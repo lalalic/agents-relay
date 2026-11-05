@@ -14,6 +14,8 @@ import {dispatchTaskAction,TASK_RECOVER_ACTION} from '../../dist/task-actions.js
 import {requestTroubleshooterEscalation,recordEscalationNotificationDelivery,resumeTroubleshooter} from '../../dist/task-recovery.js';
 import {tryTransitionTaskEvent,dependencyReady} from '../../dist/task-transitions.js';
 import {createPlanRound} from '../../dist/planner.js';
+import {recordTargetedRevisionRequest} from '../../dist/review-revision-model.js';
+import {decideRevisionLifecycle} from '../../dist/workflow/revision-v2.js';
 const stamp='2026-10-17T12:00:00.000Z';
 const jobId='l3-replay';
 const task=(id,deps=[],initialState)=>{const state=initialState??(deps.length?'DRAFT':'RUNNING');const running=state==='RUNNING';return {jobId,id,kind:'work',agentName:'implementation',adapter:'chatgpt',input:'mock agent',output:{kind:'task_pr'},parentTaskId:null,dependencies:deps,capabilities:[],state,attempt:state==='QUEUED'||deps.length?0:1,maxAttempts:3,leaseOwner:running?'mock':null,leaseExpiresAt:running?'2099-01-01T00:00:00.000Z':null,executionId:running?'exec-a':null,executionHistory:running?[{id:'exec-a',attempt:1,startedAt:stamp}]:[],threadId:null,result:null,error:null,timeoutMs:900000,createdAt:stamp,updatedAt:stamp};};
@@ -62,10 +64,10 @@ export async function runReplay(scenario) {
      if(value==='@planned')return (await snapshot()).plans?.findLast(p=>p.status==='SUCCEEDED')?.generatedTaskIds?.[0]??'__planned_unavailable__';
      if(value==='@troubleshoot-planned')return 'troubleshoot-'+((await snapshot()).plans?.findLast(p=>p.status==='SUCCEEDED')?.generatedTaskIds?.[0]??'__planned_unavailable__');
      if(value==='@review')return (await snapshot()).review?.taskId??'__review_unavailable__';
-     if(value==='@fix')return (await snapshot()).tasks.find(t=>t.id.startsWith('review-fix-'))?.id??'__fix_unavailable__';
+     if(value==='@revision')return (await snapshot()).tasks.find(t=>t.revision?.kind==='targeted')?.id??'__revision_unavailable__';
      return value??'a';
    };
-   if(!['task.completed','task.failed','task.started','review.started','review.approved','review.changes_required','job.merge.failed','job.merge.succeeded','job.head.changed','mock.clock.advance','mock.claim','planner.settle','planner.await-success','task.recover','task.escalate','mock.notification.delivered','human.unblock','reconcile','restart'].includes(step.type)) throw Error(`unsupported event: ${step.type}`);
+   if(!['task.completed','task.failed','task.started','mock.revision.request','mock.revision.materialize','review.started','review.approved','review.changes_required','job.merge.failed','job.merge.succeeded','job.head.changed','mock.clock.advance','mock.claim','planner.settle','planner.await-success','task.recover','task.escalate','mock.notification.delivered','human.unblock','reconcile','restart'].includes(step.type)) throw Error(`unsupported event: ${step.type}`);
    if(step.type==='reconcile') await runtime.reconcile(jobId);
    else if(step.type==='planner.settle' || step.type==='planner.await-success'){
      const desired=step.type==='planner.await-success'?'SUCCEEDED':(step.expectStatus??'SUCCEEDED');
@@ -113,6 +115,47 @@ export async function runReplay(scenario) {
      if(recovery?.escalation?.notification?.status!=='delivered')throw Error('test requires actual notifier receipt before human response');
      const result=await resumeTroubleshooter(store,jobId,recoveryId,step.response??'Provider authorization completed');
      if(result.task.state!=='QUEUED' || result.task.escalation?.status!=='responded')throw Error('authorized human response did not resume Troubleshooter');
+   }
+   else if(step.type==='mock.revision.request') {
+    // Explicit fixture stand-in for the still-deferred authenticated CLI intake.
+    // Its reducer and canonical Revision Graph are production code.
+    const reviewerId=await resolveTaskId(step.reviewTaskId??'@review');
+    const originalId=await resolveTaskId(step.originalTaskId??(scenario.plannerScript?'@planned':'a'));
+    await store.mutateJob(jobId,current=>{
+      const reviewer=current.tasks.find(t=>t.id===reviewerId);
+      recordTargetedRevisionRequest(current,{
+        requestId:'l3/'+reviewerId+'/'+reviewer.executionId,
+        reviewTaskId:reviewerId,reviewExecutionId:reviewer.executionId,
+        headSha:step.headSha??current.headSha,originalTaskId:originalId,
+        findings:[{id:'F1',summary:step.finding??'missing invariant'}],
+      });
+      return current;
+    });
+   }
+   else if(step.type==='mock.revision.materialize') {
+    // Fixture-only implementation of a future Graph-selected creation effect.
+    // Never interpret this as proof that the production CLI or scheduler exists.
+    const reviewerId=await resolveTaskId(step.reviewTaskId??'@review');
+    const originalId=await resolveTaskId(step.originalTaskId??(scenario.plannerScript?'@planned':'a'));
+    await store.mutateJob(jobId,current=>{
+      const request=current.reviewRevisionRequests?.find(r=>r.reviewTaskId===reviewerId&&r.originalTaskId===originalId);
+      if(!request || current.review?.revisionDisposition!=='targeted' || current.review.taskId!==reviewerId)
+        throw Error('revision fixture cannot materialize without a verified targeted review verdict');
+      const decision=decideRevisionLifecycle('REQUESTED','revision.queue',{changesRequiredRecorded:true});
+      if(!decision.accepted || !decision.actions.some(a=>a.id==='revision.queueTask'))
+        throw Error('canonical revision Graph did not authorize queueing');
+      const id='revision-'+request.reviewHeadSha;
+      const owner=current.tasks.find(t=>t.id===originalId);
+      if(owner?.state!=='SUCCEEDED')throw Error('revision fixture owner must have immutable success evidence');
+      if(!current.tasks.some(t=>t.id===id))current.tasks.push({
+        ...task(id,[reviewerId],'QUEUED'),kind:'work',agentName:owner.agentName,
+        parentTaskId:originalId,output:{kind:'task_pr'},
+        revision:{kind:'targeted',originalTaskId:originalId,reviewTaskId:reviewerId,
+          basedOnHeadSha:request.reviewHeadSha,requestIds:[request.requestId]},
+      });
+      request.status='queued';request.revisionTaskId=id;
+      return current;
+    });
    }
    else if(step.type==='mock.claim') {
     // External provider/adapter claim is simulated; legality is decided by the production Graph.

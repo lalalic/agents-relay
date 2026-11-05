@@ -9,11 +9,14 @@ test('full production path completes through worker, review, dependency reconcil
   assert.equal(result.mergeReceipts.length, 1);
 });
 
-test('changes-required creates a real fix/re-review path on a new head', async () => {
-  const result = await runFullPath({ id: 'review-revision-rereview', reviewVerdicts: { '*': ['changes-required', 'approved'] }, steps: [{ type: 'advance-head', headSha: 'head-2' }], expected: { jobState: 'COMPLETED', mergeStatus: 'succeeded' } });
+test('unowned changes-required fails closed without creating a generic fix or merging', async () => {
+  const result = await runFullPath({ id: 'review-needs-ownership', reviewVerdicts: { '*': ['changes-required'] },
+    expected: { jobState: 'ACTIVE', mergeStatus: 'pending' } });
   assert.equal(result.outcome, 'PASS', JSON.stringify({ errors: result.errors, actual: result.actual }));
-  assert.ok(result.trace.some(step => step.tasks.some(item => item.id.startsWith('review-fix-'))));
-  assert.ok(result.trace.some(step => step.headSha === 'head-2'));
+  assert.equal(result.actual.review.outcome, 'changes_required');
+  assert.equal(result.actual.review.revisionDisposition, 'needs-ownership');
+  assert.equal(result.trace.some(step => step.tasks.some(item => item.id.startsWith('review-fix-'))), false);
+  assert.equal(result.mergeReceipts.length, 0);
 });
 
 test('parallel dependency release and restart retain SQLite authority', async () => {

@@ -21,6 +21,7 @@ import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState, runti
 import { relayControlJob, relayJobStateCommand } from '../dist/cli-support.js';
 import { dispatchTaskAction } from '../dist/task-actions.js';
 import { bindPlannedReviewHead } from '../dist/planned-review-head.js';
+import { recordTargetedRevisionRequest } from '../dist/review-revision-model.js';
 import { DurableTaskTransitionRuntime } from '../dist/workflow/durable-transition.js';
 import { resolveExecutionContext } from '../dist/execution-context.js';
 
@@ -970,7 +971,7 @@ test('ChatGPT reviewer uses the same start acknowledgement policy as normal Chat
   assert.equal(durable.tasks.find(item=>item.id===created.id)?.state,'SUCCEEDED');
   assert.equal(durable.tasks.find(item=>item.id===created.id)?.executionId,null);
   assert.equal(durable.review?.outcome,'changes_required');
-  assert.equal(durable.tasks.filter(item=>item.id.startsWith('review-fix-')).length,1);
+  assert.equal(durable.tasks.filter(item=>item.id.startsWith('review-fix-')).length,0);
   await stop(); await rm(contextRoot,{recursive:true,force:true});
 });
 
@@ -2244,35 +2245,57 @@ test('CLI init persists no-review independently from auto-merge', async () => {
   await rm(directory,{recursive:true,force:true});
 });
 
-test('review changes-required creates one routable implementation fix task containing all findings', async () => {
+test('review changes-required records actionable evidence but never synthesizes a generic fix', async () => {
   const reviewJob={...job([task('work','SUCCEEDED')]),headSha:'sha-fix-12345678'};
-  const store=new InMemoryStore(reviewJob); const events=[];
-  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0,emit:event=>events.push(event)});
+  const store=new InMemoryStore(reviewJob);
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
   await reconciler.reconcile('j');
   const reviewer=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer');
-  assert.ok(reviewer);
-  const payload={review:{headSha:'sha-fix-12345678',issues:['first bug','second bug',{summary:'third bug'}]}};
+  const payload={review:{headSha:'sha-fix-12345678',issues:['first bug','second bug']}};
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','changes required','orchestrator',payload));
-  await reconciler.idle();
-  let saved=await store.load('j');
-  const fixes=saved.tasks.filter(item=>item.id.startsWith('review-fix-'));
-  assert.equal(fixes.length,1);
-  assert.equal(fixes[0].id,'review-fix-sha-fix-');
-  assert.equal(fixes[0].agentName,'implementation');
-  assert.deepEqual(fixes[0].workerRequirements,{capabilities:[]});
-  assert.equal(fixes[0].routing,undefined);
-  assert.equal(fixes[0].timeoutMs,0);
-  assert.deepEqual(fixes[0].dependencies,[reviewer.id]);
-  assert.match(fixes[0].input,/1\. first bug/);
-  assert.match(fixes[0].input,/2\. second bug/);
-  assert.match(fixes[0].input,/3\. third bug/);
-  assert.equal(saved.tasks.find(item=>item.id===reviewer.id)?.state,'SUCCEEDED');
-  assert.equal(saved.state,'ACTIVE');
-  assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'QUEUED');
-  assert.equal(events.filter(event=>event.type==='review.fix_task_created').length,1);
+  const saved=await store.load('j');
+  assert.equal(saved.review.outcome,'changes_required');
+  assert.equal(saved.review.revisionDisposition,'needs-ownership');
+  assert.equal(saved.review.evidence.data.review.issues.length,2);
+  assert.equal(saved.tasks.find(item=>item.id===reviewer.id).state,'SUCCEEDED');
+  assert.equal(saved.tasks.filter(item=>item.id.startsWith('review-fix-')).length,0);
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','duplicate event','orchestrator',payload));
+  assert.equal((await store.load('j')).tasks.filter(item=>item.id.startsWith('review-fix-')).length,0);
+});
+
+test('review verdict persists targeted request lineage and immutable round in one authoritative mutation', async () => {
+  const head='head-targeted-12345';
+  const owner={...task('owner','SUCCEEDED'),agentName:'implementation',kind:'work',result:{summary:'original evidence'}};
+  const reviewer={...task('reviewer','RUNNING',['owner']),agentName:'reviewer',reviewHeadSha:head,
+    executionId:'review-exec',leaseOwner:'test',attempt:1,executionHistory:[{id:'review-exec',attempt:1,startedAt:now()}]};
+  const initial={...job([owner,reviewer]),headSha:head,review:{outcome:'started',headSha:head,taskId:'reviewer',evidence:null,updatedAt:now()}};
+  const store=new InMemoryStore(initial);store.headSha=async()=>head;
+  store.mutateJob=async(id,mutation)=>{
+    const next=mutation(await store.load(id));await store.saveJob(next);
+    for(const t of next.tasks) await store.saveTask(t);return store.load(id);
+  };
+  await store.mutateJob('j',current=>{
+    recordTargetedRevisionRequest(current,{requestId:'request-1',reviewTaskId:'reviewer',
+      reviewExecutionId:'review-exec',headSha:head,originalTaskId:'owner',
+      findings:[{id:'F1',summary:'Fix dependency fence'}]});
+    return current;
+  });
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
+  const source=eventSource('j','reviewer','review-exec');
+  const verdict=eventFor('j','reviewer',null,'review.changes_required','failed','fix requested','orchestrator',
+    {outcome:{head_sha:head,blocking_findings:[{id:'F1',summary:'Fix dependency fence'}]}},source);
+  await reconciler.handleEvent(verdict);
+  let saved=await store.load('j');
+  assert.equal(saved.review.outcome,'changes_required');
+  assert.equal(saved.review.revisionDisposition,'targeted');
+  assert.equal(saved.reviewRevisionRounds.length,1);
+  assert.deepEqual(saved.reviewRevisionRounds[0].requestIds,['request-1']);
+  assert.equal(saved.reviewRevisionRounds[0].reviewExecutionId,'review-exec');
+  assert.equal(saved.tasks.find(t=>t.id==='owner').result.summary,'original evidence');
+  assert.equal(saved.tasks.filter(t=>t.id.startsWith('review-fix-')).length,0);
+  await reconciler.handleEvent(verdict);
   saved=await store.load('j');
-  assert.equal(saved.tasks.filter(item=>item.id.startsWith('review-fix-')).length,1);
+  assert.equal(saved.reviewRevisionRounds.length,1);
 });
 
 test('PR 258-shaped local review evidence creates one idempotent fix and rejects malformed evidence', async () => {
@@ -2311,24 +2334,19 @@ test('PR 258-shaped local review evidence creates one idempotent fix and rejects
     },
   }, source));
   saved = await store.load('j');
-  const fixes = saved.tasks.filter(item => item.id.startsWith('review-fix-'));
-  assert.equal(fixes.length, 1);
-  assert.equal(fixes[0].id, 'review-fix-059c84f0');
-  assert.equal(fixes[0].parentTaskId, reviewer.id);
-  assert.deepEqual(fixes[0].dependencies, [reviewer.id]);
-  assert.equal(fixes[0].agentName, 'implementation');
-  assert.match(fixes[0].input, /Direct child close cancels forced group cleanup/);
+  assert.equal(saved.tasks.filter(item => item.id.startsWith('review-fix-')).length,0);
+  assert.equal(saved.review?.revisionDisposition,'needs-ownership');
   assert.equal(saved.review?.outcome, 'changes_required');
   assert.equal(saved.review?.headSha, headSha);
   assert.equal(saved.review?.evidence?.data?.source?.id, source.id);
-  assert.equal(emitted.filter(event => event.type === 'review.fix_task_created').length, 1);
+  assert.equal(emitted.filter(event => event.type === 'review.fix_task_created').length, 0);
 
   await reconciler.handleEvent(eventFor('j', reviewer.id, null, 'review.changes_required', 'failed', 'duplicate event', 'orchestrator', {
     outcome: { decision: 'changes_required', head_sha: headSha, blocking_findings: [{ summary: 'duplicate' }] },
   }, source));
   saved = await store.load('j');
-  assert.equal(saved.tasks.filter(item => item.id.startsWith('review-fix-')).length, 1);
-  assert.equal(emitted.filter(event => event.type === 'review.fix_task_created').length, 1);
+  assert.equal(saved.tasks.filter(item => item.id.startsWith('review-fix-')).length, 0);
+  assert.equal(emitted.filter(event => event.type === 'review.fix_task_created').length, 0);
   await unsubscribe();
 });
 
@@ -2347,9 +2365,8 @@ test('planner-created review binds its first authoritative verdict to Job review
   assert.equal(saved.review?.taskId, reviewer.id);
   assert.equal(saved.review?.headSha, head);
   assert.equal(saved.tasks.find(item => item.id === reviewer.id)?.state, 'SUCCEEDED');
-  const fixes = saved.tasks.filter(item => item.id.startsWith('review-fix-'));
-  assert.equal(fixes.length, 1);
-  assert.match(fixes[0].input, /Remove unrequested seed artifact/);
+  assert.equal(saved.review.revisionDisposition,'needs-ownership');
+  assert.equal(saved.tasks.filter(item=>item.id.startsWith('review-fix-')).length,0);
 });
 
 test('planner-created review approval persists locally without requesting remote merge', async () => {
@@ -2371,16 +2388,16 @@ test('planner-created review approval persists locally without requesting remote
   assert.equal(merges, 0);
 });
 
-test('review changes-required falls back to one fix task from the review message', async () => {
-  const reviewJob={...job([task('work','SUCCEEDED')]),headSha:'fallback12345678'};
-  const store=new InMemoryStore(reviewJob);
+test('review changes-required without owner remains open for explicit ownership resolution', async () => {
+  const root={...job([task('work','SUCCEEDED')]),headSha:'fallback12345678'};
+  const store=new InMemoryStore(root);
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
   await reconciler.reconcile('j');
-  const reviewer=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer'); assert.ok(reviewer);
+  const reviewer=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer');
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','fix the race and add coverage','orchestrator',{review:{headSha:'fallback12345678'}}));
-  const fixes=(await store.load('j')).tasks.filter(item=>item.id.startsWith('review-fix-'));
-  assert.equal(fixes.length,1);
-  assert.match(fixes[0].input,/fix the race and add coverage/);
+  const saved=await store.load('j');
+  assert.equal(saved.review.revisionDisposition,'needs-ownership');
+  assert.equal(saved.tasks.filter(item=>item.id.startsWith('review-fix-')).length,0);
 });
 
 test('approved review never calls GitHub merge regardless of autoMerge policy', async () => {
@@ -2817,7 +2834,7 @@ test('reviewer runtime recovery preserves exact immutable head and accepts verdi
   assert.equal(recovered.reviewHeadSha,'sha-review-recovered');
   assert.equal(durable.review?.headSha,'sha-review-recovered');
   assert.equal(durable.review?.outcome,'changes_required');
-  assert.equal(durable.tasks.filter(item=>item.id.startsWith('review-fix-')).length,1);
+  assert.equal(durable.tasks.filter(item=>item.id.startsWith('review-fix-')).length,0);
   await stop(); await reconciler.close();
 });
 
@@ -2860,17 +2877,14 @@ test('Planner null-review first verdict persists through atomic store mutation',
   assert.equal(saved.review.headSha,head);
   assert.equal(saved.review.evidence.data.headSha,head);
   const fixes=saved.tasks.filter(item=>item.id.startsWith('review-fix-'));
-  assert.equal(fixes.length,verdict==='review.approved'?0:1);
+  assert.equal(fixes.length,0);
   await send();
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'task.completed',
     'succeeded','generic completion','orchestrator',{},eventSource('j',reviewer.id,'exec-1')));
   saved=await store.load('j');
   assert.equal(saved.review.outcome,outcome);
   assert.equal(saved.tasks.filter(item=>item.id.startsWith('review-fix-')).length,fixes.length);
-  if(fixes.length){
-   assert.equal(fixes[0].parentTaskId,reviewer.id);
-   assert.equal(emitted.filter(event=>event.type==='review.fix_task_created').length,1);
-  }
+  assert.equal(emitted.filter(event=>event.type==='review.fix_task_created').length,0);
  }
 });
 

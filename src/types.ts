@@ -123,7 +123,49 @@ export type ReviewTaskMetadata = {
 };
 export type ManualTaskStateOverride = { from: TaskState; to: TaskState; at: string; actor: 'dashboard-user' };
 export type ReviewOutcome = 'pending' | 'started' | 'approved' | 'changes_required' | 'blocked' | 'stale';
-export type ReviewState = { outcome: ReviewOutcome; headSha: string; taskId: string | null; evidence: Result | null; updatedAt: string };
+/** A review verdict never authorizes editing an already SUCCEEDED Task. */
+export type ReviewRevisionDisposition = 'targeted' | 'needs-ownership';
+export type ReviewState = { outcome: ReviewOutcome; headSha: string; taskId: string | null; evidence: Result | null; updatedAt: string; revisionDisposition?: ReviewRevisionDisposition };
+/** Missing dependency policy means order-only (the pre-revision default). */
+export type DependencyValidity = 'order-only' | 'revalidate' | 'rerun';
+/** Each value identifies the exact upstream successful evidence generation. */
+export type DependencyRevisionVector = Record<string, string>;
+export type RevisionKind = 'targeted' | 'revalidate' | 'rerun';
+export type RevisionStatus = 'requested' | 'queued' | 'running' | 'verified' | 'failed' | 'stale';
+export type RevisionFinding = { id: string; summary: string; evidence?: string };
+/** Durable request identity; status/task linkage is monotone. */
+export type ReviewRevisionRequest = {
+  requestId: string;
+  reviewTaskId: string;
+  reviewExecutionId: string;
+  reviewHeadSha: string;
+  originalTaskId: string;
+  findings: RevisionFinding[];
+  createdAt: string;
+  status: RevisionStatus;
+  revisionTaskId?: string;
+  dependencyVector?: DependencyRevisionVector;
+  feedbackOrigin: 'final-review' | 'authenticated-adapter';
+};
+/** Review rounds are historical; Job.review is the current delivery gate. */
+export type ReviewRevisionRound = {
+  reviewTaskId: string;
+  reviewExecutionId: string;
+  headSha: string;
+  requestIds: string[];
+  status: 'changes_required' | 'approved';
+  nextReviewTaskId?: string;
+  recordedAt: string;
+};
+/** A separate Task owns each new result, leaving the original Task immutable. */
+export type TaskRevision = {
+  kind: RevisionKind;
+  originalTaskId: string;
+  requestIds: string[];
+  reviewTaskId: string;
+  basedOnHeadSha: string;
+  dependencyVector?: DependencyRevisionVector;
+};
 export type ChatGptThreadDelivery = {
   kind: 'new-turn';
   threadId: string;
@@ -141,7 +183,7 @@ export type ChatGptThreadDelivery = {
 export type Task = {
   comments?: import('./task-comments.js').TaskComment[];
   jobId?: string; id: string; title?: string; taskUrl?: string; kind?: TaskKind; priority?: Priority; storySize?: StorySize; projectName?: string; agentName?: string; agentGraph?: string; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; taskCapabilities?: string[]; workerCapabilities?: string[]; adapter: AdapterName;
-  planningDecisionId?: string; planningSource?: PlanningDecisionSource; planningRound?: number; previousPlannerTaskId?: string | null; planTrigger?: PlanTrigger; tag?: string; plannerRetryFeedback?: string; plannerGuidance?: string; manualPlanning?: boolean;
+  planningDecisionId?: string; planningSource?: PlanningDecisionSource; planningRound?: number; previousPlannerTaskId?: string | null; planTrigger?: PlanTrigger; tag?: string; plannerRetryFeedback?: string; plannerGuidance?: string; manualPlanning?: boolean; dependencyValidity?: Record<string, DependencyValidity>; revision?: TaskRevision;
   resolutionClassification?: { kind: 'superseded' | 'invalid'; targetTaskId: string; evidence: string; reason: string; updatedAt: string };
   input: string; attachments?: string[]; output?: TaskOutput; review?: ReviewTaskMetadata; workerRequirements?: WorkerRequirements; workerSelection?: WorkerSelection; routing?: RoutingDecision; continuation?: Continuation | null; continuationDeliveredAt?: string | null; chatgptTabClosePolicy?: ChatGptTabClosePolicy; state: TaskState; attempt: number; maxAttempts: number;
   leaseOwner: string | null; leaseExpiresAt: string | null; executionId: string | null; executionHistory?: Array<{ id: string; attempt: number; startedAt: string }>; threadId: string | null; threadUrl?: string | null; threadHistory?: Array<{executionId:string;threadUrl:string;attempt:number;at:string}>;
@@ -197,7 +239,7 @@ export function normalizeLegacyTaskLifecycle(task: Task): Task {
 export type RecoveryFailureRecord = { taskId: string; recoveryTaskId: string; reason: string; at: string };
 export type JobPause = { generation: number; requestedAt: string };
 export type ProjectionRecovery = { key: string; remoteSha: string; status: 'repairing' | 'retry' | 'projected' | 'escalated'; taskId: string; attempts: number; maxAttempts: number; error?: string; updatedAt: string };
-export type Job = { githubProjection?: { status: 'pr_bound' | 'merged_without_pr' | 'no_diff'; sourceSha: string; observedAt: string }; projectionRecovery?: ProjectionRecovery; localMerge?: import('./local-git-merge.js').LocalMergeReceipt; recoveryFailures?: RecoveryFailureRecord[]; id: string; title: string; objective?: string; projectPath?: string; priority?: Priority; description?: string; tag?: JobTag; autoMerge?: boolean; reviewEnabled?: boolean; /** Enables direct Agent Graph shortcut dispatch before Task materialization. */ executionMode?: 'shortcut'; /** Explicitly permits content-only shortcut terminal completion; all PR/review/merge gates remain forbidden. */ contentOnly?: boolean; /** Immutable elapsed-time budget origin for direct shortcut execution. */ shortcutExecutionStartedAt?: string; /** Immutable elapsed-time deadline for direct shortcut execution. */ shortcutExecutionDeadlineAt?: string; prNumber: number; repository: string; state: JobLifecycleState; continuation: Continuation | null; review?: ReviewState; headSha?: string; reviewerThreadId?: string; creatorThreadId?: string; implementationThreadId?: string; initialPlanning?: { status: 'pending' | 'complete'; decisionId: string }; blockerResolutionMode?: BlockerResolutionMode; blockerResolvedAt?: string; unblocks?: BlockerDependent[]; changeCycle?: JobChangeCycle; plans?: Plan[]; pause?: JobPause; createdAt: string; updatedAt: string; tasks: Task[] };
+export type Job = { githubProjection?: { status: 'pr_bound' | 'merged_without_pr' | 'no_diff'; sourceSha: string; observedAt: string }; projectionRecovery?: ProjectionRecovery; localMerge?: import('./local-git-merge.js').LocalMergeReceipt; recoveryFailures?: RecoveryFailureRecord[]; id: string; title: string; objective?: string; projectPath?: string; priority?: Priority; description?: string; tag?: JobTag; autoMerge?: boolean; reviewEnabled?: boolean; /** Enables direct Agent Graph shortcut dispatch before Task materialization. */ executionMode?: 'shortcut'; /** Explicitly permits content-only shortcut terminal completion; all PR/review/merge gates remain forbidden. */ contentOnly?: boolean; /** Immutable elapsed-time budget origin for direct shortcut execution. */ shortcutExecutionStartedAt?: string; /** Immutable elapsed-time deadline for direct shortcut execution. */ shortcutExecutionDeadlineAt?: string; prNumber: number; repository: string; state: JobLifecycleState; continuation: Continuation | null; review?: ReviewState; reviewRevisionRequests?: ReviewRevisionRequest[]; reviewRevisionRounds?: ReviewRevisionRound[]; headSha?: string; reviewerThreadId?: string; creatorThreadId?: string; implementationThreadId?: string; initialPlanning?: { status: 'pending' | 'complete'; decisionId: string }; blockerResolutionMode?: BlockerResolutionMode; blockerResolvedAt?: string; unblocks?: BlockerDependent[]; changeCycle?: JobChangeCycle; plans?: Plan[]; pause?: JobPause; createdAt: string; updatedAt: string; tasks: Task[] };
 export type Continuation = { kind: 'codex-thread' | 'command' | 'webhook'; target: string; input?: string };
 export type EventRecord = { version: 1; event_id: string; job_id: string; task_id: string; parent_task_id: string | null; type: string; status: string; timestamp: string; visibility: string; level: string; message: string; source?: Record<string, unknown>; data?: Record<string, unknown> };
 

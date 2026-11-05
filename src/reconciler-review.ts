@@ -14,6 +14,7 @@ import { createTaskEntity } from './workflow/entity-creation.js';
 import { localSourceHead, localWorkingHead } from './local-git-merge.js';
 import { chatgptThreadRequirements, resolveReviewerThreadDestination, resolveImplementationTaskThreadDestination, prepareReviewerThreadDelivery } from './reviewer-thread.js';
 import { reviewGenerationMatches } from './review-generation-fence.js';
+import { targetedRequestsForReview, targetedRequestsCoverReview } from './review-revision-model.js';
 import { codexFallbackRouting, codexNoStartFallbackRoute, quarantineUnavailableCodexFallback } from './chatgpt-platform-fallback.js';
 
 
@@ -72,12 +73,13 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     if (!Array.isArray(rawIssues)) return [];
     return rawIssues.map(item => {
       if (typeof item === 'string') return item.trim();
-      if (!item || typeof item !== 'object' || Array.isArray(item)) return '';
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return '[unparseable blocking finding]';
       const value = item as Record<string, unknown>;
       return (typeof value.summary === 'string' ? value.summary
         : typeof value.message === 'string' ? value.message
         : typeof value.finding === 'string' ? value.finding
-        : typeof value.title === 'string' ? value.title : '').trim();
+        : typeof value.title === 'string' ? value.title
+        : typeof value.id === 'string' ? value.id : '[unparseable blocking finding]').trim();
     }).filter(Boolean);
   }
 
@@ -387,20 +389,19 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     }
 
     let needsReconcile = false;
-    let pendingFixTask: Task | null = null;
-    const reviewDecision = await dispatchReviewLifecycle(initialReviewOutcome, event.type, { autoMerge: job.autoMerge !== false }, async actionId => {
-      if (actionId === 'review.createFix') {
+    let revisionDisposition: 'targeted' | 'needs-ownership' | undefined;
+    const reviewDecision = await dispatchReviewLifecycle(initialReviewOutcome, event.type, { autoMerge: job.autoMerge !== false, targetedRevisionRequestsReady: targetedRequestsCoverReview(job, task, headSha, normalizedEvidence.issues) }, async actionId => {
+      if (actionId === 'review.awaitTargetedRevisions') {
+        revisionDisposition = 'targeted';
+        // Subsequent revision child scheduling is owned by the revision Graph;
+        // the review verdict never creates an unowned generic fix.
         needsReconcile = true;
-        const issues = normalizedEvidence.issues;
-        if (issues.length === 0) issues.push(event.message || 'Address the reviewer-requested changes');
-        const now = event.timestamp || new Date().toISOString(); const id = 'review-fix-' + headSha.slice(0, 8);
-        if (!job.tasks.some(item => item.id === id)) {
-          const fixPrNumber = this.externalReviewPrNumber(job);
-          const fixTarget = fixPrNumber > 0 ? `PR #${fixPrNumber}` : `Job ${job.id} artifact`;
-          const input = 'Address all reviewer findings for ' + fixTarget + ' at ' + headSha + ':\n\n' + issues.map((issue, index) => (index + 1) + '. ' + issue).join('\n');
-          const fixTask = createTaskEntity(job, { jobId: job.id, id, title: `Fix review ${headSha.slice(0, 8)}`, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'implementation', parentTaskId: task.id, dependencies: [task.id], capabilities: ['implementation'], workerRequirements: { capabilities: [] }, adapter: 'codex', input, output: { kind: 'task_pr' }, continuation: null, continuationDeliveredAt: null, attempt: 0, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: 0, createdAt: now, updatedAt: now });
-          pendingFixTask = fixTask;
-        }
+        return {};
+      }
+      if (actionId === 'review.requireOwnerResolution') {
+        revisionDisposition = 'needs-ownership';
+        // An explicitly authorized Planner re-plan may resolve ownership,
+        // but there is no implicit generic fix or automatic escalation.
         return {};
       }
       if (actionId === 'review.requestMerge') {
@@ -425,6 +426,12 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         const freshTask = current.tasks.find(item => item.id === task.id);
         if (!freshTask || !reviewGenerationMatches(current, job, task, headSha)) return current;
         const candidate = structuredClone(freshTask);
+        // The graph verdict was decided on the outer snapshot. Never commit a
+        // different disposition if concurrent intake changed the requests.
+        if (event.type === 'review.changes_required'
+          && targetedRequestsCoverReview(current, freshTask, headSha, normalizedEvidence.issues)
+            !== (revisionDisposition === 'targeted')) return current;
+        const requestIds = targetedRequestsForReview(current, freshTask, headSha).map(item => item.requestId);
         const freshDecision = tryTransitionTaskEvent(candidate, event.type);
         if (!freshDecision.accepted || !freshDecision.target) return current;
         if (freshDecision.target !== 'RUNNING') {
@@ -442,8 +449,17 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         if (currentHeadSha === headSha) current.headSha = headSha;
         freshTask.error = null;
         if (freshDecision.target !== 'RUNNING') freshTask.result = { summary: event.message || `Review ${event.type}`, data: event.data ?? {} };
-        if (pendingFixTask && !current.tasks.some(item => item.id === pendingFixTask!.id)) current.tasks.push(structuredClone(pendingFixTask));
-        current.review = { outcome, headSha, taskId: freshTask.id, evidence, updatedAt: reviewUpdatedAt };
+        current.review = { outcome, headSha, taskId: freshTask.id, evidence, updatedAt: reviewUpdatedAt,
+          ...(revisionDisposition ? { revisionDisposition } : {}) };
+        if ((event.type === 'review.changes_required' || event.type === 'review.approved') && terminalExecutionId
+          && !current.reviewRevisionRounds?.some(round => round.reviewTaskId === freshTask.id && round.reviewExecutionId === terminalExecutionId)) {
+          current.reviewRevisionRounds = [...(current.reviewRevisionRounds ?? []), {
+            reviewTaskId: freshTask.id, reviewExecutionId: terminalExecutionId, headSha,
+            requestIds,
+            status: outcome === 'approved' ? 'approved' : 'changes_required',
+            recordedAt: reviewUpdatedAt,
+          }];
+        }
         current.updatedAt = reviewUpdatedAt;
         committed = true;
         return current;
@@ -454,15 +470,8 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       if (terminalExecutionId) {
         this.finalizeReviewExecution(job.id, { ...task, executionId: terminalExecutionId }, event);
       }
-      const committedFixTask = pendingFixTask as Task | null;
-      if (committedFixTask) await this.emit(eventFor(job.id, committedFixTask.id, task.id, 'review.fix_task_created', 'queued', 'Created one fix task ' + committedFixTask.id + ' for reviewer findings', 'orchestrator', { headSha }, { agent: 'relay', component: 'agents-relay' }));
     } else {
-      const legacyFixTask = pendingFixTask as Task | null;
-      if (legacyFixTask) {
-        await this.store.appendTask(legacyFixTask);
-        await this.emit(eventFor(job.id, legacyFixTask.id, task.id, 'review.fix_task_created', 'queued', 'Created one fix task ' + legacyFixTask.id + ' for reviewer findings', 'orchestrator', { headSha }, { agent: 'relay', component: 'agents-relay' }));
-      }
-      job.review = { outcome, headSha, taskId: task.id, evidence, updatedAt: reviewUpdatedAt };
+      job.review = { outcome, headSha, taskId: task.id, evidence, updatedAt: reviewUpdatedAt, ...(revisionDisposition ? { revisionDisposition } : {}) };
       job.updatedAt = reviewUpdatedAt; await this.store.saveTask(task); await this.store.saveJob(job);
     }
     if (event.type==='review.started' && this.store.verifyWorkflowLaunch) {

@@ -4,7 +4,7 @@ import { dispatchWorkflowGraph, dispatchWorkflowGraphSync } from './dispatcher.j
 import type { ReviewOutcome } from '../types.js';
 
 export type ReviewGraphState = 'NONE' | 'PENDING' | 'STARTED' | 'APPROVED' | 'CHANGES_REQUIRED' | 'BLOCKED' | 'STALE';
-export type ReviewGraphAction = 'review.create' | 'review.cancelStale' | 'review.createFix' | 'review.requestMerge';
+export type ReviewGraphAction = 'review.create' | 'review.cancelStale' | 'review.awaitTargetedRevisions' | 'review.requireOwnerResolution' | 'review.requestMerge';
 
 const source = readFileSync(new URL('../../workflow/review-lifecycle.mmd', import.meta.url), 'utf8');
 const boolGuard = (name: string) => (facts: { readonly durableFacts: Readonly<Record<string, unknown>> }) => facts.durableFacts[name] === true;
@@ -23,8 +23,9 @@ export const reviewLifecycleV2 = new GraphRuntime(source, {
     noApprovedCurrentReview: boolGuard('noApprovedCurrentReview'),
     autoMerge: boolGuard('autoMerge'),
     reviewUnblocked: boolGuard('reviewUnblocked'),
+    targetedRevisionRequestsReady: boolGuard('targetedRevisionRequestsReady'),
   },
-  actions: Object.fromEntries((['review.create','review.cancelStale','review.createFix','review.requestMerge'] as ReviewGraphAction[]).map(id => [id,{id}])),
+  actions: Object.fromEntries((['review.create','review.cancelStale','review.awaitTargetedRevisions','review.requireOwnerResolution','review.requestMerge'] as ReviewGraphAction[]).map(id => [id,{id}])),
   events: Object.fromEntries(['reconcile','review.started','review.approved','review.changes_required','review.legacy_blocked','review.retry','head.changed'].map(id => [id,{id}])),
 });
 
