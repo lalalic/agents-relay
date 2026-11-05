@@ -1,3 +1,4 @@
+import { isFinalReviewAgent } from './final-review-role.js';
 import type { Job, Task } from './types.js';
 
 /** Called inside SQLite mutateJob against the latest durable Job snapshot. */
@@ -11,7 +12,7 @@ export function reviewGenerationMatches(current: Job, original: Job, task: Task,
   // generation. Reject competing reviewers of that same head deterministically.
   if (current.review?.outcome === 'stale' && original.review?.outcome === 'stale'
       && current.review.headSha !== headSha && task.planningDecisionId) {
-    const currentHeadReviewers = current.tasks.filter(item => item.agentName === 'reviewer'
+    const currentHeadReviewers = current.tasks.filter(item => isFinalReviewAgent(item.agentName)
       && item.reviewHeadSha === headSha && item.state !== 'CANCELLED');
     return currentHeadReviewers.at(-1)?.id === task.id;
   }

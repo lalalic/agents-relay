@@ -21,6 +21,7 @@ test('mandatory self-review is delivered to both worker adapters even with no na
         ['review-chair', { role: 'chair' }, false],
         ['review-chair', undefined, false],
         ['reviewer', undefined, false],
+        ['job-acceptance-reviewer', undefined, false],
         ['planner', undefined, false],
         ['troubleshooter', undefined, false],
       ]) {
@@ -55,4 +56,13 @@ test('mandatory self-review is delivered to both worker adapters even with no na
     else process.env.AGENTS_RELAY_PROMPT_REFERENCE_DIR = previous;
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('acceptance reviewer can report findings while the new revise CLI is not yet deployed', async () => {
+  const instructions = await readFile('skills/agents-relay/agents/job-acceptance-reviewer.agent.md', 'utf8');
+  assert.match(instructions, /execution-pinned Relay CLI supports/);
+  assert.match(instructions, /do not fail a completed review solely because the CLI does not exist/);
+  assert.match(instructions, /data\.revision_submission: "cli-unavailable"/);
+  assert.match(instructions, /Never claim targeted requests were persisted/);
+  assert.match(instructions, /available CLI's validation error/);
 });

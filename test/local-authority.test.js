@@ -402,7 +402,7 @@ test('offline Graph automatically creates exactly one final-review Task', async 
   await reconciler.reconcile('local');
   await reconciler.reconcile('local');
   const observed = await store.load('local');
-  assert.equal(observed.tasks.filter(t => t.agentName === 'reviewer').length, 1);
+  assert.equal(observed.tasks.filter(t => t.agentName === 'job-acceptance-reviewer').length, 1);
   assert.equal(observed.review?.outcome, 'pending');
   assert.equal(await sqlite.pendingProjectionCount(), 0);
   sqlite.close();
@@ -501,7 +501,7 @@ test('UNKNOWN PR still creates a local final Review without requesting Merge', a
     projectPathForJob: () => process.cwd() });
   await reconciler.reconcile('local');
   const saved = await local.load('local');
-  assert.equal(saved.tasks.filter(t => t.agentName === 'reviewer').length, 1);
+  assert.equal(saved.tasks.filter(t => t.agentName === 'job-acceptance-reviewer').length, 1);
   assert.equal(saved.state, 'ACTIVE');
   assert.equal(await sqlite.pendingProjectionCount(), 0);
   sqlite.close();

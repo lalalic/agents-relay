@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { jobHasActiveExecution } from './job-execution-slot.js';
 import type { ExecutionContext } from './execution-context.js';
 import { eventFor } from './events.js';
-import { materializePlannerChild, parsePlannerResult, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress, validatePlannerResolutionMaterialization } from './planner.js';
+import { materializePlannerChild, parsePlannerResult, validatePlannerHierarchy, validatePlannerAgentRoles, validatePlannerLifecycleOwnership, validatePlannerProgress, validatePlannerResolutionMaterialization } from './planner.js';
 import { attachResolutionOwnership } from './workflow/task-resolution.js';
 import { samePlannerChildDefinition } from './planner-child.js';
 import { dispatchJobLifecycleSync } from './workflow/lifecycle.js';
@@ -177,6 +177,9 @@ export async function finishPlanner(
     const historyCleanup: PlannerHistoryCleanup[] = parsed.history_cleanup ?? [];
     const result = assignPlannerTaskIds(parsed, job.repository, job.id, plan.id);
     const executionContext = await ports.plannerContext(job, plan);
+    try { validatePlannerAgentRoles(result.next_tasks); } catch (error) {
+      throw new PlannerApplyValidationError('candidate', [error instanceof Error ? error.message : String(error)]);
+    }
     validatePlannerHierarchy(job.tasks, result.next_tasks);
     if (!plan.forceRestate) validatePlannerResolutionMaterialization(job.tasks, result.next_tasks);
     validatePlannerLifecycleOwnership(job, result.next_tasks);

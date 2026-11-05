@@ -1,3 +1,6 @@
+import { submitTargetedRevisionRequest } from './review-revision-model.js';
+import { localSourceHead, localWorkingHead } from './local-git-merge.js';
+import type { RevisionFinding } from './types.js';
 import { appendTaskComment } from './task-comments.js';
 import type { Job, Task } from './types.js';
 import { once } from 'node:events';
@@ -152,6 +155,33 @@ export function createWorkspaceControl(deps: any) {
       for (const task of blocked) await publishTaskUnblocked(bus, refreshed, task.id, reason);
       await pool.reconcileLocalJob(jobId, 'control.job.unblock');
       return await store.load(jobId);
+    }
+    if (command === 'task.revise') {
+      const repository = typeof body.repository === 'string' ? body.repository : '';
+      const originalTaskId = typeof body.taskId === 'string' ? body.taskId : '';
+      const reviewTaskId = typeof body.reviewTaskId === 'string' ? body.reviewTaskId : '';
+      const reviewExecutionId = typeof body.reviewExecutionId === 'string' ? body.reviewExecutionId : '';
+      const headSha = typeof body.headSha === 'string' ? body.headSha : '';
+      const requestId = typeof body.requestId === 'string' ? body.requestId : '';
+      const findings = body.findings;
+      if (!repository || repository !== job.repository || !originalTaskId || !reviewTaskId || !reviewExecutionId || !requestId
+          || !/^[a-f0-9]{40,64}$/i.test(headSha) || !Array.isArray(findings) || findings.length < 1 || findings.length > 200)
+        throw new Error('task.revise requires matching repository, original/reviewer IDs, active execution ID, valid SHA, stable request ID and nonempty findings');
+      // Trust fresh local Git truth, not the caller or PR projection. The
+      // atomic reducer independently checks durable head and execution.
+      const projectRoot = await resolveManagedProjectPath(job.repository);
+      const projectPath = resolveRepositoryProjectPath(projectRoot, job.projectPath);
+      const liveHead = job.localMerge?.sourceRef
+        ? localSourceHead(projectPath, job.localMerge.sourceRef)
+        : localWorkingHead(projectPath);
+      if (liveHead !== headSha) throw new Error('task.revise rejected: local Git source head changed since immutable review');
+      const response = await submitTargetedRevisionRequest(store, jobId, {
+        requestId, reviewTaskId, reviewExecutionId, headSha, originalTaskId,
+        findings: findings as RevisionFinding[],
+      });
+      // Reviewer is still RUNNING: verdict event will wake the reconciler.
+      // The committed receipt must not be obscured by an unrelated wake failure.
+      return response;
     }
     if (command === 'task.comment') {
       const taskId = typeof body.taskId === 'string' ? body.taskId : '';

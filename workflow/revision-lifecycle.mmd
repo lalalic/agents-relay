@@ -1,0 +1,68 @@
+---
+title: Revision Lifecycle
+description: Authorizes immutable-head targeted feedback and child revision lifecycle; Task graph continues to own worker execution.
+---
+flowchart LR
+%% relay: initial none
+none["state: NONE"]
+requested["state: REQUESTED"]
+queued["state: QUEUED"]
+running["state: RUNNING"]
+verified["state: VERIFIED"]
+failed["state: FAILED"]
+stale["state: STALE"]
+reviewerAuthorized["guard: reviewerAuthorized"]
+sameHead["guard: reviewHeadCurrent"]
+ownerEligible["guard: originalTaskSucceeded"]
+recordRequest["action: revision.recordRequest"]
+recordQueue["action: revision.queueTask"]
+recordVerified["action: revision.recordVerified"]
+recordFailed["action: revision.recordFailed"]
+retryQueued["guard: taskRetryQueued"]
+retryQueue["action: revision.queueTask"]
+markStaleRequested["action: revision.markStale"]
+markStaleQueued["action: revision.markStale"]
+markStaleRunning["action: revision.markStale"]
+markStaleFailed["action: revision.markStale"]
+verdictReady["guard: changesRequiredRecorded"]
+none -->|on: revision.submit| reviewerAuthorized
+reviewerAuthorized -->|true| sameHead
+reviewerAuthorized -->|false| none
+sameHead -->|true| ownerEligible
+sameHead -->|false| none
+ownerEligible -->|true| recordRequest
+ownerEligible -->|false| none
+recordRequest --> requested
+%% Duplicate submissions are idempotent only when the durable request payload
+%% matches. The reducer rejects a conflicting payload for the same request ID.
+requested -->|on: revision.submit| requested
+requested -->|on: revision.queue| verdictReady
+verdictReady -->|true| recordQueue
+verdictReady -->|false| requested
+recordQueue --> queued
+queued -->|on: revision.started| running
+running -->|on: revision.verified| recordVerified
+recordVerified --> verified
+running -->|on: revision.failed| recordFailed
+recordFailed --> failed
+%% A failed/uncertain revision can resume only after Relay has authoritatively
+%% requeued the SAME child through its recovery Graph.
+failed -->|on: revision.retry| retryQueued
+running -->|on: revision.retry| retryQueued
+retryQueued -->|true| retryQueue
+retryQueue --> queued
+requested -->|on: review.head_changed| markStaleRequested
+markStaleRequested --> stale
+queued -->|on: review.head_changed| markStaleQueued
+markStaleQueued --> stale
+running -->|on: review.head_changed| markStaleRunning
+markStaleRunning --> stale
+failed -->|on: review.head_changed| markStaleFailed
+markStaleFailed --> stale
+
+%% A restarted reviewer execution is a new immutable review generation even
+%% when the reviewed SHA is unchanged; old pending feedback cannot hold the gate.
+requested -->|on: review.execution_changed| markStaleRequested
+queued -->|on: review.execution_changed| markStaleQueued
+running -->|on: review.execution_changed| markStaleRunning
+failed -->|on: review.execution_changed| markStaleFailed

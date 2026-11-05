@@ -1,3 +1,4 @@
+import { isFinalReviewAgent } from './final-review-role.js';
 import { readFile, writeFile } from 'node:fs/promises';
 import { plannerInput } from './planner.js';
 import { arg, storeFor } from './cli-support.js';
@@ -84,7 +85,7 @@ export async function runPromptCommand(args: string[]): Promise<void> {
     if (!task) throw new Error(`Task ${taskId} not found in Job ${job.id}`);
     if (!task.executionId) throw new Error(`Task ${taskId} has no execution ID`);
     const context = await resolveExecutionContext(projectPath,
-      task.agentName === 'troubleshooter' ? 'troubleshooter' : task.agentName === 'reviewer' ? 'reviewer' : 'worker');
+      task.agentName === 'troubleshooter' ? 'troubleshooter' : isFinalReviewAgent(task.agentName) ? 'reviewer' : 'worker');
     prompt = await managedWorkerInput(job, {...task, adapter}, context);
   }
   const output = arg(args, '--output');

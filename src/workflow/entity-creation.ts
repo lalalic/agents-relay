@@ -1,6 +1,7 @@
 import type { Job, Task } from '../types.js';
 import { dispatchJobLifecycleSync, dispatchTaskLifecycleSync } from './lifecycle.js';
 import { deriveTaskTitle } from '../task-title.js';
+import { validateDependencyValidity } from '../dependency-validity.js';
 
 export type NewTask = Omit<Task, 'state'>;
 export type NewJob = Omit<Job, 'state'>;
@@ -18,6 +19,7 @@ function validateTaskRequirements(value: NewTask): void {
   if (value.workerRequirements && !Array.isArray(value.workerRequirements.capabilities)) {
     throw new Error(`Task ${value.id} workerRequirements.capabilities must be an array`);
   }
+  validateDependencyValidity(value.dependencies, value.dependencyValidity, `Task ${value.id} dependencyValidity`);
 }
 
 /**

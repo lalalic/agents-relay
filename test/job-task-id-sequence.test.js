@@ -70,7 +70,7 @@ test('planner Task aliases resolve to durable repository IDs without losing DAG 
   try {
     const raw={objective_status:'in_progress',assessment:'graph',unblocks:[],next_tasks:[
       {title: 'Implement and verify durable task outputs', id:'story',input:'produce story',output:{kind:'task_pr'},dependencies:[]},
-      {title: 'Implement and verify durable task outputs', id:'direction',input:'direct',output:{kind:'task_pr'},parentTaskId:'story',dependencies:['story','external-task']},
+      {title: 'Implement and verify durable task outputs', id:'direction',input:'direct',output:{kind:'task_pr'},parentTaskId:'story',dependencies:['story','external-task'],dependencyValidity:{story:'rerun','external-task':'revalidate'}},
     ]};
     const result=assignPlannerTaskIds(raw,'lalalic/neo','episode-1','plan-1',dir);
     const [story,direction]=result.next_tasks;
@@ -78,6 +78,7 @@ test('planner Task aliases resolve to durable repository IDs without losing DAG 
     assert.equal(direction.id,'2');
     assert.equal(direction.parentTaskId,story.id);
     assert.deepEqual(direction.dependencies,[story.id,'external-task']);
+    assert.deepEqual(direction.dependencyValidity,{[story.id]:'rerun','external-task':'revalidate'});
     assert.deepEqual(assignPlannerTaskIds(raw,'lalalic/neo','episode-1','plan-1',dir),result);
     assert.equal(raw.next_tasks[0].id,'story');
   } finally { await rm(root,{recursive:true,force:true}); }

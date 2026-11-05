@@ -58,10 +58,12 @@ const reviewSteps=[
  {type:'task.completed',taskId:'a'},
  {type:'mock.claim',taskId:'@review',executionId:'review-1'},
  {type:'review.started',taskId:'@review',executionId:'review-1',data:{head_sha:'head-1'}},
+ {type:'mock.revision.request',finding:'missing invariant'},
  {type:'review.changes_required',taskId:'@review',executionId:'review-1',data:{head_sha:'head-1',blocking_findings:[{message:'missing invariant'}]}},
- {type:'mock.claim',taskId:'@fix',executionId:'fix-1'},
- {type:'task.started',taskId:'@fix',executionId:'fix-1'},
- {type:'task.completed',taskId:'@fix',executionId:'fix-1'},
+ {type:'mock.revision.materialize'},
+ {type:'mock.claim',taskId:'@revision',executionId:'fix-1'},
+ {type:'task.started',taskId:'@revision',executionId:'fix-1'},
+ {type:'task.completed',taskId:'@revision',executionId:'fix-1'},
  {type:'job.head.changed',headSha:'head-2'},
  {type:'reconcile'},
  {type:'review.approved',taskId:'final-review-head-1',executionId:'review-1',data:{head_sha:'head-1'},expectIgnored:true},
@@ -84,7 +86,7 @@ const reviewFixture={
  id:'gate-review-recovery',autoMerge:true,reviewEnabled:true,headSha:'head-1',
  mergeOutcomes:['failed','succeeded'],tasks:[{id:'a'}],steps:reviewSteps,
  expected:{jobState:'COMPLETED',localMergeStatus:'succeeded',tasks:{a:'SUCCEEDED',
- 'final-review-head-1':'SUCCEEDED','review-fix-head-1':'SUCCEEDED',
+ 'final-review-head-1':'SUCCEEDED','revision-head-1':'SUCCEEDED',
  'final-review-head-2':'SUCCEEDED','troubleshoot-final-review-head-2':'SUCCEEDED'}},
 };
 for(const id of ['review-changes-required','reviewer-failure-recovery','merge-failure-recovery']) verifiedCases[id]=reviewFixture;
@@ -156,15 +158,15 @@ export async function evaluateRecoveryMatrix(){
      : path.id==='stale-replay-after-restart'
      ? result.trace[5].event==='restart'&&result.trace[9].progress===false&&result.trace[10].progress===false&&result.trace[9].before.some(t=>t.id==='a'&&t.state==='SUCCEEDED')&&result.trace[10].after.some(t=>t.id==='a'&&t.state==='SUCCEEDED')
      : path.id==='review-changes-required'
-     ? result.trace[3].after.some(t=>t.id==='review-fix-head-1'&&t.state==='QUEUED')&&result.trace[9].progress===false&&events.includes('review.approved')
+     ? result.trace[5].after.some(t=>t.id.startsWith('revision-') && t.id!=='revision-head-1'&&t.state==='QUEUED')&&result.trace[11].progress===false&&events.includes('review.approved')
      : path.id==='reviewer-failure-recovery'
-     ? result.trace[12].after.some(t=>t.id==='final-review-head-2'&&t.state==='FAILED')&&result.trace[16].after.some(t=>t.id==='troubleshoot-final-review-head-2'&&t.state==='SUCCEEDED')&&events.includes('task.recover')
+     ? result.trace[14].after.some(t=>t.id==='final-review-head-2'&&t.state==='FAILED')&&result.trace[18].after.some(t=>t.id==='troubleshoot-final-review-head-2'&&t.state==='SUCCEEDED')&&events.includes('task.recover')
      : path.id==='merge-failure-recovery'
      ? result.externalGitAttempts===2&&result.observedEvents.filter(x=>x.event.startsWith('job.merge.')).map(x=>x.event).join(',')==='job.merge.failed,job.merge.succeeded'
      : impossible
      ? result.trace.some(x=>x.event==='job.merge.succeeded'&&x.jobState==='ACTIVE')&&events.includes('restart')
      : false;
-   results.push({id:path.id,outcome:verified&&causal?'PASS':'FAIL',reason:verified&&causal?null:result.errors.join('; ')||'Missing authoritative causal evidence',authority:result.authority,scenarioId:result.scenarioId,sqliteJobState:result.actual.jobState,traceSteps:result.trace.length,limitations:'External model, notifier and Git effects are isolated mocks'});
+   results.push({id:path.id,outcome:verified&&causal?'PASS':'FAIL',reason:verified&&causal?null:result.errors.join('; ')||'Missing authoritative causal evidence',authority:result.authority,scenarioId:result.scenarioId,sqliteJobState:result.actual.jobState,traceSteps:result.trace.length,limitations:'External model, notifier, Git and revision-child materialization are isolated mocks; CLI and dependency scheduler not verified'});
   }catch(error){results.push({id:path.id,outcome:'FAIL',reason:String(error)});}
  }
  return results;

@@ -41,9 +41,15 @@ cancelApproved["action: review.cancelStale"]
 cancelChanges["action: review.cancelStale"]
 cancelBlocked["action: review.cancelStale"]
 reviewUnblocked["guard: reviewUnblocked"]
-fixPending["action: review.createFix"]
-fixStarted["action: review.createFix"]
-fixChanges["action: review.createFix"]
+targetedPending["guard: targetedRevisionRequestsReady"]
+targetedStarted["guard: targetedRevisionRequestsReady"]
+targetedChanges["guard: targetedRevisionRequestsReady"]
+recordTargetedPending["action: review.awaitTargetedRevisions"]
+recordTargetedStarted["action: review.awaitTargetedRevisions"]
+recordTargetedChanges["action: review.awaitTargetedRevisions"]
+ownerPending["action: review.requireOwnerResolution"]
+ownerStarted["action: review.requireOwnerResolution"]
+ownerChanges["action: review.requireOwnerResolution"]
 mergePending["action: review.requestMerge"]
 mergeStarted["action: review.requestMerge"]
 
@@ -96,8 +102,11 @@ pending -->|on: review.approved| autoMergePending
 autoMergePending -->|true| mergePending
 mergePending --> approved
 autoMergePending -->|false| approved
-pending -->|on: review.changes_required| fixPending
-fixPending --> changes
+pending -->|on: review.changes_required| targetedPending
+targetedPending -->|true| recordTargetedPending
+targetedPending -->|false| ownerPending
+recordTargetedPending --> changes
+ownerPending --> changes
 
 %% A failed Reviewer execution may recover with a new Execution ID while
 %% the Review lifecycle remains STARTED. This is a legal re-start event;
@@ -107,10 +116,16 @@ started -->|on: review.approved| autoMergeStarted
 autoMergeStarted -->|true| mergeStarted
 mergeStarted --> approved
 autoMergeStarted -->|false| approved
-started -->|on: review.changes_required| fixStarted
-fixStarted --> changes
-changes -->|on: review.changes_required| fixChanges
-fixChanges --> changes
+started -->|on: review.changes_required| targetedStarted
+targetedStarted -->|true| recordTargetedStarted
+targetedStarted -->|false| ownerStarted
+recordTargetedStarted --> changes
+ownerStarted --> changes
+changes -->|on: review.changes_required| targetedChanges
+targetedChanges -->|true| recordTargetedChanges
+targetedChanges -->|false| ownerChanges
+recordTargetedChanges --> changes
+ownerChanges --> changes
 
 pending -->|on: head.changed| cancelPending
 cancelPending --> stale
@@ -118,6 +133,22 @@ started -->|on: head.changed| cancelStarted
 cancelStarted --> stale
 approved -->|on: head.changed| cancelApproved
 cancelApproved --> stale
+changes -->|on: revision.settled| targetedVerified
+%% Only the Review Graph selects re-review; settlement is proven by correlated
+%% child terminal evidence and explicit revision request provenance.
+targetedVerified["guard: targetedRevisionsVerified"]
+reviewRoundAllowed["guard: reviewRoundWithinLimit"]
+reviewNoProgressAllowed["guard: reviewNoProgressWithinLimit"]
+prepareRereview["action: review.prepareRereview"]
+limitOwnerResolution["action: review.requireOwnerResolution"]
+targetedVerified -->|true| reviewRoundAllowed
+reviewRoundAllowed -->|true| reviewNoProgressAllowed
+reviewNoProgressAllowed -->|true| prepareRereview
+reviewNoProgressAllowed -->|false| limitOwnerResolution
+%% Exhausted re-review rounds require explicit owner/Planner recovery.
+reviewRoundAllowed -->|false| limitOwnerResolution
+limitOwnerResolution --> changes
+prepareRereview --> stale
 changes -->|on: head.changed| cancelChanges
 cancelChanges --> stale
 blocked -->|on: review.retry| reviewUnblocked

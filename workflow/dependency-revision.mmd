@@ -1,0 +1,30 @@
+---
+title: Dependency Revision
+description: Authorizes a semantic downstream verification or rerun based on explicit edge policy and a settled dependency evidence vector.
+---
+flowchart LR
+%% relay: initial none
+none["state: NONE"]
+proposed["state: PROPOSED"]
+verified["state: VERIFIED"]
+stale["state: STALE"]
+markStale["action: dependencyRevision.markStale"]
+upstreamChanged["guard: upstreamEvidenceChanged"]
+explicitPolicy["guard: explicitValidityPolicy"]
+allSettled["guard: allInputsSettled"]
+notDuplicated["guard: notAlreadyRecorded"]
+rerunRequired["guard: rerunRequired"]
+createRerun["action: dependencyRevision.createRerun"]
+createRevalidation["action: dependencyRevision.createRevalidation"]
+none -->|on: dependency.reconcile| upstreamChanged
+upstreamChanged -->|true| explicitPolicy
+explicitPolicy -->|true| allSettled
+allSettled -->|true| notDuplicated
+notDuplicated -->|true| rerunRequired
+rerunRequired -->|true| createRerun
+rerunRequired -->|false| createRevalidation
+createRerun --> proposed
+createRevalidation --> proposed
+proposed -->|on: dependency.verified| verified
+proposed -->|on: dependency.stale| markStale
+markStale --> stale

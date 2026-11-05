@@ -33,7 +33,8 @@ for (const [verdict, expected, expectedTask] of [
     assert.equal(saved.tasks.find(t=>t.id===id)?.executionId,null);
     await runtime.handleEvent(event);
     saved=await store.load('j');
-    assert.equal(saved.tasks.filter(t=>t.id.startsWith('review-fix-')).length,verdict==='approved'?0:1);
+    assert.equal(saved.tasks.filter(t=>t.id.startsWith('review-fix-')).length,0);
+    if (verdict === 'changes-required') assert.equal(saved.review?.revisionDisposition, 'needs-ownership');
     await runtime.close();
   });
 }

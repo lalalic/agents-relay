@@ -12,6 +12,7 @@ export function assignPlannerTaskIds(result: PlannerResult, repository: string, 
       id: aliases.get(spec.id)!,
       parentTaskId: spec.parentTaskId ? (aliases.get(spec.parentTaskId) ?? spec.parentTaskId) : spec.parentTaskId,
       dependencies: spec.dependencies?.map(dep => aliases.get(dep) ?? dep),
+      ...(spec.dependencyValidity ? { dependencyValidity: Object.fromEntries(Object.entries(spec.dependencyValidity).map(([dep, policy]) => [aliases.get(dep) ?? dep, policy])) } : {}),
     })),
   };
 }

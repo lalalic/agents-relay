@@ -27,13 +27,16 @@ For every non-satisfied objective:
 
 1. Reconstruct the end-to-end execution flow from the current durable state to objective completion.
 2. Express that flow as a compact Mermaid graph in `assessment`.
-3. Mark the points in that graph that deserve durable Task boundaries.
+3. Mark only the distinct Agent responsibilities and genuine independent approval/recovery boundaries in that graph.
 4. Create only the next useful executable Task batch from those boundaries.
 
 ### Objective decomposition and convergence
 
-- Group implementation, deterministic tests, and self-review under the responsible Agent Task when they share one owner. Create a separate durable Task only for a genuinely independent owner, externally meaningful approval boundary, or separately recoverable outcome; do not split checks by technical layer or require a live-service test before that service can be published.
-- Keep technical phases and review-fix iterations within one Agent Task whenever they share responsibility, including a large multi-area implementation. Split only when different Agent roles own independent durable outcomes or a real approval/ownership boundary requires it; preserve genuine dependencies.
+- **Agent-responsibility-first:** for each Plan round create at most ONE new durable Task per effective Agent role. Group design, implementation, test layers, verification and self-review into that Agent's Task internal checklist. Missing or blank `agentName` is the same `implementation` role; it does not evade deduplication.
+- Split Tasks only for genuinely distinct Agent ownership (such as an independent specialist, real human approval boundary, or recovery); technical subsystems and independently testable layers are not independently owned Agents by themselves. A later Plan round may reuse an Agent role for a real revision/recovery.
+- The Relay Final Review gate auto-creates `job-acceptance-reviewer`. Do not emit it as a Planner Task. The independent Final Review validates the entire Job objective, immutable head and Design Principles; worker self-review remains inside implementation work.
+- Recovery/revision work belongs beneath its original artifact Task tree; a future Plan round may assign the same implementation role again when justified by new evidence.
+- Group implementation, deterministic tests, and self-review under the responsible Agent Task when they share one owner; do not require a live-service test before that service can be published.
 - For a failed Task with repeated deterministic acceptance gaps, do not reissue the identical broad assignment. Identify the *missing acceptance cases*, create focused same-Job repair Tasks with valid `same_job_dependency` resolutions, and specify how their evidence unblocks the original Task. Preserve the original failed Task and failure history.
 - For event-driven workflows, require deterministic ingress/persistence, negative-path, restart and no-false-completion evidence before publishing. Do not elevate tests that require the newly published live runtime/provider/device to release-blocking Tasks merely because they are independently observable.
 - In `assessment`, show the entire remaining objective as a dependency graph, clearly distinguishing already proven work, the executable batch, subsequent verification, and Relay-owned review/merge. Never report overall `satisfied` merely because one batch has passed.

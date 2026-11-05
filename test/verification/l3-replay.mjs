@@ -14,6 +14,8 @@ import {dispatchTaskAction,TASK_RECOVER_ACTION} from '../../dist/task-actions.js
 import {requestTroubleshooterEscalation,recordEscalationNotificationDelivery,resumeTroubleshooter} from '../../dist/task-recovery.js';
 import {tryTransitionTaskEvent,dependencyReady} from '../../dist/task-transitions.js';
 import {createPlanRound} from '../../dist/planner.js';
+import {recordTargetedRevisionRequest} from '../../dist/review-revision-model.js';
+import {decideRevisionLifecycle} from '../../dist/workflow/revision-v2.js';
 const stamp='2026-10-17T12:00:00.000Z';
 const jobId='l3-replay';
 const task=(id,deps=[],initialState)=>{const state=initialState??(deps.length?'DRAFT':'RUNNING');const running=state==='RUNNING';return {jobId,id,kind:'work',agentName:'implementation',adapter:'chatgpt',input:'mock agent',output:{kind:'task_pr'},parentTaskId:null,dependencies:deps,capabilities:[],state,attempt:state==='QUEUED'||deps.length?0:1,maxAttempts:3,leaseOwner:running?'mock':null,leaseExpiresAt:running?'2099-01-01T00:00:00.000Z':null,executionId:running?'exec-a':null,executionHistory:running?[{id:'exec-a',attempt:1,startedAt:stamp}]:[],threadId:null,result:null,error:null,timeoutMs:900000,createdAt:stamp,updatedAt:stamp};};
@@ -62,10 +64,11 @@ export async function runReplay(scenario) {
      if(value==='@planned')return (await snapshot()).plans?.findLast(p=>p.status==='SUCCEEDED')?.generatedTaskIds?.[0]??'__planned_unavailable__';
      if(value==='@troubleshoot-planned')return 'troubleshoot-'+((await snapshot()).plans?.findLast(p=>p.status==='SUCCEEDED')?.generatedTaskIds?.[0]??'__planned_unavailable__');
      if(value==='@review')return (await snapshot()).review?.taskId??'__review_unavailable__';
-     if(value==='@fix')return (await snapshot()).tasks.find(t=>t.id.startsWith('review-fix-'))?.id??'__fix_unavailable__';
+     if(value==='revision-head-1')return (await snapshot()).tasks.find(t=>t.revision?.kind==='targeted')?.id??'__revision_unavailable__';
+     if(value==='@revision')return (await snapshot()).tasks.find(t=>t.revision?.kind==='targeted')?.id??'__revision_unavailable__';
      return value??'a';
    };
-   if(!['task.completed','task.failed','task.started','review.started','review.approved','review.changes_required','job.merge.failed','job.merge.succeeded','job.head.changed','mock.clock.advance','mock.claim','planner.settle','planner.await-success','task.recover','task.escalate','mock.notification.delivered','human.unblock','reconcile','restart'].includes(step.type)) throw Error(`unsupported event: ${step.type}`);
+   if(!['task.completed','task.failed','task.started','mock.revision.request','mock.revision.materialize','review.started','review.approved','review.changes_required','job.merge.failed','job.merge.succeeded','job.head.changed','mock.clock.advance','mock.claim','planner.settle','planner.await-success','task.recover','task.escalate','mock.notification.delivered','human.unblock','reconcile','restart'].includes(step.type)) throw Error(`unsupported event: ${step.type}`);
    if(step.type==='reconcile') await runtime.reconcile(jobId);
    else if(step.type==='planner.settle' || step.type==='planner.await-success'){
      const desired=step.type==='planner.await-success'?'SUCCEEDED':(step.expectStatus??'SUCCEEDED');
@@ -113,6 +116,34 @@ export async function runReplay(scenario) {
      if(recovery?.escalation?.notification?.status!=='delivered')throw Error('test requires actual notifier receipt before human response');
      const result=await resumeTroubleshooter(store,jobId,recoveryId,step.response??'Provider authorization completed');
      if(result.task.state!=='QUEUED' || result.task.escalation?.status!=='responded')throw Error('authorized human response did not resume Troubleshooter');
+   }
+   else if(step.type==='mock.revision.request') {
+    // Explicit fixture stand-in for the still-deferred authenticated CLI intake.
+    // Its reducer and canonical Revision Graph are production code.
+    const reviewerId=await resolveTaskId(step.reviewTaskId??'@review');
+    const originalId=await resolveTaskId(step.originalTaskId??(scenario.plannerScript?'@planned':'a'));
+    await store.mutateJob(jobId,current=>{
+      const reviewer=current.tasks.find(t=>t.id===reviewerId);
+      recordTargetedRevisionRequest(current,{
+        requestId:'l3/'+reviewerId+'/'+reviewer.executionId,
+        reviewTaskId:reviewerId,reviewExecutionId:reviewer.executionId,
+        headSha:step.headSha??current.headSha,originalTaskId:originalId,
+        findings:[{id:'F1',summary:step.finding??'missing invariant'}],
+      });
+      return current;
+    });
+   }
+   else if(step.type==='mock.revision.materialize') {
+    // Production revision reducer atomically created the child; the review
+    // verdict and Graph-driven reconciliation must queue exactly that child.
+    await runtime.reconcile(jobId);
+    const current=await snapshot();
+    const reviewerId=await resolveTaskId(step.reviewTaskId??'@review');
+    const originalId=await resolveTaskId(step.originalTaskId??(scenario.plannerScript?'@planned':'a'));
+    const requests=(current.reviewRevisionRequests??[]).filter(r=>r.reviewTaskId===reviewerId && r.originalTaskId===originalId);
+    const children=current.tasks.filter(t=>t.revision?.kind==='targeted' && t.revision.reviewTaskId===reviewerId && t.revision.originalTaskId===originalId);
+    if(requests.length!==1 || children.length!==1 || children[0].state!=='QUEUED' || requests[0].revisionTaskId!==children[0].id)
+      throw Error('production Graph did not materialize exactly one queued semantic Revision child');
    }
    else if(step.type==='mock.claim') {
     // External provider/adapter claim is simulated; legality is decided by the production Graph.
@@ -198,7 +229,7 @@ export async function runReplay(scenario) {
   const actual={jobState:prior.state,tasks:Object.fromEntries(prior.tasks.map(t=>[t.id,t.state])),plans:(prior.plans??[]).map(p=>({id:p.id,status:p.status,attempt:p.attempt,objectiveStatus:p.objectiveStatus})),localMerge:prior.localMerge??null};
   const errors=[];
   if(scenario.expected?.jobState && scenario.expected.jobState!==actual.jobState) errors.push(`job expected ${scenario.expected.jobState}, got ${actual.jobState}`);
-  for(const [id,state] of Object.entries(scenario.expected?.tasks??{})) if(actual.tasks[id]!==state)errors.push(`${id} expected ${state}, got ${actual.tasks[id]??'missing'}`);
+  for(const [id,state] of Object.entries(scenario.expected?.tasks??{})) { const resolvedId=id==='revision-head-1' ? prior.tasks.find(t=>t.revision?.kind==='targeted')?.id??id : id; if(actual.tasks[resolvedId]!==state)errors.push(`${id} expected ${state}, got ${actual.tasks[resolvedId]??'missing'}`); }
   for(const [id,state] of Object.entries(scenario.expected?.plans??{})) if(!actual.plans.some(p=>p.id===id&&p.status===state))errors.push(`Plan ${id} expected ${state}`);
   if(scenario.expected?.localMergeStatus && actual.localMerge?.status!==scenario.expected.localMergeStatus) errors.push(`merge expected ${scenario.expected.localMergeStatus}, got ${actual.localMerge?.status??'none'}`);
   for(const assertion of scenario.assertions??[]){

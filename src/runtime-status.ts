@@ -1,3 +1,4 @@
+import { isFinalReviewAgent } from './final-review-role.js';
 import { Job, JobRuntimeStatus, Task } from './types.js';
 
 export type PullRequestRuntimeState = 'UNKNOWN' | 'OPEN' | 'MERGED' | 'CLOSED';
@@ -12,13 +13,21 @@ export function isSuperseded(task: Task, byId: ReadonlyMap<string, Task>): boole
     && byId.get(classification.targetTaskId)?.state === 'SUCCEEDED';
 }
 
+function staleTargetedRevisionTaskIds(job: Job): Set<string> {
+  return new Set((job.reviewRevisionRequests ?? [])
+    .filter(request => request.status === 'stale' && request.revisionTaskId)
+    .map(request => request.revisionTaskId!));
+}
+
 export function implementationTasks(job: Job): Task[] {
   const byId = new Map(job.tasks.map(task => [task.id, task]));
+  const staleRevisions = staleTargetedRevisionTaskIds(job);
   return job.tasks.filter(task => task.kind !== 'planner'
-    && task.agentName !== 'reviewer'
+    && !isFinalReviewAgent(task.agentName)
     && task.agentName !== 'troubleshooter'
     && !isSuperseded(task, byId)
-    && task.state !== 'DRAFT');
+    && !staleRevisions.has(task.id)
+    && (task.state !== 'DRAFT' || Boolean(task.revision)));
 }
 
 export function implementationComplete(job: Job): boolean {
@@ -43,14 +52,15 @@ export function deriveJobRuntimeStatus(job: Job, _prState: PullRequestRuntimeSta
   if (implementation.some(task => task.state === 'RUNNING')) return 'RUNNING';
   if (implementation.some(task => task.state === 'QUEUED')) return 'QUEUED';
 
-  const reviewRunning = job.tasks.some(task => task.agentName === 'reviewer' && task.state === 'RUNNING');
+  const reviewRunning = job.tasks.some(task => isFinalReviewAgent(task.agentName) && task.state === 'RUNNING');
   if (job.review?.outcome === 'approved') return 'MERGE_PENDING';
   if (reviewRunning) return 'REVIEWING';
 
   if (job.tasks.some(task => task.state === 'RUNNING')) return 'RUNNING';
   if (job.tasks.some(task => task.state === 'QUEUED')) return 'QUEUED';
   if (job.tasks.some(task => task.state === 'BLOCKED')) return 'BLOCKED';
-  if (job.tasks.some(task => task.state === 'FAILED')) return 'FAILED';
+  const staleRevisions = staleTargetedRevisionTaskIds(job);
+  if (job.tasks.some(task => task.state === 'FAILED' && !staleRevisions.has(task.id))) return 'FAILED';
   if (job.tasks.some(task => task.state === 'DRAFT')) return 'WAITING';
   if (plannerFailed) return 'FAILED';
   if (plannerRunning) return 'RUNNING';
