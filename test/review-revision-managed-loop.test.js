@@ -9,6 +9,7 @@ import { LocalAuthorityDurableStore } from '../dist/local-authority-store.js';
 import { MemoryEventBus, eventFor } from '../dist/events.js';
 import { executionEventSource } from '../dist/reconciler.js';
 import { submitTargetedRevisionRequest } from '../dist/review-revision-model.js';
+import { implementationComplete } from '../dist/runtime-status.js';
 
 const sha='abcdef0123456789abcdef0123456789abcdef01';
 const now=()=>new Date().toISOString();
@@ -192,4 +193,35 @@ test('head change stales old targeted work and releases the immutable-head revie
    assert.equal(recovered.review.taskId,saved.review.taskId);
   } finally { authority.close(); }
  } finally { if(!runtimeClosed) await runtime.close(); if(storeOpen) authority.close(); await rm(directory,{recursive:true,force:true}); }
+});
+
+test('reviewer retry on the same SHA stales old-generation feedback before approval', async () => {
+  const store=setup();
+  const runtime=managedReconciler(store,{owner:'review-execution-change-test',maxConcurrent:0,adapters:[],
+    eventBus:new MemoryEventBus(),headShaProvider:()=>sha,
+    reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}}});
+  try {
+    const request=await submitTargetedRevisionRequest(store,'managed-review',{
+      requestId:'old-generation-request',reviewTaskId:'review-1',reviewExecutionId:'review-exec',headSha:sha,
+      originalTaskId:'implementation',findings:[{id:'R1',summary:'Repair stale prior reviewer execution'}],
+    });
+    let saved=await store.load('managed-review');
+    assert.equal(saved.tasks.find(t=>t.id===request.request.revisionTaskId).state,'DRAFT');
+    await store.mutateJob('managed-review',current=>{
+      const reviewer=current.tasks.find(t=>t.id==='review-1');
+      reviewer.executionId='review-exec-2';reviewer.attempt=2;
+      reviewer.executionHistory.push({id:'review-exec-2',attempt:2,startedAt:now()});
+      return current;
+    });
+    await runtime.handleEvent(event('review-1','review-exec-2','approved'));
+    saved=await store.load('managed-review');
+    assert.equal(saved.review.outcome,'approved');
+    assert.equal(saved.reviewRevisionRequests[0].status,'stale');
+    assert.equal(saved.tasks.find(t=>t.id===request.request.revisionTaskId).state,'CANCELLED');
+    assert.equal(implementationComplete(saved),true,'old review generation must not hold the delivery gate');
+    await runtime.handleEvent(event('review-1','review-exec','changes-required',[{id:'R1',summary:'stale'}]));
+    const after=await store.load('managed-review');
+    assert.equal(after.review.outcome,'approved','older execution may not overturn approved review');
+    assert.equal(after.reviewRevisionRequests[0].status,'stale');
+  } finally { await runtime.close(); }
 });

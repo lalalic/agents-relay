@@ -59,3 +59,10 @@ running -->|on: review.head_changed| markStaleRunning
 markStaleRunning --> stale
 failed -->|on: review.head_changed| markStaleFailed
 markStaleFailed --> stale
+
+%% A restarted reviewer execution is a new immutable review generation even
+%% when the reviewed SHA is unchanged; old pending feedback cannot hold the gate.
+requested -->|on: review.execution_changed| markStaleRequested
+queued -->|on: review.execution_changed| markStaleQueued
+running -->|on: review.execution_changed| markStaleRunning
+failed -->|on: review.execution_changed| markStaleFailed

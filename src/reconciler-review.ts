@@ -12,7 +12,7 @@ import { routeExecution } from './execution-routing.js';
 import { recordRouteOutcome } from './route-outcome-recording.js';
 import { ReconcilerRuntimeBase, type EventHandlingResult } from './reconciler-runtime.js';
 import { dispatchReviewLifecycle, reviewOutcome } from './workflow/review-v2.js';
-import { decideRevisionLifecycle } from './workflow/revision-v2.js';
+import { staleReviewRevisions } from './review-revision-stale.js';
 import { dispatchTaskLifecycleSync } from './workflow/lifecycle.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
 import { localSourceHead, localWorkingHead } from './local-git-merge.js';
@@ -65,50 +65,14 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     await this.store.saveTask(staleTask);
   }
 
-  /** The Review Graph selects this effect on head change; the Revision Graph
-   * decides each request's stale transition. Child disposition and request
-   * status are committed together so stale work cannot strand implementation
-   * completion across restart. */
-  private async staleReviewRevisions(job: Job, reviewTaskId: string, headSha: string): Promise<void> {
-    if (!this.store.mutateJob) return;
-    const cancelled: Array<{ taskId: string; executionId: string | null }> = [];
-    await this.store.mutateJob(job.id, current => {
-      if (current.review?.taskId !== reviewTaskId || current.review.headSha !== headSha) return current;
-      for (const request of current.reviewRevisionRequests ?? []) {
-        if (request.reviewTaskId !== reviewTaskId || request.reviewHeadSha !== headSha) continue;
-        const states = { requested: 'REQUESTED', queued: 'QUEUED', running: 'RUNNING', failed: 'FAILED' } as const;
-        const state = states[request.status as keyof typeof states];
-        if (!state) continue;
-        const decision = decideRevisionLifecycle(state, 'review.head_changed');
-        if (!decision.accepted || decision.target !== 'STALE' || !decision.actions.some(action => action.id === 'revision.markStale')) continue;
-        const child = request.revisionTaskId ? current.tasks.find(task => task.id === request.revisionTaskId) : undefined;
-        if (child && ['DRAFT', 'QUEUED', 'RUNNING'].includes(child.state)) {
-          const executionId = child.executionId ?? child.executionHistory?.at(-1)?.id ?? null;
-          if (!tryTransitionTaskEvent(child, 'cancel').accepted) continue;
-          child.error = 'Targeted revision evidence became stale after the review head changed';
-          child.leaseOwner = null;
-          child.leaseExpiresAt = null;
-          child.executionId = null;
-          child.updatedAt = new Date().toISOString();
-          if (executionId) cancelled.push({ taskId: child.id, executionId });
-        } else if (child && child.state !== 'FAILED' && child.state !== 'SUCCEEDED' && child.state !== 'CANCELLED') {
-          continue;
-        }
-        request.status = 'stale';
-      }
-      current.updatedAt = new Date().toISOString();
-      return current;
-    });
-    for (const execution of cancelled) this.cancelExecutionGeneration(job.id, execution.taskId, execution.executionId);
-  }
-
   protected async invalidateStaleReview(job: Job, headSha: string | null): Promise<void> {
     const staleReview = job.review;
     if (!headSha || !staleReview || staleReview.headSha === headSha) return;
     const decision = await dispatchReviewLifecycle(staleReview.outcome, 'head.changed', {}, async actionId => {
       if (actionId === 'review.cancelStale') {
         await this.cancelStaleReviewTask(job);
-        if (staleReview.taskId) await this.staleReviewRevisions(job, staleReview.taskId, staleReview.headSha);
+        if (staleReview.taskId) await staleReviewRevisions(this.store, job, staleReview.taskId, staleReview.headSha,
+          (taskId, executionId) => this.cancelExecutionGeneration(job.id, taskId, executionId));
         return {};
       }
       throw new Error('Unsupported stale review action ' + actionId);
@@ -372,6 +336,16 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     if (task.reviewHeadSha !== headSha) return { applied: false, reconcile: false, reason: event.type + '.stale' };
     const currentHeadSha = await this.currentHeadSha(job);
     if (currentHeadSha ? currentHeadSha !== headSha : Boolean(job.headSha && job.headSha !== headSha)) return { applied: false, reconcile: false, reason: event.type + '.stale' };
+    // Reviewer attempts may restart at the same SHA. Graph-stale requests
+    // from prior execution generations before accepting this generation's
+    // verdict; otherwise their DRAFT children can block approval forever.
+    if (task.executionId && job.reviewRevisionRequests?.some(request =>
+      request.reviewTaskId === task.id && request.reviewHeadSha === headSha
+      && request.reviewExecutionId !== task.executionId && request.status !== 'stale')) {
+      await staleReviewRevisions(this.store, job, task.id, headSha,
+        (taskId, executionId) => this.cancelExecutionGeneration(job.id, taskId, executionId),
+        task.executionId);
+    }
     // Planner-created reviewer tasks predate the final-review Job gate. Bind
     // their first trustworthy review event to PENDING before dispatching it.
     const freshAfterStale = job.review?.outcome === 'stale'

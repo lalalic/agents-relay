@@ -53,6 +53,7 @@ test('canonical revision Graph authorizes intake only for current reviewer/head/
   assert.deepEqual(decideRevisionLifecycle('RUNNING', 'revision.failed').actions.map(a => a.id), ['revision.recordFailed']);
   assert.equal(decideRevisionLifecycle('QUEUED', 'review.head_changed').target, 'STALE');
   assert.equal(decideRevisionLifecycle('FAILED', 'review.head_changed').target, 'STALE');
+  assert.equal(decideRevisionLifecycle('REQUESTED', 'review.execution_changed').target, 'STALE');
   assert.equal(decideRevisionLifecycle('REQUESTED', 'revision.submit').target, 'REQUESTED');
 });
 
