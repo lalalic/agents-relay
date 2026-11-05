@@ -1,3 +1,5 @@
+import { settleReviewRevisionRound } from './review-revision-settlement.js';
+import { isFinalReviewAgent, FINAL_REVIEW_AGENT } from './final-review-role.js';
 import { browserWorkerPool } from './browser-worker-runtime.js';
 import { ChatGptThreadDelivery, Job, Task, EventRecord, ReviewOutcome, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements } from './types.js';
 import { completionGateSatisfied, refreshTaskDependencies, transitionTaskEvent, transitionJobEvent, tryTransitionTaskEvent } from './task-transitions.js';
@@ -36,7 +38,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     }
   }
   private reviewFacts(job: Job, headSha: string | null): Readonly<Record<string, unknown>> {
-    const reviewTasks = job.tasks.filter(task => task.agentName === 'reviewer' && task.reviewHeadSha === headSha);
+    const reviewTasks = job.tasks.filter(task => isFinalReviewAgent(task.agentName) && task.reviewHeadSha === headSha);
     const currentReviewTask = job.review?.taskId ? job.tasks.find(task => task.id === job.review?.taskId) : undefined;
     return {
       reviewEnabled: job.reviewEnabled !== false,
@@ -116,7 +118,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
 
   private nextFinalReviewTaskId(job: Job, headSha: string): string {
     const base = 'final-review-' + headSha.slice(0, 12);
-    const ids = new Set(job.tasks.filter(task => task.reviewHeadSha === headSha && task.agentName === 'reviewer').map(task => task.id));
+    const ids = new Set(job.tasks.filter(task => task.reviewHeadSha === headSha && isFinalReviewAgent(task.agentName)).map(task => task.id));
     if (!ids.has(base)) return base;
     for (let round = 2; round < 1000; round += 1) {
       const candidate = base + '-r' + round;
@@ -140,7 +142,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       reviewThread ? chatgptThreadRequirements(this.options.reviewer?.requirements) : undefined,
     );
     const chatgptThreadDelivery = prepareReviewerThreadDelivery(job, {
-      id, agentName: 'reviewer', reviewHeadSha: headSha, routing: reviewerRouting.candidate.routing,
+      id, agentName: FINAL_REVIEW_AGENT, reviewHeadSha: headSha, routing: reviewerRouting.candidate.routing,
     }, this.options.reviewer?.threadId);
     const input = [
       `Job ID: ${job.id}`,
@@ -154,7 +156,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       'Do not treat historical failed attempts as current artifact defects; distinguish preserved baseline files from implementation.',
     ].join('\n\n');
     const task = createTaskEntity(job, {
-      jobId: job.id, id, title: 'Review', kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'reviewer',
+      jobId: job.id, id, title: 'Review', kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: FINAL_REVIEW_AGENT,
       parentTaskId: null, dependencies: reviewGateTasks.map(item => item.id), capabilities: ['review'],
       workerSelection: reviewerRouting.selection, adapter: reviewerRouting.candidate.adapter,
       input,
@@ -165,7 +167,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       error: null, timeoutMs: this.options.reviewer?.timeoutMs ?? storySizeTimeoutMs('M'), createdAt: now, updatedAt: now
     });
     await this.store.appendTask(task);
-    await this.emit(eventFor(job.id, id, task.parentTaskId, 'review.created', 'queued', 'Final review task ' + id + ' created for ' + headSha + ' using ' + reviewerRouting.reason, 'orchestrator', { headSha, agentName: 'reviewer', reviewerRouting: { workerId: reviewerRouting.selection.workerId, reason: reviewerRouting.reason, selectedBy: reviewerRouting.selection.selectedBy } }));
+    await this.emit(eventFor(job.id, id, task.parentTaskId, 'review.created', 'queued', 'Final review task ' + id + ' created for ' + headSha + ' using ' + reviewerRouting.reason, 'orchestrator', { headSha, agentName: FINAL_REVIEW_AGENT, reviewerRouting: { workerId: reviewerRouting.selection.workerId, reason: reviewerRouting.reason, selectedBy: reviewerRouting.selection.selectedBy } }));
     return id;
   }
 
@@ -184,11 +186,12 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
 
   protected async ensureFinalReview(job: Job, headSha: string | null): Promise<void> {
     if (headSha && !(await this.projectedReviewHeadReady(job, headSha))) return;
+    job = await settleReviewRevisionRound(this.store, job);
     // Restore the review gate only after an authoritative unblock of the original reviewer.
     const priorReviewTask = job.tasks.find(task => task.id === job.review?.taskId);
     if (job.review?.outcome === 'blocked' && job.review.headSha === headSha
-      && priorReviewTask?.agentName === 'reviewer' && priorReviewTask.unblock?.event === 'task.unblocked'
-      && ['QUEUED', 'RUNNING', 'FAILED'].includes(priorReviewTask.state)) {
+      && isFinalReviewAgent(priorReviewTask?.agentName) && priorReviewTask?.unblock?.event === 'task.unblocked'
+      && ['QUEUED', 'RUNNING', 'FAILED'].includes(priorReviewTask?.state ?? '')) {
       const recovered = await dispatchReviewLifecycle('blocked', 'review.retry', { reviewUnblocked: true });
       if (recovered.accepted && recovered.target === 'PENDING') {
         job.review = { ...job.review, outcome: 'pending', updatedAt: new Date().toISOString() };
@@ -264,7 +267,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   }
   protected async routeTaskForExecution(job: Job, task: Task): Promise<{ task: Task; routed: boolean }> {
     const implementationThread = resolveImplementationTaskThreadDestination(job, task);
-    const reviewerThread = task.agentName === 'reviewer' ? resolveReviewerThreadDestination(job, this.options.reviewer?.threadId) : null;
+    const reviewerThread = isFinalReviewAgent(task.agentName) ? resolveReviewerThreadDestination(job, this.options.reviewer?.threadId) : null;
     if (task.routing && !((implementationThread || reviewerThread) && task.adapter !== 'chatgpt')) return { task, routed: false };
     if (!task.output || task.adapter === 'orchestrator') return { task, routed: false };
 
@@ -360,7 +363,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   }
   protected async applyReviewEvent(event: EventRecord): Promise<EventHandlingResult> {
     const job = await this.store.load(event.job_id);
-    const task = job.tasks.find(item => item.id === event.task_id && item.agentName === 'reviewer');
+    const task = job.tasks.find(item => item.id === event.task_id && isFinalReviewAgent(item.agentName));
     if (!task) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
     const normalizedEvidence = ReconcilerReviewBase.normalizeReviewEvidence(event, task);
     if (!normalizedEvidence) return { applied: false, reconcile: false, reason: event.type + '.ignored' };

@@ -957,7 +957,7 @@ test('ChatGPT reviewer uses the same start acknowledgement policy as normal Chat
   const reviewer={adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}};
   const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,reviewer,executionContextRoots:{globalRoot:contextRoot,neoRoot:null}});
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); await new Promise(resolve=>setTimeout(resolve,40));
-  const created=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer'); assert.equal(created?.state,'QUEUED');
+  const created=(await store.load('j')).tasks.find(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName)); assert.equal(created?.state,'QUEUED');
   const source=await activeEventSource(store,created.id);
   await bus.publish(eventFor('j',created.id,null,'task.started','running','review began','user',undefined,source));
   await bus.publish(eventFor('j',created.id,null,'task.completed','succeeded','generic review process completion','user',undefined,source));
@@ -985,7 +985,7 @@ test('reviewer start acknowledgement timeout quarantines the unknown ChatGPT sub
   const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:20,reviewer,executionContextRoots:{globalRoot:contextRoot,neoRoot:null}});
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); await new Promise(resolve=>setTimeout(resolve,100));
   const saved=await store.load('j');
-  const review=saved.tasks.find(item=>item.agentName==='reviewer');
+  const review=saved.tasks.find(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName));
   assert.equal(review?.state,'FAILED');
   assert.equal(review?.failureReason,'worker_outcome_unknown');
   assert.equal(review?.platformFailure?.executionId,review?.executionHistory?.[0]?.id);
@@ -1658,7 +1658,7 @@ test('final review ignores troubleshooter recovery history', async () => {
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:bus,maxConcurrent:0,reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}}});
   await reconciler.reconcile('j');
   const saved=await store.load('j');
-  const review=saved.tasks.find(item=>item.agentName==='reviewer');
+  const review=saved.tasks.find(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName));
   assert.ok(review);
   assert.deepEqual(review.dependencies,['done']);
   assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'QUEUED');
@@ -1689,7 +1689,7 @@ test('final review ignores explicitly superseded cancelled history', async () =>
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:bus,maxConcurrent:0,reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}}});
   await reconciler.reconcile('j');
   const saved=await store.load('j');
-  const review=saved.tasks.find(item=>item.agentName==='reviewer');
+  const review=saved.tasks.find(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName));
   assert.ok(review);
   assert.deepEqual(review.dependencies,['done']);
 });
@@ -1998,8 +1998,8 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, maxConcurrent: 0, reviewer: { adapter: 'chatgpt', routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'test', decidedAt: now() } } });
   await reconciler.reconcile('j');
   let saved = await store.load('j');
-  assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
-  const reviewer = saved.tasks.find(item => item.agentName === 'reviewer');
+  assert.equal(saved.tasks.filter(item => ['reviewer','job-acceptance-reviewer'].includes(item.agentName)).length, 1);
+  const reviewer = saved.tasks.find(item => ['reviewer','job-acceptance-reviewer'].includes(item.agentName));
   assert.equal(reviewer?.parentTaskId, null);
   assert.equal(reviewer?.reviewHeadSha, 'sha-review-1');
   assert.equal(reviewer?.adapter, 'chatgpt');
@@ -2015,7 +2015,7 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
 
   await reconciler.reconcile('j');
   saved = await store.load('j');
-  assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
+  assert.equal(saved.tasks.filter(item => ['reviewer','job-acceptance-reviewer'].includes(item.agentName)).length, 1);
 });
 
 test('review thread metadata persists and resolves reviewer, creator, then CLI override', async () => {
@@ -2052,7 +2052,7 @@ test('thread-bound final review uses the selected durable thread and records del
   const reviewer = { adapter: 'chatgpt', routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'test', decidedAt: now() } };
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, maxConcurrent: 0, reviewer });
   await reconciler.reconcile('j');
-  const reviewerTask = (await store.load('j')).tasks.find(item => item.agentName === 'reviewer');
+  const reviewerTask = (await store.load('j')).tasks.find(item => ['reviewer','job-acceptance-reviewer'].includes(item.agentName));
   assert.equal(reviewerTask?.adapter, 'chatgpt');
   assert.equal(reviewerTask?.chatgptThreadDelivery?.threadId, 'creator-thread');
   assert.equal(reviewerTask?.chatgptThreadDelivery?.threadSource, 'creator');
@@ -2074,7 +2074,7 @@ test('review thread override wins over durable metadata', async () => {
     reviewer: { threadId: 'override-thread', adapter: 'chatgpt', routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'test', decidedAt: now() } },
   });
   await reconciler.reconcile('j');
-  const reviewerTask = (await store.load('j')).tasks.find(item => item.agentName === 'reviewer');
+  const reviewerTask = (await store.load('j')).tasks.find(item => ['reviewer','job-acceptance-reviewer'].includes(item.agentName));
   assert.equal(reviewerTask?.chatgptThreadDelivery?.threadId, 'override-thread');
   assert.equal(reviewerTask?.chatgptThreadDelivery?.threadSource, 'override');
 });
@@ -2110,14 +2110,14 @@ test('final review created after the first dispatch pass is dispatched in the sa
 
   await reconciler.reconcile('j');
   const saved = await store.load('j');
-  const reviewer = saved.tasks.find(item => item.agentName === 'reviewer');
+  const reviewer = saved.tasks.find(item => ['reviewer','job-acceptance-reviewer'].includes(item.agentName));
   assert.ok(reviewer);
   assert.equal(adapter.launches, 1);
   assert.equal(reviewer.attempt, 1);
   assert.ok(reviewer.executionId);
 
   await reconciler.reconcile('j');
-  assert.equal((await store.load('j')).tasks.filter(item => item.agentName === 'reviewer').length, 1);
+  assert.equal((await store.load('j')).tasks.filter(item => ['reviewer','job-acceptance-reviewer'].includes(item.agentName)).length, 1);
   assert.equal(adapter.launches, 1);
   await rm(contextRoot, { recursive: true, force: true });
 });
@@ -2133,13 +2133,13 @@ test('cancelled same-head review creates a versioned review round instead of con
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
   await reconciler.reconcile('j');
   let saved=await store.load('j');
-  let rounds=saved.tasks.filter(item=>item.agentName==='reviewer'&&item.reviewHeadSha==='sha-review-round');
+  let rounds=saved.tasks.filter(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName)&&item.reviewHeadSha==='sha-review-round');
   assert.equal(rounds.length,2);
   assert.equal(rounds[1].id,base+'-r2');
   assert.equal(saved.review?.taskId,base+'-r2');
   await reconciler.reconcile('j');
   saved=await store.load('j');
-  rounds=saved.tasks.filter(item=>item.agentName==='reviewer'&&item.reviewHeadSha==='sha-review-round');
+  rounds=saved.tasks.filter(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName)&&item.reviewHeadSha==='sha-review-round');
   assert.equal(rounds.length,2);
 });
 test('reconcile ignores remote head and does not request GitHub merge after local approval', async () => {
@@ -2160,7 +2160,7 @@ test('reconcile ignores remote head and does not request GitHub merge after loca
 
   await reconciler.reconcile('j');
   const afterReview = await store.load('j');
-  const reviewer = afterReview.tasks.find(item => item.agentName === 'reviewer');
+  const reviewer = afterReview.tasks.find(item => ['reviewer','job-acceptance-reviewer'].includes(item.agentName));
   assert.ok(reviewer);
   assert.equal(afterReview.headSha, oldHead);
   assert.equal(reviewer.reviewHeadSha, oldHead);
@@ -2182,7 +2182,7 @@ test('autonomous in-progress batch advances planner without creating final revie
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
   await reconciler.reconcile('j');
   const saved=await store.load('j');
-  assert.equal(saved.tasks.some(item=>item.agentName==='reviewer'),false);
+  assert.equal(saved.tasks.some(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName)),false);
   assert.equal(saved.tasks.filter(item=>item.kind==='planner').length,1); // legacy history remains read-only
   assert.equal(saved.plans?.some(item=>item.id==='plan-2'),true);
 });
@@ -2196,7 +2196,7 @@ test('autonomous satisfied objective ignores failed troubleshooter history for f
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
   await reconciler.reconcile('j');
   const saved=await store.load('j');
-  assert.equal(saved.tasks.filter(item=>item.agentName==='reviewer').length,1);
+  assert.equal(saved.tasks.filter(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName)).length,1);
 });
 
 test('autonomous satisfied objective still blocks final review on failed implementation', async () => {
@@ -2207,7 +2207,7 @@ test('autonomous satisfied objective still blocks final review on failed impleme
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
   await reconciler.reconcile('j');
   const saved=await store.load('j');
-  assert.equal(saved.tasks.some(item=>item.agentName==='reviewer'),false);
+  assert.equal(saved.tasks.some(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName)),false);
 });
 
 test('autonomous satisfied objective allows one final review', async () => {
@@ -2218,8 +2218,8 @@ test('autonomous satisfied objective allows one final review', async () => {
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
   await reconciler.reconcile('j');
   const saved=await store.load('j');
-  assert.equal(saved.tasks.filter(item=>item.agentName==='reviewer').length,1);
-  assert.equal(saved.tasks.find(item=>item.agentName==='reviewer')?.reviewHeadSha,'sha-autonomous-done');
+  assert.equal(saved.tasks.filter(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName)).length,1);
+  assert.equal(saved.tasks.find(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName))?.reviewHeadSha,'sha-autonomous-done');
 });
 
 test('no-review jobs stay ACTIVE and become merge-pending without creating a reviewer task', async () => {
@@ -2232,7 +2232,7 @@ test('no-review jobs stay ACTIVE and become merge-pending without creating a rev
   assert.equal(saved.state,'ACTIVE');
   assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'MERGE_PENDING');
   assert.equal(saved.review,undefined);
-  assert.equal(saved.tasks.some(item=>item.agentName==='reviewer'),false);
+  assert.equal(saved.tasks.some(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName)),false);
 });
 
 test('CLI init persists no-review independently from auto-merge', async () => {
@@ -2250,7 +2250,7 @@ test('review changes-required records actionable evidence but never synthesizes 
   const store=new InMemoryStore(reviewJob);
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
   await reconciler.reconcile('j');
-  const reviewer=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer');
+  const reviewer=(await store.load('j')).tasks.find(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName));
   const payload={review:{headSha:'sha-fix-12345678',issues:['first bug','second bug']}};
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','changes required','orchestrator',payload));
   const saved=await store.load('j');
@@ -2309,7 +2309,7 @@ test('PR 258-shaped local review evidence creates one idempotent fix and rejects
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [new FakeAdapter()], eventBus: bus, maxConcurrent: 0 });
   await reconciler.reconcile('j');
   let saved = await store.load('j');
-  const reviewer = saved.tasks.find(item => item.agentName === 'reviewer');
+  const reviewer = saved.tasks.find(item => ['reviewer','job-acceptance-reviewer'].includes(item.agentName));
   assert.ok(reviewer);
   assert.equal(reviewer.reviewHeadSha, headSha);
 
@@ -2393,7 +2393,7 @@ test('review changes-required without owner remains open for explicit ownership 
   const store=new InMemoryStore(root);
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
   await reconciler.reconcile('j');
-  const reviewer=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer');
+  const reviewer=(await store.load('j')).tasks.find(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName));
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','fix the race and add coverage','orchestrator',{review:{headSha:'fallback12345678'}}));
   const saved=await store.load('j');
   assert.equal(saved.review.revisionDisposition,'needs-ownership');
@@ -2407,7 +2407,7 @@ test('approved review never calls GitHub merge regardless of autoMerge policy', 
     store.mergePullRequest=async sha=>{ merges+=1; mergedSha=sha; };
     const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
     await reconciler.reconcile('j');
-    const created=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer');
+    const created=(await store.load('j')).tasks.find(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName));
     assert.ok(created);
     await reconciler.handleEvent(eventFor('j',created.id,null,'review.approved','succeeded','approved','orchestrator',{review:{headSha:'sha-auto',summary:'approved',blockingFindings:[]}}));
     assert.equal(merges,expected);
@@ -2438,7 +2438,7 @@ test('review outcomes persist durably and old SHA evidence is ignored after head
   const bus = new MemoryEventBus();
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [new FakeAdapter()], eventBus: bus, maxConcurrent: 0 });
   await reconciler.reconcile('j');
-  const created = (await store.load('j')).tasks.find(item => item.agentName === 'reviewer');
+  const created = (await store.load('j')).tasks.find(item => ['reviewer','job-acceptance-reviewer'].includes(item.agentName));
   assert.ok(created);
   await reconciler.handleEvent(eventFor('j', created.id, null, 'review.started', 'running', 'started', 'orchestrator', { review: { headSha: 'sha-review-1', summary: 'gates passed', evidence: ['tests'] } }));
   assert.equal((await store.load('j')).review?.outcome, 'started');
@@ -2463,7 +2463,7 @@ test('review outcomes persist durably and old SHA evidence is ignored after head
   await reconciler.reconcile('j');
   const refreshed = await store.load('j');
   assert.equal(refreshed.review?.headSha, 'sha-review-2');
-  assert.equal(refreshed.tasks.filter(item => item.agentName === 'reviewer').length, 2);
+  assert.equal(refreshed.tasks.filter(item => ['reviewer','job-acceptance-reviewer'].includes(item.agentName)).length, 2);
 });
 
 
@@ -2472,7 +2472,7 @@ test('legacy blocked review becomes failed Reviewer with Troubleshooter recovery
   const store=new InMemoryStore(reviewJob);
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:1});
   await reconciler.reconcile('j');
-  const reviewer=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer');
+  const reviewer=(await store.load('j')).tasks.find(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName));
   assert.ok(reviewer);
   const source=await activeEventSource(store,reviewer.id);
   assert.equal((await reconciler.applyEvent(eventFor('j',reviewer.id,null,'task.started','running','review started','user',{},source))).applied,true);
@@ -2493,11 +2493,11 @@ test('projected PR stale head delays final review until projection catches up', 
   store.pullRequestHead=async()=>({ref:'e2e/test',sha:projected});
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
   await reconciler.reconcile('j');
-  assert.equal((await store.load('j')).tasks.some(item=>item.agentName==='reviewer'),false);
+  assert.equal((await store.load('j')).tasks.some(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName)),false);
   projected='sha-current';
   await reconciler.reconcile('j');
   const durable=await store.load('j');
-  const reviewer=durable.tasks.find(item=>item.agentName==='reviewer');
+  const reviewer=durable.tasks.find(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName));
   assert.ok(reviewer);
   assert.equal(reviewer.reviewHeadSha,'sha-current');
   await reconciler.close();
@@ -2518,7 +2518,7 @@ test('approved reviewer remains SUCCEEDED while external MERGED PR cannot termin
   const store=new InMemoryStore(reviewJob); store.pullRequestState=async()=> 'OPEN'; store.headSha=async()=> 'sha-merged-review';
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
   await reconciler.reconcile('j');
-  const reviewer=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer');
+  const reviewer=(await store.load('j')).tasks.find(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName));
   assert.ok(reviewer);
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.started','running','started','orchestrator',{review:{headSha:'sha-merged-review'}}));
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.approved','succeeded','approved','orchestrator',{review:{headSha:'sha-merged-review'}}));

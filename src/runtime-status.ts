@@ -1,3 +1,4 @@
+import { isFinalReviewAgent } from './final-review-role.js';
 import { Job, JobRuntimeStatus, Task } from './types.js';
 
 export type PullRequestRuntimeState = 'UNKNOWN' | 'OPEN' | 'MERGED' | 'CLOSED';
@@ -9,10 +10,10 @@ function isSuperseded(task: Task): boolean {
 
 export function implementationTasks(job: Job): Task[] {
   return job.tasks.filter(task => task.kind !== 'planner'
-    && task.agentName !== 'reviewer'
+    && !isFinalReviewAgent(task.agentName)
     && task.agentName !== 'troubleshooter'
     && !isSuperseded(task)
-    && task.state !== 'DRAFT');
+    && (task.state !== 'DRAFT' || Boolean(task.revision)));
 }
 
 export function implementationComplete(job: Job): boolean {
@@ -37,7 +38,7 @@ export function deriveJobRuntimeStatus(job: Job, _prState: PullRequestRuntimeSta
   if (implementation.some(task => task.state === 'RUNNING')) return 'RUNNING';
   if (implementation.some(task => task.state === 'QUEUED')) return 'QUEUED';
 
-  const reviewRunning = job.tasks.some(task => task.agentName === 'reviewer' && task.state === 'RUNNING');
+  const reviewRunning = job.tasks.some(task => isFinalReviewAgent(task.agentName) && task.state === 'RUNNING');
   if (job.review?.outcome === 'approved') return 'MERGE_PENDING';
   if (reviewRunning) return 'REVIEWING';
 

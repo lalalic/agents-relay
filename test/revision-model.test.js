@@ -63,7 +63,12 @@ test('review request records append-only original Task comment without changing 
   assert.equal(first.request.feedbackOrigin, 'final-review');
   assert.deepEqual(j.tasks[0].result, original.result);
   assert.equal(j.tasks[0].state, 'SUCCEEDED');
-  assert.equal(j.tasks.length, 2);
+  assert.equal(j.tasks.length, 3, 'identified feedback creates exactly one separate revision Task');
+  assert.equal(j.tasks[2].state, 'DRAFT', 'must not dispatch before changes-required verdict');
+  assert.equal(j.tasks[2].parentTaskId, 'owner');
+  assert.equal(j.tasks[2].revision.kind, 'targeted');
+  assert.equal(j.tasks[2].revision.originalTaskId, 'owner');
+  assert.equal(j.tasks[2].comments[0].kind, 'review.feedback');
   assert.equal(j.tasks[0].comments.length, 1);
   assert.equal(j.tasks[0].comments[0].kind, 'review.feedback');
   assert.deepEqual(targetedRequestsForReview(j, j.tasks[1], 'head-1').map(r => r.requestId), ['req-1']);
@@ -77,6 +82,8 @@ test('review request records append-only original Task comment without changing 
   recordTargetedRevisionRequest(j, input({ requestId: 'req-2', findings: [{ id: 'F2', summary: 'Second finding, same owner' }] }));
   assert.deepEqual(j.reviewRevisionRequests.map(r => r.requestId), ['req-1', 'req-2']);
   assert.equal(j.tasks[0].comments.length, 2);
+  assert.equal(j.tasks.length, 3, 'same owner and Review round reuses semantic child');
+  assert.deepEqual(j.tasks[2].revision.requestIds, ['req-1','req-2']);
 });
 
 test('targeted revision intake rejects stale head, stale execution, unowned and duplicate/empty findings', () => {

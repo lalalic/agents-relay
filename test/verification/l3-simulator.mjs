@@ -36,12 +36,12 @@ function fakeAdapter(bus, outcomes, verdicts, heads, startedWaiters) {
           startedWaiters.delete(source.id);
         }
         await new Promise(resolve => setTimeout(resolve, 0));
-        const key = currentTask.agentName === 'reviewer' ? currentTask.id : currentTask.id;
-        const queue = currentTask.agentName === 'reviewer' ? verdicts[key] ?? verdicts['*'] ?? ['approved'] : outcomes[key] ?? ['completed'];
+        const key = ['reviewer','job-acceptance-reviewer'].includes(currentTask.agentName) ? currentTask.id : currentTask.id;
+        const queue = ['reviewer','job-acceptance-reviewer'].includes(currentTask.agentName) ? verdicts[key] ?? verdicts['*'] ?? ['approved'] : outcomes[key] ?? ['completed'];
         const result = queue.shift() ?? 'completed';
         if (result === 'failed') {
           await bus.publish(eventFor(currentTask.jobId, currentTask.id, currentTask.parentTaskId, 'task.failed', 'failed', 'simulated worker failure', 'orchestrator', { phase: currentTask.agentName, reason: 'fault injection' }, source));
-        } else if (currentTask.agentName === 'reviewer') {
+        } else if (['reviewer','job-acceptance-reviewer'].includes(currentTask.agentName)) {
           const head = heads.current;
           await bus.publish(eventFor(currentTask.jobId, currentTask.id, currentTask.parentTaskId, 'task.completed', 'succeeded', `simulated review ${result}`, 'orchestrator', { verdict: result, head_sha: head, findings: result === 'changes-required' ? [{ summary: 'simulated blocking finding' }] : [] }, source));
         } else {

@@ -1,3 +1,4 @@
+import { isFinalReviewAgent } from './final-review-role.js';
 import { buildRelayWorkPrompt, type PromptAdapter } from './agent-prompt-builder.js';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -134,14 +135,14 @@ export function materializePlannerChild(job: Job, planner: Plan | Task, spec: Pl
   const source = 'round' in planner ? planner.source : planner.planningSource ?? 'model-planner';
   const round = 'round' in planner ? planner.round : planner.planningRound ?? 1;
   const plannerHeadSha = 'round' in planner ? planner.headSha : undefined;
-  const reviewHeadSha = spec.agentName === 'reviewer' && !(spec.dependencies?.length) ? plannerHeadSha ?? job.headSha : undefined;
+  const reviewHeadSha = isFinalReviewAgent(spec.agentName) && !(spec.dependencies?.length) ? plannerHeadSha ?? job.headSha : undefined;
   const resolution = spec.resolution;
   if (resolution) {
     const target = resolution.targetTaskId ? job.tasks.find(task => task.id === resolution.targetTaskId) : undefined;
     if (!target || !unresolvedTask(target)) throw new Error(`Planner resolution for ${spec.id} must target one unresolved durable Task`);
   }
-  const reviewerThread = spec.agentName === 'reviewer' ? prepareReviewerThreadDelivery(job, { id: spec.id, agentName: spec.agentName, reviewHeadSha }) : undefined, implementationThread = (spec.agentName === 'implementation' || spec.agentName == null) && job.implementationThreadId ? job.implementationThreadId : undefined, threadOwned = Boolean(reviewerThread || implementationThread);
-  return createTaskEntity(job, { jobId: job.id, id: spec.id, title: spec.agentName === 'reviewer' ? 'Review' : spec.title, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: spec.agentName === 'reviewer' ? null : spec.parentTaskId ?? null, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: threadOwned ? chatgptThreadRequirements(spec.workerRequirements) : spec.workerRequirements, adapter: threadOwned ? 'chatgpt' : (spec.adapter ?? 'codex'), chatgptThreadDelivery: reviewerThread, input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: decisionId, planningSource: source, planningRound: round, reviewHeadSha, resolution: resolution ? { ...resolution, state: 'proposed', owner: 'planner', updatedAt: now } : undefined });
+  const reviewerThread = isFinalReviewAgent(spec.agentName) ? prepareReviewerThreadDelivery(job, { id: spec.id, agentName: spec.agentName, reviewHeadSha }) : undefined, implementationThread = (spec.agentName === 'implementation' || spec.agentName == null) && job.implementationThreadId ? job.implementationThreadId : undefined, threadOwned = Boolean(reviewerThread || implementationThread);
+  return createTaskEntity(job, { jobId: job.id, id: spec.id, title: isFinalReviewAgent(spec.agentName) ? 'Review' : spec.title, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: isFinalReviewAgent(spec.agentName) ? null : spec.parentTaskId ?? null, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: threadOwned ? chatgptThreadRequirements(spec.workerRequirements) : spec.workerRequirements, adapter: threadOwned ? 'chatgpt' : (spec.adapter ?? 'codex'), chatgptThreadDelivery: reviewerThread, input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: decisionId, planningSource: source, planningRound: round, reviewHeadSha, resolution: resolution ? { ...resolution, state: 'proposed', owner: 'planner', updatedAt: now } : undefined });
 }
 
 export function planningSpec(task: Task): PlannerTaskSpec {
@@ -304,12 +305,15 @@ export function parsePlannerResult(value: unknown): PlannerResult {
 
 export function validatePlannerProgress(job: Job, result: PlannerResult): void {
   if (result.objective_status !== 'in_progress' || result.next_tasks.length > 0 || result.unblocks.length > 0) return;
-  const previousReviewFinished = job.tasks.some(task => task.agentName === 'reviewer' && task.state === 'SUCCEEDED');
+  const previousReviewFinished = job.tasks.some(task => isFinalReviewAgent(task.agentName) && task.state === 'SUCCEEDED');
   if (previousReviewFinished) return;
   const liveWork = job.tasks.some(task => task.kind !== 'planner' && !['SUCCEEDED','FAILED','CANCELLED'].includes(task.state));
   if (liveWork) return;
   throw new Error('Planner returned in_progress with no executable tasks or unblocks while no live work remains; return satisfied when only Relay-owned review/merge/completion effects remain');
 }
+
+
+export { validatePlannerAgentRoles } from './planner-agent-roles.js';
 
 export function validatePlannerLifecycleOwnership(job: Job, specs: readonly PlannerTaskSpec[]): void {
   if (!job.localMerge?.sourceRef) return;
@@ -420,7 +424,6 @@ export function plannerInput(context: PlannerContext): string {
     } : undefined })),
   });
 }
-
 export class CommandObjectivePlanner implements ObjectivePlanner {
   constructor(private readonly command: string) { if (!command) throw new Error('Planner command is required'); }
   async plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult> {
@@ -435,15 +438,12 @@ export class CommandObjectivePlanner implements ObjectivePlanner {
     });
   }
 }
-
 const DEFAULT_PLANNER_AGENT = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'agents-relay', 'agents', 'planner.agent.md');
 const DEFAULT_TASK_JOB_CONTRACT = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'agents-relay', 'contracts', 'task-job-contract.md');
-
 export function buildPlannerCodexArgs(storeDirectory: string, input: string): string[] {
   return ['exec', '--json', '--sandbox', 'workspace-write', '--add-dir', resolvePath(dirname(storeDirectory)),
     '-c', 'sandbox_workspace_write.network_access=true', '--', input];
 }
-
 function parsePlannerAgentMessage(line: string): string | undefined {
   try {
     const value = JSON.parse(line) as Record<string, unknown>;

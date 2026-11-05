@@ -1,3 +1,4 @@
+import { isFinalReviewAgent } from './final-review-role.js';
 import { hasSafeAlternativeWorker } from './browser-worker-routing.js';
 import { codexNoStartFallbackRoute, persistChatGptPlatformFailure } from './chatgpt-platform-fallback.js';
 import { classifyChatGptPlatformFailure } from './worker-rejection.js';
@@ -52,7 +53,7 @@ export async function handleWorkerLaunchFailure(
     && !activeExecution?.workerStarted;
   const canRetryNoStart = noStarted && currentJob.executionMode !== 'shortcut'
     && (currentTask?.adapter === 'chatgpt' || currentTask?.adapter === 'z')
-    && currentTask.agentName !== 'reviewer'
+    && !isFinalReviewAgent(currentTask.agentName)
     && currentTask.agentName !== 'troubleshooter' && currentTask.kind !== 'planner'
     && !currentTask.noStartFallback && currentTask.attempt < currentTask.maxAttempts;
   const codexFallback = canRetryNoStart

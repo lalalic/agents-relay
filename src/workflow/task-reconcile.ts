@@ -1,3 +1,4 @@
+import { revisionRequestReady } from '../review-revision-execution.js';
 import type { Job, Task } from '../types.js';
 import { dispatchTaskLifecycleSync } from './lifecycle.js';
 import type { WorkflowContext } from './mermaid.js';
@@ -27,6 +28,7 @@ export function reconcileTaskDependencies(job: Job): Job {
   const tasks = new Map(job.tasks.map(task => [task.id, task]));
   for (const task of scopedTasks) {
     if (task.kind === 'planner') continue;
+    if (!revisionRequestReady(job, task)) continue;
     if (task.state === 'DRAFT' && task.unblock) continue;
     const ready = dependencyReady(task, tasks);
     const facts: WorkflowContext = {

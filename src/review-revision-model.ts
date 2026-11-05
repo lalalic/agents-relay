@@ -1,8 +1,11 @@
+import { isFinalReviewAgent } from './final-review-role.js';
 import type {
   DependencyRevisionVector, DependencyValidity, Job, ReviewRevisionRequest,
   RevisionFinding, Task,
 } from './types.js';
 import { appendTaskComment } from './task-comments.js';
+import { createHash } from 'node:crypto';
+import { createTaskEntity } from './workflow/entity-creation.js';
 import { decideRevisionLifecycle } from './workflow/revision-v2.js';
 import type { RelayStore } from './relay-store.js';
 
@@ -14,6 +17,13 @@ export type SubmitReviewRevision = {
   originalTaskId: string;
   findings: RevisionFinding[];
 };
+
+/** A stable child identity per immutable review round and responsible owner.
+ * The request IDs are append-only feedback attached to this single child.
+ */
+export function targetedRevisionTaskId(reviewTaskId: string, ownerTaskId: string): string {
+  return 'revision-' + createHash('sha256').update(JSON.stringify([reviewTaskId, ownerTaskId])).digest('hex').slice(0, 24);
+}
 
 /** A request and its source Task comment are one atomic SQLite Job snapshot mutation.
  * The caller MUST execute this reducer inside RelayStore.mutateJob. It is never
@@ -40,9 +50,9 @@ export function recordTargetedRevisionRequest(job: Job, input: SubmitReviewRevis
   const owner = job.tasks.find(item => item.id === input.originalTaskId);
   const facts = {
     reviewerAuthorized: job.state === 'ACTIVE'
-      && reviewer?.agentName === 'reviewer'
-      && reviewer.state === 'RUNNING'
-      && reviewer.executionId === input.reviewExecutionId,
+      && isFinalReviewAgent(reviewer?.agentName)
+      && reviewer?.state === 'RUNNING'
+      && reviewer?.executionId === input.reviewExecutionId,
     reviewHeadCurrent: reviewer?.reviewHeadSha === input.headSha
       && job.headSha === input.headSha
       && (!job.review || (job.review.headSha === input.headSha
@@ -50,7 +60,7 @@ export function recordTargetedRevisionRequest(job: Job, input: SubmitReviewRevis
         && ['pending', 'started'].includes(job.review.outcome))),
     originalTaskSucceeded: owner?.state === 'SUCCEEDED'
       && owner.kind !== 'planner'
-      && owner.agentName !== 'reviewer'
+      && !isFinalReviewAgent(owner.agentName)
       && owner.id !== reviewer?.id
       && !owner.revision,
   };
@@ -60,6 +70,7 @@ export function recordTargetedRevisionRequest(job: Job, input: SubmitReviewRevis
     throw new Error('revision rejected: reviewer, head, execution or original owner is not current/eligible');
   }
   const now = new Date().toISOString();
+  const childId = targetedRevisionTaskId(input.reviewTaskId, input.originalTaskId);
   const request: ReviewRevisionRequest = {
     requestId: input.requestId,
     reviewTaskId: input.reviewTaskId,
@@ -68,7 +79,7 @@ export function recordTargetedRevisionRequest(job: Job, input: SubmitReviewRevis
     originalTaskId: input.originalTaskId,
     findings: structuredClone(input.findings),
     createdAt: now,
-    status: 'requested',
+    status: 'requested', revisionTaskId: childId,
     feedbackOrigin: 'final-review',
   };
   job.reviewRevisionRequests = [...(job.reviewRevisionRequests ?? []), request];
@@ -77,6 +88,42 @@ export function recordTargetedRevisionRequest(job: Job, input: SubmitReviewRevis
       + input.findings.map(f => '- ' + f.id + ': ' + f.summary).join('\n'),
     { author: 'reviewer', kind: 'review.feedback', executionId: input.reviewExecutionId,
       transition: 'revision.requested', idempotencyKey: 'review-revision/' + input.requestId });
+  // Child creation and finding association are committed together with the
+  // request and owner comment: a crash cannot orphan an accepted request.
+  const existingChild = job.tasks.find(item => item.id === childId);
+  if (existingChild) {
+    if (existingChild.revision?.kind !== 'targeted' || existingChild.revision.originalTaskId !== input.originalTaskId
+      || existingChild.revision.reviewTaskId !== input.reviewTaskId || existingChild.revision.basedOnHeadSha !== input.headSha
+      || existingChild.state !== 'DRAFT') throw new Error('revision child no longer accepts feedback in this immutable review round');
+    existingChild.revision.requestIds = [...new Set([...existingChild.revision.requestIds, input.requestId])];
+  } else {
+    if (!owner || !reviewer) throw new Error('review revision owner/reviewer missing');
+    const originalEvidence = owner.result ? JSON.stringify(owner.result) : 'No original result';
+    const child = createTaskEntity(job, {
+      jobId: job.id, id: childId, kind: 'work', title: 'Revise ' + (owner.title ?? owner.id),
+      priority: owner.priority ?? job.priority, storySize: owner.storySize ?? 'M', projectName: owner.projectName,
+      agentName: owner.agentName, parentTaskId: owner.id, dependencies: [reviewer.id],
+      capabilities: [...owner.capabilities], workerRequirements: owner.workerRequirements,
+      adapter: owner.adapter, input: [
+        `Revision of original Task ${owner.id} for Job ${job.id}; Final Review ${reviewer.id}, immutable reviewed head ${input.headSha}.`,
+        'Retrieve the authoritative Task Context; follow ALL append-only review.feedback comments and associated request IDs. Repair the original result without changing the historical succeeded Task. Review the full current Job objective and repository head, implement and verify the correction, and include root cause, solution, validation and self-review evidence in the durable result.',
+        'Original Task input:\n' + owner.input,
+        'Original completed evidence:\n' + originalEvidence,
+      ].join('\n\n'), output: owner.output ?? { kind: 'task_pr' },
+      revision: { kind: 'targeted', originalTaskId: owner.id, requestIds: [input.requestId],
+        reviewTaskId: reviewer.id, basedOnHeadSha: input.headSha },
+      attempt: 0, maxAttempts: Math.max(3, owner.maxAttempts),
+      leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null,
+      result: null, error: null, continuation: null, continuationDeliveredAt: null,
+      timeoutMs: owner.timeoutMs, createdAt: now, updatedAt: now,
+    }, { defer: true });
+    job.tasks.push(child);
+  }
+  appendTaskComment(job, childId,
+    'Review feedback request ' + input.requestId + ' for owner ' + input.originalTaskId + ' at ' + input.headSha + ':\n'
+      + input.findings.map(f => '- ' + f.id + ': ' + f.summary + (f.evidence ? '\n  Evidence: ' + f.evidence : '')).join('\n'),
+    { author: 'reviewer', kind: 'review.feedback', executionId: input.reviewExecutionId,
+      transition: 'revision.requested', idempotencyKey: 'review-revision-child/' + input.requestId });
   return { request, created: true };
 }
 

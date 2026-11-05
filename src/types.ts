@@ -165,11 +165,12 @@ export type TaskRevision = {
   reviewTaskId: string;
   basedOnHeadSha: string;
   dependencyVector?: DependencyRevisionVector;
+  threadContinuation?: { decision: 'reuse' | 'fallback'; reason: string; originalThreadId?: string; decidedAt: string };
 };
 export type ChatGptThreadDelivery = {
   kind: 'new-turn';
   threadId: string;
-  threadSource: 'override' | 'reviewer' | 'creator' | 'implementation';
+  threadSource: 'override' | 'reviewer' | 'creator' | 'implementation' | 'original-task';
   requestId: string;
   jobId: string;
   repository?: string;

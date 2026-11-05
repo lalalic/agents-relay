@@ -1,18 +1,13 @@
+import { revisionRequestReady, reconcileReviewRevisions } from './review-revision-execution.js'; import { reconcileDependencyRevisions } from './dependency-revision-execution.js'; import { isFinalReviewAgent } from './final-review-role.js';
 import {deliverPendingEscalations} from './escalation-notifier.js'; import {createFailedPlanRecovery} from './planner-recovery.js'; import { recoverPlannerChildren } from './planner-child-recovery.js'; import { drainProductionWorkflowOutbox } from './reconciler-workflow-outbox.js'; import { cancelPausedGenerations } from './reconciler-pause.js';  import { cancelActiveTasks } from './reconciler-cancellation.js'; import { implementationComplete } from './runtime-status.js'; import { bindPlannedReviewHead } from './planned-review-head.js';import { randomUUID } from 'node:crypto'; import { Job, Plan, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js'; import { DurableStore } from './store.js'; import { dependencyReady, refreshTaskDependencies, transitionJobEvent, transitionTaskEvent } from './task-transitions.js'; import { applyTaskCancelAction, applyTaskRetryAction } from './task-actions.js'; import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js'; import { eventFor } from './events.js'; import { PreSubmissionRejection } from './worker-rejection.js'; import { createPlanRound, materializePlannerChild, pendingPlan, parsePlannerResult, plannerInput, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress, validatePlannerResolutionMaterialization } from './planner.js'; import { retryPendingPlannerUnblocks } from './planner-runtime.js'; import { dispatchPlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js'; import { ExecutionContext, ExecutionRole, resolveExecutionContext } from './execution-context.js'; import { validateAgentSelection } from './agent-graph.js'; import { ReconcilerReviewBase } from './reconciler-review.js';
-import { executeForceRestate } from './force-restate.js'; import { recordThreadDelivery, resolveImplementationTaskThreadDestination, prepareReviewerThreadDelivery, resolveReviewerThreadDestination } from './reviewer-thread.js'; import { executeManualPlan } from './manual-plan.js'; import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js'; export { executionEventSource } from './reconciler-runtime.js'; export type { ReconcileOptions } from './reconciler-runtime.js';
+import { executeForceRestate } from './force-restate.js'; import { recordThreadDelivery, resolveImplementationTaskThreadDestination, prepareRevisionThreadDelivery, prepareReviewerThreadDelivery, resolveReviewerThreadDestination } from './reviewer-thread.js'; import { executeManualPlan } from './manual-plan.js'; import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js'; export { executionEventSource } from './reconciler-runtime.js'; export type { ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js'; import { exhaustedTroubleshooterRecoveries, pendingTroubleshooterTasks, pendingTroubleshooterReopens, pendingTroubleshooterRetries, refreshTroubleshooterInput } from './troubleshooter.js';
 import { fallbackFailedTroubleshooters, escalateExhaustedTroubleshooters } from './troubleshooter-fallback.js';import { assertCleanWorktreeAtHead, prepareManagedExecutionWorktree } from './workspace.js';
 import { cleanupMergedJobWorktree } from './job-worktree-cleanup.js'; import { jobHasActiveExecution } from './job-execution-slot.js'; import { requiresWorkerInactivityWatchdog } from './task-inactivity-watchdog.js';
-import { managedWorkerInput } from './managed-worker-input.js';
-import { attachResolutionOwnership } from './workflow/task-resolution.js';
-import { launchShortcutEffect, resumeShortcutEffect, resumeShortcutEventWaits } from './reconciler-shortcut.js';
-export { managedWorkerInput } from './managed-worker-input.js';
-import { recoverExpiredExecutions, recoverStartupOrphans as recoverStartupExecutionOrphans, type ExecutionRecoveryPorts } from './execution-recovery.js';
-import { dispatchJobReconcile } from './workflow/job-reconcile-v2.js';
-import { resolvePlannerContext, resolveTaskContext } from './reconciler-context.js';
-import { reconcileLocalGitCompletion } from './local-merge-delivery.js';
-import { repairLegacyOrchestrators } from './legacy-orchestrator-repair.js';
-import { launchPlanExecution } from './planner-runtime.js';
+import { managedWorkerInput } from './managed-worker-input.js'; import { attachResolutionOwnership } from './workflow/task-resolution.js'; import { launchShortcutEffect, resumeShortcutEffect, resumeShortcutEventWaits } from './reconciler-shortcut.js';
+export { managedWorkerInput } from './managed-worker-input.js'; import { recoverExpiredExecutions, recoverStartupOrphans as recoverStartupExecutionOrphans, type ExecutionRecoveryPorts } from './execution-recovery.js';
+import { dispatchJobReconcile } from './workflow/job-reconcile-v2.js'; import { resolvePlannerContext, resolveTaskContext } from './reconciler-context.js';
+import { reconcileLocalGitCompletion } from './local-merge-delivery.js'; import { repairLegacyOrchestrators } from './legacy-orchestrator-repair.js'; import { launchPlanExecution } from './planner-runtime.js';
 import { classifyFailure, errorMessage, observability, withObservabilityCorrelation } from './observability.js'; import { recoverInteractiveDecisions } from './interactive-resume.js';
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
@@ -60,7 +55,7 @@ export class Reconciler extends ReconcilerReviewBase {
     }
     const capacity = Math.max(0, (this.options.maxConcurrent ?? 4) - this.live.size - this.plannerLive.size);
     const dispatchable = (jobHasActiveExecution(scheduled) ? [] : scheduled.tasks)
-      .filter(task => task.state === 'QUEUED'
+      .filter(task => revisionRequestReady(scheduled, task) && task.state === 'QUEUED'
         && task.executionId === null
         && task.kind !== 'planner'
         && task.adapter !== 'orchestrator'
@@ -166,6 +161,8 @@ export class Reconciler extends ReconcilerReviewBase {
         this.cancelExecutionGeneration(job.id, task.id, task.executionId ?? task.executionHistory?.at(-1)?.id);
         this.plannerLive.get(task.id)?.controller.abort();
       }
+      await reconcileReviewRevisions(this.store, jobId);
+      await reconcileDependencyRevisions(this.store, jobId);
       const beforeSchedule = await this.store.load(jobId);
       const taskStatesBeforeSchedule = new Map(beforeSchedule.tasks.map(task => [task.id, task.state]));
       let scheduled = refreshTaskDependencies(beforeSchedule);
@@ -321,12 +318,13 @@ export class Reconciler extends ReconcilerReviewBase {
     const claimedTask = await withExecutionBoundary(job.id, '__job_execution_slot__', async () => {
       const freshJob = await this.store.load(job.id);
       let freshTask = freshJob.tasks.find(item => item.id === task.id);
-      if (!freshTask || freshTask.state !== 'QUEUED' || !dependencyReady(freshTask, new Map(freshJob.tasks.map(item => [item.id, item])))) return;
+      if (!freshTask || freshTask.state !== 'QUEUED' || !revisionRequestReady(freshJob, freshTask)
+        || !dependencyReady(freshTask, new Map(freshJob.tasks.map(item => [item.id, item])))) return;
       if (freshTask.executionId !== null) return;
       if (jobHasActiveExecution(freshJob, { taskId: freshTask.id })) return;
-      if (freshTask.agentName === 'reviewer' && freshTask.planningDecisionId && freshTask.dependencies.length) await bindPlannedReviewHead(this.store, freshTask, await this.currentHeadSha(freshJob));
+      if (isFinalReviewAgent(freshTask.agentName) && freshTask.planningDecisionId && freshTask.dependencies.length) await bindPlannedReviewHead(this.store, freshTask, await this.currentHeadSha(freshJob));
       const implementationThread = resolveImplementationTaskThreadDestination(freshJob, freshTask);
-      if ((!freshTask.routing || ((implementationThread || (freshTask.agentName === 'reviewer' && resolveReviewerThreadDestination(freshJob, this.options.reviewer?.threadId))) && freshTask.adapter !== 'chatgpt')) && freshTask.adapter !== 'orchestrator') {
+      if ((!freshTask.routing || ((implementationThread || (isFinalReviewAgent(freshTask.agentName) && resolveReviewerThreadDestination(freshJob, this.options.reviewer?.threadId))) && freshTask.adapter !== 'chatgpt')) && freshTask.adapter !== 'orchestrator') {
         const routed = await this.routeTaskForExecutionFailClosed(freshJob, freshTask); if (!routed) return; freshTask = routed.task;
       }
       if (['codex', 'chatgpt', 'z'].includes(freshTask.adapter) && !freshTask.routing) {
@@ -344,8 +342,9 @@ export class Reconciler extends ReconcilerReviewBase {
         attempt: freshTask.attempt,
         startedAt: new Date(startedAt).toISOString(),
       }].slice(-8);
-      if (freshTask.agentName === 'reviewer') freshTask.chatgptThreadDelivery = prepareReviewerThreadDelivery(freshJob, freshTask, this.options.reviewer?.threadId);
-      if (implementationThread && freshTask.adapter === 'chatgpt') {
+      if (isFinalReviewAgent(freshTask.agentName)) freshTask.chatgptThreadDelivery = prepareReviewerThreadDelivery(freshJob, freshTask, this.options.reviewer?.threadId);
+      if (freshTask.revision?.kind === 'targeted') freshTask.chatgptThreadDelivery = prepareRevisionThreadDelivery(freshJob, freshTask);
+      if (implementationThread && !freshTask.revision && freshTask.adapter === 'chatgpt') {
         freshTask.chatgptThreadDelivery = {
           kind: 'new-turn', threadId: implementationThread, threadSource: 'implementation',
           requestId: `${freshJob.id}:${freshTask.id}:${freshTask.executionId}`,
@@ -357,7 +356,7 @@ export class Reconciler extends ReconcilerReviewBase {
         let claimed: Task | undefined;
         await this.store.mutateJob(job.id, current => {
           const durable = current.tasks.find(item => item.id === freshTask!.id);
-          if (!durable || durable.state !== 'QUEUED' || durable.executionId !== null
+          if (!durable || durable.state !== 'QUEUED' || !revisionRequestReady(current, durable) || durable.executionId !== null
             || !dependencyReady(durable, new Map(current.tasks.map(item => [item.id, item])))) return current;
           if (freshTask!.routing) durable.routing = structuredClone(freshTask!.routing);
           if (freshTask!.workerSelection) durable.workerSelection = structuredClone(freshTask!.workerSelection);
@@ -370,8 +369,9 @@ export class Reconciler extends ReconcilerReviewBase {
             id: durable.executionId, attempt: durable.attempt, startedAt: new Date(startedAt).toISOString(),
           }].slice(-8);
           const implementationThread = resolveImplementationTaskThreadDestination(current, durable);
-          if (durable.agentName === 'reviewer') durable.chatgptThreadDelivery = prepareReviewerThreadDelivery(current, { ...durable, routing: freshTask!.routing }, this.options.reviewer?.threadId);
-          if (implementationThread && durable.adapter === 'chatgpt') {
+          if (isFinalReviewAgent(durable.agentName)) durable.chatgptThreadDelivery = prepareReviewerThreadDelivery(current, { ...durable, routing: freshTask!.routing }, this.options.reviewer?.threadId);
+          if (durable.revision?.kind === 'targeted') durable.chatgptThreadDelivery = prepareRevisionThreadDelivery(current, durable);
+          if (implementationThread && !durable.revision && durable.adapter === 'chatgpt') {
             durable.chatgptThreadDelivery = {
               kind: 'new-turn', threadId: implementationThread, threadSource: 'implementation',
               requestId: `${current.id}:${durable.id}:${durable.executionId}`,
@@ -400,7 +400,7 @@ export class Reconciler extends ReconcilerReviewBase {
     }
     let executionContext: ExecutionContext;
     try {
-      const role: ExecutionRole = task.agentName === 'reviewer' ? 'reviewer' : task.agentName === 'troubleshooter' ? 'troubleshooter' : task.parentTaskId ? 'nested-worker' : 'worker';
+      const role: ExecutionRole = isFinalReviewAgent(task.agentName) ? 'reviewer' : task.agentName === 'troubleshooter' ? 'troubleshooter' : task.parentTaskId ? 'nested-worker' : 'worker';
       const projectPath = this.options.projectPathForJob ? await this.options.projectPathForJob(job, task) : task.routing?.cwd ?? process.cwd();
       executionContext = await this.resolvedContext(job, task, role, projectPath);
     } catch (error) {

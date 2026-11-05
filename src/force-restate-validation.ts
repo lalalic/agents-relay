@@ -1,3 +1,4 @@
+import { isFinalReviewAgent } from './final-review-role.js';
 import type { Job, Task } from './types.js';
 import type { PlannerHistoryCleanup } from './planner-history-cleanup.js';
 import { classifyTaskResolution } from './workflow/task-resolution.js';
@@ -77,7 +78,7 @@ export function forceRestateConverged(job: Job, planId?: string, candidates?: re
 export function objectiveSatisfiedForReview(job: Job): boolean {
   const latest = (job.plans ?? []).at(-1);
   if (latest?.status !== 'SUCCEEDED' || latest.objectiveStatus !== 'satisfied') return false;
-  const implementation = job.tasks.filter(task => task.kind !== 'planner' && task.agentName !== 'reviewer' && task.agentName !== 'troubleshooter'
+  const implementation = job.tasks.filter(task => task.kind !== 'planner' && !isFinalReviewAgent(task.agentName) && task.agentName !== 'troubleshooter'
     && task.resolutionClassification?.kind !== 'superseded');
   return implementation.length > 0 && implementation.every(task => task.state === 'SUCCEEDED');
 }
@@ -105,7 +106,7 @@ export function applyPlannerHistoryCleanup(job: Job, expectedTaskIds: readonly s
     }
     if (item.outcome === 'unresolved') continue;
     if (item.outcome === 'cancelled_review') {
-      if (task.agentName !== 'reviewer' || !tryTransitionTaskEvent(task, 'cancel').accepted) {
+      if (!isFinalReviewAgent(task.agentName) || !tryTransitionTaskEvent(task, 'cancel').accepted) {
         issues.push(`Task ${item.taskId} cannot be cancelled as a failed review. Only a FAILED reviewer Task can use cancelled_review.`);
         continue;
       }

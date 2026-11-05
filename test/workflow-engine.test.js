@@ -14,6 +14,7 @@ import { troubleshooterV2 } from '../dist/workflow/troubleshooter-v2.js';
 import { escalationGraph } from '../dist/workflow/escalation.js';
 import { reviewLifecycleV2 } from '../dist/workflow/review-v2.js';
 import { revisionLifecycle } from '../dist/workflow/revision-v2.js';
+import { dependencyRevisionLifecycle } from '../dist/workflow/dependency-revision-v2.js';
 import { taskRelatedActionV2 } from '../dist/workflow/task-related-action-v2.js';
 import { taskResolutionV2 } from '../dist/workflow/task-resolution.js';
 import { projectionConflictV2 } from '../dist/workflow/projection-conflict-v2.js';
@@ -88,6 +89,7 @@ test('every repository lifecycle graph file parses and validates with the produc
         ['browser-worker-pool.mmd',browserPoolGraph],
         ['review-lifecycle.mmd', reviewLifecycleV2],
         ['revision-lifecycle.mmd', revisionLifecycle],
+        ['dependency-revision.mmd', dependencyRevisionLifecycle],
         ['planner-trigger.mmd', plannerTriggerV2],
         ['planner-orchestration.mmd', plannerOrchestrationV2],
         ['blocker-resolution.mmd', blockerResolutionV2],

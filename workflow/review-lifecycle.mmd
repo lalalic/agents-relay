@@ -133,6 +133,15 @@ started -->|on: head.changed| cancelStarted
 cancelStarted --> stale
 approved -->|on: head.changed| cancelApproved
 cancelApproved --> stale
+changes -->|on: revision.settled| targetedVerified
+%% Only the Review Graph selects re-review; settlement is proven by correlated
+%% child terminal evidence and explicit revision request provenance.
+targetedVerified["guard: targetedRevisionsVerified"]
+reviewRoundAllowed["guard: reviewRoundWithinLimit"]
+prepareRereview["action: review.prepareRereview"]
+targetedVerified -->|true| reviewRoundAllowed
+reviewRoundAllowed -->|true| prepareRereview
+prepareRereview --> stale
 changes -->|on: head.changed| cancelChanges
 cancelChanges --> stale
 blocked -->|on: review.retry| reviewUnblocked

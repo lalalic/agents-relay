@@ -1,3 +1,5 @@
+import { dependencyRevisionStillCurrent } from './dependency-revision-execution.js';
+import { isFinalReviewAgent } from './final-review-role.js';
 import { handleWorkerLaunchFailure } from './worker-failure-recovery.js';
 import { normalizeReviewerTerminalEvent } from './review-terminal-normalization.js';
 import { executionEventSource, eventSourceId, executionIdFromSource, claimTerminalExecution, terminalExecutionClaimed } from './execution-event-identity.js';
@@ -82,8 +84,15 @@ export abstract class ReconcilerRuntimeBase {
     if (event.type === 'task.started') return this.markWorkerStarted(event);
     if (event.type === 'task.progress') return this.markWorkerProgress(event);
     if (event.type === 'task.completed') {
-      const task = (await this.store.load(event.job_id)).tasks.find(item => item.id === event.task_id);
-      const normalized = task?.agentName === 'reviewer' ? normalizeReviewerTerminalEvent(event) : null;
+      const latest = await this.store.load(event.job_id);
+      const task = latest.tasks.find(item => item.id === event.task_id);
+      // Source generation still goes through canonical Task terminal
+      // correlation; convert stale verification into a safe supersede event.
+      if (task?.revision && task.revision.kind !== 'targeted' && !dependencyRevisionStillCurrent(latest, task)) {
+        return this.applyTerminalEvent({ ...event, type: 'task.cancelled',
+          message: 'Superseded upstream dependency evidence vector changed before terminal validation' });
+      }
+      const normalized = isFinalReviewAgent(task?.agentName) ? normalizeReviewerTerminalEvent(event) : null;
       if (normalized) return normalized.type === 'task.failed' ? this.applyTerminalEvent(normalized) : this.applyReviewEvent(normalized);
     }
     if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) {
@@ -374,7 +383,7 @@ export abstract class ReconcilerRuntimeBase {
       eligible: (_job, task) => {
         if (!['codex', 'chatgpt', 'z', 'orchestrator'].includes(task.adapter)) return false;
         if (event.type === 'task.blocked' && lifecycleEvent !== 'interactive.waiting' && (!trustedInternal || task.agentName !== 'troubleshooter')) return false;
-        if (task.agentName === 'reviewer' && event.type === 'task.completed') return false;
+        if (isFinalReviewAgent(task.agentName) && event.type === 'task.completed') return false;
         if (event.type === 'task.completed' && task.interactiveInvocation?.status !== undefined && task.interactiveInvocation.status !== 'approved') return false; // current interactive revision requires durable approval
         const modelBacked = ['codex', 'chatgpt', 'z'].includes(task.adapter);
         if (!trustedInternal && modelBacked && !isCorrelatedWorkerEvent(task, event)) {
@@ -436,7 +445,7 @@ export abstract class ReconcilerRuntimeBase {
     if (lifecycleEvent !== 'interactive.waiting') await recordTerminalRouteOutcome(this.options.decisionAuditStore, transition.task, event, terminalEventExecutionId ?? null);
     if (transition.task.adapter === 'codex' && liveAtTerminal && !liveAtTerminal.processSettled && liveAtTerminal.jobId === event.job_id && (!terminalEventExecutionId || liveAtTerminal.executionId === terminalEventExecutionId)) { liveAtTerminal.controller.abort(); liveAtTerminal.execution.cancel(); }
     if (event.type === 'task.completed') await this.deliverContinuation(transition.job, transition.task);
-    const reviewWorker = transition.task.agentName === 'reviewer';
+    const reviewWorker = isFinalReviewAgent(transition.task.agentName);
     return { applied: true, reconcile: lifecycleEvent !== 'interactive.waiting' && (!reviewWorker || event.type === 'task.failed'), reason: reviewWorker ? `${event.type}.review-worker` : event.type, reconcileMode: reviewWorker || lifecycleEvent === 'interactive.waiting' ? undefined : 'detached' };
   }
   protected terminalWait(taskId: string, executionId: string, launchBarrier: number): { promise: Promise<void>; cancel: () => void } {

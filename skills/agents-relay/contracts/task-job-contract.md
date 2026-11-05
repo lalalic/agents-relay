@@ -24,6 +24,10 @@ Task producers choose semantic task properties such as objective, dependencies, 
 
 `Task.timeoutMs` is the inactivity window. Only an accepted `task.started` or newer `task.progress` event for the exact current execution resets it; duplicate, stale, and out-of-order progress does not.
 
+### Planner role-first Task granularity
+
+New Plan rounds assign at most one newly authored Task per effective Agent role. Group design, coding, Graph changes, CLI, testing, self-review, and internal phases in the same implementation worker Task instead of decomposing by technical subsystem. A missing/blank `agentName` is normalized to `implementation` for duplicate checks. PLAN_APPLY_VALIDATION_FAILED rejects duplicate effective roles atomically, with corrective detail. Distinct Agents may own truly independent work, and a later Plan round can reuse the same role for genuine revision/recovery. The automatic SHA-bound Final Review gate creates `job-acceptance-reviewer` itself; Planner does not emit that agent as an ordinary Task. Legacy review agents and historical Plans are read compatibly.
+
 ### Planning graph and semantic Task tree
 
 The planning graph expresses execution flow. The Task tree expresses semantic ownership. `dependencies` answer which durable outcomes must succeed before a Task can run; `parentTaskId` answers which durable artifact or milestone owns the Task. These are independent relationships.

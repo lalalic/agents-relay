@@ -113,8 +113,8 @@ test('planner can create business parent-child hierarchy without plan-N parents'
   const root = { ...job([]), state: 'DRAFT' };
   const store = new InMemoryStore(root);
   const planner = { plan: async () => ({ objective_status: 'in_progress', assessment: 'hierarchy', next_tasks: [
-    {title: 'Implement and verify durable task outputs',  id: 'day-2026-09-28', input: 'Group the day.', output, storySize: 'S' },
-    {title: 'Implement and verify durable task outputs',  id: 'hour-17', parentTaskId: 'day-2026-09-28', input: 'Run the hour.', output, storySize: 'S' }
+    {title: 'Implement and verify durable task outputs',  id: 'day-2026-09-28', input: 'Group the day.', output, storySize: 'S', agentName: 'implementation' },
+    {title: 'Implement and verify durable task outputs',  id: 'hour-17', parentTaskId: 'day-2026-09-28', input: 'Run the hour.', output, storySize: 'S', agentName: 'review-chair' }
   ] }) };
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [{ name: 'codex', id: 'planner-worker', capabilities: [] }], planner, maxConcurrent: 0 });
   const result = await reconciler.planJob('auto');
