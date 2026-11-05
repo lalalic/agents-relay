@@ -162,11 +162,12 @@ export function targetedRequestsForReview(job: Job, reviewTask: Task, headSha: s
  * resolution rather than silently disappearing behind a partial request.
  */
 export function targetedRequestsCoverReview(job: Job, reviewTask: Task, headSha: string, verdictIssues: readonly string[]): boolean {
+  if (!verdictIssues.length || verdictIssues.some(issue => issue.trim() === '[unparseable blocking finding]')) return false;
   const requests = targetedRequestsForReview(job, reviewTask, headSha);
   if (!requests.length) return false;
   const covered = new Set(requests.flatMap(request => request.findings.flatMap(finding =>
     [finding.id.trim(), finding.summary.trim()])));
-  return verdictIssues.every(issue => issue.trim() !== '[unparseable blocking finding]' && covered.has(issue.trim()));
+  return verdictIssues.every(issue => covered.has(issue.trim()));
 }
 
 export function dependencyValidity(task: Task, dependencyTaskId: string): DependencyValidity {

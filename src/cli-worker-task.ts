@@ -3,6 +3,7 @@ import { taskOverallTimeoutMs } from './types.js';
 import { arg, hasArg, textOption, integerArg, chatGptTabClosePolicy, storySize, priority, continuation } from './cli-support.js';
 import { parseAgentGraph } from './agent-graph.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
+import { validateDependencyValidity } from './dependency-validity.js';
 export function recoveryDiagnosisFromArgs(args: string[]) {
   const failureKind = arg(args, '--failure-kind');
   if (!failureKind) return undefined;
@@ -10,6 +11,13 @@ export function recoveryDiagnosisFromArgs(args: string[]) {
   if (!reason.trim()) throw new Error('--failure-kind requires --reason');
   if (!['adapter_failure', 'model_failure', 'provider_failure', 'task_failure', 'unknown'].includes(failureKind)) throw new Error('Invalid --failure-kind');
   return { failureKind, reason, evidence: arg(args, '--evidence') || undefined, reroute: hasArg(args, '--reroute'), excludeCurrentRoute: hasArg(args, '--exclude-current-route') };
+}
+export function dependencyValidityFromArgs(args: string[], dependencies: readonly string[]): Task['dependencyValidity'] {
+  if (!hasArg(args, '--dependency-validity')) return undefined;
+  let parsed: unknown;
+  try { parsed = JSON.parse(arg(args, '--dependency-validity')); }
+  catch { throw new Error('--dependency-validity must be valid JSON'); }
+  return validateDependencyValidity(dependencies, parsed, '--dependency-validity');
 }
 export async function workerTaskFromArgs(job: Job, args: string[], now: string): Promise<Task> {
   const model = arg(args, '--model');
@@ -29,6 +37,7 @@ export async function workerTaskFromArgs(job: Job, args: string[], now: string):
   const closePolicy = hasArg(args, '--chatgpt-tab-close-policy') ? chatGptTabClosePolicy(args) : undefined;
   const size = storySize(args);
   const dependencies = arg(args, '--deps').split(',').filter(Boolean);
+  const dependencyValidity = dependencyValidityFromArgs(args, dependencies);
   const timeoutMs = hasArg(args, '--timeout') ? integerArg(args, '--timeout', taskOverallTimeoutMs(size, routing?.reasoning)) : routing ? taskOverallTimeoutMs(size, routing.reasoning) : 0;
   return createTaskEntity(job, {
     jobId: job.id,
@@ -41,6 +50,7 @@ export async function workerTaskFromArgs(job: Job, args: string[], now: string):
     agentGraph,
     parentTaskId: arg(args, '--parent') || null,
     dependencies,
+    dependencyValidity,
     capabilities: arg(args, '--capabilities').split(',').filter(Boolean),
     workerRequirements,
     adapter,

@@ -1,6 +1,6 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
-import { deriveJobRuntimeStatus } from '../dist/runtime-status.js';
+import { deriveJobRuntimeStatus, implementationComplete, implementationTasks } from '../dist/runtime-status.js';
 
 const now=()=>new Date().toISOString();
 const task=(id,state='QUEUED',agentName)=>({jobId:'j',id,kind:'work',agentName,parentTaskId:null,dependencies:[],capabilities:[],adapter:'orchestrator',input:'x',state,attempt:0,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:0,createdAt:now(),updatedAt:now(),continuation:null,continuationDeliveredAt:null});
@@ -38,4 +38,20 @@ test('planner failure without tasks is FAILED, planning is RUNNING rather than I
   assert.equal(deriveJobRuntimeStatus(job([],{plans:[plan]})),'FAILED');
   assert.equal(deriveJobRuntimeStatus(job([],{plans:[{...plan,status:'PLANNING'}]})),'RUNNING');
   assert.equal(deriveJobRuntimeStatus(job([task('worker','RUNNING')],{plans:[plan]})),'RUNNING');
+});
+
+test('stale targeted revision children are preserved but do not block implementation completion',()=>{
+  const owner=task('owner','SUCCEEDED','implementation');
+  const child={...task('revision','CANCELLED','implementation'),revision:{kind:'targeted',originalTaskId:'owner',reviewTaskId:'review',basedOnHeadSha:'old',requestIds:['request']}};
+  const target=job([owner,child],{reviewRevisionRequests:[{requestId:'request',reviewTaskId:'review',reviewExecutionId:'old-exec',reviewHeadSha:'old',originalTaskId:'owner',findings:[],createdAt:now(),status:'stale',revisionTaskId:'revision',feedbackOrigin:'final-review'}]});
+  assert.deepEqual(implementationTasks(target).map(item=>item.id),['owner']);
+  assert.equal(implementationComplete(target),true);
+  target.reviewRevisionRequests[0].status='queued';
+  assert.equal(implementationComplete(target),false);
+  target.reviewRevisionRequests[0].status='stale';
+  target.tasks[1].state='FAILED';
+  target.tasks[1].error='Historical failure from the old review head';
+  assert.equal(implementationComplete(target),true);
+  assert.notEqual(deriveJobRuntimeStatus(target),'FAILED','stale historical revision failure does not fail the current Job');
+  assert.equal(target.tasks[1].error,'Historical failure from the old review head');
 });

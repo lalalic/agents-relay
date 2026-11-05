@@ -23,6 +23,7 @@ retryQueue["action: revision.queueTask"]
 markStaleRequested["action: revision.markStale"]
 markStaleQueued["action: revision.markStale"]
 markStaleRunning["action: revision.markStale"]
+markStaleFailed["action: revision.markStale"]
 verdictReady["guard: changesRequiredRecorded"]
 none -->|on: revision.submit| reviewerAuthorized
 reviewerAuthorized -->|true| sameHead
@@ -56,3 +57,5 @@ queued -->|on: review.head_changed| markStaleQueued
 markStaleQueued --> stale
 running -->|on: review.head_changed| markStaleRunning
 markStaleRunning --> stale
+failed -->|on: review.head_changed| markStaleFailed
+markStaleFailed --> stale

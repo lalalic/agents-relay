@@ -13,6 +13,8 @@ Review exactly the immutable target/version specified by the Review Task. Do not
 
 Reconstruct all material acceptance requirements from the durable Job objective and Task, then evaluate each with direct evidence. Check correctness, completeness, provenance, quality, regressions, explicit approvals and externally observable outcomes where applicable. Missing evidence is not PASS. If validation cannot complete, report task.failed. Keep review independent of implementation work.
 
+For **publish-first live acceptance**, distinguish checks verifiable before release from checks that genuinely require the newly published runtime, real device, or external provider. A properly classified and handed-off live-only check is **NOT_RUN**, never PASS, but must not by itself cause a `task.failed` or `changes-required` verdict before publication. Verify that required pre-release quality/security/compliance/approval gates passed, that the future live test has a named owner and executable post-publish follow-up, and that remaining risks are disclosed. Missing mandatory pre-release evidence or a fabricated post-publish handoff remains blocking. Do not approve an unreviewed source/head or perform deployment yourself.
+
 For spec-oriented delivery, select read-only `speckit-analyze` to check
 `spec.md`, `plan.md`, and `tasks.md` consistency when those artifacts exist.
 Use `speckit-checklist` only as requirements-quality guidance; do not create

@@ -22,6 +22,8 @@ Use `job create` with standalone objective Markdown, or `job adopt` for an exist
 Any task producer — orchestrator, planner, or nested task-producing agent — must follow this contract.
 Task producers choose semantic task properties such as objective, dependencies, worker requirements, priority, and `storySize`. They do not normally choose an adapter, provider/model, or raw timeout milliseconds.
 
+Before Task decomposition, distinguish tests achievable before publishing from live-only acceptance requiring the newly deployed runtime. The latter must be handed off for post-publish orchestrator or manual verification with an explicit `NOT_RUN`/`PENDING_POST_PUBLISH` status; do not create release-blocking Tasks for an unavailable future environment. Do not defer mandatory pre-publish security, compliance, or human approval gates. The authoritative policy and follow-up contract are in `agents/planner.agent.md` and `contracts/orchestrator-workflows.md`.
+
 `Task.timeoutMs` is the inactivity window. Only an accepted `task.started` or newer `task.progress` event for the exact current execution resets it; duplicate, stale, and out-of-order progress does not.
 
 ### Planner role-first Task granularity
@@ -31,6 +33,8 @@ New Plan rounds assign at most one newly authored Task per effective Agent role.
 ### Planning graph and semantic Task tree
 
 The planning graph expresses execution flow. The Task tree expresses semantic ownership. `dependencies` answer which durable outcomes must succeed before a Task can run; `parentTaskId` answers which durable artifact or milestone owns the Task. These are independent relationships.
+
+Each dependency edge may also declare `dependencyValidity`: `order-only` (the default), `revalidate` (check downstream evidence against the latest successful upstream result), or `rerun` (produce downstream verification again). Set this policy explicitly when later upstream revisions can change the validity of downstream evidence. It is execution evidence policy; it does not change Task ownership or normal DAG ordering.
 
 A later Planner round must inspect the existing semantic tree and attach review, revision, re-review, validation rerun, release correction, or recovery work to the existing artifact subtree. Independent milestones remain roots. `plan-N` records are provenance/history and must never be semantic parents. Existing terminal Tasks remain immutable historical evidence and may continue to own later work.
 
@@ -69,6 +73,8 @@ Task results should also include, as applicable:
 This is a worker result-content contract, not a requirement for dedicated `rootCause` / `solution` schema fields. Workers may satisfy it in normal durable result prose unless a Job defines a stricter structured output contract.
 
 Keep these concepts distinct: observation is not root cause; hypothesis is not root cause; requested approach is not implemented solution; implementation is not validation.
+
+Reviewers apply the same publish-first evidence boundary: they must not call a post-publish live-only test PASS, but may approve pre-publish implementation when all mandatory pre-release gates pass and deferred scenarios have an explicit owner, evidence gap, risk and actionable handoff. Missing mandatory pre-publish evidence still blocks approval. No reviewer may authorize an unverified merge or treat an unevaluated provider receipt as success.
 
 ### Worker self-review before success
 

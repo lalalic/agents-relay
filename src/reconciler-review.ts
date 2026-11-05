@@ -11,6 +11,7 @@ import { routeExecution } from './execution-routing.js';
 import { recordRouteOutcome } from './route-outcome-recording.js';
 import { ReconcilerRuntimeBase, type EventHandlingResult } from './reconciler-runtime.js';
 import { dispatchReviewLifecycle, reviewOutcome } from './workflow/review-v2.js';
+import { decideRevisionLifecycle } from './workflow/revision-v2.js';
 import { dispatchTaskLifecycleSync } from './workflow/lifecycle.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
 import { localSourceHead, localWorkingHead } from './local-git-merge.js';
@@ -68,21 +69,24 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const data = ReconcilerReviewBase.reviewRecord(event.data);
     const outcome = ReconcilerReviewBase.reviewRecord(data.outcome);
     const review = ReconcilerReviewBase.reviewRecord(data.review);
-    const rawIssues = outcome.blocking_findings !== undefined ? outcome.blocking_findings
+    const rawIssues = data.findings !== undefined ? data.findings
+      : outcome.blocking_findings !== undefined ? outcome.blocking_findings
       : outcome.blockingFindings !== undefined ? outcome.blockingFindings
+      : outcome.findings !== undefined ? outcome.findings
+      : review.findings !== undefined ? review.findings
       : review.issues !== undefined ? review.issues
+      : data.blocking_findings !== undefined ? data.blocking_findings
       : data.issues;
-    if (!Array.isArray(rawIssues)) return [];
+    if (rawIssues === undefined) return [];
+    if (!Array.isArray(rawIssues)) return ['[unparseable blocking finding]'];
     return rawIssues.map(item => {
-      if (typeof item === 'string') return item.trim();
+      if (typeof item === 'string') return item.trim() || '[unparseable blocking finding]';
       if (!item || typeof item !== 'object' || Array.isArray(item)) return '[unparseable blocking finding]';
       const value = item as Record<string, unknown>;
-      return (typeof value.summary === 'string' ? value.summary
-        : typeof value.message === 'string' ? value.message
-        : typeof value.finding === 'string' ? value.finding
-        : typeof value.title === 'string' ? value.title
-        : typeof value.id === 'string' ? value.id : '[unparseable blocking finding]').trim();
-    }).filter(Boolean);
+      const text = [value.summary, value.message, value.finding, value.title, value.id]
+        .find(candidate => typeof candidate === 'string' && candidate.trim().length > 0);
+      return typeof text === 'string' ? text.trim() : '[unparseable blocking finding]';
+    });
   }
 
   private static normalizeReviewEvidence(event: EventRecord, task: Task): { headSha: string; issues: string[] } | null {
@@ -103,17 +107,71 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     await this.store.saveTask(staleTask);
   }
 
+  /** The Review Graph selects this effect on head change; the Revision Graph
+   * decides each request's stale transition. Child disposition and request
+   * status are committed together so stale work cannot strand implementation
+   * completion across restart. */
+  private async staleReviewRevisions(job: Job, reviewTaskId: string, headSha: string): Promise<void> {
+    if (!this.store.mutateJob) return;
+    const cancelled: Array<{ taskId: string; executionId: string | null }> = [];
+    await this.store.mutateJob(job.id, current => {
+      if (current.review?.taskId !== reviewTaskId || current.review.headSha !== headSha) return current;
+      for (const request of current.reviewRevisionRequests ?? []) {
+        if (request.reviewTaskId !== reviewTaskId || request.reviewHeadSha !== headSha) continue;
+        const states = { requested: 'REQUESTED', queued: 'QUEUED', running: 'RUNNING', failed: 'FAILED' } as const;
+        const state = states[request.status as keyof typeof states];
+        if (!state) continue;
+        const decision = decideRevisionLifecycle(state, 'review.head_changed');
+        if (!decision.accepted || decision.target !== 'STALE' || !decision.actions.some(action => action.id === 'revision.markStale')) continue;
+        const child = request.revisionTaskId ? current.tasks.find(task => task.id === request.revisionTaskId) : undefined;
+        if (child && ['DRAFT', 'QUEUED', 'RUNNING'].includes(child.state)) {
+          const executionId = child.executionId ?? child.executionHistory?.at(-1)?.id ?? null;
+          if (!tryTransitionTaskEvent(child, 'cancel').accepted) continue;
+          child.error = 'Targeted revision evidence became stale after the review head changed';
+          child.leaseOwner = null;
+          child.leaseExpiresAt = null;
+          child.executionId = null;
+          child.updatedAt = new Date().toISOString();
+          if (executionId) cancelled.push({ taskId: child.id, executionId });
+        } else if (child && child.state !== 'FAILED' && child.state !== 'SUCCEEDED' && child.state !== 'CANCELLED') {
+          continue;
+        }
+        request.status = 'stale';
+      }
+      current.updatedAt = new Date().toISOString();
+      return current;
+    });
+    for (const execution of cancelled) this.cancelExecutionGeneration(job.id, execution.taskId, execution.executionId);
+  }
+
   protected async invalidateStaleReview(job: Job, headSha: string | null): Promise<void> {
-    if (!headSha || !job.review || job.review.headSha === headSha) return;
-    const decision = await dispatchReviewLifecycle(job.review.outcome, 'head.changed', {}, async actionId => {
-      if (actionId === 'review.cancelStale') { await this.cancelStaleReviewTask(job); return {}; }
+    const staleReview = job.review;
+    if (!headSha || !staleReview || staleReview.headSha === headSha) return;
+    const decision = await dispatchReviewLifecycle(staleReview.outcome, 'head.changed', {}, async actionId => {
+      if (actionId === 'review.cancelStale') {
+        await this.cancelStaleReviewTask(job);
+        if (staleReview.taskId) await this.staleReviewRevisions(job, staleReview.taskId, staleReview.headSha);
+        return {};
+      }
       throw new Error('Unsupported stale review action ' + actionId);
     });
     if (!decision.accepted) return;
     const outcome = reviewOutcome(decision.target);
     if (!outcome) throw new Error('Review graph produced invalid stale target ' + decision.target);
-    job.review = { ...job.review, outcome, updatedAt: new Date().toISOString() };
-    await this.store.saveJob(job);
+    const updatedAt = new Date().toISOString();
+    if (this.store.mutateJob) {
+      const persisted = await this.store.mutateJob(job.id, current => {
+        const currentReview = current.review;
+        if (!currentReview || currentReview.taskId !== staleReview.taskId || currentReview.headSha !== staleReview.headSha) return current;
+        current.review = { ...currentReview, outcome, updatedAt };
+        current.updatedAt = updatedAt;
+        return current;
+      });
+      Object.assign(job, persisted);
+    } else {
+      job.review = { ...staleReview, outcome, updatedAt };
+      await this.store.saveJob(job);
+    }
   }
 
   private nextFinalReviewTaskId(job: Job, headSha: string): string {

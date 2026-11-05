@@ -1,6 +1,11 @@
 import test, { managedReconciler } from './test-runtime.js';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { InMemoryStore } from '../dist/store.js';
+import { SQLiteRelayStore } from '../dist/relay-store.js';
+import { LocalAuthorityDurableStore } from '../dist/local-authority-store.js';
 import { MemoryEventBus, eventFor } from '../dist/events.js';
 import { executionEventSource } from '../dist/reconciler.js';
 import { submitTargetedRevisionRequest } from '../dist/review-revision-model.js';
@@ -98,4 +103,93 @@ test('managed Job review -> targeted fix -> exact SHA independent re-review -> a
  assert.equal(saved.reviewRevisionRounds.length,2);
  assert.equal(saved.reviewRevisionRounds.at(-1).status,'approved');
  assert.deepEqual(saved.tasks[0].result,{summary:'original complete'});
+});
+
+test('review data.findings must all be covered; partial targeted feedback fails closed',async()=>{
+ const store=setup();
+ const bus=new MemoryEventBus();
+ const runtime=managedReconciler(store,{owner:'review-findings-test',maxConcurrent:0,adapters:[],eventBus:bus,
+    headShaProvider:()=>sha,reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}}});
+ await submitTargetedRevisionRequest(store,'managed-review',{requestId:'partial-request',reviewTaskId:'review-1',reviewExecutionId:'review-exec',
+    headSha:sha,originalTaskId:'implementation',findings:[{id:'F1',summary:'Fix old bug'}]});
+ await runtime.handleEvent(event('review-1','review-exec','changes-required',[
+    {id:'F1',summary:'Fix old bug'},{id:'F2',summary:'Uncovered regression'}]));
+ const saved=await store.load('managed-review');
+ assert.equal(saved.review.outcome,'changes_required');
+ assert.equal(saved.review.revisionDisposition,'needs-ownership');
+ assert.equal(saved.tasks[2].state,'DRAFT','an incomplete finding set cannot dispatch the existing revision child');
+ assert.equal(saved.reviewRevisionRequests[0].status,'requested');
+});
+
+test('malformed review findings cannot be hidden by an existing targeted request',async()=>{
+ const store=setup();
+ const runtime=managedReconciler(store,{owner:'review-malformed-findings-test',maxConcurrent:0,adapters:[],eventBus:new MemoryEventBus(),
+    headShaProvider:()=>sha,reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}}});
+ await submitTargetedRevisionRequest(store,'managed-review',{requestId:'malformed-request',reviewTaskId:'review-1',reviewExecutionId:'review-exec',
+    headSha:sha,originalTaskId:'implementation',findings:[{id:'F1',summary:'Fix old bug'}]});
+ const malformed=event('review-1','review-exec','changes-required');
+ malformed.data.findings=['   '];
+ await runtime.handleEvent(malformed);
+ const saved=await store.load('managed-review');
+ assert.equal(saved.review.revisionDisposition,'needs-ownership');
+ assert.equal(saved.tasks[2].state,'DRAFT');
+});
+
+test('missing review findings cannot be treated as vacuously covered',async()=>{
+ const store=setup();
+ const runtime=managedReconciler(store,{owner:'review-missing-findings-test',maxConcurrent:0,adapters:[],eventBus:new MemoryEventBus(),
+    headShaProvider:()=>sha,reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}}});
+ await submitTargetedRevisionRequest(store,'managed-review',{requestId:'missing-findings-request',reviewTaskId:'review-1',reviewExecutionId:'review-exec',
+    headSha:sha,originalTaskId:'implementation',findings:[{id:'F1',summary:'Fix old bug'}]});
+ const missing=event('review-1','review-exec','changes-required');
+ delete missing.data.findings;
+ await runtime.handleEvent(missing);
+ const saved=await store.load('managed-review');
+ assert.equal(saved.review.revisionDisposition,'needs-ownership');
+ assert.equal(saved.tasks[2].state,'DRAFT');
+});
+
+test('head change stales old targeted work and releases the immutable-head review gate',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'relay-stale-review-'));
+ const seed=setup();
+ let authority=new SQLiteRelayStore(join(directory,'relay.db'));
+ const store=new LocalAuthorityDurableStore(authority,new InMemoryStore(),undefined,true);
+ let storeOpen=true;
+ await store.saveJob(await seed.load('managed-review'));
+ const bus=new MemoryEventBus();
+ let currentSha=sha;
+ const runtime=managedReconciler(store,{owner:'review-head-change-test',maxConcurrent:0,adapters:[],eventBus:bus,
+    headShaProvider:()=>currentSha,reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}}});
+ let runtimeClosed=false;
+ try {
+  await submitTargetedRevisionRequest(store,'managed-review',{requestId:'head-change-request',reviewTaskId:'review-1',reviewExecutionId:'review-exec',
+      headSha:sha,originalTaskId:'implementation',findings:[{id:'F1',summary:'Fix old bug'}]});
+  await runtime.handleEvent(event('review-1','review-exec','changes-required',[{id:'F1',summary:'Fix old bug'}]));
+  await runtime.idle();
+  await runtime.reconcile('managed-review');
+  let saved=await store.load('managed-review');
+  const childId=saved.reviewRevisionRequests[0].revisionTaskId;
+  assert.equal(saved.tasks.find(task=>task.id===childId).state,'QUEUED');
+  currentSha='abcdef0123456789abcdef0123456789abcdef02';
+  saved=await runtime.reconcile('managed-review');
+  const child=saved.tasks.find(task=>task.id===childId);
+  assert.equal(saved.reviewRevisionRequests[0].status,'stale');
+  assert.equal(child.state,'CANCELLED');
+  assert.equal(child.executionId,null);
+  assert.equal(saved.review.outcome,'pending');
+  assert.equal(saved.review.headSha,currentSha);
+  assert.equal(saved.tasks.filter(task=>task.reviewHeadSha===currentSha&&task.agentName==='job-acceptance-reviewer').length,1);
+  await runtime.close();
+  runtimeClosed=true;
+  authority.close();
+  storeOpen=false;
+  authority=new SQLiteRelayStore(join(directory,'relay.db'));
+  const reopened=new LocalAuthorityDurableStore(authority,new InMemoryStore(),undefined,true);
+  try {
+   const recovered=await reopened.load('managed-review');
+   assert.equal(recovered.reviewRevisionRequests[0].status,'stale');
+   assert.equal(recovered.tasks.find(task=>task.id===childId).state,'CANCELLED');
+   assert.equal(recovered.review.taskId,saved.review.taskId);
+  } finally { authority.close(); }
+ } finally { if(!runtimeClosed) await runtime.close(); if(storeOpen) authority.close(); await rm(directory,{recursive:true,force:true}); }
 });

@@ -13,12 +13,20 @@ export function isSuperseded(task: Task, byId: ReadonlyMap<string, Task>): boole
     && byId.get(classification.targetTaskId)?.state === 'SUCCEEDED';
 }
 
+function staleTargetedRevisionTaskIds(job: Job): Set<string> {
+  return new Set((job.reviewRevisionRequests ?? [])
+    .filter(request => request.status === 'stale' && request.revisionTaskId)
+    .map(request => request.revisionTaskId!));
+}
+
 export function implementationTasks(job: Job): Task[] {
   const byId = new Map(job.tasks.map(task => [task.id, task]));
+  const staleRevisions = staleTargetedRevisionTaskIds(job);
   return job.tasks.filter(task => task.kind !== 'planner'
     && !isFinalReviewAgent(task.agentName)
     && task.agentName !== 'troubleshooter'
     && !isSuperseded(task, byId)
+    && !staleRevisions.has(task.id)
     && (task.state !== 'DRAFT' || Boolean(task.revision)));
 }
 
@@ -51,7 +59,8 @@ export function deriveJobRuntimeStatus(job: Job, _prState: PullRequestRuntimeSta
   if (job.tasks.some(task => task.state === 'RUNNING')) return 'RUNNING';
   if (job.tasks.some(task => task.state === 'QUEUED')) return 'QUEUED';
   if (job.tasks.some(task => task.state === 'BLOCKED')) return 'BLOCKED';
-  if (job.tasks.some(task => task.state === 'FAILED')) return 'FAILED';
+  const staleRevisions = staleTargetedRevisionTaskIds(job);
+  if (job.tasks.some(task => task.state === 'FAILED' && !staleRevisions.has(task.id))) return 'FAILED';
   if (job.tasks.some(task => task.state === 'DRAFT')) return 'WAITING';
   if (plannerFailed) return 'FAILED';
   if (plannerRunning) return 'RUNNING';

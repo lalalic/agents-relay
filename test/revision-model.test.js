@@ -52,6 +52,7 @@ test('canonical revision Graph authorizes intake only for current reviewer/head/
   assert.equal(decideRevisionLifecycle('RUNNING', 'revision.verified').target, 'VERIFIED');
   assert.deepEqual(decideRevisionLifecycle('RUNNING', 'revision.failed').actions.map(a => a.id), ['revision.recordFailed']);
   assert.equal(decideRevisionLifecycle('QUEUED', 'review.head_changed').target, 'STALE');
+  assert.equal(decideRevisionLifecycle('FAILED', 'review.head_changed').target, 'STALE');
   assert.equal(decideRevisionLifecycle('REQUESTED', 'revision.submit').target, 'REQUESTED');
 });
 
@@ -75,6 +76,7 @@ test('review request records append-only original Task comment without changing 
   assert.equal(targetedRequestsCoverReview(j, j.tasks[1], 'head-1', ['Fix dependency fence']),true);
   assert.equal(targetedRequestsCoverReview(j, j.tasks[1], 'head-1', ['Fix dependency fence','unowned finding']),false);
   assert.equal(targetedRequestsCoverReview(j, j.tasks[1], 'head-1', ['[unparseable blocking finding]']),false);
+  assert.equal(targetedRequestsCoverReview(j, j.tasks[1], 'head-1', []),false);
   assert.equal(targetedRequestsCoverReview(j, j.tasks[1], 'head-1', ['F1']),true);
   assert.equal(recordTargetedRevisionRequest(j, input()).created, false);
   assert.equal(j.tasks[0].comments.length, 1);

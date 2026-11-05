@@ -323,6 +323,13 @@ test('planner reports malformed nested output precisely', () => {
   assert.throws(() => parsePlannerResult({ objective_status:'in_progress', assessment:'x', next_tasks:[{title: 'Implement and verify durable task outputs', id:'x',input:'work',output:'file'}] }), /output must be an object/);
 });
 
+test('planner preserves explicit dependency validity and rejects undeclared or invalid policies', () => {
+  const taskSpec = { title: 'Implement and verify durable task outputs', id: 'check', input: 'verify output', output, dependencies: ['owner'], dependencyValidity: { owner: 'rerun' } };
+  assert.deepEqual(parsePlannerResult({ objective_status: 'in_progress', assessment: 'verify', next_tasks: [taskSpec] }).next_tasks[0].dependencyValidity, { owner: 'rerun' });
+  assert.throws(() => parsePlannerResult({ objective_status: 'in_progress', assessment: 'verify', next_tasks: [{ ...taskSpec, dependencyValidity: { other: 'rerun' } }] }), /must identify a declared dependency/);
+  assert.throws(() => parsePlannerResult({ objective_status: 'in_progress', assessment: 'verify', next_tasks: [{ ...taskSpec, dependencyValidity: { owner: 'repeat' } }] }), /must be order-only, revalidate, or rerun/);
+});
+
 test('planner preserves worker requirements for worker-router selection', () => {
   const result = parsePlannerResult({ objective_status: 'in_progress', assessment: 'work', next_tasks: [{title: 'Implement and verify durable task outputs',
     id: 'resource-aware', input: 'do work', adapter: 'codex', output,
