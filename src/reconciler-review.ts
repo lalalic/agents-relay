@@ -1,5 +1,6 @@
 import { settleReviewRevisionRound } from './review-revision-settlement.js';
-import { isFinalReviewAgent, FINAL_REVIEW_AGENT } from './final-review-role.js';
+import { isFinalReviewAgent, FINAL_REVIEW_AGENT, nextFinalReviewTaskId } from './final-review-role.js';
+import { normalizeReviewEvidence } from './review-evidence.js';
 import { browserWorkerPool } from './browser-worker-runtime.js';
 import { ChatGptThreadDelivery, Job, Task, EventRecord, ReviewOutcome, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements } from './types.js';
 import { completionGateSatisfied, refreshTaskDependencies, transitionTaskEvent, transitionJobEvent, tryTransitionTaskEvent } from './task-transitions.js';
@@ -51,49 +52,6 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       currentReviewCancelled: currentReviewTask?.reviewHeadSha === headSha && currentReviewTask.state === 'CANCELLED',
       noApprovedCurrentReview: !reviewTasks.some(task => task.state === 'SUCCEEDED' && job.review?.headSha === headSha && job.review.outcome === 'approved'),
     };
-  }
-
-  private static reviewRecord(value: unknown): Record<string, unknown> {
-    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-  }
-
-  private static reviewHeadSha(event: EventRecord): string | undefined {
-    const data = ReconcilerReviewBase.reviewRecord(event.data);
-    const outcome = ReconcilerReviewBase.reviewRecord(data.outcome);
-    const review = ReconcilerReviewBase.reviewRecord(data.review);
-    return [outcome.head_sha, outcome.headSha, review.head_sha, review.headSha, data.head_sha, data.headSha]
-      .find((value): value is string => typeof value === 'string' && value.length > 0);
-  }
-
-  private static reviewIssues(event: EventRecord): string[] {
-    const data = ReconcilerReviewBase.reviewRecord(event.data);
-    const outcome = ReconcilerReviewBase.reviewRecord(data.outcome);
-    const review = ReconcilerReviewBase.reviewRecord(data.review);
-    const rawIssues = data.findings !== undefined ? data.findings
-      : outcome.blocking_findings !== undefined ? outcome.blocking_findings
-      : outcome.blockingFindings !== undefined ? outcome.blockingFindings
-      : outcome.findings !== undefined ? outcome.findings
-      : review.findings !== undefined ? review.findings
-      : review.issues !== undefined ? review.issues
-      : data.blocking_findings !== undefined ? data.blocking_findings
-      : data.issues;
-    if (rawIssues === undefined) return [];
-    if (!Array.isArray(rawIssues)) return ['[unparseable blocking finding]'];
-    return rawIssues.map(item => {
-      if (typeof item === 'string') return item.trim() || '[unparseable blocking finding]';
-      if (!item || typeof item !== 'object' || Array.isArray(item)) return '[unparseable blocking finding]';
-      const value = item as Record<string, unknown>;
-      const text = [value.summary, value.message, value.finding, value.title, value.id]
-        .find(candidate => typeof candidate === 'string' && candidate.trim().length > 0);
-      return typeof text === 'string' ? text.trim() : '[unparseable blocking finding]';
-    });
-  }
-
-  private static normalizeReviewEvidence(event: EventRecord, task: Task): { headSha: string; issues: string[] } | null {
-    const explicitHeadSha = ReconcilerReviewBase.reviewHeadSha(event);
-    const headSha = explicitHeadSha ?? (event.type === 'review.approved' ? task.reviewHeadSha : undefined);
-    if (!headSha) return null;
-    return { headSha, issues: ReconcilerReviewBase.reviewIssues(event) };
   }
 
   private async cancelStaleReviewTask(job: Job): Promise<void> {
@@ -174,24 +132,9 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     }
   }
 
-  private nextFinalReviewTaskId(job: Job, headSha: string): string {
-    const base = 'final-review-' + headSha.slice(0, 12);
-    const ids = new Set(job.tasks.filter(task => task.reviewHeadSha === headSha && isFinalReviewAgent(task.agentName)).map(task => task.id));
-    if (!ids.has(base)) return base;
-    for (let round = 2; round < 1000; round += 1) {
-      const candidate = base + '-r' + round;
-      if (!ids.has(candidate)) return candidate;
-    }
-    throw new Error('Too many final review rounds for ' + headSha);
-  }
-
-  private externalReviewPrNumber(job: Job): number {
-    return job.prNumber;
-  }
-
   private async createFinalReviewTask(job: Job, headSha: string): Promise<string> {
-    const id = this.nextFinalReviewTaskId(job, headSha);
-    const reviewPrNumber = this.externalReviewPrNumber(job);
+    const id = nextFinalReviewTaskId(job, headSha);
+    const reviewPrNumber = job.prNumber;
     const now = new Date().toISOString();
     const reviewGateTasks = implementationTasks(job);
     const reviewThread = resolveReviewerThreadDestination(job, this.options.reviewer?.threadId);
@@ -346,7 +289,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         id: job.id, title: job.title, objective: job.objective ?? null,
         description: job.description ?? null, priority: job.priority ?? null,
         repository: job.repository,
-        prNumber: this.externalReviewPrNumber(job), state: job.state,
+        prNumber: job.prNumber, state: job.state,
       },
       task: {
         id: task.id, kind: task.kind ?? 'work', storySize: task.storySize ?? 'M',
@@ -423,7 +366,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const job = await this.store.load(event.job_id);
     const task = job.tasks.find(item => item.id === event.task_id && isFinalReviewAgent(item.agentName));
     if (!task) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
-    const normalizedEvidence = ReconcilerReviewBase.normalizeReviewEvidence(event, task);
+    const normalizedEvidence = normalizeReviewEvidence(event, task);
     if (!normalizedEvidence) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
     const headSha = normalizedEvidence.headSha;
     if (task.reviewHeadSha !== headSha) return { applied: false, reconcile: false, reason: event.type + '.stale' };

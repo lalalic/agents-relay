@@ -21,7 +21,9 @@ replaces independent implementation and acceptance-evidence review.
 
 ## Targeted revision ownership
 
-For actionable findings, identify the original responsible durable Task ID. Before publishing `changes-required`, invoke `agents-relay task revise` for each owner with a stable request ID, the exact active Reviewer execution identity and immutable head SHA, and findings in a file. Use the authoritative Task Context; an unsupported or ambiguous owner must be reported, not guessed. Do not edit artifacts, invoke Planner for every issue, or claim that CLI submission itself completed the revision. Check the CLI receipt.
+For actionable findings, identify the original responsible durable Task ID. When the **execution-pinned Relay CLI supports** `task revise`, submit each owner's findings with a stable request ID, the exact active Reviewer execution identity, immutable head SHA and findings file; check the durable receipt. An ambiguous owner must be reported, not guessed. Do not edit artifacts, invoke Planner for every issue, or claim CLI submission completed a revision.
+
+**Bootstrap compatibility:** During a managed rollout that is itself introducing `task revise`, the execution-pinned CLI may not yet expose the command. Verify genuine command unavailability via its help/usage output. In that one case, **do not fail a completed review solely because the CLI does not exist**. Publish the canonical `task.completed` verdict `changes-required` with exact `head_sha`, complete actionable `data.findings` (including owner Task IDs where known), and `data.revision_submission: "cli-unavailable"`. Relay owns fallback remediation through its existing Review Graph. Never claim targeted requests were persisted. This fallback is NOT permission to ignore an available CLI's validation error, stale execution, authorization failure or missing evidence; those remain fail-closed.
 
 ## Review Decision
 

@@ -16,7 +16,6 @@ import { parsePlannerHistoryCleanup, type PlannerHistoryCleanup } from './planne
 import { plannerTaskContext } from './planner-task-context.js';
 import { relayStoreDirectory } from './local-job-path.js';
 import { validateDependencyValidity } from './dependency-validity.js';
-
 export type ObjectiveStatus = 'in_progress' | 'satisfied';
 export type PlannerTaskSpec = {
   id: string;
@@ -45,7 +44,6 @@ export type PlannerUnblockSpec = { repository: string; prNumber: number; jobId: 
 export type PlannerResult = { objective_status: ObjectiveStatus; assessment: string; next_tasks: PlannerTaskSpec[]; unblocks: PlannerUnblockSpec[]; history_cleanup?: PlannerHistoryCleanup[]; cliApplied?: true };
 export type PlannerContext = { planExecution?: { planId: string; executionId: string }; forceRestate?: boolean; restateTaskIds?: readonly string[]; job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null; trigger?: PlanTrigger; executionContext?: ExecutionContext; retryFeedback?: string; guidance?: string };
 export type SemanticTaskTreeEntry = { id: string; title?: string; parent_task_id: string | null; state: Task['state']; dependencies: string[]; planning_decision_id?: string; planning_round?: number; review?: ReviewTaskMetadata; resolution_classification?: Task['resolutionClassification'] };
-
 export function semanticTaskTree(tasks: readonly Task[]): { roots: string[]; tasks: SemanticTaskTreeEntry[] } {
   const work = tasks.filter(task => task.kind !== 'planner');
   const ids = new Set(work.map(task => task.id));
@@ -54,10 +52,8 @@ export function semanticTaskTree(tasks: readonly Task[]): { roots: string[]; tas
     tasks: work.map(task => ({ id: task.id, title: task.title, parent_task_id: task.parentTaskId, state: task.state, dependencies: [...task.dependencies], planning_decision_id: task.planningDecisionId, planning_round: task.planningRound, review: task.review, resolution_classification: task.resolutionClassification })),
   };
 }
-
 export interface ObjectivePlanner { plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult>; }
 export type PlannerRoundOptions = { guidance?: string; manual?: boolean; timeoutMs?: number; now?: string };
-
 function plannerTrigger(job: Job, manual = false): PlanTrigger {
   const consumed = new Set((job.plans ?? []).filter(plan => plan.status === 'SUCCEEDED').flatMap(plan => plan.trigger.source === 'unblock' ? plan.trigger.taskIds ?? [] : []));
   const unblocked = job.tasks.filter(task => ['DRAFT', 'QUEUED'].includes(task.state) && task.unblock && !consumed.has(task.id));
@@ -69,7 +65,6 @@ function plannerTrigger(job: Job, manual = false): PlanTrigger {
   });
   if (!decision.accepted) throw new Error('Planner trigger graph rejected plan.requested');
   const source = decision.target as PlanTrigger['source'];
-
   if (source === 'manual') return { source: 'manual' };
   if (source === 'unblock') {
     if (unblocked.length > 0) {
@@ -306,7 +301,6 @@ export function parsePlannerResult(value: unknown): PlannerResult {
   return { objective_status: status, assessment: root.assessment, next_tasks, unblocks, ...(history_cleanup ? { history_cleanup } : {}) };
 }
 
-
 export function validatePlannerProgress(job: Job, result: PlannerResult): void {
   if (result.objective_status !== 'in_progress' || result.next_tasks.length > 0 || result.unblocks.length > 0) return;
   const previousReviewFinished = job.tasks.some(task => isFinalReviewAgent(task.agentName) && task.state === 'SUCCEEDED');
@@ -315,7 +309,6 @@ export function validatePlannerProgress(job: Job, result: PlannerResult): void {
   if (liveWork) return;
   throw new Error('Planner returned in_progress with no executable tasks or unblocks while no live work remains; return satisfied when only Relay-owned review/merge/completion effects remain');
 }
-
 
 export { validatePlannerAgentRoles } from './planner-agent-roles.js';
 
