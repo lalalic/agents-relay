@@ -15,6 +15,8 @@ export type InteractiveInvocation = {
   boundAt: string;
   decidedAt?: string;
   feedback?: string;
+  comments?: readonly unknown[];
+  idempotencyKey?: string;
 };
 export type InteractiveDecisionDelivery = {
   jobId: string;
@@ -24,6 +26,12 @@ export type InteractiveDecisionDelivery = {
   revision: string;
   decision: InteractiveDecision;
   feedback?: string;
+  contentHash?: string;
+  revisionId?: string;
+  previewId?: string;
+  requestId?: string;
+  idempotencyKey?: string;
+  comments?: readonly unknown[];
   eventId: string;
   deliveredAt: string;
 };
@@ -43,6 +51,8 @@ export type AcceptedInteractiveDecision = {
   revision: string;
   decision: InteractiveDecision;
   feedback?: string;
+  comments?: readonly unknown[];
+  idempotencyKey?: string;
   event: EventRecord;
 };
 export type HostInvocationCoordinatorOptions = {
@@ -66,6 +76,8 @@ export const interactiveInvocationGraph = new GraphRuntime(graphSource, {
     currentInvocation: facts => facts.durableFacts.currentInvocation === true,
     awaitingDecision: facts => facts.durableFacts.awaitingDecision === true,
     currentRevision: facts => facts.durableFacts.currentRevision === true,
+    eventOnlyCurrentExecution: facts => facts.durableFacts.eventOnlyCurrentExecution === true,
+    eventOnlyNextRevision: facts => facts.durableFacts.eventOnlyNextRevision === true,
     duplicateDelivery: facts => facts.durableFacts.duplicateDelivery === true,
     changesRequested: facts => facts.durableFacts.changesRequested === true,
   },
@@ -119,10 +131,22 @@ export function normalizeInteractiveDecision(event: EventRecord): InteractiveDec
   const revision = string('revision');
   const decision = value.decision === 'approved' || value.decision === 'changes_requested' ? value.decision : null;
   if (!jobId || !taskId || !executionId || !invocationId || !revision || !decision) return null;
-  const feedback = string('feedback');
+  if (event.source?.id !== `job/${jobId}/task/${taskId}/execution/${executionId}`) return null;
+  if (value.contentHash !== undefined && typeof value.feedback !== 'string') return null;
+  const feedback = typeof value.feedback === 'string' ? value.feedback : null;
+  const contentHash = string('contentHash');
+  if (contentHash && contentHash !== revision) return null;
+  const comments = value.comments;
+  if (comments !== undefined && (!Array.isArray(comments) || comments.length > 100 ||
+    comments.some(comment => !comment || typeof comment !== 'object' || Array.isArray(comment) ||
+      typeof comment.text !== 'string'))) return null;
   return {
     jobId, taskId, executionId, invocationId, revision, decision,
     feedback: feedback ?? undefined,
+    contentHash: contentHash ?? undefined, revisionId: string('revisionId') ?? undefined,
+    previewId: string('previewId') ?? undefined, requestId: string('requestId') ?? undefined,
+    idempotencyKey: string('idempotencyKey') ?? undefined,
+    comments: comments as readonly unknown[] | undefined,
     eventId: event.event_id,
     deliveredAt: event.timestamp,
   };
@@ -137,7 +161,16 @@ export function interactiveDecisionFingerprint(decision: InteractiveDecisionDeli
     revision: decision.revision,
     decision: decision.decision,
     feedback: decision.feedback ?? null,
+    comments: decision.comments ?? null,
   })).digest('hex');
+}
+
+/** First event for an unbound interaction must carry immutable video identity. */
+export function eventOnlyReviewEligible(delivery: InteractiveDecisionDelivery): boolean {
+  return Boolean(delivery.contentHash && /^[a-f0-9]{64}$/.test(delivery.contentHash) &&
+    delivery.revision === delivery.contentHash && delivery.feedback !== undefined &&
+    [delivery.revisionId, delivery.requestId, delivery.idempotencyKey, delivery.invocationId]
+      .every(value => typeof value === 'string' && value.length > 0 && value.length <= 128));
 }
 
 function invocationState(invocation: InteractiveInvocation | undefined): InteractiveInvocationStatus {
@@ -148,6 +181,7 @@ async function decideInteractiveInvocation(
   task: Task,
   delivery: InteractiveDecisionDelivery,
   duplicateDelivery: boolean,
+  jobActive: boolean,
 ): Promise<{ accepted: boolean; actions: readonly string[] }> {
   const invocation = task.interactiveInvocation;
   const result = await dispatchWorkflowGraph(interactiveInvocationGraph, {
@@ -157,6 +191,12 @@ async function decideInteractiveInvocation(
       currentInvocation: invocation?.invocationId === delivery.invocationId,
       awaitingDecision: invocation?.status === 'awaiting_decision',
       currentRevision: invocation?.revision === delivery.revision,
+      eventOnlyCurrentExecution: jobActive && !invocation && task.state === 'RUNNING' &&
+        task.executionId === delivery.executionId && eventOnlyReviewEligible(delivery),
+      eventOnlyNextRevision: jobActive && invocation?.status === 'changes_requested' &&
+        invocation.executionId === delivery.executionId && task.state === 'RUNNING' &&
+        task.executionId === delivery.executionId && invocation.revision !== delivery.revision &&
+        eventOnlyReviewEligible(delivery),
       duplicateDelivery,
       changesRequested: delivery.decision === 'changes_requested',
     },
@@ -235,13 +275,13 @@ export class HostInteractiveInvocationCoordinator {
     }
     const job = await this.options.store.loadJob(delivery.jobId);
     const task = job?.tasks.find((item: Task) => item.id === delivery.taskId);
-    if (!job || !task || task.interactiveInvocation?.executionId !== delivery.executionId ||
+    if (!job || !task ||
         (task.executionId !== delivery.executionId && task.state !== 'DRAFT')) {
       await this.options.store.recordHostInvocationEvent?.(delivery, 'stale', interactiveDecisionFingerprint(delivery));
       return { outcome: 'stale', reason: 'execution_not_bound' };
     }
     const duplicate = await this.options.store.hasHostInvocationDecision?.(delivery.jobId, delivery.taskId, delivery.invocationId, interactiveDecisionFingerprint(delivery)) ?? false;
-    const graphDecision = await decideInteractiveInvocation(task, delivery, duplicate);
+    const graphDecision = await decideInteractiveInvocation(task, delivery, duplicate, job.state === 'ACTIVE');
     const selected = graphDecision.actions.some(action => action === 'interactive.requestChanges' || action === 'interactive.approve');
     if (!graphDecision.accepted || !selected || duplicate) {
       const outcome: InteractiveDecisionOutcome = duplicate ? 'duplicate' : 'stale';
@@ -254,7 +294,7 @@ export class HostInteractiveInvocationCoordinator {
     const accepted: AcceptedInteractiveDecision = {
       jobId: delivery.jobId, taskId: delivery.taskId, executionId: delivery.executionId,
       invocationId: delivery.invocationId, revision: delivery.revision, decision: delivery.decision,
-      feedback: delivery.feedback, event,
+      feedback: delivery.feedback, comments: delivery.comments, idempotencyKey: delivery.idempotencyKey, event,
     };
     const key = `${accepted.jobId}:${accepted.taskId}:${accepted.executionId}:${accepted.invocationId}`;
     const waiter = this.waiters.get(key);

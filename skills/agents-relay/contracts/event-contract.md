@@ -42,6 +42,53 @@ The automatically created `job-acceptance-reviewer` (historical `reviewer` recor
 A fix child reports its **own** correlated completion after verified repair. Downstream `dependencyValidity` policy is `order-only` by default, or explicitly `revalidate`/`rerun` per declared input. All changed upstream generations must settle before a fan-in consumer can verify or rerun. Relay derives successful revision lineage from durable Task results, then creates another fresh immutable-head Job Acceptance Review. A partially submitted message, unverified terminal, historical result or stale source SHA does not count as a fix or approval.
 
 
+## Generic interactive decision event (human review)
+
+**Canonical type:** `task.interactive_decision`. This is a human decision for an in-progress Task (video preview, document review, image approval, etc.), **not** an Implementation terminal event or a Job Final Reviewer verdict. A UI such as Markcut is a generic publisher: it receives a caller-supplied template and fills only the declared review-result fields. It must not invent Task/Execution/source identity or a new Relay-specific event type.
+
+**Producer event template**, based on the exact managed Task execution context (illustrative identities only):
+
+```json
+{
+  "type": "task.interactive_decision",
+  "source": "job/556/task/producer/execution/exec-abc",
+  "data": {
+    "interactive": {
+      "jobId": "556",
+      "taskId": "producer",
+      "executionId": "exec-abc",
+      "invocationId": "review-request-123"
+    }
+  }
+}
+```
+
+The caller provides this as `markcut.preview({path, review:{delivery:"event", eventTemplate}})` or the same metadata in a Neo Mobile review request. `source` and the four template identity fields are immutable. They must match the current Job/Task/Execution. An invocation ID is a stable unique identifier for the human review request; it is not a video revision, a new Task, or a generated execution ID.
+
+**On human Submit**, the Preview UI fills the following fields under `data.interactive`, preserving every caller-owned field:
+
+| Field | Rule |
+| --- | --- |
+| `decision` | **Required**: `approved` or `changes_requested`; only the human sets it. |
+| `feedback` | **Required** string: plain-language feedback, or `""` on approval. |
+| `comments` | Optional structured scene/timestamp comments; do not flatten or discard when available. |
+| `revision` | **Required**: immutable content SHA-256 for the reviewed video in event-only mode. |
+| `contentHash` | **Required** in event-only mode; equals `revision`, exact 64 lowercase hex. |
+| `revisionId` | **Required** in event-only mode: human-visible immutable preview revision identifier. |
+| `previewId`, `requestId` | Optional/required respectively in event-only mode; bind the original review request. |
+| `idempotencyKey` | **Required** in event-only mode, stable across delivery retries. |
+
+For a human clicking Approve or Request Changes, **one submitted decision generates one event**. Editing individual comments does not publish events. The Preview and Neo Mobile use the same field paths. Events Bus still accepts `{type,source,data}`; via Neo MCP `events`, call `{command:"publish",args:{type,source,data}}`. A successful publish is only a transport receipt, **not** an accepted Relay decision or a completed revision.
+
+**Relay admission and Graph semantics:**
+
+1. Normalize the event, validate the source identity against the data and current Task, then consult the canonical `workflow/interactive-invocation.mmd` Graph. Reject stale executions, invalid decisions/versions, wrong identities, cancelled Jobs and duplicated/conflicting decisions; record the decision atomically in Relay-owned durable state.
+2. Legacy host-bound invocations remain supported. An event-only decision may arrive **without a preceding `bindInteractiveInvocation()`** when the Job is ACTIVE, the Task is RUNNING in the exact matching Execution, and the event carries complete immutable content identity. A later video revision may be submitted for the same execution only after `changes_requested`; already decided revisions may not be replayed as new ones.
+3. `changes_requested` records actionable feedback for the owning Task. `approved` passes only the human interaction gate for **that exact content**; it does not mark a Task or Job complete. Graph-selected continuation/recovery is separate from the Event Bus receipt. A RUNNING Worker that did not register a waiting Promise must consume the accepted decision via its event-driven workflow; accepting the event alone does not create a new Agent Turn.
+4. **Limitation of an entirely unbound event**: Relay cannot independently prove that a never-before-seen content hash is the *latest* Markcut preview solely from the Event payload. The Preview provider and mobile client must reject superseded revisions before publishing; a future trusted, durable preview-generation fact is necessary if Relay must independently reject every previously unreviewed stale version. Do not present client-declared revision fields as cryptographic authorization.
+
+`review.approved` and `review.changes_required` belong to immutable-head Job Acceptance Review; do **not** emit those or `task.completed` from a Preview UI. Consumers outside Relay may use their own event type, but managed Relay review templates must use `task.interactive_decision`.
+
 ## Troubleshooter human escalation
 
 Only a real user action merits escalation. Troubleshooter invokes the Relay escalation operation, specifying the required action, resolution condition, and diagnostic context. Relay durably records the human action and blocks **the Troubleshooter Task**, leaving the original failed Task `FAILED`. This is a Relay state transition, not a third agent terminal event.
@@ -52,7 +99,7 @@ See [task-recovery-flows.md](task-recovery-flows.md) for unified architecture, o
 
 Reviewer unavailable evidence is an execution failure (`task.failed`), not a blocked Task. Legacy Reviewer verdict `blocked` is normalized to failure and must dispatch Troubleshooter. Only Relay blocks a Troubleshooter during human escalation.
 
-A host-mediated interactive invocation is a separate Relay-controlled wait. It requires an already-bound `interactiveInvocation` with status `awaiting_decision`. It is not permission for a Worker or Reviewer to choose a blocked terminal outcome.
+A host-mediated interactive invocation remains a Relay-controlled wait when explicitly bound. The event-only path above accepts complete decisions from current active executions without requiring prior binding; neither route authorizes a Worker or Reviewer to choose a blocked terminal outcome.
 
 A legacy Job-level `review: blocked` gate is reset to `pending` only after authoritative `task.unblocked` metadata exists on its bound Reviewer Task and the immutable review head still matches. The same Reviewer Task then resumes without creating a duplicate.
 

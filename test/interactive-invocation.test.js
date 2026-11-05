@@ -188,6 +188,65 @@ test('SQLite decision recovers after event delivery loss and concurrent decision
   await fixture.dispose();
 });
 
+test('event-only preview review selects generic Graph without a prior invocation bind', async () => {
+  const fixture = await temporaryStore();
+  const job = makeJob();
+  await fixture.store.saveJob(job);
+  const reconciler = managedReconciler(new ProjectedDurableStore(fixture.store, new InMemoryStore(job)), {
+    owner: 'event-only-review', adapters: [],
+  });
+  const hash1 = 'a'.repeat(64);
+  const hash2 = 'b'.repeat(64);
+  const event = (invocationId, hash, decision, text) => {
+    const base = decisionEvent(job.id, job.tasks[0].id, invocationId, hash, decision, text);
+    base.data.interactive = {...base.data.interactive, revisionId: `rev-${invocationId}`,
+      contentHash: hash, previewId: `preview-${invocationId}`, requestId: `request-${invocationId}`,
+      idempotencyKey: `key-${invocationId}`, comments: [{sceneId:'opening', timeSeconds:3.2, text}]};
+    return base;
+  };
+  const first = event('new-preview-1', hash1, 'changes_requested', 'shorten introduction');
+  const acceptedFirst = await reconciler.applyEvent(first);
+  assert.equal(acceptedFirst.reason, 'task.interactive_decision.accepted');
+  assert.equal(acceptedFirst.reconcile, true);
+  assert.equal((await fixture.store.loadJob(job.id)).tasks[0].interactiveInvocation.status, 'changes_requested');
+  assert.match((await reconciler.applyEvent({...first, event_id:'replayed-first'})).reason, /duplicate/);
+  const second = event('new-preview-2', hash2, 'approved', 'looks good');
+  assert.equal((await reconciler.applyEvent(second)).reason, 'task.interactive_decision.accepted');
+  assert.equal((await fixture.store.loadJob(job.id)).tasks[0].interactiveInvocation.revision, hash2);
+  assert.match((await reconciler.applyEvent({...first, event_id:'old-after-new'})).reason, /stale|duplicate/);
+  const sql = new DatabaseSync(fixture.dbPath);
+  assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM host_invocation_decision').get().n, 2);
+  sql.close();
+  await reconciler.close();
+  await fixture.dispose();
+});
+
+test('event-only decisions reject spoofed source, stale execution and unverified revision identity', async () => {
+  const fixture = await temporaryStore();
+  const job = makeJob();
+  await fixture.store.saveJob(job);
+  const reconciler = managedReconciler(new ProjectedDurableStore(fixture.store, new InMemoryStore(job)), {
+    owner: 'event-only-rejection', adapters: [],
+  });
+  const hash = 'a'.repeat(64);
+  const make = () => ({...decisionEvent(job.id, job.tasks[0].id, 'unbound-1', hash, 'approved', ''),
+    data:{interactive:{jobId:job.id,taskId:job.tasks[0].id,executionId:'exec-1',
+      invocationId:'unbound-1',revision:hash,contentHash:hash,revisionId:'r1',
+      requestId:'q1',idempotencyKey:'k1',decision:'approved',feedback:'',comments:[]}}});
+  const forged = make();
+  forged.source = {id:'job/another/task/task-interactive/execution/exec-1'};
+  assert.equal((await reconciler.applyEvent(forged)).applied, false);
+  const bad = make(); bad.data.interactive.contentHash = 'b'.repeat(64);
+  assert.equal((await reconciler.applyEvent(bad)).applied, false);
+  const inactive = await fixture.store.loadJob(job.id);
+  inactive.state = 'CANCELLED';
+  await fixture.store.saveJob(inactive);
+  assert.match((await reconciler.applyEvent(make())).reason, /stale/);
+  assert.equal((await fixture.store.loadJob(job.id)).tasks[0].interactiveInvocation, undefined);
+  await reconciler.close();
+  await fixture.dispose();
+});
+
 test('generic host adapter adds Relay identity outside the UI decision payload', async () => {
   const { hostInteractiveDecisionEvent } = await import('../dist/interactive-invocation.js');
   const generic = { eventId: 'review-1', invocationId: 'inv-1', revision: 'hash-v1',

@@ -1,7 +1,7 @@
 /** Durable host-side interactive decision ledger, independent of preview providers. */
 import type { DatabaseSync } from 'node:sqlite';
 import type { Job } from './types.js';
-import type { InteractiveDecisionDelivery, InteractiveDecisionOutcome, InteractiveInvocation } from './interactive-invocation.js';
+import { eventOnlyReviewEligible, type InteractiveDecisionDelivery, type InteractiveDecisionOutcome, type InteractiveInvocation } from './interactive-invocation.js';
 
 export const hostInvocationTablesSql = `
   CREATE TABLE IF NOT EXISTS host_invocation_event (
@@ -77,9 +77,21 @@ export function recordHostInvocationDecision(
     const job = snapshot?.json ? JSON.parse(snapshot.json) as Job : null;
     const task = job?.tasks.find(item => item.id === delivery.taskId);
     const invocation = task?.interactiveInvocation;
-    if (!job || !task || !invocation || !(['RUNNING','DRAFT'].includes(task.state)) || invocation.executionId !== delivery.executionId ||
-        (task.executionId !== delivery.executionId && task.state !== 'DRAFT') ||
-        invocation.status !== 'awaiting_decision' || invocation.invocationId !== delivery.invocationId || invocation.revision !== delivery.revision) {
+    const bound = invocation && ['RUNNING', 'DRAFT'].includes(task?.state ?? '') &&
+      invocation.executionId === delivery.executionId &&
+      (task?.executionId === delivery.executionId || task?.state === 'DRAFT') &&
+      invocation.status === 'awaiting_decision' && invocation.invocationId === delivery.invocationId &&
+      invocation.revision === delivery.revision;
+    // Event-only reviews are claims against an ACTIVE execution, not permission to
+    // release an arbitrary DRAFT/failed/cancelled Task or replay an older revision.
+    const active = job?.state === 'ACTIVE' && task?.state === 'RUNNING' &&
+      task.executionId === delivery.executionId && eventOnlyReviewEligible(delivery);
+    const seen = db.prepare('SELECT 1 FROM host_invocation_decision WHERE job_id=? AND task_id=? AND execution_id=? AND revision=?')
+      .get(delivery.jobId, delivery.taskId, delivery.executionId, delivery.revision);
+    const eventOnly = active && !seen && (!invocation ||
+      (invocation.status === 'changes_requested' && invocation.executionId === delivery.executionId &&
+       invocation.revision !== delivery.revision));
+    if (!job || !task || job.state !== 'ACTIVE' || (!bound && !eventOnly)) {
       recordHostInvocationEvent(db, delivery, 'stale', fingerprint);
       db.exec('COMMIT');
       return { outcome: 'stale', reason: 'invocation_or_revision_mismatch' };
@@ -95,7 +107,8 @@ export function recordHostInvocationDecision(
     const decidedInvocation: InteractiveInvocation = {
       invocationId: delivery.invocationId, revision: delivery.revision, executionId: delivery.executionId,
       status: delivery.decision === 'approved' ? 'approved' : 'changes_requested',
-      boundAt: invocation.boundAt, decidedAt: delivery.deliveredAt, feedback: delivery.feedback,
+      boundAt: bound ? invocation.boundAt : delivery.deliveredAt, decidedAt: delivery.deliveredAt,
+      feedback: delivery.feedback, comments: delivery.comments, idempotencyKey: delivery.idempotencyKey,
     };
     task.interactiveInvocation = decidedInvocation;
     const candidate = Date.parse(delivery.deliveredAt);
