@@ -3,16 +3,22 @@ import { Job, JobRuntimeStatus, Task } from './types.js';
 
 export type PullRequestRuntimeState = 'UNKNOWN' | 'OPEN' | 'MERGED' | 'CLOSED';
 
-function isSuperseded(task: Task): boolean {
-  return task.state === 'CANCELLED' && ((task.resolution?.path === 'cancel_supersede' && task.resolution.state === 'resolved')
-    || (typeof task.error === 'string' && task.error.startsWith('Superseded ')));
+export function isSuperseded(task: Task, byId: ReadonlyMap<string, Task>): boolean {
+  if (task.state === 'CANCELLED' && task.resolution?.path === 'cancel_supersede' && task.resolution.state === 'resolved') return true;
+  const classification = task.resolutionClassification;
+  return task.state === 'FAILED' && classification?.kind === 'superseded'
+    && typeof classification.targetTaskId === 'string' && Boolean(classification.targetTaskId.trim())
+    && typeof classification.evidence === 'string' && Boolean(classification.evidence.trim())
+    && typeof classification.reason === 'string' && Boolean(classification.reason.trim())
+    && byId.get(classification.targetTaskId)?.state === 'SUCCEEDED';
 }
 
 export function implementationTasks(job: Job): Task[] {
+  const byId = new Map(job.tasks.map(task => [task.id, task]));
   return job.tasks.filter(task => task.kind !== 'planner'
     && !isFinalReviewAgent(task.agentName)
     && task.agentName !== 'troubleshooter'
-    && !isSuperseded(task)
+    && !isSuperseded(task, byId)
     && (task.state !== 'DRAFT' || Boolean(task.revision)));
 }
 

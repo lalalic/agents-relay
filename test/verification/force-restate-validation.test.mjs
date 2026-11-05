@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { forceRestateBlocked, forceRestateConverged, objectiveSatisfiedForReview } from '../../dist/force-restate-validation.js';
+import { implementationComplete } from '../../dist/runtime-status.js';
 
 const base = { state: 'ACTIVE', tasks: [] };
 const candidate = { workerId: 'codex-test', adapter: 'codex', capabilities: ['model'] };
@@ -33,4 +34,43 @@ test('L1 satisfied-objective review guard denies false completion and accepts ve
   assert.equal(objectiveSatisfiedForReview({ ...job, tasks: [], plans: [plan] }), false);
   assert.equal(objectiveSatisfiedForReview({ ...job, plans: [{ ...plan, objectiveStatus: 'in_progress' }] }), false);
   assert.equal(objectiveSatisfiedForReview({ ...job, plans: [plan, { ...plan, id: 'plan-4', round: 4, status: 'FAILED' }] }), false);
+});
+
+test('L1 Plan Apply and Review completion agree on durable supersession evidence', () => {
+  const work = { id: 'a', kind: 'work', agentName: 'implementation', state: 'SUCCEEDED' };
+  const plan = { id: 'plan-3', round: 3, status: 'SUCCEEDED', objectiveStatus: 'satisfied' };
+  const cancelled = { id: 'old-cancelled', kind: 'work', agentName: 'implementation', state: 'CANCELLED', resolution: { path: 'cancel_supersede', state: 'resolved' } };
+  const accepted = { state: 'ACTIVE', tasks: [work, cancelled], plans: [plan] };
+  assert.equal(objectiveSatisfiedForReview(accepted), true);
+  assert.equal(implementationComplete(accepted), true);
+
+  const unresolved = { ...cancelled, resolution: { path: 'cancel_supersede', state: 'active' } };
+  const unresolvedJob = { ...accepted, tasks: [work, unresolved] };
+  assert.equal(objectiveSatisfiedForReview(unresolvedJob), false);
+  assert.equal(implementationComplete(unresolvedJob), false);
+
+  const forgedLegacyError = { ...cancelled, resolution: undefined, error: 'Superseded by text only' };
+  const forgedJob = { ...accepted, tasks: [work, forgedLegacyError] };
+  assert.equal(objectiveSatisfiedForReview(forgedJob), false);
+  assert.equal(implementationComplete(forgedJob), false);
+
+  const historicalFailure = { id: 'old-failed', kind: 'work', agentName: 'implementation', state: 'FAILED', resolutionClassification: { kind: 'superseded', targetTaskId: 'a', evidence: 'replacement verified', reason: 'covered', updatedAt: '2026-11-05T00:00:00.000Z' } };
+  const classified = { ...accepted, tasks: [work, historicalFailure] };
+  assert.equal(objectiveSatisfiedForReview(classified), true);
+  assert.equal(implementationComplete(classified), true);
+
+  for (const state of ['QUEUED', 'RUNNING', 'FAILED']) {
+    const unfinished = { ...accepted, tasks: [{ ...work, state }] };
+    assert.equal(objectiveSatisfiedForReview(unfinished), false, `${state} implementation work cannot satisfy Plan Apply`);
+    assert.equal(implementationComplete(unfinished), false, `${state} implementation work cannot open review`);
+  }
+  const invalidTarget = { ...historicalFailure, resolutionClassification: { ...historicalFailure.resolutionClassification, targetTaskId: 'missing' } };
+  const invalidJob = { ...accepted, tasks: [work, invalidTarget] };
+  assert.equal(objectiveSatisfiedForReview(invalidJob), false);
+  assert.equal(implementationComplete(invalidJob), false);
+
+  const incompleteClassification = { ...historicalFailure, resolutionClassification: { ...historicalFailure.resolutionClassification, evidence: '' } };
+  const incompleteJob = { ...accepted, tasks: [work, incompleteClassification] };
+  assert.equal(objectiveSatisfiedForReview(incompleteJob), false);
+  assert.equal(implementationComplete(incompleteJob), false);
 });
