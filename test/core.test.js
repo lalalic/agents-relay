@@ -1168,35 +1168,47 @@ test('stale old-generation failure cannot cancel or mutate the current execution
 });
 
 test('confirmed ChatGPT pre-submission rejection uses no-start Codex recovery when eligible', async () => {
-  const t=task('chat-platform-reroute');
-  t.adapter='chatgpt'; t.state='QUEUED'; t.attempt=1; t.maxAttempts=3;
-  t.executionId='chat-platform-exec'; t.leaseOwner='relay'; t.leaseExpiresAt=new Date(Date.now()+60000).toISOString();
-  t.executionHistory=[{id:'chat-platform-exec',attempt:1,startedAt:now()}];
-  t.routing={provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()};
-  t.workerSelection={workerId:'fake-chatgpt',adapter:'chatgpt',capabilities:['model','chatgpt'],selectedBy:'test',selectedAt:now()};
-  t.workerRequirements={capabilities:[]};
-  const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); const events=[];
-  const adapter=new FakeAdapter(); const stopEvents=await bus.subscribe('j',async event=>events.push(event));
-  class FailureHarness extends Reconciler {
-    trigger(){return this.failLaunch('j',t.id,t.executionId,PreSubmissionRejection.fromPlatformResponse({status:'rejected',submitted:false,code:'MODEL_UNAVAILABLE',message:'unsupported'}),'delivery');}
+  // The no-start path requires a configured Codex default. Never depend on
+  // the developer's ~/.codex/config.toml, which is absent on CI runners.
+  const codexHome = await mkdtemp(join(tmpdir(), 'relay-core-no-start-'));
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = codexHome;
+  await writeFile(join(codexHome, 'config.toml'), 'model = "fallback-model-42"\nmodel_provider = "openai"\n');
+  try {
+    const t=task('chat-platform-reroute');
+    t.adapter='chatgpt'; t.state='QUEUED'; t.attempt=1; t.maxAttempts=3;
+    t.executionId='chat-platform-exec'; t.leaseOwner='relay'; t.leaseExpiresAt=new Date(Date.now()+60000).toISOString();
+    t.executionHistory=[{id:'chat-platform-exec',attempt:1,startedAt:now()}];
+    t.routing={provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()};
+    t.workerSelection={workerId:'fake-chatgpt',adapter:'chatgpt',capabilities:['model','chatgpt'],selectedBy:'test',selectedAt:now()};
+    t.workerRequirements={capabilities:[]};
+    const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); const events=[];
+    const adapter=new FakeAdapter(); const stopEvents=await bus.subscribe('j',async event=>events.push(event));
+    class FailureHarness extends Reconciler {
+      trigger(){return this.failLaunch('j',t.id,t.executionId,PreSubmissionRejection.fromPlatformResponse({status:'rejected',submitted:false,code:'MODEL_UNAVAILABLE',message:'unsupported'}),'delivery');}
+    }
+    const reconciler=new FailureHarness(store,{owner:'test',adapters:[new FakeChatGptAdapter(),adapter],eventBus:bus,maxConcurrent:0});
+    await reconciler.trigger(); await new Promise(resolve=>setTimeout(resolve,30));
+    const saved=(await store.load('j')).tasks.find(item=>item.id===t.id);
+    assert.equal(saved.id,t.id);
+    assert.equal(saved.state,'QUEUED');
+    assert.equal(saved.failureReason,undefined);
+    assert.equal(saved.adapter,'chatgpt');
+    assert.equal(saved.routing,undefined);
+    assert.equal(saved.workerSelection,undefined);
+    assert.equal(saved.executionHistory?.length,1);
+    assert.equal(saved.executionHistory?.[0]?.id,'chat-platform-exec');
+    assert.equal(saved.noStartFallback?.failedExecutionId,'chat-platform-exec');
+    assert.equal(saved.noStartFallback?.failedAttempt,1);
+    assert.equal(saved.routingExclusions?.[0]?.workerId,'fake-chatgpt');
+    assert.ok(events.some(event=>event.type==='worker.no_start_fallback'));
+    assert.equal((await store.load('j')).tasks.some(item=>item.agentName==='troubleshooter'),false);
+    await reconciler.close(); await stopEvents();
+  } finally {
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+    await rm(codexHome, { recursive: true, force: true });
   }
-  const reconciler=new FailureHarness(store,{owner:'test',adapters:[new FakeChatGptAdapter(),adapter],eventBus:bus,maxConcurrent:0});
-  await reconciler.trigger(); await new Promise(resolve=>setTimeout(resolve,30));
-  const saved=(await store.load('j')).tasks.find(item=>item.id===t.id);
-  assert.equal(saved.id,t.id);
-  assert.equal(saved.state,'QUEUED');
-  assert.equal(saved.failureReason,undefined);
-  assert.equal(saved.adapter,'chatgpt');
-  assert.equal(saved.routing,undefined);
-  assert.equal(saved.workerSelection,undefined);
-  assert.equal(saved.executionHistory?.length,1);
-  assert.equal(saved.executionHistory?.[0]?.id,'chat-platform-exec');
-  assert.equal(saved.noStartFallback?.failedExecutionId,'chat-platform-exec');
-  assert.equal(saved.noStartFallback?.failedAttempt,1);
-  assert.equal(saved.routingExclusions?.[0]?.workerId,'fake-chatgpt');
-  assert.ok(events.some(event=>event.type==='worker.no_start_fallback'));
-  assert.equal((await store.load('j')).tasks.some(item=>item.agentName==='troubleshooter'),false);
-  await reconciler.close(); await stopEvents();
 });
 
 test('confirmed ChatGPT rejection with no Codex route follows the FAILED quarantine edge', async () => {
