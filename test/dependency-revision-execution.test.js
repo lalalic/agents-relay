@@ -11,6 +11,8 @@ const fixture=()=>({id:'job',title:'depend',repository:'test/test',state:'ACTIVE
 test('dependency Graph authorizes only complete explicit and changed semantic input evidence',()=>{
  const facts={upstreamEvidenceChanged:true,explicitValidityPolicy:true,allInputsSettled:true,notAlreadyRecorded:true};
  assert.equal(decideDependencyRevision('dependency.reconcile',facts).target,'PROPOSED');
+ assert.deepEqual(decideDependencyRevision('dependency.reconcile',{...facts,rerunRequired:true}).actions.map(a=>a.id),['dependencyRevision.createRerun']);
+ assert.deepEqual(decideDependencyRevision('dependency.reconcile',{...facts,rerunRequired:false}).actions.map(a=>a.id),['dependencyRevision.createRevalidation']);
  for(const key of Object.keys(facts)) assert.notEqual(decideDependencyRevision('dependency.reconcile',{...facts,[key]:false}).target,'PROPOSED');
 });
 

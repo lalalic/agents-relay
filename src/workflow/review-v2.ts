@@ -26,6 +26,7 @@ export const reviewLifecycleV2 = new GraphRuntime(source, {
     targetedRevisionRequestsReady: boolGuard('targetedRevisionRequestsReady'),
     targetedRevisionsVerified: boolGuard('targetedRevisionsVerified'),
     reviewRoundWithinLimit: boolGuard('reviewRoundWithinLimit'),
+    reviewNoProgressWithinLimit: boolGuard('reviewNoProgressWithinLimit'),
   },
   actions: Object.fromEntries((['review.create','review.cancelStale','review.awaitTargetedRevisions','review.requireOwnerResolution','review.requestMerge','review.prepareRereview'] as ReviewGraphAction[]).map(id => [id,{id}])),
   events: Object.fromEntries(['reconcile','review.started','review.approved','review.changes_required','review.legacy_blocked','review.retry','head.changed','revision.settled'].map(id => [id,{id}])),

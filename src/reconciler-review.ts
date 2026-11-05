@@ -19,6 +19,7 @@ import { localSourceHead, localWorkingHead } from './local-git-merge.js';
 import { chatgptThreadRequirements, resolveReviewerThreadDestination, resolveImplementationTaskThreadDestination, prepareReviewerThreadDelivery } from './reviewer-thread.js';
 import { reviewGenerationMatches } from './review-generation-fence.js';
 import { targetedRequestsForReview, targetedRequestsCoverReview } from './review-revision-model.js';
+import { reviewFindingFingerprint } from './review-revision-policy.js';
 import { codexFallbackRouting, codexNoStartFallbackRoute, quarantineUnavailableCodexFallback } from './chatgpt-platform-fallback.js';
 
 
@@ -435,6 +436,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
             reviewTaskId: freshTask.id, reviewExecutionId: terminalExecutionId, headSha,
             requestIds,
             status: outcome === 'approved' ? 'approved' : 'changes_required',
+            findingFingerprint: reviewFindingFingerprint(normalizedEvidence.issues),
             recordedAt: reviewUpdatedAt,
           }];
         }

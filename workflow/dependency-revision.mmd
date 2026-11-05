@@ -13,13 +13,18 @@ upstreamChanged["guard: upstreamEvidenceChanged"]
 explicitPolicy["guard: explicitValidityPolicy"]
 allSettled["guard: allInputsSettled"]
 notDuplicated["guard: notAlreadyRecorded"]
-createRevision["action: dependencyRevision.createChild"]
+rerunRequired["guard: rerunRequired"]
+createRerun["action: dependencyRevision.createRerun"]
+createRevalidation["action: dependencyRevision.createRevalidation"]
 none -->|on: dependency.reconcile| upstreamChanged
 upstreamChanged -->|true| explicitPolicy
 explicitPolicy -->|true| allSettled
 allSettled -->|true| notDuplicated
-notDuplicated -->|true| createRevision
-createRevision --> proposed
+notDuplicated -->|true| rerunRequired
+rerunRequired -->|true| createRerun
+rerunRequired -->|false| createRevalidation
+createRerun --> proposed
+createRevalidation --> proposed
 proposed -->|on: dependency.verified| verified
 proposed -->|on: dependency.stale| markStale
 markStale --> stale

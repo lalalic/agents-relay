@@ -5,8 +5,8 @@ import { dispatchWorkflowGraphSync } from './dispatcher.js';
 const boolGuard = (key: string) => (context: { readonly durableFacts: Readonly<Record<string, unknown>> }) => context.durableFacts[key] === true;
 export const dependencyRevisionLifecycle = new GraphRuntime(readFileSync(new URL('../../workflow/dependency-revision.mmd', import.meta.url), 'utf8'), {
   states: new Set(['NONE', 'PROPOSED', 'VERIFIED', 'STALE']),
-  guards: Object.fromEntries(['upstreamEvidenceChanged', 'explicitValidityPolicy', 'allInputsSettled', 'notAlreadyRecorded'].map(key => [key, boolGuard(key)])),
-  actions: { 'dependencyRevision.createChild': { id: 'dependencyRevision.createChild' }, 'dependencyRevision.markStale': { id: 'dependencyRevision.markStale' } },
+  guards: Object.fromEntries(['upstreamEvidenceChanged', 'explicitValidityPolicy', 'allInputsSettled', 'notAlreadyRecorded', 'rerunRequired'].map(key => [key, boolGuard(key)])),
+  actions: { 'dependencyRevision.createRerun': { id: 'dependencyRevision.createRerun' }, 'dependencyRevision.createRevalidation': { id: 'dependencyRevision.createRevalidation' }, 'dependencyRevision.markStale': { id: 'dependencyRevision.markStale' } },
   events: { 'dependency.reconcile': { id: 'dependency.reconcile' }, 'dependency.verified': { id: 'dependency.verified' }, 'dependency.stale': { id: 'dependency.stale' } },
 });
 

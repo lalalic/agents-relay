@@ -154,6 +154,7 @@ export type ReviewRevisionRound = {
   headSha: string;
   requestIds: string[];
   status: 'changes_required' | 'approved';
+  findingFingerprint?: string;
   nextReviewTaskId?: string;
   recordedAt: string;
 };

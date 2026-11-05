@@ -138,10 +138,13 @@ changes -->|on: revision.settled| targetedVerified
 %% child terminal evidence and explicit revision request provenance.
 targetedVerified["guard: targetedRevisionsVerified"]
 reviewRoundAllowed["guard: reviewRoundWithinLimit"]
+reviewNoProgressAllowed["guard: reviewNoProgressWithinLimit"]
 prepareRereview["action: review.prepareRereview"]
 limitOwnerResolution["action: review.requireOwnerResolution"]
 targetedVerified -->|true| reviewRoundAllowed
-reviewRoundAllowed -->|true| prepareRereview
+reviewRoundAllowed -->|true| reviewNoProgressAllowed
+reviewNoProgressAllowed -->|true| prepareRereview
+reviewNoProgressAllowed -->|false| limitOwnerResolution
 %% Exhausted re-review rounds require explicit owner/Planner recovery.
 reviewRoundAllowed -->|false| limitOwnerResolution
 limitOwnerResolution --> changes

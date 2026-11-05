@@ -43,12 +43,13 @@ test('revision lifecycle is held until fully covered reviewer changes required v
  child.state='SUCCEEDED';reconcileReviewRevisionFacts(j);
  assert.equal(j.reviewRevisionRequests[0].status,'verified');
  assert.equal(implementationComplete(j),true);
- const settled=decideReviewLifecycle(j.review.outcome,'revision.settled',{targetedRevisionsVerified:true,reviewRoundWithinLimit:true});
+ const settled=decideReviewLifecycle(j.review.outcome,'revision.settled',{targetedRevisionsVerified:true,reviewRoundWithinLimit:true,reviewNoProgressWithinLimit:true});
  assert.equal(settled.target,'STALE');
  assert.deepEqual(settled.actions.map(x=>x.id),['review.prepareRereview']);
- assert.notEqual(decideReviewLifecycle('changes_required','revision.settled',{targetedRevisionsVerified:false,reviewRoundWithinLimit:true}).target,'STALE');
- assert.notEqual(decideReviewLifecycle('changes_required','revision.settled',{targetedRevisionsVerified:true,reviewRoundWithinLimit:false}).target,'STALE');
- assert.deepEqual(decideReviewLifecycle('changes_required','revision.settled',{targetedRevisionsVerified:true,reviewRoundWithinLimit:false}).actions.map(x=>x.id),['review.requireOwnerResolution']);
+ assert.notEqual(decideReviewLifecycle('changes_required','revision.settled',{targetedRevisionsVerified:false,reviewRoundWithinLimit:true,reviewNoProgressWithinLimit:true}).target,'STALE');
+ assert.notEqual(decideReviewLifecycle('changes_required','revision.settled',{targetedRevisionsVerified:true,reviewRoundWithinLimit:false,reviewNoProgressWithinLimit:true}).target,'STALE');
+ assert.deepEqual(decideReviewLifecycle('changes_required','revision.settled',{targetedRevisionsVerified:true,reviewRoundWithinLimit:false,reviewNoProgressWithinLimit:true}).actions.map(x=>x.id),['review.requireOwnerResolution']);
+ assert.deepEqual(decideReviewLifecycle('changes_required','revision.settled',{targetedRevisionsVerified:true,reviewRoundWithinLimit:true,reviewNoProgressWithinLimit:false}).actions.map(x=>x.id),['review.requireOwnerResolution']);
 });
 
 test('recovered revision requeues the same child through Graph without another feedback request', () => {

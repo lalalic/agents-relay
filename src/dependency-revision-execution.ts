@@ -80,22 +80,27 @@ export function reconcileDependencyRevisionFacts(job: Job): string[] {
     const vector = dependencyRevisionVector(job, original);
     const previous = priorVector(job, original);
     const changed = !sameDependencyRevisionVector(vector, previous);
+    const rerunRequired = policies.some(id => vector[id] !== previous[id] && dependencyValidity(original, id) === 'rerun');
     const stableKey = JSON.stringify([original.id, vector]);
     const id = 'dependency-revision-' + createHash('sha256').update(stableKey).digest('hex').slice(0, 24);
     const duplicate = job.tasks.some(task => task.id === id || task.revision?.originalTaskId === original.id
       && task.revision.kind !== 'targeted' && sameDependencyRevisionVector(task.revision.dependencyVector ?? {}, vector));
     const decision = decideDependencyRevision('dependency.reconcile', {
       upstreamEvidenceChanged: changed, explicitValidityPolicy: policies.length > 0,
-      allInputsSettled: inputsSettled, notAlreadyRecorded: !duplicate,
+      allInputsSettled: inputsSettled, notAlreadyRecorded: !duplicate, rerunRequired,
     });
-    if (!decision.accepted || decision.target !== 'PROPOSED'
-      || !decision.actions.some(action => action.id === 'dependencyRevision.createChild')) continue;
+    if (!decision.accepted || decision.target !== 'PROPOSED') continue;
+    // The canonical Dependency Revision Graph owns rerun vs revalidate.
+    // Facts supply evidence, but never select the workflow action here.
+    const selectedActions = decision.actions.map(action => action.id);
+    if (selectedActions.length !== 1 || !['dependencyRevision.createRerun', 'dependencyRevision.createRevalidation'].includes(selectedActions[0])) {
+      throw new Error('Dependency Revision Graph did not select exactly one child action');
+    }
+    const mode = selectedActions[0] === 'dependencyRevision.createRerun' ? 'rerun' : 'revalidate';
     const inputs = policies.map(id => {
       const originalDependency = job.tasks.find(task => task.id === id)!;
       return latestDirectRevision(job, originalDependency) ?? originalDependency;
     });
-    const mode = policies.some(id => vector[id] !== previous[id] && dependencyValidity(original, id) === 'rerun')
-      ? 'rerun' : 'revalidate';
     const upstreamRequests = inputs.flatMap(task => task.revision?.requestIds ?? []);
     const ancestorReview = inputs.find(task => task.revision)?.revision?.reviewTaskId ?? job.review?.taskId ?? '';
     const current = new Date().toISOString();

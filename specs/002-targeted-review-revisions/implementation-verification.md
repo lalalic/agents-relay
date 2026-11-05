@@ -1,8 +1,8 @@
 # Consolidated Task 728 implementation verification
 
 This receipt supplements, rather than rewrites, the Task 727 foundation verification.
-The independent `job-acceptance-reviewer` remains the authority for final Job #558
-acceptance, delivery, and actual current-HEAD approval.
+The original Job #558 and PR #293 were explicitly cancelled/closed at user direction.
+These historical receipts remain relevant evidence; delivery now belongs to the separately reviewed direct release, not the cancelled Job lifecycle.
 
 ## Implemented boundaries
 
@@ -24,8 +24,11 @@ acceptance, delivery, and actual current-HEAD approval.
 - Planner validates one effective Agent role per newly created Plan round;
   missing/blank names normalize to implementation; legacy/new Final Reviewer
   names are gate-owned rather than planner-created.
-- Five changes-required review rounds exhaust to durable owner-resolution
-  disposition and an idempotent evidence comment, not silent infinite retries.
+- Configurable review-round and repeated-finding no-progress limits are
+  selected through the Review Graph and produce durable owner-resolution
+  evidence, never silent infinite retries.
+  Operators may set `AGENTS_RELAY_REVIEW_MAX_ROUNDS` (default 5) and
+  `AGENTS_RELAY_REVIEW_NO_PROGRESS_LIMIT` (default 1); invalid values fail closed.
 
 ## Verification evidence
 
@@ -54,35 +57,34 @@ live-provider scenario remains skipped, not silently accepted.
 - **NOT_RUN:** Genuine multi-provider managed Job review/fix/re-review with
   unmocked external provider actions and final real Git delivery. Mock merge
   success is not production acceptance.
-- **PENDING:** Independent final Job objective acceptance review and delivery.
-  These gates belong to Relay and must not be certified by the Implementation worker.
+- **CANCELLED:** Original Job #558/PR #293 were cancelled without merge by
+  explicit user request; a separate direct release must provide its own reviewed
+  diff, clean merge, package publication receipt, and live service verification.
 
 An isolated CLI or browser submission acknowledgement is not a worker terminal
 event and does not prove approval or delivery.
 
 ## Post-publication live acceptance handoff
 
-These live checks are **NOT_RUN / PENDING_POST_PUBLISH**. The Plan 11 record is
-historical and remains unchanged; this section supplies its missing follow-up
-details. The package version in this reviewed source tree is
-`agents-relay@2.0.150`. Plan 11 separately records a running Relay runtime as
-`agents-relay@2.0.209`. These are distinct version surfaces: the `2.0.209`
-runtime is the intended live-check target only after its build provenance is
-verified to include the final approved, merged PR #293 commit. The package
-version and deployed runtime version must both be captured in the live receipt;
-neither version string alone proves that the other contains the reviewed code.
+These live checks are **NOT_RUN / PENDING_POST_PUBLISH**. The historic
+Plan 11 is retained as evidence, but Job #558 and PR #293 were cancelled
+without merge and cannot be reused as a release or completion receipt. The
+source tree's package.json may retain an old development version; the
+release workflow selects the actual published npm version. The verification
+target is the **exact new merged main SHA** and a separately verified npm
+publication/deployment receipt containing it. The previously running
+`agents-relay@2.0.209` cannot be assumed to include the new implementation.
 
 **Owner:** The Job orchestrator owns scheduling and recording the follow-up
 after verified publication. If it cannot run the checks in the supported live
 environment, it must request user-run acceptance and preserve this status as
 pending; it must not report a pass or silently close the handoff.
 
-**Trigger and prerequisites:** Start only after Relay confirms PR #293's
-approved commit was merged and the package publication receipt is verified.
+**Trigger and prerequisites:** Start only after the new direct-release PR is independently reviewed and
+merged and the corresponding package publication receipt is verified.
 Before executing, verify that the live Relay runtime is healthy and that its
-reported build provenance includes that exact merged commit. If the deployed
-runtime version differs from `2.0.209`, record the actual version and commit
-and confirm they contain the merged change before proceeding. Use the supported
+reported build provenance includes that exact merged commit. Record the actual runtime version and its package/source provenance and
+confirm they contain the merged change before proceeding. Use the supported
 live environment and caller-owned WebHelm session; do not recreate cancelled
 Task 787 or claim its evidence.
 
