@@ -2,8 +2,10 @@ import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { recordTargetedRevisionRequest } from '../dist/review-revision-model.js';
 import { reconcileReviewRevisionFacts, revisionRequestReady } from '../dist/review-revision-execution.js';
+import { settleReviewRevisionRound } from '../dist/review-revision-settlement.js';
 import { reconcileTaskDependencies } from '../dist/workflow/task-reconcile.js';
 import { decideReviewLifecycle } from '../dist/workflow/review-v2.js';
+import { decideRevisionLifecycle } from '../dist/workflow/revision-v2.js';
 import { implementationComplete } from '../dist/runtime-status.js';
 import { validatePlannerAgentRoles } from '../dist/planner.js';
 import { parseRevisionFindings } from '../dist/cli-revision.js';
@@ -46,6 +48,51 @@ test('revision lifecycle is held until fully covered reviewer changes required v
  assert.deepEqual(settled.actions.map(x=>x.id),['review.prepareRereview']);
  assert.notEqual(decideReviewLifecycle('changes_required','revision.settled',{targetedRevisionsVerified:false,reviewRoundWithinLimit:true}).target,'STALE');
  assert.notEqual(decideReviewLifecycle('changes_required','revision.settled',{targetedRevisionsVerified:true,reviewRoundWithinLimit:false}).target,'STALE');
+ assert.deepEqual(decideReviewLifecycle('changes_required','revision.settled',{targetedRevisionsVerified:true,reviewRoundWithinLimit:false}).actions.map(x=>x.id),['review.requireOwnerResolution']);
+});
+
+test('recovered revision requeues the same child through Graph without another feedback request', () => {
+ const j=fixture();recordTargetedRevisionRequest(j,request('retry-request','F1'));
+ const child=j.tasks[2];j.tasks[1].state='SUCCEEDED';
+ j.review={...j.review,outcome:'changes_required',revisionDisposition:'targeted'};
+ assert.equal(reconcileReviewRevisionFacts(j),true);
+ child.state='RUNNING';child.executionId='first-execution';
+ assert.equal(reconcileReviewRevisionFacts(j),true);
+ child.state='FAILED';child.executionId=null;
+ assert.equal(reconcileReviewRevisionFacts(j),true);
+ assert.equal(j.reviewRevisionRequests[0].status,'failed');
+ assert.equal(revisionRequestReady(j,child),false);
+ assert.notEqual(decideRevisionLifecycle('FAILED','revision.retry',{taskRetryQueued:false}).target,'QUEUED');
+ // Simulate the authorized Task Graph recovery; the revision layer never
+ // changes Task.state or creates another child independently.
+ child.state='QUEUED';
+ assert.equal(reconcileReviewRevisionFacts(j),true);
+ assert.equal(j.reviewRevisionRequests[0].status,'queued');
+ assert.equal(revisionRequestReady(j,child),true);
+ assert.equal(reconcileReviewRevisionFacts(j),false);
+ assert.equal(j.tasks.length,3);
+ child.state='RUNNING';child.executionId='new-execution';
+ reconcileReviewRevisionFacts(j);
+ child.state='SUCCEEDED';reconcileReviewRevisionFacts(j);
+ assert.equal(j.reviewRevisionRequests[0].status,'verified');
+});
+
+test('exhausted review cycle records durable owner-resolution gate and cannot silently re-review', async () => {
+ const j=fixture();recordTargetedRevisionRequest(j,request('limit-request','F1'));
+ j.tasks[1].state='SUCCEEDED';j.tasks[2].state='SUCCEEDED';
+ j.review={...j.review,outcome:'changes_required',revisionDisposition:'targeted'};
+ j.reviewRevisionRequests[0].status='verified';
+ j.reviewRevisionRounds=Array.from({length:5},(_,i)=>({
+   reviewTaskId:'review-'+i,reviewExecutionId:'execution-'+i,headSha:'head',
+   requestIds:[],status:'changes_required',recordedAt:now(),
+ }));
+ const store={mutateJob:async(_id, mutate)=>mutate(j)};
+ const settled=await settleReviewRevisionRound(store,j);
+ assert.equal(settled.review.outcome,'changes_required');
+ assert.equal(settled.review.revisionDisposition,'needs-ownership');
+ assert.equal(settled.tasks.find(t=>t.id==='review').comments.length,1);
+ await settleReviewRevisionRound(store,j);
+ assert.equal(settled.tasks.find(t=>t.id==='review').comments.length,1);
 });
 
 test('Planner rejects duplicate effective role but accepts independent agents and later rounds', () => {
@@ -53,6 +100,7 @@ test('Planner rejects duplicate effective role but accepts independent agents an
  assert.throws(()=>validatePlannerAgentRoles([spec('a','implementation'),spec('b',undefined)]),/duplicate effective Agent role implementation/);
  assert.throws(()=>validatePlannerAgentRoles([spec('a','director'),spec('b','director')]),/duplicate effective Agent role director/);
  assert.throws(()=>validatePlannerAgentRoles([spec('a','job-acceptance-reviewer')]),/Relay creates/);
+ assert.throws(()=>validatePlannerAgentRoles([spec('a','reviewer')]),/Relay creates/);
  assert.doesNotThrow(()=>validatePlannerAgentRoles([spec('a','implementation'),spec('b','video-director')]));
  assert.doesNotThrow(()=>validatePlannerAgentRoles([spec('third-round','implementation')]));
 });

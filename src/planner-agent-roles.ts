@@ -1,3 +1,4 @@
+import { isFinalReviewAgent } from './final-review-role.js';
 import type { PlannerTaskSpec } from './planner.js';
 
 /** One durable newly authored Task per effective Agent responsibility in each Plan.
@@ -8,7 +9,7 @@ export function validatePlannerAgentRoles(specs: readonly PlannerTaskSpec[]): vo
   const owners = new Map<string, string>();
   for (const spec of specs) {
     const role = spec.agentName?.trim() || 'implementation';
-    if (role === 'job-acceptance-reviewer') {
+    if (isFinalReviewAgent(role)) {
       throw new Error(`Task ${spec.id} must not plan job-acceptance-reviewer: Relay creates the immutable-head Final Review gate automatically`);
     }
     const previous = owners.get(role);

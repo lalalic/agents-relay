@@ -16,6 +16,7 @@ export const revisionLifecycle = new GraphRuntime(source, {
     reviewHeadCurrent: boolGuard('reviewHeadCurrent'),
     originalTaskSucceeded: boolGuard('originalTaskSucceeded'),
     changesRequiredRecorded: boolGuard('changesRequiredRecorded'),
+    taskRetryQueued: boolGuard('taskRetryQueued'),
   },
   actions: Object.fromEntries(([
     'revision.recordRequest', 'revision.queueTask', 'revision.recordVerified',
@@ -23,7 +24,7 @@ export const revisionLifecycle = new GraphRuntime(source, {
   ] as RevisionGraphAction[]).map(id => [id, { id }])),
   events: Object.fromEntries([
     'revision.submit', 'revision.queue', 'revision.started', 'revision.verified',
-    'revision.failed', 'review.head_changed',
+    'revision.failed', 'revision.retry', 'review.head_changed',
   ].map(id => [id, { id }])),
 });
 

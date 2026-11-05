@@ -1,3 +1,4 @@
+import { isFinalReviewAgent } from './final-review-role.js';
 import { buildAgentPrompt, buildRelayWorkPrompt, renderAgentPrompt, type PromptAdapter } from './agent-prompt-builder.js';
 import type { Job, Task } from './types.js';
 import { resolveAgentContract, type ExecutionContext } from './execution-context.js';
@@ -24,7 +25,7 @@ export async function managedWorkerInput(job: Job, task: Task, context?: Executi
       throw new Error(`Agent ${agentName} requires ${requiredRuntime} runtime; ${adapter} cannot launch this Task`);
   }
   const agent = selected.definition;
-  const role = agentName === 'planner' || agentName === 'reviewer' || agentName === 'troubleshooter' ? agentName : 'worker';
+  const role = isFinalReviewAgent(agentName) ? 'reviewer' : agentName === 'planner' || agentName === 'troubleshooter' ? agentName : 'worker';
   if (mode === 'evaluation') {
     const safeAgent = agent.replace(/^.*(?:task\.started|task\.completed|task\.failed|events__publish|NEO_EVENTS_EMIT).*\n?/gm, '');
     return renderAgentPrompt(buildAgentPrompt({ role, system: [safeAgent, '[Read-only evaluation safety boundary]\nDo not use tools, files, events or external services. Evaluate the role instructions as criteria only.'].filter(Boolean).join('\n\n'), user: `[Isolated prompt evaluation mode]\nTask: ${task.id}\n${task.input}` }), adapter);

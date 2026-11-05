@@ -18,6 +18,8 @@ recordRequest["action: revision.recordRequest"]
 recordQueue["action: revision.queueTask"]
 recordVerified["action: revision.recordVerified"]
 recordFailed["action: revision.recordFailed"]
+retryQueued["guard: taskRetryQueued"]
+retryQueue["action: revision.queueTask"]
 markStaleRequested["action: revision.markStale"]
 markStaleQueued["action: revision.markStale"]
 markStaleRunning["action: revision.markStale"]
@@ -42,6 +44,12 @@ running -->|on: revision.verified| recordVerified
 recordVerified --> verified
 running -->|on: revision.failed| recordFailed
 recordFailed --> failed
+%% A failed/uncertain revision can resume only after Relay has authoritatively
+%% requeued the SAME child through its recovery Graph.
+failed -->|on: revision.retry| retryQueued
+running -->|on: revision.retry| retryQueued
+retryQueued -->|true| retryQueue
+retryQueue --> queued
 requested -->|on: review.head_changed| markStaleRequested
 markStaleRequested --> stale
 queued -->|on: review.head_changed| markStaleQueued

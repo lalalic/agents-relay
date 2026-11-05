@@ -29,6 +29,19 @@ export function reconcileReviewRevisionFacts(job: Job): boolean {
   for (const request of job.reviewRevisionRequests ?? []) {
     const task = request.revisionTaskId && job.tasks.find(item => item.id === request.revisionTaskId);
     if (!task || task.revision?.reviewTaskId !== request.reviewTaskId || !task.revision.requestIds.includes(request.requestId)) continue;
+    // Only the Task Graph's already-authorized recovery to QUEUED can reopen
+    // a failed/in-flight revision request. Never retry from a stale event.
+    if ((request.status === 'failed' || request.status === 'running')
+      && task.state === 'QUEUED' && task.executionId === null
+      && job.review?.outcome === 'changes_required' && job.review.revisionDisposition === 'targeted'
+      && job.review.taskId === request.reviewTaskId) {
+      const decision = decideRevisionLifecycle(request.status === 'failed' ? 'FAILED' : 'RUNNING',
+        'revision.retry', { taskRetryQueued: true });
+      if (decision.accepted && decision.target === 'QUEUED'
+        && decision.actions.some(action => action.id === 'revision.queueTask')) {
+        updateStatus(request, 'queued'); changed = true;
+      }
+    }
     if (request.status === 'requested' && job.review?.outcome === 'changes_required'
       && job.review.taskId === request.reviewTaskId && job.review.revisionDisposition === 'targeted') {
       const decision = decideRevisionLifecycle('REQUESTED', 'revision.queue', { changesRequiredRecorded: true });

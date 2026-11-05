@@ -139,8 +139,12 @@ changes -->|on: revision.settled| targetedVerified
 targetedVerified["guard: targetedRevisionsVerified"]
 reviewRoundAllowed["guard: reviewRoundWithinLimit"]
 prepareRereview["action: review.prepareRereview"]
+limitOwnerResolution["action: review.requireOwnerResolution"]
 targetedVerified -->|true| reviewRoundAllowed
 reviewRoundAllowed -->|true| prepareRereview
+%% Exhausted re-review rounds require explicit owner/Planner recovery.
+reviewRoundAllowed -->|false| limitOwnerResolution
+limitOwnerResolution --> changes
 prepareRereview --> stale
 changes -->|on: head.changed| cancelChanges
 cancelChanges --> stale

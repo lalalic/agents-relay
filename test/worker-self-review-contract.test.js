@@ -21,6 +21,7 @@ test('mandatory self-review is delivered to both worker adapters even with no na
         ['review-chair', { role: 'chair' }, false],
         ['review-chair', undefined, false],
         ['reviewer', undefined, false],
+        ['job-acceptance-reviewer', undefined, false],
         ['planner', undefined, false],
         ['troubleshooter', undefined, false],
       ]) {
