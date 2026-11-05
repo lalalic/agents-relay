@@ -158,7 +158,7 @@ export async function evaluateRecoveryMatrix(){
      : path.id==='stale-replay-after-restart'
      ? result.trace[5].event==='restart'&&result.trace[9].progress===false&&result.trace[10].progress===false&&result.trace[9].before.some(t=>t.id==='a'&&t.state==='SUCCEEDED')&&result.trace[10].after.some(t=>t.id==='a'&&t.state==='SUCCEEDED')
      : path.id==='review-changes-required'
-     ? result.trace[5].after.some(t=>t.id==='revision-head-1'&&t.state==='QUEUED')&&result.trace[11].progress===false&&events.includes('review.approved')
+     ? result.trace[5].after.some(t=>t.id.startsWith('revision-') && t.id!=='revision-head-1'&&t.state==='QUEUED')&&result.trace[11].progress===false&&events.includes('review.approved')
      : path.id==='reviewer-failure-recovery'
      ? result.trace[14].after.some(t=>t.id==='final-review-head-2'&&t.state==='FAILED')&&result.trace[18].after.some(t=>t.id==='troubleshoot-final-review-head-2'&&t.state==='SUCCEEDED')&&events.includes('task.recover')
      : path.id==='merge-failure-recovery'

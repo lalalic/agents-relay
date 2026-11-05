@@ -64,6 +64,7 @@ export async function runReplay(scenario) {
      if(value==='@planned')return (await snapshot()).plans?.findLast(p=>p.status==='SUCCEEDED')?.generatedTaskIds?.[0]??'__planned_unavailable__';
      if(value==='@troubleshoot-planned')return 'troubleshoot-'+((await snapshot()).plans?.findLast(p=>p.status==='SUCCEEDED')?.generatedTaskIds?.[0]??'__planned_unavailable__');
      if(value==='@review')return (await snapshot()).review?.taskId??'__review_unavailable__';
+     if(value==='revision-head-1')return (await snapshot()).tasks.find(t=>t.revision?.kind==='targeted')?.id??'__revision_unavailable__';
      if(value==='@revision')return (await snapshot()).tasks.find(t=>t.revision?.kind==='targeted')?.id??'__revision_unavailable__';
      return value??'a';
    };
@@ -133,29 +134,16 @@ export async function runReplay(scenario) {
     });
    }
    else if(step.type==='mock.revision.materialize') {
-    // Fixture-only implementation of a future Graph-selected creation effect.
-    // Never interpret this as proof that the production CLI or scheduler exists.
+    // Production revision reducer atomically created the child; the review
+    // verdict and Graph-driven reconciliation must queue exactly that child.
+    await runtime.reconcile(jobId);
+    const current=await snapshot();
     const reviewerId=await resolveTaskId(step.reviewTaskId??'@review');
     const originalId=await resolveTaskId(step.originalTaskId??(scenario.plannerScript?'@planned':'a'));
-    await store.mutateJob(jobId,current=>{
-      const request=current.reviewRevisionRequests?.find(r=>r.reviewTaskId===reviewerId&&r.originalTaskId===originalId);
-      if(!request || current.review?.revisionDisposition!=='targeted' || current.review.taskId!==reviewerId)
-        throw Error('revision fixture cannot materialize without a verified targeted review verdict');
-      const decision=decideRevisionLifecycle('REQUESTED','revision.queue',{changesRequiredRecorded:true});
-      if(!decision.accepted || !decision.actions.some(a=>a.id==='revision.queueTask'))
-        throw Error('canonical revision Graph did not authorize queueing');
-      const id='revision-'+request.reviewHeadSha;
-      const owner=current.tasks.find(t=>t.id===originalId);
-      if(owner?.state!=='SUCCEEDED')throw Error('revision fixture owner must have immutable success evidence');
-      if(!current.tasks.some(t=>t.id===id))current.tasks.push({
-        ...task(id,[reviewerId],'QUEUED'),kind:'work',agentName:owner.agentName,
-        parentTaskId:originalId,output:{kind:'task_pr'},
-        revision:{kind:'targeted',originalTaskId:originalId,reviewTaskId:reviewerId,
-          basedOnHeadSha:request.reviewHeadSha,requestIds:[request.requestId]},
-      });
-      request.status='queued';request.revisionTaskId=id;
-      return current;
-    });
+    const requests=(current.reviewRevisionRequests??[]).filter(r=>r.reviewTaskId===reviewerId && r.originalTaskId===originalId);
+    const children=current.tasks.filter(t=>t.revision?.kind==='targeted' && t.revision.reviewTaskId===reviewerId && t.revision.originalTaskId===originalId);
+    if(requests.length!==1 || children.length!==1 || children[0].state!=='QUEUED' || requests[0].revisionTaskId!==children[0].id)
+      throw Error('production Graph did not materialize exactly one queued semantic Revision child');
    }
    else if(step.type==='mock.claim') {
     // External provider/adapter claim is simulated; legality is decided by the production Graph.
@@ -241,7 +229,7 @@ export async function runReplay(scenario) {
   const actual={jobState:prior.state,tasks:Object.fromEntries(prior.tasks.map(t=>[t.id,t.state])),plans:(prior.plans??[]).map(p=>({id:p.id,status:p.status,attempt:p.attempt,objectiveStatus:p.objectiveStatus})),localMerge:prior.localMerge??null};
   const errors=[];
   if(scenario.expected?.jobState && scenario.expected.jobState!==actual.jobState) errors.push(`job expected ${scenario.expected.jobState}, got ${actual.jobState}`);
-  for(const [id,state] of Object.entries(scenario.expected?.tasks??{})) if(actual.tasks[id]!==state)errors.push(`${id} expected ${state}, got ${actual.tasks[id]??'missing'}`);
+  for(const [id,state] of Object.entries(scenario.expected?.tasks??{})) { const resolvedId=id==='revision-head-1' ? prior.tasks.find(t=>t.revision?.kind==='targeted')?.id??id : id; if(actual.tasks[resolvedId]!==state)errors.push(`${id} expected ${state}, got ${actual.tasks[resolvedId]??'missing'}`); }
   for(const [id,state] of Object.entries(scenario.expected?.plans??{})) if(!actual.plans.some(p=>p.id===id&&p.status===state))errors.push(`Plan ${id} expected ${state}`);
   if(scenario.expected?.localMergeStatus && actual.localMerge?.status!==scenario.expected.localMergeStatus) errors.push(`merge expected ${scenario.expected.localMergeStatus}, got ${actual.localMerge?.status??'none'}`);
   for(const assertion of scenario.assertions??[]){

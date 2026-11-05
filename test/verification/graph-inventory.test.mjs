@@ -21,6 +21,7 @@ test('every executable graph is loaded by production, without an orphan or silen
   'authoritative-unblock.mmd',
   'blocker-resolution.mmd',
   'browser-worker-pool.mmd',
+  'dependency-revision.mmd',
   'escalation.mmd',
   'force-restate-validation.mmd',
   'interactive-invocation.mmd',
