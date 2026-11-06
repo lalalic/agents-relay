@@ -56,7 +56,7 @@ export async function driveShortcutWorkers(options: {
         });
         return { status: 'COMPLETED', job };
       }
-      if (job.tasks.some(task => task.state === 'BLOCKED')) return { status: 'WAITING_EVENT', job };
+      if (job.tasks.some(task => task.state === 'BLOCKED' || task.state === 'AWAITING_DECISION')) return { status: 'WAITING_EVENT', job };
       if (job.tasks.some(task => task.agentName === 'troubleshooter' && task.state === 'FAILED' && task.attempt >= task.maxAttempts))
         return { status: 'FAILED', job };
       await new Promise<void>(resolve => setTimeout(resolve, 350));

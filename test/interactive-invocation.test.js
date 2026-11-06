@@ -127,7 +127,7 @@ test('interactive decision events are normalized and fingerprints bind decision 
   assert.notEqual(interactiveDecisionFingerprint(delivery), interactiveDecisionFingerprint({ ...delivery, feedback: 'different' }));
 });
 
-test('external decision releases a DRAFT interactive Task and requeues the same Task', async () => {
+test('external decision releases an AWAITING_DECISION interactive Task and requeues the same Task', async () => {
   const fixture = await temporaryStore();
   const job = makeJob();
   await fixture.store.saveJob(job);
@@ -139,13 +139,13 @@ test('external decision releases a DRAFT interactive Task and requeues the same 
   const blocked = {
     ...decisionEvent(job.id, task.id, 'inv-1', 'sha256:v1', 'changes_requested'),
     event_id: 'worker-review-wait',
-    type: 'task.blocked',
-    status: 'blocked',
+    type: 'task.interactive_waiting',
+    status: 'waiting',
     message: 'External review required',
     data: {},
   };
   assert.equal((await reconciler.applyEvent(blocked)).applied, true);
-  assert.equal((await fixture.store.loadJob(job.id)).tasks[0].state, 'DRAFT');
+  assert.equal((await fixture.store.loadJob(job.id)).tasks[0].state, 'AWAITING_DECISION');
   const result = await reconciler.applyEvent(decisionEvent(job.id, task.id, 'inv-1', 'sha256:v1', 'changes_requested', 'revise narration'));
   assert.equal(result.reconcile, true);
   assert.equal(result.reason, 'task.interactive_decision.accepted');
@@ -171,7 +171,7 @@ test('SQLite decision recovers after event delivery loss and concurrent decision
   await reconciler.bindInteractiveInvocation(job.id, task, 'exec-1', 'inv-restart', 'immutable-revision');
   await reconciler.applyEvent({
     ...decisionEvent(job.id, task.id, 'inv-restart', 'immutable-revision', 'approved'),
-    type: 'task.blocked', status: 'blocked', message: 'Waiting for approval', data: {},
+    type: 'task.interactive_waiting', status: 'waiting', message: 'Waiting for approval', data: {},
   });
   const chosenEvent = decisionEvent(job.id, task.id, 'inv-restart', 'immutable-revision', 'approved', 'ready');
   const chosen = normalizeInteractiveDecision(chosenEvent);
@@ -260,4 +260,79 @@ test('generic host adapter adds Relay identity outside the UI decision payload',
   assert.equal(normalized.jobId, 'job');
   assert.equal(normalized.taskId, 'task');
   assert.equal(normalized.feedback, 'shorten credits');
+});
+
+test('an awaiting decision is a durable Task state, not an active execution or dependency draft', async () => {
+  const fixture = await temporaryStore();
+  const job = makeJob();
+  await fixture.store.saveJob(job);
+  const reconciler = managedReconciler(new ProjectedDurableStore(fixture.store, new InMemoryStore(job)), {
+    owner: 'awaiting-lifecycle', adapters: [],
+  });
+  const task = (await fixture.store.loadJob(job.id)).tasks[0];
+  await reconciler.bindInteractiveInvocation(job.id, task, 'exec-1', 'inv-await', 'revision-await');
+  const badBlock = {
+    ...decisionEvent(job.id, task.id, 'inv-await', 'revision-await', 'approved'),
+    event_id: 'invalid-task-blocked', type: 'task.blocked', status: 'blocked', data: {},
+  };
+  assert.equal((await reconciler.applyEvent(badBlock)).applied, false,
+    'ordinary worker cannot disguise an interactive handoff as a Troubleshooter block');
+  assert.equal((await fixture.store.loadJob(job.id)).tasks[0].state, 'RUNNING');
+  assert.equal((await reconciler.applyEvent({ ...badBlock,
+    event_id: 'valid-interactive-wait', type: 'task.interactive_waiting',
+  })).applied, true);
+  const waiting = await fixture.store.loadJob(job.id);
+  assert.equal(waiting.state, 'ACTIVE');
+  assert.equal(waiting.tasks[0].state, 'AWAITING_DECISION');
+  assert.equal(waiting.tasks[0].executionId, null);
+  assert.equal(waiting.tasks[0].leaseOwner, null);
+  const { jobHasActiveExecution } = await import('../dist/job-execution-slot.js');
+  const { deriveJobRuntimeStatus } = await import('../dist/runtime-status.js');
+  const { reconcileTaskDependencies } = await import('../dist/workflow/task-reconcile.js');
+  assert.equal(jobHasActiveExecution(waiting), false);
+  assert.equal(deriveJobRuntimeStatus(waiting), 'WAITING');
+  reconcileTaskDependencies(waiting);
+  assert.equal(waiting.tasks[0].state, 'AWAITING_DECISION', 'reconcile must never queue a waiting Task');
+  const { tryApplyTaskCancelAction } = await import('../dist/task-actions.js');
+  assert.equal(tryApplyTaskCancelAction(waiting.tasks[0], 'Cancelled while awaiting user'), true);
+  await fixture.store.saveJob(waiting);
+  const delayed = await reconciler.applyEvent(decisionEvent(job.id, task.id,
+    'inv-await', 'revision-await', 'approved', 'too late'));
+  assert.match(delayed.reason, /stale|ignored/);
+  assert.equal((await fixture.store.loadJob(job.id)).tasks[0].state, 'CANCELLED');
+  await reconciler.close();
+  await fixture.dispose();
+});
+
+test('SQLite startup migrates only legacy DRAFT interactive waits and preserves ordinary drafts', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'relay-wait-migration-'));
+  const dbPath = join(dir, 'relay.db');
+  const store = new SQLiteRelayStore(dbPath);
+  const waiting = { ...makeTask(), state: 'DRAFT', executionId: null,
+    leaseOwner: null, leaseExpiresAt: null,
+    interactiveInvocation: { invocationId: 'old-inv', revision: 'v1', executionId: 'exec-1',
+      status: 'awaiting_decision', boundAt: timestamp() } };
+  const ordinary = { ...makeTask(), id: 'draft-unstarted', state: 'DRAFT',
+    executionId: null, leaseOwner: null, leaseExpiresAt: null };
+  const heldAfterReview = { ...makeTask(), id: 'draft-held-after-review', state: 'DRAFT', attempt: 0,
+    executionId: null, leaseOwner: null, leaseExpiresAt: null,
+    interactiveInvocation: { invocationId: 'already-decided', revision: 'v1', executionId: 'exec-1',
+      status: 'approved', boundAt: timestamp(), decidedAt: timestamp() } };
+  await store.saveJob({ ...makeJob(waiting), tasks: [waiting, ordinary, heldAfterReview] });
+  store.close();
+  const reopened = new SQLiteRelayStore(dbPath);
+  const migrated = await reopened.loadJob('job-interactive');
+  assert.equal(migrated.tasks[0].state, 'AWAITING_DECISION');
+  assert.equal(migrated.tasks[1].state, 'DRAFT');
+  assert.equal(migrated.tasks[2].state, 'DRAFT');
+  assert.equal(migrated.tasks[0].interactiveInvocation.invocationId, 'old-inv');
+  const sql = new DatabaseSync(dbPath);
+  const durable = JSON.parse(sql.prepare('SELECT json FROM job_snapshot WHERE job_id=?')
+    .get('job-interactive').json);
+  assert.equal(durable.tasks[0].state, 'AWAITING_DECISION', 'migration must persist, not just decorate reads');
+  assert.equal(durable.tasks[1].state, 'DRAFT');
+  assert.equal(durable.tasks[2].state, 'DRAFT');
+  sql.close();
+  reopened.close();
+  await rm(dir, { recursive: true, force: true });
 });

@@ -87,7 +87,7 @@ npx agents-relay reconcile --repo OWNER/REPO --pr 12 --id job-1
 npx agents-relay job show --repo OWNER/REPO --pr 12 --id job-1
 ~~~
 
-Task readiness is explicit: `DRAFT` means the durable task exists but is not executable yet; `QUEUED` means Relay may execute it now; `RUNNING` means worker execution has started. Tasks created with dependencies start `DRAFT` and become `QUEUED` when those dependencies succeed. A dependency-free task created with `--draft` stays held until `task update --queue`. Once a task has run, external waiting is represented as `BLOCKED`, never by returning to `DRAFT`.
+Task readiness is explicit: `DRAFT` means the durable task exists but is not executable yet; `QUEUED` means Relay may execute it now; `RUNNING` means worker execution has started. Tasks created with dependencies start `DRAFT` and become `QUEUED` when those dependencies succeed. A dependency-free task created with `--draft` stays held until `task update --queue`. After binding an interactive request, a running Task may enter `AWAITING_DECISION` and release its Worker. Approved or changes-requested decisions requeue the same Task; `BLOCKED` is reserved for Troubleshooter escalation. Ordinary `DRAFT` Tasks remain unstarted/dependency-held.
 
 Mutable draft/queued/retryable task fields can be changed in place without replacing the durable task identity. `task update` rejects `RUNNING`, `SUCCEEDED`, and `CANCELLED` tasks so active execution and terminal history cannot be rewritten. For example:
 

@@ -306,7 +306,7 @@ export function serveDashboard(
       const repository = url.searchParams.get('repo') ?? undefined;
       const parsedPr = Number(url.searchParams.get('pr'));
       const prNumber = Number.isInteger(parsedPr) && parsedPr > 0 ? parsedPr : undefined;
-      const validState = ['DRAFT','QUEUED','RUNNING','BLOCKED','SUCCEEDED','FAILED','CANCELLED'].includes(requestedState);
+      const validState = ['DRAFT','QUEUED','RUNNING','AWAITING_DECISION','BLOCKED','SUCCEEDED','FAILED','CANCELLED'].includes(requestedState);
       if (req.method !== 'POST' || !/^[A-Za-z0-9_.-]+$/.test(requestedJobId) || !isTaskId(requestedTaskId) || !validState || !resolvedActions?.taskSetState) { res.writeHead(404); res.end('Task state override unavailable'); return; }
       try {
         const result = await resolvedActions.taskSetState(requestedJobId, requestedTaskId, requestedState as TaskState, { repository, prNumber });

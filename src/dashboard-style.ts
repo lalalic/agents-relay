@@ -77,7 +77,7 @@ export const dashboardStyles = `  <style>
     .job-status-line .badge { flex:0 0 auto; }
     .status-pill,.badge { display:inline-flex; align-items:center; border-radius:999px; padding:.06rem .42rem; min-height:1.35rem; font-size:.68rem; font-weight:800; }
     .status-pill.ok,.badge.ACTIVE,.badge.RUNNING,.badge.SUCCEEDED,.badge.COMPLETED,.badge.MERGED { background:#e5f3e9; color:var(--ok); }
-    .status-pill.warn,.badge.BLOCKED,.badge.DRAFT,.badge.QUEUED,.badge.WAITING,.badge.OPEN { background:#fff1d2; color:var(--warn); }
+    .status-pill.warn,.badge.BLOCKED,.badge.DRAFT,.badge.QUEUED,.badge.WAITING,.badge.AWAITING_DECISION,.badge.OPEN { background:#fff1d2; color:var(--warn); }
     .status-pill.bad,.badge.FAILED { background:#ffe8e8; color:var(--bad); }
     .status-pill.neutral,.badge.IDLE,.badge.CANCELLED { background:#edf0f4; color:var(--muted); }
     .badge.DRAFT { background:#eef2ff; color:#3f51b5; }

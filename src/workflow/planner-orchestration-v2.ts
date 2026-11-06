@@ -73,7 +73,7 @@ export function plannerOrchestrationFacts(job: Job, recoverablePendingPlan: bool
     hasSeedWork: !((job.plans?.length ?? 0) === 0 && job.tasks.filter(task => task.kind !== 'planner').length === 0),
     noActivePlanner: failedPlan?.manualPlanning ? false : unblockNeedsNewPlan(job) || !unconsumedUnblockTrigger(job) ? !scopedPlans.some(plan => plan.status === 'PLANNING') : false,
     noBlockedWork: Boolean(unconsumedUnblockTrigger(job)) || !scopedTasks.some(task => task.kind !== 'planner' && isEffectivelyBlocked(task)),
-    noActiveImplementation: !scopedTasks.some(task => task.kind !== 'planner' && (['QUEUED', 'RUNNING'].includes(task.state) || (task.state === 'DRAFT' && !task.unblock))),
+    noActiveImplementation: !scopedTasks.some(task => task.kind !== 'planner' && (['QUEUED', 'RUNNING', 'AWAITING_DECISION'].includes(task.state) || (task.state === 'DRAFT' && !task.unblock))),
     resolutionOwnedByTroubleshooter: scopedTasks.some(task => task.kind !== 'planner' && task.resolution?.owner === 'troubleshooter' && ['active', 'waiting'].includes(task.resolution.state)),
     continuationMaterialized: Boolean(unconsumedUnblockTrigger(job)) || !(latestObjective === 'in_progress' && latestId && !job.tasks.some(task => task.kind !== 'planner' && task.planningDecisionId === latestId)),
     objectiveUnsatisfied: latestObjective !== 'satisfied',

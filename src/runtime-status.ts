@@ -61,7 +61,7 @@ export function deriveJobRuntimeStatus(job: Job, _prState: PullRequestRuntimeSta
   if (job.tasks.some(task => task.state === 'BLOCKED')) return 'BLOCKED';
   const staleRevisions = staleTargetedRevisionTaskIds(job);
   if (job.tasks.some(task => task.state === 'FAILED' && !staleRevisions.has(task.id))) return 'FAILED';
-  if (job.tasks.some(task => task.state === 'DRAFT')) return 'WAITING';
+  if (job.tasks.some(task => task.state === 'AWAITING_DECISION' || task.state === 'DRAFT')) return 'WAITING';
   if (plannerFailed) return 'FAILED';
   if (plannerRunning) return 'RUNNING';
 
