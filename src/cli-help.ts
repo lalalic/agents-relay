@@ -11,6 +11,7 @@ Commands:
   job create|update|show|list|run|shortcut-receipt|merge|unblock|cancel|pause|resume  Manage SQLite-authoritative jobs with optional GitHub PRs
   task create|update|show|list|revise|classify|complete|retry|unblock|cancel  Manage durable tasks
   review job               Request graph-owned review (optional thread override)
+  review interactive       Bind, wait, ready, fail or abort a host-owned human review
   artifact validate        Check a JSON artifact against a project-owned JSON Schema
   plan                     Invoke the Planner for an existing managed Job
   plan apply               Submit a validated Task Tree within one active Plan
@@ -87,7 +88,7 @@ not GitHub. Old completed Plans are reconstructed from recorded IDs and prior
 Task history; their original historical prompt bytes are not persisted. Only
 Codex currently has production Planner dispatch. Web Planner variants show the
 same Builder message targeting the other transports, not a live delivery.`,
-  review: `Use review run for an Agent-owned outcome review, or review job for the SHA-bound final review.
+  review: `Use review run for Agent-owned outcome review, review job for final review, or review interactive for host-owned human review.
 
 Outcome: agents-relay review run --prompt-file PATH --agents video-director,market --project-path DIR [--output PATH]
 The generic Outcome Reviewer is implicit. Exit 0=PASS, 10=CHANGE_REQUIRED, 20=BLOCKED. The caller owns repair and re-review.
@@ -96,7 +97,15 @@ Request a new SHA-bound reviewer turn through the existing Relay lifecycle.
 
 Usage: npx agents-relay review job --repo OWNER/REPO --pr NUMBER --id JOB_ID [--thread-id THREAD_ID]
 
-When provided, --thread-id persists a reviewer destination; otherwise the Job reviewer thread, then creator thread, then legacy review route is used. The command wakes Relay. Review Task creation, idempotency, routing and delivery remain graph/daemon-owned. Rejects in-flight/queued reviews; does not itself mark review delivered.`,
+When provided, --thread-id persists a reviewer destination; otherwise the Job reviewer thread, then creator thread, then legacy review route is used. The command wakes Relay. Review Task creation, idempotency, routing and delivery remain graph/daemon-owned. Rejects in-flight/queued reviews; does not itself mark review delivered.
+
+Managed host interaction (Node Wrapper normally calls these automatically):
+  agents-relay review interactive begin --id JOB --task-id TASK --execution-id EXEC
+  agents-relay review interactive wait --id JOB --task-id TASK --execution-id EXEC --invocation-id INV
+  agents-relay review interactive ready --id JOB --task-id TASK --execution-id EXEC --invocation-id INV --revision SHA256
+  agents-relay review interactive fail --id JOB --task-id TASK --execution-id EXEC --invocation-id INV --reason REASON
+  agents-relay review interactive abort --id JOB --task-id TASK --execution-id EXEC --invocation-id INV
+The CLI controls the running Relay daemon; this is not a separate Worker step.`,
   artifact: `Check a JSON artifact against a project-owned JSON Schema. Read-only; does not affect Task state or planning.
 
 Usage: agents-relay artifact validate --artifact PATH --schema PATH
