@@ -10,7 +10,7 @@ Usage:
 Commands:
   job create|update|show|list|run|shortcut-receipt|merge|unblock|cancel|pause|resume  Manage SQLite-authoritative jobs with optional GitHub PRs
   task create|update|show|list|revise|classify|complete|retry|unblock|cancel  Manage durable tasks
-  review request           Request graph-owned review (optional thread override)
+  review job               Request graph-owned review (optional thread override)
   artifact validate        Check a JSON artifact against a project-owned JSON Schema
   plan                     Invoke the Planner for an existing managed Job
   plan apply               Submit a validated Task Tree within one active Plan
@@ -87,14 +87,14 @@ not GitHub. Old completed Plans are reconstructed from recorded IDs and prior
 Task history; their original historical prompt bytes are not persisted. Only
 Codex currently has production Planner dispatch. Web Planner variants show the
 same Builder message targeting the other transports, not a live delivery.`,
-  review: `Use review run for an Agent-owned outcome review, or request for the SHA-bound final review.
+  review: `Use review run for an Agent-owned outcome review, or review job for the SHA-bound final review.
 
 Outcome: agents-relay review run --prompt-file PATH --agents video-director,market --project-path DIR [--output PATH]
 The generic Outcome Reviewer is implicit. Exit 0=PASS, 10=CHANGE_REQUIRED, 20=BLOCKED. The caller owns repair and re-review.
 
 Request a new SHA-bound reviewer turn through the existing Relay lifecycle.
 
-Usage: npx agents-relay review request --repo OWNER/REPO --pr NUMBER --id JOB_ID [--thread-id THREAD_ID]
+Usage: npx agents-relay review job --repo OWNER/REPO --pr NUMBER --id JOB_ID [--thread-id THREAD_ID]
 
 When provided, --thread-id persists a reviewer destination; otherwise the Job reviewer thread, then creator thread, then legacy review route is used. The command wakes Relay. Review Task creation, idempotency, routing and delivery remain graph/daemon-owned. Rejects in-flight/queued reviews; does not itself mark review delivered.`,
   artifact: `Check a JSON artifact against a project-owned JSON Schema. Read-only; does not affect Task state or planning.
@@ -106,7 +106,7 @@ Exit 0 on PASS, 1 on schema mismatch or invalid input. Returns JSON { valid, err
 Usage: agents-relay review run (--prompt TEXT | --prompt-file PATH) [--project-path DIR] [--agents role,role] [--output PATH]
 
 Return codes: 0 PASS, 10 CHANGE_REQUIRED, 20 BLOCKED; CLI/worker errors fail separately.`,
-  'review request': `Request a review in an existing ChatGPT thread.
+  'review job': `Request a review in an existing ChatGPT thread.
 
 Required: --repo OWNER/REPO --pr NUMBER --id JOB_ID.
 Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job reviewer/creator thread or legacy route. Rejects pending reviews and wakes managed reconciliation.`,

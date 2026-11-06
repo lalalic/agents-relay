@@ -38,7 +38,9 @@ These are alternative commands for Task and Planner executions. Both fail closed
 
 ## 3. Verify, review, and recover
 
-Use the pinned CLI to inspect authoritative status, Task events, comments, and review evidence. A worker's process exit, browser submission receipt, or emitted event is **not** proof of durable completion. Task agents publish `task.started`, optional `task.progress`, and exactly one correlated terminal `task.completed` or `task.failed` via the canonical `events-bus` capability. Never emit `task.blocked` as a worker terminal outcome. Read `contracts/event-contract.md` for exact identity, event semantics, and reviewer verdict payloads; implementation agents also follow `contracts/worker-self-review.md`.
+Use the pinned CLI to inspect authoritative status, Task events, comments, and review evidence. For SHA-bound final Job review, use `agents-relay review job --repo OWNER/REPO --pr NUMBER --id JOB_ID [--thread-id THREAD_ID]`; for independent Agent-owned outcome review, use `agents-relay review run --prompt-file PATH --project-path DIR`.
+
+A worker's process exit, browser submission receipt, or emitted event is **not** proof of durable completion. Task agents publish `task.started`, optional `task.progress`, and exactly one correlated terminal `task.completed` or `task.failed` via the canonical `events-bus` capability. Never emit `task.blocked` as a worker terminal outcome. Read `contracts/event-contract.md` for exact identity, event semantics, and reviewer verdict payloads; implementation agents also follow `contracts/worker-self-review.md`.
 
 A Reviewer finding defects in a known immutable head emits `task.completed` with `data.verdict: changes-required`, `data.head_sha`, and actionable findings—not `task.failed`. If the Reviewer cannot establish the required head or produce a valid review, it reports an execution failure with `task.failed`, not an invented verdict.
 
