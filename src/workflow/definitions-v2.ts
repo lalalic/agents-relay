@@ -7,7 +7,7 @@ import {
   WORKFLOW_MUTATION_NAMES,
 } from './contracts.js';
 
-const TASK_STATES = ['DRAFT','QUEUED','RUNNING','BLOCKED','SUCCEEDED','FAILED','CANCELLED'] as const;
+const TASK_STATES = ['DRAFT','QUEUED','RUNNING','AWAITING_DECISION','BLOCKED','SUCCEEDED','FAILED','CANCELLED'] as const;
 const JOB_STATES = ['DRAFT','ACTIVE','COMPLETED','CANCELLED'] as const;
 
 const conditionRegistry = new ConditionRegistry([

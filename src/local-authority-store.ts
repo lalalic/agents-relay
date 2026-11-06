@@ -18,7 +18,7 @@ import { publishLocalCommit } from './local-commit-events.js';
  * not lifecycle storage. An explicit one-time import must use RelayStore directly.
  */
 const TASK_STATE_ORDER: Record<Task['state'], number> = {
-  DRAFT: 0, QUEUED: 1, RUNNING: 2, BLOCKED: 3,
+  DRAFT: 0, QUEUED: 1, RUNNING: 2, AWAITING_DECISION: 3, BLOCKED: 4,
   SUCCEEDED: 5, FAILED: 5, CANCELLED: 5,
 };
 

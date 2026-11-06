@@ -1,7 +1,7 @@
 import { assertV2StateTransition, jobLifecycleV2, taskLifecycleV2 } from './workflow/definitions-v2.js';
 export type JobLifecycleState = 'DRAFT' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
 export type JobRuntimeStatus = 'IDLE' | 'WAITING' | 'QUEUED' | 'RUNNING' | 'BLOCKED' | 'FAILED' | 'REVIEWING' | 'MERGE_PENDING' | 'MERGED' | 'COMPLETED' | 'CANCELLED';
-export type TaskState = 'DRAFT' | 'QUEUED' | 'RUNNING' | 'BLOCKED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
+export type TaskState = 'DRAFT' | 'QUEUED' | 'RUNNING' | 'AWAITING_DECISION' | 'BLOCKED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
 export type JobTag = { description: string; values: Record<string, string> };
 export type Priority = 'P0' | 'P1' | 'P2' | 'P3';
 export type WorkerAdapterName = 'codex' | 'chatgpt' | 'z';
@@ -230,6 +230,15 @@ export function normalizeLegacyTaskLifecycle(task: Task): Task {
     task.failureReason ??= 'legacy_unblocked_task_requires_recovery';
     task.maxAttempts = Math.max(3, task.maxAttempts ?? 0, task.attempt + 1);
     task.unblock = task.unblock ? { ...task.unblock, event: 'task.unblocked' } : undefined;
+  }
+  // Migrate persisted interactive waits from their former overloaded DRAFT state.
+  // Ordinary dependency-held DRAFT Tasks remain untouched.
+  if (legacy.state === 'DRAFT' && task.attempt > 0 && task.interactiveInvocation &&
+      !task.executionId && task.interactiveInvocation.boundAt && !task.unblock &&
+      (task.interactiveInvocation.status === 'awaiting_decision' ||
+       (Boolean(task.interactiveInvocation.decidedAt) &&
+        Date.parse(task.updatedAt) <= Date.parse(task.interactiveInvocation.decidedAt!)))) {
+    legacy.state = 'AWAITING_DECISION';
   }
   if (legacy.state === 'BLOCKED' && task.kind !== 'planner' && task.agentName !== 'troubleshooter') {
     legacy.state = 'FAILED';

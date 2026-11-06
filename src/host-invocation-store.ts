@@ -77,13 +77,13 @@ export function recordHostInvocationDecision(
     const job = snapshot?.json ? JSON.parse(snapshot.json) as Job : null;
     const task = job?.tasks.find(item => item.id === delivery.taskId);
     const invocation = task?.interactiveInvocation;
-    const bound = invocation && ['RUNNING', 'DRAFT'].includes(task?.state ?? '') &&
+    const bound = invocation && ['RUNNING', 'AWAITING_DECISION'].includes(task?.state ?? '') &&
       invocation.executionId === delivery.executionId &&
-      (task?.executionId === delivery.executionId || task?.state === 'DRAFT') &&
+      (task?.executionId === delivery.executionId || task?.state === 'AWAITING_DECISION') &&
       invocation.status === 'awaiting_decision' && invocation.invocationId === delivery.invocationId &&
       invocation.revision === delivery.revision;
     // Event-only reviews are claims against an ACTIVE execution, not permission to
-    // release an arbitrary DRAFT/failed/cancelled Task or replay an older revision.
+    // release an arbitrary waiting/failed/cancelled Task or replay an older revision.
     const active = job?.state === 'ACTIVE' && task?.state === 'RUNNING' &&
       task.executionId === delivery.executionId && eventOnlyReviewEligible(delivery);
     const seen = db.prepare('SELECT 1 FROM host_invocation_decision WHERE job_id=? AND task_id=? AND execution_id=? AND revision=?')

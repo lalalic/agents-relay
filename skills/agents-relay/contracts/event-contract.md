@@ -42,6 +42,24 @@ The automatically created `job-acceptance-reviewer` (historical `reviewer` recor
 A fix child reports its **own** correlated completion after verified repair. Downstream `dependencyValidity` policy is `order-only` by default, or explicitly `revalidate`/`rerun` per declared input. All changed upstream generations must settle before a fan-in consumer can verify or rerun. Relay derives successful revision lineage from durable Task results, then creates another fresh immutable-head Job Acceptance Review. A partially submitted message, unverified terminal, historical result or stale source SHA does not count as a fix or approval.
 
 
+## Interactive Task suspension
+
+After binding a host invocation, a RUNNING Worker waiting for human input
+publishes `task.interactive_waiting` with its exact Job/Task/Execution source identity.
+Relay checks the pending invocation, persists RUNNING -> AWAITING_DECISION,
+clears the execution lease, and releases the Worker. This is a non-failure
+handoff and is not a Task completion or a Troubleshooter block.
+The Job stays ACTIVE; the Task does not requeue until a matching
+`task.interactive_decision` is durably accepted and the Task Graph selects
+`interactive.resume` -> QUEUED. Retries and daemon restarts must not create
+another Task. Cancellation remains legal while awaiting a decision.
+
+The invocation record holds immutable request/revision identity and the
+decision outcome. Its status is not the authority for the Task execution
+lifecycle; Task.state is. The older overloaded DRAFT waiting snapshots
+are normalized to AWAITING_DECISION when the SQLite store starts.
+Do not use `task.blocked` to suspend an interactive Task.
+
 ## Generic interactive decision event (human review)
 
 **Canonical type:** `task.interactive_decision`. This is a human decision for an in-progress Task (video preview, document review, image approval, etc.), **not** an Implementation terminal event or a Job Final Reviewer verdict. A UI such as Markcut is a generic publisher: it receives a caller-supplied template and fills only the declared review-result fields. It must not invent Task/Execution/source identity or a new Relay-specific event type.

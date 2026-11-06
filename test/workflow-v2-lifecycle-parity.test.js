@@ -35,6 +35,9 @@ const taskCases = [
   ['RUNNING','worker.platform_failure',{},'FAILED'],
   ['QUEUED','cancel',{},'CANCELLED'],
   ['RUNNING','task.blocked',{},'FAILED'],
+  ['RUNNING','task.interactive_waiting',{awaitingInteractiveDecision:true},'AWAITING_DECISION'],
+  ['AWAITING_DECISION','interactive.resume',{},'QUEUED'],
+  ['AWAITING_DECISION','cancel',{},'CANCELLED'],
   ['RUNNING','task.progress',{},'RUNNING'],
   ['RUNNING','review.approved',{},'SUCCEEDED'],
   ['RUNNING','review.changes_required',{},'SUCCEEDED'],
@@ -73,7 +76,7 @@ const taskSource = readFileSync(new URL('../workflow/task-lifecycle.mmd', import
 const jobSource = readFileSync(new URL('../workflow/job-lifecycle.mmd', import.meta.url), 'utf8');
 
 const taskRuntime = new GraphRuntime(taskSource, {
-  states: new Set(['DRAFT','QUEUED','RUNNING','BLOCKED','SUCCEEDED','FAILED','CANCELLED']),
+  states: new Set(['DRAFT','QUEUED','RUNNING','AWAITING_DECISION','BLOCKED','SUCCEEDED','FAILED','CANCELLED']),
   guards: {
     dependenciesSatisfied: boolGuard('dependenciesSatisfied'),
     dependenciesUnsatisfied: boolGuard('dependenciesUnsatisfied'),
@@ -93,7 +96,7 @@ const taskRuntime = new GraphRuntime(taskSource, {
     platformFallbackSafe: boolGuard('platformFallbackSafe'),
     noStartFallbackAllowed: boolGuard('noStartFallbackAllowed'),
   },
-  events: eventRegistry([...taskCases.map(([,event]) => event), 'interactive.waiting', 'shortcut.waiting', 'shortcut.failed', 'shortcut.result', 'effect.launchShortcut.failed', 'effect.resumeShortcut.failed', 'task.progress', 'lease.expired', 'planner.failed', 'planner.unavailable', 'execution.orphaned', 'queue', 'recovery.reopen', 'pause']),
+  events: eventRegistry([...taskCases.map(([,event]) => event), 'task.interactive_waiting', 'shortcut.waiting', 'shortcut.failed', 'shortcut.result', 'effect.launchShortcut.failed', 'effect.resumeShortcut.failed', 'task.progress', 'lease.expired', 'planner.failed', 'planner.unavailable', 'execution.orphaned', 'queue', 'recovery.reopen', 'pause']),
   actions: actionRegistry(['mutation.clearError','mutation.clearFailureReason','mutation.clearLease','mutation.clearExecution','mutation.markLeaseExpired','mutation.markStartupOrphanedExhausted','mutation.markUnknownOutcome','mutation.markPlannerUnavailable','mutation.markShortcutWorkerFallback','mutation.markShortcutRecoveryRequired','mutation.preparePlatformFallback','mutation.quarantinePlatformFailure','mutation.prepareNoStartFallback','effect.launchTask','effect.launchShortcut','effect.resumeShortcut']),
 });
 

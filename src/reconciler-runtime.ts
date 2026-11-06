@@ -95,7 +95,7 @@ export abstract class ReconcilerRuntimeBase {
       const normalized = isFinalReviewAgent(task?.agentName) ? normalizeReviewerTerminalEvent(event) : null;
       if (normalized) return normalized.type === 'task.failed' ? this.applyTerminalEvent(normalized) : this.applyReviewEvent(normalized);
     }
-    if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) {
+    if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled', 'task.interactive_waiting'].includes(event.type)) {
       const result = await this.applyTerminalEvent(event);
       if (event.type !== 'task.failed' || event.source?.watchdog !== true || event.data?.workflowEvent !== 'watchdog.failed' || result.reconcile) return result;
       const durable = (await this.store.load(event.job_id)).tasks.find(task => task.id === event.task_id);
@@ -375,14 +375,15 @@ export abstract class ReconcilerRuntimeBase {
       }
     }
     const liveAtTerminal = this.live.get(event.task_id); const terminalEventExecutionId = executionIdFromSource(eventSourceId(event), event.job_id, event.task_id);
-    const lifecycleEvent = event.type === 'task.blocked'
-      ? (await this.store.load(event.job_id)).tasks.find(task => task.id === event.task_id)?.interactiveInvocation?.status === 'awaiting_decision'
-        ? 'interactive.waiting' : event.type
-      : event.type;
+    const lifecycleEvent = event.type;
     const transition = await withExecutionBoundary(event.job_id, event.task_id, () => this.taskTransitions.apply(event.job_id, event.task_id, lifecycleEvent, {
       eligible: (_job, task) => {
         if (!['codex', 'chatgpt', 'z', 'orchestrator'].includes(task.adapter)) return false;
-        if (event.type === 'task.blocked' && lifecycleEvent !== 'interactive.waiting' && (!trustedInternal || task.agentName !== 'troubleshooter')) return false;
+        if (event.type === 'task.blocked' && (!trustedInternal || task.agentName !== 'troubleshooter')) return false;
+        if (event.type === 'task.interactive_waiting' &&
+            (task.interactiveInvocation?.status !== 'awaiting_decision' ||
+             task.interactiveInvocation.executionId !== task.executionId ||
+             !isCorrelatedWorkerEvent(task, event))) return false;
         if (isFinalReviewAgent(task.agentName) && event.type === 'task.completed') return false;
         if (event.type === 'task.completed' && task.interactiveInvocation?.status !== undefined && task.interactiveInvocation.status !== 'approved') return false; // current interactive revision requires durable approval
         const modelBacked = ['codex', 'chatgpt', 'z'].includes(task.adapter);
@@ -397,7 +398,7 @@ export abstract class ReconcilerRuntimeBase {
       facts: (_job, task) => {
         const processExitedAfterPublishedTerminal = task.failureReason === 'worker_exit_without_terminal_event';
         const freshEnough = processExitedAfterPublishedTerminal || isCorrelatedWorkerEvent(task, event);
-        return { recoverableExecution: isRecoverableWatchdogFailure(task) && freshEnough, awaitingInteractiveDecision: lifecycleEvent === 'interactive.waiting' && task.interactiveInvocation?.status === 'awaiting_decision' };
+        return { recoverableExecution: isRecoverableWatchdogFailure(task) && freshEnough, awaitingInteractiveDecision: lifecycleEvent === 'task.interactive_waiting' && task.interactiveInvocation?.status === 'awaiting_decision' };
       },
       mutate: (job, task) => {
         const modelBacked = ['codex', 'chatgpt', 'z'].includes(task.adapter);
@@ -424,7 +425,7 @@ export abstract class ReconcilerRuntimeBase {
         } else if (event.type === 'task.failed') {
           task.error = event.message || `Task ${task.id} failed`;
           task.failureReason = typeof event.data?.reason === 'string' ? event.data.reason : undefined;
-        } else if (event.type === 'task.blocked' && lifecycleEvent !== 'interactive.waiting') {
+        } else if (event.type === 'task.blocked') {
           task.error = event.message || `Task ${task.id} blocked`;
           const data = event.data ?? {};
           const head = ['candidate_head', 'candidate_head_sha', 'pr_head', 'head_sha']
@@ -442,11 +443,11 @@ export abstract class ReconcilerRuntimeBase {
       },
     }));
     if (!transition?.decision.accepted) return { applied: false, reconcile: false, reason: `${event.type}.ignored` };
-    if (lifecycleEvent !== 'interactive.waiting') await recordTerminalRouteOutcome(this.options.decisionAuditStore, transition.task, event, terminalEventExecutionId ?? null);
+    if (lifecycleEvent !== 'task.interactive_waiting') await recordTerminalRouteOutcome(this.options.decisionAuditStore, transition.task, event, terminalEventExecutionId ?? null);
     if (transition.task.adapter === 'codex' && liveAtTerminal && !liveAtTerminal.processSettled && liveAtTerminal.jobId === event.job_id && (!terminalEventExecutionId || liveAtTerminal.executionId === terminalEventExecutionId)) { liveAtTerminal.controller.abort(); liveAtTerminal.execution.cancel(); }
     if (event.type === 'task.completed') await this.deliverContinuation(transition.job, transition.task);
     const reviewWorker = isFinalReviewAgent(transition.task.agentName);
-    return { applied: true, reconcile: lifecycleEvent !== 'interactive.waiting' && (!reviewWorker || event.type === 'task.failed'), reason: reviewWorker ? `${event.type}.review-worker` : event.type, reconcileMode: reviewWorker || lifecycleEvent === 'interactive.waiting' ? undefined : 'detached' };
+    return { applied: true, reconcile: lifecycleEvent !== 'task.interactive_waiting' && (!reviewWorker || event.type === 'task.failed'), reason: reviewWorker ? `${event.type}.review-worker` : event.type, reconcileMode: reviewWorker || lifecycleEvent === 'task.interactive_waiting' ? undefined : 'detached' };
   }
   protected terminalWait(taskId: string, executionId: string, launchBarrier: number): { promise: Promise<void>; cancel: () => void } {
     let resolve!: () => void;

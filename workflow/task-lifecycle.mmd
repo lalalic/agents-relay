@@ -7,6 +7,7 @@ flowchart LR
 draft["state: DRAFT"]
 queued["state: QUEUED"]
 running["state: RUNNING"]
+awaitingDecision["state: AWAITING_DECISION"]
 blocked["state: BLOCKED"]
 succeeded["state: SUCCEEDED"]
 failed["state: FAILED"]
@@ -168,12 +169,14 @@ leaseFailQueuedClearLease --> leaseFailQueuedClearExecution
 leaseFailQueuedClearExecution --> failed
 queued -->|on: cancel| cancelled
 
-running -->|on: interactive.waiting| interactiveWaitAllowed
+running -->|on: task.interactive_waiting| interactiveWaitAllowed
 interactiveWaitAllowed -->|true| runningWaitClearLease
 runningWaitClearLease["action: mutation.clearLease"]
 runningWaitClearLease --> runningWaitClearExecution
 runningWaitClearExecution["action: mutation.clearExecution"]
-runningWaitClearExecution --> draft
+runningWaitClearExecution --> awaitingDecision
+awaitingDecision -->|on: interactive.resume| releaseClearError
+awaitingDecision -->|on: cancel| cancelled
 running -->|on: task.blocked| runningBlockAllowed
 runningBlockAllowed -->|true| blocked
 runningBlockAllowed -->|false| failed
