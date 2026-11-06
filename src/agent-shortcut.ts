@@ -95,7 +95,7 @@ function shortcutJobCompletionAllowed(job: Job): boolean {
 
 async function runCommand(args: string[], cwd: string, signal: AbortSignal): Promise<{ stdout: string; stderr: string; code: number }> {
   if (!Array.isArray(args) || args.length === 0 || args.some(item => typeof item !== 'string')) throw new Error('runCommand requires a non-empty argument array');
-  const child = spawnOwnedProcess(args[0], args.slice(1), { invocation: 'shortcut.run-command', timeoutMs: 300_000, signal, spawn: { cwd, stdio: ['ignore','pipe','pipe'] } });
+  const child = spawnOwnedProcess(args[0], args.slice(1), { invocation: 'shortcut.run-command', signal, spawn: { cwd, stdio: ['ignore','pipe','pipe'] } });
   let stdout = '', stderr = '';
   child.stdout?.setEncoding('utf8'); child.stderr?.setEncoding('utf8');
   child.stdout?.on('data', chunk => { stdout += String(chunk); }); child.stderr?.on('data', chunk => { stderr += String(chunk); });
@@ -190,8 +190,7 @@ export async function runAgentShortcut(options: {
   if (currentTask.agentGraph !== task.agentGraph || currentTask.input !== task.input)
     throw new Error('Shortcut invocation Task snapshot is stale; reload the durable Task before execution or receipt consumption');
   if(currentJob.executionMode!=='shortcut'||currentJob.contentOnly!==true) throw new Error('Shortcut execution requires durable shortcut and content-only Job policy');
-  if (currentJob.shortcutExecutionDeadlineAt && !Number.isFinite(Date.parse(currentJob.shortcutExecutionDeadlineAt))) throw new Error('Shortcut execution budget metadata is invalid');
-  if (currentJob.shortcutExecutionStartedAt && !Number.isFinite(Date.parse(currentJob.shortcutExecutionStartedAt))) throw new Error('Shortcut execution budget metadata is invalid');
+  if (currentJob.shortcutExecutionStartedAt && !Number.isFinite(Date.parse(currentJob.shortcutExecutionStartedAt))) throw new Error('Shortcut execution start metadata is invalid');
   const existingShortcut=currentTask.result?.data?.shortcut as {workerFallback?:boolean}|undefined;
   if(existingShortcut?.workerFallback===true) throw new Error('Task is durably routed to the original Worker; shortcut execution is not authorized');
   if (currentJob.state!=='ACTIVE' || currentJob.pause) throw new Error(`Job ${job.id} is not runnable (${currentJob.state}${currentJob.pause?' paused':''})`);
@@ -231,7 +230,6 @@ export async function runAgentShortcut(options: {
       t.attempt += 1; t.executionId = randomUUID(); t.leaseOwner = owner;
       t.leaseExpiresAt = new Date(Date.now() + leaseMs).toISOString();
       if (!fresh.shortcutExecutionStartedAt) fresh.shortcutExecutionStartedAt = new Date().toISOString();
-      if (!fresh.shortcutExecutionDeadlineAt) fresh.shortcutExecutionDeadlineAt = new Date(Date.parse(fresh.shortcutExecutionStartedAt) + 20*60*1000).toISOString();
       t.executionHistory = [...(t.executionHistory ?? []), { id: t.executionId, attempt: t.attempt, startedAt: new Date().toISOString() }].slice(-8);
       return fresh;
     });
@@ -283,20 +281,13 @@ export async function runAgentShortcut(options: {
   if (Object.keys(state.nodes).length > Object.keys(checkpoint(currentTask).nodes).length) await persist(state);
 
   currentJob=await store.load(job.id);
-  if(!currentJob.shortcutExecutionStartedAt) throw new Error('Direct shortcut Job has no durable first-execution timestamp; refusing to start or reset its budget');
-  const startedAt=Date.parse(currentJob.shortcutExecutionStartedAt);
-  const deadlineAt=currentJob.shortcutExecutionDeadlineAt ? Date.parse(currentJob.shortcutExecutionDeadlineAt) : startedAt+20*60*1000;
-  if(!Number.isFinite(startedAt)||!Number.isFinite(deadlineAt)||deadlineAt!==startedAt+20*60*1000) throw new Error('Shortcut execution budget metadata is invalid');
-  if(!currentJob.shortcutExecutionDeadlineAt) {
-    await store.mutateJob(job.id,fresh=>{
-      if(fresh.shortcutExecutionStartedAt!==currentJob.shortcutExecutionStartedAt) throw new Error('Shortcut execution budget origin changed');
-      fresh.shortcutExecutionDeadlineAt=new Date(deadlineAt).toISOString(); return fresh;
-    });
-  }
+  // Keep the first execution timestamp for progress/optimization metrics only.
+  // Twenty minutes is an orchestrator target, never an execution deadline.
+  if(!currentJob.shortcutExecutionStartedAt || !Number.isFinite(Date.parse(currentJob.shortcutExecutionStartedAt)))
+    throw new Error('Direct shortcut Job has no durable first-execution timestamp');
   const executionAbort=new AbortController();
   const abortFromCaller=():void=>executionAbort.abort(options.signal?.reason ?? new Error('Shortcut execution interrupted'));
   if(options.signal?.aborted) abortFromCaller(); else options.signal?.addEventListener('abort',abortFromCaller,{once:true});
-  const budgetTimer=setTimeout(()=>executionAbort.abort(new Error('Shortcut execution budget exceeded (20 minutes)')),Math.max(0,deadlineAt-Date.now()));
   let leaseHeartbeatError:unknown;
   let heartbeatInFlight=false;
   const heartbeat=setInterval(()=>{
@@ -312,11 +303,10 @@ export async function runAgentShortcut(options: {
     }).catch(error=>{leaseHeartbeatError=error;executionAbort.abort(error);}).finally(()=>{heartbeatInFlight=false;});
   },heartbeatMs);
   heartbeat.unref();
-  const stopHeartbeat=():void=>{clearInterval(heartbeat);clearTimeout(budgetTimer);options.signal?.removeEventListener('abort',abortFromCaller);};
+  const stopHeartbeat=():void=>{clearInterval(heartbeat);options.signal?.removeEventListener('abort',abortFromCaller);};
   const emit=(event: Omit<ShortcutNodeEvent,'timestamp'>):void=>options.onNodeEvent?.({...event,timestamp:new Date().toISOString()});
 
   try {
-  if(Date.now()>=deadlineAt) return await fail('Shortcut execution budget exceeded (20 minutes)');
   // The existing Graph executor owns node readiness for both code and model
   // nodes. Model nodes execute using Relay's existing durable Worker adapter,
   // never by routing the entire Agent Graph to one Worker.
@@ -426,9 +416,8 @@ export async function runAgentShortcut(options: {
   }
   async function findTask(): Promise<Task> { const fresh=await store.load(job.id); const found=fresh.tasks.find(item=>item.id===task.id); if (!found) throw new Error('Task disappeared'); return found; }
   async function fail(reason: string): Promise<{ outcome: ShortcutOutcome; task: Task; fallback: boolean }> {
-    const timedOut=reason.includes('budget exceeded') || Date.now()>=deadlineAt;
-    const interrupted=options.signal?.aborted===true && !timedOut;
-    const failure=timedOut?`Shortcut execution timed out after 20 minutes: ${reason}`:interrupted?`Shortcut execution interrupted: ${reason}`:reason;
+    const interrupted=options.signal?.aborted===true;
+    const failure=interrupted?`Shortcut execution interrupted: ${reason}`:reason;
     for(const nodeId of Object.keys(state.inFlight??{})) emit({nodeId,type:'failed',data:{executionId:currentTask!.executionId!,reason:failure}});
     stopHeartbeat();
     const result=await transitions.apply(job.id,task.id,'shortcut.failed',{
@@ -437,7 +426,7 @@ export async function runAgentShortcut(options: {
         t.error=failure;
         t.leaseOwner=null; t.leaseExpiresAt=null; t.executionId=null;
         const prior=t.result??{summary:'Shortcut execution failed',data:{}};
-        t.result={...prior,summary:failure,data:{...(prior.data??{}),shortcut:{...state,terminal:{status:timedOut?'TIMED_OUT':interrupted?'INTERRUPTED':'FAILED',reason:failure,at:new Date().toISOString(),executionId:currentTask!.executionId}}}};
+        t.result={...prior,summary:failure,data:{...(prior.data??{}),shortcut:{...state,terminal:{status:interrupted?'INTERRUPTED':'FAILED',reason:failure,at:new Date().toISOString(),executionId:currentTask!.executionId}}}};
       },
     });
     if (!result?.decision.accepted) throw new Error(`Task lifecycle graph rejected shortcut failure: ${failure}`);

@@ -4,6 +4,7 @@ import { createTaskEntity } from './workflow/entity-creation.js';
 import type { DurableStore } from './store.js';
 import type { Reconciler } from './reconciler.js';
 import type { Job, Task } from './types.js';
+import { taskOverallTimeoutMs } from './types.js';
 
 /** A model node stays within its original Shortcut Job. Its durable child Task
  * uses the existing Relay Worker adapter, lifecycle Graph and Troubleshooter.
@@ -29,12 +30,10 @@ export async function runShortcutModelNode(options: {
   if(sourceRef && (!declaredRun || dirname(resolve(sourceRef))!==resolve(runRoot)))
     throw new Error('Shortcut Worker source evidence is not confined to the declared canonical run');
   const outputPath=join(runRoot,'.shortcut-node-results',`${taskId}.json`);
+  // No wall-clock cutoff. Child Workers use their standard progress-renewed
+  // inactivity watchdog; the foreground Shortcut parent keeps its lease live.
   const started=initial.shortcutExecutionStartedAt && Date.parse(initial.shortcutExecutionStartedAt);
-  if(!started||!Number.isFinite(started)) throw new Error('Model node has no immutable Shortcut deadline origin');
-  const deadline=started+20*60_000;
-  if(initial.shortcutExecutionDeadlineAt && Date.parse(initial.shortcutExecutionDeadlineAt)!==deadline)
-    throw new Error('Model node deadline differs from the original execution budget');
-  if(Date.now()>=deadline) throw new Error('Shortcut execution budget exceeded before model node dispatch');
+  if(!started||!Number.isFinite(started)) throw new Error('Model node has no Shortcut start record');
   await mkdir(dirname(outputPath),{recursive:true,mode:0o700});
   await store.mutateJob(jobId,current=>{
     const active=current.tasks.find(t=>t.id===parentTaskId);
@@ -69,14 +68,13 @@ export async function runShortcutModelNode(options: {
         agentName:node.agent,dependencies:[],capabilities:['model'],workerRequirements:{capabilities:['model']},
         adapter:'codex',input:body,output:{kind:'file',path:outputPath},
         attempt:0,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,
-        result:null,error:null,timeoutMs:Math.max(1,deadline-Date.now()),createdAt:now,updatedAt:now,
+        result:null,error:null,timeoutMs:taskOverallTimeoutMs('L'),createdAt:now,updatedAt:now,
       }));
     }
     return current;
   });
   while(true){
     if(node.signal.aborted) throw node.signal.reason ?? new Error('Shortcut Worker node interrupted');
-    if(Date.now()>=deadline) throw new Error('Shortcut execution budget exceeded while waiting for model node');
     const current=await store.load(jobId);
     if(current.state!=='ACTIVE'||current.pause) throw new Error('Shortcut Job cancelled/paused while Worker node was pending');
     const task=current.tasks.find(t=>t.id===taskId);

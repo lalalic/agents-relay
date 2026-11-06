@@ -15,19 +15,13 @@ export async function driveShortcutWorkers(options: {
 }): Promise<{ status: 'COMPLETED'|'FAILED'|'WAITING_EVENT'|'TIMED_OUT'|'INTERRUPTED'; job: Job }> {
   const { store, jobId, reconciler, taskId } = options;
   if (!store.mutateJob) throw new Error('Foreground Worker fallback requires atomic Relay SQLite');
-  const initial = await store.mutateJob(jobId, job => {
+  await store.mutateJob(jobId, job => {
     if (job.executionMode !== 'shortcut' || job.contentOnly !== true || job.state !== 'ACTIVE') throw new Error('Not an active Shortcut Job');
     if (!job.tasks.find(task => task.id === taskId)) throw new Error('Shortcut parent Task missing');
-    const now = Date.now();
-    if (!job.shortcutExecutionStartedAt) job.shortcutExecutionStartedAt = new Date(now).toISOString();
-    const first = Date.parse(job.shortcutExecutionStartedAt);
-    if (!Number.isFinite(first)) throw new Error('Invalid original Shortcut start time');
-    const deadline = new Date(first + 20*60_000).toISOString();
-    if (job.shortcutExecutionDeadlineAt && job.shortcutExecutionDeadlineAt !== deadline) throw new Error('Shortcut deadline changed');
-    job.shortcutExecutionDeadlineAt = deadline;
+    if (!job.shortcutExecutionStartedAt) job.shortcutExecutionStartedAt = new Date().toISOString();
+    if (!Number.isFinite(Date.parse(job.shortcutExecutionStartedAt))) throw new Error('Invalid original Shortcut start time');
     return job;
   });
-  const deadline = Date.parse(initial.shortcutExecutionDeadlineAt!);
   const last = new Map<string, string>();
   const stopWatching = await reconciler.watch(jobId);
   const observe = (job: Job): void => {
@@ -39,7 +33,6 @@ export async function driveShortcutWorkers(options: {
   try {
     while (true) {
       if (options.signal?.aborted) return { status: 'INTERRUPTED', job: await store.load(jobId) };
-      if (Date.now() >= deadline) return { status: 'TIMED_OUT', job: await store.load(jobId) };
       await reconciler.reconcile(jobId);
       let job = await store.load(jobId);
       observe(job);

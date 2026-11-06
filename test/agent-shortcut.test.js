@@ -250,20 +250,20 @@ test('missing standalone model node cannot use a global Queue or execute without
   assert.equal((await f.load()).tasks.length,1,'no model Task dispatched without EventBus');
 });
 
-test('direct shortcut budget is immutable across runs and timeout returns its own exit code',async t=>{
+test('Shortcut has no total-duration cutoff, even when historic 20m metadata is expired',async t=>{
   const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:slow]'});
   const startedAt=new Date(Date.now()-21*60*1000).toISOString();
-  const deadlineAt=new Date(Date.parse(startedAt)+20*60*1000).toISOString();
-  await f.writeShortcut(f.neo,'slow',`export async function run({signal}) { await new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true})); return {status:'COMPLETED',output:{bad:true},artifacts:[]}; }`);
+  const oldDeadline=new Date(Date.parse(startedAt)+20*60*1000).toISOString();
+  await f.writeShortcut(f.neo,'slow',`export async function run(){return {status:'COMPLETED',output:{elapsedTargetExceeded:true},artifacts:[]};}`);
   const store=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
-  await store.mutateJob(f.id,job=>{job.shortcutExecutionStartedAt=startedAt;job.shortcutExecutionDeadlineAt=deadlineAt;return job;}); store.close();
+  await store.mutateJob(f.id,job=>{job.shortcutExecutionStartedAt=startedAt;job.shortcutExecutionDeadlineAt=oldDeadline;return job;});store.close();
   const result=await f.cli();
-  assert.equal(result.status,4,JSON.stringify(result));
+  assert.equal(result.status,0,JSON.stringify(result));
   const saved=await f.load();
   assert.equal(saved.shortcutExecutionStartedAt,startedAt);
-  assert.equal(saved.shortcutExecutionDeadlineAt,deadlineAt);
-  assert.equal(saved.tasks[0].state,'FAILED');
-  assert.equal(saved.tasks[0].result.data.shortcut.terminal.status,'TIMED_OUT');
+  assert.equal(saved.tasks[0].state,'SUCCEEDED');
+  assert.equal(saved.state,'COMPLETED');
+  assert.equal(saved.tasks[0].result.data.shortcut.nodes.A.output.elapsedTargetExceeded,true);
 });
 
 test('missing downstream model node preserves the completed predecessor checkpoint without global Worker fallback',async t=>{
@@ -532,7 +532,8 @@ test('foreground owner launches existing model Worker and proves terminal Job st
     assert.equal(result.status,'COMPLETED',JSON.stringify(result.job.tasks.map(t=>({id:t.id,state:t.state,error:t.error,attempt:t.attempt,routing:t.routing}))));
     assert.equal(launches,1);
     assert.equal(result.job.tasks[0].state,'SUCCEEDED');
-    assert.ok(result.job.shortcutExecutionDeadlineAt);
+    assert.ok(result.job.shortcutExecutionStartedAt);
+    assert.equal(result.job.shortcutExecutionDeadlineAt,undefined);
     assert.equal(result.job.executionMode,'shortcut');
   } finally {rawStore.close();}
 });
@@ -921,13 +922,13 @@ test('D02 fault F06: retry failed parent retains completed Worker and Code nodes
     assert.deepEqual(Object.keys(first.job.tasks[0].result.data.shortcut.nodes),['A','M']);
     assert.equal(first.job.tasks.find(x=>x.id==='shortcut-initial-M').state,'SUCCEEDED');
     assert.equal(workerLaunches,1);
-    const firstDeadline=first.job.shortcutExecutionDeadlineAt;
+    const firstStart=first.job.shortcutExecutionStartedAt;
     await dispatchTaskAction(f.store,{id:'task.retry',jobId:f.id,taskId:'initial'});
     const second=await f.execute(reconciler);
     assert.equal(second.result.outcome.status,'COMPLETED',JSON.stringify(second.result.outcome));
     assert.equal(second.job.state,'COMPLETED');
     assert.equal(second.job.tasks[0].result.data.shortcut.terminal,undefined,'retry terminal must not retain the previous failed verdict');
-    assert.equal(second.job.shortcutExecutionDeadlineAt,firstDeadline);
+    assert.equal(second.job.shortcutExecutionStartedAt,firstStart);
     assert.equal(second.job.tasks.filter(x=>x.id==='shortcut-initial-M').length,1);
     assert.equal(workerLaunches,1,'existing Worker node must not be reexecuted on parent retry');
     assert.equal(await readFile(sourceRuns,'utf8'),'s','completed Code node must not replay');
