@@ -44,8 +44,18 @@ A fix child reports its **own** correlated completion after verified repair. Dow
 
 ## Interactive Task suspension
 
-After binding a host invocation, a RUNNING Worker waiting for human input
-publishes `task.interactive_waiting` with its exact Job/Task/Execution source identity.
+For **Neo-hosted Markcut Preview**, the Worker calls the federated `markcut.preview`
+tool **once** with a video `path` and its authoritative
+`relay: {jobId, taskId, executionId}` context. The Neo MCP wrapper obtains a
+Relay-owned Invocation and Event Template, starts the independent Markcut
+compiler, registers the Task wait, and sends the iPhone notification only after
+the immutable preview is ready. The Worker does **not** publish a separate
+waiting event or manage an Invocation ID. This contract applies only to Neo's
+wrapped tool; standalone Markcut has no Relay or Notification dependency.
+
+For other host adapters, after binding an Invocation a RUNNING Worker waiting
+for human input publishes `task.interactive_waiting` with its exact
+Job/Task/Execution source identity.
 Relay checks the pending invocation, persists RUNNING -> AWAITING_DECISION,
 clears the execution lease, and releases the Worker. This is a non-failure
 handoff and is not a Task completion or a Troubleshooter block.

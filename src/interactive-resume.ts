@@ -5,6 +5,7 @@ import type { InteractiveDecision } from './interactive-invocation.js';
 import { shouldRecoverInteractiveDecision } from './interactive-invocation.js';
 import { tryTransitionTaskEvent } from './task-transitions.js';
 import { applyTaskUnblockRetrySnapshot } from './task-actions.js';
+import {appendTaskComment} from './task-comments.js';
 
 export async function resumeInteractiveTask(
   store: DurableStore, jobId: string, taskId: string, invocationId: string,
@@ -23,6 +24,11 @@ export async function resumeInteractiveTask(
       throw new Error('Interactive Task release rejected by canonical lifecycle Graph');
     }
     applyTaskUnblockRetrySnapshot(task);
+    if(decision==='changes_requested'){
+      // Preserve human feedback across the next Execution/Invocation binding.
+      const feedback=invocation.feedback?.trim() || 'Changes requested';
+      appendTaskComment(job,taskId,`Interactive review changes requested for revision ${revision}: ${feedback.slice(0,1000)}`);
+    }
     task.error = null;
     task.failureReason = undefined;
     task.updatedAt = new Date().toISOString();

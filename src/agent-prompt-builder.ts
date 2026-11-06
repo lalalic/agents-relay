@@ -161,6 +161,7 @@ export async function buildRelayWorkPrompt(input: {
       'START: After Bootstrap and the minimal event-contract preflight, publish `task.started` through the canonical events-bus before beginning Task work. Verify the publish response.',
       'PROGRESS: Publish `task.progress` with concrete progress/evidence during long-running work and before the inactivity timeout. Progress is not completion.',
       'TERMINAL: After verifying durable output, publish exactly ONE `task.completed`; if you cannot fulfill the Task, publish `task.failed` with phase, reason and evidence. Do not silently exit or treat a process/browser receipt as completion.',
+      'INTERACTIVE PREVIEW: For human video review call Neo MCP `markcut.preview` once with `path` and `relay: {jobId,taskId,executionId}` using the exact execution IDs above. Neo binds the Invocation, suspends the Task, and sends the iPhone notification when the preview is ready. Do not emit `task.interactive_waiting` or a terminal event for this handoff. On resumption, read Task Context for the accepted decision and feedback.',
       'Every event MUST use the exact source above. Do not publish `task.blocked` or `task.unblocked`; those are Relay-owned states. Relay must accept the correlated event.',
     ]),
     '', '## Contexts',

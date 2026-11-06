@@ -1,4 +1,5 @@
 import { submitTargetedRevisionRequest } from './review-revision-model.js';
+import {beginInteractiveReview,abortInteractiveReview,readyInteractiveReview,failInteractiveReview} from './interactive-request.js';
 import { localSourceHead, localWorkingHead } from './local-git-merge.js';
 import type { RevisionFinding } from './types.js';
 import { appendTaskComment } from './task-comments.js';
@@ -126,6 +127,51 @@ export function createWorkspaceControl(deps: any) {
     const store = binding.store;
     const job = await store.load(jobId);
 
+    if (command.startsWith('review.interactive.')) {
+      const taskId=typeof body.taskId==='string'?body.taskId:'';
+      const executionId=typeof body.executionId==='string'?body.executionId:'';
+      const invocationId=typeof body.invocationId==='string'?body.invocationId:'';
+      if(!taskId||!executionId)throw new Error('Interactive review requires taskId and executionId');
+      if(command==='review.interactive.begin')
+        return await beginInteractiveReview(store,jobId,taskId,executionId);
+      if(!invocationId)throw new Error('Interactive review requires invocationId');
+      if(command==='review.interactive.abort'){
+        await abortInteractiveReview(store,jobId,taskId,executionId,invocationId);
+        return {aborted:true};
+      }
+      if(command==='review.interactive.wait'){
+        const current=(await store.load(jobId)).tasks.find((t:Task)=>t.id===taskId);
+        if(current?.state==='AWAITING_DECISION'&&current.interactiveInvocation?.invocationId===invocationId)
+          return {waiting:true,taskState:'AWAITING_DECISION'};
+        if(current?.state!=='RUNNING'||current.executionId!==executionId||
+           current.interactiveInvocation?.invocationId!==invocationId)
+          throw new Error('Stale interactive waiting request');
+        const reconciler=makeReconciler(store,concurrency);
+        const event=eventFor(jobId,taskId,current.parentTaskId,'task.interactive_waiting','waiting',
+          'Neo Preview requested interactive review','orchestrator',{},
+          {id:`job/${jobId}/task/${taskId}/execution/${executionId}`,component:'neo-preview'});
+        try{
+          const outcome=await reconciler.applyEvent(event);
+          if(!outcome.applied)throw new Error('Relay rejected interactive waiting event: '+outcome.reason);
+          // The durable graph transition is authoritative. The ordinary bus
+          // records the handoff for event history; duplicate consumption is inert.
+          try{await bus?.publish(event);}catch(error){
+            process.stderr.write(`warning: interactive wait event transport: ${String(error)}\n`);
+          }
+          return {waiting:true,taskState:'AWAITING_DECISION'};
+        }finally{await reconciler.close();}
+      }
+      if(command==='review.interactive.ready')
+        return await readyInteractiveReview(store,jobId,taskId,executionId,invocationId,
+          typeof body.revision==='string'?body.revision:'');
+      if(command==='review.interactive.fail'){
+        const result=await failInteractiveReview(store,jobId,taskId,executionId,invocationId,
+          typeof body.reason==='string'?body.reason:'Preview failed');
+        if(result.requeued)await pool.reconcileLocalJob(jobId,'interactive.preview-failed');
+        return result;
+      }
+      throw new Error('Unknown interactive review command');
+    }
     if (command === 'job.update') {
       const patch = (body.patch && typeof body.patch === 'object' ? body.patch : {}) as Record<string, unknown>;
       if ('executionMode' in patch || 'schedule' in patch) throw new Error('Job execution modes and schedules are unsupported');
