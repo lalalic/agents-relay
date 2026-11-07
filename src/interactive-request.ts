@@ -56,7 +56,7 @@ export async function abortInteractiveReview(store:DurableStore,jobId:string,tas
 }
 export async function readyInteractiveReview(store:DurableStore,jobId:string,taskId:string,
   executionId:string,invocationId:string,revision:string){
-  if(!/^[a-f0-9]{64}$/.test(revision))throw new Error('Immutable revision must be SHA-256');
+  if(!/^[a-f0-9]{40}$/.test(revision))throw new Error('Immutable review revision must be full Git Commit SHA');
   if(!store.mutateJob)throw new Error('Interactive review requires durable mutation');
   await store.mutateJob(jobId,job=>{
     const task=job.tasks.find(t=>t.id===taskId);

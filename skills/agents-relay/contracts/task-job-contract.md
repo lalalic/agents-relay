@@ -161,6 +161,8 @@ A newly created zero-task DRAFT Job waits for explicit initial planning (`plan` 
 
 ## Task evidence and head identity
 
+For Git-versioned Neo Project Interactive Previews, bind a verified full 40-character Git Commit SHA as the sole review revision (`data.interactive.commitSha`, and `data.interactive.revision` must equal it). Compiled media cache hashes, legacy Markcut `revisionId` and `contentHash` must not be used as the Event Review identity. The Producer creates the Stage Commit before requesting Preview; Relay continues to own the decision and Task lifecycle. Generic non-video interactions are not made into Git commits by this contract.
+
 ### Canonical Neo Project runs boundary
 
 `runs/` is durable runtime evidence, not source code and not temporary checkout state. When a Task's declared file output is under `runs/`, that Task and every semantic descendant execute directly in the canonical resolved project directory. Agents Relay MUST NOT create or switch those Tasks into per-execution Git worktrees.

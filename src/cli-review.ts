@@ -21,7 +21,7 @@ export async function runInteractiveReviewCommand(argv: string[]): Promise<void>
   if(!jobId||!taskId||!executionId)throw new Error('review interactive requires --id --task-id --execution-id');
   if(action!=='begin'&&!invocationId)throw new Error('review interactive '+action+' requires --invocation-id');
   const revision=arg(args,'--revision');
-  if(action==='ready'&&!/^[a-f0-9]{64}$/.test(revision))throw new Error('review interactive ready requires --revision SHA256');
+  if(action==='ready'&&!/^[a-f0-9]{40}$/.test(revision))throw new Error('review interactive ready requires full 40-character Git Commit SHA');
   if(action==='fail'&&!arg(args,'--reason').trim())throw new Error('review interactive fail requires --reason');
   const body:Record<string,unknown>={command:`review.interactive.${action}`,jobId,taskId,executionId};
   if(action!=='begin')body.invocationId=invocationId;

@@ -26,6 +26,7 @@ export type InteractiveDecisionDelivery = {
   revision: string;
   decision: InteractiveDecision;
   feedback?: string;
+  commitSha?: string;
   contentHash?: string;
   revisionId?: string;
   previewId?: string;
@@ -132,10 +133,13 @@ export function normalizeInteractiveDecision(event: EventRecord): InteractiveDec
   const decision = value.decision === 'approved' || value.decision === 'changes_requested' ? value.decision : null;
   if (!jobId || !taskId || !executionId || !invocationId || !revision || !decision) return null;
   if (event.source?.id !== `job/${jobId}/task/${taskId}/execution/${executionId}`) return null;
-  if (value.contentHash !== undefined && typeof value.feedback !== 'string') return null;
   const feedback = typeof value.feedback === 'string' ? value.feedback : null;
+  const commitSha = string('commitSha');
   const contentHash = string('contentHash');
-  if (contentHash && contentHash !== revision) return null;
+  if (commitSha) {
+    if (!/^[a-f0-9]{40}$/.test(commitSha) || revision !== commitSha ||
+        value.contentHash !== undefined || value.revisionId !== undefined || feedback === null) return null;
+  } else if (contentHash && (contentHash !== revision || feedback === null)) return null;
   const comments = value.comments;
   if (comments !== undefined && (!Array.isArray(comments) || comments.length > 100 ||
     comments.some(comment => !comment || typeof comment !== 'object' || Array.isArray(comment) ||
@@ -143,6 +147,7 @@ export function normalizeInteractiveDecision(event: EventRecord): InteractiveDec
   return {
     jobId, taskId, executionId, invocationId, revision, decision,
     feedback: feedback ?? undefined,
+    commitSha: commitSha ?? undefined,
     contentHash: contentHash ?? undefined, revisionId: string('revisionId') ?? undefined,
     previewId: string('previewId') ?? undefined, requestId: string('requestId') ?? undefined,
     idempotencyKey: string('idempotencyKey') ?? undefined,
@@ -165,11 +170,12 @@ export function interactiveDecisionFingerprint(decision: InteractiveDecisionDeli
   })).digest('hex');
 }
 
-/** First event for an unbound interaction must carry immutable video identity. */
+/** Event-only review identity is exactly one complete Git commit SHA. */
 export function eventOnlyReviewEligible(delivery: InteractiveDecisionDelivery): boolean {
-  return Boolean(delivery.contentHash && /^[a-f0-9]{64}$/.test(delivery.contentHash) &&
-    delivery.revision === delivery.contentHash && delivery.feedback !== undefined &&
-    [delivery.revisionId, delivery.requestId, delivery.idempotencyKey, delivery.invocationId]
+  return Boolean(delivery.commitSha && /^[a-f0-9]{40}$/.test(delivery.commitSha) &&
+    delivery.revision === delivery.commitSha && !delivery.contentHash && !delivery.revisionId &&
+    delivery.feedback !== undefined &&
+    [delivery.requestId, delivery.idempotencyKey, delivery.invocationId]
       .every(value => typeof value === 'string' && value.length > 0 && value.length <= 128));
 }
 

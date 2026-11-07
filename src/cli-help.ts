@@ -102,7 +102,7 @@ When provided, --thread-id persists a reviewer destination; otherwise the Job re
 Managed host interaction (Node Wrapper normally calls these automatically):
   agents-relay review interactive begin --id JOB --task-id TASK --execution-id EXEC
   agents-relay review interactive wait --id JOB --task-id TASK --execution-id EXEC --invocation-id INV
-  agents-relay review interactive ready --id JOB --task-id TASK --execution-id EXEC --invocation-id INV --revision SHA256
+  agents-relay review interactive ready --id JOB --task-id TASK --execution-id EXEC --invocation-id INV --revision GIT_COMMIT_SHA
   agents-relay review interactive fail --id JOB --task-id TASK --execution-id EXEC --invocation-id INV --reason REASON
   agents-relay review interactive abort --id JOB --task-id TASK --execution-id EXEC --invocation-id INV
 The CLI controls the running Relay daemon; this is not a separate Worker step.`,

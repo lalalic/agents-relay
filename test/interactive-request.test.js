@@ -38,10 +38,10 @@ test('Neo prepare is idempotent and binds current execution before suspension',a
   const waiting=(await f.store.loadJob(f.j.id)).tasks[0];
   assert.equal(waiting.state,'AWAITING_DECISION');assert.equal(waiting.executionId,null);
   await assert.rejects(readyInteractiveReview(f.store,f.j.id,'producer','exec-1',first.invocationId,'bad'));
-  const hash='a'.repeat(64);
+  const hash='a'.repeat(40);
   assert.equal((await readyInteractiveReview(f.store,f.j.id,'producer','exec-1',first.invocationId,hash)).ready,true);
   assert.equal((await f.store.loadJob(f.j.id)).tasks[0].interactiveInvocation.revision,hash);
-  await assert.rejects(readyInteractiveReview(f.store,f.j.id,'producer','exec-1',first.invocationId,'b'.repeat(64)));
+  await assert.rejects(readyInteractiveReview(f.store,f.j.id,'producer','exec-1',first.invocationId,'b'.repeat(40)));
  }finally{await f.close();}
 });
 test('Neo preview compile failure returns original Task to QUEUED without creating another Task',async()=>{
@@ -69,14 +69,13 @@ test('iPhone Decision Event resumes original awaiting Task after Neo binds exact
  const f=await fixture();try{
   const started=await beginInteractiveReview(f.store,f.j.id,'producer','exec-1');
   await wait(f,started.invocationId);
-  const hash='f'.repeat(64);
+  const hash='f'.repeat(40);
   await readyInteractiveReview(f.store,f.j.id,'producer','exec-1',started.invocationId,hash);
   const event={version:1,event_id:'phone-'+started.invocationId,job_id:f.j.id,task_id:'producer',
     parent_task_id:null,type:'task.interactive_decision',status:'running',timestamp:now(),
     visibility:'user',level:'info',message:'User approved Preview',
     source:{id:'job/job-preview/task/producer/execution/exec-1'},
-    data:{interactive:{...started.eventTemplate.data.interactive,revision:hash,revisionId:'r1',
-      contentHash:hash,previewId:'p1',requestId:'request1',idempotencyKey:'key1',
+    data:{interactive:{...started.eventTemplate.data.interactive,revision:hash,commitSha:hash,previewId:'p1',requestId:'request1',idempotencyKey:'key1',
       decision:'approved',feedback:'',comments:[]}}};
   const result=await f.reconciler.applyEvent(event);
   assert.equal(result.reason,'task.interactive_decision.accepted');
@@ -89,12 +88,12 @@ test('changes_requested retains approval gate while fresh execution may prepare 
  const f=await fixture();try{
   const start=await beginInteractiveReview(f.store,f.j.id,'producer','exec-1');
   await wait(f,start.invocationId);
-  const hash='e'.repeat(64);
+  const hash='e'.repeat(40);
   await readyInteractiveReview(f.store,f.j.id,'producer','exec-1',start.invocationId,hash);
   const event={version:1,event_id:'changes-'+start.invocationId,job_id:f.j.id,task_id:'producer',
     parent_task_id:null,type:'task.interactive_decision',status:'running',timestamp:now(),visibility:'user',level:'info',
     message:'User requested edits',source:{id:'job/job-preview/task/producer/execution/exec-1'},
-    data:{interactive:{...start.eventTemplate.data.interactive,revision:hash,revisionId:'revision-1',contentHash:hash,
+    data:{interactive:{...start.eventTemplate.data.interactive,revision:hash,commitSha:hash,
       previewId:'p1',requestId:'r1',idempotencyKey:'k1',decision:'changes_requested',feedback:'Shorten opening',comments:[]}}};
   assert.equal((await f.reconciler.applyEvent(event)).reason,'task.interactive_decision.accepted');
   let current=await f.store.loadJob(f.j.id);
