@@ -87,7 +87,9 @@ export async function runShortcutModelNode(options: {
       const record=value as Record<string,unknown>;
       if(record.status!=='COMPLETED'||!record.output||typeof record.output!=='object'||Array.isArray(record.output))
         throw new Error('Worker Task reported success without contract-valid node output');
-      // Some existing Worker roles report artifact records as {path,type}.
+      // Some Workers report {path,kind:"human-readable description"}.
+      // Only the checked on-disk path is an artifact identity; `kind` is not
+      // a declared filesystem type or authorization claim.
       // Convert ONLY exact file records to the Shortcut contract's path list;
       // the Graph executor still verifies realpath containment and SHA-256.
       if(Array.isArray(record.artifacts)) {
@@ -102,10 +104,11 @@ export async function runShortcutModelNode(options: {
             if(fields.length===1 && fields[0]==='path'
               && typeof ref.path==='string' && ref.path.trim()) return ref.path;
             if(fields.length===2 && fields.includes('path')
-              && ((fields.includes('type') && ref.type==='file') || (fields.includes('kind') && ref.kind==='file'))
+              && ((fields.includes('type') && ref.type==='file') ||
+                  (fields.includes('kind') && typeof ref.kind==='string' && ref.kind.trim()))
               && typeof ref.path==='string' && ref.path.trim()) return ref.path;
           }
-          throw new Error('Worker node returned unsupported artifact entry; expected a file path, {path}, {type:"file",path} or {kind:"file",path}');
+          throw new Error('Worker node returned unsupported artifact entry; expected a file path, {path}, {type:"file",path} or {kind:"description",path}');
         });
         return {...record,artifacts:files};
       }
