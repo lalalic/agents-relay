@@ -187,7 +187,11 @@ export class RepositoryWorkerPool {
       const ingressWebhook = event.type === 'github.webhook' && event.data?.coordinatorIngress === true && !routedWebhook;
       if (ingressWebhook) return;
       if (routedWebhook) return;
-      const lifecycle = ['task.started', 'task.progress', 'task.completed', 'task.failed', 'task.blocked', 'task.unblocked', 'task.cancelled', 'review.started', 'review.approved', 'review.changes_required', 'review.blocked'].includes(event.type);
+      const lifecycle = ['task.started', 'task.progress', 'task.completed', 'task.failed', 'task.blocked', 'task.unblocked', 'task.cancelled', 'review.started', 'review.approved', 'review.changes_required', 'review.blocked',
+        // Mobile/host interactive decisions must reach the same canonical reconciler
+        // as other Task lifecycle events; merely storing the NATS audit event
+        // must never be mistaken for resuming an AWAITING_DECISION Task.
+        'task.interactive_decision'].includes(event.type);
       // GitHub transport is observational. It must never wake lifecycle execution.
       if (event.type === 'github.webhook') return;
       const wake = event.type === 'job.wake' || event.type === 'review.created' || event.type === 'planner.completed' || event.type === 'shortcut.result';

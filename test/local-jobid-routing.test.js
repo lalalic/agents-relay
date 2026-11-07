@@ -50,6 +50,26 @@ test('no-PR targeted worker event resolves Job ID without GitHub PR metadata',as
   } finally {await stop();}
 });
 
+test('mobile interactive decision is applied by the global pool subscriber and resumes the waiting Job', async()=>{
+  const f=fixture({...baseJob,id:'mobile-review-route'});
+  const bus=new MemoryEventBus(); const stop=await f.pool.watch(bus);
+  try {
+    const ev=eventFor('mobile-review-route','review-waiter',null,'task.interactive_decision',
+      'running','real iPhone feedback','orchestrator',
+      {interactive:{jobId:'mobile-review-route',taskId:'review-waiter',executionId:'exec-test',
+        invocationId:'invocation-test',revision:'a'.repeat(40),commitSha:'a'.repeat(40),
+        decision:'changes_requested',feedback:'E2E_TEST_ONLY: change opening title',
+        requestId:'request-test',idempotencyKey:'idempotency-test'}},
+      {id:'job/mobile-review-route/task/review-waiter/execution/exec-test'});
+    await bus.publish(ev);
+    for(let i=0;i<100&&!f.calls.some(([kind])=>kind==='reconcile');i++)
+      await new Promise(resolve=>setTimeout(resolve,2));
+    assert.deepEqual(f.calls.map(c=>c[0]),['event','reconcile']);
+    assert.equal(f.calls[0][1],'task.interactive_decision');
+    assert.equal(f.getGithubCalls(),0);
+  }finally{await stop();}
+});
+
 test('planner.completed wakes queued work immediately without periodic reconcile',async()=>{
   const work={jobId:'planner-wake',id:'work',state:'QUEUED',dependencies:[],attempt:0,maxAttempts:3,
     leaseOwner:null,leaseExpiresAt:null,executionId:null,adapter:'orchestrator',input:'local',output:{kind:'task_pr'},

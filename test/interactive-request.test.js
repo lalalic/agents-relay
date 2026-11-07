@@ -6,6 +6,8 @@ import {tmpdir} from 'node:os';
 import {SQLiteRelayStore} from '../dist/relay-store.js';
 import {ProjectedDurableStore} from '../dist/projected-store.js';
 import {InMemoryStore} from '../dist/store.js';
+import {RepositoryWorkerPool} from '../dist/pool.js';
+import {MemoryEventBus} from '../dist/events.js';
 import {beginInteractiveReview,readyInteractiveReview,failInteractiveReview,abortInteractiveReview} from '../dist/interactive-request.js';
 const now=()=>new Date().toISOString();
 const task=()=>({jobId:'job-preview',id:'producer',parentTaskId:null,dependencies:[],capabilities:[],
@@ -84,6 +86,43 @@ test('iPhone Decision Event resumes original awaiting Task after Neo binds exact
   assert.equal(current.tasks[0].interactiveInvocation.status,'approved');
  }finally{await f.close();}
 });
+test('full pool NATS-style review intake applies mobile CHANGES_REQUESTED to original durable Task',async()=>{
+ const f=await fixture(); const bus=new MemoryEventBus();
+ const pool=new RepositoryWorkerPool(1,
+   (_store,_capacity)=>({
+     applyEvent:event=>f.reconciler.applyEvent(event),
+     reconcile:async()=>{},
+   }),
+   async()=>[{job:await f.store.loadJob(f.j.id),githubState:'UNKNOWN',draft:false,mergedAt:null,closedAt:null}],
+   async id=>id===f.j.id?{job:await f.store.loadJob(id),store:f.store}:null);
+ const stop=await pool.watch(bus);
+ try{
+   const started=await beginInteractiveReview(f.store,f.j.id,'producer','exec-1');
+   await wait(f,started.invocationId);
+   const sha='b'.repeat(40);
+   await readyInteractiveReview(f.store,f.j.id,'producer','exec-1',started.invocationId,sha);
+   const original={version:1,event_id:'mobile-pool-'+started.invocationId,job_id:f.j.id,task_id:'producer',
+     parent_task_id:null,type:'task.interactive_decision',status:'running',timestamp:now(),visibility:'orchestrator',level:'info',
+     message:'Task decision submitted from native iPhone',source:{id:'job/job-preview/task/producer/execution/exec-1'},
+     data:{interactive:{...started.eventTemplate.data.interactive,revision:sha,commitSha:sha,previewId:'preview',
+       requestId:'request-from-phone',idempotencyKey:'unique-phone-key',decision:'changes_requested',
+       feedback:'E2E_TEST_ONLY: adjust opening',comments:[]}}};
+   assert.equal((await f.store.loadJob(f.j.id)).tasks[0].state,'AWAITING_DECISION');
+   await bus.publish(original);
+   for(let attempt=0;attempt<100;attempt++){
+     if((await f.store.loadJob(f.j.id)).tasks[0].state==='QUEUED')break;
+     await new Promise(done=>setTimeout(done,5));
+   }
+   const task=(await f.store.loadJob(f.j.id)).tasks[0];
+   assert.equal(task.state,'QUEUED','live pool must consume the human event instead of just storing it');
+   assert.equal(task.interactiveInvocation.status,'changes_requested');
+   assert.match(JSON.stringify(task.comments),/E2E_TEST_ONLY/);
+   await bus.publish(original);
+   await new Promise(done=>setTimeout(done,15));
+   assert.equal((await f.store.loadJob(f.j.id)).tasks[0].state,'QUEUED','retrying same delivery must be idempotent');
+ }finally{await stop();await f.close();}
+});
+
 test('changes_requested retains approval gate while fresh execution may prepare a new revision',async()=>{
  const f=await fixture();try{
   const start=await beginInteractiveReview(f.store,f.j.id,'producer','exec-1');
