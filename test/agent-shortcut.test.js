@@ -867,6 +867,36 @@ test('D02 fault F04: Worker {path,type} file records normalize with checked arti
   } finally {await stop();}
 });
 
+test('D02 fault F04b: Worker exact {path} file records normalize with checked artifact hashes and unblock code successor',async t=>{
+  const f=await mixedFixture(t,'D02-code-model-code.mmd');
+  const {mkdir}=await import('node:fs/promises'),{dirname}=await import('node:path');
+  const artifact=join(f.project,'director-story.txt');
+  await f.writeShortcut(f.project,'source',`export async function run(){return {status:'COMPLETED',output:{source:true},artifacts:[]};}`);
+  await f.writeShortcut(f.project,'finish',`export async function run({input}){
+    if(input.predecessorOutputs.M.good!==true)throw Error('Model output missing at code successor');
+    return {status:'COMPLETED',output:{end:true},artifacts:[]};}`);
+  const adapter={name:'codex',id:'codex',capabilities:['model','codex'],launch(task){
+    const source={id:`job/${f.id}/task/${task.id}/execution/${task.executionId}`};
+    void (async()=>{
+      await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.started','running','fixture start','user',undefined,source));
+      await mkdir(dirname(task.output.path),{recursive:true});
+      await writeFile(artifact,'verified file bytes');
+      await writeFile(task.output.path,JSON.stringify({status:'COMPLETED',output:{good:true},artifacts:[{path:artifact}]}));
+      await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.completed','succeeded','fixture terminal','orchestrator',{},source));
+    })().catch(error=>{throw error;});
+    return {id:'mock-path-only-output',launched:Promise.resolve(),promise:Promise.resolve({summary:'mock ended'}),cancel(){}};
+  }};
+  const reconciler=f.makeReconciler(adapter),stop=await reconciler.watch(f.id);
+  try {
+    const {result,job}=await f.execute(reconciler);
+    assert.equal(result.outcome.status,'COMPLETED',JSON.stringify(result.outcome));
+    assert.equal(job.state,'COMPLETED');
+    assert.equal(job.tasks[0].result.data.shortcut.nodes.M.artifacts[0],artifact);
+    assert.ok(job.tasks[0].result.data.shortcut.artifactHashes.M['director-story.txt']);
+    assert.equal(job.tasks[0].result.data.shortcut.nodes.C.output.end,true);
+  } finally {await stop();}
+});
+
 test('D02 fault F05: non-file artifact records are rejected despite terminal success',async t=>{
   const f=await mixedFixture(t,'D02-code-model-code.mmd');
   const {mkdir}=await import('node:fs/promises'),{dirname}=await import('node:path');

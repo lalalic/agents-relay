@@ -31,7 +31,7 @@ The permanent suite retains **five DAGs (D01–D05), no D06**. D02/D03 have a st
 - **F05:** unsupported artifact record types are rejected even when the Worker emits `task.completed`.
 - **F06:** the model Worker and initial Code node completed, but a downstream Code node failed. Canonical `task.retry` resumes the **same Job/Task** without replaying either completed node and without resetting the original deadline.
 - **F07:** a Graph-authorized parent retry must clear the previous attempt’s terminal failure from the new checkpoint while retaining completed nodes, execution history, and immutable deadline.
-- **F08:** legacy Worker file records `{kind:"file",path}` are normalized only with exact keys; realpath containment and SHA-256 remain mandatory before a downstream node can run.
+- **F08:** Worker file records `{path}`, `{kind:"file",path}` or `{type:"file",path}` are normalized only with exact keys; realpath containment and SHA-256 remain mandatory before a downstream node can run.
 - **F09:** the Worker sees the canonical Run path and may verify approved source manifests and earlier stage files without treating unrelated nodes as declared DAG predecessor outputs.
 - **F10:** an untrusted declared canonical Run path that differs from the bound parent Task output directory is refused before a Worker Task is created.
 

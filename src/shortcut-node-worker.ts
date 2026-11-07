@@ -96,11 +96,16 @@ export async function runShortcutModelNode(options: {
           if(item && typeof item==='object' && !Array.isArray(item)) {
             const ref=item as Record<string,unknown>;
             const fields=Object.keys(ref);
+            // A Worker may naturally produce a path-only file record. Accept
+            // EXACTLY {path} (no unrecognized metadata), then let the Graph
+            // executor verify realpath confinement and SHA-256 as usual.
+            if(fields.length===1 && fields[0]==='path'
+              && typeof ref.path==='string' && ref.path.trim()) return ref.path;
             if(fields.length===2 && fields.includes('path')
               && ((fields.includes('type') && ref.type==='file') || (fields.includes('kind') && ref.kind==='file'))
               && typeof ref.path==='string' && ref.path.trim()) return ref.path;
           }
-          throw new Error('Worker node returned unsupported artifact entry; expected a file path, {type:"file",path} or {kind:"file",path}');
+          throw new Error('Worker node returned unsupported artifact entry; expected a file path, {path}, {type:"file",path} or {kind:"file",path}');
         });
         return {...record,artifacts:files};
       }
