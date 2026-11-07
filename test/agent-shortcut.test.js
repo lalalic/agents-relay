@@ -897,6 +897,46 @@ test('D02 fault F04b: Worker exact {path} file records normalize with checked ar
   } finally {await stop();}
 });
 
+test('D02 F04c: a canonical Project Run Worker may return Run-relative Editor artifacts',async t=>{
+  const f=await mixedFixture(t,'D02-code-model-code.mmd');
+  const {mkdir}=await import('node:fs/promises');
+  const {dirname}=await import('node:path');
+  const canonicalRun=join(f.project,'runs','2026-11-07-editor-e2e');
+  await mkdir(canonicalRun,{recursive:true});
+  await f.store.mutateJob(f.id,job=>{
+    job.tasks[0].output={kind:'file',path:join(canonicalRun,'job-output.json')};
+    job.tasks[0].input=`- Canonical run: ${canonicalRun}`;
+    return job;
+  });
+  const file=join(canonicalRun,'edit-decision-list.json');
+  await f.writeShortcut(f.project,'source',`export async function run(){return {status:'COMPLETED',output:{source:true},artifacts:[]};}`);
+  await f.writeShortcut(f.project,'finish',`export async function run({input}){
+    if(input.predecessorOutputs.M.edited!==true)throw Error('missing Editor result');
+    return {status:'COMPLETED',output:{end:true},artifacts:[]};}`);
+  let launches=0;
+  const adapter={name:'codex',id:'codex',capabilities:['model','codex'],launch(task){
+    launches++;
+    const source={id:`job/${f.id}/task/${task.id}/execution/${task.executionId}`};
+    void (async()=>{
+      await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.started','running','fixture start','user',undefined,source));
+      await mkdir(dirname(task.output.path),{recursive:true});
+      await writeFile(file,'verified Editor output');
+      await writeFile(task.output.path,JSON.stringify({status:'COMPLETED',output:{edited:true},artifacts:['edit-decision-list.json']}));
+      await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.completed','succeeded','fixture complete','orchestrator',{},source));
+    })().catch(error=>{throw error;});
+    return {id:'mock-run-relative-editor',launched:Promise.resolve(),promise:Promise.resolve({summary:'exit'}),cancel(){}};
+  }};
+  const reconciler=f.makeReconciler(adapter),stop=await reconciler.watch(f.id);
+  try{
+    const {result,job}=await f.execute(reconciler);
+    assert.equal(result.outcome.status,'COMPLETED',JSON.stringify(result.outcome));
+    assert.equal(job.state,'COMPLETED');
+    assert.equal(launches,1);
+    assert.equal(job.tasks[0].result.data.shortcut.artifactHashes.M['runs/2026-11-07-editor-e2e/edit-decision-list.json'].length,64);
+    assert.equal(job.tasks[0].result.data.shortcut.nodes.C.output.end,true);
+  }finally{await stop();}
+});
+
 test('D02 fault F05: non-file artifact records are rejected despite terminal success',async t=>{
   const f=await mixedFixture(t,'D02-code-model-code.mmd');
   const {mkdir}=await import('node:fs/promises'),{dirname}=await import('node:path');

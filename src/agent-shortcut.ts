@@ -350,13 +350,30 @@ export async function runAgentShortcut(options: {
           if (requiresVlogVisionerEvidence(node.agent.toLowerCase())) await validateVisionerResult(result,projectReal);
           if(task.output?.kind==='file')await validateShortcutStageGate({projectPath:projectReal,agent:node.agent,runPath:dirname(task.output.path),execute:trackedRunCommand});
           const artifactHashes: Record<string,string> = {};
+          // Project-local Shortcut nodes use project-relative paths. Managed
+          // Project Run Workers may instead return paths relative to their
+          // canonical Run; both must stay inside the Project and remain
+          // unambiguous before hashing bytes.
+          const runRoot=task.output?.kind==='file' ? await realpath(dirname(task.output.path)) : null;
+          const checkedRunRoot=runRoot&&inside(projectReal,runRoot)?runRoot:null;
           for (const artifact of artifactPaths) {
-            if (!artifact) throw new Error('shortcut artifact path cannot be empty');
-            const artifactPath=isAbsolute(artifact)?resolve(artifact):resolve(projectReal,artifact);
-            let actual:string; try { actual=await realpath(artifactPath); } catch { throw new Error(`shortcut artifact missing: ${artifact}`); }
-            if (!inside(projectReal,actual)) throw new Error(`shortcut artifact missing or outside project: ${artifact}`);
-            const relativePath=relative(projectReal,actual);
-            artifactHashes[relativePath]=digestBytes(await readFile(actual));
+            if (!artifact || typeof artifact!=='string') throw new Error('shortcut artifact path cannot be empty');
+            const candidates=isAbsolute(artifact)
+              ? [resolve(artifact)]
+              : [...new Set([resolve(projectReal,artifact),...(checkedRunRoot?[resolve(checkedRunRoot,artifact)]:[])])];
+            const found:string[]=[];
+            for (const candidate of candidates) {
+              // Never follow a symlink from outside the Project into it.
+              if(!inside(projectReal,candidate))continue;
+              try {
+                const actual=await realpath(candidate);
+                if(inside(projectReal,actual)&&!found.includes(actual))found.push(actual);
+              }catch{/* Check the alternate canonical Run location. */}
+            }
+            if(found.length===0)throw new Error(`shortcut artifact missing or outside project: ${artifact}`);
+            if(found.length>1)throw new Error(`shortcut artifact ambiguous between project and run: ${artifact}`);
+            const relativePath=relative(projectReal,found[0]);
+            artifactHashes[relativePath]=digestBytes(await readFile(found[0]));
           }
           return { id, value: result, artifactHashes };
         } catch (error) { return { id, value: null, error: error instanceof Error ? error.message : String(error) }; }
