@@ -5,6 +5,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {SQLiteRelayStore} from '../dist/relay-store.js';
 import {ProjectedDurableStore} from '../dist/projected-store.js';
+import {LocalAuthorityDurableStore} from '../dist/local-authority-store.js';
 import {InMemoryStore} from '../dist/store.js';
 import {RepositoryWorkerPool} from '../dist/pool.js';
 import {MemoryEventBus} from '../dist/events.js';
@@ -16,9 +17,10 @@ const task=()=>({jobId:'job-preview',id:'producer',parentTaskId:null,dependencie
  timeoutMs:60000,createdAt:now(),updatedAt:now(),continuation:null,continuationDeliveredAt:null});
 const job=(t=task())=>({id:t.jobId,title:'Preview',prNumber:0,repository:'local/job',state:'ACTIVE',
  continuation:null,createdAt:now(),updatedAt:now(),tasks:[t]});
-async function fixture(){const dir=await mkdtemp(join(tmpdir(),'relay-preview-'));const store=new SQLiteRelayStore(join(dir,'db.sqlite'));
+async function fixture({localAuthority=false}={}){const dir=await mkdtemp(join(tmpdir(),'relay-preview-'));const store=new SQLiteRelayStore(join(dir,'db.sqlite'));
  const j=job();await store.saveJob(j);
- const reconciler=managedReconciler(new ProjectedDurableStore(store,new InMemoryStore(j)),{owner:'preview-test',adapters:[]});
+ const runtime=localAuthority ? new LocalAuthorityDurableStore(store,new InMemoryStore(j),undefined,true) : new ProjectedDurableStore(store,new InMemoryStore(j));
+ const reconciler=managedReconciler(runtime,{owner:'preview-test',adapters:[]});
  return {store,j,reconciler,async close(){await reconciler.close();store.close();await rm(dir,{recursive:true,force:true});}};}
 async function wait(f,inv){
  const ev={version:1,event_id:'wait-'+inv,job_id:f.j.id,task_id:'producer',parent_task_id:null,
@@ -87,7 +89,7 @@ test('iPhone Decision Event resumes original awaiting Task after Neo binds exact
  }finally{await f.close();}
 });
 test('full pool NATS-style review intake applies mobile CHANGES_REQUESTED to original durable Task',async()=>{
- const f=await fixture(); const bus=new MemoryEventBus();
+ const f=await fixture({localAuthority:true}); const bus=new MemoryEventBus();
  const pool=new RepositoryWorkerPool(1,
    (_store,_capacity)=>({
      applyEvent:event=>f.reconciler.applyEvent(event),

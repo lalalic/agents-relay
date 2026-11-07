@@ -1,4 +1,5 @@
 import type { EventRecord } from './types.js';
+import type { InteractiveDecisionDelivery, InteractiveDecisionOutcome, InteractiveInvocation } from './interactive-invocation.js';
 import type { AgentRegistration, Job, Plan, Task } from './types.js';
 import type { AtomicJobMutation, DurableStore, Comment, PullRequestState } from './store.js';
 import { GitHubProjectionWriter } from './projected-store.js';
@@ -85,6 +86,26 @@ export class LocalAuthorityDurableStore implements DurableStore {
       payload: { operation: 'close_pull_request' },
       priority: 200,
     });
+  }
+
+  /** Host-owned mobile Review is a SQLite lifecycle fact, never a GitHub
+   * projection. Use the same authoritative host-invocation ledger as the
+   * preview CLI and do not acknowledge a decision without durable storage. */
+  async recordHostInvocationEvent(delivery: InteractiveDecisionDelivery, outcome: InteractiveDecisionOutcome, fingerprint: string): Promise<void> {
+    if (!this.authority.recordHostInvocationEvent) throw new Error('SQLite host invocation event ledger unavailable');
+    await this.authority.recordHostInvocationEvent(delivery, outcome, fingerprint);
+  }
+
+  async hasHostInvocationDecision(jobId: string, taskId: string, invocationId: string, fingerprint?: string): Promise<boolean> {
+    if (!this.authority.hasHostInvocationDecision) throw new Error('SQLite host invocation decision ledger unavailable');
+    return this.authority.hasHostInvocationDecision(jobId, taskId, invocationId, fingerprint);
+  }
+
+  async recordHostInvocationDecision(delivery: InteractiveDecisionDelivery, fingerprint: string): Promise<{ outcome: InteractiveDecisionOutcome; reason: string; invocation?: InteractiveInvocation }> {
+    if (!this.authority.recordHostInvocationDecision) throw new Error('SQLite host invocation decision ledger unavailable');
+    const receipt = await this.authority.recordHostInvocationDecision(delivery, fingerprint);
+    if (receipt.outcome === 'accepted') publishLocalCommit(await this.load(delivery.jobId));
+    return receipt;
   }
 
   async recordExecutionProcess(record: ExecutionProcessRecord): Promise<void> {
