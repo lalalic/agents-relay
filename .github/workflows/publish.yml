@@ -108,14 +108,18 @@ jobs:
               exit 0
             fi
 
-            if grep -q 'previously staged version' "$publish_error"; then
+            # NPM's transparency log can reject an equivalent staged tarball
+            # with TLOG_CREATE_ENTRY_ERROR (409), even when npm view still
+            # reports this version as absent. Like an immutable staged version,
+            # it needs a NEW patch version, not blind retry of the same bytes.
+            if grep -Eq 'previously staged version|TLOG_CREATE_ENTRY_ERROR' "$publish_error"; then
               version="$(node scripts/npm-version.mjs "$version")"
               npm version "$version" --no-git-tag-version --ignore-scripts
               continue
             fi
             exit 1
           done
-          echo 'Unable to publish after five staged-version retries' >&2
+          echo 'Unable to publish after five immutable publish-conflict retries' >&2
           exit 1
       - name: Record package publication on originating PR
         if: ${{ steps.publish.outcome == 'success' }}
