@@ -133,33 +133,48 @@ function raceAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   });
   return Promise.race([work, aborted]).finally(() => { if (rejectAbort) signal.removeEventListener('abort', rejectAbort); });
 }
-// Only Vlog's Visioner evidence follows the source-manifest/index artifact schema.
-// Distribution Visioner has a separate domain contract and cannot reuse it.
+// Vlog's Visioner sources actual Markcut perception and lightweight normalized
+// media; the historical vision-segment-index.json contract was retired.
+// Distribution Visioner has a separate domain contract.
 function requiresVlogVisionerEvidence(agent: string | undefined): boolean {
   return agent === 'visioner' || agent === 'vlog-visioner';
 }
 async function validateVisionerResult(result: Record<string, unknown>, projectRoot: string): Promise<void> {
-  const artifacts=result.artifacts, output=result.output as Record<string,unknown>;
-  if (!artifacts || Array.isArray(artifacts) || typeof artifacts!=='object' || !['vision-evidence.json','vision-segment-index.json','metadata.json'].every(name=>
-    Object.prototype.hasOwnProperty.call(artifacts,name)&&typeof output[name]==='string')) throw new Error('Visioner requires evidence, index, and metadata artifacts');
+  const output=result.output as Record<string,unknown>|undefined;
+  const artifacts=result.artifacts;
+  const names=['vision-evidence.json','vision-normalized-manifest.json','metadata.json'] as const;
+  if (!output || !artifacts || Array.isArray(artifacts) || typeof artifacts!=='object' ||
+      !names.every(name=>Object.prototype.hasOwnProperty.call(artifacts,name)&&typeof output[name]==='string'))
+    throw new Error('Visioner requires source-linked evidence, normalized manifest and Markcut metadata artifacts');
   const files=artifacts as Record<string,unknown>;
   const evidence=files['vision-evidence.json'] as Record<string,unknown>|undefined;
-  const index=files['vision-segment-index.json'] as Record<string,unknown>|undefined;
+  const normalized=files['vision-normalized-manifest.json'] as Record<string,unknown>|undefined;
   const metadata=files['metadata.json'];
-  if (!evidence||evidence.status!=='EVIDENCE_READY_UNREVIEWED'||evidence.stage!=='visioner'||!Array.isArray(evidence.sources)||!Array.isArray(evidence.observations)
-    || !index||index.status!=='SOURCE_LINKED_UNREVIEWED'||!Array.isArray(index.sources)||!Array.isArray(index.observations)||!metadata||typeof metadata!=='object') throw new Error('Visioner artifacts do not satisfy the source-linked evidence contract');
-  const artifactFiles=new Map<string,{bytes:Buffer;parsed:Record<string,unknown>}>();
-  for(const name of ['vision-evidence.json','vision-segment-index.json','metadata.json']) {
+  if (!evidence || evidence.status!=='EVIDENCE_READY_UNREVIEWED' || evidence.stage!=='visioner' ||
+      !Array.isArray(evidence.sources) || !Array.isArray(evidence.observations) || !Array.isArray(evidence.summary) ||
+      !normalized || normalized.profile!=='markcut-vision-normalized-v1' || normalized.usage!=='vision-understanding-only' ||
+      !Array.isArray(normalized.sources) || !metadata || typeof metadata!=='object' || Array.isArray(metadata))
+    throw new Error('Visioner artifacts do not satisfy the current source-linked evidence contract');
+  const actualFiles=new Map<string,Buffer>();
+  for (const name of names) {
     const actual=await realpath(resolve(projectRoot,String(output[name])));
     if(!inside(projectRoot,actual)) throw new Error(`Visioner artifact escapes project root: ${name}`);
-    const bytes=await readFile(actual), parsed:unknown=JSON.parse(bytes.toString('utf8'));
-    if(!parsed||typeof parsed!=='object'||Array.isArray(parsed)||canonical(parsed)!==canonical(files[name])) throw new Error(`Visioner structured artifact differs from file: ${name}`);
-    artifactFiles.set(name,{bytes,parsed:parsed as Record<string,unknown>});
+    const bytes=await readFile(actual),parsed:unknown=JSON.parse(bytes.toString('utf8'));
+    if(!parsed||typeof parsed!=='object'||Array.isArray(parsed)||canonical(parsed)!==canonical(files[name]))
+      throw new Error(`Visioner structured artifact differs from file: ${name}`);
+    actualFiles.set(name,bytes);
   }
-  const evidenceFile=artifactFiles.get('vision-evidence.json')!, indexFile=artifactFiles.get('vision-segment-index.json')!, metadataFile=artifactFiles.get('metadata.json')!;
-  // Stage authority is the source-linked structure and original media IDs, not repeated checksum validation.
-  if(evidenceFile.parsed.status!=='EVIDENCE_READY_UNREVIEWED'||indexFile.parsed.status!=='SOURCE_LINKED_UNREVIEWED'
-    ||!metadataFile.parsed)throw new Error('Visioner structured evidence does not satisfy the Stage contract');
+  if (evidence.markcut_metadata_sha256!==digestBytes(actualFiles.get('metadata.json')!) ||
+      normalized.sourceManifestSha256!==evidence.manifest_hash)
+    throw new Error('Visioner normalized and Markcut source provenance does not match');
+  const originalSources=evidence.sources as Array<Record<string,unknown>>;
+  const normalizedSources=normalized.sources as Array<Record<string,unknown>>;
+  if (originalSources.length===0||originalSources.length!==normalizedSources.length||
+      new Set(originalSources.map(source=>source.source_id)).size!==originalSources.length||
+      originalSources.some(source=>typeof source.source_id!=='string'||typeof source.source_sha256!=='string'||
+        !(source.source_id in (metadata as Record<string,unknown>))||
+        !normalizedSources.some(item=>item.sourceId===source.source_id&&item.sourceSha256===source.source_sha256)))
+    throw new Error('Visioner normalized manifest does not cover every original source identity');
 }
 
 export async function runAgentShortcut(options: {

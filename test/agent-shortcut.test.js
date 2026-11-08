@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { SQLiteRelayStore } from '../dist/relay-store.js';
@@ -19,7 +19,7 @@ const graph = `flowchart TD\nA[agent:alpha] --> C[agent:join]\nB[agent:beta] -->
 const root = resolve(new URL('..', import.meta.url).pathname);
 
 async function fixture(t, { agentGraph = graph, projectOverride = true, initialDraft = false } = {}) {
-  const directory = await mkdtemp(join(tmpdir(), 'relay-shortcut-'));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'relay-shortcut-')));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const storeDir = join(directory, 'stores');
   await mkdir(storeDir);
@@ -473,7 +473,7 @@ test('content-only shortcut completion requires a durable no-review no-merge pol
   finally { store.close(); }
 });
 
-test('legacy and project-local Vlog Visioner shortcuts cannot bypass required evidence/index/metadata',async t=>{
+test('legacy and project-local Vlog Visioner shortcuts cannot bypass source evidence/normalized media/metadata',async t=>{
   for (const agent of ['visioner','vlog-visioner']) {
     await t.test(agent,async t=>{
       const f=await fixture(t,{agentGraph:`flowchart TD\nA[agent:${agent}]`});
@@ -485,6 +485,28 @@ test('legacy and project-local Vlog Visioner shortcuts cannot bypass required ev
       assert.equal((await f.load()).tasks[0].state,'FAILED');
     });
   }
+});
+
+test('Vlog Visioner accepts current source-linked evidence and normalized manifest without legacy index',async t=>{
+  const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:vlog-visioner]'});
+  const sha='a'.repeat(64),manifestSha='b'.repeat(64);
+  const metadata={'001':{duration:9.7,perception:{desc:'Observed trees',segments:{'0to9700':{vision:'Trees'}}}}};
+  const metadataBytes=Buffer.from(JSON.stringify(metadata));
+  const evidence={stage:'visioner',status:'EVIDENCE_READY_UNREVIEWED',
+    manifest_hash:manifestSha,markcut_metadata_sha256:createHash('sha256').update(metadataBytes).digest('hex'),
+    sources:[{source_id:'001',source_sha256:sha}],observations:[],summary:[]};
+  const normalized={profile:'markcut-vision-normalized-v1',usage:'vision-understanding-only',
+    sourceManifestSha256:manifestSha,sources:[{sourceId:'001',sourceSha256:sha,normalizedSha256:'c'.repeat(64)}]};
+  const artifacts={'vision-evidence.json':evidence,'vision-normalized-manifest.json':normalized,'metadata.json':metadata};
+  const output={};
+  for(const [name,value] of Object.entries(artifacts)){
+    const path=join(await realpath(f.project),name);await writeFile(path,JSON.stringify(value));output[name]=path;
+  }
+  await f.writeShortcut(f.project,'vlog-visioner',
+    `export async function run(){return {status:'COMPLETED',output:${JSON.stringify(output)},artifacts:${JSON.stringify(artifacts)}};}`);
+  const result=await f.cli();
+  assert.equal(result.status,0,JSON.stringify({stderr:result.stderr,stdout:result.stdout?.slice(-1500)}));
+  assert.equal((await f.load()).tasks[0].state,'SUCCEEDED');
 });
 
 test('ordinary Relay queue never dispatches a queued shortcut Worker fallback or its Troubleshooter', async t => {
