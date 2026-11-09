@@ -9,13 +9,12 @@ Every Agents Relay Job uses the same durable objective lifecycle. There is no `f
 3. The Planner returns `objective_status`, `assessment`, and `next_tasks`. Each materialized child has an immutable `planningDecisionId` and `planningRound`; semantic parentage uses `parentTaskId`.
 4. `in_progress` requires executable work or a valid recovery/blocked resolution, so the Job stays ACTIVE. Planner rounds are idempotent across duplicate wakes and daemon restarts.
 
-Shortcut mode is opt-in. It resolves `agents/<agent>.agent.mjs` beside the effective Agent Markdown
-(project, shared, or builtin). It falls back only through explicit Agent
-inheritance, executes independent graph nodes concurrently,
+Shortcut mode is opt-in. It resolves project `agents/.shortcut/<agent>.agent.mjs`
+before Neo shared shortcuts, executes independent graph nodes concurrently,
 persists node checkpoints and event waits in the existing SQLite Task result,
-and runs nodes without shortcuts using the existing model-backed Worker
-adapter. A shortcut failure may have produced effects and stays FAILED for
-Troubleshooter recovery; it must not replay the graph. Nonhuman waits resume
+and returns a missing shortcut or a pre-effect failure to the original Worker
+route. A failure after a shortcut may have produced effects stays FAILED for
+Troubleshooter recovery and does not replay the graph. Nonhuman waits resume
 only from a validated result receipt atomically stored in the SQLite Task
 checkpoint and matched to the active Job, Task, execution, wait ID, revision,
 and content hash. A `shortcut.result` EventBus event is only a wake signal; its
