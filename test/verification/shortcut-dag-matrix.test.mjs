@@ -28,7 +28,7 @@ async function fixture(t,id) {
   const directory=await mkdtemp(join(tmpdir(),`shortcut-${id}-`));
   t.after(()=>rm(directory,{recursive:true,force:true}));
   const project=join(directory,'project'),neo=join(directory,'neo'),storeDir=join(directory,'stores');
-  for(const path of [join(project,'agents','.shortcut'),join(neo,'agents','.shortcut'),storeDir])await mkdir(path,{recursive:true});
+  for(const path of [join(project,'agents'),join(neo,'agents'),storeDir])await mkdir(path,{recursive:true});
   const jobId='99901';
   const now=new Date().toISOString();
   const job=createJobEntity({id:jobId,title:`${id} offline`,objective:'offline contract verification',projectPath:undefined,
@@ -42,7 +42,10 @@ async function fixture(t,id) {
     createdAt:now,updatedAt:now}));
   const store=new SQLiteRelayStore(join(directory,'relay.sqlite'),jobId);
   try { await store.createJobIfAbsent(job); } finally { store.close(); }
-  const module=async(agent,source)=>writeFile(join(project,'agents','.shortcut',`${agent}.agent.mjs`),source);
+  const module=async(agent,source)=>{
+    await writeFile(join(project,'agents',`${agent}.agent.md`),`---\nname: ${agent}\n---\nFixture ${agent}\n`);
+    await writeFile(join(project,'agents',`${agent}.agent.mjs`),source);
+  };
   const run=(...args)=>spawnSync(process.execPath,[join(root,'dist','cli.js'),'job','run','--mode','shortcut',
     '--id',jobId,'--repo','local/shortcut-test','--no-github','--store-dir',storeDir,
     '--task-id','initial','--project-path',project,'--neo-root',neo,...args],

@@ -1,13 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
-import { resolve, relative, isAbsolute, sep, dirname } from 'node:path';
-import { realpath } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
+import { resolve, relative, isAbsolute, sep, dirname, join, basename } from 'node:path';
 import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import { spawnOwnedProcess } from './owned-process.js';
 import { validateShortcutStageGate } from './shortcut-stage-contract.js';
 import { parseAgentGraph } from './agent-graph.js';
+import { resolveAgentMarkdown } from './agent-content-resolver.js';
+import { BUNDLED_AGENTS_ROOT } from './execution-context.js';
 import type { DurableStore } from './store.js';
 import type { Job, Result, Task } from './types.js';
 import { DurableTaskTransitionRuntime } from './workflow/durable-transition.js';
@@ -103,17 +103,32 @@ async function runCommand(args: string[], cwd: string, signal: AbortSignal): Pro
   return { stdout, stderr, code: code ?? -1 };
 }
 
+/** The Markdown resolver already selects the effective Agent and its explicit
+ * inheritance chain. Inspect only those source files, most specific first;
+ * never look up an unrelated same-named shortcut in another layer. */
 async function discoverShortcut(agent: string, projectPath: string, neoRoot?: string): Promise<string | null> {
-  const file = `${agent}.agent.mjs`;
-  const root=await realpath(projectPath);
-  const project = resolve(root, 'agents', '.shortcut', file);
-  if (existsSync(project)) { const actual=await realpath(project); if (!inside(root,actual)) throw new Error('Project shortcut symlink escapes project root'); return actual; }
-  const shared = neoRoot ? resolve(neoRoot, 'agents', '.shortcut', file) : null;
-  if (!shared || !existsSync(shared)) return null;
-  const sharedRoot=await realpath(resolve(neoRoot!, 'agents', '.shortcut'));
-  const actual=await realpath(shared);
-  if (!inside(sharedRoot,actual)) throw new Error('Shared shortcut symlink escapes shortcut root');
-  return actual;
+  let sources: string[];
+  try {
+    ({ sources } = await resolveAgentMarkdown(agent, BUNDLED_AGENTS_ROOT, projectPath, neoRoot));
+  } catch (error) {
+    if (error instanceof Error && error.message === `Unknown agent ${agent}`) return null;
+    throw error;
+  }
+  for (const source of [...sources].reverse()) {
+    const directory = dirname(source);
+    const owner = basename(source).replace(/(?:\.agent)?\.md$/, '');
+    const candidate = join(directory, `${owner}.agent.mjs`);
+    let actual: string;
+    try { actual = await realpath(candidate); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      throw error;
+    }
+    if (dirname(actual) !== directory) throw new Error(`Agent shortcut symlink escapes source directory: ${candidate}`);
+    if (!(await stat(actual)).isFile()) throw new Error(`Agent shortcut is not a regular file: ${candidate}`);
+    return actual;
+  }
+  return null;
 }
 export async function missingShortcutNodes(agentGraph: string, projectPath: string, neoRoot?: string): Promise<string[]> {
   const graph = parseAgentGraph(agentGraph);
@@ -196,7 +211,7 @@ export async function runAgentShortcut(options: {
     const path = await discoverShortcut(node.agent, projectReal, neoRoot);
     return { nodeId: node.id, path, hash: path ? digestBytes(await readFile(path)) : 'missing' };
   }));
-  const shortcutHash = digest(canonical(shortcuts.map(item => [item.nodeId, item.hash])));
+  const shortcutHash = digest(canonical(shortcuts.map(item => [item.nodeId, item.path, item.hash])));
   const transitions = new DurableTaskTransitionRuntime(store);
   const owner = `shortcut-${process.pid}-${randomUUID()}`;
   let currentJob = await store.load(job.id);

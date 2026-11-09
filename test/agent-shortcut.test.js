@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { SQLiteRelayStore } from '../dist/relay-store.js';
@@ -25,8 +25,8 @@ async function fixture(t, { agentGraph = graph, projectOverride = true, initialD
   await mkdir(storeDir);
   const project = join(directory, 'project');
   const neo = join(directory, 'neo');
-  await mkdir(join(project, 'agents', '.shortcut'), { recursive: true });
-  await mkdir(join(neo, 'agents', '.shortcut'), { recursive: true });
+  await mkdir(join(project, 'agents'), { recursive: true });
+  await mkdir(join(neo, 'agents'), { recursive: true });
   const id = '98001';
   const job = createJobEntity({ id, title: 'Shortcut CLI', objective: 'Run a fixture graph', projectPath: undefined,
     prNumber: 0, repository: 'local/shortcut-test', continuation: null, autoMerge: false, reviewEnabled: false, contentOnly: true, executionMode: 'shortcut',
@@ -41,7 +41,8 @@ async function fixture(t, { agentGraph = graph, projectOverride = true, initialD
   await store.createJobIfAbsent(job);
   store.close();
   const writeShortcut = async (base, agent, source) => {
-    await writeFile(join(base, 'agents', '.shortcut', `${agent}.agent.mjs`), source);
+    await writeFile(join(base, 'agents', `${agent}.agent.mjs`), source);
+    await writeFile(join(base, 'agents', `${agent}.agent.md`), `---\nname: ${agent}\n---\nAgent ${agent} fixture\n`);
   };
   const cli = async (...args) => spawnSync(process.execPath, [join(root, 'dist', 'cli.js'), 'job', 'run', '--mode', 'shortcut', '--id', id,
     '--repo', 'local/shortcut-test', '--no-github', '--store-dir', storeDir, '--task-id', 'initial', '--project-path', project, '--neo-root', neo, ...args],
@@ -69,6 +70,48 @@ test('foreground shortcut job run activates a newly-created DRAFT Job via Job Gr
   assert.equal(durable.tasks[0].state, 'SUCCEEDED');
   assert.ok(durable.tasks[0].executionHistory.length > 0);
   assert.match(result.stderr, /shortcut.node/);
+});
+
+test('standalone project Agent cannot execute a same-named Neo shortcut or a legacy .shortcut module', async t => {
+  const f = await fixture(t, { agentGraph: 'flowchart TD\nA[agent:alpha]' });
+  await f.writeShortcut(f.neo, 'alpha', `export async function run() { throw Error('WRONG_SOURCE'); }`);
+  await writeFile(join(f.project, 'agents', 'alpha.agent.md'), '---\nname: alpha\n---\nStandalone project role\n');
+  const oldDir = join(f.project, 'agents', '.shortcut');
+  await mkdir(oldDir);
+  await writeFile(join(oldDir, 'alpha.agent.mjs'), `export async function run() { throw Error('LEGACY_SOURCE'); }`);
+  const { missingShortcutNodes } = await import('../dist/agent-shortcut.js');
+  assert.deepEqual(await missingShortcutNodes(f.task.agentGraph, f.project, f.neo), ['A']);
+});
+
+test('explicit extends: neo/alpha inherits the Neo sibling shortcut and runs it', async t => {
+  const f = await fixture(t, { agentGraph: 'flowchart TD\nA[agent:alpha]' });
+  await f.writeShortcut(f.neo, 'alpha', `export async function run() { return {status:'COMPLETED', output:{source:'neo'},artifacts:[]}; }`);
+  await writeFile(join(f.project, 'agents', 'alpha.agent.md'), '---\nname: alpha\nextends: neo/alpha\n---\nProject overlay\n');
+  const { missingShortcutNodes } = await import('../dist/agent-shortcut.js');
+  assert.deepEqual(await missingShortcutNodes(f.task.agentGraph, f.project, f.neo), []);
+  const result = await f.cli();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).outcome.output.nodes.A.output.source, 'neo');
+});
+
+test('absolute inheritance resolves its differently named Agent sibling, not a same-named unrelated source', async t => {
+  const f = await fixture(t, { agentGraph: 'flowchart TD\nA[agent:alpha]' });
+  const base = join(f.directory, 'specialist.agent.md');
+  await writeFile(base, '---\nname: specialist\n---\nSpecialist definition\n');
+  await writeFile(join(f.directory, 'specialist.agent.mjs'), `export async function run() {return {status:'COMPLETED',output:{source:'specialist'},artifacts:[]};}`);
+  await writeFile(join(f.project, 'agents', 'alpha.agent.md'), `---\nname: alpha\nextends: ${base}\n---\nProject overlay\n`);
+  const result = await f.cli();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).outcome.output.nodes.A.output.source, 'specialist');
+});
+
+test('symlinked sibling shortcut cannot escape the effective Agent source directory', async t => {
+  const f = await fixture(t, { agentGraph: 'flowchart TD\nA[agent:alpha]' });
+  await f.writeShortcut(f.neo, 'alpha', `export async function run(){return {status:'COMPLETED',output:{},artifacts:[]};}`);
+  await writeFile(join(f.project, 'agents', 'alpha.agent.md'), '---\nname: alpha\n---\nStandalone\n');
+  await symlink(join(f.neo, 'agents', 'alpha.agent.mjs'), join(f.project, 'agents', 'alpha.agent.mjs'));
+  const { missingShortcutNodes } = await import('../dist/agent-shortcut.js');
+  await assert.rejects(missingShortcutNodes(f.task.agentGraph, f.project, f.neo), /symlink escapes source directory/);
 });
 
 test('shortcut commands reject file-backed Jobs before mutation', async t => {

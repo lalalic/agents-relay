@@ -16,7 +16,7 @@ one durable terminal result rather than treating process exit as success.
 
 ### User Story 2 — Use code shortcuts and model-backed nodes (P1)
 
-Nodes with an explicit, verified `.shortcut/<agent>.agent.mjs` execute that
+Nodes with an explicit, verified `<agent>.agent.mjs` execute that
 module. Nodes requiring a model but lacking a code shortcut use the existing
 Relay Worker fallback, including its normal Adapter/model routing and durable
 Task lifecycle. No separate direct Codex executor is required.

@@ -21,7 +21,7 @@ and intended reuse; implementation must not introduce parallel authorities.
 
 | Capability | Existing authority | Reuse boundary |
 | --- | --- | --- |
-| Project policy and agent discovery | Neo root `AGENTS.md`, project `AGENTS.md`, and shared `agents/*.agent.md` | Keep existing Markdown agents and project directories intact. Shortcut source is additive under `agents/.shortcut/<agent>.agent.mjs`; project agents take precedence over Neo shared agents. |
+| Project policy and agent discovery | Neo root `AGENTS.md`, project `AGENTS.md`, and shared `agents/*.agent.md` | Keep existing Markdown agents and project directories intact. Shortcut source is additive under `agents/<agent>.agent.mjs`; project agents take precedence over Neo shared agents. |
 | Vlog normal-stage topology | `vlog/graph.mmd` and `vlog/AGENTS.md` | Existing DAG: Visioner → Director → Editor → Producer → Final QA. Watcher/ingress and publishing are outside it. |
 | Visioner behavior | `agents/visioner.agent.md` | Treat this contract as authoritative; shortcut may only execute supported existing tools and return its required evidence. |
 | Stage inputs, artifacts and acceptance | `vlog/docs/episode-stage-contract.md` | Visioner requires owner-approved source manifest/local readable media; `vision-evidence.json` cites source IDs, hashes, original times, and uncertainty. |
