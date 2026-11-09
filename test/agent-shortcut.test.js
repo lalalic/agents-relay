@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { SQLiteRelayStore } from '../dist/relay-store.js';
@@ -41,6 +41,8 @@ async function fixture(t, { agentGraph = graph, projectOverride = true, initialD
   await store.createJobIfAbsent(job);
   store.close();
   const writeShortcut = async (base, agent, source) => {
+    const markdown = join(base, 'agents', `${agent}.agent.md`);
+    if (!existsSync(markdown)) await writeFile(markdown, `---\nname: ${agent}\n---\n# ${agent}\n`);
     await writeFile(join(base, 'agents', '.shortcut', `${agent}.agent.mjs`), source);
   };
   const cli = async (...args) => spawnSync(process.execPath, [join(root, 'dist', 'cli.js'), 'job', 'run', '--mode', 'shortcut', '--id', id,
@@ -102,6 +104,54 @@ test('actual shortcut CLI runs parallel branches, joins declared outputs, and ho
   assert.equal(data.task.state, 'SUCCEEDED');
   assert.equal((await f.load()).state, 'COMPLETED');
   assert.equal(data.outcome.output.nodes.C.output.alpha, 'project-alpha');
+});
+
+test('Shortcut lookup rejects orphan scripts in a different Agent layer', async t => {
+  const f = await fixture(t, { agentGraph: 'flowchart TD\nA[agent:alpha]' });
+  await f.writeShortcut(f.neo, 'alpha', `export async function run(){return {status:'COMPLETED',output:{source:'shared'},artifacts:[]};}`);
+  await writeFile(join(f.project, 'agents', '.shortcut', 'alpha.agent.mjs'),
+    `export async function run(){throw Error('orphan project script must not run');}`);
+  const result = await f.cli();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).outcome.output.nodes.A.output.source, 'shared');
+});
+
+test('Standalone project Agent does not inherit an unrelated shared Shortcut', async t => {
+  const f = await fixture(t, { agentGraph: 'flowchart TD\nA[agent:alpha]' });
+  await f.writeShortcut(f.neo, 'alpha', `export async function run(){return {status:'COMPLETED',output:{source:'shared'},artifacts:[]};}`);
+  await writeFile(join(f.project, 'agents', 'alpha.agent.md'), '---\nname: alpha\n---\n# Standalone override\n');
+  const { missingShortcutNodes } = await import('../dist/agent-shortcut.js');
+  assert.deepEqual(await missingShortcutNodes('flowchart TD\nA[agent:alpha]', f.project, f.neo), ['A']);
+});
+
+test('Explicit Agent inheritance reuses parent Shortcut from its own .shortcut directory', async t => {
+  const f = await fixture(t, { agentGraph: 'flowchart TD\nA[agent:alpha]' });
+  await f.writeShortcut(f.neo, 'alpha', `export async function run(){return {status:'COMPLETED',output:{source:'inherited'},artifacts:[]};}`);
+  await writeFile(join(f.project, 'agents', 'alpha.agent.md'),
+    '---\nname: alpha\nextends: neo/alpha\n---\n# Project extension\n');
+  const result = await f.cli();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).outcome.output.nodes.A.output.source, 'inherited');
+});
+
+test('Flat sibling Shortcut is not part of Agent-local .shortcut discovery', async t => {
+  const f = await fixture(t, { agentGraph: 'flowchart TD\nA[agent:alpha]' });
+  await writeFile(join(f.project, 'agents', 'alpha.agent.md'), '---\nname: alpha\n---\n# Alpha\n');
+  await writeFile(join(f.project, 'agents', 'alpha.agent.mjs'), 'export async function run(){throw Error("wrong convention");}');
+  const { missingShortcutNodes } = await import('../dist/agent-shortcut.js');
+  assert.deepEqual(await missingShortcutNodes('flowchart TD\nA[agent:alpha]', f.project, f.neo), ['A']);
+});
+
+test('Shortcut symlinks escaping the resolved Agent .shortcut directory fail closed', async t => {
+  const f = await fixture(t, { agentGraph: 'flowchart TD\nA[agent:alpha]' });
+  await writeFile(join(f.project, 'agents', 'alpha.agent.md'), '---\nname: alpha\n---\n# Alpha\n');
+  const target = join(f.directory, 'outside.agent.mjs');
+  await writeFile(target, 'export async function run(){throw Error("outside");}');
+  await symlink(target, join(f.project, 'agents', '.shortcut', 'alpha.agent.mjs'));
+  const { missingShortcutNodes } = await import('../dist/agent-shortcut.js');
+  await assert.rejects(
+    missingShortcutNodes('flowchart TD\nA[agent:alpha]', f.project, f.neo),
+    /Agent shortcut symlink escapes source directory/);
 });
 
 test('shortcut Job creation refuses an initial Planner round before any Task can materialize',async t=>{
