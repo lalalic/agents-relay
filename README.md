@@ -91,21 +91,23 @@ EOF
 npx agents-relay job create --repo OWNER/REPO \
   --title "Objective" --objective-file job.md
 
-# The orchestrator decides the initial batch separately
+# Create-only example: the orchestrator explicitly adds these Tasks.
+# For normal autonomous execution, instead pass --initial-plan at creation
+# and let the Planner choose the minimal Tasks; do not also create these manually.
 cat > task.md <<'EOF'
 # Work
 
 Implement this phase using the Job objective as context.
 EOF
-npx agents-relay task create --repo OWNER/REPO --id job-1 \
+npx agents-relay task create --repo OWNER/REPO --id JOB_ID \
   --task-id initial --output task-pr --input-file task.md
 
-npx agents-relay task create --repo OWNER/REPO --id job-1 \
+npx agents-relay task create --repo OWNER/REPO --id JOB_ID \
   --task-id child --output task-pr \
   --input "Implement the described child task and publish a terminal event."
 
-npx agents-relay reconcile --repo OWNER/REPO --pr 12 --id job-1
-npx agents-relay job show --repo OWNER/REPO --pr 12 --id job-1
+npx agents-relay reconcile --repo OWNER/REPO --id JOB_ID
+npx agents-relay job show --id JOB_ID
 ~~~
 
 Task readiness is explicit: `DRAFT` means the durable task exists but is not executable yet; `QUEUED` means Relay may execute it now; `RUNNING` means worker execution has started. Tasks created with dependencies start `DRAFT` and become `QUEUED` when those dependencies succeed. A dependency-free task created with `--draft` stays held until `task update --queue`. After binding an interactive request, a running Task may enter `AWAITING_DECISION` and release its Worker. Approved or changes-requested decisions requeue the same Task; `BLOCKED` is reserved for Troubleshooter escalation. Ordinary `DRAFT` Tasks remain unstarted/dependency-held.
@@ -113,37 +115,41 @@ Task readiness is explicit: `DRAFT` means the durable task exists but is not exe
 Mutable draft/queued/retryable task fields can be changed in place without replacing the durable task identity. `task update` rejects `RUNNING`, `SUCCEEDED`, and `CANCELLED` tasks so active execution and terminal history cannot be rewritten. For example:
 
 ~~~sh
-npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id child \
+npx agents-relay task update --repo OWNER/REPO --id JOB_ID --task-id child \
   --adapter chatgpt --provider chatgpt --model gpt-5.6-sol --reasoning high \
   --capabilities model,chatgpt,browser-harness
 
 # Explicitly release a held DRAFT task
-npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id child --queue
+npx agents-relay task update --repo OWNER/REPO --id JOB_ID --task-id child --queue
 ~~~
 
 Jobs separate durable lifecycle from derived runtime status. Durable lifecycle is `DRAFT | ACTIVE | COMPLETED | CANCELLED`: a newly created Job is DRAFT, and creating executable work or starting the Planner activates it. Runtime status (`IDLE`, `WAITING`, `QUEUED`, `RUNNING`, `BLOCKED`, `FAILED`, `REVIEWING`, `MERGE_PENDING`, `MERGED`, or `CANCELLED`) is computed from Tasks, Review, and locally confirmed merge facts and is never persisted as lifecycle truth.
+
+The **Job Execution Lifecycle (JEL)** is Create → Plan → Execute → Final Review → Merge → Completed. All work/recovery Tasks must reach a terminal state (SUCCEEDED, FAILED, or CANCELLED) before Final Review is eligible; terminal failure is evidence for the reviewer, not automatic acceptance. The independent Final Reviewer records findings. A PASS goes to the merge gate; CHANGES_REQUIRED persists findings and starts a minimal Planner N+1 repair round, then another Final Review. No automatic Plan N+1 is created after successful work. Planner and Workers use the discovered `ponytail` Skill to avoid unnecessary tasks without omitting required verification. For operator discussion, call this lifecycle **JEL**.
 
 Lifecycle transition authority lives in the directly renderable canonical flowchart sources linked in [Workflow graph navigation](#workflow-graph-navigation). Git history owns prior graph versions; the working tree contains only the current graph set.
 
 The canonical Mermaid Graph Engine is the authoritative durable workflow decision path. Job/Task lifecycle transitions plus Review, Planner, Blocker/Unblock, and Troubleshooter orchestration branches are defined by the canonical workflow graphs and executed through the shared graph runtime. TypeScript supplies facts and primitive action/effect implementations; it must not duplicate those workflow branches as a second procedural state machine.
 
-Job objectives and Task inputs are Markdown. Prefer `--objective-file` / `--input-file` (use `-` for stdin) for durable long-form context; inline `--objective` / `--input` remain for short/simple text and are mutually exclusive with the file variants. When a diagram materially clarifies the work, put Mermaid first and then Markdown detail. A newly created Job must capture enough context to finish independently of the originating chat. Its PR body contains exactly one hidden `agents-relay:job:v1` metadata marker followed by the objective Markdown; there is no separate Job comment duplicating the objective. Objective and Job metadata updates rewrite that same PR body. Legacy Job-comment markers remain readable and are migrated into the PR body on the next Job save.
+Job objectives and Task inputs are Markdown. Prefer `--objective-file` / `--input-file` (use `-` for stdin) for durable long-form context; inline `--objective` / `--input` remain for short/simple text and are mutually exclusive with the file variants. When a diagram materially clarifies the work, put Mermaid first and then Markdown detail. A newly created Job must capture enough context to finish independently of the originating chat. SQLite owns Job metadata and objectives. Any display PR or historical PR marker is a compatibility/audit projection, not the source of lifecycle truth.
 
-Every Job is objective-driven. `job create` persists only the durable Job and never
-creates executable tasks. The caller can either create work directly with
+Every Job is objective-driven. By default, `job create` persists only a DRAFT
+Job; `--initial-plan` also initializes the first real Planner round and its
+validated work. For a create-only Job, the caller can add Tasks directly with
 `task create` or invoke the Planner explicitly with `plan`. Direct
 orchestrator-created tasks are persisted directly and are not wrapped in a
 synthetic Plan. `agents-relay plan` works immediately on a zero-task DRAFT Job,
 activates it, persists a real `plan-N` planning round, and materializes validated
 `next_tasks`. Reconciliation does not invent the first round for an untouched
-zero-task DRAFT Job; once work starts, every Job automatically creates later
-Planner rounds until its latest Plan is satisfied.
+zero-task DRAFT Job. Once work starts, Relay waits for all work/recovery Tasks
+to terminate and triggers Final Review. Only a CHANGES_REQUIRED review verdict
+can start the next Planner round; PASS proceeds to the local merge gate.
 
 Manual planning syntax:
 
 ~~~sh
-npx agents-relay plan --repo OWNER/REPO --pr 12 --id job-1 --prompt "Plan the implementation from the durable objective"
-npx agents-relay plan --repo OWNER/REPO --pr 12 --id job-1 --prompt-file guidance.md
+npx agents-relay plan --repo OWNER/REPO --id JOB_ID --prompt "Plan the implementation from the durable objective"
+npx agents-relay plan --repo OWNER/REPO --id JOB_ID --prompt-file guidance.md
 ~~~
 
 The optional prompt is additional round guidance; it does not replace the durable Job objective. New planning rounds use `plan-N`; historical `planner-N` records remain readable.
@@ -167,7 +173,7 @@ Use `job update` for partial mutable metadata changes on an already healthy Job 
 npx agents-relay job update --id JOB_ID --priority P0 --no-auto-merge
 ~~~
 
-Request an eligible new review with `npx agents-relay review job --repo OWNER/REPO --pr NUMBER --id JOB_ID`.
+Request an eligible new review with `npx agents-relay review job --repo OWNER/REPO --id JOB_ID`.
 Pass optional `--thread-id THREAD_ID` to persist a reviewer-thread override for subsequent
 review routing. Without it, Relay uses the stored reviewer thread, then creator thread,
 or the legacy review path when neither exists. This request wakes graph-owned
@@ -190,7 +196,7 @@ Managed GitHub task create/update/show/list/retry/cancel and reconcile/serve com
 The original init command remains supported for backward compatibility:
 
 ~~~sh
-npx agents-relay init --repo OWNER/REPO --pr 1 --id job-1 --title "Objective"
+npx agents-relay init --repo OWNER/REPO --pr 1 --id JOB_ID --title "Objective"
 ~~~
 
 ## npm publishing
@@ -275,7 +281,7 @@ Relay does not discover Skill directories or invoke a separate runtime.
 The ChatGPT adapter uses Relay's `agents/chatgpt-worker.agent.md` lifecycle contract. A new worker uses `webhelm platform run chatgpt new-thread --session-id SESSION_ID --config <file>` in a caller-owned Session. This is a regular persistent ChatGPT thread, which supports the connected Neo MCP in the verified account. Relay closes the Session after submission, but the ChatGPT thread remains in history. Existing-thread review and handoff continue through `new-turn`. File paths are included in the worker message for Neo MCP reading; they are not uploaded as browser attachments. Submission receipts retain `status: submitted`; the event bus owns task completion.
 
 ~~~sh
-npx agents-relay task create --repo OWNER/REPO --pr 5 --id job-1 \
+npx agents-relay task create --repo OWNER/REPO --pr 5 --id JOB_ID \
   --task-id research-ui --adapter chatgpt \
   --capabilities model,chatgpt,browser-harness \
   --provider openai --model MODEL \
@@ -283,13 +289,13 @@ npx agents-relay task create --repo OWNER/REPO --pr 5 --id job-1 \
   --input "Research the dashboard UX and write the final report to the declared output file."
 ~~~
 
-GitHub PR state is authoritative for terminal lifecycle: a merged PR reconciles its managed job to `COMPLETED`; a closed, unmerged PR reconciles to `CANCELLED` and cannot launch queued work. The dashboard exposes `/api/jobs` and shows PR state, durable Job lifecycle, and derived runtime status separately. A merged PR reconciles lifecycle to `COMPLETED`; a closed, unmerged PR reconciles lifecycle to `CANCELLED`.
+SQLite and the canonical Graphs are authoritative for terminal lifecycle. A remote PR merge/close is an audit observation, not a state transition. Final Review PASS authorizes local Git merge; confirmed local-merge evidence gates `COMPLETED`. The dashboard exposes `/api/jobs` and distinguishes durable Job lifecycle from derived runtime status.
 
 Relay has no orchestrator worker adapter for new work. Orchestrators are external clients that create/plan durable Tasks; Execution Router selects a real worker route (`codex` or `chatgpt`). The CLI and dashboard do not expose manual orchestrator-only `task start`, `task complete`, or synthetic `record` paths.
 
 Historical stores may still contain `adapter: orchestrator`. Reconciliation treats that value only as legacy migration evidence: QUEUED work that never started can be converted in place to normal worker requirements; RUNNING work with an unknown outcome is quarantined as BLOCKED instead of replayed; only explicit durable `externalCompletionVerified` evidence can complete legacy work without execution. New Task creation and Task update reject that adapter.
 
-For managed jobs, the GitHub PR body is the canonical collaboration surface while SQLite remains lifecycle authority.
+For managed Jobs, SQLite is the canonical collaboration and lifecycle record; an optional GitHub display PR carries audit information only.
 
 ### Automatic task troubleshooting
 

@@ -43,9 +43,9 @@ Actions:
   run     Opt in to direct Agent Graph shortcuts for one existing Task
   shortcut-receipt  Atomically record a validated nonhuman result for a persisted wait
   list    List managed Jobs in a repository
-  merge   Queue a retryable external PR merge; Graph completes the Job only after confirmation
+  merge   Legacy entry point; local Git merge is Graph-owned (no CLI PR merge)
   unblock Authoritatively invalidate current BLOCKED decisions and trigger replanning/resume
-  cancel  Close the backing PR and cancel the Job
+  cancel  Cancel the Job through the SQLite/Graph lifecycle (no PR required)
   pause   Persistently stop dispatch and interrupt active generations; lifecycle state remains unchanged
   resume  Clear pause metadata and requeue interrupted work
 
