@@ -713,7 +713,7 @@ test('Jobs search defaults exclude cancelled; one status and repository combine 
   assert.deepEqual(searchDashboardJobs(tied, new URLSearchParams({ status:'ACTIVE' })).jobs.map(job => job.id), ['a','older','b']);
 });
 
-test('Jobs active-first ordering spans filtered matches before the 20-row cap', () => {
+test('Jobs active-first ordering respects the newest-20 selection cap', () => {
   const jobs = [
     { id:'cancelled-new', state:'CANCELLED', repository:'owner/one', title:'needle cancelled', updatedAt:'2026-10-29T13:00:00Z' },
     { id:'completed-new', state:'COMPLETED', repository:'owner/one', title:'needle complete', updatedAt:'2026-10-29T12:00:00Z' },
@@ -728,11 +728,13 @@ test('Jobs active-first ordering spans filtered matches before the 20-row cap', 
   const defaults = searchDashboardJobs(jobs, new URLSearchParams());
   assert.equal(defaults.total, 23);
   assert.equal(defaults.jobs.length, 20);
-  assert.deepEqual(defaults.jobs.filter(job => job.state === 'COMPLETED' || job.state === 'CANCELLED').map(job => job.id), []);
+  assert.deepEqual(defaults.jobs.filter(job => job.state === 'COMPLETED' || job.state === 'CANCELLED').map(job => job.id), ['completed-new']);
   assert.deepEqual(defaults.jobs.slice(0, 2).map(job => job.id), ['active-22', 'active-21']);
+  assert.equal(defaults.jobs.at(-1).id, 'completed-new');
+  assert.ok(!defaults.jobs.some(job => job.id === 'active-01'));
   const filtered = searchDashboardJobs(jobs, new URLSearchParams({ q:'needle' }));
   assert.equal(filtered.total, 23);
-  assert.deepEqual(filtered.jobs.filter(job => job.state === 'COMPLETED' || job.state === 'CANCELLED').map(job => job.id), []);
+  assert.deepEqual(filtered.jobs.filter(job => job.state === 'COMPLETED' || job.state === 'CANCELLED').map(job => job.id), ['completed-new']);
   assert.deepEqual(filtered.jobs.slice(0, 2).map(job => job.id), ['active-22', 'active-21']);
   assert.deepEqual(
     searchDashboardJobs([

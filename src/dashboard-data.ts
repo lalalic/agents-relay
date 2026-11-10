@@ -101,9 +101,9 @@ export function searchDashboardJobs<T extends DashboardJobLike>(jobs: readonly T
       || String(job.id || '').toLowerCase().includes(search)
       || Boolean(normalizedPr) && String(job.prNumber || '').includes(normalizedPr);
   };
-  const matching = jobs.filter(job => matchesStatus(job) && matchesRepository(job) && matchesSearch(job)).sort(compareDashboardJobs);
+  const matching = jobs.filter(job => matchesStatus(job) && matchesRepository(job) && matchesSearch(job)).sort(compareDashboardJobInventory);
   return {
-    jobs: matching.slice(0, DASHBOARD_JOB_RESULT_LIMIT),
+    jobs: matching.slice(0, DASHBOARD_JOB_RESULT_LIMIT).sort(compareDashboardJobs),
     repositories: [...new Set(jobs.map(job => job.repository).filter(Boolean))].sort(),
     total: matching.length,
   };
