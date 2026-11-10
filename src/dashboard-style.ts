@@ -81,6 +81,7 @@ export const dashboardStyles = `  <style>
     .status-pill.bad,.badge.FAILED { background:#ffe8e8; color:var(--bad); }
     .status-pill.neutral,.badge.IDLE,.badge.CANCELLED { background:#edf0f4; color:var(--muted); }
     .badge.DRAFT { background:#eef2ff; color:#3f51b5; }
+    .badge.shortcut-mode { background:var(--accent2); color:var(--accent); border:1px solid var(--accent); }
     .badge.MERGE_PENDING { background:#ffe3a3; color:#7a4a00; }
     .details-dialog { width:min(850px,calc(100vw - 2rem)); max-height:85vh; overflow:auto; border:1px solid var(--border); border-radius:.6rem; background:var(--surface); color:var(--text); box-shadow:0 18px 55px #0004; padding:1rem; } .details-dialog::backdrop { background:#17202b99; } .details-dialog-head { display:flex; justify-content:space-between; align-items:center; gap:1rem; position:sticky; top:-1rem; background:var(--surface); padding:.5rem 0; } .details-dialog pre { white-space:pre-wrap; overflow-wrap:anywhere; background:var(--surface2); padding:.7rem; border-radius:.4rem; } .details-dialog h3 { font-size:.8rem; margin:1rem 0 .3rem; }
     .job-summary,.detail-groups { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.55rem; }

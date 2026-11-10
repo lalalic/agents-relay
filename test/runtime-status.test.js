@@ -55,3 +55,16 @@ test('stale targeted revision children are preserved but do not block implementa
   assert.notEqual(deriveJobRuntimeStatus(target),'FAILED','stale historical revision failure does not fail the current Job');
   assert.equal(target.tasks[1].error,'Historical failure from the old review head');
 });
+
+
+test('Shortcut Job runtime distinguishes external trigger from Relay queue and merge',()=>{
+ const base={executionMode:'shortcut',contentOnly:true,prNumber:0,autoMerge:false,reviewEnabled:false};
+ assert.equal(deriveJobRuntimeStatus(job([task('entry','QUEUED')],base)),'WAITING');
+ assert.equal(deriveJobRuntimeStatus(job([task('entry','RUNNING')],base)),'RUNNING');
+ assert.equal(deriveJobRuntimeStatus(job([task('entry','SUCCEEDED')],base)),'WAITING');
+ assert.equal(deriveJobRuntimeStatus(job([task('entry','QUEUED')],{...base,state:'DRAFT'})),'IDLE');
+ assert.equal(deriveJobRuntimeStatus(job([task('entry','SUCCEEDED')],{...base,state:'COMPLETED'})),'COMPLETED');
+ const parent=task('entry','RUNNING');const child={...task('shortcut-entry-director','BLOCKED'),parentTaskId:'entry'};
+ assert.equal(deriveJobRuntimeStatus(job([parent,child],base)),'BLOCKED');
+ assert.equal(deriveJobRuntimeStatus(job([parent,{...child,state:'RUNNING'}],base)),'RUNNING');
+});

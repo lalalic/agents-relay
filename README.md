@@ -289,7 +289,7 @@ npx agents-relay task create --repo OWNER/REPO --pr 5 --id JOB_ID \
   --input "Research the dashboard UX and write the final report to the declared output file."
 ~~~
 
-SQLite and the canonical Graphs are authoritative for terminal lifecycle. A remote PR merge/close is an audit observation, not a state transition. Final Review PASS authorizes local Git merge; confirmed local-merge evidence gates `COMPLETED`. The dashboard exposes `/api/jobs` and distinguishes durable Job lifecycle from derived runtime status.
+SQLite and the canonical Graphs are authoritative for terminal lifecycle. A remote PR merge/close is an audit observation, not a state transition. Final Review PASS authorizes local Git merge; confirmed local-merge evidence gates `COMPLETED`. The dashboard exposes `/api/jobs` and distinguishes durable Job lifecycle from derived runtime status. Shortcut execution is shown separately from managed queue execution: an externally triggered Shortcut is WAITING until its foreground runner starts, then RUNNING, and never shows MERGE_PENDING solely because its content-only Task completed. The Shortcut badge and selected Job details expose execution mode and graph-node progress. For model-backed Shortcut nodes, the same caller-configured `--shared-root` (or `AGENTS_RELAY_SHARED_ROOT`) must be supplied to child Worker execution context, not just Shortcut discovery.
 
 Relay has no orchestrator worker adapter for new work. Orchestrators are external clients that create/plan durable Tasks; Execution Router selects a real worker route (`codex` or `chatgpt`). The CLI and dashboard do not expose manual orchestrator-only `task start`, `task complete`, or synthetic `record` paths.
 

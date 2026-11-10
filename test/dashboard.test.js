@@ -300,7 +300,7 @@ test('selected job heading is title-only and single-line', () => {
   assert.match(dashboardHtml, /#selected-job-title \{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; \}/);
   assert.doesNotMatch(dashboardHtml, /summary\.append\(field\('Title'/);
   assert.doesNotMatch(dashboardHtml, /field\('Description'/);
-  assert.match(dashboardHtml, /field\('PR state',job\.githubState/);
+  assert.match(dashboardHtml, /field\('PR state',job\.executionMode==='shortcut'\?'Not applicable':job\.githubState/);
   assert.match(dashboardHtml, /jobStateField\(job\)/);
   assert.match(dashboardHtml, /field\('Runtime status',job\.runtimeStatus\|\|'IDLE'\)/);
 });
@@ -349,7 +349,7 @@ test('job rows show lifecycle and runtime without PR state or quick actions', ()
   assert.match(dashboardHtml, /job\.state/);
   assert.match(dashboardHtml, /job\.runtimeStatus\|\|'IDLE'/);
   assert.match(dashboardHtml, /text\('PR Merged'\)/);
-  assert.match(dashboardHtml, /field\('PR state',job\.githubState\|\|'UNKNOWN'\)/);
+  assert.match(dashboardHtml, /field\('PR state',job\.executionMode==='shortcut'\?'Not applicable':job\.githubState/);
   assert.doesNotMatch(dashboardHtml, /actionButton\(job/);
   assert.doesNotMatch(dashboardHtml, /className='job-action'/);
   assert.match(dashboardHtml, /const primary=element\('div','job-primary'\);primary\.append\(states\)/);
@@ -1476,4 +1476,19 @@ test('Router Rules audit renders execution and legacy decisions without undefine
     text: value => String(value),
   }));
   assert.deepEqual(labels, ['codex · gpt-6-luna', 'codex · gpt-5.6-terra', 'fallback-worker · —']);
+});
+
+
+test('Shortcut jobs render a separate execution-mode label and refresh authoritative state on relay patches',()=>{
+ assert.match(dashboardHtml,/job\.executionMode==='shortcut'.*?shortcut-mode/);
+ assert.match(dashboardHtml,/Execution mode',job\.executionMode==='shortcut'\?'Shortcut Runner \(external trigger\)'/);
+ assert.match(dashboardHtml,/field\('Shortcut nodes',shortcutProgress\(job\)\)/);
+ assert.match(dashboardHtml,/void refreshJobSnapshot\(payload\.statePatch\.jobId\)/);
+});
+
+test('CLI foreground reconciler forwards configured shared root to Shortcut Worker context',async()=>{
+ const {runtime}=await import('../dist/cli.js');
+ const reconciler=runtime(new InMemoryStore({id:'test',title:'test',repository:'local/test',state:'DRAFT',tasks:[]}),['--no-github','--workspace-root','/tmp','--shared-root','/tmp/shared-visioner','--global-root','/tmp/global-agents'],undefined,undefined,true);
+ try{assert.equal(reconciler.options.executionContextRoots.sharedRoot,'/tmp/shared-visioner');assert.equal(reconciler.options.executionContextRoots.globalRoot,'/tmp/global-agents');}
+ finally{await reconciler.close();}
 });

@@ -41,6 +41,18 @@ export function deriveJobRuntimeStatus(job: Job, _prState: PullRequestRuntimeSta
   if (job.state === 'COMPLETED') return 'COMPLETED';
   if (job.state === 'DRAFT') return 'IDLE';
 
+  // A Shortcut Job is owned by an external foreground runner, not the Relay
+  // scheduler queue. Do not advertise a not-yet-invoked Shortcut as QUEUED,
+  // or a content-only Shortcut as pending a PR merge/review.
+  if (job.executionMode === 'shortcut' && job.contentOnly === true) {
+    const children = job.tasks.filter(task => task.parentTaskId !== null);
+    if (children.some(task => task.state === 'BLOCKED') && !children.some(task => task.state === 'RUNNING')) return 'BLOCKED';
+    if (children.some(task => task.state === 'FAILED') && !children.some(task => task.state === 'RUNNING')) return 'FAILED';
+    if (job.tasks.some(task => task.state === 'AWAITING_DECISION')) return 'WAITING';
+    if (job.tasks.some(task => task.state === 'RUNNING')) return 'RUNNING';
+    return 'WAITING'; // External Shortcut Runner has not started or needs a resume.
+  }
+
   const currentPlan = job.plans?.at(-1);
   // An unresolved planner failure is a Job failure, not an idle Job.
   // Active task execution still takes precedence below.
