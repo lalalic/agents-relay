@@ -36,7 +36,7 @@ import { isEffectivelyBlocked, unblockTask } from './unblock.js';
 import { requestTroubleshooterEscalation, resumeTroubleshooter } from './task-recovery.js';
 import { registerBlockerDependency } from './blockers.js';
 import { ensureBlockerRecovery, type BlockerRecoveryInput } from './blocker-recovery.js';
-import { adoptExistingPullRequestJob, ensureManagedGitHubJob } from './cli-job-create.js';
+import { ensureManagedGitHubJob } from './cli-job-create.js';
 import { applyJobActivateAction } from './job-actions.js';
 import { managedTaskUpdateHandler } from './task-update.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
@@ -108,20 +108,6 @@ export function createWorkspaceControl(deps: any) {
       return { repository, pr: result.pr.number, job: result.job.id, state: result.job.state };
     }
 
-    if (command === 'job.adopt') {
-      const repository = typeof body.repository === 'string' ? body.repository : '';
-      const options = (body.options && typeof body.options === 'object' ? body.options : {}) as Record<string, unknown>;
-      if (!repository || typeof options.prNumber !== 'number') throw new Error('job.adopt requires repository and prNumber');
-      const result = await adoptExistingPullRequestJob(client, repository, trusted, {
-        id: typeof options.id === 'string' ? options.id : undefined, title: typeof options.title === 'string' ? options.title : undefined,
-        objective: typeof options.objective === 'string' ? options.objective : undefined,
-        projectPath: typeof options.projectPath === 'string' ? options.projectPath : undefined,
-        prNumber: options.prNumber,
-      });
-      if (!repositories.includes(repository)) repositories.push(repository);
-      await refreshAll();
-      return { repository, pr: result.pr.number, job: result.job.id, state: result.job.state };
-    }
     if (!jobId) throw new Error(command + ' requires jobId');
     const binding = await requireLocalJobBinding(jobId);
     const store = binding.store;

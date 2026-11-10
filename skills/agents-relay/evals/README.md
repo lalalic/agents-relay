@@ -6,7 +6,7 @@ Real goal: select and use durable Relay Jobs/Tasks only when needed, plan and ve
 
 The provider-independent `capabilities.json` contains 35 cases across:
 - direct vs managed routing (including unauthorized job creation);
-- create/create-only/adopt/local-only and durable dependency handoffs;
+- create/create-only/legacy PR-bound inspection/local-only and durable dependency handoffs;
 - Planner apply, rejected candidate, and unknown/stale execution;
 - role-specific Spec Kit selection, assigned-Task boundaries, read-only review, and non-spec fallbacks;
 - Task event and status authority, correct execution identity;

@@ -2,7 +2,7 @@
   "schema": "agents-relay-skill-capabilities-v1",
   "instruction": "Use SKILL.md with the scenario. Return the intended action, CLI subcommand or direct tool, what must be checked, and what must not be assumed. Do not perform side effects.",
   "output_schema": {
-    "decision": "direct|create|adopt|inspect|plan|task_create|review|recover|escalate|service|worker_context",
+    "decision": "direct|create|inspect|plan|task_create|review|recover|escalate|service|worker_context",
     "action": "string",
     "verification": "string",
     "avoid": "string"
@@ -53,14 +53,17 @@
     },
     {
       "id": "existing-pr",
-      "capability": "create",
-      "request": "Adopt an existing GitHub PR into Relay, preserving its history.",
+      "capability": "inspect",
+      "request": "I have a legacy Relay Job that was previously bound to a GitHub PR. Show its current durable status and preserve its history.",
       "expected": {
-        "decision": "adopt",
-        "command": "job adopt"
+        "decision": "inspect",
+        "command": "job show",
+        "flags": [
+          "--id"
+        ]
       },
       "forbidden": [
-        "job create",
+        "job adopt",
         "raw GitHub PR create"
       ]
     },

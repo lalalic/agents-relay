@@ -89,7 +89,7 @@ try {
     rules:['DO NOT run tools, shell commands, or perform any side effects.',
       'For each scenario return what an agent should DO NEXT, as if it were an intended action, not a command to execute now.',
       'Return only JSON: {"results":[{"id":"case id","decision":"enum","action":"specific intended CLI command with required flags OR protocol event","verification":"brief evidence to confirm","avoid":"brief safety constraint"}]}.',
-      'decision must be one of: direct, create, adopt, inspect, plan, task_create, review, recover, escalate, service, worker_context.',
+      'decision must be one of: direct, create, inspect, plan, task_create, review, recover, escalate, service, worker_context.',
       'Use the actual Relay CLI or event contracts in the skill. Do not guess output IDs.',
       'In action include exact relevant CLI flags, not only the action name; for task events use exact event names.',
       'For cases with role_contract, follow that exact agent role and use stage-appropriate Spec Kit skills only for spec-oriented delivery.',

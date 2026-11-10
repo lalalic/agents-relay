@@ -35,10 +35,10 @@ export async function activateShortcutJobForDirectRun(store: DurableStore, jobId
   });
 }
 
-export async function runShortcutJobCommand(args: string[], id: string, repo: string, makeRunner?: (store: DurableStore, bus: EventBus | undefined) => Reconciler): Promise<void> {
+export async function runShortcutJobCommand(args: string[], id: string, makeRunner?: (store: DurableStore, bus: EventBus | undefined) => Reconciler): Promise<void> {
   assertSqliteShortcutArgs(args);
   if (arg(args, '--mode') !== 'shortcut') throw new Error('job run requires --mode shortcut');
-  const loaded = await storeFor(args);
+  const loaded = await storeFor(args, false, true);
   if (loaded.localFile !== null || !loaded.store.mutateJob || !loaded.store.reserveWorkflowLaunch)
     throw new Error('Shortcut execution requires the authoritative SQLite Relay store');
   const job = loaded.job;
@@ -77,7 +77,7 @@ export async function runShortcutJobCommand(args: string[], id: string, repo: st
   await activateShortcutJobForDirectRun(loaded.store, id);
   loaded.job = await loaded.store.load(id);
   const workspaceRoot = await resolveWorkspaceRoot(arg(args, '--workspace-root') || undefined);
-  const projectRoot = await resolveManagedProjectPath(noGitHubMode(args) ? undefined : repo, arg(args, '--project-path') || loaded.job.projectPath || '', workspaceRoot);
+  const projectRoot = await resolveManagedProjectPath(noGitHubMode(args) ? undefined : loaded.job.repository, arg(args, '--project-path') || loaded.job.projectPath || '', workspaceRoot);
   const projectPath = resolveRepositoryProjectPath(projectRoot, loaded.job.projectPath);
   const globalRoot = arg(args, '--global-root') || process.env.AGENTS_HOME || undefined;
   const missing = await missingShortcutNodes(task.agentGraph!, projectPath, arg(args, '--shared-root') || process.env.AGENTS_RELAY_SHARED_ROOT || undefined, workspaceRoot, globalRoot);
@@ -125,7 +125,7 @@ export async function recordShortcutReceiptCommand(args: string[], id: string): 
   if (!taskId || !nodeId || !waitId || !revision || !executionId || !outputFile || !contentSha256)
     throw new Error('job shortcut-receipt requires --task-id --node-id --wait-id --revision --execution-id --output-file --content-sha256');
   if (outputFile === '-') throw new Error('--output-file requires a local file path');
-  const { store, localFile } = await storeFor(args);
+  const { store, localFile } = await storeFor(args, false, true);
   if (localFile !== null || !store.mutateJob || !store.reserveWorkflowLaunch)
     throw new Error('Shortcut receipts require the authoritative SQLite Relay store');
   const bytes = await readFile(outputFile);

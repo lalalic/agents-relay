@@ -37,7 +37,7 @@ Usage:
   npx agents-relay job <create|update|show|list|run|shortcut-receipt|merge|unblock|cancel|pause|resume> [options]
 
 Actions:
-  create  Create a durable Job, optionally binding an existing unmanaged PR
+  create  Create a durable SQLite-authoritative Job
   update  Partially update mutable metadata on a healthy existing Job
   show    Show one durable Job
   run     Opt in to direct Agent Graph shortcuts for one existing Task
@@ -50,11 +50,11 @@ Actions:
   resume  Clear pause metadata and requeue interrupted work
 
 Common options:
-  --repo OWNER/REPO       GitHub repository
+  --repo OWNER/REPO       Required for create; optional Job identity check otherwise
   --id JOB_ID             Durable job identifier
 
 Shortcut execution:
-  agents-relay job run --mode shortcut --id JOB --repo OWNER/REPO --task-id TASK
+  agents-relay job run --mode shortcut --id JOB --task-id TASK
     [--store-dir DIR] [--project-path DIR] [--shared-root DIR] [--concurrency 4]
 
 The selected Task must have an Agent Graph. Project shortcuts at
@@ -66,7 +66,7 @@ events are wake signals. Human approval remains hostInvocation-only.
 Shortcut Job completion requires durable contentOnly=true and no PR, merge, or review gates.
 
 Record an asynchronous result with:
-  agents-relay job shortcut-receipt --id JOB --repo OWNER/REPO --task-id TASK
+  agents-relay job shortcut-receipt --id JOB --task-id TASK
     --node-id NODE --wait-id WAIT --revision REV --execution-id EXECUTION
     --output-file result.json --content-sha256 SHA256
 
@@ -74,7 +74,7 @@ The file must contain the completed shortcut result object. SHA256 is computed
 over its canonical JSON content and must equal the persisted wait content hash.
 
 Example:
-  npx agents-relay job show --repo OWNER/REPO --id 101`,
+  npx agents-relay job show --id 101`,
   prompt: `Read-only exact PromptBuilder output for a durable Plan or Task.
 
   agents-relay prompt --id JOB --plan-id PLAN --adapter codex|chatgpt|z [--output FILE]
@@ -120,48 +120,45 @@ Required: --repo OWNER/REPO --id JOB_ID.
 Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job reviewer/creator thread or legacy route. Rejects pending reviews and wakes managed reconciliation.`,
   'job create': `Create a SQLite-authoritative Job (objective-only).
 
-Required: --repo OWNER/REPO and a standalone Job objective. Job ID defaults to an auto-incrementing store-global number; --id may only reference an existing numeric Job. Existing PR adoption is an explicit separate command: job adopt.
+Required: --repo OWNER/REPO and a standalone Job objective. Job ID defaults to an auto-incrementing store-global number; --id may only reference an existing numeric Job.
 Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --initial-plan, --no-review, --shortcut-execution, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
 Job creation enables auto-merge by default. By default it is create-only; --initial-plan validates the first real Planner round before atomically creating the durable Job and Plan, then publishes the normal wake. --shortcut-execution creates a create-only content-only Job with durable direct Graph execution policy, no auto-merge, and no review; select it before Tasks are materialized and do not combine it with --initial-plan. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
 
 Example:
   npx agents-relay job create --repo OWNER/REPO --project-path vlog --title "Episode" --objective-file episode.md --initial-plan`,
-  'job adopt': `Adopt an existing PR as a SQLite-authoritative Job.
-
-Required: --repo OWNER/REPO and --pr NUMBER. The Job ID is allocated atomically from the global SQLite sequence. Optional --id references an already-existing numeric Job only.`,
   'job update': `Partially update mutable metadata on a healthy existing Job.
 
-Required: --repo OWNER/REPO and --id JOB_ID.
+Required: --id JOB_ID. Optional: --repo OWNER/REPO verifies the stored Job identity.
 Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --project-path RELATIVE_PATH, --priority, --tag JSON, --auto-merge|--no-auto-merge, --review|--no-review, --content-only|--no-content-only, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID, and continuation options. The objective updates local SQLite; PR body changes are independent external actions. Content-only completion requires no PR/merge/review requirements and explicit --no-auto-merge --no-review --content-only.
 Unspecified fields are preserved. Local Job/PR identity mismatch is rejected.
 
 Example:
-  npx agents-relay job update --repo OWNER/REPO --id 101 --priority P0 --no-auto-merge`,
+  npx agents-relay job update --id 101 --priority P0 --no-auto-merge`,
   'job show': `Show one durable Job.
 
-Required: --repo OWNER/REPO and --id JOB_ID.
+Required: --id JOB_ID. Optional: --repo OWNER/REPO validates the repository.
 
 Example:
-  npx agents-relay job show --repo OWNER/REPO --id 101`,
-  'job list': `List managed Jobs in a repository.
+  npx agents-relay job show --id 101`,
+  'job list': `List managed Jobs across repositories, or filter by repository.
 
-Required: --repo OWNER/REPO.
+Optional: --repo OWNER/REPO filters results.
 
 Example:
-  npx agents-relay job list --repo OWNER/REPO`,
+  npx agents-relay job list`,
   'job merge': `Legacy entry point; external GitHub PR merges are not initiated by this CLI.
 
-Managed Jobs use Graph-owned local merge and publication. Identify a Job with --repo OWNER/REPO and --id JOB_ID.`,
-  'job unblock': `Authoritatively unblock BLOCKED Troubleshooter Tasks in one Job.\n\nRequired: --repo OWNER/REPO --id JOB_ID --reason TEXT. Each unblocked Troubleshooter is queued as the same Task and must rerun, verify the condition, and issue a fresh resolution before retrying an original failed Task.`,
+Managed Jobs use Graph-owned local merge and publication. Identify a Job with --id JOB_ID; --repo OWNER/REPO is optional.`,
+  'job unblock': `Authoritatively unblock BLOCKED Troubleshooter Tasks in one Job.\n\nRequired: --id JOB_ID --reason TEXT. Optional: --repo OWNER/REPO. Each unblocked Troubleshooter is queued as the same Task and must rerun, verify the condition, and issue a fresh resolution before retrying an original failed Task.`,
   'job cancel': `Cancel a durable Job and its unfinished Tasks through the authoritative Relay Graph.
 
-Required: --repo OWNER/REPO and --id JOB_ID. No PR number is required.`,
+Required: --id JOB_ID. Optional: --repo OWNER/REPO checks identity. No PR number is required.`,
   'job pause': `Pause a durable Job without inventing a PAUSED lifecycle state.
 
-Required: --repo OWNER/REPO --id JOB_ID. Running worker and Planner generations are interrupted durably and resume as uncompleted work.`,
+Required: --id JOB_ID. Optional: --repo OWNER/REPO. Running worker and Planner generations are interrupted durably and resume as uncompleted work.`,
   'job resume': `Resume a paused durable Job.
 
-Required: --repo OWNER/REPO --id JOB_ID. Interrupted work is requeued and normal reconciliation continues.`,
+Required: --id JOB_ID. Optional: --repo OWNER/REPO. Interrupted work is requeued and normal reconciliation continues.`,
   escalation: `Run the canonical escalation workflow for a suspected human/external blocker.\n\nRequired: --intent TEXT|--intent-file PATH and --blocked-on TEXT|--blocked-on-file PATH. Optional: --context/--context-file, --on-needs-user/--on-needs-user-file, --cwd. The workflow/escalation.mmd graph invokes an operator-configured executor and owns the resolved / failed / needs_user branches. Only needs_user selects the block-for-user path. Set AGENTS_RELAY_ESCALATION_COMMAND to an absolute executable path or JSON argv array (for example ["/opt/homebrew/bin/neo","escalation"]). No Neo executable is assumed by Relay; missing/broken executors produce technical_failure.`,
   status: `Show live aggregate runtime status from the running Agents Relay service.
 

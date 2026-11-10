@@ -28,9 +28,8 @@ printf '%s\n' '# Dogfood\n\nVerify the build and report evidence.' > /tmp/relay-
 npx agents-relay job create --repo lalalic/agents-relay --title "Dogfood" \
   --objective-file /tmp/relay-dogfood-objective.md --initial-plan
 # Use the Job ID returned by create for subsequent operations:
-npx agents-relay job show --repo lalalic/agents-relay --id JOB_ID
+npx agents-relay job show --id JOB_ID
 npx agents-relay task list --repo lalalic/agents-relay --id JOB_ID
 ```
 
-Existing GitHub PR adoption is a separate explicit legacy operation; standard Jobs
-require only their durable ID.
+Existing PR-bound Jobs remain readable by durable ID; the CLI does not import external PRs.

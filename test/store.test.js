@@ -365,9 +365,9 @@ test('dashboard terminal history uses latest durable activity for discovery orde
   assert.deepEqual(dashboardManagedJobs(items).slice(0, 1).map(item => item.job.id), ['job-44']);
 });
 
-test('managed Job binds a known PR number entirely offline with zero GitHub reads', async () => {
+test('legacy PR-bound Job remains readable entirely offline with zero GitHub reads', async () => {
   const { ensureManagedGitHubJob } = await import('../dist/cli.js');
-  const root = await mkdtemp(join(tmpdir(), 'relay-offline-adopt-'));
+  const root = await mkdtemp(join(tmpdir(), 'relay-offline-legacy-pr-'));
   const directory = join(root, 'stores');
   try {
     const client = {
@@ -375,7 +375,7 @@ test('managed Job binds a known PR number entirely offline with zero GitHub read
       graphql: async () => { throw new Error('GitHub disconnected'); },
     };
     const result = await ensureManagedGitHubJob(client, 'owner/repo', new Set(), {
-      idempotencyKey: 'adopted', prNumber: 6, storeDirectory: directory,
+      idempotencyKey: 'legacy-pr', prNumber: 6, storeDirectory: directory,
     });
     assert.equal(result.pr.number, 6);
     assert.match(result.job.id, /^[1-9][0-9]*$/);

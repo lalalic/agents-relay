@@ -121,11 +121,9 @@ test('new Job creation refuses nonnumeric explicitly supplied IDs', async () => 
   try {
     const client={request:async()=>{throw new Error('unexpected GitHub')},graphql:async()=>{throw new Error('unexpected GitHub')}};
     await assert.rejects(ensureManagedGitHubJob(client,'owner/repo',new Set(),{id:'legacy-slug',objective:'invalid',storeDirectory:dir}),/positive decimal integer/);
-    const {adoptExistingPullRequestJob}=await import('../dist/cli-job-create.js');
-    await assert.rejects(adoptExistingPullRequestJob(client,'owner/repo',new Set(),{id:'legacy-pr-id',prNumber:12,storeDirectory:dir}),/positive decimal integer/);
-    const adopted=await adoptExistingPullRequestJob(client,'owner/repo',new Set(),{prNumber:12,storeDirectory:dir});
-    assert.equal(adopted.job.id,'1');
-    assert.equal((await adoptExistingPullRequestJob(client,'owner/repo',new Set(),{prNumber:12,storeDirectory:dir})).job.id,'1');
+    const created=await ensureManagedGitHubJob(client,'owner/repo',new Set(),{objective:'valid',storeDirectory:dir});
+    assert.equal(created.job.id,'1');
+    assert.equal((await ensureManagedGitHubJob(client,'owner/repo',new Set(),{id:created.job.id,storeDirectory:dir})).job.id,'1');
     assert.equal(allocateEntityId(dir,'other/repo','job'),'2');
   } finally {await rm(root,{recursive:true,force:true});}
 });

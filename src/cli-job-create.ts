@@ -6,11 +6,7 @@ import { createJobEntity } from './workflow/entity-creation.js';
 import { normalizeThreadId } from './reviewer-thread.js';
 import { discoverLocalRelayStoreSnapshots, relayStoreDirectory } from './relay-store.js';
 
-/**
- * Ordinary Job creation is local and objective-oriented. Legacy PR metadata is
- * handled by adoptExistingPullRequestJob below so the normal contract cannot accidentally
- * create a second external lifecycle.
- */
+/** Create a local SQLite-authoritative Job; external PR metadata is optional compatibility data. */
 export async function ensureManagedGitHubJob(
   _client: GitHubClient,
   repositoryName: string,
@@ -92,36 +88,4 @@ export async function ensureManagedGitHubJob(
   } finally {
     local.relay.close();
   }
-}
-
-/** Import an existing PR without letting external labels choose the durable numeric Job ID. */
-export async function adoptExistingPullRequestJob(
-  _client: GitHubClient, repositoryName: string, _trustedAuthors: ReadonlySet<string>, options: {
-    id?: string; prNumber: number; title?: string; objective?: string; projectPath?: string; storeDirectory?: string;
-  },
-): Promise<{ job: Job; pr: PullRequest }> {
-  if (!Number.isInteger(options.prNumber) || options.prNumber <= 0) throw new Error('job adopt requires a positive --pr');
-  if (options.id && !/^[1-9][0-9]*$/.test(options.id)) throw new Error('Job ID must be a positive decimal integer');
-  const directory = options.storeDirectory ?? relayStoreDirectory();
-  const knownJobs = (await discoverLocalRelayStoreSnapshots(directory)).flatMap(snapshot => snapshot.jobs);
-  const matches = options.id ? knownJobs.filter(job => job.id === options.id) : knownJobs.filter(job => job.repository === repositoryName && job.prNumber === options.prNumber);
-  if (matches.length > 1) throw new Error('Ambiguous existing immutable Job or PR binding');
-  if (matches.length === 1) {
-    const existing = matches[0];
-    if (existing.repository !== repositoryName || existing.prNumber !== options.prNumber) throw new Error(`Job ID ${options.id} is already bound to another repository or PR`);
-    return { job: existing, pr: { number: existing.prNumber, title: existing.title, body: existing.objective ?? '', state: 'OPEN', head: '', base: 'main' } };
-  }
-  if (options.id) throw new Error(`Unknown numeric Job ID ${options.id}; new PR adoptions allocate IDs automatically`);
-  const id = allocateEntityId(directory, repositoryName, 'job', `adopt:pr:${options.prNumber}`, new Set(knownJobs.map(job => job.id)));
-  const local = openLocalManagedStore(repositoryName, options.prNumber, { directory, jobId: id, noGitHub: true });
-  try {
-    const existing = (await local.relay.listJobs()).find(job => job.repository === repositoryName && job.prNumber === options.prNumber);
-    if (existing) return { job: existing, pr: { number: existing.prNumber, title: existing.title, body: existing.objective ?? '', state: 'OPEN', head: '', base: 'main' } };
-    const now = new Date().toISOString();
-    const job = createJobEntity({ id, title: options.title ?? id, objective: options.objective, projectPath: options.projectPath,
-      description: options.objective, priority: 'P2', autoMerge: true, reviewEnabled: true,
-      prNumber: options.prNumber, repository: repositoryName, continuation: null, createdAt: now, updatedAt: now, tasks: [] });
-    const created = local.store.createJobIfAbsent ? await local.store.createJobIfAbsent(job) : (await local.store.saveJob(job), job);
-    return { job: created, pr: { number: options.prNumber, title: created.title, body: created.objective ?? '', state: 'OPEN', head: '', base: 'main' } };
-  } finally { local.relay.close(); }
 }

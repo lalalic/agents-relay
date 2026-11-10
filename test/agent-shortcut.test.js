@@ -73,6 +73,20 @@ test('foreground shortcut job run activates a newly-created DRAFT Job via Job Gr
   assert.match(result.stderr, /shortcut.node/);
 });
 
+test('foreground Shortcut Runner resolves a stored repository when --repo is omitted', async t => {
+  const f = await fixture(t, { agentGraph: 'flowchart TD\nA[agent:alpha]', initialDraft: true });
+  await f.writeShortcut(f.project, 'alpha',
+    `export async function run(){return {status:'COMPLETED',output:{source:'id-only'},artifacts:[]};}`);
+  const cli = join(root, 'dist', 'cli.js');
+  const result = spawnSync(process.execPath, [cli, 'job', 'run', '--mode', 'shortcut',
+    '--id', f.id, '--task-id', 'initial', '--no-github',
+    '--store-dir', f.storeDir, '--project-path', f.project, '--shared-root', f.neo],
+  { encoding: 'utf8', env: { ...process.env, AGENTS_RELAY_STORE_DIR: f.storeDir } });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).outcome.status, 'COMPLETED');
+  assert.equal((await f.load()).state, 'COMPLETED');
+});
+
 test('shortcut commands reject file-backed Jobs before mutation', async t => {
   const f = await fixture(t);
   const file = join(f.directory, 'legacy-job.json');

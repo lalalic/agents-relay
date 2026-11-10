@@ -23,8 +23,9 @@ export async function runLocalShortcutBinding(kind: 'job'|'task', action: string
     return;
   }
   if (kind === 'job' && action === 'show' || kind === 'task' && action === 'list') {
-    const { job } = await storeFor(args);
-    if (job.repository !== repository(args) || job.executionMode !== 'shortcut' || job.contentOnly !== true)
+    const { job } = await storeFor(args, false, kind === 'job');
+    const requestedRepo = kind === 'job' ? arg(args, '--repo') : repository(args);
+    if ((requestedRepo && job.repository !== requestedRepo) || job.executionMode !== 'shortcut' || job.contentOnly !== true)
       throw new Error('local shortcut Job identity mismatch');
     console.log(JSON.stringify(kind === 'job' ? job : job.tasks, null, 2));
     return;

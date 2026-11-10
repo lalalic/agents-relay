@@ -19,11 +19,11 @@ For ordinary CLI use, consult `npx agents-relay --help` and `npx agents-relay <c
 
 ```sh
 npx agents-relay job create --repo OWNER/REPO --title "Objective" --objective-file job.md --initial-plan
-npx agents-relay job show --repo OWNER/REPO --id JOB_ID
+npx agents-relay job show --id JOB_ID
 npx agents-relay task list --repo OWNER/REPO --id JOB_ID
 ```
 
-Use the **Job ID returned by create**; do not invent an ID, PR number, or Task. Omit `--initial-plan` only for explicitly create-only work. For an existing GitHub PR, use `job adopt`; do not create a managed PR through raw GitHub commands. For local-only work, consult the CLI's `--no-github` option.
+Use the **Job ID returned by create**; do not invent an ID, PR number, or Task. Omit `--initial-plan` only for explicitly create-only work. Existing GitHub PRs are not imported as Jobs; GitHub is audit-only and local Git owns merge/delivery. For local-only work, consult the CLI's `--no-github` option.
 
 Read `contracts/task-job-contract.md` before authoring or changing Jobs or Tasks and `contracts/orchestrator-workflows.md` when handling initial planning, P0/self Jobs, or merge/delivery boundaries. For content work, load the active Neo Project rules, its Agent Graph if present, and the relevant stage contracts—not a presumed universal production sequence.
 

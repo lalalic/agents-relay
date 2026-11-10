@@ -15,7 +15,7 @@ For long-form content, use files instead of shell-quoted arguments:
 
 When creating a new Job from an active discussion, the orchestrator must consolidate **all context needed to finish the Job without the originating thread** into the Job objective before creation. Include, as applicable: goal, relevant background, decisions already made, requirements, constraints, lifecycle/workflow semantics, non-goals, implementation boundaries, acceptance criteria, delivery/review instructions, and any important known issues. Do not create a Job whose objective is only a one-line summary when the discussion contains material implementation context.
 
-Use `job create` with standalone objective Markdown, or `job adopt` for an existing PR when authorized. Use Relay CLI for subsequent Job reads and updates; do not infer Job state or objective from GitHub.
+Use `job create` with standalone objective Markdown. Existing PRs are not imported as Jobs. Use Relay CLI for subsequent Job reads and updates; do not infer Job state or objective from GitHub.
 
 ## Task producers
 

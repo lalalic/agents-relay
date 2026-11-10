@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const skillRoot = new URL('../skills/agents-relay/', import.meta.url);
 const dataFile = new URL('evals/capabilities.json', skillRoot);
-const validDecisions = new Set(['direct','create','adopt','inspect','plan','task_create','review','recover','escalate','service','worker_context']);
+const validDecisions = new Set(['direct','create','inspect','plan','task_create','review','recover','escalate','service','worker_context']);
 
 test('Agents Relay capability eval fixtures cover real user decisions and negative paths', async () => {
   const { schema, instruction, output_schema, cases } = JSON.parse(await readFile(dataFile,'utf8'));

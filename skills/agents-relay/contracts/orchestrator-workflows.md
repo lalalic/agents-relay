@@ -24,7 +24,7 @@ job create --initial-plan
   -> normal routing, execution, and reconciliation
 ```
 
-Without `--initial-plan`, `job create` remains create-only and establishes durable Job/PR state without execution. `agents-relay plan` remains available for an existing create-only/adopted Job. Unless the user explicitly requested **create-only / no execution**, the orchestrator should use `job create --initial-plan` rather than issuing two separate commands.
+Without `--initial-plan`, `job create` remains create-only and establishes durable Job state without execution. `agents-relay plan` remains available for an existing create-only Job. Unless the user explicitly requested **create-only / no execution**, the orchestrator should use `job create --initial-plan` rather than issuing two separate commands.
 
 The initial decomposition belongs to that durable Planner round. The orchestrator must not hand-author the initial child Task batch as a substitute. If initial planning fails, the create command fails visibly after preserving the durable Job/Plan evidence; the orchestrator must not silently invent Tasks. Every Job follows this same objective-driven lifecycle. After a completed implementation batch, Relay automatically creates subsequent Plan rounds until the latest successful Plan reports `objective_status: satisfied`; there is no fixed/autonomous execution mode or Job scheduling.
 

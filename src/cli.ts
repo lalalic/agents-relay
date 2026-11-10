@@ -181,9 +181,9 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
 }
 async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (hasArg(args, '--shortcut-local')) return runLocalShortcutBinding('job',action,args);
-  if (!['create', 'adopt', 'update', 'show', 'list', 'merge', 'unblock', 'cancel', 'pause', 'resume', 'run', 'shortcut-receipt'].includes(action)) throw new Error(usage);
-  const repo = repository(args);
-  if (action !== 'adopt' && action !== 'create') optionalLegacyPr(args);
+  if (!['create', 'update', 'show', 'list', 'merge', 'unblock', 'cancel', 'pause', 'resume', 'run', 'shortcut-receipt'].includes(action)) throw new Error(usage);
+  const repo = action === 'create' ? repository(args) : arg(args, '--repo');
+  if (action !== 'create') optionalLegacyPr(args);
   let createObjective: string | undefined;
   if (action === 'create') {
     if (hasArg(args, '--no-auto-merge')) throw new Error('job create does not accept --no-auto-merge; new Jobs always enable auto-merge');
@@ -193,24 +193,14 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     createObjective = await textOption(args, '--objective', '--objective-file');
     if (!createObjective.trim()) throw new Error('job create requires --objective-file PATH|- or --objective MARKDOWN containing the complete standalone Job context');
     const legacy = ['--pr','--head','--base','--body','--local-merge-source','--local-merge-target','--idempotency-key'].find(flag => hasArg(args, flag));
-    if (legacy) throw new Error(`job create does not accept ${legacy}; use job adopt only for existing PR bindings`);
-  }
-  if (action === 'adopt') {
-    const adoptId = arg(args, '--id');
-    const adoptPr = Number(arg(args, '--pr'));
-    if (!Number.isInteger(adoptPr) || adoptPr <= 0) throw new Error('job adopt requires a positive --pr');
-    const objective = await textOption(args, '--objective', '--objective-file');
-    const result = await relayControlCommand(args, { command: 'job.adopt', repository: repo, options: {
-      id: adoptId || undefined, prNumber: adoptPr, title: arg(args, '--title') || undefined, objective: objective || undefined, projectPath: arg(args, '--project-path') || undefined,
-    }});
-    console.log(JSON.stringify(result, null, 2)); return;
+    if (legacy) throw new Error(`job create does not accept ${legacy}; PR binding is not supported during creation`);
   }
   if (action === 'list') { console.log(JSON.stringify(await relayJobList(args), null, 2)); return; }
   const id = arg(args, '--id');
   if (!id && action !== 'create') throw new Error('--id is required for managed local Jobs');
   if (action === 'pause' || action === 'resume') {
-    const target = await storeFor(args);
-    if (target.job.repository !== repo) throw new Error('Local Job/PR binding mismatch');
+    const target = await storeFor(args, false, true);
+    if (repo && target.job.repository !== repo) throw new Error('Local Job/PR binding mismatch');
     const updated = action === 'pause' ? await pauseJob(target.store, id) : await resumeJob(target.store, id);
     await saveLocal(target.localFile, updated);
     await withEventBus(args, bus => publishWake(bus, updated, 'job', `Job ${id} ${action} requested`));
@@ -228,12 +218,12 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
       reviewerThreadId: hasArg(args, '--reviewer-thread-id') ? arg(args, '--reviewer-thread-id') : undefined, creatorThreadId: hasArg(args, '--creator-thread-id') ? arg(args, '--creator-thread-id') : undefined, implementationThreadId: hasArg(args, '--implementation-thread-id') ? arg(args, '--implementation-thread-id') : undefined,
     }}); console.log(JSON.stringify(result, null, 2)); return;
   }
-  if (action === 'run') { await runShortcutJobCommand(args, id, repo, (store, bus) => runtime(store, args, bus, codexAndZaiUsageRegistry(), true)); return; }
+  if (action === 'run') { await runShortcutJobCommand(args, id, (store, bus) => runtime(store, args, bus, codexAndZaiUsageRegistry(), true)); return; }
   if (action === 'shortcut-receipt') { await recordShortcutReceiptCommand(args, id); return; }
   const job = await relayControlJob(args, id);
   if (action === 'unblock') { const reason = arg(args, '--reason'); if (!reason.trim()) throw new Error('job unblock requires --reason'); const updated = await relayControlCommand<Job>(args, { command: 'job.unblock', jobId: id, reason }); console.log(JSON.stringify(updated, null, 2)); return; }
   if (action === 'show') { console.log(JSON.stringify(job, null, 2)); return; }
-  if (job.repository !== repo) {
+  if (repo && job.repository !== repo) {
     throw new Error('Local Job/PR binding mismatch');
   }
   if (action === 'merge') {

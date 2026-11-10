@@ -53,7 +53,7 @@ Read `troubleshooter-qa.md` beside the Prompt-pinned Relay Skill for user-editab
 - Never blindly retry a deterministic failure. Event-history inspection is a hard precondition for retry; if event history cannot be retrieved, record that observability blocker explicitly rather than pretending diagnosis is complete.
 - Never create a second P0 Job for the same root cause when a suitable active one already exists; reuse/adopt/reconcile it.
 - P0 fixes must follow the P0/self-job contract: durable Job first, orchestrator-owned Task immediately, direct execution by this recovery orchestrator, no reviewer gate unless explicitly required.
-- Repository PR creation/adoption/repair still goes through Agents Relay.
+- Relay owns the local Job lifecycle and optional GitHub PR projection; do not import external PRs as Jobs.
 - Keep fixes narrowly scoped; do not use a failed application task as permission for broad platform refactoring.
 - If a P0 fix publishes a package or changes a managed service, verify the released artifact and dependent service health before retrying the original Task.
 - Do not mark an immediate recovery successful merely because a repair PR was opened. A deferred recovery may complete after it has durably registered the exact original Task/attempt on the blocker Job; Relay then owns the later generation-safe wake-up.

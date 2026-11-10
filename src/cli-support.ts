@@ -66,12 +66,12 @@ function validateReadOnlyJobBinding(args: string[]): void {
     if (!Number.isSafeInteger(pr) || pr<=0) throw new Error('--pr must be a positive integer');
   }
 }
-export async function storeFor(args: string[], allowIdOnly = false): Promise<{ store: DurableStore; job: Job; localFile: string | null }> {
+export async function storeFor(args: string[], allowIdOnly = false, optionalRepo = false): Promise<{ store: DurableStore; job: Job; localFile: string | null }> {
   if (allowIdOnly) validateReadOnlyJobBinding(args);
   const file = arg(args, '--file');
   if (file) {
     const loaded = await localStore(file);
-    if (allowIdOnly) {
+    if (allowIdOnly || optionalRepo) {
       const requestedId=arg(args,'--id'), requestedRepo=arg(args,'--repo');
       if (requestedId!==loaded.job.id) throw new Error('Local --file Job ID binding mismatch');
       if (requestedRepo && loaded.job.repository!==requestedRepo)
@@ -82,9 +82,9 @@ export async function storeFor(args: string[], allowIdOnly = false): Promise<{ s
     }
     return { ...loaded, localFile: file };
   }
-  const repo = allowIdOnly ? arg(args, '--repo') : noGitHubMode(args) ? repository(args) : arg(args, '--repo');
+  const repo = allowIdOnly || optionalRepo ? arg(args, '--repo') : noGitHubMode(args) ? repository(args) : arg(args, '--repo');
   const jobId = arg(args, '--id');
-  if (!jobId || (!repo && !allowIdOnly)) throw new Error('Local Job requires --repo and --id (or explicit --file)');
+  if (!jobId || (!repo && !allowIdOnly && !optionalRepo)) throw new Error('Local Job requires --id and, for this operation, --repo (or explicit --file)');
   const directory = arg(args, '--store-dir') || relayStoreDirectory();
   if (allowIdOnly) {
     // Read-only CLI must not initialize SQLiteRelayStore: its constructor
