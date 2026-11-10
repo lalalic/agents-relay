@@ -79,8 +79,8 @@ ${dashboardStyles}
       </div>
     </div>
   </section>
-  <dialog id="jel-dialog" class="jel-dialog" aria-label="Job Execution Lifecycle chart"><div class="jel-dialog-header"><strong id="jel-dialog-title">Job Execution Lifecycle</strong><button type="button" id="jel-dialog-close" class="refresh-button" aria-label="Close JEL chart">Close</button></div><div class="jel-legend" aria-label="JEL diagnostics"><span class="jel-legend-failed">Failed</span><span class="jel-legend-retry">Retry</span><span class="jel-legend-troubleshooter">Troubleshooter</span></div><div id="jel-chart" class="jel-chart" aria-live="polite"></div><p id="jel-status" class="subtle">Graph derived from the selected job snapshot.</p></dialog>
-  <dialog id="graph-dialog" class="graph-dialog" aria-label="Workflow graph viewer"><div class="graph-dialog-header"><strong id="graph-dialog-title">Workflow graph</strong><div class="graph-navigation"><button type="button" id="graph-zoom-out" class="refresh-button" aria-label="Zoom out">−</button><span id="graph-zoom-level" aria-live="polite">100%</span><button type="button" id="graph-zoom-in" class="refresh-button" aria-label="Zoom in">+</button><button type="button" id="graph-zoom-reset" class="refresh-button">Fit</button><button type="button" id="graph-dialog-close" class="refresh-button">Close</button></div></div><div id="graph-dialog-viewport" class="graph-dialog-viewport"></div></dialog>
+  <div id="jel-chart" class="graph-canvas jel-chart" aria-live="polite" hidden></div>
+  <dialog id="graph-dialog" class="graph-dialog" aria-label="Graph viewer"><div class="graph-dialog-header"><strong id="graph-dialog-title">Workflow graph</strong><div class="graph-navigation"><button type="button" id="graph-zoom-out" class="refresh-button" aria-label="Zoom out">−</button><span id="graph-zoom-level" aria-live="polite">100%</span><button type="button" id="graph-zoom-in" class="refresh-button" aria-label="Zoom in">+</button><button type="button" id="graph-zoom-reset" class="refresh-button">Fit</button><button type="button" id="graph-dialog-close" class="refresh-button">Close</button></div></div><div id="graph-jel-meta" class="graph-jel-meta" hidden><div class="jel-legend" aria-label="JEL diagnostics"><span class="jel-legend-failed">Failed</span><span class="jel-legend-retry">Retry</span><span class="jel-legend-troubleshooter">Troubleshooter</span></div><p id="jel-status" class="subtle">Graph derived from the selected job snapshot.</p></div><div id="graph-dialog-viewport" class="graph-dialog-viewport"></div></dialog>
   <section id="rules-view" role="tabpanel" aria-labelledby="rules-tab" hidden><div class="panel"><div class="panel-head"><h2>Router Rules</h2><span id="rules-meta" class="subtle"></span></div><div class="panel-body"><div class="router-rules-workspace"><div class="router-rules-pane rules-editor"><h3>Rules Editor</h3><p class="rules-help">Execution Router rules with an explicit <code>[choices]</code> section (provider: model [reasoning] entries, additive to profile defaults) and a <code>[routing-instruction]</code> section forwarded verbatim to Laya. Relay deduplicates, applies hard gates, and sends one merged choice list; impossible routes remain excluded by code and Codex stays the deterministic fallback.</p><textarea id="rules-text" class="rules-textarea" spellcheck="true" aria-label="Execution router rules" placeholder="[choices]\nopenai: sol medium, luna high\nzai: glm-5.3-flash high\n\n[routing-instruction]\nPrefer zai until its quota resets; otherwise use the openai default."></textarea><div class="rules-footer"><span id="rules-status" class="subtle" aria-live="polite"></span><div><button id="rules-test" class="rules-save" type="button">Test Router</button> <button id="rules-save" class="rules-save" type="button">Save rules</button></div></div></div><div class="router-rules-pane"><div class="panel-head"><h3>Audit Log</h3><button id="audit-refresh" type="button">Refresh</button></div><div id="audit-log" class="audit-log" aria-live="polite"><p class="empty">Loading latest routing decisions…</p></div></div></div><div class="router-test-panel"><h3>Test Router Result</h3><div id="router-test-results" class="router-test-results" aria-live="polite"><p class="empty">Select a Job and Task, then run Test Router.</p></div></div></div></div></section>
   <section id="qa-view" role="tabpanel" aria-labelledby="qa-tab" hidden>
     <div class="panel"><div class="panel-head"><h2>Troubleshooter Q&A</h2><span class="subtle">skills/agents-relay/troubleshooter-qa.md</span></div>
@@ -212,36 +212,33 @@ function syncFilters(){
 }
 function repoName(repository){if(typeof repository!=='string'||!repository)return 'unknown-repo';const parts=repository.split('/').filter(Boolean);return parts.at(-1)||repository;}
 const buildJelDiagram=${jobJelDiagram.toString()};
-const jelDialog=document.querySelector('#jel-dialog');
 const jelChart=document.querySelector('#jel-chart');
 const jelStatus=document.querySelector('#jel-status');
 let jelRenderSequence=0;
 async function openJelChart(job){
   const renderId=++jelRenderSequence;
-  jelDialog.querySelector('#jel-dialog-title').textContent='JEL · '+value(job.repository)+'/'+value(job.id);
   jelChart.replaceChildren(element('p','subtle',text('Rendering job lifecycle…')));
   jelStatus.textContent='Wall-clock elapsed from persisted timestamps (includes queued time); unknown means timing data is unavailable. Pending stages are not complete.';
-  jelDialog.showModal();
+  showGraphViewer(jelChart,'JEL · '+value(job.repository)+'/'+value(job.id),true);
   const source=buildJelDiagram(job);
   try{
     if(!window.mermaid)throw new Error('Mermaid unavailable');
     if(!window.__relayMermaidReady){window.mermaid.initialize({startOnLoad:false,securityLevel:'strict',flowchart:{htmlLabels:false}});window.__relayMermaidReady=true;}
     const rendered=await window.mermaid.render('relay-jel-'+renderId,source);
-    if(renderId!==jelRenderSequence||!jelDialog.open)return;
+    if(renderId!==jelRenderSequence||!graphDialog.open||graphViewerContent!==jelChart)return;
     const svg=sanitizeGraphSvg(rendered.svg);
     const definitions=graphNodeDefinitions(source);
     for(const node of svg.querySelectorAll('g.node')){const entry=Array.from(definitions.entries()).find(([key])=>node.id.includes('-flowchart-'+key+'-'));if(entry)addNodeLabel(node,entry[1]);}
     applyGraphPalette(svg);
     applyJelHighlights(svg);
     jelChart.replaceChildren(svg);
+    fitGraphViewer();
   }catch(error){
-    if(renderId!==jelRenderSequence||!jelDialog.open)return;
+    if(renderId!==jelRenderSequence||!graphDialog.open||graphViewerContent!==jelChart)return;
     jelChart.replaceChildren(element('pre','jel-source',text(source)));
     jelStatus.textContent='Graph preview unavailable; showing the JEL source.';
   }
 }
-jelDialog.querySelector('#jel-dialog-close').addEventListener('click',()=>jelDialog.close());
-jelDialog.addEventListener('close',()=>{jelRenderSequence++;});
 function applyJelHighlights(svg){
   const palette={failed:['#fee2e2','#b91c1c','#991b1b'],retry:['#ede9fe','#7c3aed','#5b21b6'],troubleshooter:['#fef3c7','#b45309','#92400e']};
   for(const node of svg.querySelectorAll('g.node')){
@@ -253,7 +250,7 @@ function applyJelHighlights(svg){
     for(const label of node.querySelectorAll('text,tspan'))label.setAttribute('fill',color);
   }
 }
-function jelField(job){const box=element('div','detail-group');box.append(element('p','detail-label',text('Job Execution Lifecycle')));const line=element('p','detail-value');const link=element('a','',text('View JEL chart'));link.href='#jel-dialog';link.addEventListener('click',event=>{event.preventDefault();void openJelChart(job);});line.append(link);box.append(line);return box;}
+function jelField(job){const box=element('div','detail-group');box.append(element('p','detail-label',text('Job Execution Lifecycle')));const line=element('p','detail-value');const link=element('a','',text('View JEL chart'));link.href='#graph-dialog';link.addEventListener('click',event=>{event.preventDefault();void openJelChart(job);});line.append(link);box.append(line);return box;}
 function shortcutProgress(job){if(job.executionMode!=='shortcut')return null;const root=(job.tasks||[]).find(task=>task.agentGraph);const checkpoint=root?.result?.data?.shortcut;const nodes=Object.keys(checkpoint?.nodes||{});const pending=Object.keys(checkpoint?.inFlight||{});const completed=nodes.filter(id=>checkpoint.nodes[id]?.status==='COMPLETED').length;const current=pending.length?pending.join(', '):'—';return completed+' completed · '+(pending.length?'running: '+current:'no active node');}
 function renderJobList(){jobList.replaceChildren();const visible=filteredJobs();if(!jobs.length){jobList.append(element('li','empty',text('No durable jobs discovered.')));return;}if(!visible.length){jobList.append(element('li','empty',text('No jobs match the selected filters.')));return;}for(const job of visible){const row=element('div','job-row'+(isCompleteUnmerged(job)?' complete-unmerged':''));row.setAttribute('aria-current',String(jobSelectionKey(job)===selectedJob));row.addEventListener('click',()=>selectJob(job));const content=element('div','job-content');const select=document.createElement('button');select.type='button';select.className='job-button';select.setAttribute('aria-current',String(jobSelectionKey(job)===selectedJob));select.title=job.title||job.id;select.addEventListener('click',event=>{event.stopPropagation();selectJob(job);});select.append(element('span','job-title',text(repoName(job.repository)+'/'+value(job.id)+(Number(job.prNumber||0)>0?'/PR#'+value(job.prNumber):'')+': '+value(job.title||job.id))));const states=element('span','job-status-line');states.append(element('span','badge '+value(job.state),text(value(job.state))));if(job.executionMode==='shortcut')states.append(element('span','badge shortcut-mode',text('SHORTCUT')));states.append(element('span','badge '+value(job.runtimeStatus||'IDLE'),text(value(job.runtimeStatus||'IDLE'))));if(job.publicationFailure)states.append(element('span','badge FAILED',text('PUBLISH FAILED: '+value(job.publicationFailure.stage))));else if(job.publication?.version)states.append(element('span','badge SUCCEEDED',text('v'+job.publication.version)));else if(Number(job.prNumber||0)>0&&job.githubState==='MERGED')states.append(element('span','badge MERGED',text('PR Merged')));else if(job.state==='COMPLETED'&&job.githubState==='CLOSED')states.append(element('span','badge SUCCEEDED',text('PR Archived')));if(job.state==='ACTIVE'&&job.reviewEnabled!==false)states.append(element('span','badge flag-review',text('REVIEW REQUIRED')));if(job.localMerge?.status==='failed')states.append(element('span','badge FAILED',text('MERGE FAILED: '+value(job.localMerge.error||'Unknown error'))));else if(isCompleteUnmerged(job))states.append(element('span','badge MERGE_PENDING',text('MERGE PENDING')));const primary=element('div','job-primary');primary.append(states);const lastLine=element('div','job-last-line');lastLine.append(element('span','subtle',text(compactCounts(counts(job.tasks)))),element('span','subtle',text(relativeTime(job.updatedAt))));content.append(select,primary,lastLine);row.append(content);jobList.append(element('li','',row));}}
 function taskTagDisplay(job,task){const display=task.tag&&job?.tag?.values?.[task.tag];return typeof display==='string'&&display?display:null;}
@@ -359,7 +356,104 @@ window.addEventListener('hashchange',syncMobileJobsView);
 usageTab.addEventListener('click',()=>{location.hash='#/usage';showView('usage');});
 graphsTab.addEventListener('click',()=>{location.hash='#/graphs/entry';showView('graphs');});
 document.querySelector('#graph-entry').addEventListener('click',()=>navigateGraph('main'));
-const graphDialog=document.querySelector('#graph-dialog');const graphViewport=document.querySelector('#graph-dialog-viewport');let graphZoom=1;const graphCanvasHome=graphCanvas.parentNode;function setGraphZoom(value){graphZoom=Math.min(4,Math.max(.35,value));const svg=graphCanvas.querySelector('svg');if(svg){svg.style.width=(Number(svg.getAttribute('width'))||Math.max(900,svg.viewBox.baseVal.width))*graphZoom+'px';svg.style.maxWidth='none';}document.querySelector('#graph-zoom-level').textContent=Math.round(graphZoom*100)+'%';}document.querySelector('#graph-maximize').addEventListener('click',()=>{graphDialog.showModal();graphViewport.append(graphCanvas);document.querySelector('#graph-dialog-title').textContent=graphTitle.textContent;setGraphZoom(1);});function closeGraphViewer(){graphCanvasHome.insertBefore(graphCanvas,graphCanvasHome.querySelector('.graph-source-details'));setGraphZoom(1);}graphDialog.addEventListener('close',closeGraphViewer);document.querySelector('#graph-dialog-close').addEventListener('click',()=>graphDialog.close());document.querySelector('#graph-zoom-in').addEventListener('click',()=>setGraphZoom(graphZoom*1.25));document.querySelector('#graph-zoom-out').addEventListener('click',()=>setGraphZoom(graphZoom/1.25));document.querySelector('#graph-zoom-reset').addEventListener('click',()=>setGraphZoom(1));graphViewport.addEventListener('wheel',event=>{if(!event.ctrlKey&&!event.metaKey)return;event.preventDefault();setGraphZoom(graphZoom*(event.deltaY<0?1.15:1/1.15));},{passive:false});let drag=null;graphViewport.addEventListener('pointerdown',event=>{if(event.target.closest('.drillable'))return;drag={x:event.clientX,y:event.clientY,left:graphViewport.scrollLeft,top:graphViewport.scrollTop};graphViewport.setPointerCapture(event.pointerId);});graphViewport.addEventListener('pointermove',event=>{if(!drag)return;graphViewport.scrollLeft=drag.left-(event.clientX-drag.x);graphViewport.scrollTop=drag.top-(event.clientY-drag.y);});graphViewport.addEventListener('pointerup',()=>drag=null);graphViewport.addEventListener('pointercancel',()=>drag=null);
+const graphDialog=document.querySelector('#graph-dialog');
+const graphViewport=document.querySelector('#graph-dialog-viewport');
+const graphJelMeta=document.querySelector('#graph-jel-meta');
+const graphZoomLevel=document.querySelector('#graph-zoom-level');
+let graphZoom=1;
+let graphViewerContent=null;
+let graphViewerHome=null;
+let graphViewerNext=null;
+let graphViewerWasHidden=false;
+function graphViewerSvg(){return graphViewerContent?.querySelector('svg')||null;}
+function graphIntrinsicSize(svg){
+  const view=svg.viewBox?.baseVal;
+  const width=view?.width||Number.parseFloat(svg.getAttribute('width'))||svg.getBoundingClientRect().width||900;
+  const height=view?.height||Number.parseFloat(svg.getAttribute('height'))||svg.getBoundingClientRect().height||500;
+  return {width:Math.max(1,width),height:Math.max(1,height)};
+}
+function setGraphZoom(value,preserveCenter=true){
+  const svg=graphViewerSvg();
+  const dimensions=svg?graphIntrinsicSize(svg):null;
+  const centerX=dimensions?(graphViewport.scrollLeft+graphViewport.clientWidth/2)/(dimensions.width*graphZoom):0;
+  const centerY=dimensions?(graphViewport.scrollTop+graphViewport.clientHeight/2)/(dimensions.height*graphZoom):0;
+  graphZoom=Math.max(.05,Math.min(6,Number.isFinite(value)?value:1));
+  if(svg&&dimensions){
+    svg.style.width=dimensions.width*graphZoom+'px';
+    svg.style.height=dimensions.height*graphZoom+'px';
+    svg.style.maxWidth='none';
+    if(preserveCenter){
+      graphViewport.scrollLeft=dimensions.width*graphZoom*centerX-graphViewport.clientWidth/2;
+      graphViewport.scrollTop=dimensions.height*graphZoom*centerY-graphViewport.clientHeight/2;
+    }
+  }
+  graphZoomLevel.textContent=Math.round(graphZoom*100)+'%';
+}
+function fitGraphViewer(){
+  const svg=graphViewerSvg();
+  if(!svg){setGraphZoom(1,false);return;}
+  const {width,height}=graphIntrinsicSize(svg);
+  const availableWidth=Math.max(1,graphViewport.clientWidth-48);
+  const availableHeight=Math.max(1,graphViewport.clientHeight-48);
+  setGraphZoom(Math.min(availableWidth/width,availableHeight/height),false);
+  graphViewport.scrollLeft=Math.max(0,(graphViewport.scrollWidth-graphViewport.clientWidth)/2);
+  graphViewport.scrollTop=Math.max(0,(graphViewport.scrollHeight-graphViewport.clientHeight)/2);
+}
+function showGraphViewer(content,title,isJel=false){
+  if(graphDialog.open)return;
+  // A native dialog close event can arrive after a fast reopen. Restore the
+  // previous content synchronously so it is never orphaned by replaceChildren.
+  if(graphViewerContent)closeGraphViewer();
+  graphViewerContent=content;
+  graphViewerHome=content.parentNode;
+  graphViewerNext=content.nextSibling;
+  graphViewerWasHidden=content.hidden;
+  content.hidden=false;
+  graphJelMeta.hidden=!isJel;
+  graphViewport.replaceChildren(content);
+  document.querySelector('#graph-dialog-title').textContent=title;
+  graphDialog.showModal();
+  graphViewport.scrollLeft=0;
+  graphViewport.scrollTop=0;
+  fitGraphViewer();
+}
+function closeGraphViewer(){
+  const content=graphViewerContent;
+  if(!content)return;
+  if(content===jelChart)jelRenderSequence++;
+  const svg=graphViewerSvg();
+  if(svg){svg.style.width='';svg.style.height='';svg.style.maxWidth='';}
+  const next=graphViewerNext?.parentNode===graphViewerHome?graphViewerNext:null;
+  graphViewerHome.insertBefore(content,next);
+  content.hidden=graphViewerWasHidden;
+  graphViewerContent=null;
+  graphViewerHome=null;
+  graphViewerNext=null;
+  graphJelMeta.hidden=true;
+  graphZoom=1;
+  graphZoomLevel.textContent='100%';
+}
+document.querySelector('#graph-maximize').addEventListener('click',()=>showGraphViewer(graphCanvas,graphTitle.textContent));
+function dismissGraphViewer(){if(graphDialog.open)graphDialog.close();closeGraphViewer();}
+graphDialog.addEventListener('close',()=>{if(!graphDialog.open)closeGraphViewer();});
+graphDialog.addEventListener('cancel',event=>{event.preventDefault();dismissGraphViewer();});
+document.querySelector('#graph-dialog-close').addEventListener('click',dismissGraphViewer);
+document.querySelector('#graph-zoom-in').addEventListener('click',()=>setGraphZoom(graphZoom*1.25));
+document.querySelector('#graph-zoom-out').addEventListener('click',()=>setGraphZoom(graphZoom/1.25));
+document.querySelector('#graph-zoom-reset').addEventListener('click',fitGraphViewer);
+graphViewport.addEventListener('wheel',event=>{if(!event.ctrlKey&&!event.metaKey)return;event.preventDefault();setGraphZoom(graphZoom*(event.deltaY<0?1.15:1/1.15));},{passive:false});
+let graphDrag=null;
+graphViewport.addEventListener('pointerdown',event=>{
+  if(event.target.closest('.drillable')||event.button!==0)return;
+  graphDrag={id:event.pointerId,x:event.clientX,y:event.clientY,left:graphViewport.scrollLeft,top:graphViewport.scrollTop};
+  graphViewport.setPointerCapture(event.pointerId);
+});
+graphViewport.addEventListener('pointermove',event=>{
+  if(!graphDrag||event.pointerId!==graphDrag.id)return;
+  graphViewport.scrollLeft=graphDrag.left-(event.clientX-graphDrag.x);
+  graphViewport.scrollTop=graphDrag.top-(event.clientY-graphDrag.y);
+});
+for(const eventName of ['pointerup','pointercancel','lostpointercapture'])graphViewport.addEventListener(eventName,()=>{graphDrag=null;});
 document.querySelector('#graph-back').addEventListener('click',()=>history.back());
 document.querySelector('#graph-forward').addEventListener('click',()=>history.forward());
 window.addEventListener('popstate',()=>{if(graphFromHash()){renderGraphNavigation();showView('graphs');}else if(location.hash==='#/usage')showView('usage');else if(location.hash==='#/execution-router-rules')showView('rules');else if(location.hash==='#/troubleshooter-qa')showView('qa');else showView('jobs');});

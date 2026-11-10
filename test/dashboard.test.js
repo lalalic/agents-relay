@@ -202,13 +202,16 @@ test('dashboard removes the obsolete ChatGPT shortcuts and connection surfaces',
   assert.doesNotMatch(dashboardHtml, /#\/shortcuts/);
 });
 
-test('job detail JEL link opens a snapshot-driven graph in a modal', () => {
-  assert.match(dashboardHtml, /id="jel-dialog"/);
+test('job detail JEL link opens a snapshot-driven graph in the shared viewer', () => {
+  assert.doesNotMatch(dashboardHtml, /id="jel-dialog"/);
+  assert.match(dashboardHtml, /id="graph-dialog"/);
+  assert.match(dashboardHtml, /id="graph-jel-meta"/);
   assert.match(dashboardHtml, /id="jel-chart"/);
   assert.match(dashboardHtml, /function jelField\(job\)/);
-  assert.match(dashboardHtml, /link\.href='#jel-dialog'/);
+  assert.match(dashboardHtml, /link\.href='#graph-dialog'/);
   assert.match(dashboardHtml, /openJelChart\(job\)/);
-  assert.match(dashboardHtml, /jelDialog\.showModal\(\)/);
+  assert.match(dashboardHtml, /showGraphViewer\(jelChart,'JEL · '/);
+  assert.match(dashboardHtml, /fitGraphViewer\(\)/);
   assert.match(dashboardHtml, /window\.mermaid\.render\('relay-jel-'/);
   assert.match(dashboardHtml, /sanitizeGraphSvg\(rendered\.svg\)/);
   assert.match(dashboardHtml, /graphNodeDefinitions\(source\)/);

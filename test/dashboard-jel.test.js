@@ -129,3 +129,28 @@ test('dashboard JEL colors are applied AFTER sanitized graph palettes, with a vi
   assert.match(dashboardHtml,/palette=\{failed:/);
   assert.match(dashboardHtml,/shape\.setAttribute\('fill',fill\)/);
 });
+
+
+test('JEL uses the same resizable graph viewer as Workflow, with fit, zoom and pan', async () => {
+  const {dashboardHtml} = await import('../dist/dashboard-html.js');
+  const {dashboardStyles} = await import('../dist/dashboard-style.js');
+  assert.match(dashboardHtml,/function showGraphViewer\(content,title,isJel=false\)/);
+  assert.match(dashboardHtml,/showGraphViewer\(jelChart,'JEL · '/);
+  assert.match(dashboardHtml,/showGraphViewer\(graphCanvas,graphTitle\.textContent\)/);
+  assert.match(dashboardHtml,/graphViewport\.replaceChildren\(content\)/);
+  assert.match(dashboardHtml,/graphViewerHome\.insertBefore\(content,next\)/);
+  assert.match(dashboardHtml,/graphViewerWasHidden=content\.hidden/);
+  assert.match(dashboardHtml,/if\(graphViewerContent\)closeGraphViewer\(\)/);
+  assert.match(dashboardHtml,/function dismissGraphViewer\(\)\{if\(graphDialog\.open\)graphDialog\.close\(\);closeGraphViewer\(\);\}/);
+  assert.match(dashboardHtml,/content\.hidden=graphViewerWasHidden/);
+  assert.match(dashboardHtml,/function fitGraphViewer\(\)/);
+  assert.match(dashboardHtml,/availableWidth\/width,availableHeight\/height/);
+  assert.match(dashboardHtml,/setGraphZoom\(graphZoom\*1\.25\)/);
+  assert.match(dashboardHtml,/setGraphZoom\(graphZoom\/1\.25\)/);
+  assert.match(dashboardHtml,/addEventListener\('click',fitGraphViewer\)/);
+  assert.match(dashboardHtml,/graphViewport\.addEventListener\('pointermove'/);
+  assert.match(dashboardHtml,/if\(content===jelChart\)jelRenderSequence\+\+/);
+  assert.match(dashboardStyles,/\.graph-dialog\s*\{[^}]*width:98vw; height:96vh; height:96dvh/);
+  assert.match(dashboardStyles,/\.graph-dialog\[open\]\s*\{[^}]*display:flex/);
+  assert.match(dashboardStyles,/\.graph-dialog-viewport\s*\{[^}]*flex:1/);
+});
