@@ -159,7 +159,7 @@ test('task tree branches default-collapse complete subtrees and preserve manual 
 
 test('dashboard exposes a top-level Graphs browser backed by the workflow graph API', () => {
   assert.match(dashboardHtml, /id="graphs-tab"[\s\S]*>Workflow<\/button>/);
-  assert.match(dashboardHtml, /id="shortcuts-tab"[\s\S]*>Shortcuts<\/button>[\s\S]*id="graphs-tab"[\s\S]*>Workflow<\/button>/);
+  assert.doesNotMatch(dashboardHtml, /id="shortcuts-tab"/);
   assert.match(dashboardHtml, /id="graphs-view"/);
   assert.match(dashboardHtml, /loadJSON\('\/api\/graphs'\)/);
   assert.match(dashboardHtml, /function renderSelectedGraph\(\)/);
@@ -196,23 +196,25 @@ test('dashboard exposes workflow graphs through a no-store API', async () => {
   await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 });
 
-test('dashboard exposes a top-level ChatGPT Shortcuts editor beside Router Rules', () => {
-  assert.match(dashboardHtml, /id="rules-tab"[\s\S]*>Router Rules<\/button>[\s\S]*id="shortcuts-tab"[\s\S]*>Shortcuts<\/button>/);
-  assert.match(dashboardHtml, /id="shortcuts-view"/);
-  assert.match(dashboardHtml, /id="shortcuts-text"/);
-  assert.match(dashboardHtml, /id="shortcuts-save"/);
-  assert.match(dashboardHtml, /localStorage\.setItem\(CHAT_SHORTCUTS_KEY/);
+test('dashboard removes the obsolete ChatGPT shortcuts and connection surfaces', () => {
+  assert.doesNotMatch(dashboardHtml, /id="(?:connection|shortcuts-tab|shortcuts-view|shortcuts-save|shortcuts-text)"/);
+  assert.doesNotMatch(dashboardHtml, /ChatGPT shortcut|chatShortcut|CHAT_SHORTCUT|shortcutsTab|shortcutsView|connection\./i);
+  assert.doesNotMatch(dashboardHtml, /#\/shortcuts/);
 });
 
-test('job detail exposes ChatGPT shortcuts as an empty-first select that resets after launch', () => {
-  assert.match(dashboardHtml, /function chatShortcutField\(job\)/);
-  assert.match(dashboardHtml, /select\.append\(new Option\('',''\)\)/);
-  assert.match(dashboardHtml, /job-chat-shortcut-select/);
-  assert.match(dashboardHtml, /const CHAT_SHORTCUT_TARGET='agents-relay-shortcut';/);
-  assert.match(dashboardHtml, /window\.open\(chatShortcutUrl\(prompt\),CHAT_SHORTCUT_TARGET,'noopener'\)/);
-  assert.doesNotMatch(dashboardHtml, /window\.open\(chatShortcutUrl\(prompt\),'_blank','noopener'\)/);
-  assert.match(dashboardHtml, /select\.value='';/);
-  assert.match(dashboardHtml, /chatShortcutField\(job\)/);
+test('job detail JEL link opens a snapshot-driven graph in a modal', () => {
+  assert.match(dashboardHtml, /id="jel-dialog"/);
+  assert.match(dashboardHtml, /id="jel-chart"/);
+  assert.match(dashboardHtml, /function jelField\(job\)/);
+  assert.match(dashboardHtml, /link\.href='#jel-dialog'/);
+  assert.match(dashboardHtml, /openJelChart\(job\)/);
+  assert.match(dashboardHtml, /jelDialog\.showModal\(\)/);
+  assert.match(dashboardHtml, /window\.mermaid\.render\('relay-jel-'/);
+  assert.match(dashboardHtml, /sanitizeGraphSvg\(rendered\.svg\)/);
+  assert.match(dashboardHtml, /graphNodeDefinitions\(source\)/);
+  assert.match(dashboardHtml, /addNodeLabel\(node,entry\[1\]\)/);
+  assert.match(dashboardHtml, /jelField\(job\)/);
+  assert.match(dashboardHtml, /Graph preview unavailable/);
 });
 
 test('dashboard applies lifecycle state patches from relay SSE without refetching jobs', () => {
@@ -238,9 +240,10 @@ test('dashboard exposes the operations-console structure safely', () => {
 });
 
 
-test('SSE connection health stays out of the durable job event feed', () => {
-  assert.match(dashboardHtml, /stream\.onopen=\(\)=>\{connection\.textContent='';connection\.setAttribute\('aria-label','Event stream connected'\);connection\.className='status-pill ok';\}/);
-  assert.match(dashboardHtml, /stream\.onerror=\(\)=>\{connection\.textContent='';connection\.setAttribute\('aria-label','Event stream reconnecting'\);connection\.className='status-pill warn';\}/);
+test('SSE still updates Jobs without a separate connection status component', () => {
+  assert.match(dashboardHtml, /const stream=new EventSource\('\/events'\)/);
+  assert.match(dashboardHtml, /stream\.addEventListener\('relay'/);
+  assert.doesNotMatch(dashboardHtml, /stream\.onopen=|stream\.onerror=|id="connection"/);
   assert.doesNotMatch(dashboardHtml, /addEvent\(\{type:'connection'/);
 });
 
@@ -1138,16 +1141,13 @@ test('dashboard highlights failed/error events red and blocked/warn events amber
   assert.match(dashboardHtml, /\.event-item\.event-error/);
 });
 
-test('clipboard copies only repo/jobid and shortcut retains full reference', () => {
+test('clipboard copies only repo/jobid without the removed shortcut reference', () => {
   assert.match(dashboardHtml, /clipboard\.writeText\(repoName\(job\.repository\)\+'\/'\+value\(job\.id\)\)/);
-  assert.match(dashboardHtml, /function jobChatRef\(job\)/);
-  assert.match(dashboardHtml, /value\(job\?\.id\)/);
-  assert.match(dashboardHtml, /value\(job\?\.title\|\|job\?\.id\)/);
-  assert.match(dashboardHtml, /replaceAll\('%1',jobChatRef\(job\)\)/);
+  assert.doesNotMatch(dashboardHtml, /jobChatRef|replaceAll\('%1'/);
 });
 
 test('selectJob copies repo/jobid for local and GitHub Jobs', () => {
-  const functions = ['jobChatRef', 'copySelectedJobIdentity', 'selectJob'];
+  const functions = ['copySelectedJobIdentity', 'selectJob'];
   const source = functions.map(name => {
     const line = dashboardHtml.split('\n').find(line => line.startsWith(`function ${name}(`));
     assert.ok(line, `${name} exists in the rendered Dashboard`);
@@ -1255,6 +1255,8 @@ test('main Mermaid file owns safe, validated navigation links', async () => {
   assert.match(dashboardHtml, /function graphLinks\(source\)/);
   assert.match(dashboardHtml, /graph\.source\.replace/);
   assert.match(dashboardHtml, /sanitizeGraphSvg\(rendered\.svg\)/);
+  assert.match(dashboardHtml, /graphNodeDefinitions\(source\)/);
+  assert.match(dashboardHtml, /addNodeLabel\(node,entry\[1\]\)/);
   assert.match(dashboardHtml, /graphLinks\(graph\.source\)/);
   assert.match(dashboardHtml, /id="graph-back"/);
   assert.match(dashboardHtml, /id="graph-forward"/);
@@ -1339,7 +1341,6 @@ test('Jobs search keeps only the newest response across filters and Refresh', as
   const state = {
     jobsRefresh:{disabled:false,textContent:'Refresh'}, jobsFeedback:{textContent:''}, jobs:[], jobRepositories:[],
     selectedJob:null,selectedTaskId:null,searchQuery:' initial ',selectedStatus:'ACTIVE',selectedRepo:'owner/one', URLSearchParams,
-    connection:{textContent:'',className:'',setAttribute(name,value){this[name]=value;}},
     location:{hash:''}, jobList:{replaceChildren(){}},
     loadJSON(url){return new Promise((resolve,reject)=>pending.push({url,resolve,reject}));},
     dedupeJobs(value){return value;},drawRuntimeSummary(){},compareJobs(){return 0;},
@@ -1376,18 +1377,18 @@ test('Jobs search keeps only the newest response across filters and Refresh', as
   const fourth=context.runRefresh(true);
   pending[2].reject(new Error('old request failed'));
   await third;
-  assert.notEqual(context.connection.className,'status-pill bad');
+  assert.equal(context.jobsFeedback.textContent,'');
   pending[3].resolve({jobs:[{id:'newest'}],repositories:[],total:1});
   await fourth;
   assert.equal(context.jobs[0].id,'newest');
-  assert.equal(context.connection.className,'status-pill ok');
+  assert.equal(context.jobs[0].id,'newest');
   assert.equal(context.jobsRefresh.disabled,false);
   assert.equal(context.jobsRefresh.textContent,'Refresh');
   const failure=context.runRefresh(true);
   pending[4].reject(new Error('network unavailable'));
   await failure;
   assert.equal(context.jobsFeedback.textContent,'Refresh failed: network unavailable');
-  assert.equal(context.connection.className,'status-pill bad');
+  assert.equal(context.jobsFeedback.textContent,'Refresh failed: network unavailable');
   assert.equal(context.jobsRefresh.disabled,false);
   assert.equal(context.jobsRefresh.textContent,'Refresh');
 });
