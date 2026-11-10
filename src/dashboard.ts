@@ -15,7 +15,7 @@ import { loadExecutionRouterRules, saveExecutionRouterRules } from './routing-po
 import { summarizeRuntime } from './runtime-summary.js';
 import { GitHubRuntimeRateUsage } from './github-runtime-usage.js';
 import type { DecisionAuditRecord } from './decision-audit.js';
-import { dashboardWorkflowGraphs, effectiveGitHubUsage, eventHistory, searchDashboardJobs } from './dashboard-data.js';
+import { dashboardWorkflowGraphs, effectiveGitHubUsage, eventHistory, listDashboardJobInventory, searchDashboardJobs } from './dashboard-data.js';
 export { dashboardWorkflowGraphs, githubPrUrl, searchDashboardJobs } from './dashboard-data.js';
 const SSE_HEARTBEAT_MS = 15000;
 type DashboardTarget = { repository?: string; prNumber?: number };
@@ -199,7 +199,11 @@ export function serveDashboard(
         const url = new URL(req.url ?? '/', 'http://127.0.0.1');
         const forceRefresh = url.searchParams.get('refresh') === '1';
         const jobs = await discoveredJobs(forceRefresh);
-        const body = searchDashboardJobs(jobs, url.searchParams);
+        // The web dashboard remains capped at 20; the CLI requests the full
+        // read-only inventory explicitly, including terminal CANCELLED Jobs.
+        const body = url.searchParams.get('inventory') === '1'
+          ? listDashboardJobInventory(jobs, url.searchParams.get('repo') ?? '')
+          : searchDashboardJobs(jobs, url.searchParams);
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         if (!res.writableEnded) res.end(JSON.stringify(body));
       } catch (error) {

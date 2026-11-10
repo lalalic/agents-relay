@@ -183,6 +183,13 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (hasArg(args, '--shortcut-local')) return runLocalShortcutBinding('job',action,args);
   if (!['create', 'adopt', 'update', 'show', 'list', 'merge', 'unblock', 'cancel', 'pause', 'resume', 'run', 'shortcut-receipt'].includes(action)) throw new Error(usage);
   const repo = repository(args);
+  // The PR flag is obsolete for normal Jobs; legacy PR-bound callers may still
+  // supply a positive value as an additional identity fence. Never ignore bad values.
+  if (action !== 'adopt' && action !== 'create' && hasArg(args, '--pr')) {
+    const legacyPr = Number(arg(args, '--pr'));
+    if (!Number.isSafeInteger(legacyPr) || legacyPr <= 0)
+      throw new Error('--pr must be a positive integer (deprecated; omit it for ordinary Job commands)');
+  }
   let createObjective: string | undefined;
   if (action === 'create') {
     if (hasArg(args, '--no-auto-merge')) throw new Error('job create does not accept --no-auto-merge; new Jobs always enable auto-merge');
@@ -210,16 +217,11 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (action === 'pause' || action === 'resume') {
     const target = await storeFor(args);
     if (target.job.repository !== repo) throw new Error('Local Job/PR binding mismatch');
-    const prValue = arg(args, '--pr');
-    if (prValue && target.job.prNumber !== Number(prValue)) throw new Error('Local Job/PR binding mismatch');
     const updated = action === 'pause' ? await pauseJob(target.store, id) : await resumeJob(target.store, id);
     await saveLocal(target.localFile, updated);
     await withEventBus(args, bus => publishWake(bus, updated, 'job', `Job ${id} ${action} requested`));
     console.log(JSON.stringify(updated, null, 2)); return;
   }
-  const prValue = arg(args, '--pr');
-  const prNumber = prValue ? Number(prValue) : 0;
-  if (prValue && (!Number.isInteger(prNumber) || (prNumber ?? 0) <= 0)) throw new Error('--pr must be a positive integer');
   if (action === 'create') {
     if (hasArg(args, '--shortcut-execution') && hasArg(args, '--initial-plan')) throw new Error('--shortcut-execution requires create-only Job creation; materialize Agent Graph Tasks only after durable shortcut policy is stored');
     rejectRemovedJobOptions(args);
@@ -237,8 +239,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   const job = await relayControlJob(args, id);
   if (action === 'unblock') { const reason = arg(args, '--reason'); if (!reason.trim()) throw new Error('job unblock requires --reason'); const updated = await relayControlCommand<Job>(args, { command: 'job.unblock', jobId: id, reason }); console.log(JSON.stringify(updated, null, 2)); return; }
   if (action === 'show') { console.log(JSON.stringify(job, null, 2)); return; }
-  const boundPrNumber = job.prNumber > 0 ? job.prNumber : 0;
-  if (job.repository !== repo || (prValue && boundPrNumber !== prNumber)) {
+  if (job.repository !== repo) {
     throw new Error('Local Job/PR binding mismatch');
   }
   if (action === 'merge') {

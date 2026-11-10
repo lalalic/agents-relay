@@ -66,6 +66,16 @@ export async function eventHistory(jobId: string, taskId: string | null, limit: 
   try { return await eventsBusHistory(jobId, taskId, limit); } catch { return []; }
 }
 
+/** CLI inventory is complete, including CANCELLED; only the dashboard list is capped. */
+export function listDashboardJobInventory<T extends DashboardJobLike>(jobs: readonly T[], repository = ''): DashboardJobsSearchResult<T> {
+  const selected = jobs.filter(job => !repository || job.repository === repository).sort(compareDashboardJobs);
+  return {
+    jobs: selected,
+    repositories: [...new Set(jobs.map(job => job.repository).filter(Boolean))].sort(),
+    total: selected.length,
+  };
+}
+
 export function searchDashboardJobs<T extends DashboardJobLike>(jobs: readonly T[], query: URLSearchParams): DashboardJobsSearchResult<T> {
   const requestedStatus = (query.get('status') ?? query.get('statuses') ?? '').trim().toUpperCase();
   const status = requestedStatus && ['DRAFT', 'ACTIVE', 'COMPLETED', 'CANCELLED'].includes(requestedStatus) ? requestedStatus : '';

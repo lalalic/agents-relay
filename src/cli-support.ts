@@ -109,6 +109,14 @@ export async function storeFor(args: string[], allowIdOnly = false): Promise<{ s
 }
 export async function saveLocal(file: string | null, job: Job): Promise<void> { if (file) await writeFile(file, JSON.stringify(job, null, 2)); }
 
+function optionalLegacyPr(args: string[]): number | undefined {
+  if (!hasArg(args, '--pr')) return undefined;
+  const value = Number(arg(args, '--pr'));
+  if (!Number.isSafeInteger(value) || value <= 0)
+    throw new Error('--pr must be a positive integer (deprecated; use --id for normal operations)');
+  return value;
+}
+
 export async function relayControlJob(args: string[], jobId: string): Promise<Job> {
   const host = arg(args, '--host', '127.0.0.1');
   const port = Number(arg(args, '--port', String(SERVICE_DEFAULTS.port)));
@@ -116,9 +124,10 @@ export async function relayControlJob(args: string[], jobId: string): Promise<Jo
   let response: Response;
   const params = new URLSearchParams({ id: jobId });
   const repo = arg(args, '--repo');
-  const pr = Number(arg(args, '--pr'));
+  const legacyPr = optionalLegacyPr(args);
   if (repo) params.set('repo', repo);
-  if (Number.isInteger(pr) && pr > 0) params.set('pr', String(pr));
+  // Accept legacy PR bindings as additional fences, but never require them.
+  if (legacyPr !== undefined) params.set('pr', String(legacyPr));
   try { response = await fetch(`http://${host}:${port}/api/job?${params.toString()}`); }
   catch (error) { throw new Error(`Agents Relay service unavailable at ${host}:${port}: ${error instanceof Error ? error.message : String(error)}`); }
   if (!response.ok) throw new Error(`Agents Relay job request failed: ${await response.text() || `HTTP ${response.status}`}`);
@@ -140,11 +149,21 @@ export async function relayJobList(args: string[]): Promise<Job[]> {
   const host = arg(args, '--host', '127.0.0.1');
   const port = Number(arg(args, '--port', String(SERVICE_DEFAULTS.port)));
   const repo = arg(args, '--repo');
+  const query = new URLSearchParams({ inventory: '1' });
+  if (repo) query.set('repo', repo);
   let response: Response;
-  try { response = await fetch(`http://${host}:${port}/api/jobs`); }
+  try { response = await fetch(`http://${host}:${port}/api/jobs?${query.toString()}`); }
   catch (error) { throw new Error(`Agents Relay service unavailable at ${host}:${port}: ${error instanceof Error ? error.message : String(error)}`); }
   if (!response.ok) throw new Error(`Agents Relay jobs request failed: ${await response.text() || `HTTP ${response.status}`}`);
-  const jobs = await response.json() as Job[];
+  // /api/jobs serves a paged dashboard envelope rather than a bare array.
+  const payload: unknown = await response.json();
+  const rows = Array.isArray(payload) ? payload :
+    (payload && typeof payload === 'object' && 'jobs' in payload ? (payload as { jobs: unknown }).jobs : undefined);
+  if (!Array.isArray(rows) || rows.some(row => !row || typeof row !== 'object' ||
+      typeof row.repository !== 'string' || typeof row.id !== 'string')) {
+    throw new Error('Invalid Relay jobs response: expected an array of Job summaries');
+  }
+  const jobs = rows as Job[];
   return repo ? jobs.filter(job => job.repository === repo) : jobs;
 }
 
@@ -154,9 +173,9 @@ export async function relayJobStateCommand(args: string[], jobId: string, state:
   if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error('--port must be an integer between 1 and 65535');
   const params = new URLSearchParams({ id: jobId, state });
   const repo = arg(args, '--repo');
-  const pr = Number(arg(args, '--pr'));
+  const legacyPr = optionalLegacyPr(args);
   if (repo) params.set('repo', repo);
-  if (Number.isInteger(pr) && pr > 0) params.set('pr', String(pr));
+  if (legacyPr !== undefined) params.set('pr', String(legacyPr));
   let response: Response;
   try { response = await fetch(`http://${host}:${port}/api/job-state?${params.toString()}`, { method: 'POST' }); }
   catch (error) { throw new Error(`Agents Relay service unavailable at ${host}:${port}: ${error instanceof Error ? error.message : String(error)}`); }

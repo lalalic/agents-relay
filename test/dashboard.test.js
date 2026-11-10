@@ -721,7 +721,7 @@ test('Jobs API performs a fresh authoritative query and returns only the latest 
     const timestamp = new Date(Date.UTC(2026, 0, 1) + fixtureOrder++ * 1000).toISOString();
     return { id, title:id, prNumber:1, repository:'owner/repo', state:'ACTIVE', continuation:null, createdAt:timestamp, updatedAt:timestamp, tasks:[], ...overrides };
   };
-  const jobs = Array.from({length:22},(_,index)=>job(`job-${index+1}`));
+  const jobs = [...Array.from({length:22},(_,index)=>job(`job-${index+1}`)), job('cancelled', { state:'CANCELLED' })];
   let calls = 0;
   const overviewProvider = async (forceRefresh) => {
     calls += 1;
@@ -742,6 +742,14 @@ test('Jobs API performs a fresh authoritative query and returns only the latest 
   assert.deepEqual(result.repositories, ['owner/repo']);
   assert.equal(Object.hasOwn(result,'page'),false);
   assert.equal(Object.hasOwn(result,'totalPages'),false);
+  // CLI requests complete inventory; the dashboard's 20-row cap must stay intact.
+  const inventoryResponse = await fetch(`http://127.0.0.1:${address.port}/api/jobs?refresh=1&inventory=1&repo=owner%2Frepo`);
+  assert.equal(inventoryResponse.status, 200);
+  const inventory = await inventoryResponse.json();
+  assert.equal(inventory.total, 23);
+  assert.equal(inventory.jobs.length, 23);
+  assert.equal(inventory.jobs.filter(item=>item.state==='CANCELLED').length, 1);
+  assert.equal(calls, 2);
   server.close();
 });
 

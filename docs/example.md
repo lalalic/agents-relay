@@ -21,10 +21,16 @@ typed planner result. Its `next_tasks` IDs must remain stable across retries.
 
 For a nested task, use `task create --parent build --deps build`; reconciliation releases it only after `build` succeeds.
 
-The same flow against the dogfood PR is:
+For durable repository Jobs, use the Job ID; no pull-request number is required:
 
 ```sh
-npx agents-relay init --repo lalalic/agents-relay --pr 1 --id agents-relay-dev-20260918-1302 --title "Dogfood"
-npx agents-relay task create --repo lalalic/agents-relay --pr 1 --id agents-relay-dev-20260918-1302 --task-id verify-dogfood --output task-pr --input "Verify the dogfood flow and publish a terminal event"
-npx agents-relay reconcile --repo lalalic/agents-relay --pr 1 --id agents-relay-dev-20260918-1302
+printf '%s\n' '# Dogfood\n\nVerify the build and report evidence.' > /tmp/relay-dogfood-objective.md
+npx agents-relay job create --repo lalalic/agents-relay --title "Dogfood" \
+  --objective-file /tmp/relay-dogfood-objective.md --initial-plan
+# Use the Job ID returned by create for subsequent operations:
+npx agents-relay job show --repo lalalic/agents-relay --id JOB_ID
+npx agents-relay task list --repo lalalic/agents-relay --id JOB_ID
 ```
+
+Existing GitHub PR adoption is a separate explicit legacy operation; standard Jobs
+require only their durable ID.
