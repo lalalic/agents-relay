@@ -109,7 +109,7 @@ export async function storeFor(args: string[], allowIdOnly = false): Promise<{ s
 }
 export async function saveLocal(file: string | null, job: Job): Promise<void> { if (file) await writeFile(file, JSON.stringify(job, null, 2)); }
 
-function optionalLegacyPr(args: string[]): number | undefined {
+export function optionalLegacyPr(args: string[]): number | undefined {
   if (!hasArg(args, '--pr')) return undefined;
   const value = Number(arg(args, '--pr'));
   if (!Number.isSafeInteger(value) || value <= 0)
