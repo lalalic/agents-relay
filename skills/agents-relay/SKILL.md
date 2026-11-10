@@ -7,6 +7,10 @@ description: Use Agents Relay for durable multi-step or multi-agent work that ne
 
 Agents Relay manages durable Jobs and Tasks. Use its CLI for Job/Task state and actions; do not read its private storage, GitHub projections, or internal service APIs. Prefer completing simple, non-delegated work directly without Relay.
 
+## Job Execution Lifecycle (JEL)
+
+Explain **JEL** to the user: **Create → Plan → Execute → Final Review → Merge → Completed**. After work/recovery Tasks terminate (SUCCEEDED/FAILED/CANCELLED), Final Review judges completion: PASS merges; CHANGES_REQUIRED persists findings, starts Planner N+1 for minimal fixes, then re-reviews. No automatic post-success Plan. Planner/Workers use discovered **ponytail** Skill (YAGNI, reuse, minimal Tasks); preserve mandatory safeguards.
+
 ## 1. Choose and start a Job
 
 Use Relay when the objective requires independent Tasks, durable progress, retries, review, or cross-session handoffs. Capture the full user objective, decisions, constraints, acceptance checks, and delivery expectations in standalone Markdown before creating a Job. A fresh agent must be able to act without the originating conversation. Put a Mermaid diagram before its explanation only when it clarifies a real workflow.

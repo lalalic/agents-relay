@@ -28,14 +28,14 @@ test('authoritative unblock queues the same Troubleshooter', async()=>{
   assert.equal(release.executionId,null);
 });
 
-test('maybeCreatePlanner gates on a BLOCKED Troubleshooter but not FAILED ordinary work', async()=>{
+test('no-review Planner retains continuation for failed ordinary work, but a BLOCKED Troubleshooter holds planning', async()=>{
   const failed={...baseTask('failed','FAILED'),blockedBaseline:undefined,error:'implementation failed'};
   const plan={...baseTask('plan-1','SUCCEEDED'),kind:'planner',agentName:'planner',error:null,plannerResult:{objective_status:'in_progress',assessment:'continue',next_tasks:[]},planningRound:1};
   failed.planningDecisionId='plan-1';
   const store=new InMemoryStore(makeJob([plan,failed]));
   const reconciler=managedReconciler(store,{owner:'test',adapters:[],maxConcurrent:0,planner:{plan:async()=>({objective_status:'satisfied',assessment:'done',next_tasks:[],unblocks:[]})}});
   const after=await reconciler.maybeCreatePlanner(await store.load('dependent'));
-  assert.ok(after.plans?.some(p=>p.id==='plan-2'));
+  assert.equal(after.plans?.some(p=>p.id==='plan-2'),true,'review-disabled Jobs continue planning until satisfied');
   assert.equal(after.tasks.some(t=>t.id==='plan-2'),false);
 
   const blocked={...baseTask('blocked','BLOCKED','troubleshooter'),planningDecisionId:'plan-1'};

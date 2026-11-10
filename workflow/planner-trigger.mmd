@@ -7,14 +7,17 @@ flowchart LR
 idle["state: idle"]
 checkUnblock["state: check_unblock"]
 checkInitial["state: check_initial"]
+checkReview["state: check_review"]
 manual["state: manual"]
 unblock["state: unblock"]
 initial["state: initial"]
 continuation["state: continuation"]
+review["state: review"]
 
 manualGuard["guard: manualPlan"]
 unblockGuard["guard: hasUnblock"]
 initialGuard["guard: initialPlan"]
+reviewGuard["guard: reviewRequired"]
 
 idle -->|on: plan.requested| manualGuard
 manualGuard -->|true| manual
@@ -26,4 +29,8 @@ unblockGuard -->|false| checkInitial
 
 checkInitial -->|on: plan.requested| initialGuard
 initialGuard -->|true| initial
-initialGuard -->|false| continuation
+initialGuard -->|false| checkReview
+
+checkReview -->|on: plan.requested| reviewGuard
+reviewGuard -->|true| review
+reviewGuard -->|false| continuation

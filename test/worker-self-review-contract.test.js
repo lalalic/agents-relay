@@ -1,9 +1,10 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { managedWorkerInput } from '../dist/managed-worker-input.js';
+import { buildPlannerExecutionPrompt } from '../dist/planner.js';
 import { resolveExecutionContext } from '../dist/execution-context.js';
 
 test('mandatory self-review is delivered to both worker adapters even with no named agent', async () => {
@@ -58,11 +59,32 @@ test('mandatory self-review is delivered to both worker adapters even with no na
   }
 });
 
-test('acceptance reviewer can report findings while the new revise CLI is not yet deployed', async () => {
+test('resolved Ponytail Skill is pinned into both Planner and Worker prompts', async () => {
+  const dir = await mkdtemp(join(tmpdir(),'relay-ponytail-prompt-'));
+  try {
+    const skill = join(dir,'ponytail','SKILL.md');
+    await mkdir(join(dir,'ponytail'),{recursive:true});
+    await writeFile(skill,'# Ponytail\nYAGNI, reuse, minimal work.\n');
+    const cx = await resolveExecutionContext(process.cwd(),'planner');
+    const resolved={...cx,skills:[...cx.skills.filter(item=>item.name!=='ponytail'),{name:'ponytail',path:skill,source:'global'}]};
+    const job={id:'jel-ponytail',repository:'owner/repo',title:'Review',objective:'Do minimum correct work',tasks:[],plans:[]};
+    const task={id:'work',jobId:job.id,adapter:'codex',agentName:'implementation',kind:'work',
+      state:'QUEUED',input:'Implement and test',output:{kind:'task_pr'},executionId:'work-exec',
+      attempt:1,maxAttempts:3,dependencies:[]};
+    const worker=await managedWorkerInput({...job,tasks:[task]},task,resolved);
+    assert.ok(worker.includes(skill),'worker prompt must cite the resolved Skill file');
+    const planner=await buildPlannerExecutionPrompt({job,tasks:[],objective:job.objective,
+      previousPlannerTaskId:null,planExecution:{planId:'plan-1',executionId:'planner-exec'},
+      executionContext:resolved});
+    assert.ok(planner.includes(skill),'planner prompt must cite the same pinned Skill');
+  } finally { await rm(dir,{recursive:true,force:true}); }
+});
+
+test('Final Reviewer persists findings for the next JEL Planner round', async () => {
   const instructions = await readFile('skills/agents-relay/agents/job-acceptance-reviewer.agent.md', 'utf8');
-  assert.match(instructions, /execution-pinned Relay CLI supports/);
-  assert.match(instructions, /do not fail a completed review solely because the CLI does not exist/);
-  assert.match(instructions, /data\.revision_submission: "cli-unavailable"/);
-  assert.match(instructions, /Never claim targeted requests were persisted/);
-  assert.match(instructions, /available CLI's validation error/);
+  assert.match(instructions, /Final Review is the sole whole-Job completion check/);
+  assert.match(instructions, /FAILED and CANCELLED/);
+  assert.match(instructions, /complete actionable findings/);
+  assert.match(instructions, /next Planner round/);
+  assert.match(instructions, /Do not call `task revise`/);
 });

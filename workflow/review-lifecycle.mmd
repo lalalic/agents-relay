@@ -1,6 +1,6 @@
 ---
 title: Review Lifecycle
-description: Manages review creation, immutable verdicts, changes-required, and re-review. The implementationComplete guard ignores only durably resolved cancel_supersede cancellations and failed Tasks with a valid superseded classification targeting succeeded work.
+description: Manages review creation, immutable verdicts, changes-required, and re-review. Review is eligible after all non-review Tasks are terminal, regardless of outcome. Approval still requires verified implementation outcomes before merge.
 ---
 flowchart LR
 %% relay: initial none
@@ -15,16 +15,16 @@ stale["state: STALE"]
 
 reviewEnabledNone["guard: reviewEnabled"]
 jobActiveNone["guard: jobActive"]
-implementationCompleteNone["guard: implementationComplete"]
+workTerminalNone["guard: reviewWorkSettled"]
 headAvailableNone["guard: headAvailable"]
-completionGateNone["guard: completionGateSatisfied"]
+reviewPlanReadyNone["guard: reviewPlanReady"]
 noActiveReviewNone["guard: noActiveReviewTask"]
 noApprovedReviewNone["guard: noApprovedCurrentReview"]
 reviewEnabledStale["guard: reviewEnabled"]
 jobActiveStale["guard: jobActive"]
-implementationCompleteStale["guard: implementationComplete"]
+workTerminalStale["guard: reviewWorkSettled"]
 headAvailableStale["guard: headAvailable"]
-completionGateStale["guard: completionGateSatisfied"]
+reviewPlanReadyStale["guard: reviewPlanReady"]
 noActiveReviewStale["guard: noActiveReviewTask"]
 noApprovedReviewStale["guard: noApprovedCurrentReview"]
 pendingRetry["guard: noActiveReviewTask"]
@@ -56,14 +56,14 @@ mergeStarted["action: review.requestMerge"]
 none -->|on: reconcile| reviewEnabledNone
 reviewEnabledNone -->|true| jobActiveNone
 reviewEnabledNone -->|false| none
-jobActiveNone -->|true| implementationCompleteNone
+jobActiveNone -->|true| workTerminalNone
 jobActiveNone -->|false| none
-implementationCompleteNone -->|true| headAvailableNone
-implementationCompleteNone -->|false| none
-headAvailableNone -->|true| completionGateNone
+workTerminalNone -->|true| headAvailableNone
+workTerminalNone -->|false| none
+headAvailableNone -->|true| reviewPlanReadyNone
 headAvailableNone -->|false| none
-completionGateNone -->|true| noActiveReviewNone
-completionGateNone -->|false| none
+reviewPlanReadyNone -->|true| noActiveReviewNone
+reviewPlanReadyNone -->|false| none
 noActiveReviewNone -->|true| noApprovedReviewNone
 noActiveReviewNone -->|false| none
 noApprovedReviewNone -->|true| createNone
@@ -73,14 +73,14 @@ createNone --> pending
 stale -->|on: reconcile| reviewEnabledStale
 reviewEnabledStale -->|true| jobActiveStale
 reviewEnabledStale -->|false| stale
-jobActiveStale -->|true| implementationCompleteStale
+jobActiveStale -->|true| workTerminalStale
 jobActiveStale -->|false| stale
-implementationCompleteStale -->|true| headAvailableStale
-implementationCompleteStale -->|false| stale
-headAvailableStale -->|true| completionGateStale
+workTerminalStale -->|true| headAvailableStale
+workTerminalStale -->|false| stale
+headAvailableStale -->|true| reviewPlanReadyStale
 headAvailableStale -->|false| stale
-completionGateStale -->|true| noActiveReviewStale
-completionGateStale -->|false| stale
+reviewPlanReadyStale -->|true| noActiveReviewStale
+reviewPlanReadyStale -->|false| stale
 noActiveReviewStale -->|true| noApprovedReviewStale
 noActiveReviewStale -->|false| stale
 noApprovedReviewStale -->|true| createStale
@@ -151,6 +151,20 @@ limitOwnerResolution --> changes
 prepareRereview --> stale
 changes -->|on: head.changed| cancelChanges
 cancelChanges --> stale
+%% Only a Review-finding-driven Plan with settled revision Tasks opens re-review.
+reviewChangesReady["guard: reviewPlanReady"]
+reviewChangesSettled["guard: reviewWorkSettled"]
+reviewChangesInactive["guard: noActiveReviewTask"]
+createChanges["action: review.create"]
+changes -->|on: reconcile| reviewChangesReady
+reviewChangesReady -->|true| reviewChangesSettled
+reviewChangesReady -->|false| changes
+reviewChangesSettled -->|true| reviewChangesInactive
+reviewChangesSettled -->|false| changes
+reviewChangesInactive -->|true| createChanges
+reviewChangesInactive -->|false| changes
+createChanges --> pending
+
 blocked -->|on: review.retry| reviewUnblocked
 reviewUnblocked -->|true| pending
 reviewUnblocked -->|false| blocked

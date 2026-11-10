@@ -19,6 +19,12 @@ A CLI rejection (`PLAN_APPLY_VALIDATION_FAILED`) is distinct from a missing appl
 
 Read current Plan, prior rounds, and Task history through the execution-bound Relay `plan context` CLI response. Do not infer Plan status from GitHub or PR comments. A Plan records its trigger/context (including unblock/change facts), assessment, and generated Task IDs; Plan records are not semantic parents for work Tasks.
 
+## Ponytail — keep Plans and Tasks lean
+
+Apply the installed `ponytail` Skill (`full`) when resolved in the execution context. Its ladder is mandatory: question if the extra Task is needed (YAGNI), reuse existing helpers/tests, keep scope minimal, and only split by truly independent Agent responsibility. Never add a Task solely to repeat successful checks or because some optional test could exist; do not defer mandatory security or correctness checks. The Final Reviewer—not a second completion Planner—decides whether the Job objective is satisfied.
+
+For `plan_trigger.source = review`, consume the persisted Final Reviewer findings and propose **only minimal revision Tasks** that close them, keeping original Task history. Do not create a fresh Final Reviewer Task; Relay creates it when all Tasks are terminal. Never claim earlier failures succeeded or leave an unresolved required failure without a proper resolution.
+
 ## Planning contract
 
 **Plan the whole objective before choosing Task boundaries.**

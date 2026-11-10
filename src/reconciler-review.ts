@@ -3,8 +3,9 @@ import { isFinalReviewAgent, FINAL_REVIEW_AGENT, nextFinalReviewTaskId } from '.
 import { normalizeReviewEvidence } from './review-evidence.js';
 import { browserWorkerPool } from './browser-worker-runtime.js';
 import { ChatGptThreadDelivery, Job, Task, EventRecord, ReviewOutcome, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements } from './types.js';
-import { completionGateSatisfied, refreshTaskDependencies, transitionTaskEvent, transitionJobEvent, tryTransitionTaskEvent } from './task-transitions.js';
-import { implementationComplete, implementationTasks } from './runtime-status.js';
+import { refreshTaskDependencies, transitionTaskEvent, transitionJobEvent, tryTransitionTaskEvent } from './task-transitions.js';
+import { implementationTasks } from './runtime-status.js';
+import { reviewPlanReady, reviewWorkSettled } from './review-replan.js';
 import { eventFor } from './events.js';
 import { RoutingDecision, WorkerSelection } from './types.js';
 import { workerCandidates, type WorkerCandidate } from './worker-routing.js';
@@ -46,9 +47,9 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     return {
       reviewEnabled: job.reviewEnabled !== false,
       jobActive: job.state === 'ACTIVE' || job.projectionRecovery?.status === 'repairing',
-      implementationComplete: implementationComplete(job),
+      reviewWorkSettled: reviewWorkSettled(job),
       headAvailable: Boolean(headSha),
-      completionGateSatisfied: completionGateSatisfied(job),
+      reviewPlanReady: reviewPlanReady(job),
       noActiveReviewTask: !reviewTasks.some(task => ['DRAFT', 'QUEUED', 'RUNNING'].includes(task.state)),
       currentReviewCancelled: currentReviewTask?.reviewHeadSha === headSha && currentReviewTask.state === 'CANCELLED',
       noApprovedCurrentReview: !reviewTasks.some(task => task.state === 'SUCCEEDED' && job.review?.headSha === headSha && job.review.outcome === 'approved'),
@@ -119,11 +120,13 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       'Use the selected reviewer agent contract as the authoritative review protocol.',
       'This is a PRE-MERGE artifact approval gate: inspect exact PR head, requirements, tests and genuine blocking defects.',
       'Do not block approval because automatic merge, Job COMPLETED, or post-merge validation has not occurred yet.',
+      'All non-review Tasks have terminal outcomes. Examine FAILED and CANCELLED Tasks and their recovery evidence; never approve an unresolved required outcome.',
+      'The Final Review is the Job completion check. Persist concrete, owner-attributed findings with a changes-required verdict; Relay starts a new Planner round for revisions.',
       'Do not treat historical failed attempts as current artifact defects; distinguish preserved baseline files from implementation.',
     ].join('\n\n');
     const task = createTaskEntity(job, {
       jobId: job.id, id, title: 'Review', kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: FINAL_REVIEW_AGENT,
-      parentTaskId: null, dependencies: reviewGateTasks.map(item => item.id), capabilities: ['review'],
+      parentTaskId: null, dependencies: [], capabilities: ['review'],
       workerSelection: reviewerRouting.selection, adapter: reviewerRouting.candidate.adapter,
       input,
       output: { kind: 'task_pr' }, routing: reviewerRouting.candidate.routing, continuation: null, continuationDeliveredAt: null,
@@ -465,7 +468,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     }
     // Review approval records evidence only. The subsequent Graph reconcile
     // drives durable local Git merge delivery and terminalization.
-    if (outcome === 'approved') needsReconcile = true;
+    if (outcome === 'approved' || outcome === 'changes_required') needsReconcile = true;
     return { applied: true, reconcile: needsReconcile, reason: 'review.' + outcome, reconcileMode: needsReconcile ? 'detached' : undefined };
   }
 

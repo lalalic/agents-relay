@@ -16,7 +16,7 @@ checkResolution["state: check_resolution_ownership"]
 checkBlocked["state: check_blocked"]
 checkWork["state: check_work"]
 checkMaterialized["state: check_materialized"]
-checkObjective["state: check_objective"]
+checkReview["state: check_review"]
 wait["state: wait"]
 recovered["state: recovered"]
 created["state: created"]
@@ -32,7 +32,7 @@ resolutionOwned["guard: resolutionOwnedByTroubleshooter"]
 noBlocked["guard: noBlockedWork"]
 noActiveWork["guard: noActiveImplementation"]
 materialized["guard: continuationMaterialized"]
-unsatisfied["guard: objectiveUnsatisfied"]
+reviewRequired["guard: reviewNeedsReplan"]
 
 recoverAction["action: planner.recoverPending"]
 createRecovery["action: planner.createRecovery"]
@@ -84,9 +84,9 @@ noActiveWork -->|true| checkMaterialized
 
 checkMaterialized -->|on: planner.reconcile| materialized
 materialized -->|false| wait
-materialized -->|true| checkObjective
+materialized -->|true| checkReview
 
-checkObjective -->|on: planner.reconcile| unsatisfied
-unsatisfied -->|false| wait
-unsatisfied -->|true| createAction
+checkReview -->|on: planner.reconcile| reviewRequired
+reviewRequired -->|false| wait
+reviewRequired -->|true| createAction
 createAction --> created

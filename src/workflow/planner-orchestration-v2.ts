@@ -2,11 +2,12 @@ import { readFileSync } from 'node:fs';
 import { GraphRuntime, type GraphDecision, type ActionReceipt } from './graph-v2.js';
 import { dispatchWorkflowGraph, dispatchWorkflowGraphSync } from './dispatcher.js';
 import type { Job } from '../types.js';
+import { reviewNeedsReplan } from '../review-replan.js';
 import { isEffectivelyBlocked, unblockNeedsNewPlan, unconsumedUnblockTrigger } from '../unblock.js';
 
 export type PlannerOrchestrationState =
   | 'idle' | 'check_legacy_pending' | 'check_recover' | 'check_plan_failure' | 'check_plan_recovery' | 'check_plan_recovery_exists' | 'check_seed' | 'check_planner'
-  | 'check_resolution_ownership' | 'check_blocked' | 'check_work' | 'check_materialized' | 'check_objective'
+  | 'check_resolution_ownership' | 'check_blocked' | 'check_work' | 'check_materialized' | 'check_review'
   | 'wait' | 'recovered' | 'created';
 
 const source = readFileSync(new URL('../../workflow/planner-orchestration.mmd', import.meta.url), 'utf8');
@@ -15,7 +16,7 @@ const boolGuard = (name: string) => (facts: { readonly durableFacts: Readonly<Re
 export const plannerOrchestrationV2 = new GraphRuntime(source, {
   states: new Set<PlannerOrchestrationState>([
     'idle','check_legacy_pending','check_recover','check_plan_failure','check_plan_recovery','check_plan_recovery_exists','check_seed','check_planner','check_resolution_ownership',
-    'check_blocked','check_work','check_materialized','check_objective','wait','recovered','created',
+    'check_blocked','check_work','check_materialized','check_review','wait','recovered','created',
   ]),
   guards: {
     legacyPlanningPending: boolGuard('legacyPlanningPending'),
@@ -29,7 +30,7 @@ export const plannerOrchestrationV2 = new GraphRuntime(source, {
     noBlockedWork: boolGuard('noBlockedWork'),
     noActiveImplementation: boolGuard('noActiveImplementation'),
     continuationMaterialized: boolGuard('continuationMaterialized'),
-    objectiveUnsatisfied: boolGuard('objectiveUnsatisfied'),
+    reviewNeedsReplan: boolGuard('reviewNeedsReplan'),
   },
   actions: {
     'planner.createRecovery': { id: 'planner.createRecovery' },
@@ -76,6 +77,9 @@ export function plannerOrchestrationFacts(job: Job, recoverablePendingPlan: bool
     noActiveImplementation: !scopedTasks.some(task => task.kind !== 'planner' && (['QUEUED', 'RUNNING', 'AWAITING_DECISION'].includes(task.state) || (task.state === 'DRAFT' && !task.unblock))),
     resolutionOwnedByTroubleshooter: scopedTasks.some(task => task.kind !== 'planner' && task.resolution?.owner === 'troubleshooter' && ['active', 'waiting'].includes(task.resolution.state)),
     continuationMaterialized: Boolean(unconsumedUnblockTrigger(job)) || !(latestObjective === 'in_progress' && latestId && !job.tasks.some(task => task.kind !== 'planner' && task.planningDecisionId === latestId)),
-    objectiveUnsatisfied: latestObjective !== 'satisfied',
+    reviewNeedsReplan: reviewNeedsReplan(job) || Boolean(unconsumedUnblockTrigger(job))
+      || (job.reviewEnabled === false && latestObjective !== 'satisfied')
+      || (!scopedPlans.some(plan => plan.status === 'SUCCEEDED')
+        && !scopedTasks.some(task => task.kind === 'planner' && task.state === 'SUCCEEDED')),
   };
 }

@@ -1672,7 +1672,7 @@ test('final review ignores troubleshooter recovery history', async () => {
   const saved=await store.load('j');
   const review=saved.tasks.find(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName));
   assert.ok(review);
-  assert.deepEqual(review.dependencies,['done']);
+  assert.deepEqual(review.dependencies,[], 'review gates on terminal work rather than SUCCESS-only dependencies');
   assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'QUEUED');
 });
 
@@ -1703,7 +1703,7 @@ test('final review ignores explicitly superseded cancelled history', async () =>
   const saved=await store.load('j');
   const review=saved.tasks.find(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName));
   assert.ok(review);
-  assert.deepEqual(review.dependencies,['done']);
+  assert.deepEqual(review.dependencies,[], 'review gates on terminal work rather than SUCCESS-only dependencies');
 });
 
 test('async launch and delivery rejection emits exactly one task.failed', async () => {
@@ -2186,7 +2186,7 @@ test('reconcile ignores remote head and does not request GitHub merge after loca
   assert.equal(mergedHead, null);
 });
 
-test('autonomous in-progress batch advances planner without creating final review', async () => {
+test('completed in-progress implementation goes directly to Final Review without Plan 2', async () => {
   const planner=task('plan-1','SUCCEEDED'); planner.kind='planner'; planner.agentName='planner'; planner.plannerResult={objective_status:'in_progress',assessment:'continue',next_tasks:[],unblocks:[]};
   const work=task('work','SUCCEEDED'); work.planningDecisionId='plan-1'; work.planningSource='model-planner';
   const root={...job([planner,work]),plans:[],state:'ACTIVE',headSha:'sha-autonomous-in-progress'};
@@ -2194,9 +2194,9 @@ test('autonomous in-progress batch advances planner without creating final revie
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
   await reconciler.reconcile('j');
   const saved=await store.load('j');
-  assert.equal(saved.tasks.some(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName)),false);
+  assert.equal(saved.tasks.some(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName)),true);
   assert.equal(saved.tasks.filter(item=>item.kind==='planner').length,1); // legacy history remains read-only
-  assert.equal(saved.plans?.some(item=>item.id==='plan-2'),true);
+  assert.equal(saved.plans?.some(item=>item.id==='plan-2') ?? false,false,'only Final Review may request a second Plan');
 });
 
 test('autonomous satisfied objective ignores failed troubleshooter history for final review', async () => {
@@ -2900,6 +2900,15 @@ test('Planner null-review first verdict persists through atomic store mutation',
  }
 });
 
+test('daemon restart wakes pending Final Review and missing Troubleshooter without duplicate planning', () => {
+  const completed={...job([task('done','SUCCEEDED')]),state:'ACTIVE',headSha:'review-ready-head'};
+  assert.equal(needsLifecycleReconciliation(completed),true,'terminal work without a Reviewer must still wake after restart');
+  const failed={...job([task('failed','FAILED')]),state:'ACTIVE',headSha:'recovery-ready-head'};
+  assert.equal(needsLifecycleReconciliation(failed),true,'a failed Task with no Troubleshooter must still wake');
+  failed.tasks.push({...task('troubleshoot-failed','BLOCKED'),agentName:'troubleshooter',parentTaskId:'failed'});
+  assert.equal(needsLifecycleReconciliation(failed),false,'blocked recovery is not a free invitation to replan/review');
+});
+
 test('daemon inventory wakes an autonomous job with unconsumed unblock', () => {
   const blocked=task('25','BLOCKED');
   const unblocked=task('30','DRAFT');
@@ -2907,7 +2916,7 @@ test('daemon inventory wakes an autonomous job with unconsumed unblock', () => {
   const value={...job([blocked,unblocked]),plans:[]};
   assert.equal(needsLifecycleReconciliation(value),true);
   value.plans=[{id:'plan-4',status:'SUCCEEDED',trigger:{source:'unblock',taskIds:['30']}}];
-  assert.equal(needsLifecycleReconciliation(value),true,'unsatisfied objective still needs a Planner round');
+  assert.equal(needsLifecycleReconciliation(value),false,'the unblock was consumed; an in-progress Plan alone cannot force another planning round');
   value.plans[0].objectiveStatus='satisfied';
   assert.equal(needsLifecycleReconciliation(value),false);
 });

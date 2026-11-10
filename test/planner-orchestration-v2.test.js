@@ -2,15 +2,15 @@ import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { decidePlannerOrchestration, plannerOrchestrationFacts } from '../dist/workflow/planner-orchestration-v2.js';
 
-const base={legacyPlanningPending:false,recoverablePendingPlan:false,hasSeedWork:true,noActivePlanner:true,noBlockedWork:true,noActiveImplementation:true,continuationMaterialized:true,objectiveUnsatisfied:true};
+const base={legacyPlanningPending:false,recoverablePendingPlan:false,hasSeedWork:true,noActivePlanner:true,noBlockedWork:true,noActiveImplementation:true,continuationMaterialized:true,reviewNeedsReplan:false};
 test('Planner orchestration v2 graph owns wait/recover/create decisions', () => {
   assert.equal(decidePlannerOrchestration({...base,legacyPlanningPending:true}).target,'wait');
   const recover=decidePlannerOrchestration({...base,recoverablePendingPlan:true});
   assert.equal(recover.target,'recovered');
   assert.deepEqual(recover.actions.map(action=>action.id),['planner.recoverPending']);
   assert.equal(decidePlannerOrchestration({...base,noActiveImplementation:false}).target,'wait');
-  assert.equal(decidePlannerOrchestration({...base,objectiveUnsatisfied:false}).target,'wait');
-  const create=decidePlannerOrchestration(base);
+  assert.equal(decidePlannerOrchestration({...base,reviewNeedsReplan:false}).target,'wait');
+  const create=decidePlannerOrchestration({...base,reviewNeedsReplan:true});
   assert.equal(create.target,'created');
   assert.deepEqual(create.actions.map(action=>action.id),['planner.createRound']);
 });
@@ -36,4 +36,16 @@ test('terminal failed unblock Plan pauses automatic retry until manually request
   const facts=plannerOrchestrationFacts(job,false);
   assert.equal(facts.noActivePlanner,false);
   assert.equal(decidePlannerOrchestration(facts).target,'wait');
+});
+
+test('review-disabled Jobs retain Planner continuation until objective is satisfied', () => {
+  const work={id:'work',kind:'work',state:'SUCCEEDED',planningDecisionId:'plan-1'};
+  const root={reviewEnabled:false,tasks:[work],plans:[{id:'plan-1',round:1,status:'SUCCEEDED',
+    trigger:{source:'initial'},objectiveStatus:'in_progress'}]};
+  const facts=plannerOrchestrationFacts(root,false);
+  assert.equal(facts.reviewNeedsReplan,true);
+  assert.equal(decidePlannerOrchestration(facts).target,'created');
+  root.plans[0].objectiveStatus='satisfied';
+  assert.equal(plannerOrchestrationFacts(root,false).reviewNeedsReplan,false);
+  assert.equal(decidePlannerOrchestration(plannerOrchestrationFacts(root,false)).target,'wait');
 });

@@ -6,6 +6,12 @@ Before `job create`, the orchestrator converts the relevant discussion into a st
 
 This contract defines orchestrator-owned exception workflows that sit above normal Agents Relay task/job execution.
 
+## Review-driven JEL continuation
+
+After the Initial Plan materializes its Tasks, Relay waits for **all non-review Tasks to be terminal**, including Troubleshooter recoveries. The Final Reviewer reads every Task result (including FAILED and CANCELLED), the original Job objective, the immutable head and test evidence. An outstanding required failure must be reported as a finding and cannot pass the merge gate. The Final Review is the **completion check**; do not schedule a second Planner merely to ask whether the objective is satisfied.
+
+`review.approved` with valid durable evidence permits Relay-owned merge/delivery. `review.changes_required` persists the immutable Reviewer's findings in the Job and initiates a **new Planner round**, whose sole automatic objective is to address those findings with the minimum necessary revision Tasks. Once those Tasks terminate, repeat Final Review. No speculative verification Task or separate completion-check Planner is allowed. Preserve older targeted-revision histories for restart compatibility; new Review rounds should use the Review → Replan path. A real blocker/recovery may use its separate canonical trigger without pretending to be a Review finding.
+
 ## Normal managed Job start workflow
 
 For a normal managed Job, the preferred bootstrap is one command:

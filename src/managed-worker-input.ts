@@ -46,6 +46,8 @@ export async function managedWorkerInput(job: Job, task: Task, context?: Executi
         join(packageRoot, 'skills/agents-relay/contracts/task-recovery-flows.md'),
         join(packageRoot, 'skills/agents-relay/contracts/blocker-job-recovery.md'),
       ] : []),
+      ...(role === 'worker' && context.skills.find(skill => skill.name === 'ponytail')
+        ? [context.skills.find(skill => skill.name === 'ponytail')!.path] : []),
       ...(role === 'worker' && !task.review && task.agentName !== 'review-chair'
         ? [join(packageRoot, 'skills/agents-relay/contracts/worker-self-review.md')] : []),
     ],

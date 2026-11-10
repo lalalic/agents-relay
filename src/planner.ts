@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { Job, Plan, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, PlanTrigger, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements, ReviewTaskMetadata, TaskResolutionProposal, DependencyValidity } from './types.js';
+import { reviewNeedsReplan } from './review-replan.js';
 import { unresolvedTask } from './workflow/task-resolution.js';
 import { ExecutionContext, BUNDLED_AGENTS_ROOT } from './execution-context.js';
 import { agentSourceLayers, resolveAgentMarkdown } from './agent-content-resolver.js';
@@ -62,6 +63,7 @@ function plannerTrigger(job: Job, manual = false): PlanTrigger {
     manualPlan: manual && !hasUnblock,
     hasUnblock,
     initialPlan: (job.plans?.length ?? 0) === 0 && !job.tasks.some(task => task.kind === 'planner'),
+    reviewRequired: reviewNeedsReplan(job),
   });
   if (!decision.accepted) throw new Error('Planner trigger graph rejected plan.requested');
   const source = decision.target as PlanTrigger['source'];
@@ -84,21 +86,20 @@ function plannerTrigger(job: Job, manual = false): PlanTrigger {
     return { source: 'unblock', taskIds: cycle.taskIds, reason: cycle.reason, facts: cycle.facts, blockedHeadShas: cycle.baselineHeadShas, currentHeadSha: cycle.currentHeadSha, unblockSource: cycle.source };
   }
   if (source === 'initial') return { source: 'initial' };
+  if (source === 'review') return { source: 'review', reviewTaskId: job.review?.taskId ?? undefined,
+    reason: 'Final Review requested changes', facts: ['Address persisted Final Review findings.'] };
   return { source: 'continuation' };
 }
-
 export function plannerRoundNumber(task: Task): number | null {
   if (task.kind !== 'planner') return null;
   if (Number.isInteger(task.planningRound) && (task.planningRound ?? 0) > 0) return task.planningRound as number;
   const match = /^(?:plan|planner)-(\d+)$/.exec(task.id);
   return match ? Number(match[1]) : null;
 }
-
 function latestLegacyPlanner(job: Job): Task | undefined {
   return job.tasks.filter(task => task.kind === 'planner')
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).at(-1);
 }
-
 export function createPlanRound(job: Job, options: PlannerRoundOptions = {}): Plan {
   const plans = [...(job.plans ?? [])].sort((a, b) => a.round - b.round || a.createdAt.localeCompare(b.createdAt));
   const legacy = job.tasks.filter(task => task.kind === 'planner');
@@ -120,11 +121,9 @@ export function createPlanRound(job: Job, options: PlannerRoundOptions = {}): Pl
     createdAt: now, updatedAt: now,
   };
 }
-
 export function pendingPlan(job: Job): Plan | null {
   return [...(job.plans ?? [])].filter(plan => plan.status === 'PLANNING').sort((a, b) => a.round - b.round)[0] ?? null;
 }
-
 export function materializePlannerChild(job: Job, planner: Plan | Task, spec: PlannerTaskSpec, executionContext: ExecutionContext): Task {
   validateAgentSelection(executionContext, spec.agentName, spec.agentGraph);
   const now = new Date().toISOString();
@@ -141,7 +140,6 @@ export function materializePlannerChild(job: Job, planner: Plan | Task, spec: Pl
   const reviewerThread = isFinalReviewAgent(spec.agentName) ? prepareReviewerThreadDelivery(job, { id: spec.id, agentName: spec.agentName, reviewHeadSha }) : undefined, implementationThread = (spec.agentName === 'implementation' || spec.agentName == null) && job.implementationThreadId ? job.implementationThreadId : undefined, threadOwned = Boolean(reviewerThread || implementationThread);
   return createTaskEntity(job, { jobId: job.id, id: spec.id, title: isFinalReviewAgent(spec.agentName) ? 'Review' : spec.title, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: isFinalReviewAgent(spec.agentName) ? null : spec.parentTaskId ?? null, dependencies: spec.dependencies ?? [], dependencyValidity: spec.dependencyValidity, capabilities: spec.capabilities ?? [], workerRequirements: threadOwned ? chatgptThreadRequirements(spec.workerRequirements) : spec.workerRequirements, adapter: threadOwned ? 'chatgpt' : (spec.adapter ?? 'codex'), chatgptThreadDelivery: reviewerThread, input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: decisionId, planningSource: source, planningRound: round, reviewHeadSha, resolution: resolution ? { ...resolution, state: 'proposed', owner: 'planner', updatedAt: now } : undefined });
 }
-
 export function planningSpec(task: Task): PlannerTaskSpec {
   if (!task.output) throw new Error(`Initial task ${task.id} requires an output contract`);
   if (!['codex', 'chatgpt', 'z'].includes(task.adapter)) throw new Error(`Initial task ${task.id} requires a supported worker adapter`);
@@ -399,6 +397,9 @@ export function plannerInput(context: PlannerContext): string {
     previous_planner_task_id: context.previousPlannerTaskId,
     plan_trigger: context.trigger,
     legacy_change_cycle: context.job.changeCycle,
+    review_feedback: context.job.review && (context.trigger?.source === 'review' || context.job.review.outcome === 'changes_required')
+      ? { task_id: context.job.review.taskId, head_sha: context.job.review.headSha,
+        findings: boundedText(JSON.stringify(context.job.review.evidence?.data ?? {}), 6000) } : undefined,
     semantic_task_tree: semanticTaskTree(context.tasks),
     plans: (context.job.plans ?? []).map(plan => ({
       id: plan.id,
@@ -455,10 +456,9 @@ export async function buildPlannerExecutionPrompt(context: PlannerContext, agent
   if (!context.planExecution) throw new Error('Planner execution is missing its durable Plan and execution identity');
   const ctx = context.executionContext, selected = ctx ? await resolveAgentMarkdown('planner', BUNDLED_AGENTS_ROOT, ctx.project.path, ctx.project.sharedRoot, agentSourceLayers(ctx.project.path, ctx.project)) : undefined;
   return buildRelayWorkPrompt({ agentName:'planner', agentContent:selected?.content ?? await readFile(agentFile,'utf8'),adapter,
-    contracts:[
-      join(dirname(fileURLToPath(import.meta.url)), '..', 'skills/agents-relay/contracts/task-job-contract.md'),
+    contracts:[join(dirname(fileURLToPath(import.meta.url)), '..', 'skills/agents-relay/contracts/task-job-contract.md'),
       join(dirname(fileURLToPath(import.meta.url)), '..', 'skills/agents-relay/contracts/blocker-job-recovery.md'),
-    ],
+      ...(ctx?.skills.find(skill => skill.name === 'ponytail')?.path ? [ctx.skills.find(skill => skill.name === 'ponytail')!.path] : [])],
     contexts:ctx?.instructions.filter(item => item.path.endsWith('/AGENTS.md')) ?? [],
     projectPath:ctx?.project.gitRoot ?? ctx?.project.path ?? process.cwd(),providerInstructions:ctx?.providerInstructions?.[adapter],skillPath:join(dirname(fileURLToPath(import.meta.url)), '..', 'skills/agents-relay/SKILL.md'),jobId:context.job.id,
     taskId:context.planExecution.planId,executionId:context.planExecution.executionId,

@@ -9,7 +9,10 @@ import { errorMessage, observability, withObservabilityCorrelation } from './obs
 import { jobHasActiveExecution } from './job-execution-slot.js';
 import { pendingPlan } from './planner.js';
 import { decidePlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js';
-import { pendingTroubleshooterRetries } from './troubleshooter.js';
+import { pendingTroubleshooterTasks, pendingTroubleshooterReopens, pendingTroubleshooterRetries } from './troubleshooter.js';
+import { reviewPlanReady, reviewWorkSettled } from './review-replan.js';
+import { decideReviewLifecycle } from './workflow/review-v2.js';
+import { isFinalReviewAgent } from './final-review-role.js';
 
 const RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 type HydratableStore = DurableStore & { hydrate?: (job: Job) => Promise<void> };
@@ -24,7 +27,20 @@ export function needsLifecycleReconciliation(job: Job, now = Date.now()): boolea
   // The Graph owns continuation eligibility, including restart recovery.
   const planning = decidePlannerOrchestration(plannerOrchestrationFacts(job, Boolean(pendingPlan(job))));
   if (planning.accepted && planning.actions.length > 0) return true;
-  if (pendingTroubleshooterRetries(job).length > 0) return true;
+  if (pendingTroubleshooterTasks(job).length || pendingTroubleshooterReopens(job).length || pendingTroubleshooterRetries(job).length) return true;
+  // Use the canonical Review Graph for restart wake-ups; Reconciler must still verify the live head SHA.
+  if (job.state === 'ACTIVE' && job.headSha && job.reviewEnabled !== false) {
+    const reviewTasks = job.tasks.filter(task => isFinalReviewAgent(task.agentName) && task.reviewHeadSha === job.headSha);
+    const current = job.review?.taskId ? job.tasks.find(task => task.id === job.review?.taskId) : undefined;
+    const review = decideReviewLifecycle(job.review?.outcome, 'reconcile', {
+      reviewEnabled: true, jobActive: true, headAvailable: true,
+      reviewWorkSettled: reviewWorkSettled(job), reviewPlanReady: reviewPlanReady(job),
+      noActiveReviewTask: !reviewTasks.some(task => ['DRAFT','QUEUED','RUNNING'].includes(task.state)),
+      noApprovedCurrentReview: !reviewTasks.some(task => task.state === 'SUCCEEDED' && job.review?.headSha === job.headSha && job.review?.outcome === 'approved'),
+      currentReviewCancelled: current?.reviewHeadSha === job.headSha && current.state === 'CANCELLED',
+    });
+    if (review.accepted && review.actions.some(action => action.id === 'review.create')) return true;
+  }
   if (job.tasks.some(task => (task.state === 'QUEUED' && task.executionId === null)
     || (task.state === 'RUNNING' && task.adapter === 'orchestrator' && task.executionId === null)
     || (task.state === 'DRAFT' && task.dependencies.length > 0))) return true;
