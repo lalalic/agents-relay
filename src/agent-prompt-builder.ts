@@ -172,7 +172,9 @@ export async function buildRelayWorkPrompt(input: {
     ] : [
       'Read the FULL authoritative Task input, output, and acceptance criteria through the matching Relay CLI. Fulfill THAT Task: reading context, starting, or summarizing it is preparation only.',
       ...(input.workerSelfReview ? [
-        'Before task.completed, perform at least TWO independent full Task-to-result review/fix rounds: reread the Task requirements, check every requirement, fix real gaps, and review again until clean. Never invent fixes or evidence; if you cannot fulfill the Task, report task.failed.',
+        'Before task.completed, perform at least TWO independent full Task-to-result review/fix rounds: reread the Task requirements, check every requirement, fix real gaps, and review again until clean. Never invent fixes or evidence.',
+        'A failing test, incomplete implementation, or self-review finding means CONTINUE implementing and fixing, not task.failed. While a concrete next repair is feasible within this execution, do that repair and repeat the full review/fix cycle; use task.progress to report findings and the next repair.',
+        'Only report task.failed for a specific, verified blocker that prevents further effective work in this execution (such as missing required access, an unavailable dependency, or an exhausted hard execution limit). Explain the blocker, evidence, what was attempted, and why no actionable repair remains. Do not equate unfinished Task requirements with inability to fulfill them.',
         'For EACH completed self-review round (including clean rounds), publish a separate correlated `task.progress` event via the configured events-bus, recording round number, Task requirements checked, findings, fixes and verification outcome. Verify event acceptance before continuing or publishing the terminal event. A progress event is not task.completed.',
       ] : []),
     ]),

@@ -31,6 +31,8 @@ test('production worker prompt assembly separates roles and snapshots each effec
         assert.match(prompt, /at least TWO independent full Task-to-result review\/fix rounds/);
         assert.match(prompt, /reading context, starting, or summarizing it is preparation only/);
         assert.match(prompt, /For EACH completed self-review round .*publish a separate correlated `task.progress` event/);
+        assert.match(prompt, /self-review finding means CONTINUE implementing and fixing, not task.failed/);
+        assert.match(prompt, /Only report task.failed for a specific, verified blocker/);
       } else assert.doesNotMatch(prompt, /at least TWO independent full Task-to-result/);
       assert.match(prompt, new RegExp(`Task: task-${role}\\nExecution: execution-${role}`));
       assert.doesNotMatch(prompt, new RegExp(`UNTRUSTED TASK EVIDENCE ${role}`));
@@ -40,7 +42,7 @@ test('production worker prompt assembly separates roles and snapshots each effec
       assert.doesNotMatch(prompt, /\(sha256:/);
       assert.doesNotMatch(prompt, /Use the agents-relay skill at \//);
       assert.match(await readFile(match[1], 'utf8'), new RegExp(role === 'worker' ? 'implementation' : role, 'i'));
-      assert.ok(prompt.length < 4500, `${role}/${adapter} must remain compact`);
+      assert.ok(prompt.length < 5100, `${role}/${adapter} must remain compact`);
       assert.ok(prompt.indexOf('## Contracts') < prompt.indexOf('## Contexts'));
       assert.ok(prompt.indexOf('## Contexts') < prompt.indexOf('## Task'));
     }
@@ -67,7 +69,10 @@ test('regression: implementation Task cannot be interpreted as only context retr
   assert.match(assignment,/reading context, starting, or summarizing it is preparation only/);
   assert.match(assignment,/at least TWO independent full Task-to-result review\/fix rounds/);
   assert.match(assignment,/reread the Task requirements, check every requirement, fix real gaps, and review again until clean/);
-  assert.match(assignment,/if you cannot fulfill the Task, report task.failed/);
+  assert.match(assignment,/A failing test, incomplete implementation, or self-review finding means CONTINUE implementing and fixing, not task.failed/);
+  assert.match(assignment,/While a concrete next repair is feasible within this execution, do that repair/);
+  assert.match(assignment,/Only report task.failed for a specific, verified blocker/);
+  assert.match(assignment,/Do not equate unfinished Task requirements with inability to fulfill them/);
   assert.match(assignment,/For EACH completed self-review round .*publish a separate correlated `task.progress` event/);
   assert.match(assignment,/round number, Task requirements checked, findings, fixes and verification outcome/);
   assert.match(assignment,/Verify event acceptance before continuing or publishing the terminal event/);
@@ -97,7 +102,7 @@ test('Job without PR or localMerge still dispatches only a Task ID and authorita
   const prompt = await managedWorkerInput({id:'537',repository:'lalalic/neo',prNumber:0,title:'Vlog',objective:'PRIVATE JOB OBJECTIVE MUST NOT LEAK',state:'ACTIVE',tasks:[task],plans:[]},task,context);
   assert.match(prompt,/Job: 537\nTask: 476\nExecution: 123e4567/);
   for (const forbidden of ['Job URL: null','GitHub is the source of truth','PRIVATE EPISODE','PRIVATE TASK COMMENT','PRIVATE JOB OBJECTIVE', 'Resolved execution context']) assert.ok(!prompt.includes(forbidden),forbidden);
-  assert.ok(prompt.length < 4300, `Production prompt is ${prompt.length} chars`);
+  assert.ok(prompt.length < 5000, `Production prompt is ${prompt.length} chars`);
 });
 
 test('managed worker receives provider instructions only from Job Execution Context and uses actual owning Git root as cwd', async t => {
