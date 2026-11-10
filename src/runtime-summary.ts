@@ -28,7 +28,15 @@ function runningWorker(task: Task): 'chatgpt' | 'codex' | null {
   return adapter === 'chatgpt' || adapter === 'codex' ? adapter : null;
 }
 
-export function summarizeRuntime(jobs: readonly Job[]): RuntimeSummary {
+/** The durable RUNNING flag alone is not evidence of an active execution. */
+function hasLiveExecution(job: Job, task: Task, now: number): boolean {
+  if (job.state !== 'ACTIVE' || task.state !== 'RUNNING') return false;
+  if (!task.executionId || !task.leaseOwner || !task.leaseExpiresAt) return false;
+  const expiry = Date.parse(task.leaseExpiresAt);
+  return Number.isFinite(expiry) && expiry > now;
+}
+
+export function summarizeRuntime(jobs: readonly Job[], now = Date.now()): RuntimeSummary {
   let activeJobs = 0;
   let runningTasks = 0;
   let chatgpt = 0;
@@ -39,7 +47,7 @@ export function summarizeRuntime(jobs: readonly Job[]): RuntimeSummary {
   for (const job of jobs) {
     if (job.state === 'ACTIVE') activeJobs += 1;
     for (const task of job.tasks) {
-      if (task.state !== 'RUNNING') continue;
+      if (!hasLiveExecution(job, task, now)) continue;
       runningTasks += 1;
       const worker = runningWorker(task);
       if (worker === 'chatgpt') chatgpt += 1;
