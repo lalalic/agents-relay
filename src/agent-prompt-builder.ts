@@ -109,6 +109,7 @@ export async function buildRelayWorkPrompt(input: {
   executionId: string;
   adapter: PromptAdapter;
   projectPath: string;
+  providerInstructions?: readonly string[];
 }): Promise<string> {
   if (!input.jobId || !input.taskId || !input.executionId) throw new Error('Relay prompt requires a full execution binding');
   const reference = await snapshotAgentInstructions(input.agentContent,
@@ -116,31 +117,21 @@ export async function buildRelayWorkPrompt(input: {
   const contracts = await Promise.all(input.contracts.map(path => promptFileReference(path, 'context')));
   // Global AGENTS is Bootstrap-owned and README is human documentation.
   // The calling Role Action selects context intentionally, not by a directory dump.
-  const ranks: Record<string, number> = { neo: 0, project: 1 };
+  const ranks: Record<string, number> = { global: 0, shared: 1, parent: 2, project: 3 };
   const orderedContext = input.contexts.filter(item =>
-    (item.source === 'neo' || item.source === 'project') && item.path.endsWith('/AGENTS.md'))
+    (['global', 'shared', 'parent', 'project'].includes(item.source)) && item.path.endsWith('/AGENTS.md'))
     .sort((a,b) => (ranks[a.source] ?? 0) - (ranks[b.source] ?? 0));
   const contexts = await Promise.all(orderedContext.map(item => promptFileReference(item.path, 'context')));
-  const global = input.adapter === 'codex'
-    ? input.contexts.find(item => item.source === 'global' && item.path.endsWith('/AGENTS.md'))
-    : undefined;
-  const globalReference = global ? await promptFileReference(global.path, 'context') : undefined;
-  const bootstrap = input.adapter === 'codex'
-    ? [
-        `Use Codex CLI with project cwd: ${input.projectPath}. Codex -C loads directory AGENTS.md instructions.`,
-        ...(globalReference ? [`Read global Neo rules once if they are not already loaded: ${globalReference.path}.`] : []),
-        'Use local shell and files for referenced contracts and the Relay CLI. Do not call neo bootstrap.',
-      ]
-    : input.adapter === 'chatgpt'
-      ? [
-          'Account Default Instructions already initialize the Neo/XChat Harness.',
-          'Use the connected Neo MCP fs/shell tools to read the listed Neo Master files and execute Relay CLI. Do not run neo bootstrap again.',
-        ]
-      : [
-          'The Z runtime supplies a one-hour Neo OAuth access token (never the operator or refresh token). Do not ask the user to copy a token.',
-          'Use the same Z interactive bootstrap entry: https://neoy.qili2.com/files/z-chat/bootstrap.md.',
-          'Run Neo MCP through authenticated HTTPS. The Z cloud filesystem is not Neo Master. Continue the assigned Task after bootstrap; do not wait for another user message.',
-        ];
+  // The caller's Job Execution Context owns provider startup behavior.
+  // Relay never embeds instructions for a specific vendor, host, or MCP gateway.
+  const bootstrap = [
+    `Git repository working directory (cwd): ${input.projectPath}`,
+    'Use this repository as cwd for local execution. For remote execution, access it only through the configured file/tool provider.',
+    'Read the immutable Agent and Task contracts listed below. Follow configured provider guidance only when supplied by the Job Execution Context.',
+    ...(input.providerInstructions?.length ? [
+      '[Caller-supplied provider instructions]', ...input.providerInstructions,
+    ] : []),
+  ];
   // Validate that the selected Relay Skill exists, but let the harness resolve its path.
   await promptFileReference(input.skillPath, 'context');
   const lines = [
@@ -161,14 +152,14 @@ export async function buildRelayWorkPrompt(input: {
       'START: After Bootstrap and the minimal event-contract preflight, publish `task.started` through the canonical events-bus before beginning Task work. Verify the publish response.',
       'PROGRESS: Publish `task.progress` with concrete progress/evidence during long-running work and before the inactivity timeout. Progress is not completion.',
       'TERMINAL: After verifying durable output, publish exactly ONE `task.completed`; if you cannot fulfill the Task, publish `task.failed` with phase, reason and evidence. Do not silently exit or treat a process/browser receipt as completion.',
-      'INTERACTIVE PREVIEW: For human video review call Neo MCP `markcut.preview` once with `path` and `relay: {jobId,taskId,executionId}` using the exact execution IDs above. Neo binds the Invocation, suspends the Task, and sends the iPhone notification when the preview is ready. Do not emit `task.interactive_waiting` or a terminal event for this handoff. On resumption, read Task Context for the accepted decision and feedback.',
+      'INTERACTIVE REVIEW: If this Job requires review, use only the review action and binding supplied by its Execution Context. Relay owns the suspension and resume state. Never invent a review tool or emit a terminal event while awaiting review. After resumption read the authoritative Task Context for the decision.',
       'Every event MUST use the exact source above. Do not publish `task.blocked` or `task.unblocked`; those are Relay-owned states. Relay must accept the correlated event.',
     ]),
     '', '## Contexts',
     ...(contexts.length ? ['Read only these additional role-relevant rules. Bootstrap and inherited Agent rules are not duplicated here.', ...contexts.map((ref, i) => `${i + 1}. [${orderedContext[i].source}] ${ref.path}`)] : ['None required at startup. Read files only when selected by the Agent contract or the current Task.']),
     '', '## Task',
     'Use the agents-relay skill to read authoritative Job and Task/Plan details via the Relay CLI.',
-    'All Relay state reads and operations use that version-matched CLI. Publish only required Task events through the separately listed Neo events-bus protocol; never inspect Relay backing storage or HTTP APIs.',
+    'All Relay state reads and operations use that version-matched CLI. Publish only required Task events through the configured events-bus protocol; never inspect Relay backing storage or HTTP APIs.',
     `Job: ${input.jobId}`,
     `Task: ${input.taskId}`,
     `Execution: ${input.executionId}`,

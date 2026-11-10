@@ -41,9 +41,9 @@ async function fakeWebHelm(mode,run){
         let result={ok:true};
         if(op==='workspace-create') {
           result={name:request.name,initialized:true,poolSize:request.pool_size};
-        }else if(op==='start'){const id='owned-pool-'+(++sessionSeq);activeSessions.add(id);result={session_id:id,workspace:'Neo',workspace_supported:true};}
+        }else if(op==='start'){const id='owned-pool-'+(++sessionSeq);activeSessions.add(id);result={session_id:id,workspace:'Relay',workspace_supported:true};}
         else if(op==='heartbeat')result={session_id:request.session_id,alive:true,last_used_at:Date.now()};
-        else if(op==='list')result={sessions:[...activeSessions].map(session_id=>({session_id,workspace:'Neo'}))};
+        else if(op==='list')result={sessions:[...activeSessions].map(session_id=>({session_id,workspace:'Relay'}))};
         else if(op==='exec'&&stdin.includes('const url=')){
           if(mode==='slow-observe')await new Promise(resolve=>setTimeout(resolve,250));
           const counter=process.env.POOL_TEST_LOG+'.count';
@@ -319,7 +319,7 @@ test('uncertain terminal-recovery send quarantines and is never retried',async()
   });
 });
 
-test('ChatGPT and Z share the Neo group via daemon IPC; heartbeats update leased sessions only',async()=>{
+test('ChatGPT and Z share the Relay browser group via daemon IPC; heartbeats update leased sessions only',async()=>{
   await fakeWebHelm('idle',async(log,pool)=>{
     const activity=[];
     const make=(provider,executionId)=>pooledWebHelmRun({
@@ -334,7 +334,7 @@ test('ChatGPT and Z share the Neo group via daemon IPC; heartbeats update leased
     const events=(await readFile(log,'utf8')).trim().split('\n').map(JSON.parse);
     const starts=events.filter(e=>e.a[1]==='start');
     assert.equal(starts.length,2);
-    assert.ok(starts.every(e=>e.request.workspace==='Neo'));
+    assert.ok(starts.every(e=>e.request.workspace==='Relay'));
     assert.ok(events.some(e=>e.a.join(' ')==='workspace create'&&e.request.pool_size===6));
     assert.equal(events.filter(e=>e.a[1]==='heartbeat').length>=2,true);
     assert.equal(activity.length,0,'Heartbeat must not be counted as model progress');

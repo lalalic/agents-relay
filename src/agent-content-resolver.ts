@@ -1,9 +1,35 @@
 import { createHash } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve, relative, sep } from 'node:path';
 
 export type AgentMergeMode = 'extend' | 'replace';
 export type EffectiveAgentContent = { content: string; hash: string; sources: string[]; metadata: Record<string, string | undefined> };
+export type AgentSourceLayer = { root: string; source: 'global' | 'shared' | 'parent' | 'project' };
+
+/** The same ordered layers are used for Agent contracts and Agent-owned Shortcuts. */
+export function agentSourceLayers(projectPath: string, options: {
+  globalRoot?: string; sharedRoot?: string | null; workspaceRoot?: string;
+} = {}): AgentSourceLayer[] {
+  const project = resolve(projectPath);
+  const layers: AgentSourceLayer[] = [];
+  if (options.globalRoot) layers.push({ root: resolve(options.globalRoot), source: 'global' });
+  if (options.sharedRoot) layers.push({ root: resolve(options.sharedRoot), source: 'shared' });
+  if (options.workspaceRoot) {
+    const workspace = resolve(options.workspaceRoot);
+    const rel = relative(workspace, project);
+    if (rel !== '..' && !rel.startsWith('..' + sep) && !isAbsolute(rel)) {
+      let cursor = workspace;
+      layers.push({ root: cursor, source: 'parent' });
+      for (const part of rel.split(sep).filter(Boolean).slice(0, -1)) {
+        cursor = join(cursor, part);
+        layers.push({ root: cursor, source: 'parent' });
+      }
+    }
+  }
+  layers.push({ root: project, source: 'project' });
+  return layers.filter((layer, i) => layers.findIndex(other => other.root === layer.root) === i);
+}
+
 const parseList = (raw: string): string[] => raw.trim().replace(/^\[/, '').replace(/\]$/, '').split(',').map(s => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
 
 /** Restrict the frontmatter grammar to the explicitly supported scalar/list fields. */
@@ -94,8 +120,8 @@ function mergeSections(base: string, child: ReturnType<typeof parseDocument>): s
   return result.trim();
 }
 
-/** Resolve the visible agent through Relay, Neo shared, then project-local layers. */
-export async function resolveAgentMarkdown(name: string, builtinsRoot: string, contextRoot: string, neoRoot?: string | null): Promise<EffectiveAgentContent> {
+/** Resolve the visible agent through Relay, shared, then project-local layers. */
+export async function resolveAgentMarkdown(name: string, builtinsRoot: string, contextRoot: string, sharedRoot?: string | null, layers?: readonly AgentSourceLayer[]): Promise<EffectiveAgentContent> {
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) throw new Error(`Invalid agent name ${name}`);
   const load = async (path: string, root: string, expectedName?: string) => {
     const canonical = await realpath(path);
@@ -125,17 +151,20 @@ export async function resolveAgentMarkdown(name: string, builtinsRoot: string, c
   let sharedSources: string[] = [];
   let sources = base ? [base.path] : [];
   let metadata = { ...(base?.metadata ?? {}) };
-  for (const [layer, root] of [['neo', neoRoot], ['project', contextRoot]] as const) {
+  for (const { source: layer, root } of layers ?? agentSourceLayers(contextRoot, { sharedRoot })) {
     if (!root) continue;
     let overlay: Loaded | undefined;
     try { overlay = await loadLayer(join(root, 'agents')); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
     if (!overlay) continue;
     const hasOperations = overlay.replace.length || overlay.extend.length;
     if (hasOperations && !overlay.extendsAgent) throw new Error('Section operations require extends');
-    if (overlay.extendsAgent && !isAbsolute(overlay.extendsAgent) && ![`relay/${name}`, `neo/${name}`].includes(overlay.extendsAgent)) throw new Error(`Only extends: relay/${name}, neo/${name}, or an absolute Markdown path is supported`);
-    if (layer === 'neo' && overlay.extendsAgent === `neo/${name}`) throw new Error(`Missing Neo base for agent ${name}`);
+    const sharedBaseName = /^shared\/([A-Za-z0-9_-]+)$/.exec(overlay.extendsAgent ?? '')?.[1];
+    if (overlay.extendsAgent && !isAbsolute(overlay.extendsAgent) &&
+        overlay.extendsAgent !== `relay/${name}` && !sharedBaseName)
+      throw new Error(`Only extends: relay/${name}, shared/<agent>, or an absolute Markdown path is supported`);
+    if (layer === 'shared' && sharedBaseName === name) throw new Error(`Missing shared base for agent ${name}`);
     if (overlay.extendsAgent === `relay/${name}` && !base) throw new Error(`Missing Relay base for agent ${name}`);
-    if (overlay.extendsAgent === `neo/${name}` && !shared) throw new Error(`Missing Neo base for agent ${name}`);
+    if (sharedBaseName === name && !shared) throw new Error(`Missing shared base for agent ${name}`);
     if (!overlay.extendsAgent) {
       effective = overlay;
       metadata = {};
@@ -144,6 +173,19 @@ export async function resolveAgentMarkdown(name: string, builtinsRoot: string, c
       // An explicit absolute base is supplied by the author of this Agent, not discovered by Relay.
       // Keep the base's own name; it need not match the project Agent's name.
       let external: Loaded | undefined;
+      if (sharedBaseName && sharedBaseName !== name) {
+        if (!sharedRoot) throw new Error(`Missing shared base for agent ${name}: ${sharedBaseName}`);
+        for (const suffix of ['.agent.md', '.md']) {
+          try {
+            external = await load(join(sharedRoot, 'agents', `${sharedBaseName}${suffix}`),
+              join(sharedRoot, 'agents'), sharedBaseName);
+            break;
+          } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+        }
+        if (!external) throw new Error(`Missing shared base for agent ${name}: ${sharedBaseName}`);
+        if (!external.body || external.extendsAgent)
+          throw new Error(`Cross-name shared base must be a standalone Agent: ${sharedBaseName}`);
+      }
       if (isAbsolute(overlay.extendsAgent!)) {
         const path = overlay.extendsAgent!;
         if (!path.endsWith('.md')) throw new Error('Absolute Agent base must be a Markdown file');
@@ -151,13 +193,13 @@ export async function resolveAgentMarkdown(name: string, builtinsRoot: string, c
         if (!external.name || !external.body) throw new Error('Absolute Agent base requires name frontmatter and nonempty body');
         if (external.extendsAgent) throw new Error('Absolute Agent base must be a standalone definition');
       }
-      const parent = external ?? (overlay.extendsAgent === `relay/${name}` ? base : overlay.extendsAgent === `neo/${name}` ? shared : effective);
+      const parent = external ?? (overlay.extendsAgent === `relay/${name}` ? base : sharedBaseName === name ? shared : effective);
       effective = { ...overlay, body: mergeSections(parent!.body, overlay) };
       metadata = { ...parent!.metadata };
-      sources = [...(external ? [external.path] : overlay.extendsAgent === `relay/${name}` ? [base!.path] : overlay.extendsAgent === `neo/${name}` ? sharedSources : sources), overlay.path];
+      sources = [...(external ? [external.path] : overlay.extendsAgent === `relay/${name}` ? [base!.path] : sharedBaseName === name ? sharedSources : sources), overlay.path];
     }
     Object.assign(metadata, overlay.metadata);
-    if (layer === 'neo') { shared = effective; sharedSources = [...sources]; }
+    if (layer === 'shared') { shared = effective; sharedSources = [...sources]; }
   }
   if (!effective) throw new Error(`Unknown agent ${name}`);
   const content = effective.body;

@@ -43,9 +43,8 @@ Execution ID: ${executionId}
 Execution source: ${source}
 
 [Required event contracts]
-/Users/chengli/Workspace/neo/skills/events-bus/references/protocol.md
-/Users/chengli/Workspace/agents-relay/skills/agents-relay/contracts/event-contract.md
-Read and follow both contracts before execution.
+The required Relay event contracts are supplied in the managed task input.
+Read those pinned contracts before execution.
 
 Retrieve the authoritative Task Context:
   agents-relay task context --repo ${repository} --id ${jobId} --task-id ${taskId} --execution-id ${executionId}

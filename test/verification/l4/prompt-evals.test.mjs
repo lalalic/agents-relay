@@ -16,6 +16,7 @@ const exec = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '../../..');
 const vlog = process.env.RELAY_L4_VLOG_PROJECT ?? '/Users/chengli/Workspace/neo/vlog';
+const sharedRoot = process.env.RELAY_L4_SHARED_ROOT ?? resolve(vlog, '..');
 const sha = data => createHash('sha256').update(data).digest('hex');
 const adapters = ['codex','chatgpt','z'];
 const roles = ['planner','implementation','reviewer','troubleshooter','vlog-producer','vlog-final-qa'];
@@ -60,7 +61,7 @@ async function validateReferences(prompt) {
 }
 
 let contextPromise;
-const context=()=>contextPromise??=resolveExecutionContext(vlog,'worker');
+const context=()=>contextPromise??=resolveExecutionContext(vlog,'worker',{sharedRoot});
 
 for(const adapter of adapters)for(const role of roles) {
   test(`L4 generated prompt: ${role} × ${adapter}`,async()=>{
@@ -92,7 +93,7 @@ for(const adapter of adapters)for(const role of roles) {
       const fixture=join(cliRoot,'job.json');
       await writeFile(fixture,JSON.stringify({...job,plans:plan,projectPath:vlog}));
       const arg=role==='planner'?['--plan-id','plan-1']:['--task-id','L4-TASK'];
-      const result=await exec(process.execPath,['dist/cli.js','prompt','--file',fixture,'--id',jobId,'--project-path',vlog,'--adapter',adapter,...arg],{cwd:repo,timeout:20000});
+      const result=await exec(process.execPath,['dist/cli.js','prompt','--file',fixture,'--id',jobId,'--project-path',vlog,'--adapter',adapter,...arg],{cwd:repo,timeout:20000,env:{...process.env,AGENTS_RELAY_SHARED_ROOT:sharedRoot}});
       assert.equal(result.stdout.trimEnd(),prompt,'CLI and actual Graph Action must use identical builder output');
     }finally{await rm(cliRoot,{recursive:true,force:true});}
     const parsed=parsePrompt(prompt);
@@ -131,9 +132,9 @@ for(const adapter of adapters)for(const role of roles) {
     await readFile(packageCli);
     assert.match((await readFile(skillPath,'utf8')),/matching-absolute-dist\/cli\.js/,
       'Skill must direct the Worker to the same-version CLI, not an old globally installed binary');
-    assert.doesNotMatch(parsed.Contexts,/README\.md|\/\.agents\/AGENTS\.md/,'README and global instructions are not Task context');
+    assert.doesNotMatch(parsed.Contexts,/README\.md/,'README is not an executable Task context');
     assert.doesNotMatch(parsed.Contexts,/\[neo\]/,'Parent Neo context is loaded by harness or project policy on demand, not repeated');
-    if(role!=='planner' && adapter==='codex')assert.match(parsed.Contexts,/None required at startup/);
+    if(role!=='planner' && adapter==='codex')assert.match(parsed.Contexts,/\[project\].*\/AGENTS\.md/);
     if(role!=='planner' && adapter!=='codex')assert.match(parsed.Contexts,/\[project\].*\/AGENTS\.md/);
     assert.doesNotMatch(prompt,/inline immutable local reference snapshots|Job URL: null|Task URL: null/);
     if(role==='planner'){
@@ -149,7 +150,7 @@ for(const adapter of adapters)for(const role of roles) {
       assert.doesNotMatch(parsed.Contracts,/event-contract\.md|events-bus\/references\/protocol/);
        assert.doesNotMatch(parsed.Contracts,/task\.started|task\.completed|task\.failed|Events contract/i);
       assert.match(parsed.Contracts,/plan context|plan apply|PLAN_APPLIED/);
-      assert.match(parsed.Contexts,/None required at startup/);
+      assert.match(parsed.Contexts,/\[project\].*\/AGENTS\.md/);
       assert.doesNotMatch(prompt,/task\.started|task\.completed|task\.progress/);
       assert.ok(!refs.refs.some(x=>x.endsWith('event-contract.md')));
     }else{
@@ -182,25 +183,14 @@ for(const adapter of adapters)for(const role of roles) {
       if(role==='vlog-producer')assert.match(refs.agent,/episode stage contract|episode-stage-contract/);
       if(role==='vlog-final-qa')assert.match(refs.agent,/QA|review|evidence/i);
     }
-    if(adapter==='codex'){
-      assert.match(parsed.Bootstrap,/project cwd/);
-      assert.match(parsed.Bootstrap,/AGENTS\.md/);
-      assert.match(parsed.Bootstrap,/local shell/);
-    }else if(adapter==='chatgpt'){
-      assert.match(parsed.Bootstrap,/Default Instructions/);
-      assert.match(parsed.Bootstrap,/Neo MCP fs\/shell/);
-      assert.doesNotMatch(parsed.Bootstrap,/NEO_ACCESS_TOKEN=|Bearer [A-Za-z0-9_-]{20}/i);
-    }else{
-      assert.match(parsed.Bootstrap,/neoy\.qili2\.com\/files\/z-chat\/bootstrap\.md/);
-      assert.match(parsed.Bootstrap,/OAuth/);
-      assert.doesNotMatch(parsed.Bootstrap,/NEO_ACCESS_TOKEN=|Bearer [A-Za-z0-9_-]{20}/,'No credentials in printable Action Prompt');
-      if(role!=='planner'){
-        assert.equal(zTaskBrief(prompt),prompt,'Z cannot rewrite Task Prompt');
-        const runtime=zBootstrap('L4_NON_SECRET_TEST_TOKEN',prompt);
-        assert.match(runtime,/## Bootstrap\nNeo OAuth access token: L4_NON_SECRET_TEST_TOKEN/);
-        assert.equal(zExecutionSource(prompt),`job/${jobId}/task/L4-TASK/execution/${execution}`);
-        assert.equal(runtime.replace('Neo OAuth access token: L4_NON_SECRET_TEST_TOKEN\n',''),prompt);
-      }
+    assert.match(parsed.Bootstrap,/Git repository working directory \(cwd\):/);
+    assert.doesNotMatch(parsed.Bootstrap,/Codex -C|Neo MCP|Use the Z runtime|configured agent harness/);
+    if(adapter==='z' && role!=='planner'){
+      assert.equal(zTaskBrief(prompt),prompt,'Z cannot rewrite Task Prompt');
+      const runtime=zBootstrap('L4_NON_SECRET_TEST_TOKEN',prompt);
+      assert.match(runtime,/## Bootstrap\nOAuth access token: L4_NON_SECRET_TEST_TOKEN/);
+      assert.equal(zExecutionSource(prompt),`job/${jobId}/task/L4-TASK/execution/${execution}`);
+      assert.equal(runtime.replace('OAuth access token: L4_NON_SECRET_TEST_TOKEN\n',''),prompt);
     }
   });
 }
@@ -210,12 +200,11 @@ test('L4 Vlog role snapshots resolve their original Markdown links before cachin
   for(const name of ['vlog-director','vlog-editor','vlog-producer']){
     const {definition,sources}=await resolveAgentContract(cx,name);
     if(name==='vlog-director'){
-      assert.match(definition,/`runs\/personal-library\/tour-director\.json`/);
-      assert.match(definition,/`lib\/tour-director-index\.mjs`/);
+      assert.match(definition,/Personal Story|story/i);
       assert.doesNotMatch(definition,/`vlog\/(?:runs|lib)\//);
       // Personal run artifacts are intentionally ignored and may be absent
       // in a clean integration checkout. Only committed tooling is mandatory.
-      await readFile(join(vlog,'lib/tour-director-index.mjs'));
+      await readFile(join(vlog,'docs/director-mvp.md'));
     }
     assert.ok(sources.length>0);
     const links=[...definition.matchAll(/\]\(([^)\s]+)\)/g)].map(x=>x[1])
@@ -242,7 +231,7 @@ test('L4 execution-scoped CLI loads a real isolated SQLite Plan and Task, reject
     createdAt:at,updatedAt:at,tasks:[task],plans:[plan],projectPath:vlog};
   try {
     await store.saveJob(job);
-    const env={...process.env,AGENTS_RELAY_STORE_DIR:join(dir,'stores')};
+    const env={...process.env,AGENTS_RELAY_SHARED_ROOT:sharedRoot,AGENTS_RELAY_STORE_DIR:join(dir,'stores')};
     for(const [kind,args] of [
       ['task',['task','context','--id',jobId,'--task-id','L4-TASK','--execution-id',execution]],
       ['plan',['plan','context','--id',jobId,'--plan-id','plan-1','--execution-id',execution]],

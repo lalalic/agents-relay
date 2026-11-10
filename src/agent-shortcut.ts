@@ -6,7 +6,8 @@ import { pathToFileURL } from 'node:url';
 import { spawnOwnedProcess } from './owned-process.js';
 import { validateShortcutStageGate } from './shortcut-stage-contract.js';
 import { parseAgentGraph } from './agent-graph.js';
-import { resolveAgentMarkdown } from './agent-content-resolver.js';
+import { agentSourceLayers, resolveAgentMarkdown } from './agent-content-resolver.js';
+import { homedir } from 'node:os';
 import { BUNDLED_AGENTS_ROOT } from './execution-context.js';
 import type { DurableStore } from './store.js';
 import type { Job, Result, Task } from './types.js';
@@ -105,10 +106,11 @@ async function runCommand(args: string[], cwd: string, signal: AbortSignal): Pro
 
 /** A Shortcut belongs to an Agent source, not to an independent name search.
  * Only explicit Agent inheritance permits falling back to a parent's Shortcut. */
-async function discoverShortcut(agent: string, projectPath: string, neoRoot?: string): Promise<string | null> {
+async function discoverShortcut(agent: string, projectPath: string, sharedRoot?: string, workspaceRoot?: string, globalRoot?: string): Promise<string | null> {
   let sources: string[];
   try {
-    ({ sources } = await resolveAgentMarkdown(agent, BUNDLED_AGENTS_ROOT, projectPath, neoRoot));
+    ({ sources } = await resolveAgentMarkdown(agent, BUNDLED_AGENTS_ROOT, projectPath, sharedRoot,
+      agentSourceLayers(projectPath, { sharedRoot, workspaceRoot, globalRoot: globalRoot ?? process.env.AGENTS_HOME ?? join(homedir(), '.agents') })));
   } catch (error) {
     if (error instanceof Error && error.message === `Unknown agent ${agent}`) return null;
     throw error;
@@ -137,10 +139,10 @@ async function discoverShortcut(agent: string, projectPath: string, neoRoot?: st
   }
   return null;
 }
-export async function missingShortcutNodes(agentGraph: string, projectPath: string, neoRoot?: string): Promise<string[]> {
+export async function missingShortcutNodes(agentGraph: string, projectPath: string, sharedRoot?: string, workspaceRoot?: string, globalRoot?: string): Promise<string[]> {
   const graph = parseAgentGraph(agentGraph);
   const result = await Promise.all(graph.nodes.map(async node => ({
-    id: node.id, available: Boolean(await discoverShortcut(node.agent, projectPath, neoRoot)),
+    id: node.id, available: Boolean(await discoverShortcut(node.agent, projectPath, sharedRoot, workspaceRoot, globalRoot)),
   })));
   return result.filter(item => !item.available).map(item => item.id);
 }
@@ -155,57 +157,14 @@ function raceAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   });
   return Promise.race([work, aborted]).finally(() => { if (rejectAbort) signal.removeEventListener('abort', rejectAbort); });
 }
-// Vlog's Visioner sources actual Markcut perception and lightweight normalized
-// media; the historical vision-segment-index.json contract was retired.
-// Distribution Visioner has a separate domain contract.
-function requiresVlogVisionerEvidence(agent: string | undefined): boolean {
-  return agent === 'visioner' || agent === 'vlog-visioner';
-}
-async function validateVisionerResult(result: Record<string, unknown>, projectRoot: string): Promise<void> {
-  const output=result.output as Record<string,unknown>|undefined;
-  const artifacts=result.artifacts;
-  const names=['vision-evidence.json','vision-normalized-manifest.json','metadata.json'] as const;
-  if (!output || !artifacts || Array.isArray(artifacts) || typeof artifacts!=='object' ||
-      !names.every(name=>Object.prototype.hasOwnProperty.call(artifacts,name)&&typeof output[name]==='string'))
-    throw new Error('Visioner requires source-linked evidence, normalized manifest and Markcut metadata artifacts');
-  const files=artifacts as Record<string,unknown>;
-  const evidence=files['vision-evidence.json'] as Record<string,unknown>|undefined;
-  const normalized=files['vision-normalized-manifest.json'] as Record<string,unknown>|undefined;
-  const metadata=files['metadata.json'];
-  if (!evidence || evidence.status!=='EVIDENCE_READY_UNREVIEWED' || evidence.stage!=='visioner' ||
-      !Array.isArray(evidence.sources) || !Array.isArray(evidence.observations) || !Array.isArray(evidence.summary) ||
-      !normalized || normalized.profile!=='markcut-vision-normalized-v1' || normalized.usage!=='vision-understanding-only' ||
-      !Array.isArray(normalized.sources) || !metadata || typeof metadata!=='object' || Array.isArray(metadata))
-    throw new Error('Visioner artifacts do not satisfy the current source-linked evidence contract');
-  const actualFiles=new Map<string,Buffer>();
-  for (const name of names) {
-    const actual=await realpath(resolve(projectRoot,String(output[name])));
-    if(!inside(projectRoot,actual)) throw new Error(`Visioner artifact escapes project root: ${name}`);
-    const bytes=await readFile(actual),parsed:unknown=JSON.parse(bytes.toString('utf8'));
-    if(!parsed||typeof parsed!=='object'||Array.isArray(parsed)||canonical(parsed)!==canonical(files[name]))
-      throw new Error(`Visioner structured artifact differs from file: ${name}`);
-    actualFiles.set(name,bytes);
-  }
-  if (evidence.markcut_metadata_sha256!==digestBytes(actualFiles.get('metadata.json')!) ||
-      normalized.sourceManifestSha256!==evidence.manifest_hash)
-    throw new Error('Visioner normalized and Markcut source provenance does not match');
-  const originalSources=evidence.sources as Array<Record<string,unknown>>;
-  const normalizedSources=normalized.sources as Array<Record<string,unknown>>;
-  if (originalSources.length===0||originalSources.length!==normalizedSources.length||
-      new Set(originalSources.map(source=>source.source_id)).size!==originalSources.length||
-      originalSources.some(source=>typeof source.source_id!=='string'||typeof source.source_sha256!=='string'||
-        !(source.source_id in (metadata as Record<string,unknown>))||
-        !normalizedSources.some(item=>item.sourceId===source.source_id&&item.sourceSha256===source.source_sha256)))
-    throw new Error('Visioner normalized manifest does not cover every original source identity');
-}
 
 export async function runAgentShortcut(options: {
-  store: DurableStore; job: Job; task: Task; projectPath: string; neoRoot?: string; concurrency?: number;
+  store: DurableStore; job: Job; task: Task; projectPath: string; sharedRoot?: string; workspaceRoot?: string; globalRoot?: string; concurrency?: number;
   leaseMs?: number; heartbeatMs?: number; resumeReceiptSelected?: true;
   signal?: AbortSignal; onNodeEvent?: (event: ShortcutNodeEvent) => void;
   runModelNode?: (node: { id: string; agent: string; predecessorOutputs: Record<string, unknown>; executionId: string; signal: AbortSignal }) => Promise<unknown>;
 }): Promise<{ outcome: ShortcutOutcome; task: Task; fallback: boolean }> {
-  const { store, job, task, projectPath, neoRoot } = options;
+  const { store, job, task, projectPath, sharedRoot, workspaceRoot, globalRoot } = options;
   if (!store.mutateJob) throw new Error('Shortcut execution requires atomic Relay SQLite mutation');
   const leaseMs=options.leaseMs??300_000, heartbeatMs=options.heartbeatMs??30_000;
   if(!Number.isSafeInteger(leaseMs)||leaseMs<100||!Number.isSafeInteger(heartbeatMs)||heartbeatMs<10||heartbeatMs>=leaseMs) throw new Error('Shortcut lease heartbeat must be positive and shorter than its lease');
@@ -215,7 +174,7 @@ export async function runAgentShortcut(options: {
   const inputHash = digest(task.input);
   const projectReal = await realpath(projectPath);
   const shortcuts = await Promise.all(graph.nodes.map(async node => {
-    const path = await discoverShortcut(node.agent, projectReal, neoRoot);
+    const path = await discoverShortcut(node.agent, projectReal, sharedRoot, workspaceRoot, globalRoot);
     return { nodeId: node.id, path, hash: path ? digestBytes(await readFile(path)) : 'missing' };
   }));
   const shortcutHash = digest(canonical(shortcuts.map(item => [item.nodeId, item.path, item.hash])));
@@ -308,7 +267,6 @@ export async function runAgentShortcut(options: {
       artifactHashes[relative(projectReal, actual)] = digestBytes(await readFile(actual));
     }
     const nodeAgent=graph.nodes.find(node=>node.id===nodeId)?.agent;
-    if(requiresVlogVisionerEvidence(nodeAgent?.toLowerCase())) await validateVisionerResult(output,projectReal);
     if(nodeAgent&&task.output?.kind==='file')await validateShortcutStageGate({projectPath:projectReal,agent:nodeAgent,runPath:dirname(task.output.path),execute:(args,cwd)=>runCommand(args,cwd,new AbortController().signal)});
     state.nodes[nodeId] = structuredClone(output);
     state.artifactHashes[nodeId] = artifactHashes;
@@ -384,7 +342,6 @@ export async function runAgentShortcut(options: {
               return (result.output as Record<string, string>)[name];
             });
           const projectReal=await realpath(projectPath);
-          if (requiresVlogVisionerEvidence(node.agent.toLowerCase())) await validateVisionerResult(result,projectReal);
           if(task.output?.kind==='file')await validateShortcutStageGate({projectPath:projectReal,agent:node.agent,runPath:dirname(task.output.path),execute:trackedRunCommand});
           const artifactHashes: Record<string,string> = {};
           // Project-local Shortcut nodes use project-relative paths. Managed

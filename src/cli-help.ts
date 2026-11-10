@@ -56,7 +56,7 @@ Common options:
 
 Shortcut execution:
   agents-relay job run --mode shortcut --id JOB --repo OWNER/REPO --task-id TASK
-    [--store-dir DIR] [--project-path DIR] [--neo-root DIR] [--concurrency 4]
+    [--store-dir DIR] [--project-path DIR] [--shared-root DIR] [--concurrency 4]
 
 The selected Task must have an Agent Graph. Project shortcuts at
 agents/.shortcut/<agent>.agent.mjs override Neo shared shortcuts. A Graph

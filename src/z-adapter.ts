@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { ChatGptAdapter, type ChatGptAgentRunner } from './adapters.js';
 import { pooledWebHelmRun } from './browser-worker-runtime.js';
-import { issueZWorkerCredential } from './z-oauth.js';
+import { issueZWorkerCredential, zWorkerMcpEndpoint } from './z-oauth.js';
 
 /** The worker must use the exact server-issued execution source, never invent one. */
 export function zExecutionSource(prompt: string): string {
@@ -24,20 +24,21 @@ export function zTaskBrief(prompt: string): string {
   const output = prompt.match(/\[Output contract\]\n([\s\S]*?)\n\[Required event contracts\]/)?.[1];
   if (!output) throw new Error('Z worker missing authoritative output contract');
   const objective = prompt.match(/^Job objective: (.+)$/m)?.[1];
-  return '[LOCAL SQLite Job — no GitHub lookup]\nThe Task brief is complete and authoritative. Do not query GitHub issues or PRs for Relay state; use the version-matched Relay CLI. Read Neo bootstrap and the pinned contracts, retrieve Task context with Relay CLI, then execute the Task.\n[Durable Job objective]\n' + (objective ?? '(see task)') +
+  return '[LOCAL SQLite Job — no GitHub lookup]\nThe Task brief is complete and authoritative. Do not query GitHub issues or PRs for Relay state; use the version-matched Relay CLI. Read the configured harness bootstrap and the pinned contracts, retrieve Task context with Relay CLI, then execute the Task.\n[Durable Job objective]\n' + (objective ?? '(see task)') +
     '\n[Authoritative Task input]\n' + local +
     '\n[Output contract]\n' + output;
 }
 
 /** Insert only the short-lived credential into the Graph Action's single Bootstrap section. */
-export function zBootstrap(accessToken: string, prompt: string): string {
+export function zBootstrap(accessToken: string, prompt: string, endpoint?: string): string {
   zExecutionSource(prompt); // Reject an unbound worker before sending credentials.
   if (!accessToken.trim() || /[\r\n]/.test(accessToken)) throw new Error('Invalid Z worker credential');
-  const credential = `Neo OAuth access token: ${accessToken}`;
+  const credential = `OAuth access token: ${accessToken}`;
+  const transport = endpoint ? `\nConfigured MCP endpoint: ${endpoint}\nConnect using the short-lived OAuth access token above. Do not expose the token in logs or file contents.` : '';
   const marker = '\n## Bootstrap\n';
   return prompt.startsWith('# Role\n') && prompt.includes(marker)
-    ? prompt.replace(marker, `${marker}${credential}\n`)
-    : `${credential}\n\n${prompt}`; // Legacy prompts lack a Bootstrap section.
+    ? prompt.replace(marker, `${marker}${credential}${transport}\n`)
+    : `${credential}${transport}\n\n${prompt}`; // Legacy prompts lack a Bootstrap section.
 }
 
 function zRunner(): ChatGptAgentRunner {
@@ -48,9 +49,9 @@ function zRunner(): ChatGptAgentRunner {
     build: async()=>{
       const token=await issueZWorkerCredential();
       const actualFiles=(request.files??[]).filter(path=>!path.includes('/agents-relay/prompt-references/'));
-      const attachments=actualFiles.length?'\n\nReference paths accessible through Neo MCP fs:\n'+actualFiles.join('\n'):'';
+      const attachments=actualFiles.length?'\n\nReference paths accessible through the configured MCP file tools:\n'+actualFiles.join('\n'):'';
       return {action:'new-thread',config:{
-        message:zBootstrap(token,zTaskBrief(request.prompt))+attachments,
+        message:zBootstrap(token,zTaskBrief(request.prompt),zWorkerMcpEndpoint())+attachments,
         timeout_seconds:90,wait:false,
       }};
     },
@@ -58,7 +59,7 @@ function zRunner(): ChatGptAgentRunner {
       const token=await issueZWorkerCredential();
       const source=zExecutionSource(request.prompt);
       return {thread_id:threadId,wait:false,timeout_seconds:90,
-        message:`[Relay terminal recovery — original execution ${source}]\nThe previous worker did not publish a terminal event. Verify Neo event history and the durable Task output using Neo MCP at https://neoy.qili2.com/mcp. Temporary access token: ${token}. Never print this token or store it in files. If output is verifiably complete, publish task.completed for this exact execution. Otherwise continue and publish real task.progress, or task.failed when impossible. Never invent success or start another execution.`};
+        message:`[Relay terminal recovery — original execution ${source}]\nThe previous worker did not publish a terminal event. Verify the event history and durable Task output using the configured MCP provider at ${zWorkerMcpEndpoint()}. Temporary access token: ${token}. Never print this token or store it in files. If output is verifiably complete, publish task.completed for this exact execution. Otherwise continue and publish real task.progress, or task.failed when impossible. Never invent success or start another execution.`};
     },
   },signal);
 }
@@ -66,6 +67,6 @@ function zRunner(): ChatGptAgentRunner {
 export class ZAdapter extends ChatGptAdapter {
   override readonly name = 'z' as const;
   override readonly id = 'z/webhelm';
-  override readonly capabilities: readonly string[] = ['model', 'z', 'webhelm', 'coding', 'filesystem', 'neo-mcp'];
+  override readonly capabilities: readonly string[] = ['model', 'z', 'webhelm', 'coding', 'filesystem', 'mcp'];
   constructor() { super({ agentRunner: zRunner(), tabClosePolicy: 'after-terminal' }); }
 }

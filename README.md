@@ -9,6 +9,13 @@ The canonical V2 architecture contract is
 [DESIGN-PRINCIPLES.md](DESIGN-PRINCIPLES.md). README sections below describe
 the runtime; they do not replace that contract.
 
+**Harness/Project integration:** The intended Relay boundary is standalone and
+provider-neutral: callers supply shared Agent/Skill capability sources and a
+Job Execution Context, not a Neo installation. The [Harness-independence
+specification](docs/harness-independence.md) describes resolution precedence,
+Git-root isolation, adapter ownership, acceptance criteria, and **remaining
+Neo-specific runtime dependencies**. The decoupling is not yet complete.
+
 For authoritative Task unblock, Resolution ownership, Planner rejection feedback, and failure recovery, see [Unblock and Resolution workflow](docs/unblock-resolution-workflow.md) with its [Mermaid diagram](docs/diagrams/unblock-resolution-end-to-end.mmd).
 
 ## V2 architecture
@@ -247,7 +254,7 @@ Managed tasks are descriptive work for agents, not shell commands. Use `codex` o
 
 Every model-backed task declares a durable output with `--output task-pr` or `--output file --output-path PATH`. Agents Relay bootstraps workers with the managed PR URL, durable task-comment URL, job/task identity, project, output contract, and mandatory terminal-event contract; workers retrieve the task intent from GitHub rather than receiving a duplicate copy of the stored task prompt.
 
-For Codex and ChatGPT, **correlated worker events are authoritative lifecycle inputs**, not a separate durable store. Event publication uses the canonical Neo `events-bus` surface (`events__publish` for sandboxed/hosted workers, or `NEO_EVENTS_EMIT` for direct local workers); Agents Relay subscribes, validates correlation, applies graph transitions, persists results in RelayStore, and projects them to GitHub. Relay publishes `task.process.launched` only after successful adapter launch; `task.started` is worker-owned and must be a new, correlated start acknowledgement. Codex publishes `task.process.exited` when its synchronous runtime exits, while ChatGPT publishes `task.process.async_exited` after its one-shot submission runtime exits; neither substitutes for `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled`. The executing agent must publish exactly one correlated terminal event. Relay persists the matching durable state only from that terminal event. Model-backed tasks require an event bus and time out explicitly if no terminal event arrives.
+For Codex and ChatGPT, **correlated worker events are authoritative lifecycle inputs**, not a separate durable store. Event publication uses the configured `events-bus` surface (`publish` for sandboxed/hosted workers, or its local CLI helper with `EVENTS_BUS_EVENT_SOURCE` set); Agents Relay subscribes, validates correlation, applies graph transitions, persists results in RelayStore, and projects them to GitHub. Relay publishes `task.process.launched` only after successful adapter launch; `task.started` is worker-owned and must be a new, correlated start acknowledgement. Codex publishes `task.process.exited` when its synchronous runtime exits, while ChatGPT publishes `task.process.async_exited` after its one-shot submission runtime exits; neither substitutes for `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled`. The executing agent must publish exactly one correlated terminal event. Relay persists the matching durable state only from that terminal event. Model-backed tasks require an event bus and time out explicitly if no terminal event arrives.
 
 External execution uses the single global `webhelm` executable installed by the
 WebHelm Skill. Before starting Relay, install that Skill through the agent's

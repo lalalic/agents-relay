@@ -4,6 +4,7 @@ import type { Job, Task } from './types.js';
 import { resolveAgentContract, type ExecutionContext } from './execution-context.js';
 
 import { dirname, join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -27,27 +28,28 @@ export async function managedWorkerInput(job: Job, task: Task, context?: Executi
   const agent = selected.definition;
   const role = isFinalReviewAgent(agentName) ? 'reviewer' : agentName === 'planner' || agentName === 'troubleshooter' ? agentName : 'worker';
   if (mode === 'evaluation') {
-    const safeAgent = agent.replace(/^.*(?:task\.started|task\.completed|task\.failed|events__publish|NEO_EVENTS_EMIT).*\n?/gm, '');
+    const safeAgent = agent.replace(/^.*(?:task\.started|task\.completed|task\.failed|events__publish|EVENTS_BUS_EMIT).*\n?/gm, '');
     return renderAgentPrompt(buildAgentPrompt({ role, system: [safeAgent, '[Read-only evaluation safety boundary]\nDo not use tools, files, events or external services. Evaluate the role instructions as criteria only.'].filter(Boolean).join('\n\n'), user: `[Isolated prompt evaluation mode]\nTask: ${task.id}\n${task.input}` }), adapter);
   }
   const packageRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-  if (!context.project.neoRoot) throw new Error('Neo events-bus root is unavailable for Relay worker');
+  const eventSkill = context.skills.find(skill => skill.name === 'events-bus');
+  const eventProtocol = eventSkill ? join(dirname(eventSkill.path), 'references/protocol.md') : undefined;
   return buildRelayWorkPrompt({
     agentName,
     agentContent:agent,
     adapter,
     contracts: [
-      join(context.project.neoRoot, 'skills/events-bus/references/protocol.md'),
+      ...(eventProtocol && existsSync(eventProtocol) ? [eventProtocol] : []),
       join(packageRoot, 'skills/agents-relay/contracts/task-job-contract.md'),
       join(packageRoot, 'skills/agents-relay/contracts/event-contract.md'),
       ...(role === 'worker' && !task.review && task.agentName !== 'review-chair'
         ? [join(packageRoot, 'skills/agents-relay/contracts/worker-self-review.md')] : []),
     ],
-    // Codex loads project AGENTS from cwd. Web workers do not: give them only
-    // the current project policy; parent Neo rules are linked from that file.
-    contexts:adapter === 'codex' ? [] : context.instructions.filter(item =>
-      item.source === 'project' && item.path.endsWith('/AGENTS.md')),
-    projectPath:context.project.path,
+    // Context comes from the caller; never assume a Neo installation or
+    // vendor-specific bootstrap. All adapters see the same bounded rules.
+    contexts:context.instructions.filter(item => item.path.endsWith('/AGENTS.md')),
+    projectPath:context.project.gitRoot ?? context.project.path,
+    providerInstructions:context.providerInstructions?.[adapter],
     skillPath:join(packageRoot, 'skills/agents-relay/SKILL.md'),
     jobId:job.id,
     taskId:task.id,

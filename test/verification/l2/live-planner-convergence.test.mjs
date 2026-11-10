@@ -140,7 +140,7 @@ process.exitCode = result.status ?? 1;
     process.env.AGENTS_RELAY_STORE_DIR = storeDirectory;
 
     const executionContext = {
-      project: { name: 'planner-l2-fixture', path: projectDirectory, workspaceRoot: projectDirectory, neoRoot: null, globalRoot: null },
+      project: { name: 'planner-l2-fixture', path: projectDirectory, workspaceRoot: projectDirectory, sharedRoot: null, globalRoot: null },
       role: 'planner', instructions: [], skills: [], runtimes: [],
       agents: [{ name: 'implementation', description: 'Implement justified recovery work.', capabilities: ['implementation'], restrictions: [], trustDomains: [], runtime: 'codex', source: 'test' }],
       delegation: { mode: 'relay-child-task', parentTaskIdRequired: false },

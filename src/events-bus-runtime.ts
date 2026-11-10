@@ -5,7 +5,7 @@ import { join } from 'node:path';
 export type EventsBusRuntime = { natsUrl: string; apiUrl: string; subjectPrefix: string; configPath: string };
 
 export function eventsBusConfigPath(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.NEO_EVENTS_BUS_CONFIG) return env.NEO_EVENTS_BUS_CONFIG;
+  if (env.EVENTS_BUS_CONFIG) return env.EVENTS_BUS_CONFIG;
   const dataDir = env.EVENTS_BUS_DATA_DIR || join(homedir(), 'Library', 'Application Support', 'EventsBus');
   return join(dataDir, 'runtime.json');
 }
@@ -13,12 +13,24 @@ export function eventsBusConfigPath(env: NodeJS.ProcessEnv = process.env): strin
 export function resolveEventsBusRuntime(env: NodeJS.ProcessEnv = process.env): EventsBusRuntime {
   const configPath = eventsBusConfigPath(env);
   let saved: Record<string, unknown> = {};
-  try { saved = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>; } catch { /* fall through to protocol defaults */ }
+  try {
+    const decoded: unknown = JSON.parse(readFileSync(configPath, 'utf8'));
+    if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded))
+      throw new Error('Events Bus runtime configuration must be an object');
+    saved = decoded as Record<string, unknown>;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+      throw new Error(`Invalid Events Bus runtime config at ${configPath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  // A saved old namespace must not silently override the new publisher/consumer
+  // contract. The operator coordinates the durable Events Bus cutover.
+  if (saved.subjectPrefix === 'neo.events.job' && !env.EVENTS_BUS_SUBJECT_PREFIX)
+    throw new Error('Legacy Events Bus subject in saved runtime config; coordinate migration to relay.events.job');
   return {
     configPath,
-    natsUrl: env.NEO_NATS_URL || String(saved.natsUrl || 'nats://127.0.0.1:4222'),
-    apiUrl: env.NEO_EVENTS_API_URL || String(saved.apiUrl || 'http://127.0.0.1:4223'),
-    subjectPrefix: env.NEO_EVENTS_SUBJECT_PREFIX || String(saved.subjectPrefix || 'neo.events.job'),
+    natsUrl: env.EVENTS_BUS_NATS_URL || String(saved.natsUrl || 'nats://127.0.0.1:4222'),
+    apiUrl: env.EVENTS_BUS_API_URL || String(saved.apiUrl || 'http://127.0.0.1:4223'),
+    subjectPrefix: env.EVENTS_BUS_SUBJECT_PREFIX || String(saved.subjectPrefix || 'relay.events.job'),
   };
 }
 

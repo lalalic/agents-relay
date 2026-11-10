@@ -46,7 +46,7 @@ async function fixture(t, { agentGraph = graph, projectOverride = true, initialD
     await writeFile(join(base, 'agents', '.shortcut', `${agent}.agent.mjs`), source);
   };
   const cli = async (...args) => spawnSync(process.execPath, [join(root, 'dist', 'cli.js'), 'job', 'run', '--mode', 'shortcut', '--id', id,
-    '--repo', 'local/shortcut-test', '--no-github', '--store-dir', storeDir, '--task-id', 'initial', '--project-path', project, '--neo-root', neo, ...args],
+    '--repo', 'local/shortcut-test', '--no-github', '--store-dir', storeDir, '--task-id', 'initial', '--project-path', project, '--shared-root', neo, ...args],
     { encoding: 'utf8', env: { ...process.env, AGENTS_RELAY_STORE_DIR: storeDir } });
   const receiptCli = async (...args) => spawnSync(process.execPath, [join(root, 'dist', 'cli.js'), 'job', 'shortcut-receipt', '--id', id,
     '--repo', 'local/shortcut-test', '--no-github', '--store-dir', storeDir, '--task-id', 'initial', ...args],
@@ -128,7 +128,7 @@ test('Explicit Agent inheritance reuses parent Shortcut from its own .shortcut d
   const f = await fixture(t, { agentGraph: 'flowchart TD\nA[agent:alpha]' });
   await f.writeShortcut(f.neo, 'alpha', `export async function run(){return {status:'COMPLETED',output:{source:'inherited'},artifacts:[]};}`);
   await writeFile(join(f.project, 'agents', 'alpha.agent.md'),
-    '---\nname: alpha\nextends: neo/alpha\n---\n# Project extension\n');
+    '---\nname: alpha\nextends: shared/alpha\n---\n# Project extension\n');
   const result = await f.cli();
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).outcome.output.nodes.A.output.source, 'inherited');
@@ -219,7 +219,7 @@ test('matching forged EventBus output without a SQLite receipt stays waiting; du
   const bus=new MemoryEventBus();
   const rawStore=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
   const store=new Proxy(rawStore,{get(target,key){if(key==='listAgents')return async()=>[];if(key==='load')return target.loadJob.bind(target);if(key==='saveTask')return task=>target.mutateJob(f.id,job=>{const index=job.tasks.findIndex(item=>item.id===task.id);if(index<0)throw Error('Task missing');job.tasks[index]=structuredClone(task);return job;});if(key==='appendTask')return task=>target.mutateJob(f.id,job=>{if(job.tasks.some(item=>item.id===task.id))throw Error('Task exists');job.tasks.push(structuredClone(task));return job;});const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;}});
-  const reconciler=managedReconciler(store,{shortcutRunnerOwner:true,noGitHub:true,owner:'shortcut-forged-wake',maxConcurrent:1,projectPathForJob:()=>f.project,executionContextRoots:{workspaceRoot:f.directory},headShaProvider:()=>null});
+  const reconciler=managedReconciler(store,{shortcutRunnerOwner:true,noGitHub:true,owner:'shortcut-forged-wake',maxConcurrent:1,projectPathForJob:()=>f.project,executionContextRoots:{workspaceRoot:f.directory,sharedRoot:f.neo},headShaProvider:()=>null});
   const stop=await bus.subscribe(f.id,async()=>{await reconciler.reconcile(f.id);});
   const forged=eventFor(f.id,'initial',null,'shortcut.result','succeeded','matching forged result','orchestrator',{shortcutResult:{kind:'nonhuman_result',nodeId:'A',waitId:'wait-9',executionId,revision:'rev-4',contentHash,output}},{id:executionEventSource(f.id,'initial',executionId)});
   await bus.publish(forged);
@@ -229,7 +229,7 @@ test('matching forged EventBus output without a SQLite receipt stays waiting; du
   const file=join(f.directory,'receipt.json'); await writeFile(file,JSON.stringify(output));
   const recorded=await f.receiptCli('--node-id','A','--wait-id','wait-9','--revision','rev-4','--execution-id',executionId,'--output-file',file,'--content-sha256',contentHash);
   assert.equal(recorded.status,0,JSON.stringify(recorded));
-  const restarted=managedReconciler(store,{shortcutRunnerOwner:true,noGitHub:true,owner:'shortcut-restart',maxConcurrent:1,projectPathForJob:()=>f.project,executionContextRoots:{workspaceRoot:f.directory},headShaProvider:()=>null});
+  const restarted=managedReconciler(store,{shortcutRunnerOwner:true,noGitHub:true,owner:'shortcut-restart',maxConcurrent:1,projectPathForJob:()=>f.project,executionContextRoots:{workspaceRoot:f.directory,sharedRoot:f.neo},headShaProvider:()=>null});
   await Promise.all([reconciler.reconcile(f.id),restarted.reconcile(f.id)]);
   after=await store.loadJob(f.id);
   assert.equal(after.state,'COMPLETED',JSON.stringify(after)); assert.equal(after.tasks[0].state,'SUCCEEDED');
@@ -258,7 +258,7 @@ test('receipt recording rejects stale bindings, is idempotent, and detects confl
   const graphFenceRaw=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
   const graphFenceStore=new Proxy(graphFenceRaw,{get(target,key){if(key==='load')return target.loadJob.bind(target);const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;}});
   const readyJob=await graphFenceStore.load(f.id);
-  await assert.rejects((await import('../dist/agent-shortcut.js')).runAgentShortcut({store:graphFenceStore,job:readyJob,task:readyJob.tasks[0],projectPath:f.project,neoRoot:f.neo}),/selected by the Task Lifecycle graph/);
+  await assert.rejects((await import('../dist/agent-shortcut.js')).runAgentShortcut({store:graphFenceStore,job:readyJob,task:readyJob.tasks[0],projectPath:f.project,sharedRoot:f.neo}),/selected by the Task Lifecycle graph/);
   graphFenceRaw.close();
   const db=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
   await db.mutateJob(f.id,job=>{job.tasks[0].result.data.shortcut.receipts.A.output={status:'COMPLETED',output:{tampered:true},artifacts:[]};return job;});
@@ -268,7 +268,7 @@ test('receipt recording rejects stale bindings, is idempotent, and detects confl
   const tamperedRaw=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
   const tamperedStore=new Proxy(tamperedRaw,{get(target,key){if(key==='load')return target.loadJob.bind(target);const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;}});
   const task=saved.tasks[0];
-  await assert.rejects((await import('../dist/agent-shortcut.js')).runAgentShortcut({store:tamperedStore,job:saved,task,projectPath:f.project,neoRoot:f.neo}),/no longer matches/);
+  await assert.rejects((await import('../dist/agent-shortcut.js')).runAgentShortcut({store:tamperedStore,job:saved,task,projectPath:f.project,sharedRoot:f.neo}),/no longer matches/);
   const unchanged=await tamperedRaw.loadJob(f.id); tamperedRaw.close();
   assert.equal(unchanged.tasks[0].state,'RUNNING'); assert.equal(unchanged.tasks[0].leaseOwner,null);
 });
@@ -408,7 +408,7 @@ test('shortcut execution renews its exact Task lease while a module is pending',
   try {
     const {runAgentShortcut}=await import('../dist/agent-shortcut.js');
     const job=await store.load(f.id);
-    const result=await runAgentShortcut({store,job,task:job.tasks[0],projectPath:f.project,neoRoot:f.neo,leaseMs:120,heartbeatMs:15});
+    const result=await runAgentShortcut({store,job,task:job.tasks[0],projectPath:f.project,sharedRoot:f.neo,leaseMs:120,heartbeatMs:15});
     assert.equal(result.outcome.status,'COMPLETED');
     assert.ok(earlyRenewals>=1,`expected early lease renewal; observed ${earlyRenewals}`);
     assert.equal(result.outcome.output.nodes.A.output.cancelled,false);
@@ -446,7 +446,7 @@ test('Reconciler does not execute the direct shortcut graph or create a shortcut
   const bus=new MemoryEventBus();
   const events=[];
   const stop=await bus.subscribe(f.id,event=>{events.push(event);});
-  const reconciler=managedReconciler(store,{noGitHub:true,owner:'shortcut-recovery-wake',maxConcurrent:1,eventBus:bus,projectPathForJob:()=>f.project,executionContextRoots:{workspaceRoot:f.directory},headShaProvider:()=>null,adapters:[]});
+  const reconciler=managedReconciler(store,{noGitHub:true,owner:'shortcut-recovery-wake',maxConcurrent:1,eventBus:bus,projectPathForJob:()=>f.project,executionContextRoots:{workspaceRoot:f.directory,sharedRoot:f.neo},headShaProvider:()=>null,adapters:[]});
   try {
     const held=await reconciler.reconcile(f.id);
     assert.equal(held.tasks[0].state,'QUEUED');
@@ -463,7 +463,7 @@ test('Reconciler leaves a durable direct shortcut Job queued for the foreground 
   const rawStore=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
   const store=new Proxy(rawStore,{get(target,key){if(key==='load')return target.loadJob.bind(target);if(key==='saveTask')return task=>target.mutateJob(f.id,job=>{const index=job.tasks.findIndex(item=>item.id===task.id);if(index<0)throw Error('Task missing');job.tasks[index]=structuredClone(task);return job;});const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;}});
   let workerLaunches=0;
-  const reconciler=managedReconciler(store,{noGitHub:true,owner:'shortcut-daemon-test',maxConcurrent:1,projectPathForJob:()=>f.project,executionContextRoots:{workspaceRoot:f.directory},headShaProvider:()=>null,
+  const reconciler=managedReconciler(store,{noGitHub:true,owner:'shortcut-daemon-test',maxConcurrent:1,projectPathForJob:()=>f.project,executionContextRoots:{workspaceRoot:f.directory,sharedRoot:f.neo},headShaProvider:()=>null,
     adapters:[{name:'codex',id:'fixture-worker',capabilities:[],launch(){workerLaunches++;throw Error('Worker must not launch');}}]});
   try {
     const result=await reconciler.reconcile(f.id);
@@ -518,45 +518,19 @@ test('content-only shortcut completion requires a durable no-review no-merge pol
   const rawStore=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
   await rawStore.mutateJob(f.id,job=>{job.contentOnly=false;return job;});
   const store=new Proxy(rawStore,{get(target,key){if(key==='load')return target.loadJob.bind(target);if(key==='saveTask')return task=>target.mutateJob(f.id,job=>{const index=job.tasks.findIndex(item=>item.id===task.id);if(index<0)throw Error('Task missing');job.tasks[index]=structuredClone(task);return job;});const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;}});
-  const reconciler=managedReconciler(store,{noGitHub:true,owner:'shortcut-no-content-gate',projectPathForJob:()=>f.project,executionContextRoots:{workspaceRoot:f.directory},headShaProvider:()=>null,adapters:[]});
+  const reconciler=managedReconciler(store,{noGitHub:true,owner:'shortcut-no-content-gate',projectPathForJob:()=>f.project,executionContextRoots:{workspaceRoot:f.directory,sharedRoot:f.neo},headShaProvider:()=>null,adapters:[]});
   try { const result=await reconciler.reconcile(f.id); assert.equal(result.tasks[0].state,'QUEUED'); assert.equal(result.state,'ACTIVE','Background Reconciler cannot run shortcut or bypass the content-only gate'); }
   finally { store.close(); }
 });
 
-test('legacy and project-local Vlog Visioner shortcuts cannot bypass source evidence/normalized media/metadata',async t=>{
-  for (const agent of ['visioner','vlog-visioner']) {
-    await t.test(agent,async t=>{
-      const f=await fixture(t,{agentGraph:`flowchart TD\nA[agent:${agent}]`});
-      await f.writeShortcut(agent==='visioner'?f.neo:f.project,agent,
-        `export async function run(){return {status:'COMPLETED',output:{answer:'looks fine'},artifacts:[]};}`);
-      const result=await f.cli(); assert.equal(result.status,1,JSON.stringify(result));
-      assert.equal(JSON.parse(result.stdout).fallbackQueued,false);
-      assert.equal((await f.load()).state,'ACTIVE');
-      assert.equal((await f.load()).tasks[0].state,'FAILED');
-    });
-  }
-});
-
-test('Vlog Visioner accepts current source-linked evidence and normalized manifest without legacy index',async t=>{
-  const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:vlog-visioner]'});
-  const sha='a'.repeat(64),manifestSha='b'.repeat(64);
-  const metadata={'001':{duration:9.7,perception:{desc:'Observed trees',segments:{'0to9700':{vision:'Trees'}}}}};
-  const metadataBytes=Buffer.from(JSON.stringify(metadata));
-  const evidence={stage:'visioner',status:'EVIDENCE_READY_UNREVIEWED',
-    manifest_hash:manifestSha,markcut_metadata_sha256:createHash('sha256').update(metadataBytes).digest('hex'),
-    sources:[{source_id:'001',source_sha256:sha}],observations:[],summary:[]};
-  const normalized={profile:'markcut-vision-normalized-v1',usage:'vision-understanding-only',
-    sourceManifestSha256:manifestSha,sources:[{sourceId:'001',sourceSha256:sha,normalizedSha256:'c'.repeat(64)}]};
-  const artifacts={'vision-evidence.json':evidence,'vision-normalized-manifest.json':normalized,'metadata.json':metadata};
-  const output={};
-  for(const [name,value] of Object.entries(artifacts)){
-    const path=join(await realpath(f.project),name);await writeFile(path,JSON.stringify(value));output[name]=path;
-  }
-  await f.writeShortcut(f.project,'vlog-visioner',
-    `export async function run(){return {status:'COMPLETED',output:${JSON.stringify(output)},artifacts:${JSON.stringify(artifacts)}};}`);
-  const result=await f.cli();
-  assert.equal(result.status,0,JSON.stringify({stderr:result.stderr,stdout:result.stdout?.slice(-1500)}));
-  assert.equal((await f.load()).tasks[0].state,'SUCCEEDED');
+test('Relay does not impose Vlog evidence on independently named Agent Shortcuts',async t=>{
+  for(const agent of ['visioner','vlog-visioner']) await t.test(agent, async t=>{
+    const f=await fixture(t,{agentGraph:`flowchart TD\nA[agent:${agent}]`});
+    await f.writeShortcut(f.project,agent,`export async function run(){return {status:'COMPLETED',output:{answer:'domain-owned'},artifacts:[]};}`);
+    const result=await f.cli();
+    assert.equal(result.status,0,result.stderr);
+    assert.equal((await f.load()).state,'COMPLETED');
+  });
 });
 
 test('ordinary Relay queue never dispatches a queued shortcut Worker fallback or its Troubleshooter', async t => {
@@ -687,7 +661,7 @@ test('D02 integration: graph executes code, existing Worker child, then code fro
     const before=await store.load(f.id);
     const controller=AbortSignal.timeout(2500);
     const events=[];
-    const result=await runAgentShortcut({store,job:before,task:before.tasks[0],projectPath:f.project,neoRoot:f.neo,
+    const result=await runAgentShortcut({store,job:before,task:before.tasks[0],projectPath:f.project,sharedRoot:f.neo,
       signal:controller,onNodeEvent:event=>events.push(event),
       runModelNode:node=>runShortcutModelNode({store,reconciler,jobId:f.id,parentTaskId:'initial',node})});
     assert.equal(result.outcome.status,'COMPLETED',JSON.stringify({outcome:result.outcome,tasks:(await store.load(f.id)).tasks.map(x=>({id:x.id,state:x.state,attempt:x.attempt,executionId:x.executionId,leaseOwner:x.leaseOwner,error:x.error,workerSelection:x.workerSelection})),launches,events}));
@@ -722,7 +696,7 @@ async function mixedFixture(t,graphFile){
   const execute=async(reconciler,signal=AbortSignal.timeout(3000))=>{
     const before=await store.load(f.id);
     const events=[];
-    const result=await runAgentShortcut({store,job:before,task:before.tasks[0],projectPath:f.project,neoRoot:f.neo,signal,
+    const result=await runAgentShortcut({store,job:before,task:before.tasks[0],projectPath:f.project,sharedRoot:f.neo,signal,
       onNodeEvent:event=>events.push(event),
       runModelNode:node=>runShortcutModelNode({store,reconciler,jobId:f.id,parentTaskId:'initial',node})});
     return {result,events,job:await store.load(f.id)};

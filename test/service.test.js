@@ -106,15 +106,15 @@ test('event transport resolution preserves explicit choice and auto-detects reac
   assert.equal(eventBusResolutionMessage(local), 'event transport: none (local mode)');
 });
 
-test('event transport resolution honors NEO_NATS_URL when no CLI URL is supplied', async () => {
-  const previous = process.env.NEO_NATS_URL;
-  process.env.NEO_NATS_URL = 'nats://env-host:4555';
+test('event transport resolution honors EVENTS_BUS_NATS_URL when no CLI URL is supplied', async () => {
+  const previous = process.env.EVENTS_BUS_NATS_URL;
+  process.env.EVENTS_BUS_NATS_URL = 'nats://env-host:4555';
   try {
     const resolved = await resolveEventBus([], async () => true);
     assert.equal(resolved.natsUrl, 'nats://env-host:4555');
     assert.equal(resolved.source, 'auto');
   } finally {
-    if (previous === undefined) delete process.env.NEO_NATS_URL; else process.env.NEO_NATS_URL = previous;
+    if (previous === undefined) delete process.env.EVENTS_BUS_NATS_URL; else process.env.EVENTS_BUS_NATS_URL = previous;
   }
 });
 

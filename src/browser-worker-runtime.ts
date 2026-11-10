@@ -22,10 +22,13 @@ export type PoolSubmission = {
   completionRecoveryGraceMs?: number;
 };
 export type PooledRun = { submitted: Promise<string>; promise: Promise<string>; release: () => Promise<void>; cancel: () => void };
-const WORKSPACE = 'Neo';
+// Relay owns its browser session pool; provider names are deployment configuration.
+const WORKSPACE = process.env.AGENTS_RELAY_WEBHELM_WORKSPACE?.trim() || 'Relay';
+if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(WORKSPACE))
+  throw new Error('AGENTS_RELAY_WEBHELM_WORKSPACE must be a safe workspace name');
 const WORKSPACE_CAPACITY = 6;
 let pendingWorkspaceProvision: Promise<void> | undefined;
-async function ensureNeoWorkspace(): Promise<void> {
+async function ensureRelayWorkspace(): Promise<void> {
   if (!pendingWorkspaceProvision) {
     pendingWorkspaceProvision = (async () => {
       // Shared setup must outlive cancellation by one waiting Worker.
@@ -224,7 +227,7 @@ export function pooledWebHelmRun(request: PoolSubmission, signal: AbortSignal): 
       if(profile.platform!==request.provider)throw Error(`WebHelm platform ${request.provider} missing`);
       let session:Record<string,unknown>;
       try {
-        await ensureNeoWorkspace();
+        await ensureRelayWorkspace();
         session=await webHelmDaemonRequest({op:'start',workspace:WORKSPACE},{signal,timeoutMs:60_000});
       }
       catch(error) {providerPreflightFailed=true;throw error;}
@@ -232,7 +235,7 @@ export function pooledWebHelmRun(request: PoolSubmission, signal: AbortSignal): 
       sessionId=session.session_id;
       pool.bindSession(lease,sessionId);
       if (session.workspace !== WORKSPACE || session.workspace_supported !== true) {
-        throw Error('WebHelm returned a Session outside the provisioned Neo Workspace');
+        throw Error('WebHelm returned a Session outside the configured Relay browser workspace');
       }
       // Keep session last_used_at fresh without mutating the worker's model progress.
       const heartbeatPeriod = Math.max(1000,Math.min(request.heartbeatIntervalMs ?? 45_000,60_000));

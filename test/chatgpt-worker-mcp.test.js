@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { ChatGptAdapter, parseDriverJson } from '../dist/adapters.js';
 import {fakeWebHelmDaemon} from './fake-webhelm-daemon.mjs';
 
-test('new ChatGPT worker uses a Neo daemon Session and includes file references',async()=>{
+test('new ChatGPT worker uses a Relay browser Session and includes file references',async()=>{
   const root=await mkdtemp(join(tmpdir(),'relay-new-thread-mcp-'));
   const command=join(root,'fake-webhelm');
   await writeFile(command,[
@@ -35,7 +35,7 @@ test('new ChatGPT worker uses a Neo daemon Session and includes file references'
     assert.match(run.config.message,/Read the input through Neo/);
     assert.match(run.config.message,/\/tmp\/evidence\.txt/);
     assert.equal(run.config.file,undefined);
-    assert.equal(daemon.requests.filter(r=>r.op==='start'&&r.workspace==='Neo').length,1);
+    assert.equal(daemon.requests.filter(r=>r.op==='start'&&r.workspace==='Relay').length,1);
     assert.equal(daemon.requests.filter(r=>r.op==='stop').length,1);
   }finally{
     await daemon.close();
@@ -59,7 +59,7 @@ test('normal-thread receipt rejects missing durable identity', async () => {
   },new AbortController().signal).promise,/durable ChatGPT thread/);
 });
 
-test('existing-thread delivery holds its Neo session until terminal',async()=>{
+test('existing-thread delivery holds its Relay browser session until terminal',async()=>{
   const root=await mkdtemp(join(tmpdir(),'relay-webhelm-sync-'));
   const command=join(root,'fake-webhelm');
   await writeFile(command,[

@@ -5,15 +5,15 @@ WebHelm's persistent Z platform. This is a browser worker, not the Z.ai API.
 
 ## Authorization
 
-The Relay process performs Neo's OAuth Authorization Code + PKCE flow with a
-local-only callback (`http://127.0.0.1:8765/neo/oauth/callback`).
-The operator consent credential stays on Neo Master; the browser worker receives
-**only a one-hour OAuth access token**, and Relay revokes the unused refresh token.
+Relay performs the configured OAuth Authorization Code + PKCE flow with a
+local-only callback (`http://127.0.0.1:8765/agents-relay/oauth/callback`).
+The OAuth provider is **caller-configured**, not assumed to be Neo.app.
+Configure `AGENTS_RELAY_Z_OAUTH_ORIGIN` (HTTPS) and
+`AGENTS_RELAY_Z_OAUTH_OPERATOR_TOKEN_FILE` (private credential file) or
+`AGENTS_RELAY_Z_OAUTH_OPERATOR_TOKEN`. The Z browser worker receives only
+a one-hour access token; unused refresh credentials are revoked. No default
+operator token file, Neo host URL, or Neo.app installation is required.
 
-The default operator credential source is the NeoY-owned
-`~/Library/Application Support/NeoY/core-token`, read by Relay on the same host.
-Optional overrides: `AGENTS_RELAY_Z_NEO_OPERATOR_TOKEN_FILE`,
-`AGENTS_RELAY_Z_NEO_OPERATOR_TOKEN`, and `AGENTS_RELAY_Z_NEO_ORIGIN`.
 Never place the operator token in a Z.ai conversation or command arguments.
 
 Until the WebHelm Z fix is installed globally, set

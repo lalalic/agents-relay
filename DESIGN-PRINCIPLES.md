@@ -42,6 +42,16 @@ Workflow graphs and Task dependencies describe execution flow. The Task tree
 describes semantic ownership of durable outcomes. Do not use one relationship
 as a substitute for the other.
 
+### 7. Relay is independent of its caller's Harness
+
+Relay consumes configured capability sources and a Job Execution Context;
+caller-specific installation paths, executables, browser workspace names,
+preview providers, and project domains are not core lifecycle dependencies.
+The boundary is directional: a Harness such as Neo can call Relay, while
+Relay should work without that Harness. Optional integrations belong behind
+explicit provider/adapters, never implicit defaults. See the current-state
+inventory and target [Harness-independence spec](docs/harness-independence.md).
+
 ## Architecture Lens
 
 For architecture-sensitive work, planning must answer only the questions that
@@ -55,6 +65,8 @@ materially apply:
    duplicate graph authority?
 6. Do all entry points for the same intent converge on the same semantics?
 7. Is execution flow being confused with semantic Task ownership?
+8. Is a client-Harness-specific dependency entering generic Relay rather than
+   a configurable provider or caller-supplied execution context?
 
 If a question does not apply, omit it rather than copying the whole lens into
 every Task.
@@ -78,7 +90,8 @@ the durable Job objective. In particular, review must detect:
 - divergent semantics between entry points for the same intent;
 - operational state persisted in the wrong authority layer; or
 - Task dependencies used as a substitute for semantic Task ownership, or vice
-  versa.
+  versa; or
+- a fixed caller-Harness dependency introduced into Relay's generic runtime.
 
 The shared reviewer agent is resolved through project execution context. For
 Agents Relay work, AGENTS.md requires the reviewer to consume this document;

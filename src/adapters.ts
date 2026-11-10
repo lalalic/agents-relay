@@ -82,11 +82,12 @@ export class CodexAdapter implements WorkerAdapter {
 
   launch(task: Task, signal: AbortSignal, context: LaunchContext = {}): Execution {
     if (!task.routing) throw new Error(`Task ${task.id} requires routing metadata before Codex launch`);
-    const child = spawnOwnedProcess(this.command, buildCodexArgs(task.routing, task.input), {
+    const cwd = task.routing.cwd ?? context.executionContext?.project.gitRoot ?? context.executionContext?.project.path;
+    const child = spawnOwnedProcess(this.command, buildCodexArgs({ ...task.routing, cwd }, task.input), {
       invocation: `worker.codex:${task.id}`,
       signal,
       correlation: { jobId: task.jobId, taskId: task.id, executionId: task.executionId ?? undefined },
-      spawn: { shell: false, cwd: task.routing.cwd, stdio: ['ignore', 'pipe', 'pipe'] },
+      spawn: { shell: false, cwd, stdio: ['ignore', 'pipe', 'pipe'] },
     });
     let stdoutBuffer = '';
     let stderrTail = '';
@@ -309,7 +310,7 @@ function browserWorkerRunner(): ChatGptAgentRunner {
     const delivery=request.thread;
     const message=request.files?.length && !request.prompt.startsWith('# Role')
       && !request.prompt.startsWith('[Relay agent:')
-      ? `${request.prompt}\n\nTask file paths (read with Neo MCP):\n${request.files.map(file=>`- ${JSON.stringify(file)}`).join('\n')}`
+      ? `${request.prompt}\n\nTask file paths (read using configured file-access tools):\n${request.files.map(file=>`- ${JSON.stringify(file)}`).join('\n')}`
       : request.prompt;
     return pooledWebHelmRun({
       provider:'chatgpt', executionId:request.execution?.executionId ?? randomUUID(),

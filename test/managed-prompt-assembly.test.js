@@ -55,7 +55,7 @@ test('evaluation mode preserves reviewer guidance without production lifecycle a
     const prompt = await managedWorkerInput({ id: 'prompt-test', repository: 'example/repo', title: 'Prompt test', objective: 'Evaluate reviewer contract', state: 'ACTIVE', localMerge: { sourceRef: 'prompt-test' }, tasks: [task], plans: [] }, task, context, 'evaluation');
     assert.match(prompt, /evidence|review/i);
     assert.match(prompt, /read-only evaluation/i);
-    assert.doesNotMatch(prompt, /publish exactly one canonical task\.(?:started|completed|failed)|events__publish|NEO_EVENTS_EMIT/);
+    assert.doesNotMatch(prompt, /publish exactly one canonical task\.(?:started|completed|failed)|events__publish|EVENTS_BUS_EMIT/);
   } finally { await rm(emptyGlobal, { recursive: true, force: true }); }
 });
 
@@ -68,4 +68,31 @@ test('Job without PR or localMerge still dispatches only a Task ID and authorita
   assert.match(prompt,/Job: 537\nTask: 476\nExecution: 123e4567/);
   for (const forbidden of ['Job URL: null','GitHub is the source of truth','PRIVATE EPISODE','PRIVATE TASK COMMENT','PRIVATE JOB OBJECTIVE', 'Resolved execution context']) assert.ok(!prompt.includes(forbidden),forbidden);
   assert.ok(prompt.length < 3500);
+});
+
+test('managed worker receives provider instructions only from Job Execution Context and uses actual owning Git root as cwd', async t => {
+  const { mkdir, writeFile }=await import('node:fs/promises');
+  const { execFileSync }=await import('node:child_process');
+  const root=await mkdtemp(join(tmpdir(),'relay-repository-context-'));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const repository=join(root,'repo'); const project=join(repository,'nested-project');
+  await mkdir(project,{recursive:true});
+  execFileSync('git',['init','-q',repository]);
+  await writeFile(join(project,'AGENTS.md'),'# Caller project instructions');
+  const context=await resolveExecutionContext(project,'worker',{
+    workspaceRoot:root,globalRoot:join(root,'global'),
+    providerInstructions:{codex:['Use caller-provided Codex local executor.'],chatgpt:['Use caller-provided remote file tools.']},
+  });
+  assert.equal(context.project.gitRoot,await (await import('node:fs/promises')).realpath(repository));
+  const job={id:'repo-context',repository:'local/repo',title:'Context',objective:'Contract',state:'ACTIVE',tasks:[],plans:[]};
+  const task={id:'work',jobId:'repo-context',kind:'work',agentName:'implementation',state:'QUEUED',adapter:'codex',input:'untrusted',
+    output:{kind:'task_pr'},executionId:'exec-1',attempt:1,maxAttempts:1,dependencies:[]};
+  const codex=await managedWorkerInput(job,task,context);
+  assert.match(codex,new RegExp(`Git repository working directory \\(cwd\\): ${context.project.gitRoot.replaceAll('/','\\/')}`));
+  assert.match(codex,/Use caller-provided Codex local executor/);
+  assert.doesNotMatch(codex,/Use caller-provided remote file tools|Neo MCP|neoy\.qili2\.com|The Z runtime/);
+  const chatgpt=await managedWorkerInput(job,{...task,adapter:'chatgpt'},context);
+  assert.match(chatgpt,/Use caller-provided remote file tools/);
+  assert.doesNotMatch(chatgpt,/Use caller-provided Codex local executor/);
+  assert.match(chatgpt,/\[project\].*AGENTS\.md/);
 });

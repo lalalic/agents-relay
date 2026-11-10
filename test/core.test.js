@@ -955,7 +955,7 @@ test('ChatGPT reviewer uses the same start acknowledgement policy as normal Chat
   const work=task('work','SUCCEEDED'); const store=new InMemoryStore({...job([work]),headSha:'sha-review-timeout'}); const bus=new MemoryEventBus();
   const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};
   const reviewer={adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}};
-  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,reviewer,executionContextRoots:{globalRoot:contextRoot,neoRoot:null}});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,reviewer,executionContextRoots:{globalRoot:contextRoot,sharedRoot:null}});
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); await new Promise(resolve=>setTimeout(resolve,40));
   const created=(await store.load('j')).tasks.find(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName)); assert.equal(created?.state,'QUEUED');
   const source=await activeEventSource(store,created.id);
@@ -982,7 +982,7 @@ test('reviewer start acknowledgement timeout quarantines the unknown ChatGPT sub
   const work=task('work','SUCCEEDED'); const store=new InMemoryStore({...job([work]),headSha:'sha-review-recovery'}); const bus=new MemoryEventBus();
   const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};
   const reviewer={adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}};
-  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:20,reviewer,executionContextRoots:{globalRoot:contextRoot,neoRoot:null}});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:20,reviewer,executionContextRoots:{globalRoot:contextRoot,sharedRoot:null}});
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); await new Promise(resolve=>setTimeout(resolve,100));
   const saved=await store.load('j');
   const review=saved.tasks.find(item=>['reviewer','job-acceptance-reviewer'].includes(item.agentName));
@@ -2101,7 +2101,7 @@ test('final review created after the first dispatch pass is dispatched in the sa
   const adapter = new FakeAdapter();
   const reconciler = managedReconciler(store, {
     owner: 'test', adapters: [adapter], eventBus: bus, maxConcurrent: 1,
-    executionContextRoots: { globalRoot: contextRoot, neoRoot: null },
+    executionContextRoots: { globalRoot: contextRoot, sharedRoot: null },
   });
   const originalEnsureFinalReview = reconciler.ensureFinalReview.bind(reconciler);
   let reviewChecks = 0;

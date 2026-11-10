@@ -14,7 +14,7 @@ export class MemoryEventBus implements EventBus {
 export class NatsEventBus implements EventBus {
   private connection: NatsConnection | null = null;
   private module: NatsModule | null = null;
-  constructor(private readonly url = 'nats://127.0.0.1:4222', private readonly subjectPrefix = 'neo.events.job') { if (!/^[A-Za-z0-9_.-]+$/.test(subjectPrefix)) throw new Error(`Unsafe event subject prefix: ${subjectPrefix}`); }
+  constructor(private readonly url = 'nats://127.0.0.1:4222', private readonly subjectPrefix = 'relay.events.job') { if (!/^[A-Za-z0-9_.-]+$/.test(subjectPrefix)) throw new Error(`Unsafe event subject prefix: ${subjectPrefix}`); }
   private async moduleLoaded(): Promise<NatsModule> { this.module ??= await import('nats'); return this.module; }
   private async client(): Promise<NatsConnection> { const nats = await this.moduleLoaded(); this.connection ??= await nats.connect({ servers: this.url, timeout: 1000 }); return this.connection; }
   async ping(): Promise<void> { await (await this.client()).flush(); }

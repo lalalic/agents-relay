@@ -86,7 +86,7 @@ test('planner rejects new legacy Reviewer roles while preserving immutable head 
   store.headSha = async () => headSha;
   let observedTriggerHeadSha;
   const reconciler = managedReconciler(store, {
-    owner: 'test', adapters: [{ name: 'codex', id: 'review-worker', capabilities: ['model'] }, { name: 'chatgpt', id: 'review-chatgpt', capabilities: ['model', 'chatgpt', 'webhelm'] }], maxConcurrent: 0, executionContextRoots: { globalRoot: contextRoot, neoRoot: null },
+    owner: 'test', adapters: [{ name: 'codex', id: 'review-worker', capabilities: ['model'] }, { name: 'chatgpt', id: 'review-chatgpt', capabilities: ['model', 'chatgpt', 'webhelm'] }], maxConcurrent: 0, executionContextRoots: { globalRoot: contextRoot, sharedRoot: null },
     planner: { plan: async context => { observedTriggerHeadSha = context.trigger.currentHeadSha; return { objective_status: 'in_progress', assessment: 'review required', next_tasks: [{title: 'Implement and verify durable task outputs',
       id: 'immutable-review', input: `Review exactly ${headSha}.`, agentName: 'reviewer', output,
     }] }; } },
@@ -255,7 +255,7 @@ test('Planner contract makes forced cleanup an upfront audit and apply rejection
 test('planner input stays compact with a large execution context and planner history', () => {
   const huge = 'x'.repeat(70000);
   const context = {
-    project: { name:'neo-build-log', path:'/tmp/neo/neo-build-log', workspaceRoot:'/tmp/neo', neoRoot:'/tmp/neo', globalRoot:'/tmp' },
+    project: { name:'neo-build-log', path:'/tmp/neo/neo-build-log', workspaceRoot:'/tmp/neo', sharedRoot:'/tmp/neo', globalRoot:'/tmp' },
     role:'planner',
     instructions:[{path:'/tmp/huge',content:huge}],
     skills:[{name:'huge-skill',description:huge,path:'/tmp/skill'}],
@@ -466,7 +466,7 @@ test('default planner agent runs from the resolved project working directory', a
     await chmod(command, 0o700);
     const planner = new AgentObjectivePlanner(command, agentFile);
     const executionContext = {
-      project: { name: 'project', path: root, workspaceRoot: root, neoRoot: null, globalRoot: root },
+      project: { name: 'project', path: root, workspaceRoot: root, sharedRoot: null, globalRoot: root },
       role: 'planner',
       instructions: [],
       skills: [],

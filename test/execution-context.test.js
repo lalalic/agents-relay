@@ -47,10 +47,11 @@ test('shared execution context resolves precedence, fallbacks, explicit selectio
     const reviewer = await agent(project, 'reviewer', 'review');
     const sharedOnly = await agent(neo, 'shared-only', 'shared');
     await writeFile(sharedOnly, '---\nname: shared-only\ncapabilities: [shared]\ndescription: shared contract\n---\n\nShared base.');
-    await writeFile(join(project, 'agents', 'shared-only.agent.md'), '---\nname: shared-only\nextends: neo/shared-only\ncapabilities: [project]\n---\n\nProject extension.');
+    await writeFile(join(project, 'agents', 'shared-only.agent.md'), '---\nname: shared-only\nextends: shared/shared-only\ncapabilities: [project]\n---\n\nProject extension.');
 
     const context = await resolveExecutionContext(project, 'worker', {
       workspaceRoot: workspace,
+      sharedRoot: neo,
       globalRoot,
       runtimes: [{ adapter: 'codex', capabilities: ['model', 'codex'] }],
     });
@@ -67,11 +68,11 @@ test('shared execution context resolves precedence, fallbacks, explicit selectio
     assert.deepEqual(byAgent.get('duplicate').trustDomains, ['local']);
     assert.deepEqual(byAgent.get('duplicate').delegation, []);
     assert.equal(byAgent.get('reviewer').path, await realpath(reviewer));
-    assert.equal(byAgent.get('neo-private').source, 'neo');
+    assert.equal(byAgent.get('neo-private').source, 'shared');
     assert.equal(byAgent.get('shared-only').source, 'project');
     assert.deepEqual(byAgent.get('shared-only').capabilities, ['project']);
     assert.equal(byAgent.get('shared-only').description, 'shared contract');
-    assert.equal(byAgent.has('global-private'), false);
+    assert.equal(byAgent.get('global-private').source, 'global');
     assert.deepEqual(context.instructions.map(item => item.source), ['global', 'project', 'project']);
     const neoAgents = await realpath(join(neo, 'AGENTS.md'));
     assert.equal(context.instructions.some(item => item.path === neoAgents), false);
@@ -80,11 +81,11 @@ test('shared execution context resolves precedence, fallbacks, explicit selectio
     const inherited = await agentContractPrompt(context, 'shared-only');
     assert.match(inherited, /Shared base\.\s+Project extension\./);
 
-    const selected = await resolveExecutionContext(project, 'reviewer', { workspaceRoot: workspace, globalRoot, explicitSkills: ['neo-only'], explicitAgents: ['reviewer'] });
+    const selected = await resolveExecutionContext(project, 'reviewer', { workspaceRoot: workspace, globalRoot, sharedRoot: neo, explicitSkills: ['neo-only'], explicitAgents: ['reviewer'] });
     assert.deepEqual(selected.skills.map(item => item.name), ['neo-only']);
     assert.deepEqual(selected.agents.map(item => item.name), ['reviewer']);
-    await assert.rejects(resolveExecutionContext(project, 'worker', { workspaceRoot: workspace, globalRoot, explicitSkills: ['missing'] }), /not visible/);
-    await assert.rejects(resolveExecutionContext(project, 'worker', { workspaceRoot: workspace, globalRoot, explicitAgents: ['missing-agent'] }), /not visible/);
+    await assert.rejects(resolveExecutionContext(project, 'worker', { workspaceRoot: workspace, globalRoot, sharedRoot: neo, explicitSkills: ['missing'] }), /not visible/);
+    await assert.rejects(resolveExecutionContext(project, 'worker', { workspaceRoot: workspace, globalRoot, sharedRoot: neo, explicitAgents: ['missing-agent'] }), /not visible/);
     await assert.rejects(resolveExecutionContext(join(root, 'missing-project'), 'worker', { workspaceRoot: workspace, globalRoot }), /Project path not found/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -118,25 +119,28 @@ test('execution context fails clearly when the configured Workspace Root is abse
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('Neo Shared Root is always derived from Workspace Root and ignores NEO_SHARED_ROOT', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'agents-relay-derived-neo-'));
-  const previous = process.env.NEO_SHARED_ROOT;
+test('shared capability root is explicit and never inferred from a source checkout', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'relay-independent-shared-'));
+  const previous = process.env.AGENTS_RELAY_SHARED_ROOT;
   try {
     const workspace = join(root, 'workspace');
-    const neo = join(workspace, 'neo');
-    const alternate = join(root, 'alternate-neo');
+    const shared = join(workspace, 'shared');
     const project = join(workspace, 'project');
-    await Promise.all([mkdir(join(neo, 'agents'), { recursive: true }), mkdir(join(alternate, 'agents'), { recursive: true }), mkdir(project, { recursive: true })]);
-    await agent(neo, 'shared-role');
-    await agent(alternate, 'wrong-role');
-    process.env.NEO_SHARED_ROOT = alternate;
-    const context = await resolveExecutionContext(project, 'worker', { workspaceRoot: workspace });
-    assert.equal(context.project.neoRoot, await realpath(neo));
-    assert.equal(context.agents.some(item => item.name === 'shared-role'), true);
-    assert.equal(context.agents.some(item => item.name === 'wrong-role'), false);
+    await Promise.all([mkdir(join(shared, 'agents'), { recursive: true }), mkdir(project, { recursive: true })]);
+    await agent(shared, 'shared-role');
+    delete process.env.AGENTS_RELAY_SHARED_ROOT;
+    const isolated = await resolveExecutionContext(project, 'worker', { workspaceRoot: workspace });
+    assert.equal(isolated.project.sharedRoot, null);
+    assert.equal(isolated.agents.some(item => item.name === 'shared-role'), false);
+    const explicit = await resolveExecutionContext(project, 'worker', { workspaceRoot: workspace, sharedRoot: shared });
+    assert.equal(explicit.project.sharedRoot, await realpath(shared));
+    assert.equal(explicit.agents.some(item => item.name === 'shared-role'), true);
+    process.env.AGENTS_RELAY_SHARED_ROOT = shared;
+    const configured = await resolveExecutionContext(project, 'worker', { workspaceRoot: workspace });
+    assert.equal(configured.project.sharedRoot, await realpath(shared));
   } finally {
-    if (previous === undefined) delete process.env.NEO_SHARED_ROOT;
-    else process.env.NEO_SHARED_ROOT = previous;
+    if (previous === undefined) delete process.env.AGENTS_RELAY_SHARED_ROOT;
+    else process.env.AGENTS_RELAY_SHARED_ROOT = previous;
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -155,7 +159,7 @@ test('managed worker Prompt lists independent context files in priority order',a
     assert.match(prompt,/^# Role\nYou are implementation/);
     assert.match(prompt,/## Contracts[\s\S]*## Contexts[\s\S]*## Task/);
     assert.match(prompt,/\[project\].*\/project\/AGENTS\.md/);
-    assert.doesNotMatch(prompt,/\[global\].*AGENTS\.md/);
+    assert.match(prompt,/\[global\].*AGENTS\.md/);
     assert.match(prompt,/Job: j\nTask: child\nExecution: nested-exec/);
     assert.doesNotMatch(prompt,/PRIVATE TASK INPUT|github\.com/);
   }finally{await rm(root,{recursive:true,force:true});}
@@ -251,4 +255,39 @@ sections:
 Oops`);
     await assert.rejects(resolveAgentMarkdown('planner',BUNDLED_AGENTS_ROOT,project),/missing in base/);
   } finally { await rm(root,{recursive:true,force:true}); }
+});
+
+test('parent Agents and Skills inherit hierarchically and shortcuts follow the exact resolved Agent source', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'relay-hierarchical-sources-'));
+  try {
+    const workspace = join(root, 'workspace');
+    const shared = join(root, 'shared');
+    const globalRoot = join(root, 'global');
+    const parent = join(workspace, 'projects');
+    const project = join(parent, 'vlog');
+    await Promise.all([mkdir(project, { recursive: true }), mkdir(shared, { recursive: true }), mkdir(globalRoot, { recursive: true })]);
+    await agent(globalRoot, 'global-agent', 'global');
+    await agent(shared, 'shared-agent', 'shared');
+    const inheritedAgent = await agent(parent, 'parent-agent', 'parent');
+    await writeFile(inheritedAgent, '---\nname: parent-agent\n---\nParent agent content');
+    const parentShortcut = join(parent, 'agents', '.shortcut');
+    await mkdir(parentShortcut, { recursive: true });
+    await writeFile(join(parentShortcut, 'parent-agent.agent.mjs'), 'export async function run() { return {status:"COMPLETED",output:{ok:true},artifacts:[]}; }');
+    const originalSharedSkill = await skill(shared, 'shared-skill');
+    const parentSkill = await skill(parent, 'shared-skill');
+    const context = await resolveExecutionContext(project, 'worker', { workspaceRoot: workspace, globalRoot, sharedRoot: shared });
+    assert.equal(context.agents.find(item => item.name === 'parent-agent')?.source, 'parent');
+    assert.equal(context.agents.find(item => item.name === 'global-agent')?.source, 'global');
+    assert.equal(context.agents.find(item => item.name === 'shared-agent')?.source, 'shared');
+    assert.equal(context.skills.find(item => item.name === 'shared-skill')?.path, await realpath(parentSkill));
+    assert.notEqual(context.skills.find(item => item.name === 'shared-skill')?.path, await realpath(originalSharedSkill));
+    const { missingShortcutNodes } = await import('../dist/agent-shortcut.js');
+    assert.deepEqual(await missingShortcutNodes('flowchart TD\nA[agent:parent-agent]', project, shared, workspace, globalRoot), []);
+    assert.deepEqual(await missingShortcutNodes('flowchart TD\nA[agent:global-agent]', project, shared, workspace, globalRoot), ['A']);
+    await agent(project, 'parent-agent', 'local');
+    const local = await resolveExecutionContext(project, 'worker', { workspaceRoot: workspace, globalRoot, sharedRoot: shared });
+    assert.equal(local.agents.find(item => item.name === 'parent-agent')?.source, 'project');
+    // A standalone local Agent cannot inherit a Shortcut from an overridden parent.
+    assert.deepEqual(await missingShortcutNodes('flowchart TD\nA[agent:parent-agent]', project, shared, workspace, globalRoot), ['A']);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

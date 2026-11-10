@@ -11,7 +11,7 @@ test('Relay discovers NATS and API endpoints from events-bus runtime config', as
   const dir=await mkdtemp(path.join(os.tmpdir(),'relay-events-config-'));
   const configPath=path.join(dir,'runtime.json');
   await writeFile(configPath, JSON.stringify({natsUrl:'nats://127.0.0.1:5222',apiUrl:'http://127.0.0.1:5223',subjectPrefix:'test.events'}));
-  const runtime=resolveEventsBusRuntime({NEO_EVENTS_BUS_CONFIG:configPath});
+  const runtime=resolveEventsBusRuntime({EVENTS_BUS_CONFIG:configPath});
   assert.equal(runtime.natsUrl,'nats://127.0.0.1:5222');
   assert.equal(runtime.apiUrl,'http://127.0.0.1:5223');
   assert.equal(runtime.subjectPrefix,'test.events');
@@ -22,7 +22,7 @@ test('Relay history client reads events-bus API and returns newest requested eve
   const server=http.createServer((req,res)=>{const url=new URL(req.url,'http://127.0.0.1'); assert.equal(url.searchParams.get('order'),'desc'); assert.equal(url.searchParams.get('limit'),'2'); res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({job_id:'job1',events:[rows[3],rows[2]],next_cursor:4,order:'desc'}));});
   server.listen(0,'127.0.0.1'); await once(server,'listening'); const address=server.address(); assert.ok(address&&typeof address==='object');
   try {
-    const events=await eventsBusHistory('job1','task1',2,{NEO_EVENTS_API_URL:`http://127.0.0.1:${address.port}`,NEO_EVENTS_BUS_CONFIG:path.join(os.tmpdir(),'missing-events-config.json')});
+    const events=await eventsBusHistory('job1','task1',2,{EVENTS_BUS_API_URL:`http://127.0.0.1:${address.port}`,EVENTS_BUS_CONFIG:path.join(os.tmpdir(),'missing-events-config.json')});
     assert.deepEqual(events.map(e=>e.event_id),['e4','e3']);
   } finally { await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve())); }
 });
@@ -40,8 +40,8 @@ test('Relay fails closed on mismatched or malformed Task history pages', async (
   });
   server.listen(0,'127.0.0.1');await once(server,'listening');
   const addr=server.address(); assert.ok(addr && typeof addr==='object');
-  const env={NEO_EVENTS_API_URL:`http://127.0.0.1:${addr.port}`,
-    NEO_EVENTS_BUS_CONFIG:path.join(os.tmpdir(),'missing-events-config.json')};
+  const env={EVENTS_BUS_API_URL:`http://127.0.0.1:${addr.port}`,
+    EVENTS_BUS_CONFIG:path.join(os.tmpdir(),'missing-events-config.json')};
   try {
     const read=()=>eventsBusHistoryPage('job1','task1',60,{order:'asc',after:0},env);
     assert.deepEqual((await read()).events.map(e=>e.event_id),['e1']);
@@ -75,8 +75,8 @@ test('event history enforces a bounded deadline for a stalled Events Bus connect
   const server=http.createServer((_req,_res)=>{/* deliberate stalled HTTP response */});
   server.listen(0,'127.0.0.1');await once(server,'listening');
   const addr=server.address();assert.ok(addr&&typeof addr==='object');
-  const env={NEO_EVENTS_API_URL:`http://127.0.0.1:${addr.port}`,
-    NEO_EVENTS_BUS_CONFIG:path.join(os.tmpdir(),'missing-events-config.json')};
+  const env={EVENTS_BUS_API_URL:`http://127.0.0.1:${addr.port}`,
+    EVENTS_BUS_CONFIG:path.join(os.tmpdir(),'missing-events-config.json')};
   try{
     await assert.rejects(eventsBusHistoryPage('job1','task1',10,{order:'asc',timeoutMs:100},env),
       /events-bus history unavailable:.*(timed|aborted|Timeout|timeout)/i);
@@ -85,5 +85,28 @@ test('event history enforces a bounded deadline for a stalled Events Bus connect
   }finally{
     server.closeAllConnections();
     await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
+  }
+});
+
+test('saved legacy event subject fails closed unless operator explicitly selects cutover subject', async () => {
+  const root=await mkdtemp(path.join(os.tmpdir(),'relay-events-legacy-subject-'));
+  try {
+    const file=path.join(root,'runtime.json');
+    await writeFile(file,JSON.stringify({natsUrl:'nats://127.0.0.1:4222',subjectPrefix:'neo.events.job'}));
+    assert.throws(()=>resolveEventsBusRuntime({EVENTS_BUS_CONFIG:file}),/coordinate migration to relay.events.job/);
+    const configured=resolveEventsBusRuntime({EVENTS_BUS_CONFIG:file,EVENTS_BUS_SUBJECT_PREFIX:'relay.events.job'});
+    assert.equal(configured.subjectPrefix,'relay.events.job');
+    assert.equal(resolveEventsBusRuntime({EVENTS_BUS_CONFIG:path.join(root,'absent')}).subjectPrefix,'relay.events.job');
+    assert.equal(resolveEventsBusRuntime({EVENTS_BUS_CONFIG:path.join(root,'absent'),NEO_EVENTS_SUBJECT_PREFIX:'ignored.old'}).subjectPrefix,'relay.events.job');
+  } finally { await (await import('node:fs/promises')).rm(root,{recursive:true,force:true}); }
+});
+
+
+test('Relay refuses corrupt Events Bus runtime config rather than silently switching event namespace',async()=>{
+  const dir=await mkdtemp(path.join(os.tmpdir(),'relay-events-corrupt-'));
+  const file=path.join(dir,'runtime.json');
+  for (const payload of ['{corrupt','[]','null']) {
+    await writeFile(file,payload);
+    assert.throws(()=>resolveEventsBusRuntime({EVENTS_BUS_CONFIG:file}),/Invalid Events Bus runtime config/);
   }
 });

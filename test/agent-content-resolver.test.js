@@ -42,8 +42,8 @@ test('whole replacement excludes replaceable base, standalone local and builtin 
 
 test('invalid parents, conflicting sections, unknown headings and unsafe links fail closed', async t => {
   const f=await fixture(t);
-  await f.write('---\nname: planner\nextends: neo/planner\n---\n# Test');
-  await assert.rejects(resolveAgentMarkdown('planner',f.builtin,f.project),/Missing Neo base/);
+  await f.write('---\nname: planner\nextends: shared/planner\n---\n# Test');
+  await assert.rejects(resolveAgentMarkdown('planner',f.builtin,f.project),/Missing shared base/);
   await f.write('---\nname: planner\nextends: relay/planner\nsections:\n  replace: [Planner/B]\n  extend: [Planner/B]\n---\n# Planner\n## B\nChanged');
   await assert.rejects(resolveAgentMarkdown('planner',f.builtin,f.project),/Conflicting/);
   await f.write('---\nname: planner\nextends: relay/planner\nsections:\n  replace: [Planner/Missing]\n---\n# Planner\n## Missing\nChanged');
@@ -71,4 +71,27 @@ test('a merged cached Agent anchors links to each original layer, without import
   assert.ok(result.content.includes('[example](../docs/should-not-rewrite.md)'));
   assert.doesNotMatch(result.content,/BASE CONSTRAINT|PROJECT STAGE CONSTRAINT/);
   assert.equal(result.sources.length,2);
+});
+
+test('project Visioner explicitly extends differently named shared Visioner with source-owned Shortcut fallback', async t => {
+  const f = await fixture(t);
+  const shared = join(f.root, 'shared');
+  await mkdir(join(shared, 'agents', '.shortcut'), { recursive: true });
+  await writeFile(join(shared, 'agents', 'visioner.agent.md'), '---\nname: visioner\n---\n# Shared Visioner\nReusable perception contract');
+  await writeFile(join(shared, 'agents', '.shortcut', 'visioner.agent.mjs'), 'export async function run() {}');
+  await writeFile(join(f.project, 'agents', 'vlog-visioner.agent.md'),
+    '---\nname: vlog-visioner\nextends: shared/visioner\nmode: extend\n---\n# Vlog Visioner\nProject evidence contract');
+  const result = await resolveAgentMarkdown('vlog-visioner', f.builtin, f.project, shared);
+  assert.match(result.content, /Reusable perception contract/);
+  assert.match(result.content, /Project evidence contract/);
+  assert.deepEqual(result.sources.map(source => source.split('/').at(-1)), ['visioner.agent.md', 'vlog-visioner.agent.md']);
+  const { missingShortcutNodes } = await import('../dist/agent-shortcut.js');
+  assert.deepEqual(await missingShortcutNodes('flowchart TD\nA[agent:vlog-visioner]', f.project, shared), []);
+  await assert.rejects(resolveAgentMarkdown('vlog-visioner', f.builtin, f.project), /Missing shared base/);
+  await writeFile(join(f.project, 'agents', 'vlog-visioner.agent.md'),
+    '---\nname: vlog-visioner\nextends: shared/../visioner\n---\nUnsafe');
+  await assert.rejects(resolveAgentMarkdown('vlog-visioner', f.builtin, f.project, shared), /Only extends:/);
+  await writeFile(join(f.project, 'agents', 'vlog-visioner.agent.md'),
+    '---\nname: vlog-visioner\n---\nStandalone');
+  assert.deepEqual(await missingShortcutNodes('flowchart TD\nA[agent:vlog-visioner]', f.project, shared), ['A']);
 });

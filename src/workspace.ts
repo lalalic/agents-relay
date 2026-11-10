@@ -24,23 +24,6 @@ export function defaultWorkspaceRoot(): string {
 
 export async function resolveWorkspaceRoot(explicit?: string): Promise<string> {
   let configured = explicit ?? process.env.AGENTS_RELAY_WORKSPACE_ROOT;
-  if (configured === undefined) {
-    const configPath = process.env.NEO_WORKSPACE_CONFIG ?? join(homedir(), '.config', 'neo', 'workspace.json');
-    let configText: string | undefined;
-    try { configText = await readFile(configPath, 'utf8'); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error(`Cannot read workspace configuration: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    if (configText !== undefined) {
-      let config: unknown;
-      try { config = JSON.parse(configText); }
-      catch { throw new Error(`Invalid workspace configuration at ${configPath}: expected valid JSON`); }
-      if (typeof config !== 'object' || config === null || !('schemaVersion' in config) || config.schemaVersion !== 1 || !('workspaceRoot' in config) || typeof config.workspaceRoot !== 'string' || !isAbsolute(config.workspaceRoot)) {
-        throw new Error(`Invalid workspace configuration at ${configPath}`);
-      }
-      configured = config.workspaceRoot;
-    }
-  }
   // On first launch the default workspace may not exist yet. Only user-selected
   // or saved roots are mandatory existing directories.
   if (configured === undefined) return defaultWorkspaceRoot();
@@ -66,10 +49,10 @@ async function hasGitDirectory(path: string): Promise<boolean> {
 export async function discoverGitRepositories(root: string): Promise<string[]> {
   const found: string[] = [];
   const visit = async (directory: string): Promise<void> => {
-    if (await hasGitDirectory(directory)) { found.push(directory); return; }
+    if (await hasGitDirectory(directory)) found.push(directory);
     let entries;
     try { entries = await readdir(directory, { withFileTypes: true }); } catch { return; }
-    await Promise.all(entries.filter(entry => entry.isDirectory() && entry.name !== 'node_modules' && !entry.name.startsWith('.')).map(entry => visit(join(directory, entry.name))));
+    await Promise.all(entries.filter(entry => entry.isDirectory() && !['node_modules', 'runs', 'dist', 'build', 'vendor', 'coverage', '.worktrees'].includes(entry.name) && !entry.name.startsWith('.')).map(entry => visit(join(directory, entry.name))));
   };
   await visit(resolve(root));
   return found.sort((a, b) => relative(root, a).localeCompare(relative(root, b)));

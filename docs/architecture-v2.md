@@ -3,6 +3,11 @@
 Status: architecture foundation for the incremental v2 migration. This document
 defines the graph contract implemented by the v2 parser, runtime, and dispatcher.
 
+For the separation of Neo.app, Neo Harness, independent Project Git repositories,
+and this generic Relay runtime, see the [Harness-independent Relay boundary](harness-independence.md).
+That spec explicitly marks Neo-specific runtime integrations which still need
+cleanup; the target architecture must not be mistaken for an implemented guarantee.
+
 ## 1. Mental model and boundaries
 
 Agents Relay v2 is an action-driven runtime for durable agent graphs. The

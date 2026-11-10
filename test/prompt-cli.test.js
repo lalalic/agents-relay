@@ -27,9 +27,9 @@ test('prompt CLI prints exact production Planner Builder text for all three adap
       assert.match(stdout,/Job: 537\nTask: plan-2\nExecution: 123e4567/);
       assert.doesNotMatch(stdout,/PROFILE-JOB|PROFILE-PLAN|Job URL: null/);
       assert.match(stdout,/^# Role\nYou are planner/);
-      assert.match(stdout,/## Contexts\nNone required at startup/);
+      assert.match(stdout,/## Contexts\n[\s\S]*\[project\].*AGENTS\.md/);
       assert.doesNotMatch(stdout,/event-contract\.md|events-bus\/references\/protocol\.md/);
-      assert.doesNotMatch(stdout,/\[project\].*AGENTS\.md/);
+      assert.match(stdout,/Git repository working directory \(cwd\):/);
     }
     const {stderr}=await exec(process.execPath,['dist/cli.js','prompt','--file',file,'--id','537','--plan-id','plan-2','--project-path',project,'--adapter','codex'],{cwd:project,timeout:20_000});
     assert.ok(typeof stderr==='string');

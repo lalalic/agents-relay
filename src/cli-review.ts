@@ -9,7 +9,7 @@ export function reviewRequestThreadOverride(args: readonly string[]): string | u
     : undefined;
 }
 
-/** Stable local CLI contract for Neo MCP's single-call interactive preview. */
+/** Stable local CLI contract for a caller-supplied single-call interactive review tool. */
 export async function runInteractiveReviewCommand(argv: string[]): Promise<void> {
   const [action,...args]=argv;
   const commands=['begin','wait','ready','fail','abort'];

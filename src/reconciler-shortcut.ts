@@ -12,7 +12,7 @@ async function executeShortcut(store: DurableStore, options: ReconcileOptions, j
   emit: (event: EventRecord) => Promise<void>): Promise<void> {
   const projectPath = options.projectPathForJob ? await options.projectPathForJob(job, task) : task.routing?.cwd ?? process.cwd();
   const context = await resolveExecutionContext(projectPath, 'worker', options.executionContextRoots ?? {});
-  const result = await runAgentShortcut({ store, job, task, projectPath, neoRoot: context.project.neoRoot ?? undefined, concurrency: options.maxConcurrent,
+  const result = await runAgentShortcut({ store, job, task, projectPath, sharedRoot: context.project.sharedRoot ?? undefined, workspaceRoot: context.project.workspaceRoot, globalRoot: context.project.globalRoot, concurrency: options.maxConcurrent,
     ...(task.state === 'RUNNING' && task.leaseOwner === null ? { resumeReceiptSelected: true as const } : {}) });
   if (result.fallback) { await applyTaskRetryAction(result.task); await store.saveTask(result.task); }
   else if (result.outcome.status === 'FAILED') {
@@ -43,6 +43,14 @@ export async function resumeShortcutEffect(store: DurableStore, options: Reconci
   catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message === 'Shortcut wait claim was fenced by another execution' || message === `Task ${task.id} has an active or unreconciled execution lease`) return;
+    // Two reconcilers may observe the same SQLite receipt. If the first has
+    // already committed the Task's terminal success, the later callback is
+    // a stale wake-up, not an execution failure. Never overwrite the result.
+    if (message === `Job ${jobId} is not runnable (COMPLETED)`) {
+      const current = await store.load(jobId);
+      if (current.state === 'COMPLETED' && current.tasks.some(candidate => candidate.id === task.id && candidate.state === 'SUCCEEDED'))
+        return;
+    }
     throw error;
   }
 }

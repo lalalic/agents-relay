@@ -420,7 +420,7 @@ export class Reconciler extends ReconcilerReviewBase {
     }
     // Project path, output scope, and append-only comments are in the authoritative
     // execution-scoped Task Context. Do not repeat them in the adapter prompt.
-    const workerTask = { ...task, input: baseWorkerInput, routing: task.routing ? { ...task.routing, cwd: executionContext.project.path } : task.routing };
+    const workerTask = { ...task, input: baseWorkerInput, routing: task.routing ? { ...task.routing, cwd: executionContext.project.gitRoot } : task.routing };
     const startAckSetup = (task.adapter === 'chatgpt' || task.adapter === 'z') ? await this.startAck(job.id, task.id, sourceId, Date.now(), this.options.startAckTimeoutMs ?? chatGptStartAckTimeoutMs(task.timeoutMs)) : null;
     const closePolicy = task.adapter === 'chatgpt' || task.adapter === 'z' ? 'after-terminal' : task.chatgptTabClosePolicy ?? this.options.chatgptTabClosePolicy ?? adapter.tabClosePolicy ?? 'after-start';
     const terminalWait = (task.adapter === 'chatgpt' || task.adapter === 'z') && closePolicy === 'after-terminal' ? this.terminalWait(task.id, durableExecutionId, startedAt - 1) : null;

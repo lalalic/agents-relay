@@ -42,7 +42,7 @@ test('task events CLI returns only Task-scoped history through the supported com
     const args=['dist/cli.js','task','events','--file',fixture,'--id','job1',
       '--task-id','t1','--limit','2'];
     const result=await run(process.execPath,args,{cwd:process.cwd(),
-      env:{...process.env, NEO_EVENTS_API_URL:`http://127.0.0.1:${address.port}`},
+      env:{...process.env, EVENTS_BUS_API_URL:`http://127.0.0.1:${address.port}`},
       timeout:10000});
     const output=JSON.parse(result.stdout);
     assert.equal(output.jobId,'job1');
@@ -83,7 +83,7 @@ test('task events CLI pages through full history without skipping or duplicating
     await writeFile(fixture,JSON.stringify({id:'job1',repository:'example/repo',title:'test',objective:'test',state:'ACTIVE',
       prNumber:0,tasks:[{id:'t1',jobId:'job1',state:'FAILED',kind:'work',title:'failed',dependencies:[],output:{kind:'task_pr'},attempt:1,maxAttempts:1}],plans:[]}));
     const base=['dist/cli.js','task','events','--file',fixture,'--id','job1','--task-id','t1','--limit','60','--order','asc'];
-    const env={...process.env,NEO_EVENTS_API_URL:`http://127.0.0.1:${addr.port}`};
+    const env={...process.env,EVENTS_BUS_API_URL:`http://127.0.0.1:${addr.port}`};
     let after=0;const all=[];
     for(let i=0;i<4;i++){
       const {stdout}=await run(process.execPath,[...base,'--after',String(after)],{cwd:process.cwd(),env,timeout:10000});
@@ -180,7 +180,7 @@ test('read-only Task show/comments/events resolve a real isolated Job by ID with
     const beforeRead=readProjection();
     assert.equal(beforeRead.status,'processing');
     const env={...process.env,AGENTS_RELAY_STORE_DIR:join(dir,'stores'),
-      NEO_EVENTS_API_URL:`http://127.0.0.1:${addr.port}`};
+      EVENTS_BUS_API_URL:`http://127.0.0.1:${addr.port}`};
     const args=['dist/cli.js','task'];
     const runAction=async action=>(await run(process.execPath,
       [...args,action,'--id','job-id-only','--task-id','t1'],

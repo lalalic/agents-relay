@@ -79,7 +79,8 @@ export async function runShortcutJobCommand(args: string[], id: string, repo: st
   const workspaceRoot = await resolveWorkspaceRoot(arg(args, '--workspace-root') || undefined);
   const projectRoot = await resolveManagedProjectPath(noGitHubMode(args) ? undefined : repo, arg(args, '--project-path') || loaded.job.projectPath || '', workspaceRoot);
   const projectPath = resolveRepositoryProjectPath(projectRoot, loaded.job.projectPath);
-  const missing = await missingShortcutNodes(task.agentGraph!, projectPath, arg(args, '--neo-root') || join(workspaceRoot, 'neo'));
+  const globalRoot = arg(args, '--global-root') || process.env.AGENTS_HOME || undefined;
+  const missing = await missingShortcutNodes(task.agentGraph!, projectPath, arg(args, '--shared-root') || process.env.AGENTS_RELAY_SHARED_ROOT || undefined, workspaceRoot, globalRoot);
   const previous = task.result?.data?.shortcut as { workerFallback?:boolean } | undefined;
   if (previous?.workerFallback === true)
     throw new Error('Legacy whole-Graph Worker fallback is not compatible with per-node Shortcut execution; retain its original recovery ownership');
@@ -91,7 +92,8 @@ export async function runShortcutJobCommand(args: string[], id: string, repo: st
     const unwatch=workerReconciler ? await workerReconciler.watch(id) : undefined;
     try {
       const result = await runAgentShortcut({ store: loaded.store, job: loaded.job, task, projectPath,
-        neoRoot: arg(args, '--neo-root') || join(workspaceRoot, 'neo'),
+        sharedRoot: arg(args, '--shared-root') || process.env.AGENTS_RELAY_SHARED_ROOT || undefined,
+        workspaceRoot, globalRoot,
         concurrency: integerArg(args, '--concurrency', 4), signal:controller.signal,
         ...(resumeReceiptSelected?{resumeReceiptSelected:true as const}:{}),
         ...(missing.length ? { runModelNode: node => {

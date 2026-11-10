@@ -48,7 +48,7 @@ async function fixture(t,id) {
   };
   const run=(...args)=>spawnSync(process.execPath,[join(root,'dist','cli.js'),'job','run','--mode','shortcut',
     '--id',jobId,'--repo','local/shortcut-test','--no-github','--store-dir',storeDir,
-    '--task-id','initial','--project-path',project,'--neo-root',neo,...args],
+    '--task-id','initial','--project-path',project,'--shared-root',neo,...args],
     {encoding:'utf8',timeout:10000,env:{...process.env,AGENTS_RELAY_STORE_DIR:storeDir,AGENTS_RELAY_NO_GITHUB:'1'}});
   const receipt=(...args)=>spawnSync(process.execPath,[join(root,'dist','cli.js'),'job','shortcut-receipt',
     '--id',jobId,'--repo','local/shortcut-test','--no-github','--store-dir',storeDir,

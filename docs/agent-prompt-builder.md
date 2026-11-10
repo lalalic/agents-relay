@@ -66,8 +66,8 @@ terminal state. `prompt` inspection never launches a model or alters state.
 | Adapter | Runtime bootstrap | Task Prompt transport |
 | --- | --- | --- |
 | Codex | Execution cwd is resolved project; Codex's local instructions plus explicit Context files | Exact Action output as CLI initial prompt |
-| ChatGPT Web | Account Default Instructions initialize Neo/XChat harness automatically; no extra per-Task Neo bootstrap | Exact Action output as a regular User turn, readable through Neo MCP |
-| Z Web | Transport issues a short-lived OAuth token and uses the canonical interactive Z bootstrap URL, then Neo MCP. A real `task.started` must be accepted before the Task | Exact Action output appended *unaltered* after runtime bootstrap, via Z WebHelm |
+| ChatGPT Web | Caller-configured harness initializes instructions; Relay does not prescribe a bootstrap | Exact Action output as a regular User turn, readable through configured file tools |
+| Z Web | Transport issues a short-lived OAuth token and uses the canonical interactive Z bootstrap URL, then configured MCP tools. A real `task.started` must be accepted before the Task | Exact Action output appended *unaltered* after runtime bootstrap, via Z WebHelm |
 
 Each worker uses the **same CLI version as the Skill pinned by its Prompt**:
 resolve `../../dist/cli.js` from `skills/agents-relay/SKILL.md` and invoke
@@ -79,9 +79,8 @@ unaltered and keeps idempotency/attachment metadata outside user-message
 prose. This byte-for-byte transport check is part of regression tests.
 
 Z's dynamic OAuth credential is a **separate runtime-only secret**, not part
-of the reusable Task Prompt. The print-only CLI does not disclose it. Z uses
-the existing `https://neoy.qili2.com/files/z-chat/bootstrap.md` entry, rather
-than carrying another full copy of global rules or Skill catalogs.
+of the reusable Task Prompt. The print-only CLI does not disclose it. The Z adapter uses a caller-configured OAuth origin and harness bootstrap;
+Relay never supplies a fixed service endpoint or master credential path.
 
 Planner dispatch is currently Codex-only; `prompt --plan-id ... --adapter
 chatgpt|z` produces a corresponding **Task Prompt preview**, not a working
@@ -122,7 +121,7 @@ The L4 project suite targets the actual Neo Master `neo/vlog` project, not a
 fabricated Vlog Agent; override `RELAY_L4_VLOG_PROJECT` for a valid project.
 L4 requires access to that project, so it is a **separate verification gate**
 from portable unit tests and does not run on generic GitHub runners without
-the Neo workspace.
+the configured Relay browser workspace.
 
 ## Validation
 

@@ -11,7 +11,7 @@ test('Z worker OAuth issues only short-lived access credential and revokes refre
     stages.push(target.pathname);
     if (target.pathname === '/register') {
       const data = JSON.parse(init.body);
-      assert.deepEqual(data.redirect_uris, ['http://127.0.0.1:8765/neo/oauth/callback']);
+      assert.deepEqual(data.redirect_uris, ['http://127.0.0.1:8765/agents-relay/oauth/callback']);
       return Response.json({ client_id: 'neo-dcr-test' }, { status: 201 });
     }
     if (target.pathname === '/authorize' && init.method === 'GET') {
@@ -25,7 +25,7 @@ test('Z worker OAuth issues only short-lived access credential and revokes refre
       assert.equal(form.get('rid'), 'test-request-id');
       return new Response(null, {
         status: 302,
-        headers: { location: 'http://127.0.0.1:8765/neo/oauth/callback?' +
+        headers: { location: 'http://127.0.0.1:8765/agents-relay/oauth/callback?' +
           new URLSearchParams({ code: 'auth-code', state, iss: origin }) },
       });
     }
@@ -52,7 +52,7 @@ test('Z worker OAuth fails closed without an operator credential', async () => {
     origin: 'https://test.neoy.example',
     operatorToken: '',
     fetcher: async () => { throw new Error('Network request must not occur'); },
-  }), /operator token file/);
+  }), /operator token/);
 });
 
 test('Z worker OAuth rejects untrusted origins', async () => {

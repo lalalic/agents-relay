@@ -1,14 +1,15 @@
-import { resolveAgentMarkdown } from './agent-content-resolver.js';
+import { agentSourceLayers, resolveAgentMarkdown } from './agent-content-resolver.js';
 import { resolveWorkspaceRoot } from './workspace.js';
 import { access, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { Dirent } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { AgentRegistration } from './types.js';
 
 export type ExecutionRole = 'orchestrator' | 'planner' | 'reviewer' | 'troubleshooter' | 'worker' | 'nested-worker';
-export type ContextSource = 'project' | 'neo' | 'global' | 'builtin' | 'registry' | 'runtime';
+export type ContextSource = 'project' | 'parent' | 'shared' | 'global' | 'builtin' | 'registry' | 'runtime';
 
 export type ResolvedInstruction = { path: string; source: Exclude<ContextSource, 'builtin' | 'registry' | 'runtime'> };
 export type ResolvedSkill = { name: string; path: string; source: Exclude<ContextSource, 'builtin' | 'registry' | 'runtime'>; description?: string };
@@ -26,8 +27,9 @@ export type ResolvedAgent = {
 };
 export type ResolvedRuntime = { name: string; id?: string; capabilities: string[]; source: 'runtime' };
 export type ExecutionContext = {
-  project: { name: string; path: string; workspaceRoot: string; neoRoot: string | null; globalRoot: string };
+  project: { name: string; path: string; gitRoot: string; workspaceRoot: string; sharedRoot: string | null; globalRoot: string };
   role: ExecutionRole;
+  providerInstructions?: ProviderInstructions;
   instructions: ResolvedInstruction[];
   skills: ResolvedSkill[];
   agents: ResolvedAgent[];
@@ -35,7 +37,8 @@ export type ExecutionContext = {
   delegation: { mode: 'relay-child-task'; parentTaskIdRequired: boolean };
 };
 
-export type ExecutionContextRoots = { workspaceRoot?: string; globalRoot?: string };
+export type ProviderInstructions = Partial<Record<'codex' | 'chatgpt' | 'z', readonly string[]>>;
+export type ExecutionContextRoots = { workspaceRoot?: string; globalRoot?: string; sharedRoot?: string | null; providerInstructions?: ProviderInstructions };
 
 export type ExecutionContextOptions = ExecutionContextRoots & {
   explicitSkills?: readonly string[];
@@ -84,7 +87,7 @@ async function metadata(path: string): Promise<{ fields: Frontmatter; content: s
   return { fields: parseFrontmatter(content), content };
 }
 
-async function instructionPaths(projectPath: string, workspaceRoot: string, neoRoot: string | null, globalRoot: string): Promise<ResolvedInstruction[]> {
+async function instructionPaths(projectPath: string, workspaceRoot: string, sharedRoot: string | null, globalRoot: string): Promise<ResolvedInstruction[]> {
   const found: ResolvedInstruction[] = [];
   const add = async (path: string, source: ResolvedInstruction['source']): Promise<void> => {
     if (await exists(path)) { const concrete = await realpath(path); if (!found.some(item => item.path === concrete)) found.push({ path: concrete, source }); }
@@ -93,10 +96,10 @@ async function instructionPaths(projectPath: string, workspaceRoot: string, neoR
   if (isWithin(projectPath, workspaceRoot)) {
     const segments = relative(workspaceRoot, projectPath).split(sep).filter(Boolean);
     let cursor = workspaceRoot;
-    await add(join(cursor, 'AGENTS.md'), neoRoot && isWithin(cursor, neoRoot) ? 'neo' : 'project');
+    await add(join(cursor, 'AGENTS.md'), sharedRoot && isWithin(cursor, sharedRoot) ? 'shared' : 'project');
     for (const segment of segments) {
       cursor = join(cursor, segment);
-      const source: ResolvedInstruction['source'] = neoRoot && isWithin(cursor, neoRoot) && !isWithin(cursor, projectPath) ? 'neo' : 'project';
+      const source: ResolvedInstruction['source'] = sharedRoot && isWithin(cursor, sharedRoot) && !isWithin(cursor, projectPath) ? 'shared' : 'project';
       await add(join(cursor, 'AGENTS.md'), source);
     }
   } else {
@@ -165,17 +168,18 @@ export async function resolveExecutionContext(projectPath: string, role: Executi
   if (!projectPath) throw new Error('projectPath is required');
   const project = await realpath(resolve(projectPath)).catch(() => { throw new Error(`Project path not found: ${projectPath}`); });
   if (!await directory(project)) throw new Error(`Project path is not a directory: ${projectPath}`);
+  const git = spawnSync('git', ['-C', project, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 5000 });
+  const gitRoot = git.status === 0 && git.stdout?.trim() ? await realpath(git.stdout.trim()) : project;
   const workspaceRoot = await resolveWorkspaceRoot(options.workspaceRoot);
-  const neoCandidate = join(workspaceRoot, 'neo');
-  const neoRoot = await directory(neoCandidate) ? await realpath(neoCandidate) : neoCandidate;
+  const configuredSharedRoot = options.sharedRoot !== undefined ? options.sharedRoot : process.env.AGENTS_RELAY_SHARED_ROOT;
+  const sharedRoot = configuredSharedRoot ? await realpath(resolve(configuredSharedRoot)).catch(() => {
+    throw new Error(`Shared capability root does not exist: ${configuredSharedRoot}`);
+  }) : null;
+  if (sharedRoot && !await directory(sharedRoot)) throw new Error(`Shared capability root is not a directory: ${sharedRoot}`);
   const globalCandidate = configuredGlobalRoot(options.globalRoot);
   const globalRoot = await realpath(globalCandidate).catch(() => globalCandidate);
 
-  const layerRoots: Array<{ root: string; source: ResolvedSkill['source'] }> = [
-    { root: globalRoot, source: 'global' },
-    ...(neoRoot ? [{ root: neoRoot, source: 'neo' as const }] : []),
-    { root: project, source: 'project' },
-  ];
+  const layerRoots = agentSourceLayers(project, { globalRoot, sharedRoot, workspaceRoot });
   const uniqueLayers = layerRoots.filter((layer, index, list) => list.findIndex(item => resolve(item.root) === resolve(layer.root)) === index);
 
   const skillMap = new Map<string, ResolvedSkill>();
@@ -189,15 +193,17 @@ export async function resolveExecutionContext(projectPath: string, role: Executi
 
   const agentMap = new Map<string, ResolvedAgent>();
   const agentNames = new Set<string>();
-  for (const [root, source] of [[dirname(BUNDLED_AGENTS_ROOT), 'builtin'], [neoRoot, 'neo'], [project, 'project']] as const) {
-    for (const agent of await agentFiles(root, source, [])) agentNames.add(agent.name);
+  for (const agent of await agentFiles(dirname(BUNDLED_AGENTS_ROOT), 'builtin', [])) agentNames.add(agent.name);
+  for (const layer of layerRoots) {
+    const matchingSkills = skillsByLayer.get(layer.root) ?? [];
+    for (const agent of await agentFiles(layer.root, layer.source, matchingSkills)) agentNames.add(agent.name);
   }
   for (const name of agentNames) {
-    const resolved = await resolveAgentMarkdown(name, BUNDLED_AGENTS_ROOT, project, neoRoot);
+    const resolved = await resolveAgentMarkdown(name, BUNDLED_AGENTS_ROOT, project, sharedRoot, layerRoots);
     const fields = resolved.metadata;
     const sourcePath = resolved.sources[resolved.sources.length - 1];
-    const source: ResolvedAgent['source'] = sourcePath?.startsWith(project + '/') ? 'project'
-      : sourcePath?.startsWith(neoRoot + '/') ? 'neo' : 'builtin';
+    const source: ResolvedAgent['source'] = [...layerRoots].sort((a, b) => b.root.length - a.root.length).find(layer =>
+      sourcePath && isWithin(sourcePath, layer.root))?.source ?? 'builtin';
     agentMap.set(name, {
       name, path: sourcePath, source,
       description: fields.description,
@@ -225,9 +231,10 @@ export async function resolveExecutionContext(projectPath: string, role: Executi
   const agents = selectByName([...agentMap.values()].sort((a, b) => a.name.localeCompare(b.name)), options.explicitAgents, 'agent');
 
   return {
-    project: { name: basename(project), path: project, workspaceRoot, neoRoot, globalRoot },
+    project: { name: basename(project), path: project, gitRoot, workspaceRoot, sharedRoot, globalRoot },
+    providerInstructions: options.providerInstructions,
     role,
-    instructions: await instructionPaths(project, workspaceRoot, neoRoot, globalRoot),
+    instructions: await instructionPaths(project, workspaceRoot, sharedRoot, globalRoot),
     skills,
     agents,
     runtimes: (options.runtimes ?? []).map(runtime => ({ name: runtime.name ?? runtime.adapter ?? 'unknown', id: runtime.id, capabilities: [...runtime.capabilities], source: 'runtime' })),
@@ -239,7 +246,8 @@ export async function resolveAgentContract(context: ExecutionContext, agentName:
   const agent = context.agents.find(candidate => candidate.name === agentName);
   if (!agent) throw new Error(`Agent ${agentName} is not visible in the resolved execution context`);
   if (!agent.path) throw new Error(`Agent ${agentName} has no readable Markdown contract`);
-  const resolved = await resolveAgentMarkdown(agentName, BUNDLED_AGENTS_ROOT, context.project.path, context.project.neoRoot);
+  const resolved = await resolveAgentMarkdown(agentName, BUNDLED_AGENTS_ROOT, context.project.path,
+    context.project.sharedRoot, agentSourceLayers(context.project.path, context.project));
   const definition = resolved.content;
   if (!definition.trim()) throw new Error(`Agent ${agentName} Markdown contract is empty`);
   return { agent, definition, hash: resolved.hash, sources: resolved.sources };
@@ -282,7 +290,7 @@ Project path: ${context.project.path}
 Instructions (read in listed order; later/project-local instructions override earlier shared defaults):
 ${instructions}
 
-Visible skills (already de-duplicated with project-local > Neo shared > global precedence):
+Visible skills (already de-duplicated with project-local > shared > global precedence):
 ${skills}
 
 Visible agents (Relay built-in + Job context only; registered agents may supplement):

@@ -45,7 +45,7 @@ try{
 
 let token;
 const mcp=async(method,params)=>{
- const response=await fetch((process.env.AGENTS_RELAY_Z_NEO_ORIGIN ?? 'https://neoy.qili2.com').replace(/\/$/,'')+'/mcp',{
+ const response=await fetch(String(process.env.AGENTS_RELAY_Z_OAUTH_ORIGIN ?? '').replace(/\/$/,'')+'/mcp',{
   method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json',Accept:'application/json, text/event-stream'},
   body:JSON.stringify({jsonrpc:'2.0',id:31,method,params}),signal:AbortSignal.timeout(15000)});
  const raw=await response.text();const line=raw.split(/\r?\n/).find(x=>x.startsWith('data: '));const data=JSON.parse(line?line.slice(6):raw);

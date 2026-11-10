@@ -6,7 +6,7 @@ import { dirname, join, resolve as resolvePath } from 'node:path';
 import { Job, Plan, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, PlanTrigger, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements, ReviewTaskMetadata, TaskResolutionProposal, DependencyValidity } from './types.js';
 import { unresolvedTask } from './workflow/task-resolution.js';
 import { ExecutionContext, BUNDLED_AGENTS_ROOT } from './execution-context.js';
-import { resolveAgentMarkdown } from './agent-content-resolver.js';
+import { agentSourceLayers, resolveAgentMarkdown } from './agent-content-resolver.js';
 import { parseAgentGraph, validateAgentSelection } from './agent-graph.js';
 import { dispatchPlannerTrigger } from './workflow/planner-trigger-v2.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
@@ -453,10 +453,11 @@ function parsePlannerAgentMessage(line: string): string | undefined {
 }
 export async function buildPlannerExecutionPrompt(context: PlannerContext, agentFile = DEFAULT_PLANNER_AGENT, adapter: PromptAdapter = 'codex'): Promise<string> {
   if (!context.planExecution) throw new Error('Planner execution is missing its durable Plan and execution identity');
-  const ctx = context.executionContext, selected = ctx ? await resolveAgentMarkdown('planner', BUNDLED_AGENTS_ROOT, ctx.project.path, ctx.project.neoRoot) : undefined;
+  const ctx = context.executionContext, selected = ctx ? await resolveAgentMarkdown('planner', BUNDLED_AGENTS_ROOT, ctx.project.path, ctx.project.sharedRoot, agentSourceLayers(ctx.project.path, ctx.project)) : undefined;
   return buildRelayWorkPrompt({ agentName:'planner', agentContent:selected?.content ?? await readFile(agentFile,'utf8'),adapter,
     contracts:[join(dirname(fileURLToPath(import.meta.url)), '..', 'skills/agents-relay/contracts/task-job-contract.md')],
-    contexts:[],projectPath:ctx?.project.path ?? process.cwd(),skillPath:join(dirname(fileURLToPath(import.meta.url)), '..', 'skills/agents-relay/SKILL.md'),jobId:context.job.id,
+    contexts:ctx?.instructions.filter(item => item.path.endsWith('/AGENTS.md')) ?? [],
+    projectPath:ctx?.project.gitRoot ?? ctx?.project.path ?? process.cwd(),providerInstructions:ctx?.providerInstructions?.[adapter],skillPath:join(dirname(fileURLToPath(import.meta.url)), '..', 'skills/agents-relay/SKILL.md'),jobId:context.job.id,
     taskId:context.planExecution.planId,executionId:context.planExecution.executionId,
   });
 }
@@ -467,7 +468,7 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
     const prompt = await buildPlannerExecutionPrompt(context, this.agentFile);
     const runAgent = (input: string): Promise<string> => new Promise<string>((resolve, reject) => {
       // Plan apply writes unified relay.sqlite beside AGENTS_RELAY_STORE_DIR.
-      const child = spawnOwnedProcess(this.command, buildPlannerCodexArgs(relayStoreDirectory(), input), { invocation: 'planner.agent', signal, correlation: { jobId: context.job.id }, spawn: { cwd: context.executionContext?.project.path, stdio: ['ignore', 'pipe', 'pipe'] } });
+      const child = spawnOwnedProcess(this.command, buildPlannerCodexArgs(relayStoreDirectory(), input), { invocation: 'planner.agent', signal, correlation: { jobId: context.job.id }, spawn: { cwd: context.executionContext?.project.gitRoot ?? context.executionContext?.project.path, stdio: ['ignore', 'pipe', 'pipe'] } });
       let stdoutBuffer = '', finalMessage = '', stderrTail = '';
       const consume = (line: string): void => {
         const message = parsePlannerAgentMessage(line); if (message) finalMessage = message;

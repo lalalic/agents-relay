@@ -49,8 +49,8 @@ for(const adapter of ['codex','chatgpt','z'])test(`Graph Action and prompt CLI a
     if(adapter==='z'){
       const runtime=zBootstrap('RUNTIME_SECRET_PLACEHOLDER',actual);
       assert.match(runtime,/^# Role\n/);
-      assert.match(runtime,/## Bootstrap\nNeo OAuth access token: RUNTIME_SECRET_PLACEHOLDER/);
-      assert.equal(runtime.replace('Neo OAuth access token: RUNTIME_SECRET_PLACEHOLDER\n',''),actual);
+      assert.match(runtime,/## Bootstrap\nOAuth access token: RUNTIME_SECRET_PLACEHOLDER/);
+      assert.equal(runtime.replace('OAuth access token: RUNTIME_SECRET_PLACEHOLDER\n',''),actual);
       assert.doesNotMatch(runtime,/Z\.ai Full-Stack worker|FIRST ACTION:|\(sha256:/);
     }
 

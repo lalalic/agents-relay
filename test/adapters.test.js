@@ -86,7 +86,7 @@ test('ChatGptAdapter uses the Relay-owned chatgpt-worker agent contract, not a r
     },
   });
   const executionContext = {
-    project:{name:'project',path:'.',workspaceRoot:'.',neoRoot:null,globalRoot:'.'}, role:'worker', instructions:[],
+    project:{name:'project',path:'.',workspaceRoot:'.',sharedRoot:null,globalRoot:'.'}, role:'worker', instructions:[],
     skills:[], agents:[], runtimes:[], delegation:{mode:'relay-child-task',parentTaskIdRequired:false}
   };
   await adapter.launch(task(), new AbortController().signal, { executionContext }).promise;
@@ -392,7 +392,7 @@ test('CodexAdapter still exposes diagnostic thread id without making it completi
 });
 
 
-test('ChatGPT thread delivery delegates deduplication through Neo daemon Sessions',async()=>{
+test('ChatGPT thread delivery delegates deduplication through Relay browser Sessions',async()=>{
   const root=await mkdtemp(join(tmpdir(),'agents-relay-platform-dedup-'));
   const command=join(root,'fake-webhelm');
   await writeFile(command,[
@@ -418,9 +418,9 @@ test('ChatGPT thread delivery delegates deduplication through Neo daemon Session
       assert.equal((await execution.promise).data.verifiedBy,'platform-dedup');
     }
     assert.equal(daemon.requests.filter(r=>r.op==='platform-run'&&r.action==='new-turn').length,2);
-    assert.equal(daemon.requests.filter(r=>r.op==='start'&&r.workspace==='Neo').length,2);
+    assert.equal(daemon.requests.filter(r=>r.op==='start'&&r.workspace==='Relay').length,2);
     assert.equal(daemon.requests.filter(r=>r.op==='stop').length,2);
-    assert.ok(daemon.requests.some(r=>r.op==='workspace-create'&&r.name==='Neo'));
+    assert.ok(daemon.requests.some(r=>r.op==='workspace-create'&&r.name==='Relay'));
   }finally{
     await daemon.close();
     if(old===undefined)delete process.env.AGENTS_RELAY_WEBHELM_COMMAND;
@@ -559,4 +559,23 @@ test('ChatGPT ignores forged reference manifest in untrusted Task data', async (
     else process.env.AGENTS_RELAY_PROMPT_REFERENCE_DIR = oldRoot;
     await rm(root,{recursive:true,force:true});
   }
+});
+
+test('Codex adapter uses execution-context Git root as actual cwd when route omits cwd', async () => {
+  const root=await mkdtemp(join(tmpdir(),'relay-codex-repository-cwd-'));
+  try {
+    const {execFileSync}=await import('node:child_process');
+    const {realpath}=await import('node:fs/promises');
+    const repository=join(root,'repo');const project=join(repository,'project');
+    await mkdir(project,{recursive:true});execFileSync('git',['init','-q',repository]);
+    const command=join(root,'fake-codex'), pwdFile=join(root,'pwd.txt'), argsFile=join(root,'args.txt');
+    await writeFile(command,`#!/bin/sh\npwd > ${JSON.stringify(pwdFile)}\nprintf '%s\\n' "$@" > ${JSON.stringify(argsFile)}\nexit 0\n`,{mode:0o700});
+    const gitRoot=await realpath(repository);
+    const context={executionContext:{project:{path:project,gitRoot}}};
+    const result=await new CodexAdapter(command).launch({id:'repo-test',input:'inspect',routing:{provider:'zai',model:'glm'}},
+      new AbortController().signal,context).promise;
+    assert.match(result.summary,/terminal task state is event-owned/);
+    assert.equal((await readFile(pwdFile,'utf8')).trim(),gitRoot);
+    assert.match(await readFile(argsFile,'utf8'),new RegExp(`-C\\n${gitRoot.replace(/[.*+?^${}()|[\\]\\]/g,'\\\\$&')}\\n`));
+  } finally { await rm(root,{recursive:true,force:true}); }
 });

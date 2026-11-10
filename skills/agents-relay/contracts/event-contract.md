@@ -4,13 +4,13 @@
 
 ## Execution event source
 
-The Common Events Bus protocol (`<workspace>/neo/skills/events-bus/references/protocol.md`) owns the public `events.publish` input format. Its `source` field is a **string** identifying the exact current Relay execution:
+The caller-configured Events Bus protocol owns the public event-publish transport format. Relay's contract specifies only Task lifecycle meaning and execution identity. Its `source` field is a **string** identifying the exact current Relay execution:
 
 ```text
 source = "job/<job-id>/task/<task-id>/execution/<execution-id>"
 ```
 
-When calling the Neo MCP command facade, pass `command: "publish"` and nest `type`, `source`, and `data` under `args`. Do not pass an object such as `{ "source": { "id": "..." } }`; `source.id` belongs only to the internal Events Bus envelope.
+When using a provider's event command facade, follow its configured schema and preserve the exact `{type, source, data}` contract. Do not invent an object such as `{ "source": { "id": "..." } }`; `source.id` belongs only to an internal Events Bus envelope.
 
 Relay supplies the complete source string in the managed Task context. Agents must copy it unchanged; they must not infer a Job/Task ID, generate an execution ID, or reuse an identity from a previous attempt. Transport acceptance alone does not establish that Relay accepted the event for the current execution.
 
@@ -44,14 +44,13 @@ A fix child reports its **own** correlated completion after verified repair. Dow
 
 ## Interactive Task suspension
 
-For **Neo-hosted Markcut Preview**, the Worker calls the federated `markcut.preview`
-tool **once** with a video `path` and its authoritative
-`relay: {jobId, taskId, executionId}` context. The Neo MCP wrapper obtains a
-Relay-owned Invocation and Event Template, starts the independent Markcut
-compiler, registers the Task wait, and sends the iPhone notification only after
-the immutable preview is ready. The Worker does **not** publish a separate
-waiting event or manage an Invocation ID. This contract applies only to Neo's
-wrapped tool; standalone Markcut has no Relay or Notification dependency.
+For a **host-wrapped interactive review tool**, the Worker supplies the
+reviewable output path and the authoritative `relay: {jobId, taskId,
+executionId}` binding as required by that tool's caller-provided contract.
+The host owns the Invocation, immutable review material, wait binding and
+notification delivery. The Worker never fabricates the Invocation ID or
+publishes an additional waiting/terminal event when the host manages handoff.
+No particular review product, MCP server or mobile client is required.
 
 For other host adapters, after binding an Invocation a RUNNING Worker waiting
 for human input publishes `task.interactive_waiting` with its exact
@@ -67,12 +66,12 @@ another Task. Cancellation remains legal while awaiting a decision.
 The invocation record holds immutable request/revision identity and the
 decision outcome. Its status is not the authority for the Task execution
 lifecycle; Task.state is. The older overloaded DRAFT waiting snapshots
-are normalized to AWAITING_DECISION when the SQLite store starts.
+are normalized to AWAITING_DECISION during Relay durable-state initialization.
 Do not use `task.blocked` to suspend an interactive Task.
 
 ## Generic interactive decision event (human review)
 
-**Canonical type:** `task.interactive_decision`. This is a human decision for an in-progress Task (video preview, document review, image approval, etc.), **not** an Implementation terminal event or a Job Final Reviewer verdict. A UI such as Markcut is a generic publisher: it receives a caller-supplied template and fills only the declared review-result fields. It must not invent Task/Execution/source identity or a new Relay-specific event type.
+**Canonical type:** `task.interactive_decision`. This is a human decision for an in-progress Task (video preview, document review, image approval, etc.), **not** an Implementation terminal event or a Job Final Reviewer verdict. A host review UI is a generic publisher: it receives a caller-supplied template and fills only the declared review-result fields. It must not invent Task/Execution/source identity or a new Relay-specific event type.
 
 **Producer event template**, based on the exact managed Task execution context (illustrative identities only):
 
@@ -91,7 +90,7 @@ Do not use `task.blocked` to suspend an interactive Task.
 }
 ```
 
-The caller provides this as `markcut.preview({path, review:{delivery:"event", eventTemplate}})` or the same metadata in a Neo Mobile review request. `source` and the four template identity fields are immutable. They must match the current Job/Task/Execution. An invocation ID is a stable unique identifier for the human review request; it is not a video revision, a new Task, or a generated execution ID.
+The caller supplies the review action and its immutable event template, for example `{path, review:{delivery:"event", eventTemplate}}`. `source` and the four template identity fields are immutable. They must match the current Job/Task/Execution. An invocation ID is a stable unique identifier for the human review request; it is not a video revision, a new Task, or a generated execution ID.
 
 **On human Submit**, the Preview UI fills the following fields under `data.interactive`, preserving every caller-owned field:
 
@@ -106,14 +105,14 @@ The caller provides this as `markcut.preview({path, review:{delivery:"event", ev
 | `previewId`, `requestId` | Optional/required respectively in event-only mode; bind the original review request. |
 | `idempotencyKey` | **Required** in event-only mode, stable across delivery retries. |
 
-For a human clicking Approve or Request Changes, **one submitted decision generates one event**. Editing individual comments does not publish events. The Preview and Neo Mobile use the same field paths. Events Bus still accepts `{type,source,data}`; via Neo MCP `events`, call `{command:"publish",args:{type,source,data}}`. A successful publish is only a transport receipt, **not** an accepted Relay decision or a completed revision.
+For a human clicking Approve or Request Changes, **one submitted decision generates one event**. Editing individual comments does not publish events. All review clients use the same field paths. Events Bus still accepts `{type,source,data}` through the caller's configured publisher. A successful publish is only a transport receipt, **not** an accepted Relay decision or a completed revision.
 
 **Relay admission and Graph semantics:**
 
 1. Normalize the event, validate the source identity against the data and current Task, then consult the canonical `workflow/interactive-invocation.mmd` Graph. Reject stale executions, invalid decisions/versions, wrong identities, cancelled Jobs and duplicated/conflicting decisions; record the decision atomically in Relay-owned durable state.
 2. Legacy host-bound invocations remain supported. An event-only decision may arrive **without a preceding `bindInteractiveInvocation()`** when the Job is ACTIVE, the Task is RUNNING in the exact matching Execution, and the event carries complete immutable content identity. A later video revision may be submitted for the same execution only after `changes_requested`; already decided revisions may not be replayed as new ones.
 3. `changes_requested` records actionable feedback for the owning Task. `approved` passes only the human interaction gate for **that exact content**; it does not mark a Task or Job complete. Graph-selected continuation/recovery is separate from the Event Bus receipt. A RUNNING Worker that did not register a waiting Promise must consume the accepted decision via its event-driven workflow; accepting the event alone does not create a new Agent Turn.
-4. **Limitation of an entirely unbound event**: Relay cannot independently prove that a never-before-seen content hash is the *latest* Markcut preview solely from the Event payload. The Preview provider and mobile client must reject superseded revisions before publishing; a future trusted, durable preview-generation fact is necessary if Relay must independently reject every previously unreviewed stale version. Do not present client-declared revision fields as cryptographic authorization.
+4. **Limitation of an entirely unbound event**: Relay cannot independently prove that a never-before-seen content hash is the *latest* review revision solely from the Event payload. The review provider and client must reject superseded revisions before publishing; a future trusted, durable preview-generation fact is necessary if Relay must independently reject every previously unreviewed stale version. Do not present client-declared revision fields as cryptographic authorization.
 
 `review.approved` and `review.changes_required` belong to immutable-head Job Acceptance Review; do **not** emit those or `task.completed` from a Preview UI. Consumers outside Relay may use their own event type, but managed Relay review templates must use `task.interactive_decision`.
 

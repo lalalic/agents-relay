@@ -31,8 +31,8 @@ test('reference prompt preserves canonical event contract and excludes task body
   const prompt=taskReferencePrompt('owner/repo','j1','build','exec-1',source);
   assert.doesNotMatch(prompt,/LONG_PRIVATE_TASK_BODY/);
   assert.match(prompt,/Execution source: job\/j1\/task\/build\/execution\/exec-1/);
-  assert.match(prompt,/skills\/events-bus\/references\/protocol\.md/);
-  assert.match(prompt,/contracts\/event-contract\.md/);
+  assert.match(prompt,/required Relay event contracts are supplied/);
+  assert.doesNotMatch(prompt,/\/Users\/|\/Workspace\/neo\//);
   assert.doesNotMatch(prompt,/LONG_PRIVATE_TASK_BODY|source\.id|task\.started|task\.completed/);
   assert.ok(prompt.length < 1600);
   assert.throws(()=>taskReferencePrompt('owner/repo','j1','build','exec-1','missing'),/Missing required event contract references/);
