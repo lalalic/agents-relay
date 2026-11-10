@@ -45,11 +45,25 @@ export function deriveJobRuntimeStatus(job: Job, _prState: PullRequestRuntimeSta
   // scheduler queue. Do not advertise a not-yet-invoked Shortcut as QUEUED,
   // or a content-only Shortcut as pending a PR merge/review.
   if (job.executionMode === 'shortcut' && job.contentOnly === true) {
+    const now = Date.now();
+    const hasLiveLease = (task: Task): boolean => task.state === 'RUNNING'
+      && Boolean(task.executionId && task.leaseOwner && task.leaseExpiresAt)
+      && Number.isFinite(Date.parse(task.leaseExpiresAt!)) && Date.parse(task.leaseExpiresAt!) > now;
     const children = job.tasks.filter(task => task.parentTaskId !== null);
-    if (children.some(task => task.state === 'BLOCKED') && !children.some(task => task.state === 'RUNNING')) return 'BLOCKED';
-    if (children.some(task => task.state === 'FAILED') && !children.some(task => task.state === 'RUNNING')) return 'FAILED';
+    if (children.some(task => task.state === 'BLOCKED') && !children.some(hasLiveLease)) return 'BLOCKED';
+    if (children.some(task => task.state === 'FAILED') && !children.some(hasLiveLease)) return 'FAILED';
+    if (job.tasks.some(task => task.state === 'FAILED') && !job.tasks.some(hasLiveLease)) return 'FAILED';
+    if (job.pause) return 'WAITING';
     if (job.tasks.some(task => task.state === 'AWAITING_DECISION')) return 'WAITING';
-    if (job.tasks.some(task => task.state === 'RUNNING')) return 'RUNNING';
+    if (job.tasks.some(hasLiveLease)) return 'RUNNING';
+    const running = job.tasks.filter(task => task.state === 'RUNNING');
+    // WAITING_EVENT intentionally releases the runner lease but keeps the Task
+    // RUNNING until its correlated event receipt arrives.
+    if (running.some(task => task.leaseOwner === null && Boolean(task.executionId)
+      && Object.values((task.result?.data?.shortcut as { waits?: Record<string, { executionId?: string }> } | undefined)?.waits ?? {})
+        .some(wait => wait.executionId === task.executionId))) return 'WAITING';
+    // A RUNNING Task without a current lease or event wait is not executing.
+    if (running.length > 0) return 'BLOCKED';
     return 'WAITING'; // External Shortcut Runner has not started or needs a resume.
   }
 

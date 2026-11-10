@@ -60,11 +60,39 @@ test('stale targeted revision children are preserved but do not block implementa
 test('Shortcut Job runtime distinguishes external trigger from Relay queue and merge',()=>{
  const base={executionMode:'shortcut',contentOnly:true,prNumber:0,autoMerge:false,reviewEnabled:false};
  assert.equal(deriveJobRuntimeStatus(job([task('entry','QUEUED')],base)),'WAITING');
- assert.equal(deriveJobRuntimeStatus(job([task('entry','RUNNING')],base)),'RUNNING');
+ const active={...task('entry','RUNNING'),executionId:'exec-1',leaseOwner:'shortcut-owner',leaseExpiresAt:new Date(Date.now()+60_000).toISOString()};
+ assert.equal(deriveJobRuntimeStatus(job([active],base)),'RUNNING');
  assert.equal(deriveJobRuntimeStatus(job([task('entry','SUCCEEDED')],base)),'WAITING');
  assert.equal(deriveJobRuntimeStatus(job([task('entry','QUEUED')],{...base,state:'DRAFT'})),'IDLE');
  assert.equal(deriveJobRuntimeStatus(job([task('entry','SUCCEEDED')],{...base,state:'COMPLETED'})),'COMPLETED');
- const parent=task('entry','RUNNING');const child={...task('shortcut-entry-director','BLOCKED'),parentTaskId:'entry'};
+ const parent=active;const child={...task('shortcut-entry-director','BLOCKED'),parentTaskId:'entry'};
  assert.equal(deriveJobRuntimeStatus(job([parent,child],base)),'BLOCKED');
- assert.equal(deriveJobRuntimeStatus(job([parent,{...child,state:'RUNNING'}],base)),'RUNNING');
+ assert.equal(deriveJobRuntimeStatus(job([parent,{...child,state:'RUNNING',executionId:'child-exec',leaseOwner:'child-owner',leaseExpiresAt:new Date(Date.now()+60_000).toISOString()}],base)),'RUNNING');
+});
+
+test('Shortcut runtime requires a live durable execution lease to display RUNNING',()=>{
+ const base={executionMode:'shortcut',contentOnly:true,prNumber:0,reviewEnabled:false};
+ const active={...task('entry','RUNNING'),executionId:'exec-1',leaseOwner:'shortcut-owner',leaseExpiresAt:new Date(Date.now()+60_000).toISOString()};
+ const cases=[
+   {...active,leaseExpiresAt:new Date(Date.now()-60_000).toISOString()},
+   {...active,leaseExpiresAt:'not-a-date'},
+   {...active,leaseExpiresAt:null},
+   {...active,leaseOwner:null},
+   {...active,executionId:null},
+   task('entry','RUNNING'),
+ ];
+ for(const stale of cases)assert.equal(deriveJobRuntimeStatus(job([stale],base)),'BLOCKED');
+ assert.equal(deriveJobRuntimeStatus(job([active],base)),'RUNNING');
+ assert.equal(deriveJobRuntimeStatus(job([active],{...base,pause:{generation:1,requestedAt:now()}})),'WAITING');
+ assert.equal(deriveJobRuntimeStatus(job([task('entry','RUNNING')],{state:'ACTIVE'})),'RUNNING','normal jobs retain their original status mapping');
+});
+
+test('Shortcut event wait is WAITING without an active runner, but not on stale receipts',()=>{
+ const base={executionMode:'shortcut',contentOnly:true,prNumber:0,reviewEnabled:false};
+ const wait={...task('entry','RUNNING'),executionId:'exec-1',result:{summary:'waiting',data:{shortcut:{waits:{visioner:{executionId:'exec-1'}}}}}};
+ assert.equal(deriveJobRuntimeStatus(job([wait],base)),'WAITING');
+ assert.equal(deriveJobRuntimeStatus(job([{...wait,leaseExpiresAt:new Date(Date.now()-60_000).toISOString()}],base)),'WAITING');
+ assert.equal(deriveJobRuntimeStatus(job([{...wait,result:{summary:'old',data:{shortcut:{waits:{visioner:{executionId:'exec-old'}}}}}}],base)),'BLOCKED');
+ assert.equal(deriveJobRuntimeStatus(job([{...wait,state:'AWAITING_DECISION'}],base)),'WAITING');
+ assert.equal(deriveJobRuntimeStatus(job([{...wait,state:'FAILED'}],base)),'FAILED');
 });
