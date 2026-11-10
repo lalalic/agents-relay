@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 /**
  * Shared entry point for every managed Agent. Runtime Task intent lives in SQLite;
- * the adapter receives execution identity and an immutable Agent reference only.
+ * the adapter receives a Task title, execution identity, and immutable Agent reference.
  * No GitHub/PR discovery or dynamic skill/agent inventory enters the prompt.
  */
 export async function managedWorkerInput(job: Job, task: Task, context?: ExecutionContext, mode: 'production' | 'evaluation' = 'production'): Promise<string> {
@@ -57,6 +57,8 @@ export async function managedWorkerInput(job: Job, task: Task, context?: Executi
     projectPath:context.project.gitRoot ?? context.project.path,
     providerInstructions:context.providerInstructions?.[adapter],
     skillPath:join(packageRoot, 'skills/agents-relay/SKILL.md'),
+    taskTitle:task.title,
+    workerSelfReview:role === 'worker',
     jobId:job.id,
     taskId:task.id,
     executionId:task.executionId,

@@ -24,6 +24,14 @@ test('production worker prompt assembly separates roles and snapshots each effec
       assert.match(prompt, /## Contracts\n/);
       assert.match(prompt, /## Contexts\n/);
       assert.match(prompt, /## Task\n/);
+      assert.match(prompt, /## User Assignment\n/);
+      assert.ok(prompt.indexOf('## User Assignment') > prompt.indexOf('## Task'));
+      assert.ok(prompt.includes(`Assigned ${role === 'planner' ? 'Plan' : 'Task'} title (locator):`));
+      if (role === 'worker') {
+        assert.match(prompt, /at least TWO independent full Task-to-result review\/fix rounds/);
+        assert.match(prompt, /reading context, starting, or summarizing it is preparation only/);
+        assert.match(prompt, /For EACH completed self-review round .*publish a separate correlated `task.progress` event/);
+      } else assert.doesNotMatch(prompt, /at least TWO independent full Task-to-result/);
       assert.match(prompt, new RegExp(`Task: task-${role}\\nExecution: execution-${role}`));
       assert.doesNotMatch(prompt, new RegExp(`UNTRUSTED TASK EVIDENCE ${role}`));
       assert.doesNotMatch(prompt, /GitHub is the source of truth|Job URL: null|\[Resolved execution context\]/);
@@ -42,6 +50,28 @@ test('production worker prompt assembly separates roles and snapshots each effec
     await rm(emptyGlobal, { recursive: true, force: true });
     await rm(snapshotDir, { recursive: true, force: true });
   }
+});
+
+test('regression: implementation Task cannot be interpreted as only context retrieval', async () => {
+  const context = await resolveExecutionContext(resolve('.'), 'worker');
+  const task = { id:'893', jobId:'601', title:'Implement opt-in Rust Core parity', kind:'work',
+    state:'RUNNING', agentName:'implementation', adapter:'codex',
+    input:'Implement native Rust Core; validate MCP E2E and complete implementation self review.',
+    output:{kind:'task_pr'}, executionId:'exec-893', attempt:1, maxAttempts:3, dependencies:[] };
+  const job = { id:'601', repository:'lalalic/neox', title:'Rust NeoY Core', objective:'Build Rust Core', state:'ACTIVE', tasks:[task], plans:[] };
+  const prompt = await managedWorkerInput(job,task,context);
+  const assignment = prompt.split('## User Assignment\n')[1];
+  assert.ok(assignment, 'The task-specific user assignment must be last');
+  assert.match(assignment,/Implement opt-in Rust Core parity/);
+  assert.match(assignment,/Read the FULL authoritative Task input, output, and acceptance criteria/);
+  assert.match(assignment,/reading context, starting, or summarizing it is preparation only/);
+  assert.match(assignment,/at least TWO independent full Task-to-result review\/fix rounds/);
+  assert.match(assignment,/reread the Task requirements, check every requirement, fix real gaps, and review again until clean/);
+  assert.match(assignment,/if you cannot fulfill the Task, report task.failed/);
+  assert.match(assignment,/For EACH completed self-review round .*publish a separate correlated `task.progress` event/);
+  assert.match(assignment,/round number, Task requirements checked, findings, fixes and verification outcome/);
+  assert.match(assignment,/Verify event acceptance before continuing or publishing the terminal event/);
+  assert.doesNotMatch(prompt,/Implement native Rust Core; validate MCP E2E/, 'Authoritative Task text still comes from SQLite context');
 });
 
 test('evaluation mode preserves reviewer guidance without production lifecycle actions', async () => {
@@ -67,7 +97,7 @@ test('Job without PR or localMerge still dispatches only a Task ID and authorita
   const prompt = await managedWorkerInput({id:'537',repository:'lalalic/neo',prNumber:0,title:'Vlog',objective:'PRIVATE JOB OBJECTIVE MUST NOT LEAK',state:'ACTIVE',tasks:[task],plans:[]},task,context);
   assert.match(prompt,/Job: 537\nTask: 476\nExecution: 123e4567/);
   for (const forbidden of ['Job URL: null','GitHub is the source of truth','PRIVATE EPISODE','PRIVATE TASK COMMENT','PRIVATE JOB OBJECTIVE', 'Resolved execution context']) assert.ok(!prompt.includes(forbidden),forbidden);
-  assert.ok(prompt.length < 3500);
+  assert.ok(prompt.length < 4300, `Production prompt is ${prompt.length} chars`);
 });
 
 test('managed worker receives provider instructions only from Job Execution Context and uses actual owning Git root as cwd', async t => {

@@ -104,6 +104,8 @@ export async function buildRelayWorkPrompt(input: {
   contracts: readonly string[];
   contexts: readonly { path: string; source: string }[];
   skillPath: string;
+  taskTitle?: string;
+  workerSelfReview?: boolean;
   jobId: string;
   taskId: string;
   executionId: string;
@@ -163,6 +165,17 @@ export async function buildRelayWorkPrompt(input: {
     `Job: ${input.jobId}`,
     `Task: ${input.taskId}`,
     `Execution: ${input.executionId}`,
+    '', '## User Assignment',
+    ...(input.taskTitle?.trim() ? [`Assigned ${input.agentName === 'planner' ? 'Plan' : 'Task'} title (locator): ${JSON.stringify(input.taskTitle)}`] : []),
+    ...(input.agentName === 'planner' ? [
+      'Read the full authoritative Plan Context through the matching Relay CLI. Apply the actual Plan, not merely its context lookup.',
+    ] : [
+      'Read the FULL authoritative Task input, output, and acceptance criteria through the matching Relay CLI. Fulfill THAT Task: reading context, starting, or summarizing it is preparation only.',
+      ...(input.workerSelfReview ? [
+        'Before task.completed, perform at least TWO independent full Task-to-result review/fix rounds: reread the Task requirements, check every requirement, fix real gaps, and review again until clean. Never invent fixes or evidence; if you cannot fulfill the Task, report task.failed.',
+        'For EACH completed self-review round (including clean rounds), publish a separate correlated `task.progress` event via the configured events-bus, recording round number, Task requirements checked, findings, fixes and verification outcome. Verify event acceptance before continuing or publishing the terminal event. A progress event is not task.completed.',
+      ] : []),
+    ]),
   ];
   return lines.join('\n');
 }
