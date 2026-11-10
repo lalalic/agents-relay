@@ -191,17 +191,20 @@ test('context resolve CLI exposes the same resolver for XChat without durable st
     const workspace = join(root, 'workspace');
     const project = join(workspace, 'project');
     const globalRoot = join(root, 'global');
-    await Promise.all([mkdir(project, { recursive: true }), mkdir(globalRoot, { recursive: true })]);
+    const sharedRoot = join(root, 'explicit-capabilities');
+    await Promise.all([mkdir(project, { recursive: true }), mkdir(globalRoot, { recursive: true }), mkdir(sharedRoot, { recursive: true })]);
     await skill(globalRoot, 'shared');
+    await skill(sharedRoot, 'external');
     await skill(project, 'local');
     const result = spawnSync(process.execPath, [
       'dist/cli.js', 'context', 'resolve', '--project-path', project, '--role', 'orchestrator',
-      '--workspace-root', workspace, '--global-root', globalRoot, '--skills', 'local'
+      '--workspace-root', workspace, '--global-root', globalRoot, '--shared-root', sharedRoot, '--skills', 'local'
     ], { encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
     const context = JSON.parse(result.stdout);
     assert.equal(context.role, 'orchestrator');
     assert.equal(context.project.path, await realpath(project));
+    assert.equal(context.project.sharedRoot, await realpath(sharedRoot));
     assert.deepEqual(context.skills.map(item => item.name), ['local']);
     assert.equal(context.delegation.mode, 'relay-child-task');
   } finally { await rm(root, { recursive: true, force: true }); }

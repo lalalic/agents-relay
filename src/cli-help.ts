@@ -59,7 +59,7 @@ Shortcut execution:
     [--store-dir DIR] [--project-path DIR] [--shared-root DIR] [--concurrency 4]
 
 The selected Task must have an Agent Graph. Project shortcuts at
-agents/.shortcut/<agent>.agent.mjs override Neo shared shortcuts. A Graph
+agents/.shortcut/<agent>.agent.mjs override configured shared shortcuts. A Graph
 with any missing shortcut falls back to the normal durable Worker before
 executing any module; mixing shortcut and Worker nodes in one Graph is unsupported.
 Shortcuts that fail before effects also return to the Worker queue. Nonhuman waits resume only from a matching SQLite Task receipt; EventBus
@@ -274,7 +274,7 @@ Actions:
 
 Required: --project-path PATH.
 Common: --role orchestrator|planner|reviewer|worker|nested-worker, --skills a,b, --agents a,b.
-Root overrides for testing/configuration: --workspace-root PATH (or AGENTS_RELAY_WORKSPACE_ROOT), --global-root PATH. Neo Shared Root is always <workspace-root>/neo.
+Root overrides: --workspace-root PATH (or AGENTS_RELAY_WORKSPACE_ROOT), --global-root PATH, --shared-root PATH (or AGENTS_RELAY_SHARED_ROOT). Shared capabilities have no implicit Neo directory.
 
 Example:
   npx agents-relay context resolve --project-path ~/Workspace/agents-relay --role orchestrator`,

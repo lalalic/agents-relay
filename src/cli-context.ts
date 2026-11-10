@@ -12,6 +12,7 @@ export async function runContextCommand(action: string, args: string[]): Promise
   const context = await resolveExecutionContext(projectPath, roleValue as ExecutionRole, {
     workspaceRoot: arg(args, '--workspace-root') || undefined,
     globalRoot: arg(args, '--global-root') || undefined,
+    sharedRoot: arg(args, '--shared-root') || undefined,
     explicitSkills: arg(args, '--skills').split(',').filter(Boolean),
     explicitAgents: arg(args, '--agents').split(',').filter(Boolean),
   });
