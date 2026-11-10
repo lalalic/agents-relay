@@ -74,3 +74,58 @@ test('JEL shows unknown elapsed when data is missing and a live interval for act
   assert.match(diagram,/Final Review 1 \/ NOT STARTED \/ elapsed unknown/);
   assert.match(diagram,/Merge \/ PENDING \/ elapsed unknown/);
 });
+
+test('JEL renders distinct read-only failed, retry, and troubleshooter diagnostics from durable facts', () => {
+  const chart=jobJelDiagram({
+    state:'ACTIVE',
+    plans:[{id:'plan-1',round:1,status:'SUCCEEDED',generatedTaskIds:['task-17']}],
+    tasks:[
+      {id:'task-17',state:'RUNNING',agentName:'implementation',planningDecisionId:'plan-1',attempt:5,
+        executionHistory:[{attempt:4,startedAt:'2026-11-10T09:00:00Z'},{attempt:5,startedAt:'2026-11-10T10:00:00Z'}]},
+      {id:'troubleshoot-17',state:'SUCCEEDED',agentName:'troubleshooter',parentTaskId:'task-17',
+        recoveryForAttempt:4,createdAt:'2026-11-10T09:10:00Z',updatedAt:'2026-11-10T09:19:00Z'},
+    ],
+  });
+  assert.match(chart,/execute_1\["Execute 1 \/ 1 tasks \/ 0 succeeded \/ 0 failed \/ 1 active/);
+  assert.match(chart,/retry_1_0\["Retry task-17 \/ 4 retries \/ attempt 5 \/ elapsed /);
+  assert.match(chart,/failed_1_0\["Failed task-17 \/ attempt 4 \/ elapsed unknown"\]/);
+  assert.match(chart,/troubleshooter_1_0\["Troubleshooter troubleshoot-17 \/ SUCCEEDED \/ elapsed 9m 0s"\]/);
+  for(const kind of ['retry','failed','troubleshooter']){
+    assert.ok(chart.includes('execute_1 -.-> '+kind+'_1_0'));
+  }
+  assert.match(chart,/class retry_1_0 jelRetry/);
+  assert.match(chart,/class failed_1_0 jelFailed/);
+  assert.match(chart,/class troubleshooter_1_0 jelTroubleshooter/);
+  for(const color of ['#fee2e2','#ede9fe','#fef3c7'])assert.ok(chart.includes(color));
+  assert.match(chart,/execute_1 --> review_1/,'main JEL lifecycle remains unchanged');
+});
+
+test('JEL highlights currently FAILED tasks without a retry or troubleshooter, without inventing diagnostics for normal tasks', () => {
+  const failed=jobJelDiagram({state:'ACTIVE',plans:[{id:'p',round:1,status:'SUCCEEDED',generatedTaskIds:['t']}],
+    tasks:[{id:'t',state:'FAILED',attempt:1,planningDecisionId:'p',createdAt:'2026-11-10T09:00:00Z',updatedAt:'2026-11-10T09:03:00Z'}]});
+  assert.match(failed,/Failed t \/ attempt 1 \/ elapsed 3m 0s/);
+  assert.doesNotMatch(failed,/retry_1_\d+\[/);
+  assert.doesNotMatch(failed,/troubleshooter_1_\d+\[/);
+  const healthy=jobJelDiagram({state:'ACTIVE',tasks:[{id:'t',state:'SUCCEEDED',attempt:1}]});
+  assert.doesNotMatch(healthy,/(?:failed|retry|troubleshooter)_1_\d+\[/);
+});
+
+test('JEL never embeds arbitrary Task identities into Mermaid tokens or executable markup', () => {
+  const graph=jobJelDiagram({state:'ACTIVE',tasks:[
+    {id:'evil"; click terminal http://host; %%',state:'FAILED',attempt:2},
+    {id:'trouble<script>',agentName:'troubleshooter',state:'QUEUED',parentTaskId:'evil"; click terminal http://host; %%',recoveryForAttempt:1},
+  ]});
+  assert.doesNotMatch(graph,/\n\s*click\s|https?:\/\/|<script>|\"; click/);
+  assert.match(graph,/class failed_1_0 jelFailed/);
+  assert.match(graph,/class retry_1_0 jelRetry/);
+  assert.match(graph,/class troubleshooter_1_0 jelTroubleshooter/);
+});
+
+test('dashboard JEL colors are applied AFTER sanitized graph palettes, with a visible legend', async () => {
+  const {dashboardHtml} = await import('../dist/dashboard-html.js');
+  assert.match(dashboardHtml,/class="jel-legend"/);
+  assert.match(dashboardHtml,/applyGraphPalette\(svg\);\s*applyJelHighlights\(svg\);/);
+  assert.match(dashboardHtml,/node\.classList\.add\('jel-'\+kind\)/);
+  assert.match(dashboardHtml,/palette=\{failed:/);
+  assert.match(dashboardHtml,/shape\.setAttribute\('fill',fill\)/);
+});

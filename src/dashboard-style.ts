@@ -134,6 +134,11 @@ export const dashboardStyles = `  <style>
     .jel-dialog { width:min(1050px,96vw); max-height:90vh; padding:.8rem; border:1px solid var(--border); border-radius:.55rem; background:var(--surface); color:var(--text); }
     .jel-dialog::backdrop { background:#17202b99; }
     .jel-dialog-header { display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:.2rem .3rem .6rem; }
+    .jel-legend { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem; padding:.1rem .3rem .6rem; font-size:.76rem; font-weight:700; }
+    .jel-legend span { padding:.16rem .5rem; border-radius:.35rem; border:1px solid; }
+    .jel-legend-failed { background:#fee2e2; border-color:#b91c1c!important; color:#991b1b; }
+    .jel-legend-retry { background:#ede9fe; border-color:#7c3aed!important; color:#5b21b6; }
+    .jel-legend-troubleshooter { background:#fef3c7; border-color:#b45309!important; color:#92400e; }
     .jel-chart { min-height:14rem; max-height:72vh; overflow:auto; padding:.8rem; border:1px solid var(--border); border-radius:.4rem; background:var(--surface2); }
     .jel-chart svg { display:block; min-width:100%; max-width:none; height:auto; }
     .jel-source { overflow:auto; white-space:pre; font:12px/1.5 ui-monospace,monospace; }
