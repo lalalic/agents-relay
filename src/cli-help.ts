@@ -19,7 +19,7 @@ Commands:
   prompt                   Print raw Planner/Worker prompt from the production Builder
   blocker add|resolve|show  Manage cross-Job blocker dependencies
   projection conflicts|resolve  Inspect and repair deterministic GitHub projection conflicts
-  escalation               Run the canonical escalation graph and Neo escalation executor
+  escalation               Run the canonical escalation graph with a configured external executor
   context resolve          Resolve shared project instructions, skills, agents, and runtimes
   init                     Create a local demo job or initialize a GitHub job
   record                   Backfill a completed task into durable history
@@ -163,7 +163,7 @@ Required: --repo OWNER/REPO --id JOB_ID. Optional: --pr NUMBER. Running worker a
   'job resume': `Resume a paused durable Job.
 
 Required: --repo OWNER/REPO --id JOB_ID. Optional: --pr NUMBER. Interrupted work is requeued and normal reconciliation continues.`,
-  escalation: `Run the canonical escalation workflow for a suspected human/external blocker.\n\nRequired: --intent TEXT|--intent-file PATH and --blocked-on TEXT|--blocked-on-file PATH. Optional: --context/--context-file, --on-needs-user/--on-needs-user-file, --cwd. The executable workflow/escalation.mmd graph invokes Neo escalation, then owns the resolved / failed / needs_user branch. Only needs_user selects the block-for-user path.`,
+  escalation: `Run the canonical escalation workflow for a suspected human/external blocker.\n\nRequired: --intent TEXT|--intent-file PATH and --blocked-on TEXT|--blocked-on-file PATH. Optional: --context/--context-file, --on-needs-user/--on-needs-user-file, --cwd. The workflow/escalation.mmd graph invokes an operator-configured executor and owns the resolved / failed / needs_user branches. Only needs_user selects the block-for-user path. Set AGENTS_RELAY_ESCALATION_COMMAND to an absolute executable path or JSON argv array (for example ["/opt/homebrew/bin/neo","escalation"]). No Neo executable is assumed by Relay; missing/broken executors produce technical_failure.`,
   status: `Show live aggregate runtime status from the running Agents Relay service.
 
 Usage:

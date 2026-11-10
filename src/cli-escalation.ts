@@ -1,17 +1,29 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { textOption, arg } from './cli-support.js';
 import { runEscalationGraph, type EscalationRequest, type EscalationResult } from './workflow/escalation.js';
-import { spawnOwnedProcess } from './owned-process.js';
+import { spawnOwnedProcess, terminateOwnedProcess } from './owned-process.js';
 
-export function neoEscalationArgs(
-  handoffPath: string,
-  policyPath: string | undefined,
-  cwd: string | undefined,
-): string[] {
+/** A caller-selected argv vector. Only the trusted operator supplies this
+ * environment value; task input is never parsed as a shell command. */
+export function escalationCommand(env: NodeJS.ProcessEnv = process.env): { executable: string; prefixArgs: string[] } | null {
+  const raw = env.AGENTS_RELAY_ESCALATION_COMMAND?.trim();
+  if (!raw) return null;
+  let parsed: unknown;
+  try { parsed = raw.startsWith('[') ? JSON.parse(raw) : [raw]; }
+  catch { throw new Error('AGENTS_RELAY_ESCALATION_COMMAND must be an absolute executable or JSON argv array'); }
+  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.length > 12 ||
+      !parsed.every(x => typeof x === 'string' && x.length > 0 && x.length <= 4096 && !/[\r\n\0]/.test(x)) ||
+      !isAbsolute(parsed[0]))
+    throw new Error('AGENTS_RELAY_ESCALATION_COMMAND must be an absolute executable or JSON argv array');
+  return { executable: parsed[0], prefixArgs: parsed.slice(1) };
+}
+
+/** Generic executor contract. No Neo-specific subcommand is assumed. */
+export function escalationExecutorArgs(handoffPath: string, policyPath: string | undefined, cwd: string | undefined): string[] {
   return [
-    'escalation', '--handoff-file', handoffPath,
+    '--handoff-file', handoffPath,
     ...(policyPath ? ['--on-needs-user-file', policyPath] : []),
     ...(cwd ? ['--cwd', cwd] : []),
   ];
@@ -26,7 +38,16 @@ function handoffText(request: EscalationRequest): string {
   ].join('\n');
 }
 
-export async function runNeoEscalation(request: EscalationRequest): Promise<EscalationResult> {
+const failed = (summary: string): EscalationResult => ({ status: 'failed', summary, reason: summary });
+
+export async function runConfiguredEscalation(
+  request: EscalationRequest,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<EscalationResult> {
+  let selected: ReturnType<typeof escalationCommand>;
+  try { selected = escalationCommand(env); }
+  catch (error) { return failed(error instanceof Error ? error.message : String(error)); }
+  if (!selected) return failed('Escalation executor not configured: set AGENTS_RELAY_ESCALATION_COMMAND');
   const tempRoot = await mkdtemp(join(tmpdir(), 'agents-relay-escalation-'));
   try {
     const handoffPath = join(tempRoot, 'handoff.md');
@@ -36,27 +57,33 @@ export async function runNeoEscalation(request: EscalationRequest): Promise<Esca
       policyPath = join(tempRoot, 'on-needs-user.md');
       await writeFile(policyPath, request.onNeedsUser, { encoding: 'utf8', mode: 0o600 });
     }
-    const args = neoEscalationArgs(handoffPath, policyPath, request.cwd);
-    return await new Promise((resolve, reject) => {
-      const child = spawnOwnedProcess('neo', args, { invocation: 'escalation.neo', spawn: { cwd: request.cwd ?? process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] } });
+    const argv = [...selected.prefixArgs, ...escalationExecutorArgs(handoffPath, policyPath, request.cwd)];
+    return await new Promise<EscalationResult>(resolve => {
       let stdout = '';
-      let stderr = '';
-      child.stdout?.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
-      child.stderr?.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
-      child.on('error', reject);
+      let exceeded = false;
+      const child = spawnOwnedProcess(selected.executable, argv, {
+        invocation: 'escalation.configured',
+        timeoutMs: 600_000,
+        spawn: { cwd: request.cwd ?? process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] },
+      });
+      child.stdout?.setEncoding('utf8').on('data', (chunk: string) => {
+        if (stdout.length + chunk.length > 256_000) { exceeded = true; void terminateOwnedProcess(child, 'abort'); }
+        else stdout += chunk;
+      });
+      // Do not reflect stderr into the Job result: it can contain provider secrets.
+      child.stderr?.resume();
+      child.on('error', error => resolve(failed(`Escalation executor could not start: ${error.message}`)));
       child.on('close', code => {
-        let parsed: EscalationResult;
-        try {
-          parsed = JSON.parse(stdout.trim()) as EscalationResult;
-        } catch {
-          reject(new Error(`neo escalation returned invalid JSON (exit ${code ?? 'unknown'}): ${stderr || stdout}`));
-          return;
-        }
-        if (!['resolved', 'failed', 'needs_user'].includes(parsed.status)) {
-          reject(new Error(`neo escalation returned invalid status ${String(parsed.status)}`));
-          return;
-        }
-        resolve(parsed);
+        if (exceeded) return resolve(failed('Escalation executor output exceeded limit'));
+        if (code !== 0) return resolve(failed(`Escalation executor failed (exit ${code ?? 'signal'})`));
+        let parsed: unknown;
+        try { parsed = JSON.parse(stdout.trim()); }
+        catch { return resolve(failed('Escalation executor returned invalid JSON')); }
+        if (!parsed || typeof parsed !== 'object' || !('status' in parsed) ||
+            !['resolved', 'failed', 'needs_user'].includes(String(parsed.status)) ||
+            !('summary' in parsed) || typeof parsed.summary !== 'string' || !parsed.summary.trim())
+          return resolve(failed('Escalation executor returned invalid result contract'));
+        resolve(parsed as EscalationResult);
       });
     });
   } finally {
@@ -78,7 +105,7 @@ export async function runEscalationCommand(args: string[]): Promise<void> {
     ...(onNeedsUser.trim() ? { onNeedsUser } : {}),
     ...(arg(args, '--cwd') ? { cwd: arg(args, '--cwd') } : {}),
   };
-  const outcome = await runEscalationGraph(request, { invoke: runNeoEscalation });
+  const outcome = await runEscalationGraph(request, { invoke: runConfiguredEscalation });
   console.log(JSON.stringify({ state: outcome.state, ...outcome.result }, null, 2));
   if (outcome.state === 'technical_failure') process.exitCode = 2;
 }

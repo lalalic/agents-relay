@@ -2,6 +2,16 @@
 
 **Status:** Current recovery contract. Query Task state, recovery status, and comments through the matching Relay CLI.
 
+The direct Escalation CLI has an **operator-selected executor**, configured
+only through `AGENTS_RELAY_ESCALATION_COMMAND`. The canonical Graph maps
+`resolved`, `failed` and `needs_user` results to durable workflow actions;
+missing configuration or a failed/invalid provider result is a technical
+failure, not proof that a human should be contacted. This is separate from
+Relay's durable `task escalate` action, which the Troubleshooter may use only
+when it has concrete evidence of an owner-only boundary. A Neo deployment may
+select `["/opt/homebrew/bin/neo","escalation"]` as its executor, but Relay
+cannot assume Neo exists. Never pass arbitrary Task text as a Shell command.
+
 ## Principles and ownership
 
 - **Events Bus is neutral.** Its generic event envelope consists of event identity, type, time, and opaque client-defined data (plus any transport metadata needed by the bus). It must not understand Relay Jobs, Tasks, roles, or verdicts.

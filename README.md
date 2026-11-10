@@ -9,6 +9,20 @@ The canonical V2 architecture contract is
 [DESIGN-PRINCIPLES.md](DESIGN-PRINCIPLES.md). README sections below describe
 the runtime; they do not replace that contract.
 
+**Escalation executor:** `AGENTS_RELAY_ESCALATION_COMMAND` selects an external
+executable (absolute path) or a JSON argv array with a fixed command prefix.
+For example, the Neo deployment uses
+`AGENTS_RELAY_ESCALATION_COMMAND='["/opt/homebrew/bin/neo","escalation"]'`.
+Relay appends `--handoff-file`, optional `--on-needs-user-file`, and `--cwd`
+without using a shell. No Neo executable is assumed. Missing/failed executors
+produce `technical_failure` rather than silently resolving a blocker.
+
+**Interactive Review:** Relay owns the generic
+`review.interactive.begin/wait/ready/fail/abort` lifecycle, immutable revision
+binding and decision correlation. The caller (e.g. Neo's Markcut MCP wrapper)
+owns preview generation, media, UI and notifications. New waiting events use
+`component: interactive-review`; existing recorded events retain their history.
+
 **Harness/Project integration:** The intended Relay boundary is standalone and
 provider-neutral: callers supply shared Agent/Skill capability sources and a
 Job Execution Context, not a Neo installation. The [Harness-independence
@@ -294,8 +308,8 @@ flowchart LR
     Failed[Failed task] --> Troubleshooter
     Troubleshooter -->|technical| Repair[Repair / retry]
     Troubleshooter -->|suspected human blocker| Escalation[Escalation graph]
-    Escalation --> Invoke[neo escalation]
-    Invoke --> Codex[Escalation Agent + elevated Local Codex]
+    Escalation --> Invoke[Configured Escalation Executor]
+    Invoke --> Provider[External Provider, e.g. Neo]
     Codex -->|resolved| Resume[Resume recovery]
     Codex -->|failed| Technical[Technical recovery evidence]
     Codex -->|needs_user| User[Notify user + task.blocked]

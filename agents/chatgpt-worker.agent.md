@@ -12,7 +12,7 @@ You execute one complete Relay task by submitting it to a fresh, regular ChatGPT
 
 - Browser Workspace `platforms/chatgpt` is the sole owner of ChatGPT selectors, readiness checks, new-thread mechanics and submit verification.
 - Relay owns worker lifecycle, task/event barriers, routing, and cancellation; Browser Workspace owns the one-shot auto-session lifecycle.
-- Execute one new worker submission with `platform run chatgpt new-thread --session-id SESSION_ID`. Existing-thread delivery uses `new-turn`. Never use Temporary Chat for workers that need Neo MCP.
+- Execute one new worker submission with `platform run chatgpt new-thread --session-id SESSION_ID`. Existing-thread delivery uses `new-turn`. Never use Temporary Chat for workers requiring any configured MCP provider or durable execution context.
 - Relay creates and stops a caller-owned WebHelm Session for each delivery. New worker conversations persist in ChatGPT history; do not reuse a pre-existing user tab.
 - Preserve the account's current default model/thinking settings.
 - A submission is accepted only after Browser Workspace returns a verified submit receipt.

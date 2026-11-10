@@ -9,7 +9,7 @@ import {LocalAuthorityDurableStore} from '../dist/local-authority-store.js';
 import {InMemoryStore} from '../dist/store.js';
 import {RepositoryWorkerPool} from '../dist/pool.js';
 import {MemoryEventBus} from '../dist/events.js';
-import {beginInteractiveReview,readyInteractiveReview,failInteractiveReview,abortInteractiveReview} from '../dist/interactive-request.js';
+import {beginInteractiveReview,readyInteractiveReview,failInteractiveReview,abortInteractiveReview,interactiveWaitingEvent} from '../dist/interactive-request.js';
 const now=()=>new Date().toISOString();
 const task=()=>({jobId:'job-preview',id:'producer',parentTaskId:null,dependencies:[],capabilities:[],
  adapter:'orchestrator',input:'make preview',state:'RUNNING',attempt:1,maxAttempts:3,
@@ -24,8 +24,8 @@ async function fixture({localAuthority=false}={}){const dir=await mkdtemp(join(t
  return {store,j,reconciler,async close(){await reconciler.close();store.close();await rm(dir,{recursive:true,force:true});}};}
 async function wait(f,inv){
  const ev={version:1,event_id:'wait-'+inv,job_id:f.j.id,task_id:'producer',parent_task_id:null,
- type:'task.interactive_waiting',status:'waiting',timestamp:now(),visibility:'orchestrator',level:'info',message:'Preview handoff',
- source:{id:'job/job-preview/task/producer/execution/exec-1',component:'neo-preview'},data:{}};
+ type:'task.interactive_waiting',status:'waiting',timestamp:now(),visibility:'orchestrator',level:'info',message:'Interactive review requested',
+ source:{id:'job/job-preview/task/producer/execution/exec-1',component:'interactive-review'},data:{}};
  assert.equal((await f.reconciler.applyEvent(ev)).applied,true);
 }
 test('Neo prepare is idempotent and binds current execution before suspension',async()=>{
@@ -160,4 +160,14 @@ test('new authoritative execution replaces an orphaned pending Invocation after 
   assert.equal(current.interactiveInvocation.executionId,'exec-2');
   assert.equal(current.interactiveInvocation.invocationId,fresh.invocationId);
  }finally{await f.close();}
+});
+
+
+test('interactive waiting event is provider-neutral and execution-bound',()=>{
+ const event=interactiveWaitingEvent('job-1','task-2',null,'exec-3');
+ assert.equal(event.type,'task.interactive_waiting');
+ assert.equal(event.status,'waiting');
+ assert.equal(event.message,'Interactive review requested');
+ assert.deepEqual(event.source,{id:'job/job-1/task/task-2/execution/exec-3',component:'interactive-review'});
+ assert.doesNotMatch(JSON.stringify(event),/neo-preview|markcut|Neo Preview/);
 });

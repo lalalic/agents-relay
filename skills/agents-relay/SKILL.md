@@ -46,6 +46,30 @@ A Reviewer finding defects in a known immutable head emits `task.completed` with
 
 For a failed Task, diagnose before retrying. Read `contracts/task-recovery-flows.md` for recovery and human escalation boundaries. Troubleshooter inspects the original Task via `task show` and paginated `task events`, verifies the root cause, then uses the pinned CLI `task recover --task-id ORIGINAL --recovery-task-id TROUBLESHOOTER` only after proving the repair. If a shared defect cannot be repaired in this execution, register it via `blocker add` on the owning P0/self Job and complete the recovery handoff; do not leave a worker running indefinitely. Only a genuinely human-required decision justifies the **pinned CLI** `task escalate --task-id TROUBLESHOOTER --required-action ... --resolution-condition ...`; this is a Relay operation, **not** an Events Bus event. Never invent or publish an escalation event, and never escalate a browser-readiness failure as a login request without authentication evidence. Only Relay can block/unblock a Troubleshooter; after a human response, recheck the blocker before recovering the original Task. Do not silently treat missing or stale evidence as success.
 
-## 4. Manage services when needed
+## 4. Configured escalation and host-owned Interactive Review
+
+`agents-relay escalation` executes the canonical Escalation Graph using only
+`AGENTS_RELAY_ESCALATION_COMMAND` provided by the operator's environment. The
+value is either an **absolute executable path** or a JSON argv array with an
+absolute executable first (for example
+`'["/opt/homebrew/bin/neo","escalation"]'` on a host explicitly using Neo).
+Relay appends `--handoff-file`, optional `--on-needs-user-file` and `--cwd`.
+No Shell expansion or default `neo` call is allowed. Missing or broken
+configuration returns `technical_failure`; it must never be treated as
+`resolved` or `needs_user`. This direct escalation command is distinct from
+`task escalate`, which is the durable Troubleshooter/human-blocker transition.
+
+For human Preview/Review, use the **existing** Relay
+`review.interactive.begin/wait/ready/fail/abort` lifecycle. Relay provides the
+execution-bound invocation and decision contract and emits a provider-neutral
+`task.interactive_waiting` with `source.component: interactive-review`.
+Preview media compilation, delivery (for example Markcut to Neo Mobile),
+notifications, and UI are owned by the calling project/provider. Never invent
+an approval from a compile receipt or a preview handoff, never replace the
+exact event template with a provider-specific event, and never create an
+unnecessary separate Preview Provider framework. Consult the project's own
+Review/Preview contract for delivery and version binding.
+
+## 5. Manage services when needed
 
 For setup, outages, or persistent service health checks, load the separate `daemon-service-manage` Skill. The Relay Skill provides `bin/services.mjs`: run `node <pinned-skill-dir>/bin/services.mjs setup|status|doctor` as applicable. Do not start or restart services for ordinary Job operations, or create legacy unqualified PM2 names.

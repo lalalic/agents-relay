@@ -103,11 +103,11 @@ bindings require a separate verified migration decision.
 
 | Runtime source | Observed Neo coupling | Target change |
 | --- | --- | --- |
-| `src/cli-escalation.ts` | Executes the `neo` command | Inject a generic escalation executor |
+| `src/cli-escalation.ts` | No Neo import or fixed executable | `AGENTS_RELAY_ESCALATION_COMMAND` selects the external CLI; missing/broken executor yields `technical_failure` |
 | `src/browser-worker-runtime.ts` | WebHelm-specific transport/session protocol | Workspace defaults to `Relay`, overridable by `AGENTS_RELAY_WEBHELM_WORKSPACE`; future adapter extraction should make browser providers interchangeable |
 | `src/events-bus-runtime.ts`, `src/events.ts` | Migrated to `EVENTS_BUS_*` and `relay.events.job` in source | Coordinate publisher, recorder and consumers before live subject cutover |
 | `src/agent-shortcut.ts` | Vlog-specific validation removed; generic artifact hashing and stage gate retained | Project Vlog Shortcut and Stage contract now own Visioner checks; verify when migrating durable waits |
-| `src/relayd-control.ts`, `src/interactive-request.ts` | Neo Preview terminology/binding | Generic review-host adapter |
+| `src/relayd-control.ts`, `src/interactive-request.ts` | Generic lifecycle and `interactive-review` event component | Host-owned media/notification integrations remain outside Relay; no new Preview adapter needed |
 | `src/managed-worker-input.ts`, `src/agent-prompt-builder.ts` | Worker prompts now accept provider guidance from execution context | Repo Git root is supplied as cwd; verify each adapter's actual workspace execution |
 | `src/cli-help.ts`, `src/relayd-utilities.ts` | Some CLI descriptions still claim implicit Neo shared roots | Align help text with explicit shared-root contract |
 
@@ -117,24 +117,29 @@ bindings require a separate verified migration decision.
    default workspace and allow an operator-configured name. An existing `Neo`
    browser workspace is left untouched; neither open Sessions nor idle groups
    are silently migrated. Later, extract WebHelm provisioning as an adapter.
-2. **Event transport (code changed, live cutover pending):** `EVENTS_BUS_*`
-   variables and `relay.events.job` are the only event settings in source.
-   The saved Neo Master runtime still selects the previous subject, so updated
-   code refuses that configuration until migration. Coordinate the publisher,
-   recorder, external publishers and Relay subscribers with the runbook at
-   `neo/skills/events-bus/references/relay-namespace-cutover.md`.
-   Preserve existing history and durable identity.
-3. **Escalation:** define an injected `EscalationExecutor` with a typed request
-   and outcome. A `neo escalation` implementation belongs in the caller's
-   integration package, not Relay's default CLI path; a generic executor or
-   an explicit `needs_user` outcome handles installations without Neo.
+2. **Event transport (Neo Master cutover verified):** `EVENTS_BUS_*`
+   variables and `relay.events.job` are the configured event settings. The
+   deployed recorder, Relay, and Chat Gateway were verified on the new
+   namespace with actual NATS publication and history read-back. Other
+   deployments must still follow
+   `neo/skills/events-bus/references/relay-namespace-cutover.md`;
+   preserve existing history and durable identity.
+3. **Escalation (implemented):** the single environment variable
+   `AGENTS_RELAY_ESCALATION_COMMAND` accepts an absolute executable path or a
+   JSON argv vector for a command prefix. Relay appends the generic handoff
+   contract flags and captures `resolved`, `failed` or `needs_user` results.
+   Example: `["/opt/homebrew/bin/neo","escalation"]` in Neo's deployment,
+   not Relay source. Missing, broken or malformed executors resolve to
+   `technical_failure`, never optimistic completion.
 4. **Domain policy (implemented locally):** Visioner/Markcut provenance
    checks moved to Vlog `lib/validate-visioner-result.mjs` and its existing
    project-owned Stage gate. Relay retains only generic receipt, identity,
    hash and path checks plus opt-in declared Stage validation.
-5. **Review host:** replace Neo Preview-specific identifiers/wording with a
-   caller-configured Review Host adapter. Preserve exact Job/Task/Execution
-   correlation and durable review decisions.
+5. **Interactive Review (implemented):** Relay issues host-neutral waiting
+   events with `component: interactive-review`; its existing begin, wait,
+   ready, fail and abort operations remain unchanged. Neo's Markcut wrapper
+   and mobile Review Inbox supply media, delivery and decisions separately.
+   There is no need for a new generic Preview Provider framework.
 6. **Worker prompt (implemented locally):** the same generic bootstrap applies
    to Codex, ChatGPT and Z. Provider-specific instructions are an explicit
    Job Execution Context option. The owning Git root is surfaced as cwd,

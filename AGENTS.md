@@ -47,6 +47,30 @@ code change and classify it afterward.
 
 - Implementation quality instructions must be applied during shared worker prompt assembly, including unnamed normal workers, rather than relying only on a named implementation agent contract. Preserve independent reviewer and specialist-review isolation, and test the immutable prompt snapshots across adapters.
 
+## Escalation and Interactive Review integration
+
+- The canonical `workflow/escalation.mmd` owns escalation branching. Relay's CLI
+  launches **only** the executor named by the trusted deployment environment
+  `AGENTS_RELAY_ESCALATION_COMMAND`: an absolute executable path or a JSON
+  argv array (absolute executable + fixed subcommand arguments). There is no
+  built-in Neo CLI dependency, no shell evaluation of Task content, and no
+  implicit fallback to an unconfigured provider.
+- The executor receives a private `--handoff-file`, optional
+  `--on-needs-user-file`, and optional `--cwd`; it must return exactly one JSON
+  result with `status: resolved|failed|needs_user` and a nonempty `summary`.
+  Missing executors, invalid output, and nonzero exit are technical failures,
+  **never** successful recovery or proof of a human-only blocker. Neo may be a
+  deployment-selected executor; that choice is outside Relay's source.
+- Relay's `review.interactive.begin/wait/ready/fail/abort` owns durable
+  invocation, execution binding, review transition and decision acceptance.
+  It emits host-neutral `task.interactive_waiting` with
+  `source.component: interactive-review`. Do not add Markcut, Neo Mobile,
+  video/preview generation, UI, or notification policy to Relay. A host owns
+  those effects and must bind its decision to the current invocation, execution
+  and immutable Git revision. A delivery receipt never counts as approval.
+- Keep recorded historical event source labels unchanged; genericize newly
+  emitted events without rewriting persisted review or Job history.
+
 ## Verification levels
 
 Use L1 Graph branch and binding verification, L2 role/provider evidence, and L3 deterministic production-ingress/reconciliation/SQLite tests. Do not reference the retired standalone E2E runner or deleted `e2e/` directory. L1 and deterministic L3 passing do not imply a physical UI or provider integration was run; report those gates as `NOT_RUN` until independently verified. Keep negative, restart/dedupe, and false-completion coverage.

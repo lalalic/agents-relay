@@ -1,10 +1,18 @@
-/** Relay-owned admission/ready/failure for Neo-hosted interactive review requests. */
+/** Relay-owned admission/ready/failure for host-owned interactive review requests. */
 import {randomUUID} from 'node:crypto';
 import type {DurableStore} from './store.js';
 import type {Job,Task} from './types.js';
 import {tryTransitionTaskEvent} from './task-transitions.js';
 import {applyTaskUnblockRetrySnapshot} from './task-actions.js';
 import {appendTaskComment} from './task-comments.js';
+import {eventFor} from './events.js';
+
+/** Host-neutral lifecycle event; the caller owns its preview/media/notification provider. */
+export function interactiveWaitingEvent(jobId:string,taskId:string,parentTaskId:string|null,executionId:string){
+  return eventFor(jobId,taskId,parentTaskId,'task.interactive_waiting','waiting',
+    'Interactive review requested','orchestrator',{},
+    {id:`job/${jobId}/task/${taskId}/execution/${executionId}`,component:'interactive-review'});
+}
 
 export function interactiveTemplate(jobId:string,taskId:string,executionId:string,invocationId:string){
   return {type:'task.interactive_decision',source:`job/${jobId}/task/${taskId}/execution/${executionId}`,
@@ -87,7 +95,7 @@ export async function failInteractiveReview(store:DurableStore,jobId:string,task
       applyTaskUnblockRetrySnapshot(task);
       task.interactiveInvocation=undefined;
       task.error=null;task.failureReason=undefined;
-      appendTaskComment(job,taskId,`Preview delivery failed; rerun preview request: ${reason.slice(0,500)}`);
+      appendTaskComment(job,taskId,`Interactive review delivery failed; rerun review request: ${reason.slice(0,500)}`);
       task.updatedAt=new Date().toISOString();
       requeued=true;
     }else if(task.state==='RUNNING'&&task.executionId===executionId){

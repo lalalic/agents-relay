@@ -1,5 +1,5 @@
 import { submitTargetedRevisionRequest } from './review-revision-model.js';
-import {beginInteractiveReview,abortInteractiveReview,readyInteractiveReview,failInteractiveReview} from './interactive-request.js';
+import {beginInteractiveReview,abortInteractiveReview,readyInteractiveReview,failInteractiveReview,interactiveWaitingEvent} from './interactive-request.js';
 import { localSourceHead, localWorkingHead } from './local-git-merge.js';
 import type { RevisionFinding } from './types.js';
 import { appendTaskComment } from './task-comments.js';
@@ -31,7 +31,6 @@ import { basename } from 'node:path';
 import { normalizeThreadId } from './reviewer-thread.js';
 import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
 import { eventBusResolutionMessage, publishTaskBlocked, publishTaskUnblocked, resolveEventBus } from './cli-support.js';
-import { eventFor } from './events.js';
 import { classifyFailedTask, dispatchTaskAction, supersedeCancelledTask } from './task-actions.js';
 import { isEffectivelyBlocked, unblockTask } from './unblock.js';
 import { requestTroubleshooterEscalation, resumeTroubleshooter } from './task-recovery.js';
@@ -147,9 +146,7 @@ export function createWorkspaceControl(deps: any) {
            current.interactiveInvocation?.invocationId!==invocationId)
           throw new Error('Stale interactive waiting request');
         const reconciler=makeReconciler(store,concurrency);
-        const event=eventFor(jobId,taskId,current.parentTaskId,'task.interactive_waiting','waiting',
-          'Neo Preview requested interactive review','orchestrator',{},
-          {id:`job/${jobId}/task/${taskId}/execution/${executionId}`,component:'neo-preview'});
+        const event=interactiveWaitingEvent(jobId,taskId,current.parentTaskId,executionId);
         try{
           const outcome=await reconciler.applyEvent(event);
           if(!outcome.applied)throw new Error('Relay rejected interactive waiting event: '+outcome.reason);
@@ -166,7 +163,7 @@ export function createWorkspaceControl(deps: any) {
           typeof body.revision==='string'?body.revision:'');
       if(command==='review.interactive.fail'){
         const result=await failInteractiveReview(store,jobId,taskId,executionId,invocationId,
-          typeof body.reason==='string'?body.reason:'Preview failed');
+          typeof body.reason==='string'?body.reason:'Interactive review failed');
         if(result.requeued)await pool.reconcileLocalJob(jobId,'interactive.preview-failed');
         return result;
       }
