@@ -246,10 +246,15 @@ export class Reconciler extends ReconcilerReviewBase {
       emitFailed: async (task, reason) => { await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.failed', 'failed', task.error ?? reason, 'user', { reason })); },
     };
   }
-  async recoverLostExecutions(job: Job, now: number): Promise<void> { await recoverExpiredExecutions(job, now, this.executionRecoveryPorts(job)); }
+  async recoverLostExecutions(job: Job, now: number): Promise<void> {
+    if (job.executionMode === 'shortcut' && !this.options.shortcutRunnerOwner) return;
+    await recoverExpiredExecutions(job, now, this.executionRecoveryPorts(job));
+  }
   async recoverStartupOrphans(jobId: string): Promise<Job> {
     const job = await this.store.load(jobId);
-    if (job.state === 'ACTIVE') {
+    // A daemon restart does not own executions started by an external Shortcut Runner.
+    // Only the foreground Shortcut owner may recover its own interrupted leases.
+    if (job.state === 'ACTIVE' && (job.executionMode !== 'shortcut' || this.options.shortcutRunnerOwner === true)) {
       await recoverStartupExecutionOrphans(job, this.executionRecoveryPorts(job));
     }
     return this.store.load(jobId);

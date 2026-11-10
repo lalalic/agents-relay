@@ -1183,3 +1183,27 @@ test('D02 fault F10: canonical Run path mismatch fails before model Worker creat
     assert.equal(job.tasks[0].result.data.shortcut.nodes.C,undefined);
   }finally{await stop();}
 });
+
+
+test('daemon startup recovery must not reclaim externally owned Shortcut executions',async t=>{
+  const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:alpha]'});
+  const rawStore=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
+  const store=new Proxy(rawStore,{get(target,key){if(key==='load')return target.loadJob.bind(target);const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;}});
+  await store.mutateJob(f.id,job=>{
+    const task=job.tasks[0];task.state='RUNNING';task.executionId='external-shortcut-execution';
+    task.leaseOwner='external-shortcut-runner';task.leaseExpiresAt=new Date(Date.now()+900000).toISOString();
+    return job;
+  });
+  const daemon=managedReconciler(store,{owner:'daemon-restarted',noGitHub:true,maxConcurrent:1,adapters:[]});
+  try{
+    const after=await daemon.recoverStartupOrphans(f.id);
+    assert.equal(after.tasks[0].state,'RUNNING');
+    assert.equal(after.tasks[0].executionId,'external-shortcut-execution');
+    assert.equal(after.tasks[0].leaseOwner,'external-shortcut-runner');
+    assert.equal(after.tasks.filter(task=>task.agentName==='troubleshooter').length,0);
+    await daemon.recoverLostExecutions(after,Date.now()+1800000);
+    const checked=await store.loadJob(f.id);
+    assert.equal(checked.tasks[0].state,'RUNNING');
+    assert.equal(checked.tasks[0].leaseOwner,'external-shortcut-runner');
+  }finally{rawStore.close();}
+});
