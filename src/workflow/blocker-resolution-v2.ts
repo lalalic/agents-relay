@@ -15,7 +15,7 @@ export const blockerResolutionV2=new GraphRuntime(source,{
     'check_draft','check_blocked','check_failed','check_unblocked','wait','obsolete','resumed',
   ]),
   guards:{
-    resolutionAllowed:boolGuard('resolutionAllowed'),
+    resolutionConditionMet:boolGuard('resolutionConditionMet'),
     targetMatches:boolGuard('targetMatches'),
     effectivelyBlocked:boolGuard('effectivelyBlocked'),
     alreadyUnblocked:boolGuard('alreadyUnblocked'),

@@ -105,6 +105,7 @@ test('CLI inventory includes more than dashboard 20 and cancelled Jobs', async (
   const inventory = listDashboardJobInventory(jobs, 'lalalic/neox');
   assert.equal(inventory.total, 35);
   assert.equal(inventory.jobs.length, 35);
+  assert.equal(inventory.jobs[0]?.id, '634');
   assert.equal(inventory.jobs.filter(x => x.state === 'CANCELLED').length, 12);
 });
 

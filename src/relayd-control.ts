@@ -35,6 +35,7 @@ import { classifyFailedTask, dispatchTaskAction, supersedeCancelledTask } from '
 import { isEffectivelyBlocked, unblockTask } from './unblock.js';
 import { requestTroubleshooterEscalation, resumeTroubleshooter } from './task-recovery.js';
 import { registerBlockerDependency } from './blockers.js';
+import { ensureBlockerRecovery, type BlockerRecoveryInput } from './blocker-recovery.js';
 import { adoptExistingPullRequestJob, ensureManagedGitHubJob } from './cli-job-create.js';
 import { applyJobActivateAction } from './job-actions.js';
 import { managedTaskUpdateHandler } from './task-update.js';
@@ -55,7 +56,7 @@ import { routeExecution } from './execution-routing.js';
 import { RelayObservability, classifyFailure, errorMessage, observability, setObservability } from './observability.js';
 
 export function createWorkspaceControl(deps: any) {
-  const { client, trusted, noGitHub, repositories, refreshAll, requireLocalJobBinding, makeReconciler, concurrency, pool, bus, isEffectivelyBlocked, unblockTask, publishTaskUnblocked, dispatchTaskAction, registerBlockerDependency, discoverAgents, ensureManagedGitHubJob } = deps;
+  const { client, trusted, noGitHub, repositories, refreshAll, requireLocalJobBinding, makeReconciler, concurrency, pool, bus, isEffectivelyBlocked, unblockTask, publishTaskUnblocked, dispatchTaskAction, registerBlockerDependency, discoverAgents, ensureManagedGitHubJob, ensureBlockerRecovery: runBlockerRecovery = ensureBlockerRecovery } = deps;
   const workspaceControl = async (body: Record<string, unknown>): Promise<unknown> => {
     const command = typeof body.command === 'string' ? body.command : '';
     const jobId = typeof body.jobId === 'string' ? body.jobId : '';
@@ -302,6 +303,81 @@ export function createWorkspaceControl(deps: any) {
       // Job immediately instead of waiting for inventory polling/stale rescue.
       await pool.reconcileLocalJob(jobId, 'control.blocker.add');
       await refreshAll(); return relation;
+    }
+    if (command === 'blocker.ensure') {
+      const request = body.request && typeof body.request === 'object' ? body.request as Record<string, unknown> : {};
+      const readText = (field: string): string => typeof request[field] === 'string' ? request[field] : '';
+      if (request.origin !== 'planner' && request.origin !== 'troubleshooter') throw new Error('blocker.ensure origin must be planner or troubleshooter');
+      if (request.resolutionMode !== 'merge' && request.resolutionMode !== 'verified') throw new Error('blocker.ensure resolutionMode must be merge or verified');
+      const recoveryInput: BlockerRecoveryInput = {
+        requestId: readText('requestId'),
+        targetRepository: readText('targetRepository'),
+        dependentRepository: readText('dependentRepository'),
+        dependentJobId: readText('dependentJobId'),
+        dependentTaskId: readText('dependentTaskId'),
+        reason: readText('reason'),
+        title: readText('title'),
+        objective: readText('objective'),
+        projectPath: typeof request.projectPath === 'string' && request.projectPath ? request.projectPath : undefined,
+        resolutionMode: request.resolutionMode,
+        origin: request.origin,
+        authorized: request.authorized === true,
+        authorizedRepositories: repositories,
+      };
+      const recovered = await runBlockerRecovery(recoveryInput);
+      if (!repositories.includes(recoveryInput.targetRepository)) repositories.push(recoveryInput.targetRepository);
+      let planningRecoveryRequired = recovered.planningRecoveryRequired;
+      let status = recovered.status;
+      if (recovered.planningRecoveryRequired) {
+        const blocker = openLocalManagedStore(recoveryInput.targetRepository, 0, {
+          directory: relayStoreDirectory(), jobId: recovered.blockerJobId, noGitHub: true,
+        });
+        const planner = makeReconciler(blocker.store, concurrency);
+        try {
+          await planner.planJob(recovered.blockerJobId);
+          planningRecoveryRequired = false;
+          status = 'planned';
+          if (blocker.store.mutateJob) {
+            await blocker.store.mutateJob(recovered.blockerJobId, (current: Job) => ({
+              ...current,
+              blockerRecoveryRequest: current.blockerRecoveryRequest
+                ? { ...current.blockerRecoveryRequest, status: 'planned', updatedAt: new Date().toISOString() }
+                : undefined,
+            }));
+          }
+        } catch (error) {
+          const current = await blocker.store.load(recovered.blockerJobId);
+          const latestPlan = [...(current.plans ?? [])].sort((left, right) => right.round - left.round)[0];
+          if (latestPlan?.status !== 'PLANNING') throw error;
+        } finally {
+          await planner.close();
+          blocker.relay.close();
+        }
+        if (!planningRecoveryRequired && store.mutateJob) {
+          await store.mutateJob(recovered.dependentJobId, (current: Job) => {
+            const task = current.tasks.find((item: Task) => item.id === recovered.dependentTaskId);
+            const receipt = task?.blockerRecoveryReceipt;
+            if (task && receipt && receipt.requestId === recovered.requestId) {
+              task.blockerRecoveryReceipt = { ...receipt, status: 'planned', planningRecoveryRequired: false, updatedAt: new Date().toISOString() };
+            }
+            current.updatedAt = new Date().toISOString();
+            return current;
+          });
+        }
+      }
+      const blockerSnapshot = openLocalManagedStore(recoveryInput.targetRepository, 0, {
+        directory: relayStoreDirectory(), jobId: recovered.blockerJobId, noGitHub: true,
+      });
+      try {
+        if (blockerSnapshot.store.resolveBlockerDependents) {
+          const released = await blockerSnapshot.store.resolveBlockerDependents(recovered.blockerJobId, 'merge');
+          for (const target of released.unblocked) await pool.reconcileLocalJob(target.jobId, 'control.blocker.ensure.resolution');
+        }
+      } finally { blockerSnapshot.relay.close(); }
+      await pool.reconcileLocalJob(recovered.dependentJobId, 'control.blocker.ensure.dependent');
+      await pool.reconcileLocalJob(recovered.blockerJobId, 'control.blocker.ensure.blocker');
+      await refreshAll();
+      return { ...recovered, status: planningRecoveryRequired ? 'planning_required' : status, planningRecoveryRequired };
     }
     if (command === 'blocker.resolve') {
       if (!store.resolveBlockerDependents) throw new Error('Blocker resolution unavailable');

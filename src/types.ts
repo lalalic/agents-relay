@@ -112,6 +112,40 @@ export type PlanTrigger = { source: 'initial' | 'continuation' | 'manual' | 'sch
 export type Plan = { jobId: string; id: string; round: number; source: PlanningDecisionSource; previousPlanId: string | null; trigger: PlanTrigger; status: 'PLANNING' | 'SUCCEEDED' | 'FAILED'; guidance?: string; forceRestate?: boolean; restateTaskIds?: string[]; objectiveStatus?: 'in_progress' | 'satisfied'; plannerResult?: import('./planner.js').PlannerResult; appliedCandidateFingerprint?: string; assessment: string; generatedTaskIds: string[]; pendingUnblocks?: import('./planner.js').PlannerUnblockSpec[]; headSha?: string; error?: string; attempt?: number; maxAttempts?: number; leaseOwner?: string | null; leaseExpiresAt?: string | null; executionId?: string | null; appliedExecutionId?: string; pausedExecutionId?: string; retryFeedback?: string; timeoutMs?: number; manualPlanning?: boolean; createdAt: string; updatedAt: string; planUrl?: string };
 export type BlockerDependentState = 'waiting' | 'resumed' | 'obsolete';
 export type BlockerDependent = { repository: string; prNumber: number; jobId: string; taskId: string; blockedAttempt: number; registeredAt: string; state: BlockerDependentState; resolvedAt?: string; resolution?: 'merge' | 'verified'; note?: string };
+export type BlockerRecoveryRequest = {
+  requestId: string;
+  intentFingerprint: string;
+  reason: string;
+  status: 'created' | 'registered' | 'planning_required' | 'planned';
+  targetRepository: string;
+  dependentRepository: string;
+  dependentJobId: string;
+  dependentTaskId: string;
+  blockedAttempt?: number;
+  title: string;
+  objective: string;
+  projectPath?: string;
+  resolutionMode: BlockerResolutionMode;
+  origin: 'planner' | 'troubleshooter';
+  authorized: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+export type BlockerRecoveryReceipt = {
+  requestId: string;
+  reason: string;
+  status: 'registered' | 'planning_required' | 'planned';
+  blockerJobId: string;
+  blockerRepository: string;
+  dependentRepository: string;
+  dependentJobId: string;
+  dependentTaskId: string;
+  resolutionMode: BlockerResolutionMode;
+  outcome: 'created' | 'reused' | 'registered';
+  planningRecoveryRequired: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
 export type TaskOutput = { kind: 'task_pr' } | { kind: 'file'; path: string };
 export type ReviewTarget = { artifact: string; version: string };
 export type ReviewTaskMetadata = {
@@ -213,6 +247,7 @@ export type Task = {
   interactiveInvocation?: import('./interactive-invocation.js').InteractiveInvocation;
   manualStateOverrides?: ManualTaskStateOverride[];
   resolution?: TaskResolution;
+  blockerRecoveryReceipt?: BlockerRecoveryReceipt;
   escalation?: TaskEscalation;
   recoveryForAttempt?: number;
   pausedExecution?: { id: string; state: Extract<TaskState, 'RUNNING' | 'QUEUED'>; attempt: number; at: string };
@@ -250,7 +285,7 @@ export function normalizeLegacyTaskLifecycle(task: Task): Task {
 export type RecoveryFailureRecord = { taskId: string; recoveryTaskId: string; reason: string; at: string };
 export type JobPause = { generation: number; requestedAt: string };
 export type ProjectionRecovery = { key: string; remoteSha: string; status: 'repairing' | 'retry' | 'projected' | 'escalated'; taskId: string; attempts: number; maxAttempts: number; error?: string; updatedAt: string };
-export type Job = { githubProjection?: { status: 'pr_bound' | 'merged_without_pr' | 'no_diff'; sourceSha: string; observedAt: string }; projectionRecovery?: ProjectionRecovery; localMerge?: import('./local-git-merge.js').LocalMergeReceipt; recoveryFailures?: RecoveryFailureRecord[]; id: string; title: string; objective?: string; projectPath?: string; priority?: Priority; description?: string; tag?: JobTag; autoMerge?: boolean; reviewEnabled?: boolean; /** Enables direct Agent Graph shortcut dispatch before Task materialization. */ executionMode?: 'shortcut'; /** Explicitly permits content-only shortcut terminal completion; all PR/review/merge gates remain forbidden. */ contentOnly?: boolean; /** First Shortcut launch timestamp; elapsed-time metric, never a hard cutoff. */ shortcutExecutionStartedAt?: string; /** Historical metadata only, ignored by current execution. */ shortcutExecutionDeadlineAt?: string; prNumber: number; repository: string; state: JobLifecycleState; continuation: Continuation | null; review?: ReviewState; reviewRevisionRequests?: ReviewRevisionRequest[]; reviewRevisionRounds?: ReviewRevisionRound[]; headSha?: string; reviewerThreadId?: string; creatorThreadId?: string; implementationThreadId?: string; initialPlanning?: { status: 'pending' | 'complete'; decisionId: string }; blockerResolutionMode?: BlockerResolutionMode; blockerResolvedAt?: string; unblocks?: BlockerDependent[]; changeCycle?: JobChangeCycle; plans?: Plan[]; pause?: JobPause; createdAt: string; updatedAt: string; tasks: Task[] };
+export type Job = { githubProjection?: { status: 'pr_bound' | 'merged_without_pr' | 'no_diff'; sourceSha: string; observedAt: string }; projectionRecovery?: ProjectionRecovery; localMerge?: import('./local-git-merge.js').LocalMergeReceipt; recoveryFailures?: RecoveryFailureRecord[]; blockerRecoveryRequest?: BlockerRecoveryRequest; id: string; title: string; objective?: string; projectPath?: string; priority?: Priority; description?: string; tag?: JobTag; autoMerge?: boolean; reviewEnabled?: boolean; /** Enables direct Agent Graph shortcut dispatch before Task materialization. */ executionMode?: 'shortcut'; /** Explicitly permits content-only shortcut terminal completion; all PR/review/merge gates remain forbidden. */ contentOnly?: boolean; /** First Shortcut launch timestamp; elapsed-time metric, never a hard cutoff. */ shortcutExecutionStartedAt?: string; /** Historical metadata only, ignored by current execution. */ shortcutExecutionDeadlineAt?: string; prNumber: number; repository: string; state: JobLifecycleState; continuation: Continuation | null; review?: ReviewState; reviewRevisionRequests?: ReviewRevisionRequest[]; reviewRevisionRounds?: ReviewRevisionRound[]; headSha?: string; reviewerThreadId?: string; creatorThreadId?: string; implementationThreadId?: string; initialPlanning?: { status: 'pending' | 'complete'; decisionId: string }; blockerResolutionMode?: BlockerResolutionMode; blockerResolvedAt?: string; unblocks?: BlockerDependent[]; changeCycle?: JobChangeCycle; plans?: Plan[]; pause?: JobPause; createdAt: string; updatedAt: string; tasks: Task[] };
 export type Continuation = { kind: 'codex-thread' | 'command' | 'webhook'; target: string; input?: string };
 export type EventRecord = { version: 1; event_id: string; job_id: string; task_id: string; parent_task_id: string | null; type: string; status: string; timestamp: string; visibility: string; level: string; message: string; source?: Record<string, unknown>; data?: Record<string, unknown> };
 

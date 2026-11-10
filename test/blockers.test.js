@@ -5,7 +5,7 @@ import { registerBlockerDependency, resolveBlockerDependencies } from '../dist/b
 
 const now='2026-09-25T18:00:00.000Z';
 function task(id,state='FAILED',attempt=1){return {jobId:'dependent',id,kind:'work',priority:'P1',storySize:'S',parentTaskId:null,dependencies:[],capabilities:[],adapter:'codex',input:id,output:{kind:'task_pr'},continuation:null,continuationDeliveredAt:null,state,attempt,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:'boom',timeoutMs:300000,createdAt:now,updatedAt:now};}
-function job(id,repository,prNumber,tasks=[]){return {id,title:id,priority:'P1',autoMerge:true,reviewEnabled:false,prNumber,repository,state:'ACTIVE',continuation:null,createdAt:now,updatedAt:now,tasks};}
+function job(id,repository,prNumber,tasks=[],state='ACTIVE'){return {id,title:id,priority:'P1',autoMerge:true,reviewEnabled:false,prNumber,repository,state,continuation:null,createdAt:now,updatedAt:now,tasks};}
 
 test('blocker registration is reverse, cross-job, and idempotent', async()=>{
   const blockerStore=new InMemoryStore(job('blocker','org/platform',10));
@@ -23,7 +23,7 @@ test('blocker registration is reverse, cross-job, and idempotent', async()=>{
 });
 
 test('merge resolution requeues matching dependents once and marks stale generations obsolete', async()=>{
-  const blockerStore=new InMemoryStore(job('blocker','org/platform',10));
+  const blockerStore=new InMemoryStore(job('blocker','org/platform',10, [], 'COMPLETED'));
   const aStore=new InMemoryStore(job('dependent-a','org/a',21,[{...task('a','DRAFT',0),jobId:'dependent-a',error:null}]));
   const bStore=new InMemoryStore(job('dependent-b','org/b',22,[{...task('b'),jobId:'dependent-b'}]));
   await registerBlockerDependency({blockerStore,blockerJobId:'blocker',dependentStore:aStore,dependentJobId:'dependent-a',dependentTaskId:'a',resolutionMode:'merge',now});
@@ -45,7 +45,7 @@ test('consuming blocker relations is write-free on a second resolution pass', as
     writes=0;
     async saveJob(value){ this.writes += 1; await super.saveJob(value); }
   }
-  const blockerStore=new CountingStore(job('blocker','org/platform',10));
+  const blockerStore=new CountingStore(job('blocker','org/platform',10, [], 'COMPLETED'));
   const dependentStore=new InMemoryStore(job('dependent','org/app',20,[task('draft','DRAFT',0)]));
   await registerBlockerDependency({blockerStore,blockerJobId:'blocker',dependentStore,dependentJobId:'dependent',dependentTaskId:'draft',resolutionMode:'merge',now});
   blockerStore.writes=0;
@@ -57,7 +57,7 @@ test('consuming blocker relations is write-free on a second resolution pass', as
 });
 
 test('verified blocker does not wake on merge but wakes after explicit verification', async()=>{
-  const blockerStore=new InMemoryStore(job('blocker','org/platform',10));
+  const blockerStore=new InMemoryStore(job('blocker','org/platform',10, [], 'COMPLETED'));
   const dependentStore=new InMemoryStore(job('dependent','org/app',20,[task('draft','DRAFT',0)]));
   await registerBlockerDependency({blockerStore,blockerJobId:'blocker',dependentStore,dependentJobId:'dependent',dependentTaskId:'draft',resolutionMode:'verified',now});
   const factory=()=>dependentStore;
@@ -70,7 +70,7 @@ test('verified blocker does not wake on merge but wakes after explicit verificat
 
 
 test('draft dependent is durably registered and released from blocker-side authority without blockedBy', async()=>{
-  const blockerStore=new InMemoryStore(job('blocker','org/platform',10));
+  const blockerStore=new InMemoryStore(job('blocker','org/platform',10, [], 'COMPLETED'));
   const draft={...task('draft','DRAFT',0),error:null};
   const dependentStore=new InMemoryStore(job('dependent','org/app',20,[draft]));
   await registerBlockerDependency({blockerStore,blockerJobId:'blocker',dependentStore,dependentJobId:'dependent',dependentTaskId:'draft',resolutionMode:'merge',now});

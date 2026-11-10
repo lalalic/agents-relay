@@ -19,16 +19,23 @@ export type DashboardJobsSearchResult<T extends DashboardJobLike> = {
 export const DASHBOARD_JOB_RESULT_LIMIT = 20;
 export const DEFAULT_DASHBOARD_JOB_STATUSES = ['DRAFT', 'ACTIVE', 'COMPLETED'] as const;
 
-function compareDashboardJobs(a: DashboardJobLike, b: DashboardJobLike): number {
-  const timestamp = (job: DashboardJobLike): number => {
-    const updated = Date.parse(job.updatedAt ?? '');
-    if (Number.isFinite(updated)) return updated;
-    const created = Date.parse(job.createdAt ?? '');
-    return Number.isFinite(created) ? created : 0;
-  };
-  return timestamp(b) - timestamp(a)
+function dashboardJobTimestamp(job: DashboardJobLike): number {
+  const updated = Date.parse(job.updatedAt ?? '');
+  if (Number.isFinite(updated)) return updated;
+  const created = Date.parse(job.createdAt ?? '');
+  return Number.isFinite(created) ? created : 0;
+}
+
+function compareDashboardJobInventory(a: DashboardJobLike, b: DashboardJobLike): number {
+  return dashboardJobTimestamp(b) - dashboardJobTimestamp(a)
     || a.repository.localeCompare(b.repository)
     || a.id.localeCompare(b.id);
+}
+
+function compareDashboardJobs(a: DashboardJobLike, b: DashboardJobLike): number {
+  const lifecycleGroup = (job: DashboardJobLike): number => job.state === 'COMPLETED' || job.state === 'CANCELLED' ? 1 : 0;
+  return lifecycleGroup(a) - lifecycleGroup(b)
+    || compareDashboardJobInventory(a, b);
 }
 
 export async function dashboardWorkflowGraphs(): Promise<DashboardWorkflowGraph[]> {
@@ -68,7 +75,7 @@ export async function eventHistory(jobId: string, taskId: string | null, limit: 
 
 /** CLI inventory is complete, including CANCELLED; only the dashboard list is capped. */
 export function listDashboardJobInventory<T extends DashboardJobLike>(jobs: readonly T[], repository = ''): DashboardJobsSearchResult<T> {
-  const selected = jobs.filter(job => !repository || job.repository === repository).sort(compareDashboardJobs);
+  const selected = jobs.filter(job => !repository || job.repository === repository).sort(compareDashboardJobInventory);
   return {
     jobs: selected,
     repositories: [...new Set(jobs.map(job => job.repository).filter(Boolean))].sort(),
@@ -94,9 +101,9 @@ export function searchDashboardJobs<T extends DashboardJobLike>(jobs: readonly T
       || String(job.id || '').toLowerCase().includes(search)
       || Boolean(normalizedPr) && String(job.prNumber || '').includes(normalizedPr);
   };
-  const matching = jobs.filter(job => matchesStatus(job) && matchesRepository(job) && matchesSearch(job)).sort(compareDashboardJobs);
+  const matching = jobs.filter(job => matchesStatus(job) && matchesRepository(job) && matchesSearch(job)).sort(compareDashboardJobInventory);
   return {
-    jobs: matching.slice(0, DASHBOARD_JOB_RESULT_LIMIT),
+    jobs: matching.slice(0, DASHBOARD_JOB_RESULT_LIMIT).sort(compareDashboardJobs),
     repositories: [...new Set(jobs.map(job => job.repository).filter(Boolean))].sort(),
     total: matching.length,
   };

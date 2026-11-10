@@ -46,7 +46,7 @@ test('maybeCreatePlanner gates on a BLOCKED Troubleshooter but not FAILED ordina
 });
 
 test('blocker Job resolution releases dependency waits and leaves FAILED work for Troubleshooter recovery', async()=>{
-  const blockerJob={id:'blocker',title:'blocker',priority:'P0',autoMerge:true,reviewEnabled:false,prNumber:10,repository:'org/platform',state:'ACTIVE',continuation:null,createdAt:at,updatedAt:at,tasks:[]};
+  const blockerJob={id:'blocker',title:'blocker',priority:'P0',autoMerge:true,reviewEnabled:false,prNumber:10,repository:'org/platform',state:'COMPLETED',continuation:null,createdAt:at,updatedAt:at,tasks:[]};
   const blockerStore=new InMemoryStore(blockerJob);
   const blockedStore=new InMemoryStore(makeJob([baseTask('release','DRAFT')]));
   await registerBlockerDependency({blockerStore,blockerJobId:'blocker',dependentStore:blockedStore,dependentJobId:'dependent',dependentTaskId:'release',resolutionMode:'verified',now:at});
@@ -135,7 +135,7 @@ test('Troubleshooter unblock reruns the same Task without creating a Planner Pla
 
 
 test('blocker Job resolution does not unblock unrelated BLOCKED tasks', async()=>{
-  const blockerJob={id:'blocker-scope',title:'blocker',priority:'P0',autoMerge:true,reviewEnabled:false,prNumber:10,repository:'org/platform',state:'ACTIVE',continuation:null,createdAt:at,updatedAt:at,tasks:[]};
+  const blockerJob={id:'blocker-scope',title:'blocker',priority:'P0',autoMerge:true,reviewEnabled:false,prNumber:10,repository:'org/platform',state:'COMPLETED',continuation:null,createdAt:at,updatedAt:at,tasks:[]};
   const blockerStore=new InMemoryStore(blockerJob);
   const target=baseTask('target','DRAFT');
   const unrelated=baseTask('unrelated','BLOCKED','troubleshooter');

@@ -42,6 +42,10 @@ export async function managedWorkerInput(job: Job, task: Task, context?: Executi
       ...(eventProtocol && existsSync(eventProtocol) ? [eventProtocol] : []),
       join(packageRoot, 'skills/agents-relay/contracts/task-job-contract.md'),
       join(packageRoot, 'skills/agents-relay/contracts/event-contract.md'),
+      ...(role === 'troubleshooter' ? [
+        join(packageRoot, 'skills/agents-relay/contracts/task-recovery-flows.md'),
+        join(packageRoot, 'skills/agents-relay/contracts/blocker-job-recovery.md'),
+      ] : []),
       ...(role === 'worker' && !task.review && task.agentName !== 'review-chair'
         ? [join(packageRoot, 'skills/agents-relay/contracts/worker-self-review.md')] : []),
     ],

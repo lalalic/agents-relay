@@ -1,6 +1,6 @@
 ---
 title: Blocker Resolution
-description: Releases dependency-waiting work; failed work and blocked Troubleshooters require their own fresh recovery flow.
+description: Releases dependency-waiting work only after the blocker Job and configured resolution condition are verified; failed work and blocked Troubleshooters require their own fresh recovery flow.
 ---
 flowchart LR
 %% relay: initial waiting
@@ -16,7 +16,7 @@ wait["state: wait"]
 obsolete["state: obsolete"]
 resumed["state: resumed"]
 
-resolutionAllowed["guard: resolutionAllowed"]
+resolutionConditionMet["guard: resolutionConditionMet"]
 targetMatches["guard: targetMatches"]
 effectivelyBlocked["guard: effectivelyBlocked"]
 alreadyUnblocked["guard: alreadyUnblocked"]
@@ -27,9 +27,9 @@ isUnblocked["guard: isUnblocked"]
 
 releaseDraft["action: blocker.releaseDraft"]
 
-waiting -->|on: blocker.resolved| resolutionAllowed
-resolutionAllowed -->|false| wait
-resolutionAllowed -->|true| checkTarget
+waiting -->|on: blocker.resolved| resolutionConditionMet
+resolutionConditionMet -->|false| wait
+resolutionConditionMet -->|true| checkTarget
 
 checkTarget -->|on: blocker.resolved| targetMatches
 targetMatches -->|false| obsolete

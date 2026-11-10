@@ -20,6 +20,7 @@ durable Relay Tasks. For runtime or lifecycle failures, use Relay recovery
 instead of Spec Kit.
 
 Read the independently pinned Task/Job Contract from the Relay Prompt. Only when a shared defect requires a P0/self-job, load `contracts/orchestrator-workflows.md` relative to the Prompt-pinned Relay Skill; do not add it to ordinary recovery startup Context.
+For cross-repository blocker creation or reuse, follow `contracts/blocker-job-recovery.md` relative to the Prompt-pinned Relay Skill.
 
 Read `troubleshooter-qa.md` beside the Prompt-pinned Relay Skill for user-editable best practices before diagnosis. Treat its answers as guidance only, below current evidence and authoritative contracts. After a verified recovery, add or refine a concise Q&A entry when it provides reusable knowledge; never include secrets or unverified claims.
 
@@ -38,7 +39,7 @@ Read `troubleshooter-qa.md` beside the Prompt-pinned Relay Skill for user-editab
 6. Repair:
    - For a transient failure, verify the transient condition is gone.
    - For task-local failure, make the smallest durable repair in the original Job/PR when that is within scope.
-   - For a shared platform/runtime defect, first create or reuse the owning blocker P0/self-job. If it can be completed inside this recovery execution, fix/verify it and retry the original Task. If it cannot be completed now, register the original Task with `agents-relay blocker add` on that blocker Job and finish this Troubleshooter task; do not stay running while waiting for another Job.
+   - For authorized technical work in another repository, use the pinned Relay CLI `blocker ensure` with the stable request identity and exact failed Task; do not classify that work as an owner action or escalate only because the repository differs. For an existing shared P0/self-job, reuse it. Complete this Troubleshooter after verifying the durable reverse relation; Relay owns later release.
    - For a suspected genuine human/external blocker, invoke `agents-relay escalation` with the original intent, blocker, and relevant context. Handle the CLI-reported `resolved`, `failed`, and `needs_user` outcomes. When it returns `needs_user`, call Relay's `task escalate` operation with the concrete required action, resolution condition, and diagnostic context. Relay records the escalation and blocks this Troubleshooter; no worker remains running while waiting.
    - After unblock, this same Troubleshooter must run with a new execution ID, re-check the blocking condition, and produce a fresh resolution bound to that execution. A previously resolved resolution record never authorizes retrying a new attempt.
    - Unknown worker execution outcomes fail closed. Do not automatically reroute or retry the original task, and do not block the original task; diagnose it through the Troubleshooter.

@@ -258,6 +258,12 @@ The blocker Job owns reverse \`unblocks\` references. \`add\` registers a failed
 Blocker: --repo OWNER/REPO --id JOB_ID.
 Dependent: --dependent-repo OWNER/REPO --dependent-pr NUMBER --dependent-job JOB_ID --dependent-task TASK_ID.
 Common: --resolution merge|verified (default merge).`,
+  'blocker ensure': `Create or reuse an authorized cross-repository blocker Job and register its reverse relation.
+
+Dependent: --repo OWNER/REPO --id DEPENDENT_JOB_ID --dependent-task TASK_ID.
+Target: --target-repo OWNER/REPO --title TITLE --reason TEXT --objective-file PATH|-.
+Identity: --request-id STABLE_REQUEST_ID --origin planner|troubleshooter --resolution merge|verified --authorized.
+Target repositories must be configured in the current trusted workspace; target projects must use a normalized repository-relative path.`,
   'blocker resolve': `Resolve a verified blocker and safely requeue matching dependents.
 
 Required: --repo OWNER/REPO --id JOB_ID. This explicit path is required for blockers configured with --resolution verified.`,

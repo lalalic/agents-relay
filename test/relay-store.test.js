@@ -388,7 +388,7 @@ test('ProjectedDurableStore resolves blocker domain mutations locally without di
   const blockerRelay = new SQLiteRelayStore(rootTmp.path);
   const dependentRelay = new SQLiteRelayStore(dependentTmp.path);
 
-  const blockerJob = { ...makeJob(), id: 'blocker-job', repository: 'owner/blocker', prNumber: 10, tasks: [] };
+  const blockerJob = { ...makeJob(), id: 'blocker-job', repository: 'owner/blocker', prNumber: 10, state: 'COMPLETED', tasks: [] };
   const dependentTask = { ...makeTask('DRAFT'), jobId: 'dependent-job', id: 'dependent-task' };
   const dependentJob = { ...makeJob(), id: 'dependent-job', repository: 'owner/dependent', prNumber: 20, tasks: [dependentTask] };
   const blockerRemote = new InMemoryStore(blockerJob);

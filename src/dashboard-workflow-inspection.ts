@@ -58,7 +58,7 @@ export async function inspectWorkflowSymbol(graphId: string, kind: string, name:
   const pattern = kind === 'Event' ? new RegExp(`\\|on:\\s*${escaped}\\|`) : new RegExp(`\\["${kind.toLowerCase()}:\\s*${escaped}"\\]`);
   const matchingLine = source.split('\n').findIndex(line => pattern.test(line));
   if (matchingLine < 0) return null;
-  const contracts = ['skills/agents-relay/contracts/event-contract.md', 'skills/agents-relay/contracts/task-recovery-flows.md'];
+  const contracts = ['skills/agents-relay/contracts/event-contract.md', 'skills/agents-relay/contracts/task-recovery-flows.md', 'skills/agents-relay/contracts/blocker-job-recovery.md'];
   const contractRefs = (await Promise.all(contracts.map(async path => {
     try { return matches(await readFile(join(ROOT, path), 'utf8'), name, path, 2); }
     catch { return []; }

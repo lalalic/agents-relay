@@ -455,7 +455,10 @@ export async function buildPlannerExecutionPrompt(context: PlannerContext, agent
   if (!context.planExecution) throw new Error('Planner execution is missing its durable Plan and execution identity');
   const ctx = context.executionContext, selected = ctx ? await resolveAgentMarkdown('planner', BUNDLED_AGENTS_ROOT, ctx.project.path, ctx.project.sharedRoot, agentSourceLayers(ctx.project.path, ctx.project)) : undefined;
   return buildRelayWorkPrompt({ agentName:'planner', agentContent:selected?.content ?? await readFile(agentFile,'utf8'),adapter,
-    contracts:[join(dirname(fileURLToPath(import.meta.url)), '..', 'skills/agents-relay/contracts/task-job-contract.md')],
+    contracts:[
+      join(dirname(fileURLToPath(import.meta.url)), '..', 'skills/agents-relay/contracts/task-job-contract.md'),
+      join(dirname(fileURLToPath(import.meta.url)), '..', 'skills/agents-relay/contracts/blocker-job-recovery.md'),
+    ],
     contexts:ctx?.instructions.filter(item => item.path.endsWith('/AGENTS.md')) ?? [],
     projectPath:ctx?.project.gitRoot ?? ctx?.project.path ?? process.cwd(),providerInstructions:ctx?.providerInstructions?.[adapter],skillPath:join(dirname(fileURLToPath(import.meta.url)), '..', 'skills/agents-relay/SKILL.md'),jobId:context.job.id,
     taskId:context.planExecution.planId,executionId:context.planExecution.executionId,
