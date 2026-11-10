@@ -18,6 +18,7 @@ cannot assume Neo exists. Never pass arbitrary Task text as a Shell command.
 - **One agent Task event contract** applies to Implementation, Reviewer, and Troubleshooter: `task.started`, optional `task.progress`, then exactly one agent terminal event, `task.completed` or `task.failed`. Role-specific results belong in `data`. A review with findings is a *completed* review, not a failed agent execution.
 - **`task.blocked` and `task.unblocked` are authoritative Relay lifecycle transitions**, not ordinary agent terminal events. A human may authorize unblocking a Troubleshooter but does not directly unblock the failed original Task.
 - **Troubleshooter owns diagnosis and recovery decisions.** It chooses technical repair/retry, blocker-Job dependency, or human escalation. There is no separate Escalator agent.
+- For an authorized technical prerequisite in another repository, use the create-or-reuse action in [`blocker-job-recovery.md`](blocker-job-recovery.md); repository boundaries alone never justify human escalation.
 - **Relay owns transitions and dispatch.** Troubleshooter requests authorized operations through Relay CLI, then checks the CLI response and fresh Task Context. Event transport acceptance alone is not confirmation of a Task transition.
 - Preserve the original failure, exact execution correlation, evidence, and idempotency throughout retries and resumes.
 
@@ -43,7 +44,7 @@ flowchart TD
     E --> F{"Recovery decision"}
     F -->|Technical recovery| G["Fix and verify; request retry"]
     G --> H["Original Task resumes"]
-    F -->|Other Job required| I["Create/link blocker Job"]
+    F -->|Authorized cross-repository technical work| I["Create or reuse blocker Job"]
     I --> J["Dependency resolution"]
     J --> K["Original Task resumes after verification"]
     F -->|Human required| L["Troubleshooter requests escalation"]

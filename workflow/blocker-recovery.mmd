@@ -1,0 +1,51 @@
+---
+title: Blocker Recovery
+description: Authorizes and idempotently creates or adopts a cross-repository blocker Job before registering its reverse dependency.
+---
+flowchart LR
+%% relay: initial entry
+entry["state: entry"]
+check_authorization["state: check_authorization"]
+check_known_request["state: check_known_request"]
+check_dependency["state: check_dependency"]
+validate_adoption["state: validate_adoption"]
+validate_target["state: validate_target"]
+validate_trust_boundary["state: validate_trust_boundary"]
+register["state: register"]
+ready["state: ready"]
+rejected["state: rejected"]
+
+authorized["guard: authorized"]
+known_request["guard: knownRequest"]
+authoritative_dependency["guard: authoritativeDependency"]
+adoption_valid["guard: adoptionValid"]
+target_valid["guard: targetValid"]
+trust_boundary_valid["guard: trustBoundaryValid"]
+
+create_blocker["action: recovery.createBlocker"]
+adopt_blocker["action: recovery.adoptExistingBlocker"]
+register_dependency["action: recovery.registerDependency"]
+
+entry -->|on: blocker.recovery.ensure| check_authorization
+check_authorization -->|on: blocker.recovery.ensure| authorized
+authorized -->|false| rejected
+authorized -->|true| validate_target
+check_known_request -->|on: blocker.recovery.ensure| known_request
+known_request -->|true| validate_adoption
+known_request -->|false| check_dependency
+check_dependency -->|on: blocker.recovery.ensure| authoritative_dependency
+authoritative_dependency -->|true| validate_adoption
+authoritative_dependency -->|false| create_blocker
+validate_adoption -->|on: blocker.recovery.ensure| adoption_valid
+adoption_valid -->|false| rejected
+adoption_valid -->|true| adopt_blocker
+adopt_blocker -->|to: register| register
+validate_target -->|on: blocker.recovery.ensure| target_valid
+target_valid -->|false| rejected
+target_valid -->|true| validate_trust_boundary
+validate_trust_boundary -->|on: blocker.recovery.ensure| trust_boundary_valid
+trust_boundary_valid -->|false| rejected
+trust_boundary_valid -->|true| check_known_request
+create_blocker -->|to: register| register
+register -->|on: blocker.recovery.ensure| register_dependency
+register_dependency -->|to: ready| ready

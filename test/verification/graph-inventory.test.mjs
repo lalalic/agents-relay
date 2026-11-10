@@ -19,6 +19,7 @@ test('every executable graph is loaded by production, without an orphan or silen
  // the per-graph production owner, binding and edge checks below stay strict.
  const expectedGraphs=[
   'authoritative-unblock.mmd',
+  'blocker-recovery.mmd',
   'blocker-resolution.mmd',
   'browser-worker-pool.mmd',
   'dependency-revision.mmd',

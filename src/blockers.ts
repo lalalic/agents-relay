@@ -23,6 +23,7 @@ export async function registerBlockerDependency(options: {
   dependentStore: DurableStore;
   dependentJobId: string;
   dependentTaskId: string;
+  expectedAttempt?: number;
   resolutionMode?: BlockerResolutionMode;
   now?: string;
 }): Promise<BlockerDependent> {
@@ -30,6 +31,10 @@ export async function registerBlockerDependency(options: {
   const dependentJob = await options.dependentStore.load(options.dependentJobId);
   const task = dependentJob.tasks.find(item => item.id === options.dependentTaskId);
   if (!task) throw new Error(`Dependent task ${options.dependentTaskId} not found`);
+  if (task.jobId && task.jobId !== dependentJob.id) throw new Error(`Dependent task ${task.id} is bound to another Job`);
+  if (options.expectedAttempt !== undefined && task.attempt !== options.expectedAttempt) {
+    throw new Error(`Dependent task ${task.id} advanced from expected attempt ${options.expectedAttempt} to ${task.attempt}`);
+  }
   if (!['DRAFT', 'FAILED', 'BLOCKED'].includes(task.state)) throw new Error(`Dependent task ${task.id} is not waiting/blocked/failed (${task.state})`);
   const now = options.now ?? new Date().toISOString();
   const resolutionProposal = { path: 'blocker_job_dependency' as const, targetTaskId: task.id, targetJobId: blocker.id, mode: options.resolutionMode ?? blocker.blockerResolutionMode ?? 'merge' };
@@ -118,7 +123,8 @@ export async function resolveBlockerDependencies(options: {
     const targetMatches = !!task && ['DRAFT', 'FAILED', 'BLOCKED', 'QUEUED'].includes(task.state) && task.attempt === relation.blockedAttempt;
     let note = 'dependent task released from dependency wait';
     const decision = await dispatchBlockerResolution({
-      resolutionAllowed: !(mode === 'verified' && options.resolution !== 'verified'),
+      resolutionConditionMet: blocker.state === 'COMPLETED'
+        && (mode === 'verified' ? options.resolution === 'verified' : options.resolution === 'merge'),
       targetMatches,
       effectivelyBlocked: !!task && isEffectivelyBlocked(task),
       alreadyUnblocked: Boolean(task?.unblock && ['DRAFT', 'QUEUED'].includes(task.state)),

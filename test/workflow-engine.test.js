@@ -9,6 +9,7 @@ import { jobLifecycleV2, taskLifecycleV2 } from '../dist/workflow/definitions-v2
 import { plannerTriggerV2 } from '../dist/workflow/planner-trigger-v2.js';
 import { plannerOrchestrationV2 } from '../dist/workflow/planner-orchestration-v2.js';
 import { blockerResolutionV2 } from '../dist/workflow/blocker-resolution-v2.js';
+import { blockerRecoveryGraph } from '../dist/workflow/blocker-recovery.js';
 import { authoritativeUnblockV2 } from '../dist/workflow/authoritative-unblock-v2.js';
 import { troubleshooterV2 } from '../dist/workflow/troubleshooter-v2.js';
 import { escalationGraph } from '../dist/workflow/escalation.js';
@@ -93,6 +94,7 @@ test('every repository lifecycle graph file parses and validates with the produc
         ['planner-trigger.mmd', plannerTriggerV2],
         ['planner-orchestration.mmd', plannerOrchestrationV2],
         ['blocker-resolution.mmd', blockerResolutionV2],
+        ['blocker-recovery.mmd', blockerRecoveryGraph],
         ['authoritative-unblock.mmd', authoritativeUnblockV2],
         ['troubleshooter.mmd', troubleshooterV2],
         ['escalation.mmd', escalationGraph],

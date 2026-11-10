@@ -357,7 +357,7 @@ test('job rows show lifecycle and runtime without PR state or quick actions', ()
 
 
 
-test('job ordering is deterministic and latest-first across lifecycle states', () => {
+test('job ordering puts durable lifecycle-active jobs first and stays deterministic', () => {
   const orderingSource = dashboardHtml.slice(
     dashboardHtml.indexOf('function isCompleteUnmerged(job)'),
     dashboardHtml.indexOf('async function loadJSON(url)')
@@ -391,8 +391,19 @@ test('job ordering is deterministic and latest-first across lifecycle states', (
 
   assert.deepEqual([...jobs].sort(compareJobs).map(item => item.id), [
     'draft', 'failed', 'blocked', 'external-merged', 'reviewing', 'running', 'queued',
-    'active', 'cancelled', 'objective-job', 'completed', 'external-closed', 'merge-pending'
+    'active', 'objective-job', 'external-closed', 'merge-pending', 'cancelled', 'completed'
   ]);
+
+  const transitioned = [...jobs];
+  transitioned[transitioned.findIndex(item => item.id === 'objective-job')] = {
+    ...transitioned.find(item => item.id === 'objective-job'),
+    state: 'COMPLETED',
+    updatedAt: '2026-01-09T00:00:00Z',
+  };
+  assert.deepEqual(
+    transitioned.sort(compareJobs).filter(item => ['objective-job', 'failed', 'draft'].includes(item.id)).map(item => item.id),
+    ['draft', 'failed', 'objective-job'],
+  );
 });
 
 test('job row selection uses repository, PR, and durable id as one UI identity', () => {
@@ -700,6 +711,37 @@ test('Jobs search defaults exclude cancelled; one status and repository combine 
     { id:'a', state:'ACTIVE', repository:'owner/one', updatedAt:'2026-10-28T12:00:00Z' },
   ];
   assert.deepEqual(searchDashboardJobs(tied, new URLSearchParams({ status:'ACTIVE' })).jobs.map(job => job.id), ['a','older','b']);
+});
+
+test('Jobs active-first ordering spans filtered matches before the 20-row cap', () => {
+  const jobs = [
+    { id:'cancelled-new', state:'CANCELLED', repository:'owner/one', title:'needle cancelled', updatedAt:'2026-10-29T13:00:00Z' },
+    { id:'completed-new', state:'COMPLETED', repository:'owner/one', title:'needle complete', updatedAt:'2026-10-29T12:00:00Z' },
+    ...Array.from({ length: 22 }, (_, index) => ({
+      id:`active-${String(index+1).padStart(2,'0')}`,
+      state:index === 0 ? 'DRAFT' : 'ACTIVE',
+      repository:'owner/two',
+      title:index === 0 ? 'needle draft' : 'needle active',
+      updatedAt:`2026-10-${String(index + 1).padStart(2, '0')}T00:00:00Z`,
+    })),
+  ];
+  const defaults = searchDashboardJobs(jobs, new URLSearchParams());
+  assert.equal(defaults.total, 23);
+  assert.equal(defaults.jobs.length, 20);
+  assert.deepEqual(defaults.jobs.filter(job => job.state === 'COMPLETED' || job.state === 'CANCELLED').map(job => job.id), []);
+  assert.deepEqual(defaults.jobs.slice(0, 2).map(job => job.id), ['active-22', 'active-21']);
+  const filtered = searchDashboardJobs(jobs, new URLSearchParams({ q:'needle' }));
+  assert.equal(filtered.total, 23);
+  assert.deepEqual(filtered.jobs.filter(job => job.state === 'COMPLETED' || job.state === 'CANCELLED').map(job => job.id), []);
+  assert.deepEqual(filtered.jobs.slice(0, 2).map(job => job.id), ['active-22', 'active-21']);
+  assert.deepEqual(
+    searchDashboardJobs([
+      { id:'b-active', state:'ACTIVE', repository:'owner/one' },
+      { id:'a-active', state:'ACTIVE', repository:'owner/one' },
+      { id:'cancelled-new', state:'CANCELLED', repository:'owner/two' },
+    ], new URLSearchParams({ status:'ACTIVE' })).jobs.map(job => job.id),
+    ['a-active', 'b-active'],
+  );
 });
 
 test('Jobs search matches a single repository and searches durable identity', () => {
