@@ -365,9 +365,14 @@ export async function runAgentShortcut(options: {
               }catch{/* Check the alternate canonical Run location. */}
             }
             if(found.length===0)throw new Error(`shortcut artifact missing or outside project: ${artifact}`);
-            if(found.length>1)throw new Error(`shortcut artifact ambiguous between project and run: ${artifact}`);
-            const relativePath=relative(projectReal,found[0]);
-            artifactHashes[relativePath]=digestBytes(await readFile(found[0]));
+            // A copied project asset may exist at both paths. Identical bytes
+            // are unambiguous; prefer the Run copy, but fail closed on a diff.
+            const contents=await Promise.all(found.map(path=>readFile(path)));
+            const hashes=contents.map(digestBytes);
+            if(new Set(hashes).size>1)throw new Error(`shortcut artifact ambiguous between project and run: ${artifact}`);
+            const selected=checkedRunRoot ? found.findIndex(path=>inside(checkedRunRoot,path)) : -1;
+            const index=selected>=0?selected:0;
+            artifactHashes[relative(projectReal,found[index])]=hashes[index];
           }
           return { id, value: result, artifactHashes };
         } catch (error) { return { id, value: null, error: error instanceof Error ? error.message : String(error) }; }

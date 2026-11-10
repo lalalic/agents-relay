@@ -1207,3 +1207,47 @@ test('daemon startup recovery must not reclaim externally owned Shortcut executi
     assert.equal(checked.tasks[0].leaseOwner,'external-shortcut-runner');
   }finally{rawStore.close();}
 });
+
+test('D02 artifact overlap: copied identical Run asset resolves to Run, different bytes fail closed',async t=>{
+ for(const different of [false,true]) await t.test(different?'different copies rejected':'identical copies accepted',async t=>{
+  const f=await mixedFixture(t,'D02-code-model-code.mmd');
+  const {mkdir}=await import('node:fs/promises');const {dirname}=await import('node:path');
+  const run=join(f.project,'runs','2026-11-07-brand-overlap');
+  const relativeAsset='assets/brand/brand-three-taps.wav';
+  await mkdir(dirname(join(f.project,relativeAsset)),{recursive:true});
+  await mkdir(dirname(join(run,relativeAsset)),{recursive:true});
+  await writeFile(join(f.project,relativeAsset),'verified-brand-audio');
+  await writeFile(join(run,relativeAsset),different?'other-actual-audio':'verified-brand-audio');
+  await f.store.mutateJob(f.id,job=>{
+   job.tasks[0].output={kind:'file',path:join(run,'job-output.json')};
+   job.tasks[0].input=`- Canonical run: ${run}`;return job;
+  });
+  await f.writeShortcut(f.project,'source',`export async function run(){return {status:'COMPLETED',output:{source:true},artifacts:[]};}`);
+  await f.writeShortcut(f.project,'finish',`export async function run(){return {status:'COMPLETED',output:{end:true},artifacts:[]};}`);
+  const adapter={name:'codex',id:'codex',capabilities:['model','codex'],launch(task){
+   const source={id:`job/${f.id}/task/${task.id}/execution/${task.executionId}`};
+   void (async()=>{
+    await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.started','running','fixture start','user',undefined,source));
+    await mkdir(dirname(task.output.path),{recursive:true});
+    await writeFile(task.output.path,JSON.stringify({status:'COMPLETED',output:{edited:true},artifacts:[relativeAsset]}));
+    await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.completed','succeeded','fixture complete','orchestrator',{},source));
+   })().catch(error=>{throw error;});
+   return {id:'mock-brand-overlap',launched:Promise.resolve(),promise:Promise.resolve({summary:'exit'}),cancel(){}};
+  }};
+  const reconciler=f.makeReconciler(adapter),stop=await reconciler.watch(f.id);
+  try{
+   const {result,job}=await f.execute(reconciler);
+   if(different){
+    assert.equal(result.outcome.status,'FAILED');
+    assert.match(result.outcome.reason,/shortcut artifact ambiguous between project and run/);
+    assert.equal(job.tasks[0].result.data.shortcut.nodes.C,undefined);
+   }else{
+    assert.equal(result.outcome.status,'COMPLETED',JSON.stringify(result.outcome));
+    assert.equal(job.state,'COMPLETED');
+    const key='runs/2026-11-07-brand-overlap/'+relativeAsset;
+    assert.match(job.tasks[0].result.data.shortcut.artifactHashes.M[key],/^[0-9a-f]{64}$/);
+    assert.equal(job.tasks[0].result.data.shortcut.nodes.C.output.end,true);
+   }
+  }finally{await stop();}
+ });
+});
