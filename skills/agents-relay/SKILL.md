@@ -63,20 +63,14 @@ configuration returns `technical_failure`; it must never be treated as
 `resolved` or `needs_user`. This direct escalation command is distinct from
 `task escalate`, which is the durable Troubleshooter/human-blocker transition.
 
-For human Preview/Review, use the **existing** Relay
-`review.interactive.begin/wait/ready/fail/abort` lifecycle. Relay provides the
-execution-bound invocation and decision contract and emits a provider-neutral
-`task.interactive_waiting` with `source.component: interactive-review`.
-Preview media compilation, delivery (for example Markcut to Neo Mobile),
-notifications, and UI are owned by the calling project/provider. Never invent
-an approval from a compile receipt or a preview handoff, never replace the
-exact event template with a provider-specific event, and never create an
-unnecessary separate Preview Provider framework. A managed Preview inside a
-Shortcut uses the original Task identity, not a Review child Task; the
-Shortcut returns `WAITING_REVIEW` after the host durably suspends it, and
-resumes the same Task after an authenticated decision. Neo Preview commits
-Run Git changes automatically; do not invoke a separate checkpoint command.
-Consult the project's Review/Preview contract for version binding.
+Human Preview uses `review.interactive.begin/wait/ready/fail/abort` and the
+canonical `task.interactive_waiting` contract. The provider owns media and
+notifications; a delivery receipt is **not approval**. Never forge event
+identity or create a separate Review Provider. For Shortcut Preview, invoke
+the tool with the **original Task identity**, return `WAITING_REVIEW` after
+Relay durably suspends it, then resume that Task after an authenticated
+decision. Neo Preview commits the Run Git revision automatically; no separate
+checkpoint CLI. See `contracts/event-contract.md` for details.
 
 ## 5. Manage services when needed
 
