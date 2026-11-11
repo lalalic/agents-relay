@@ -85,7 +85,7 @@ try{const job=await db.loadJob(${JSON.stringify(id)}),task=job.tasks[0];
  const load=async()=>{const db=new SQLiteRelayStore(dbPath,id);try{return await db.loadJob(id)}finally{db.close()}};
  const mutate=async fn=>{const db=new SQLiteRelayStore(dbPath,id);try{return await db.mutateJob(id,fn)}finally{db.close()}};
  const trace=async()=>existsSync(join(dir,'trace.log'))?(await readFile(join(dir,'trace.log'),'utf8')).trim().split('\n'):[];
- const args=['job','run','--mode','shortcut','--id',id,'--repo','local/shortcut-l3','--no-github',
+ const args=['job','run','--legacy-shortcut-runtime','--mode','shortcut','--id',id,'--repo','local/shortcut-l3','--no-github',
   '--store-dir',storeDir,'--task-id','initial','--project-path',project,'--shared-root',shared,'--workspace-root',dir];
  const cli=()=>spawnSync(process.execPath,[join(repo,'dist','cli.js'),...args],{encoding:'utf8',timeout:20000,
   env:{...process.env,AGENTS_RELAY_STORE_DIR:storeDir,AGENTS_RELAY_NO_GITHUB:'1'}});

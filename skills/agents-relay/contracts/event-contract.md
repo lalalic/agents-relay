@@ -44,21 +44,23 @@ A fix child reports its **own** correlated completion after verified repair. Dow
 
 ## Interactive Task suspension
 
-For a **host-wrapped interactive review tool**, the Worker supplies the
-reviewable output path and the authoritative `relay: {jobId, taskId,
-executionId}` binding as required by that tool's caller-provided contract.
-The host owns the Invocation, immutable review material, wait binding and
-notification delivery. The Worker never fabricates the Invocation ID or
-publishes an additional waiting/terminal event when the host manages handoff.
-No particular review product, MCP server or mobile client is required.
+For a managed human Preview the current Agent Task calls
+`agents-relay review interactive --path ABS --id JOB --task-id TASK --execution-id EXEC`.
+The host may expose `review.preview`; it renders and delivers without managing
+Task state. Relay binds one review to that Task Execution ID, persists
+`RUNNING -> AWAITING_DECISION`, releases the execution lease, accepts a
+correlated decision, and requeues **the same Task**. The Agent does not call the
+low-level Review lifecycle commands, invent an invocation ID, or emit another
+waiting/terminal event on behalf of its host. An inbox acknowledgement is not
+approval. No Git commit, content snapshot or SHA is required for human Review.
 
-For other host adapters, after binding an Invocation a RUNNING Worker waiting
-for human input publishes `task.interactive_waiting` with its exact
-Job/Task/Execution source identity.
-Relay checks the pending invocation, persists RUNNING -> AWAITING_DECISION,
-clears the execution lease, and releases the Worker. This is a non-failure
-handoff and is not a Task completion or a Troubleshooter block.
-For Shortcut modules, a host-wrapped `markcut.preview` call uses the **original Shortcut Task identity**, not a reviewer child. The module returns `WAITING_REVIEW` only after the host has durably transitioned that Task to `AWAITING_DECISION`. The foreground runner exits with waiting status, keeping the in-flight node as a durable replay fence. After an authenticated accepted decision, the lifecycle requeues that same Task. The interactive decision event listener calls the same trusted Shortcut Runner CLI used for manual execution, immediately after Relay durably accepts the decision and requeues the original Task. It does not schedule Shortcuts through the normal Worker Pool. It never auto-starts draft or unlaunched Shortcut Jobs and does not add a separate Scheduler. On `changes_requested`, a Script node invokes its Agent's normal durable model Worker to revise existing Artifacts, then re-verifies and opens a new human Preview. `approved` continues the Graph. Nonhuman `WAITING_EVENT` receipts are a different mechanism.
+For new DAG executions, the Coordinator creates normal Agent Tasks; a review
+belongs to the corresponding Agent child, not the Coordinator. The ordinary
+Reconciler (not the external Shortcut start CLI) schedules their retries and
+revisions. A Script Task on `changes_requested` may use its own Agent Model
+executor in a **new execution of that same Task**; after a fresh approval,
+Script verifies the revised artifacts. Legacy running Shortcut checkpoints
+retain the earlier foreground-runner resume behavior until completion.
 
 The Job stays ACTIVE; the Task does not requeue until a matching
 `task.interactive_decision` is durably accepted and the Task Graph selects

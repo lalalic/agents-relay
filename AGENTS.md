@@ -67,9 +67,18 @@ code change and classify it afterward.
   `source.component: interactive-review`. Do not add Markcut, Neo Mobile,
   video/preview generation, UI, or notification policy to Relay. A host owns
   those effects and must bind its decision to the current invocation, execution
-  and immutable Git revision. A delivery receipt never counts as approval.
+  and current Task execution identity. A delivery receipt never counts as approval.
 - Keep recorded historical event source labels unchanged; genericize newly
   emitted events without rewriting persisted review or Job history.
+
+## DAG and Shortcut execution
+
+An `agentGraph` creates runtime Agent Tasks under one Coordinator Task. Each child
+uses the ordinary Task lifecycle and either the Script or Model executor; the
+Coordinator is not a Worker/lease/retry layer. New Shortcut Jobs only differ
+by their explicit CLI activation. Do not add independent DAG failure/recovery
+state, model-only revision Tasks, or Shortcut-only Task schedulers. Preserve
+legacy in-flight direct Shortcut checkpoints until they complete.
 
 ## Verification levels
 

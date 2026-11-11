@@ -1,3 +1,4 @@
+import { unifiedDAG } from './dag-task-runtime.js';
 import { GitHubClient, ManagedJobOverview, listManagedGitHubJobs, type DurableStore } from './store.js';
 import { EventBus, eventFor } from './events.js';
 import { Reconciler } from './reconciler.js';
@@ -41,6 +42,7 @@ export function needsLifecycleReconciliation(job: Job, now = Date.now()): boolea
     });
     if (review.accepted && review.actions.some(action => action.id === 'review.create')) return true;
   }
+  if (job.tasks.some(task => unifiedDAG(job,task) && task.state==='RUNNING')) return true;
   if (job.tasks.some(task => (task.state === 'QUEUED' && task.executionId === null)
     || (task.state === 'RUNNING' && task.adapter === 'orchestrator' && task.executionId === null)
     || (task.state === 'DRAFT' && task.dependencies.length > 0))) return true;
@@ -137,7 +139,7 @@ export class RepositoryWorkerPool {
       const outcome = await reconciler.applyEvent(signal.event);
       // The decision is durably applied before invoking the Shortcut CLI hook.
       // A replay can also wake a still-QUEUED Task without a new decision.
-      if (signal.event.type === 'task.interactive_decision' &&
+      if (signal.event.type === 'task.interactive_decision' && !target.job.tasks.some(t=>unifiedDAG(target.job,t)) &&
           ['task.interactive_decision.accepted','task.interactive_decision.duplicate'].includes(outcome.reason) &&
           await this.onShortcutDecision?.(jobId,signal.event.task_id)) continue;
       shouldReconcile ||= outcome.reconcile;
@@ -150,8 +152,8 @@ export class RepositoryWorkerPool {
     let capacity = Math.max(0, this.concurrency - jobs.filter(job => jobHasActiveExecution(job)).length);
     for (const job of jobs) {
       if (capacity <= 0) break;
-      // Shortcut starts and review resumes are external CLI invocations, not normal Task dispatch.
-      if (job.executionMode === 'shortcut') continue;
+      // Legacy in-flight Shortcut Jobs retain their original foreground owner.
+      if (job.executionMode === 'shortcut' && !job.tasks.some(t=>unifiedDAG(job,t))) continue;
       const store = await this.requireLocalStore(job.id);
       await (store as HydratableStore).hydrate?.(job);
       const ready = job.tasks.filter(task => (task.state === 'QUEUED' && task.executionId === null) || (task.state === 'DRAFT' && task.dependencies.length > 0)).length;

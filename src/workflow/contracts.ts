@@ -41,6 +41,7 @@ export const WORKFLOW_EVENT_NAMES = [
   'task.started',
   'shortcut.waiting',
   'shortcut.completed',
+  'content.completed',
   'shortcut.failed',
   'shortcut.result',
   'effect.launchShortcut.failed',

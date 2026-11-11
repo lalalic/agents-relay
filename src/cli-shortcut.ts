@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { missingShortcutNodes, recordShortcutReceipt, runAgentShortcut, shortcutResumeEvent } from './agent-shortcut.js';
@@ -95,6 +96,32 @@ export async function runShortcutJobCommand(args: string[], id: string, makeRunn
     if(!old)current.shortcutRunnerContext=ctx;
     return current;
   });
+  // Shortcut is an explicit activation point, not a separate Task engine.
+  // Previously launched, in-flight Shortcut checkpoints retain their legacy
+  // foreground owner; new Jobs use the ordinary Reconciler/DAG Task path.
+  const oldCheckpoint=(task.result?.data?.shortcut as object|undefined);
+  const dagCheckpoint=(task.result?.data?.dag as {version?:number}|undefined);
+  const unified=dagCheckpoint?.version===1 || (!hasArg(args,'--legacy-shortcut-runtime') && !oldCheckpoint && !job.shortcutExecutionStartedAt);
+  if(unified){
+    if(!loaded.store.mutateJob)throw Error('Unified DAG activation requires SQLite');
+    const hash=createHash('sha256').update(task.agentGraph!).digest('hex');
+    await loaded.store.mutateJob(id,current=>{
+      const root=current.tasks.find(t=>t.id===taskId);
+      if(current.state!=='ACTIVE'||!root||!root.agentGraph||root.agentGraph!==task!.agentGraph)
+        throw Error('DAG activation Task identity changed');
+      if(root.state!=='QUEUED' && root.state!=='RUNNING')throw Error('DAG Task cannot start from '+root.state);
+      const prior=root.result?.data?.dag as {version?:number;graphHash?:string}|undefined;
+      if(prior && (prior.version!==1||prior.graphHash!==hash))throw Error('DAG runtime identity changed');
+      if(!prior)root.result={summary:'DAG ready',data:{...(root.result?.data??{}),dag:{version:1,graphHash:hash}}};
+      if(!current.shortcutExecutionStartedAt)current.shortcutExecutionStartedAt=new Date().toISOString();
+      return current;
+    });
+    const scheduled=await loaded.store.load(id);
+    await withEventBus(args,bus=>publishWake(bus,scheduled,taskId,'Shortcut DAG activation (normal Task scheduler)'));
+    console.log(JSON.stringify({jobId:id,taskId,mode:'shortcut',scheduled:true,state:scheduled.state,
+      graphRuntime:'tasks',message:'Task scheduling and Review are owned by the ordinary Relay Reconciler'},null,2));
+    return;
+  }
   const missing = await missingShortcutNodes(task.agentGraph!, projectPath, sharedRoot, workspaceRoot, globalRoot);
   const previous = task.result?.data?.shortcut as { workerFallback?:boolean } | undefined;
   if (previous?.workerFallback === true)

@@ -1,3 +1,4 @@
+import { dagCompletionError } from './dag-result-contract.js';
 import { dependencyRevisionStillCurrent } from './dependency-revision-execution.js';
 import { isFinalReviewAgent } from './final-review-role.js';
 import { handleWorkerLaunchFailure } from './worker-failure-recovery.js';
@@ -86,6 +87,12 @@ export abstract class ReconcilerRuntimeBase {
     if (event.type === 'task.completed') {
       const latest = await this.store.load(event.job_id);
       const task = latest.tasks.find(item => item.id === event.task_id);
+      if(task?.dagNode){
+        const projectPath=this.options.projectPathForJob?await this.options.projectPathForJob(latest,task):undefined;
+        const invalid=await dagCompletionError(task,projectPath);
+        if(invalid)return this.applyTerminalEvent({...event,type:'task.failed',
+          message:invalid,data:{...event.data,reason:'invalid_dag_result'}});
+      }
       // Source generation still goes through canonical Task terminal
       // correlation; convert stale verification into a safe supersede event.
       if (task?.revision && task.revision.kind !== 'targeted' && !dependencyRevisionStillCurrent(latest, task)) {
@@ -213,7 +220,7 @@ export abstract class ReconcilerRuntimeBase {
     if (!task.executionId) return true;
     const sourceId = eventSourceId(event);
     const expected = executionEventSource(jobId, task.id, task.executionId);
-    if ((['codex', 'chatgpt', 'z'].includes(task.adapter)) && sourceId !== expected) return false;
+    if ((['codex', 'chatgpt', 'z', 'script'].includes(task.adapter)) && sourceId !== expected) return false;
     if (afterCommit) claimTerminalExecution(expected);
     const executionId = task.executionId;
     if (afterCommit) this.clearExecution(task.id, executionId);
@@ -378,7 +385,7 @@ export abstract class ReconcilerRuntimeBase {
     const lifecycleEvent = event.type;
     const transition = await withExecutionBoundary(event.job_id, event.task_id, () => this.taskTransitions.apply(event.job_id, event.task_id, lifecycleEvent, {
       eligible: (_job, task) => {
-        if (!['codex', 'chatgpt', 'z', 'orchestrator'].includes(task.adapter)) return false;
+        if (!['codex', 'chatgpt', 'z', 'script', 'orchestrator'].includes(task.adapter)) return false;
         if (event.type === 'task.blocked' && (!trustedInternal || task.agentName !== 'troubleshooter')) return false;
         if (event.type === 'task.interactive_waiting' &&
             (task.interactiveInvocation?.status !== 'awaiting_decision' ||
@@ -386,7 +393,7 @@ export abstract class ReconcilerRuntimeBase {
              !isCorrelatedWorkerEvent(task, event))) return false;
         if (isFinalReviewAgent(task.agentName) && event.type === 'task.completed') return false;
         if (event.type === 'task.completed' && task.interactiveInvocation?.status !== undefined && task.interactiveInvocation.status !== 'approved') return false; // current interactive revision requires durable approval
-        const modelBacked = ['codex', 'chatgpt', 'z'].includes(task.adapter);
+        const modelBacked = ['codex', 'chatgpt', 'z', 'script'].includes(task.adapter);
         if (!trustedInternal && modelBacked && !isCorrelatedWorkerEvent(task, event)) {
           const eventExecutionId = executionIdFromSource(eventSourceId(event), _job.id, task.id);
           const prior = eventExecutionId ? task.executionHistory?.find(item => item.id === eventExecutionId) : undefined;
@@ -401,7 +408,7 @@ export abstract class ReconcilerRuntimeBase {
         return { recoverableExecution: isRecoverableWatchdogFailure(task) && freshEnough, awaitingInteractiveDecision: lifecycleEvent === 'task.interactive_waiting' && task.interactiveInvocation?.status === 'awaiting_decision' };
       },
       mutate: (job, task) => {
-        const modelBacked = ['codex', 'chatgpt', 'z'].includes(task.adapter);
+        const modelBacked = ['codex', 'chatgpt', 'z', 'script'].includes(task.adapter);
         const acceptedExecutionId = task.executionId;
         const eventExecutionId = executionIdFromSource(eventSourceId(event), job.id, task.id);
         const terminalExecutionId = eventExecutionId ?? acceptedExecutionId;

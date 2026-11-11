@@ -64,6 +64,7 @@ const jobCases = [
   ['ACTIVE','review.approved',{},'ACTIVE'],
   ['ACTIVE','implementation.completed',{},'ACTIVE'],
   ['ACTIVE','shortcut.completed',{shortcutCompletionAllowed:true},'COMPLETED'],
+  ['ACTIVE','content.completed',{contentCompletionAllowed:true},'COMPLETED'],
   ['ACTIVE','cancel',{},'CANCELLED'],
   ['ACTIVE','local.completed',{jobActive:true,autoMergeEnabled:true,implementationComplete:true,completionGateSatisfied:true,reviewSatisfied:true},'COMPLETED'],
   ['ACTIVE','local.merge.requested',{jobActive:true,autoMergeEnabled:true,implementationComplete:true,completionGateSatisfied:true,reviewSatisfied:true,localMergePresent:true,reviewHeadCurrent:true,mergeAttemptReady:true},'ACTIVE'],
@@ -120,8 +121,9 @@ const jobRuntime = new GraphRuntime(jobSource, {
       && facts.durableFacts.localMergePresent === true && facts.durableFacts.reviewHeadCurrent === true
       && facts.durableFacts.mergeAttemptReady === true,
     shortcutCompletionAllowed: facts => facts.durableFacts.shortcutCompletionAllowed === true,
+    contentCompletionAllowed: facts => facts.durableFacts.contentCompletionAllowed === true,
   },
-  events: eventRegistry([...jobCases.map(([,event]) => event), 'reconcile', 'local.completed', 'shortcut.completed', 'local.merge.requested', 'effect.deliverLocalMerge.failed']),
+  events: eventRegistry([...jobCases.map(([,event]) => event), 'reconcile', 'local.completed', 'shortcut.completed', 'content.completed', 'local.merge.requested', 'effect.deliverLocalMerge.failed']),
   actions: actionRegistry(['effect.cancelActiveTasks','effect.mergePullRequest','effect.deliverLocalMerge','effect.cleanupJobWorktree']),
 });
 
