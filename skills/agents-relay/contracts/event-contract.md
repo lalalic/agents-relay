@@ -58,6 +58,8 @@ Job/Task/Execution source identity.
 Relay checks the pending invocation, persists RUNNING -> AWAITING_DECISION,
 clears the execution lease, and releases the Worker. This is a non-failure
 handoff and is not a Task completion or a Troubleshooter block.
+For Shortcut modules, a host-wrapped `markcut.preview` call uses the **original Shortcut Task identity**, not a reviewer child. The module returns `WAITING_REVIEW` only after the host has durably transitioned that Task to `AWAITING_DECISION`. The foreground runner exits with waiting status, keeping the in-flight node as a durable replay fence. After an authenticated accepted decision, the lifecycle requeues that same Task; a new foreground `job run --id ... --mode shortcut` resumes that node with the real `reviewDecision` in its input. Nonhuman `WAITING_EVENT` receipts are a different mechanism.
+
 The Job stays ACTIVE; the Task does not requeue until a matching
 `task.interactive_decision` is durably accepted and the Task Graph selects
 `interactive.resume` -> QUEUED. Retries and daemon restarts must not create

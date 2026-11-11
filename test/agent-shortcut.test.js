@@ -87,6 +87,55 @@ test('foreground Shortcut Runner resolves a stored repository when --repo is omi
   assert.equal((await f.load()).state, 'COMPLETED');
 });
 
+test('one Shortcut Task suspends for host Review and resumes after exact accepted Git SHA', async t => {
+  const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:alpha]'});
+  const cli=join(root,'dist','cli.js'),sha='a'.repeat(40);
+  const helper=join(f.directory,'host-review.mjs');
+  await writeFile(helper,`import {SQLiteRelayStore} from ${JSON.stringify(new URL('../dist/relay-store.js',import.meta.url).href)};
+import {beginInteractiveReview} from ${JSON.stringify(new URL('../dist/interactive-request.js',import.meta.url).href)};
+import {tryTransitionTaskEvent} from ${JSON.stringify(new URL('../dist/task-transitions.js',import.meta.url).href)};
+const store=new SQLiteRelayStore(${JSON.stringify(join(f.directory,'relay.sqlite'))},${JSON.stringify(f.id)});
+const job=await store.loadJob(${JSON.stringify(f.id)});
+const task=job.tasks[0];
+const receipt=await beginInteractiveReview(store,job.id,task.id,task.executionId);
+await store.mutateJob(job.id,current=>{const t=current.tasks[0];const decision=tryTransitionTaskEvent(t,'task.interactive_waiting',{awaitingInteractiveDecision:true});
+ if(!decision.accepted)throw Error('Host refused waiting: '+JSON.stringify(decision));
+ t.leaseOwner=null;t.leaseExpiresAt=null;t.executionId=null;return current;});
+process.stdout.write(JSON.stringify({invocationId:receipt.invocationId}));store.close();
+`);
+  await f.writeShortcut(f.project,'alpha',`
+export async function run({input,runCommand}) {
+  if(input.reviewDecision){
+    if(input.reviewDecision.status!=='approved'||input.reviewDecision.revision!==${JSON.stringify(sha)})throw Error('unapproved revision');
+    return {status:'COMPLETED',output:{revision:input.reviewDecision.revision},artifacts:[]};
+  }
+  const wait=await runCommand([process.execPath,${JSON.stringify(helper)}],${JSON.stringify(f.project)});
+  if(wait.code!==0)throw Error('host wait failed:'+wait.stderr);
+  return {status:'WAITING_REVIEW'};
+}
+`);
+  const first=await f.cli();
+  assert.equal(first.status,3,JSON.stringify(first));
+  assert.equal(JSON.parse(first.stdout).outcome.status,'WAITING_REVIEW');
+  const pending=await f.load();
+  assert.equal(pending.tasks.length,1,'no separate Review Task');
+  const waiting=pending.tasks[0];
+  assert.equal(waiting.state,'AWAITING_DECISION');
+  assert.ok(waiting.result.data.shortcut.inFlight.A,'original node is durable until real decision');
+  const store=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
+  await store.mutateJob(f.id,job=>{const t=job.tasks[0];t.interactiveInvocation.revision=sha;t.interactiveInvocation.status='approved';
+    t.interactiveInvocation.decidedAt=new Date().toISOString();return job;});
+  const {resumeInteractiveTask}=await import('../dist/interactive-resume.js');
+  assert.equal(await resumeInteractiveTask(store,f.id,'initial',waiting.interactiveInvocation.invocationId,sha,'approved'),true);
+  store.close();
+  const second=await f.cli();
+  assert.equal(second.status,0,JSON.stringify(second));
+  const final=await f.load();
+  assert.equal(final.state,'COMPLETED');
+  assert.equal(final.tasks.length,1);
+  assert.equal(final.tasks[0].result.data.shortcut.nodes.A.output.revision,sha);
+});
+
 test('shortcut commands reject file-backed Jobs before mutation', async t => {
   const f = await fixture(t);
   const file = join(f.directory, 'legacy-job.json');

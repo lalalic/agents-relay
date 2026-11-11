@@ -18,6 +18,7 @@ import { dependencyReady, tryTransitionTaskEvent } from './task-transitions.js';
 export type ShortcutOutcome =
   | { status: 'COMPLETED'; output: Record<string, unknown>; artifacts: string[] }
   | { status: 'WAITING_EVENT'; event: { nodeId: string; id: string; revision: string; contentHash: string } }
+  | { status: 'WAITING_REVIEW'; nodeId: string; invocationId: string }
   | { status: 'FAILED'; reason: string };
 export type ShortcutNodeEvent = { nodeId: string; type: 'started' | 'progress' | 'completed' | 'failed' | 'waiting'; timestamp: string; data?: Record<string, unknown> };
 type ShortcutWait = { kind: 'nonhuman_result'; id: string; revision: string; contentHash: string; executionId: string };
@@ -81,6 +82,13 @@ export async function recordShortcutReceipt(store: DurableStore, identity: {
 function taskShortcutInput(input: string): Record<string, unknown> {
   try { const parsed: unknown = JSON.parse(input); if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>; } catch { /* plain Task text remains available */ }
   return { taskInput: input };
+}
+
+/** Task input is untrusted; only Relay may inject accepted review provenance. */
+function safeShortcutTaskInput(input: string): Record<string, unknown> {
+  const data=taskShortcutInput(input);
+  delete data.reviewDecision;
+  return data;
 }
 
 function shortcutJobCompletionAllowed(job: Job): boolean {
@@ -208,7 +216,22 @@ export async function runAgentShortcut(options: {
       throw new Error(`Durable shortcut receipt ${nodeId} no longer matches its wait, execution, or content fingerprint`);
   }
   state.inFlight ??={};
-  if(currentTask.state==='QUEUED'&&Object.keys(state.inFlight).length>0) throw new Error('Shortcut checkpoint contains an interrupted module execution; refusing automatic replay');
+  // A host-bound human review suspends the parent Task *during* an in-flight
+  // Shortcut module call. The exact accepted invocation authorizes replaying
+  // only that node after the same Task is requeued by the lifecycle Graph.
+  let resumedReview: {nodeId:string;status:'approved'|'changes_requested';revision:string;
+    invocationId:string;feedback?:string;comments?:readonly unknown[]} | null = null;
+  if(currentTask.state==='QUEUED'&&Object.keys(state.inFlight).length>0){
+    const pending=Object.entries(state.inFlight);
+    const inv=currentTask.interactiveInvocation;
+    if(pending.length!==1||!inv?.decidedAt||!['approved','changes_requested'].includes(inv.status)||
+      inv.executionId!==pending[0][1]||!/^[a-f0-9]{40}$/.test(inv.revision))
+      throw new Error('Shortcut checkpoint contains an interrupted module execution; refusing automatic replay');
+    resumedReview={nodeId:pending[0][0],status:inv.status as 'approved'|'changes_requested',
+      revision:inv.revision,invocationId:inv.invocationId,feedback:inv.feedback,comments:inv.comments};
+    delete state.inFlight[pending[0][0]];
+  }
+
   state.artifactHashes ??= {};
   for (const [nodeId, hashes] of Object.entries(state.artifactHashes ?? {})) for (const [artifact, expected] of Object.entries(hashes)) {
     const actualPath = resolve(projectReal, artifact);
@@ -290,6 +313,10 @@ export async function runAgentShortcut(options: {
     heartbeatInFlight=true;
     void store.mutateJob!(job.id,fresh=>{
       const t=fresh.tasks.find(item=>item.id===task.id);
+      // A managed Preview has already suspended this exact Task and released
+      // its lease. Do not reinterpret that authorized handoff as lease loss.
+      if(t?.state==='AWAITING_DECISION' && t.interactiveInvocation?.status==='awaiting_decision' &&
+         t.interactiveInvocation.executionId===currentTask!.executionId) return fresh;
       if(fresh.state!=='ACTIVE'||fresh.pause||!t||t.state!=='RUNNING'||t.executionId!==currentTask!.executionId||t.leaseOwner!==owner){
         throw new Error('Shortcut execution lease was fenced during module execution');
       }
@@ -329,12 +356,13 @@ export async function runAgentShortcut(options: {
           emit({nodeId:id,type:'progress',data:{phase:shortcut?'shortcut.invoke':'worker.invoke'}});
           const raw = await raceAbort(shortcut
             ? (async () => { const module = await import(pathToFileURL(shortcut).href) as ShortcutModule;
-                return module.run({ input: { ...taskShortcutInput(task.input), projectPath, jobId: job.id, taskId: task.id, nodeId: id, agent: node.agent, predecessorOutputs }, signal:executionAbort.signal, runCommand: trackedRunCommand }); })()
+                return module.run({ input: { ...safeShortcutTaskInput(task.input), projectPath, jobId: job.id, taskId: task.id, nodeId: id, agent: node.agent, predecessorOutputs, ...(resumedReview?.nodeId===id ? {reviewDecision:{status:resumedReview.status,revision:resumedReview.revision,invocationId:resumedReview.invocationId,feedback:resumedReview.feedback,comments:resumedReview.comments}} : {}) }, signal:executionAbort.signal, runCommand: trackedRunCommand }); })()
             : options.runModelNode!({id,agent:node.agent,predecessorOutputs,executionId:currentTask!.executionId!,signal:executionAbort.signal}),executionAbort.signal);
           if(leaseHeartbeatError)throw new Error(`Shortcut lease renewal failed: ${String(leaseHeartbeatError)}`);
           if (!raw || typeof raw !== 'object') throw new Error('shortcut result must be an object');
           const result = raw as Record<string, unknown>;
           if (result.status === 'WAITING_EVENT' && result.event && typeof result.event === 'object') return { id, value: result };
+          if (result.status === 'WAITING_REVIEW') return { id, value: result };
           if (!validOutput(result)) throw new Error('shortcut returned an invalid COMPLETED result contract');
           const artifactPaths = Array.isArray(result.artifacts) ? result.artifacts as string[]
             : Object.entries(result.artifacts as Record<string, unknown>).map(([name, value]) => {
@@ -377,6 +405,22 @@ export async function runAgentShortcut(options: {
           return { id, value: result, artifactHashes };
         } catch (error) { return { id, value: null, error: error instanceof Error ? error.message : String(error) }; }
       }));
+      const reviewWait=outcomes.find(result=>result.value?.status==='WAITING_REVIEW');
+      if(reviewWait){
+        // The wrapper already persisted RUNNING -> AWAITING_DECISION and
+        // released the lease. Keep inFlight as a durable fence until the
+        // approved/changes-requested invocation requeues this same Task.
+        if(batch.length!==1) return await fail('Interactive Shortcut Review requires a single in-flight node');
+        const durable=await findTask();
+        if(durable.state!=='AWAITING_DECISION'||durable.interactiveInvocation?.status!=='awaiting_decision'||
+          durable.interactiveInvocation.executionId!==currentTask!.executionId)
+          return await fail('Shortcut Review did not bind the current Task through hostInvocation');
+        emit({nodeId:reviewWait.id,type:'waiting',data:{invocationId:durable.interactiveInvocation.invocationId,
+          executionId:durable.interactiveInvocation.executionId}});
+        stopHeartbeat();
+        return {outcome:{status:'WAITING_REVIEW',nodeId:reviewWait.id,
+          invocationId:durable.interactiveInvocation.invocationId},task:durable,fallback:false};
+      }
       const failed=outcomes.find(result=>!result.value);
       for (const result of outcomes) {
         if (!result.value) { delete state.inFlight[result.id]; continue; }

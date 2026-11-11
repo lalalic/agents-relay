@@ -105,7 +105,7 @@ export async function runShortcutJobCommand(args: string[], id: string, makeRunn
       if(result.outcome.status==='FAILED') {
         const checkpoint=result.task.result?.data?.shortcut as {terminal?:{status?:string}}|undefined;
         process.exitCode=checkpoint?.terminal?.status==='TIMED_OUT'?4:checkpoint?.terminal?.status==='INTERRUPTED'?5:1;
-      } else if(result.outcome.status==='WAITING_EVENT') process.exitCode=3;
+      } else if(result.outcome.status==='WAITING_EVENT'||result.outcome.status==='WAITING_REVIEW') process.exitCode=3;
     } finally {
       await unwatch?.();
       await workerReconciler?.close();

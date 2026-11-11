@@ -71,8 +71,12 @@ Preview media compilation, delivery (for example Markcut to Neo Mobile),
 notifications, and UI are owned by the calling project/provider. Never invent
 an approval from a compile receipt or a preview handoff, never replace the
 exact event template with a provider-specific event, and never create an
-unnecessary separate Preview Provider framework. Consult the project's own
-Review/Preview contract for delivery and version binding.
+unnecessary separate Preview Provider framework. A managed Preview inside a
+Shortcut uses the original Task identity, not a Review child Task; the
+Shortcut returns `WAITING_REVIEW` after the host durably suspends it, and
+resumes the same Task after an authenticated decision. Neo Preview commits
+Run Git changes automatically; do not invoke a separate checkpoint command.
+Consult the project's Review/Preview contract for version binding.
 
 ## 5. Manage services when needed
 
