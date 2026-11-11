@@ -1354,7 +1354,7 @@ test('D02 artifact overlap: copied identical Run asset resolves to Run, differen
  });
 });
 
-test('shared Pool resumes approved foreground Shortcut without a second explicit user launch', async t=>{
+test('interactive decision event starts approved Shortcut CLI without a second explicit user launch', async t=>{
  const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:alpha]'});
  const helper=join(f.directory,'host-review-auto.mjs');
  await writeFile(helper,`import {SQLiteRelayStore} from ${JSON.stringify(new URL('../dist/relay-store.js',import.meta.url).href)};
@@ -1380,12 +1380,23 @@ console.log(JSON.stringify(receipt));store.close();`);
  const {resumeInteractiveTask}=await import('../dist/interactive-resume.js');
  assert.equal(await resumeInteractiveTask(store,f.id,'initial',inv.invocationId,sha,'approved'),true);
  const {RepositoryWorkerPool}=await import('../dist/pool.js');
- let calls=0;let finish;
+ let calls=0;let finish;let resumedError=null;
  const finished=new Promise(resolve=>finish=resolve);
- const pool=new RepositoryWorkerPool(2,()=>{throw Error('not a managed worker')},
-  async()=>[{job:await store.loadJob(f.id)}],async()=>({job:await store.loadJob(f.id),store:{}}),
-  async job=>{calls++;const result=await f.cli();assert.equal(result.status,0,JSON.stringify(result));finish();});
- await pool.reconcile();await finished;
+ const {createShortcutReviewWake,eligibleShortcutReviewTask}=await import('../dist/shortcut-review-wake.js');
+ const eligibleJob=await store.loadJob(f.id);
+ assert.ok(eligibleShortcutReviewTask(eligibleJob,'initial'),'review must be eligible after accepted human decision');
+ const {MemoryEventBus,eventFor}=await import('../dist/events.js');
+ const listener=createShortcutReviewWake(async()=>await store.loadJob(f.id),async job=>{
+  calls++;try{const result=await f.cli();assert.equal(result.status,0,JSON.stringify(result));}catch(error){resumedError=error;}finally{finish();}});
+ const pool=new RepositoryWorkerPool(2,()=>({applyEvent:async()=>({applied:false,reconcile:false,reason:'task.interactive_decision.duplicate'}),reconcile:async()=>{}}),
+  async()=>[{job:await store.loadJob(f.id)}],async()=>({job:await store.loadJob(f.id),store:{}}),listener);
+ await pool.reconcile();assert.equal(calls,0,'Scheduler scan does not run Shortcut');
+ const bus=new MemoryEventBus();const unwatch=await pool.watch(bus);
+ await bus.publish(eventFor(f.id,'initial',null,'task.interactive_decision','running','human approval'));
+ let timeout;
+ try {await Promise.race([finished,new Promise((_,reject)=>{timeout=setTimeout(()=>reject(Error('Event listener did not launch CLI')),10000);timeout.unref();})]);}
+ finally {clearTimeout(timeout);await unwatch();}
+ if(resumedError)throw resumedError;
  assert.equal(calls,1);
  assert.equal((await store.loadJob(f.id)).state,'COMPLETED');store.close();
 });
