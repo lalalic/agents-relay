@@ -148,6 +148,25 @@ test('changes_requested retains approval gate while fresh execution may prepare 
  }finally{await f.close();}
 });
 
+test('next Stage can prepare a fresh review after prior approval on the same Shortcut parent Task',async()=>{
+ const f=await fixture();try{
+  const first=await beginInteractiveReview(f.store,f.j.id,'producer','exec-1');
+  await wait(f,first.invocationId);
+  const sha='d'.repeat(40);
+  await readyInteractiveReview(f.store,f.j.id,'producer','exec-1',first.invocationId,sha);
+  const {resumeInteractiveTask}=await import('../dist/interactive-resume.js');
+  await f.store.mutateJob(f.j.id,j=>{const t=j.tasks[0];t.interactiveInvocation.status='approved';t.interactiveInvocation.decidedAt=now();return j;});
+  assert.equal(await resumeInteractiveTask(f.store,f.j.id,'producer',first.invocationId,sha,'approved'),true);
+  await f.store.mutateJob(f.j.id,j=>{j.tasks[0].state='RUNNING';j.tasks[0].executionId='exec-2';j.tasks[0].leaseOwner='new-owner';return j;});
+  const next=await beginInteractiveReview(f.store,f.j.id,'producer','exec-2');
+  assert.notEqual(next.invocationId,first.invocationId);
+  assert.equal(next.reused,false);
+  const current=(await f.store.loadJob(f.j.id)).tasks[0];
+  assert.equal(current.interactiveInvocation.status,'awaiting_decision');
+  await assert.rejects(beginInteractiveReview(f.store,f.j.id,'producer','exec-old'));
+ }finally{await f.close()}
+});
+
 test('new authoritative execution replaces an orphaned pending Invocation after wrapper crash',async()=>{
  const f=await fixture();try{
   const old=await beginInteractiveReview(f.store,f.j.id,'producer','exec-1');

@@ -32,12 +32,11 @@ export async function beginInteractiveReview(store:DurableStore,jobId:string,tas
       invocationId=existing.invocationId;
       reused=true; // Wrapper rejects a second compile for this pending request.
     }else if(!existing || (existing.executionId!==executionId&&
-      (existing.status==='changes_requested'||existing.status==='awaiting_decision'))){
-      // A new authoritative RUNNING execution replaces a stale undelivered
-      // invocation left behind by a crashed prior wrapper/worker. The old
-      // execution cannot still be current by the Task execution guard above.
-      // The prior decision remains in the durable decision ledger and Task
-      // comments. A fresh execution may start the next preview revision.
+      (existing.status==='changes_requested'||existing.status==='awaiting_decision'||existing.status==='approved'))){
+      // A new authoritative execution can open the next Stage Preview after
+      // a prior approval, requested revision, or stale undelivered preview.
+      // The current execution guard prevents replacing an in-flight decision;
+      // historical decisions remain in the ledger and Task comments.
       invocationId=proposedId;
       task.interactiveInvocation={invocationId,executionId,revision:`pending:${invocationId}`,
         status:'awaiting_decision',boundAt:new Date().toISOString()};

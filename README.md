@@ -19,6 +19,14 @@ Relay appends `--handoff-file`, optional `--on-needs-user-file`, and `--cwd`
 without using a shell. No Neo executable is assumed. Missing/failed executors
 produce `technical_failure` rather than silently resolving a blocker.
 
+**Shortcut three-node L3 gate:** `npm run test:l3:shortcut` runs four isolated,
+deterministic three-agent DAG scenarios: no review, sequential approvals,
+Request Changes for a scripted node with a durable revision Worker, and
+Request Changes for a model-only node with re-review. They exercise real
+Shortcut CLI/SQLite/Git review identities and the real Reconciler with a
+synthetic model adapter; no external model, iPhone, or production Job is used.
+The gate is also included in `test:shortcut:dags` and `test:publish`.
+
 **Interactive Review:** Relay owns the generic
 `review.interactive.begin/wait/ready/fail/abort` lifecycle, immutable revision
 binding and decision correlation. The caller (e.g. Neo's Markcut MCP wrapper)

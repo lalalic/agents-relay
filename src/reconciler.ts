@@ -22,7 +22,7 @@ export class Reconciler extends ReconcilerReviewBase {
         if (!task || job.pause || task.state !== 'QUEUED' || task.executionId !== null) return;
         if (task.kind !== 'planner' && task.adapter !== 'orchestrator') await this.launch(job, task);
       },
-      context => `effect.launchTask:${context.jobId}:${context.taskId ?? 'task'}:${String(context.data?.attempt ?? 0)}`,
+      context => `effect.launchTask:${context.jobId}:${context.taskId ?? 'task'}:${String(context.data?.attempt ?? 0)}:${String(context.data?.reviewInvocationId ?? 'initial')}`, // Review invocation fences re-launch after retry-count reset.
     ));
     this.workflowEffects.register(new CallbackWorkflowEffectHandler(
       'effect.launchShortcut',
@@ -67,7 +67,7 @@ export class Reconciler extends ReconcilerReviewBase {
       await transitionTaskEvent(task, 'dispatch', { dispatchable: true, shortcutExecution: scheduled.executionMode === 'shortcut' && scheduled.contentOnly === true && shortcut?.workerFallback !== true && Boolean(task.agentGraph), shortcutFallback: shortcut?.workerFallback===true, shortcutHasGraph: Boolean(task.agentGraph) }, async actionId => {
         const outcomes = await this.workflowEffects.execute(
           [actionId as 'effect.launchTask' | 'effect.launchShortcut'],
-          { jobId: scheduled.id, taskId: task.id, transitionKey: `dispatch:${task.attempt}`, data: { attempt: task.attempt } },
+          { jobId: scheduled.id, taskId: task.id, transitionKey: `dispatch:${task.attempt}`, data: {attempt:task.attempt, ...(task.interactiveInvocation?.decidedAt ? {reviewInvocationId:task.interactiveInvocation.invocationId} : {})} },
         );
         await this.applyTaskEffectOutcomes(scheduled, task, outcomes);
       }, async () => { await this.store.saveTask(task); });
