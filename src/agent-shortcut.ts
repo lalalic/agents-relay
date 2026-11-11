@@ -114,7 +114,7 @@ async function runCommand(args: string[], cwd: string, signal: AbortSignal): Pro
 
 /** A Shortcut belongs to an Agent source, not to an independent name search.
  * Only explicit Agent inheritance permits falling back to a parent's Shortcut. */
-async function discoverShortcut(agent: string, projectPath: string, sharedRoot?: string, workspaceRoot?: string, globalRoot?: string): Promise<string | null> {
+export async function discoverShortcut(agent: string, projectPath: string, sharedRoot?: string, workspaceRoot?: string, globalRoot?: string): Promise<string | null> {
   let sources: string[];
   try {
     ({ sources } = await resolveAgentMarkdown(agent, BUNDLED_AGENTS_ROOT, projectPath, sharedRoot,

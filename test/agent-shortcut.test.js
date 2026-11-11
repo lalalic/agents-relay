@@ -45,7 +45,7 @@ async function fixture(t, { agentGraph = graph, projectOverride = true, initialD
     if (!existsSync(markdown)) await writeFile(markdown, `---\nname: ${agent}\n---\n# ${agent}\n`);
     await writeFile(join(base, 'agents', '.shortcut', `${agent}.agent.mjs`), source);
   };
-  const cli = async (...args) => spawnSync(process.execPath, [join(root, 'dist', 'cli.js'), 'job', 'run', '--mode', 'shortcut', '--id', id,
+  const cli = async (...args) => spawnSync(process.execPath, [join(root, 'dist', 'cli.js'), 'job', 'run', '--legacy-shortcut-runtime', '--mode', 'shortcut', '--id', id,
     '--repo', 'local/shortcut-test', '--no-github', '--store-dir', storeDir, '--task-id', 'initial', '--project-path', project, '--shared-root', neo, ...args],
     { encoding: 'utf8', env: { ...process.env, AGENTS_RELAY_STORE_DIR: storeDir } });
   const receiptCli = async (...args) => spawnSync(process.execPath, [join(root, 'dist', 'cli.js'), 'job', 'shortcut-receipt', '--id', id,
@@ -78,7 +78,7 @@ test('foreground Shortcut Runner resolves a stored repository when --repo is omi
   await f.writeShortcut(f.project, 'alpha',
     `export async function run(){return {status:'COMPLETED',output:{source:'id-only'},artifacts:[]};}`);
   const cli = join(root, 'dist', 'cli.js');
-  const result = spawnSync(process.execPath, [cli, 'job', 'run', '--mode', 'shortcut',
+  const result = spawnSync(process.execPath, [cli, 'job', 'run', '--legacy-shortcut-runtime', '--mode', 'shortcut',
     '--id', f.id, '--task-id', 'initial', '--no-github',
     '--store-dir', f.storeDir, '--project-path', f.project, '--shared-root', f.neo],
   { encoding: 'utf8', env: { ...process.env, AGENTS_RELAY_STORE_DIR: f.storeDir } });

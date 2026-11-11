@@ -1,14 +1,15 @@
 import { revisionRequestReady, reconcileReviewRevisions } from './review-revision-execution.js'; import { reconcileDependencyRevisions } from './dependency-revision-execution.js'; import { isFinalReviewAgent } from './final-review-role.js';
-import {deliverPendingEscalations} from './escalation-notifier.js'; import {createFailedPlanRecovery} from './planner-recovery.js'; import { recoverPlannerChildren } from './planner-child-recovery.js'; import { drainProductionWorkflowOutbox } from './reconciler-workflow-outbox.js'; import { cancelPausedGenerations } from './reconciler-pause.js';  import { cancelActiveTasks } from './reconciler-cancellation.js'; import { implementationComplete } from './runtime-status.js'; import { bindPlannedReviewHead } from './planned-review-head.js';import { randomUUID } from 'node:crypto'; import { Job, Plan, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js'; import { DurableStore } from './store.js'; import { dependencyReady, refreshTaskDependencies, transitionJobEvent, transitionTaskEvent } from './task-transitions.js'; import { applyTaskCancelAction, applyTaskRetryAction } from './task-actions.js'; import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js'; import { eventFor } from './events.js'; import { PreSubmissionRejection } from './worker-rejection.js'; import { createPlanRound, materializePlannerChild, pendingPlan, parsePlannerResult, plannerInput, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress, validatePlannerResolutionMaterialization } from './planner.js'; import { retryPendingPlannerUnblocks } from './planner-runtime.js'; import { dispatchPlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js'; import { ExecutionContext, ExecutionRole, resolveExecutionContext } from './execution-context.js'; import { validateAgentSelection } from './agent-graph.js'; import { ReconcilerReviewBase } from './reconciler-review.js';
+import {deliverPendingEscalations} from './escalation-notifier.js'; import {createFailedPlanRecovery} from './planner-recovery.js'; import { recoverPlannerChildren } from './planner-child-recovery.js'; import { drainProductionWorkflowOutbox } from './reconciler-workflow-outbox.js'; import { cancelPausedGenerations } from './reconciler-pause.js';  import { cancelActiveTasks } from './reconciler-cancellation.js'; import { implementationComplete } from './runtime-status.js'; import { bindPlannedReviewHead } from './planned-review-head.js';import { randomUUID } from 'node:crypto'; import { Job, Plan, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js'; import { DurableStore } from './store.js'; import { dependencyReady, refreshTaskDependencies, transitionJobEvent, transitionTaskEvent } from './task-transitions.js'; import { applyTaskCancelAction, applyTaskRetryAction } from './task-actions.js'; import { Execution, LaunchFailure, StartAckTimeout, LaunchContext, type WorkerAdapter } from './adapters.js'; import { eventFor } from './events.js'; import { PreSubmissionRejection } from './worker-rejection.js'; import { createPlanRound, materializePlannerChild, pendingPlan, parsePlannerResult, plannerInput, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress, validatePlannerResolutionMaterialization } from './planner.js'; import { retryPendingPlannerUnblocks } from './planner-runtime.js'; import { dispatchPlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js'; import { ExecutionContext, ExecutionRole, resolveExecutionContext } from './execution-context.js'; import { validateAgentSelection } from './agent-graph.js'; import { ReconcilerReviewBase } from './reconciler-review.js';
 import { executeForceRestate } from './force-restate.js'; import { recordThreadDelivery, resolveImplementationTaskThreadDestination, prepareRevisionThreadDelivery, prepareReviewerThreadDelivery, resolveReviewerThreadDestination } from './reviewer-thread.js'; import { executeManualPlan } from './manual-plan.js'; import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js'; export { executionEventSource } from './reconciler-runtime.js'; export type { ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js'; import { exhaustedTroubleshooterRecoveries, pendingTroubleshooterTasks, pendingTroubleshooterReopens, pendingTroubleshooterRetries, refreshTroubleshooterInput } from './troubleshooter.js';
 import { fallbackFailedTroubleshooters, escalateExhaustedTroubleshooters } from './troubleshooter-fallback.js';import { assertCleanWorktreeAtHead, prepareManagedExecutionWorktree } from './workspace.js';
-import { cleanupMergedJobWorktree } from './job-worktree-cleanup.js'; import { jobHasActiveExecution } from './job-execution-slot.js'; import { requiresWorkerInactivityWatchdog } from './task-inactivity-watchdog.js';
+import { cleanupMergedJobWorktree } from './job-worktree-cleanup.js'; import { jobHasActiveExecution, jobHasConflictingExecution } from './job-execution-slot.js'; import { requiresWorkerInactivityWatchdog } from './task-inactivity-watchdog.js';
 import { managedWorkerInput } from './managed-worker-input.js'; import { attachResolutionOwnership } from './workflow/task-resolution.js'; import { launchShortcutEffect, resumeShortcutEffect, resumeShortcutEventWaits } from './reconciler-shortcut.js';
 export { managedWorkerInput } from './managed-worker-input.js'; import { recoverExpiredExecutions, recoverStartupOrphans as recoverStartupExecutionOrphans, type ExecutionRecoveryPorts } from './execution-recovery.js';
 import { dispatchJobReconcile } from './workflow/job-reconcile-v2.js'; import { resolvePlannerContext, resolveTaskContext } from './reconciler-context.js';
 import { reconcileLocalGitCompletion } from './local-merge-delivery.js'; import { repairLegacyOrchestrators } from './legacy-orchestrator-repair.js'; import { launchPlanExecution } from './planner-runtime.js';
 import { classifyFailure, errorMessage, observability, withObservabilityCorrelation } from './observability.js'; import { recoverInteractiveDecisions } from './interactive-resume.js';
+import { reconcileDAGSchedule, unifiedDAG } from './dag-task-runtime.js'; import { ScriptTaskAdapter } from './script-task-adapter.js';
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 export class Reconciler extends ReconcilerReviewBase {
@@ -46,25 +47,21 @@ export class Reconciler extends ReconcilerReviewBase {
   }
   private async dispatchExecutableTasks(jobId: string): Promise<Job> {
     const scheduled = refreshTaskDependencies(await this.store.load(jobId));
-    // Ordinary daemon/queue never owns Shortcut Jobs, including recovery Tasks.
-    // Only the explicit foreground runner may use existing Worker Adapters.
-    if (scheduled.executionMode === 'shortcut' && !this.options.shortcutRunnerOwner) return scheduled;
+    if (scheduled.executionMode === 'shortcut' && !scheduled.tasks.some(t=>unifiedDAG(scheduled,t)) && !this.options.shortcutRunnerOwner) return scheduled;
     if (scheduled.pause) return scheduled;
     for (const task of scheduled.tasks.filter(item => item.state === 'SUCCEEDED' && (item.continuation || scheduled.continuation) && !item.continuationDeliveredAt)) {
       this.detach(this.deliverContinuation(scheduled, task), scheduled.id, task.id, 'continuation');
     }
     const capacity = Math.max(0, (this.options.maxConcurrent ?? 4) - this.live.size - this.plannerLive.size);
-    const dispatchable = (jobHasActiveExecution(scheduled) ? [] : scheduled.tasks)
-      .filter(task => revisionRequestReady(scheduled, task) && task.state === 'QUEUED'
-        && task.executionId === null
-        && task.kind !== 'planner'
-        && task.adapter !== 'orchestrator'
-        && dependencyReady(task, new Map(scheduled.tasks.map(item => [item.id, item]))))
-      .sort((a, b) => compareTaskPriority(a, b, scheduled.priority ?? 'P2'))
-      .slice(0, Math.min(capacity, 1));
+    const ready=scheduled.tasks.filter(task=>!unifiedDAG(scheduled,task) && revisionRequestReady(scheduled,task) &&
+      task.state==='QUEUED' && task.executionId===null && task.kind!=='planner' && task.adapter!=='orchestrator' &&
+      dependencyReady(task,new Map(scheduled.tasks.map(item=>[item.id,item]))) && !jobHasConflictingExecution(scheduled,task))
+      .sort((a,b)=>compareTaskPriority(a,b,scheduled.priority??'P2'));
+    const firstDAG=ready[0]?.dagNode?.parentTaskId;
+    const dispatchable=(firstDAG ? ready.filter(t=>t.dagNode?.parentTaskId===firstDAG) : ready.slice(0,1)).slice(0,capacity);
     for (const task of dispatchable) {
       const shortcut=task.result?.data?.shortcut as {workerFallback?:boolean}|undefined;
-      await transitionTaskEvent(task, 'dispatch', { dispatchable: true, shortcutExecution: scheduled.executionMode === 'shortcut' && scheduled.contentOnly === true && shortcut?.workerFallback !== true && Boolean(task.agentGraph), shortcutFallback: shortcut?.workerFallback===true, shortcutHasGraph: Boolean(task.agentGraph) }, async actionId => {
+      await transitionTaskEvent(task, 'dispatch', { dispatchable: true, shortcutExecution: scheduled.executionMode === 'shortcut' && scheduled.contentOnly === true && shortcut?.workerFallback !== true && Boolean(task.agentGraph) && !unifiedDAG(scheduled,task), shortcutFallback: shortcut?.workerFallback===true, shortcutHasGraph: Boolean(task.agentGraph) }, async actionId => {
         const outcomes = await this.workflowEffects.execute(
           [actionId as 'effect.launchTask' | 'effect.launchShortcut'],
           { jobId: scheduled.id, taskId: task.id, transitionKey: `dispatch:${task.attempt}`, data: {attempt:task.attempt, ...(task.interactiveInvocation?.decidedAt ? {reviewInvocationId:task.interactiveInvocation.invocationId} : {})} },
@@ -81,7 +78,7 @@ export class Reconciler extends ReconcilerReviewBase {
       let job = await this.store.load(jobId);
       // The same durable Job flag covers children, retries, and Troubleshooters.
       // Do not let a background Reconciler mutate or dispatch any of them.
-      if (job.executionMode === 'shortcut' && !this.options.shortcutRunnerOwner) return job;
+      if (job.executionMode === 'shortcut' && !job.tasks.some(t=>unifiedDAG(job,t)) && !this.options.shortcutRunnerOwner) return job;
       await drainProductionWorkflowOutbox(this.store, this.options);
       await deliverPendingEscalations(this.store,jobId,this.options.escalationNotifier);
       job = await this.store.load(jobId);
@@ -177,6 +174,7 @@ export class Reconciler extends ReconcilerReviewBase {
         scheduled = refreshTaskDependencies(await this.store.load(jobId));
       }
       scheduled = refreshTaskDependencies(await this.maybeCreatePlanner(scheduled));
+      scheduled = refreshTaskDependencies(await reconcileDAGSchedule({store:this.store,jobId,job:scheduled,projectPathForTask:async(j,t)=>j.shortcutRunnerContext?.projectPath ?? (this.options.projectPathForJob ? this.options.projectPathForJob(j,t) : t.routing?.cwd ?? process.cwd()),roots:this.options.executionContextRoots}));
       if (scheduled.state !== previousState || scheduled.updatedAt !== job.updatedAt) await this.store.saveJob(scheduled);
       scheduled = await this.dispatchExecutableTasks(jobId);
       let finalState = refreshTaskDependencies(await this.store.load(jobId));
@@ -246,10 +244,10 @@ export class Reconciler extends ReconcilerReviewBase {
       emitFailed: async (task, reason) => { await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.failed', 'failed', task.error ?? reason, 'user', { reason })); },
     };
   }
-  async recoverLostExecutions(job: Job, now: number): Promise<void> { if (job.executionMode !== 'shortcut' || this.options.shortcutRunnerOwner) await recoverExpiredExecutions(job, now, this.executionRecoveryPorts(job)); }
+  async recoverLostExecutions(job: Job, now: number): Promise<void> { if (job.executionMode !== 'shortcut' || job.tasks.some(t=>unifiedDAG(job,t)) || this.options.shortcutRunnerOwner) await recoverExpiredExecutions(job, now, this.executionRecoveryPorts(job)); }
   async recoverStartupOrphans(jobId: string): Promise<Job> {
     const job = await this.store.load(jobId);
-    if (job.state === 'ACTIVE' && (job.executionMode !== 'shortcut' || this.options.shortcutRunnerOwner === true)) {
+    if (job.state === 'ACTIVE' && (job.executionMode !== 'shortcut' || job.tasks.some(t=>unifiedDAG(job,t)) || this.options.shortcutRunnerOwner === true)) {
       await recoverStartupExecutionOrphans(job, this.executionRecoveryPorts(job));
     }
     return this.store.load(jobId);
@@ -321,10 +319,10 @@ export class Reconciler extends ReconcilerReviewBase {
       if (!freshTask || freshTask.state !== 'QUEUED' || !revisionRequestReady(freshJob, freshTask)
         || !dependencyReady(freshTask, new Map(freshJob.tasks.map(item => [item.id, item])))) return;
       if (freshTask.executionId !== null) return;
-      if (jobHasActiveExecution(freshJob, { taskId: freshTask.id })) return;
+      if (jobHasConflictingExecution(freshJob, freshTask)) return;
       if (isFinalReviewAgent(freshTask.agentName) && freshTask.planningDecisionId && freshTask.dependencies.length) await bindPlannedReviewHead(this.store, freshTask, await this.currentHeadSha(freshJob));
       const implementationThread = resolveImplementationTaskThreadDestination(freshJob, freshTask);
-      if ((!freshTask.routing || ((implementationThread || (isFinalReviewAgent(freshTask.agentName) && resolveReviewerThreadDestination(freshJob, this.options.reviewer?.threadId))) && freshTask.adapter !== 'chatgpt')) && freshTask.adapter !== 'orchestrator') {
+      if (freshTask.adapter!=='script' && (!freshTask.routing || ((implementationThread || (isFinalReviewAgent(freshTask.agentName) && resolveReviewerThreadDestination(freshJob, this.options.reviewer?.threadId))) && freshTask.adapter !== 'chatgpt')) && freshTask.adapter !== 'orchestrator') {
         const routed = await this.routeTaskForExecutionFailClosed(freshJob, freshTask); if (!routed) return; freshTask = routed.task;
       }
       if (['codex', 'chatgpt', 'z'].includes(freshTask.adapter) && !freshTask.routing) {
@@ -393,7 +391,7 @@ export class Reconciler extends ReconcilerReviewBase {
       const reserved=await this.store.reserveWorkflowLaunch({jobId:job.id,taskId:task.id,executionId:task.executionId,attempt:task.attempt,leaseOwner:task.leaseOwner});
       if (!reserved) throw new Error('already reserved launch attempt: reconcile existing generation');
     }
-    const adapter = this.options.adapters.find(x => x.name === task.adapter);
+    const adapter: WorkerAdapter | undefined = task.adapter === 'script' ? new ScriptTaskAdapter(event => this.options.eventBus ? this.emit(event) : this.handleEvent(event), this.options.executionContextRoots) : this.options.adapters.find(x => x.name === task.adapter);
     if (!adapter) {
       await this.failLaunch(job.id, task.id, task.executionId, 'No adapter ' + task.adapter);
       return;
@@ -401,7 +399,7 @@ export class Reconciler extends ReconcilerReviewBase {
     let executionContext: ExecutionContext;
     try {
       const role: ExecutionRole = isFinalReviewAgent(task.agentName) ? 'reviewer' : task.agentName === 'troubleshooter' ? 'troubleshooter' : task.parentTaskId ? 'nested-worker' : 'worker';
-      const projectPath = this.options.projectPathForJob ? await this.options.projectPathForJob(job, task) : task.routing?.cwd ?? process.cwd();
+      const projectPath = task.dagNode && job.shortcutRunnerContext?.projectPath ? job.shortcutRunnerContext.projectPath : this.options.projectPathForJob ? await this.options.projectPathForJob(job, task) : task.routing?.cwd ?? process.cwd();
       executionContext = await this.resolvedContext(job, task, role, projectPath);
     } catch (error) {
       await this.failLaunch(job.id, task.id, task.executionId, `Execution context unavailable: ${error instanceof Error ? error.message : String(error)}`);
@@ -413,7 +411,7 @@ export class Reconciler extends ReconcilerReviewBase {
     let execution: Execution;
     const sourceId = executionEventSource(job.id, task.id, durableExecutionId);
     let baseWorkerInput: string;
-    try { baseWorkerInput = await managedWorkerInput(job, task, executionContext); }
+    try { baseWorkerInput = task.adapter==='script' ? task.input : await managedWorkerInput(job, task, executionContext); }
     catch (error) {
       await this.failLaunch(job.id, task.id, task.executionId, `Execution contract unavailable: ${error instanceof Error ? error.message : String(error)}`);
       return;

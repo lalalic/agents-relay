@@ -13,9 +13,9 @@ Explain **JEL** to the user: **Create → Plan → Execute → Final Review → 
 
 ## 1. Choose and start a Job
 
-Use Relay when the objective requires independent Tasks, durable progress, retries, review, or cross-session handoffs. Capture the full user objective, decisions, constraints, acceptance checks, and delivery expectations in standalone Markdown before creating a Job. A fresh agent must be able to act without the originating conversation. Put a Mermaid diagram before its explanation only when it clarifies a real workflow.
+Use Relay for durable multi-Task work. Record the standalone objective, constraints, acceptance checks, and deliverables before Job creation.
 
-For ordinary CLI use, consult `npx agents-relay --help` and `npx agents-relay <command> --help` rather than memorizing all flags. Examples:
+Consult CLI help; examples:
 
 ```sh
 npx agents-relay job create --repo OWNER/REPO --title "Objective" --objective-file job.md --initial-plan
@@ -23,7 +23,7 @@ npx agents-relay job show --id JOB_ID
 npx agents-relay task list --repo OWNER/REPO --id JOB_ID
 ```
 
-Use the **Job ID returned by create**; do not invent an ID, PR number, or Task. Omit `--initial-plan` only for explicitly create-only work. Existing GitHub PRs are not imported as Jobs; GitHub is audit-only and local Git owns merge/delivery. For local-only work, consult the CLI's `--no-github` option.
+Use the returned Job ID; never invent IDs. Omit `--initial-plan` only for create-only work. GitHub is audit-only; local Git owns merge. For local-only operations use `--no-github`.
 
 Read `contracts/task-job-contract.md` before authoring or changing Jobs or Tasks and `contracts/orchestrator-workflows.md` when handling initial planning, P0/self Jobs, or merge/delivery boundaries. For content work, load the active Neo Project rules, its Agent Graph if present, and the relevant stage contracts—not a presumed universal production sequence.
 
@@ -40,39 +40,49 @@ node <matching-absolute-dist/cli.js> task context --id JOB --task-id TASK --exec
 node <matching-absolute-dist/cli.js> plan context --id JOB --plan-id PLAN --execution-id EXECUTION
 ```
 
-These are alternative commands for Task and Planner executions. Both fail closed for stale identities. Optional `--repo` further constrains Job identity. Do not reconstruct task content from PR comments or guessed local files. The Planner submits its candidate through the returned `apply_cli`; only the exact `PLAN_APPLIED:<plan-id>:<execution-id>` receipt proves application. Follow the assigned Role and independent Contracts; load optional context only when the work requires it. Authorized delegation creates durable Relay child Tasks, not untracked agent processes.
+Task and Planner context commands reject stale identities. Optional `--repo` constrains the Job. Never infer Task content from GitHub. Planner submits via `apply_cli`; only `PLAN_APPLIED:<plan-id>:<execution-id>` proves application. Authorized delegation creates durable child Tasks.
+
+Graph Tasks use Relay's ordinary Task Reconciler: `agentGraph` becomes a
+**Coordinator** with durable Agent-named children created as dependencies become
+ready. Script and Model are Task execution choices; each has the same
+Task-level retry, failure and review semantics. A Shortcut CLI starts an idle
+Job and hands it to that same Reconciler; it is not a separate DAG scheduler.
 
 ## 3. Verify, review, and recover
 
-Use the pinned CLI to inspect authoritative status, Task events, comments, and review evidence. For SHA-bound final Job review, use `agents-relay review job --repo OWNER/REPO --id JOB_ID [--thread-id THREAD_ID]`; for independent Agent-owned outcome review, use `agents-relay review run --prompt-file PATH --project-path DIR`.
+Inspect Task status/events with pinned CLI. Final Review: `agents-relay review job --repo OWNER/REPO --id JOB_ID [--thread-id THREAD_ID]`. Agent review: `agents-relay review run --prompt-file PATH --project-path DIR`.
 
-A worker's process exit, browser submission receipt, or emitted event is **not** proof of durable completion. Task agents publish `task.started`, optional `task.progress`, and exactly one correlated terminal `task.completed` or `task.failed` via the canonical `events-bus` capability. Never emit `task.blocked` as a worker terminal outcome. Read `contracts/event-contract.md` for exact identity, event semantics, and reviewer verdict payloads; implementation agents also follow `contracts/worker-self-review.md`.
+Process exit and delivery are not Task completion. Agents publish `task.started`, optional `task.progress`, and one correlated terminal `task.completed` or `task.failed` via `events-bus`; never `task.blocked`. See `contracts/event-contract.md` and `contracts/worker-self-review.md`.
 
 A Reviewer finding defects in a known immutable head emits `task.completed` with `data.verdict: changes-required`, `data.head_sha`, and actionable findings—not `task.failed`. If the Reviewer cannot establish the required head or produce a valid review, it reports an execution failure with `task.failed`, not an invented verdict.
 
-For a failed Task, diagnose before retrying. Read `contracts/task-recovery-flows.md` for recovery and human escalation boundaries. For authorized technical prerequisites in another repository, use `contracts/blocker-job-recovery.md` and the pinned `blocker ensure` CLI action; repository boundaries alone do not justify escalation. Troubleshooter inspects the original Task via `task show` and paginated `task events`, verifies the root cause, then uses the pinned CLI `task recover --task-id ORIGINAL --recovery-task-id TROUBLESHOOTER` only after proving the repair. Only a genuinely human-required decision justifies the **pinned CLI** `task escalate --task-id TROUBLESHOOTER --required-action ... --resolution-condition ...`; this is a Relay operation, **not** an Events Bus event. Never invent or publish an escalation event, and never escalate a browser-readiness failure as a login request without authentication evidence. Only Relay can block/unblock a Troubleshooter; after a human response, recheck the blocker before recovering the original Task. Do not silently treat missing or stale evidence as success.
+For a failed Task, **diagnose before retrying**. Load
+`contracts/task-recovery-flows.md`; for external repository prerequisites load
+`contracts/blocker-job-recovery.md`. Troubleshooter inspects the exact Task's
+state and paginated event history, proves the technical repair and calls the
+pinned `task recover --task-id ORIGINAL --recovery-task-id TROUBLESHOOTER`.
+For verified human-only blockers, use pinned `task escalate --task-id ...`;
+this is a Relay CLI operation, not an Event. Recheck evidence after escalation;
+never treat a stale response or an unverified operation as recovery.
 
 ## 4. Configured escalation and host-owned Interactive Review
 
-`agents-relay escalation` executes the canonical Escalation Graph using only
-`AGENTS_RELAY_ESCALATION_COMMAND` provided by the operator's environment. The
-value is either an **absolute executable path** or a JSON argv array with an
-absolute executable first (for example
-`'["/opt/homebrew/bin/neo","escalation"]'` on a host explicitly using Neo).
-Relay appends `--handoff-file`, optional `--on-needs-user-file` and `--cwd`.
-No Shell expansion or default `neo` call is allowed. Missing or broken
-configuration returns `technical_failure`; it must never be treated as
-`resolved` or `needs_user`. This direct escalation command is distinct from
-`task escalate`, which is the durable Troubleshooter/human-blocker transition.
+`agents-relay escalation` runs the canonical Escalation Graph only with
+an operator-configured `AGENTS_RELAY_ESCALATION_COMMAND` (absolute executable
+or JSON argv with an absolute executable). Missing/broken configuration
+returns `technical_failure`, never presumed human resolution. This differs
+from the Task Troubleshooter `task escalate` operation.
 
-Human Preview uses `review.interactive.begin/wait/ready/fail/abort` and the
-canonical `task.interactive_waiting` contract. The provider owns media and
-notifications; a delivery receipt is **not approval**. Never forge event
-identity or create a separate Review Provider. For Shortcut Preview, invoke
-the tool with the **original Task identity**, return `WAITING_REVIEW` after
-Relay durably suspends it, then resume that Task after an authenticated
-decision. Neo Preview commits the Run Git revision automatically; no separate
-checkpoint CLI. See `contracts/event-contract.md` for details.
+A Worker requests human Review once in its current execution using
+`agents-relay review interactive --path ABS --id JOB --task-id TASK --execution-id EXEC`.
+Relay delegates rendering to the configured host (Neo uses `review.preview` and
+Markcut). The reviewed Task enters `AWAITING_DECISION`. An inbox/compile receipt
+is **not approval**. An accepted Approve resumes the same Agent Task; Request
+Changes resumes the same Task with feedback (a scripted Task can switch to its
+Model executor for semantic revision, then return to Script for validation).
+One execution ID identifies at most one review. Preview does **not** create Git
+commits, snapshots or independent reviewer Tasks. Legacy in-flight Shortcut
+checkpoints remain compatible. See `contracts/event-contract.md`.
 
 ## 5. Manage services when needed
 

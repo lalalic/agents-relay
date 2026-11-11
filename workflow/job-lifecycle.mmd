@@ -14,6 +14,7 @@ cancelActive["action: effect.cancelActiveTasks"]
 localCompletionGuard["guard: localCompletionAllowed"]
 localMergeReadyGuard["guard: localMergeReady"]
 shortcutCompletionGuard["guard: shortcutCompletionAllowed"]
+contentCompletionGuard["guard: contentCompletionAllowed"]
 localMergeDelivery["action: effect.deliverLocalMerge"]
 
 draft -->|on: activate| active
@@ -29,6 +30,9 @@ cancelActive --> cancelled
 active -->|on: local.completed| localCompletionGuard
 localCompletionGuard -->|true| completed
 localCompletionGuard -->|false| active
+active -->|on: content.completed| contentCompletionGuard
+contentCompletionGuard -->|true| completed
+contentCompletionGuard -->|false| active
 active -->|on: shortcut.completed| shortcutCompletionGuard
 shortcutCompletionGuard -->|true| completed
 shortcutCompletionGuard -->|false| active

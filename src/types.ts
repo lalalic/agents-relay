@@ -4,7 +4,7 @@ export type JobRuntimeStatus = 'IDLE' | 'WAITING' | 'QUEUED' | 'RUNNING' | 'BLOC
 export type TaskState = 'DRAFT' | 'QUEUED' | 'RUNNING' | 'AWAITING_DECISION' | 'BLOCKED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
 export type JobTag = { description: string; values: Record<string, string> };
 export type Priority = 'P0' | 'P1' | 'P2' | 'P3';
-export type WorkerAdapterName = 'codex' | 'chatgpt' | 'z';
+export type WorkerAdapterName = 'codex' | 'chatgpt' | 'z' | 'script';
 /** Persisted compatibility only: new Tasks may use WorkerAdapterName values only. */
 export type AdapterName = WorkerAdapterName | 'orchestrator';
 export type ChatGptTabClosePolicy = 'after-start' | 'never' | 'after-terminal';
@@ -218,7 +218,7 @@ export type ChatGptThreadDelivery = {
 };
 export type Task = {
   comments?: import('./task-comments.js').TaskComment[];
-  jobId?: string; id: string; title?: string; taskUrl?: string; kind?: TaskKind; priority?: Priority; storySize?: StorySize; projectName?: string; agentName?: string; agentGraph?: string; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; taskCapabilities?: string[]; workerCapabilities?: string[]; adapter: AdapterName;
+  jobId?: string; id: string; title?: string; taskUrl?: string; kind?: TaskKind; priority?: Priority; storySize?: StorySize; projectName?: string; agentName?: string; agentGraph?: string; dagNode?: { parentTaskId: string; nodeId: string; graphHash: string; executor: 'script' | 'model' }; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; taskCapabilities?: string[]; workerCapabilities?: string[]; adapter: AdapterName;
   planningDecisionId?: string; planningSource?: PlanningDecisionSource; planningRound?: number; previousPlannerTaskId?: string | null; planTrigger?: PlanTrigger; tag?: string; plannerRetryFeedback?: string; plannerGuidance?: string; manualPlanning?: boolean; dependencyValidity?: Record<string, DependencyValidity>; revision?: TaskRevision;
   resolutionClassification?: { kind: 'superseded' | 'invalid'; targetTaskId: string; evidence: string; reason: string; updatedAt: string };
   input: string; attachments?: string[]; output?: TaskOutput; review?: ReviewTaskMetadata; workerRequirements?: WorkerRequirements; workerSelection?: WorkerSelection; routing?: RoutingDecision; continuation?: Continuation | null; continuationDeliveredAt?: string | null; chatgptTabClosePolicy?: ChatGptTabClosePolicy; state: TaskState; attempt: number; maxAttempts: number;

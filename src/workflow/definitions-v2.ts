@@ -11,7 +11,7 @@ const TASK_STATES = ['DRAFT','QUEUED','RUNNING','AWAITING_DECISION','BLOCKED','S
 const JOB_STATES = ['DRAFT','ACTIVE','COMPLETED','CANCELLED'] as const;
 
 const conditionRegistry = new ConditionRegistry([
-  ...new Set(['dependenciesSatisfied','dependenciesUnsatisfied','runnable','dispatchable','recoverableExecution','troubleshooterRecovery','troubleshooterTask','awaitingInteractiveDecision','retryAvailable','notMerged','autoMerge','prOpen','reviewDisabled','implementationComplete','headAvailable','mergeCapable','localCompletionAllowed','localMergeReady','shortcutCompletionAllowed'])
+  ...new Set(['dependenciesSatisfied','dependenciesUnsatisfied','runnable','dispatchable','recoverableExecution','troubleshooterRecovery','troubleshooterTask','awaitingInteractiveDecision','retryAvailable','notMerged','autoMerge','prOpen','reviewDisabled','implementationComplete','headAvailable','mergeCapable','localCompletionAllowed','localMergeReady','shortcutCompletionAllowed','contentCompletionAllowed'])
 ].map(booleanCondition));
 const boolGuard = (name: string) => conditionRegistry.guard(name);
 export const lifecycleConditions = conditionRegistry;
@@ -77,6 +77,7 @@ export const jobLifecycleV2 = load('job-lifecycle', JOB_STATES, {
       && values.reviewHeadCurrent === true && values.mergeAttemptReady === true;
   },
   shortcutCompletionAllowed: facts => facts.durableFacts.shortcutCompletionAllowed === true,
+  contentCompletionAllowed: facts => facts.durableFacts.contentCompletionAllowed === true,
 });
 
 function topologyTargets(graph: Graph, from: string): Set<string> {
