@@ -20,6 +20,9 @@ export type ResolvedAgent = {
   description?: string;
   capabilities: string[];
   runtime?: string;
+  suggestedSkills?: string[];
+  preferredModel?: string;
+  preferredReasoning?: string;
   trustDomains: string[];
   delegation: string[];
   restrictions: string[];
@@ -146,6 +149,9 @@ async function agentFiles(root: string, source: ResolvedAgent['source'], skills:
       description: fields.description || undefined,
       capabilities: listValue(fields.capabilities),
       runtime: fields.runtime || listValue(fields.runtimes)[0] || undefined,
+      suggestedSkills: listValue(fields.skills),
+      preferredModel: fields.model || undefined,
+      preferredReasoning: fields.reasoning || undefined,
       trustDomains: listValue(fields.trustDomains ?? fields.trust_domains ?? fields.trust),
       delegation: listValue(fields.delegation),
       restrictions: listValue(fields.restrictions ?? fields.boundaries),
@@ -209,6 +215,9 @@ export async function resolveExecutionContext(projectPath: string, role: Executi
       description: fields.description,
       capabilities: listValue(fields.capabilities),
       runtime: fields.runtime || listValue(fields.runtimes)[0] || undefined,
+      suggestedSkills: listValue(fields.skills),
+      preferredModel: fields.model || undefined,
+      preferredReasoning: fields.reasoning || undefined,
       trustDomains: listValue(fields.trustDomains ?? fields.trust_domains ?? fields.trust),
       delegation: listValue(fields.delegation),
       restrictions: listValue(fields.restrictions ?? fields.boundaries),
@@ -240,6 +249,22 @@ export async function resolveExecutionContext(projectPath: string, role: Executi
     runtimes: (options.runtimes ?? []).map(runtime => ({ name: runtime.name ?? runtime.adapter ?? 'unknown', id: runtime.id, capabilities: [...runtime.capabilities], source: 'runtime' })),
     delegation: { mode: 'relay-child-task', parentTaskIdRequired: role === 'nested-worker' },
   };
+}
+
+/** Resolve just the selected Agent's optional model advice without scanning
+ * every Agent/Skill in the project before routing. This is a read-only lookup. */
+export async function resolveAgentModelPreference(
+  projectPath: string, agentName: string, options: ExecutionContextRoots = {},
+): Promise<{ model?: string; reasoning?: string } | undefined> {
+  const workspaceRoot = await resolveWorkspaceRoot(options.workspaceRoot);
+  const globalRoot = configuredGlobalRoot(options.globalRoot);
+  const configuredSharedRoot = options.sharedRoot !== undefined ? options.sharedRoot : process.env.AGENTS_RELAY_SHARED_ROOT;
+  const sharedRoot = configuredSharedRoot ? resolve(configuredSharedRoot) : null;
+  const agent = await resolveAgentMarkdown(agentName, BUNDLED_AGENTS_ROOT, projectPath, sharedRoot,
+    agentSourceLayers(projectPath, { workspaceRoot, globalRoot, sharedRoot }));
+  const model = agent.metadata.model || undefined;
+  const reasoning = agent.metadata.reasoning || undefined;
+  return model || reasoning ? { model, reasoning } : undefined;
 }
 
 export async function resolveAgentContract(context: ExecutionContext, agentName: string): Promise<{ agent: ResolvedAgent; definition: string; hash: string; sources: string[] }> {

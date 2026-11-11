@@ -101,6 +101,7 @@ export async function buildReferenceFirstPrompt(input: {
 export async function buildRelayWorkPrompt(input: {
   agentName: string;
   agentContent: string;
+  suggestedSkills?: readonly string[];
   contracts: readonly string[];
   contexts: readonly { path: string; source: string }[];
   skillPath: string;
@@ -166,6 +167,7 @@ export async function buildRelayWorkPrompt(input: {
     `Task: ${input.taskId}`,
     `Execution: ${input.executionId}`,
     '', '## User Assignment',
+    ...(input.suggestedSkills?.length ? [`Suggested skills (optional, use only when relevant and available): ${input.suggestedSkills.join(', ')}`] : []),
     ...(input.taskTitle?.trim() ? [`Assigned ${input.agentName === 'planner' ? 'Plan' : 'Task'} title (locator): ${JSON.stringify(input.taskTitle)}`] : []),
     ...(input.agentName === 'planner' ? [
       'Read the full authoritative Plan Context through the matching Relay CLI. Apply the actual Plan, not merely its context lookup.',

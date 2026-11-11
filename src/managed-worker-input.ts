@@ -36,6 +36,7 @@ export async function managedWorkerInput(job: Job, task: Task, context?: Executi
   const eventProtocol = eventSkill ? join(dirname(eventSkill.path), 'references/protocol.md') : undefined;
   return buildRelayWorkPrompt({
     agentName,
+    suggestedSkills: selected.agent.suggestedSkills,
     agentContent:agent,
     adapter,
     contracts: [

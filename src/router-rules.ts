@@ -81,6 +81,19 @@ export function appendRoutingInstruction(question: string, instruction: string):
   return question + '\n\n' + instruction;
 }
 
+/** Optional Agent metadata belongs to Router advice, not candidate discovery. */
+export function appendAgentModelPreference(
+  question: string, preference?: { model?: string; reasoning?: string },
+): string {
+  if (!preference?.model && !preference?.reasoning) return question;
+  return appendRoutingInstruction(question, [
+    'Agent model preference (advisory only; lower priority than user routing instructions and all hard constraints):',
+    ...(preference.model ? [`Prefer model: ${preference.model}`] : []),
+    ...(preference.reasoning ? [`Prefer reasoning: ${preference.reasoning}`] : []),
+    'Choose only among the existing eligible routes. Do not invent or enable a route to satisfy this preference.',
+  ].join('\n'));
+}
+
 export function parseRouterRules(text: string): ParsedRouterRules {
   const choices: RouterRuleChoice[] = [];
   const seen = new Set<string>();

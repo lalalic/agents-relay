@@ -5,7 +5,7 @@ import { loadExecutionRouterRules, loadRoutingPolicy, policyAllows } from './rou
 import { AccountUsageOverview } from './usage.js';
 import { AgentRegistration, RoutingDecision, Task, WorkerRequirements, WorkerSelection } from './types.js';
 import { DEFAULT_CHATGPT_PREFERRED_CONCURRENCY, WorkerCandidate } from './worker-routing.js';
-import { appendRoutingInstruction, RouterRuleChoice } from './router-rules.js';
+import { appendRoutingInstruction, appendAgentModelPreference, RouterRuleChoice } from './router-rules.js';
 
 export type ExecutionRouteCandidate = {
   id: string;
@@ -84,6 +84,8 @@ export type ExecutionRoutingOptions = {
   decisionEngine?: DecisionEngine;
   decisionMode?: DecisionMode;
   taskFacts?: Record<string, unknown>;
+  /** Advisory Agent frontmatter; never filters or creates model candidates. */
+  modelPreference?: { model?: string; reasoning?: string };
   usage?: AccountUsageOverview;
   registered?: readonly AgentRegistration[];
   rulesPath?: string;
@@ -410,10 +412,10 @@ export async function routeExecution(
     recent_route_results: recentRouteResults,
   })) as Record<string, unknown>;
 
-  const question = appendRoutingInstruction(
+  const question = appendAgentModelPreference(appendRoutingInstruction(
     'User routing instructions have highest priority over default preferences, task size, runtime and resource signals. Candidate order is arbitrary and conveys no priority, ranking or preference. Do not favor earlier choices. Select an offered route that obeys the user instructions.\nUser routing instructions:\n' + routingInstruction,
     'Use recent_route_results (up to the last 10 confirmed execution outcomes) to weigh route reliability, including success, failure and the recorded reason. Distinguish provider/runtime faults from task-specific failures and cancellations; historical failures are evidence, not automatic hard exclusions. For vision, image generation, visual review, and final review tasks, prefer ChatGPT Worker when available and within capacity; for coding, CLI and filesystem tasks, prefer Codex. These are soft preferences subordinate to user rules. Choose exactly one listed route; do not invent routes.',
-  );
+  ), options.modelPreference);
 
   let selected = fallback;
   let evidence: WorkerSelection['decisionEvidence'] = { mode: options.decisionMode ?? 'off', fallback: true };

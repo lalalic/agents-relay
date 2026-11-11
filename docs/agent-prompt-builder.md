@@ -41,6 +41,22 @@ Planner reads the Task/Job/Plan Contract, but not Task lifecycle event contracts
 
 Project and Neo Agent frontmatter may use `extends` with an absolute Markdown path (including a standalone external `SKILL.md`). The selected local Agent keeps its own name; the referenced base can have a different name. Existing `mode`/`sections` merge rules apply, and both canonical source paths contribute to the merged contract. Source paths must be explicitly trusted by the Project author; Relay does not discover or register the external roster. Missing or malformed bases fail before Worker launch. Specialist `review run` uses the same resolver.
 
+Optional Agent frontmatter hints use inline YAML values:
+```yaml
+skills: [shotcraft, markcut]
+model: openai/gpt-6
+reasoning: high
+```
+`skills` is displayed only as **Suggested skills** in the Worker's User
+Assignment (including the Planner when its Agent is selected). The names do
+not auto-install, select, validate or require a Skill. `model` and
+`reasoning` are sent only to the unified Execution Router decision prompt as
+a **soft Agent preference**, below user routing instructions and all hard
+constraints. They do not add candidates, override explicit Task routing, or
+alter Router fallback. Missing fields leave both Prompts unchanged. Agent advice
+is resolved through a read-only project locator; it never prepares a Task worktree.
+If no safe locator or Agent is available, Relay skips the advice.
+
 Only the Agent is inherited/merged by the **existing** Agent resolver and
 content-addressed to a private 0600 file. Contracts and Contexts are NOT
 merged, copied into the Agent, or expanded into launch Prompt text. Source

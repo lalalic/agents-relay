@@ -455,7 +455,7 @@ function parsePlannerAgentMessage(line: string): string | undefined {
 export async function buildPlannerExecutionPrompt(context: PlannerContext, agentFile = DEFAULT_PLANNER_AGENT, adapter: PromptAdapter = 'codex'): Promise<string> {
   if (!context.planExecution) throw new Error('Planner execution is missing its durable Plan and execution identity');
   const ctx = context.executionContext, selected = ctx ? await resolveAgentMarkdown('planner', BUNDLED_AGENTS_ROOT, ctx.project.path, ctx.project.sharedRoot, agentSourceLayers(ctx.project.path, ctx.project)) : undefined;
-  return buildRelayWorkPrompt({ agentName:'planner', agentContent:selected?.content ?? await readFile(agentFile,'utf8'),adapter,
+  return buildRelayWorkPrompt({ agentName:'planner', agentContent:selected?.content ?? await readFile(agentFile,'utf8'),suggestedSkills:ctx?.agents.find(agent => agent.name === 'planner')?.suggestedSkills,adapter,
     contracts:[join(dirname(fileURLToPath(import.meta.url)), '..', 'skills/agents-relay/contracts/task-job-contract.md'),
       join(dirname(fileURLToPath(import.meta.url)), '..', 'skills/agents-relay/contracts/blocker-job-recovery.md'),
       ...(ctx?.skills.find(skill => skill.name === 'ponytail')?.path ? [ctx.skills.find(skill => skill.name === 'ponytail')!.path] : [])],

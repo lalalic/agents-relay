@@ -22,6 +22,7 @@ import { reviewGenerationMatches } from './review-generation-fence.js';
 import { targetedRequestsForReview, targetedRequestsCoverReview } from './review-revision-model.js';
 import { reviewFindingFingerprint } from './review-revision-policy.js';
 import { codexFallbackRouting, codexNoStartFallbackRoute, quarantineUnavailableCodexFallback } from './chatgpt-platform-fallback.js';
+import { agentModelPreferenceForJob } from './reconciler-context.js';
 
 
 export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
@@ -107,6 +108,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const reviewerRouting = await this.selectReviewer(
       reviewGateTasks,
       reviewThread ? chatgptThreadRequirements(this.options.reviewer?.requirements) : undefined,
+      job,
     );
     const chatgptThreadDelivery = prepareReviewerThreadDelivery(job, {
       id, agentName: FINAL_REVIEW_AGENT, reviewHeadSha: headSha, routing: reviewerRouting.candidate.routing,
@@ -183,7 +185,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const ready = refreshTaskDependencies(await this.store.load(job.id));
     await this.store.saveJob(ready);
   }
-  protected async selectReviewer(implementationTasks: readonly Task[], requirementsOverride?: WorkerRequirements): Promise<{ candidate: WorkerCandidate & { routing: RoutingDecision }; selection: WorkerSelection; reason: 'worker-router' }> {
+  protected async selectReviewer(implementationTasks: readonly Task[], requirementsOverride?: WorkerRequirements, job?: Job): Promise<{ candidate: WorkerCandidate & { routing: RoutingDecision }; selection: WorkerSelection; reason: 'worker-router' }> {
     const configured = this.options.reviewer;
     const registered = await this.store.listAgents();
     const usage = this.options.usageSnapshotProvider ? await this.options.usageSnapshotProvider() : undefined;
@@ -222,6 +224,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       decisionEngine: this.options.decisionEngine,
       decisionMode: this.options.decisionMode,
       taskFacts,
+      modelPreference: job ? await agentModelPreferenceForJob(this.options, job, FINAL_REVIEW_AGENT) : undefined,
       usage,
       registered,
       chatgptRunning: runtimeSummary?.chatgptRunning ?? 0,
@@ -285,6 +288,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       decisionEngine: this.options.decisionEngine,
       decisionMode: this.options.decisionMode,
       taskFacts: { ...taskFacts, recovery: task.recoveryContext ?? null, recovery_parent_failed_route: excludedRoutes[0] ?? null },
+      modelPreference: await agentModelPreferenceForJob(this.options, job, task.agentName ?? 'implementation', task),
       usage,
       registered,
       chatgptRunning: runtimeSummary?.chatgptRunning ?? 0,
