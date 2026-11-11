@@ -11,17 +11,26 @@ import { taskOverallTimeoutMs } from './types.js';
  * The parent Shortcut Graph, not the Worker Reconciler, selects DAG readiness. */
 export async function runShortcutModelNode(options: {
   store: DurableStore; reconciler: Reconciler; jobId: string; parentTaskId: string;
-  node: { id: string; agent: string; predecessorOutputs: Record<string,unknown>; executionId: string; signal: AbortSignal };
+  node: { id: string; agent: string; predecessorOutputs: Record<string,unknown>; executionId: string; signal: AbortSignal; reviewDecision?: {status:'changes_requested';revision:string;invocationId:string;feedback?:string;comments?:readonly unknown[]} };
 }): Promise<unknown> {
   const {store,reconciler,jobId,parentTaskId,node}=options;
   if(!store.mutateJob) throw new Error('Model nodes require the durable Relay SQLite store');
   if(!/^[A-Za-z_][\w.-]*$/.test(node.id)) throw new Error('Invalid shortcut model node ID');
-  const taskId=`shortcut-${parentTaskId}-${node.id}`;
+  const review=node.reviewDecision;
+  if(review && (!/^[a-f0-9]{40}$/.test(review.revision) || !/^[0-9a-f-]{36}$/i.test(review.invocationId)))
+    throw new Error('Invalid semantic Revision identity');
+  const taskId=`shortcut-${parentTaskId}-${node.id}${review?'-revision-'+review.invocationId:''}`;
   const initial=await store.load(jobId);
   const parent=initial.tasks.find(t=>t.id===parentTaskId);
   if(!parent || parent.state!=='RUNNING' || parent.executionId!==node.executionId || !parent.leaseOwner)
     throw new Error('Model node parent execution is not leased by Shortcut Runner');
   if(parent.output?.kind!=='file' || !isAbsolute(parent.output.path)) throw new Error('Model nodes require a canonical absolute Task output directory');
+  if(review){
+    const recorded=parent.interactiveInvocation;
+    if(!recorded?.decidedAt||recorded.status!=='changes_requested'||
+       recorded.invocationId!==review.invocationId||recorded.revision!==review.revision)
+      throw new Error('Revision Worker requires the actual accepted Relay review');
+  }
   const runRoot=dirname(parent.output.path);
   const declaredRun=parent.input.match(/^- Canonical run:\s*(\/[^\r\n]+)$/m)?.[1]?.trim();
   if(declaredRun && resolve(declaredRun)!==resolve(runRoot))
@@ -45,8 +54,9 @@ export async function runShortcutModelNode(options: {
     const state=cp as {workerNodes?:Record<string,string>;nodes?:Record<string,unknown>;inFlight?:Record<string,string>};
     if(state.nodes?.[node.id] || state.inFlight?.[node.id]!==node.executionId) throw new Error('Model node is no longer pending in the current Graph execution');
     state.workerNodes ??={};
-    if(state.workerNodes[node.id] && state.workerNodes[node.id]!==taskId) throw new Error('Conflicting durable Worker node mapping');
-    state.workerNodes[node.id]=taskId;
+    const workerKey=review ? `${node.id}:revision:${review.invocationId}` : node.id;
+    if(state.workerNodes[workerKey] && state.workerNodes[workerKey]!==taskId) throw new Error('Conflicting durable Worker node mapping');
+    state.workerNodes[workerKey]=taskId;
     const existing=current.tasks.find(t=>t.id===taskId);
     if(existing){
       if(existing.parentTaskId!==parentTaskId || existing.agentName!==node.agent || existing.output?.kind!=='file' || existing.output.path!==outputPath)
@@ -56,12 +66,13 @@ export async function runShortcutModelNode(options: {
       const body=JSON.stringify({
         source:'shortcut-graph-node',jobId,parentTaskId,nodeId:node.id,agent:node.agent,
         predecessorOutputs:node.predecessorOutputs,
+        ...(review ? {reviewDecision:review,revisionOf:{nodeId:node.id,commitSha:review.revision}} : {}),
         originalInput:active.input,
         ...(declaredRun ? {canonicalRunPath:declaredRun} : {}),
         ...(sourceRef ? {sourceEvidencePath:sourceRef} : {}),
         requiredResult:{status:'COMPLETED',output:{},artifacts:[]},
         outputPath,
-        instruction:'Execute only this Agent role for this DAG node. The ONLY structured DAG predecessor values are predecessorOutputs; never infer an undeclared sibling dependency. If canonicalRunPath is declared, read the authorized original source manifest and prior stage artifact files there as required by the project Agent/Stage contract; inspect and validate their real contents, source provenance, hashes and use rights. These files are allowed canonical run evidence, not an alternative DAG predecessor result and not proof of human approval. Do not claim they are absent merely because they are not repeated in predecessorOutputs. Write {status:"COMPLETED",output:{...},artifacts:[]} to outputPath only after meeting stage acceptance and send a correlated task.completed event. If a real prerequisite is unavailable, report the specific verified blocker and task.failed; do not fabricate, publish, approve or infer new permissions.'
+        instruction:review ? 'Revise only the existing Stage Artifact according to the human feedback within the Agent role, preserving source provenance; never invent evidence, approve, or publish. The parent Shortcut re-verifies and re-previews.' : 'Execute only this Agent role for this DAG node. The ONLY structured DAG predecessor values are predecessorOutputs; never infer an undeclared sibling dependency. If canonicalRunPath is declared, read the authorized original source manifest and prior stage artifact files there as required by the project Agent/Stage contract; inspect and validate their real contents, source provenance, hashes and use rights. These files are allowed canonical run evidence, not an alternative DAG predecessor result and not proof of human approval. Do not claim they are absent merely because they are not repeated in predecessorOutputs. Write {status:"COMPLETED",output:{...},artifacts:[]} to outputPath only after meeting stage acceptance and send a correlated task.completed event. If a real prerequisite is unavailable, report the specific verified blocker and task.failed; do not fabricate, publish, approve or infer new permissions.'
       });
       current.tasks.push(createTaskEntity(current,{
         jobId,id:taskId,title:`Shortcut model node ${node.id}`,kind:'work',parentTaskId,

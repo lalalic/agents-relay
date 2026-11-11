@@ -136,6 +136,59 @@ export async function run({input,runCommand}) {
   assert.equal(final.tasks[0].result.data.shortcut.nodes.A.output.revision,sha);
 });
 
+test('Request Changes invokes a semantic Agent Worker, then re-previews the same node before Approve',async t=>{
+  const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:alpha]'});
+  const helper=join(f.directory,'host-review-revision.mjs');
+  await writeFile(helper,`import {SQLiteRelayStore} from ${JSON.stringify(new URL('../dist/relay-store.js',import.meta.url).href)};
+import {beginInteractiveReview} from ${JSON.stringify(new URL('../dist/interactive-request.js',import.meta.url).href)};
+import {tryTransitionTaskEvent} from ${JSON.stringify(new URL('../dist/task-transitions.js',import.meta.url).href)};
+const store=new SQLiteRelayStore(${JSON.stringify(join(f.directory,'relay.sqlite'))},${JSON.stringify(f.id)});
+const job=await store.loadJob(${JSON.stringify(f.id)}),task=job.tasks[0];
+const receipt=await beginInteractiveReview(store,job.id,task.id,task.executionId);
+await store.mutateJob(job.id,current=>{const t=current.tasks[0];const d=tryTransitionTaskEvent(t,'task.interactive_waiting',{awaitingInteractiveDecision:true});
+if(!d.accepted)throw Error('failed human wait');t.leaseOwner=null;t.leaseExpiresAt=null;t.executionId=null;return current;});
+process.stdout.write(JSON.stringify(receipt));store.close();`);
+  await f.writeShortcut(f.project,'alpha',`
+export async function run({input,runCommand}){
+ if(input.reviewDecision?.status==='approved')return {status:'COMPLETED',output:{approved:true},artifacts:[]};
+ if(input.reviewDecision?.status==='changes_requested' && input.reviewRevision?.output?.corrected!==true)
+  throw Error('Review feedback was not handled by an Agent Worker');
+ const result=await runCommand([process.execPath,${JSON.stringify(helper)}],${JSON.stringify(f.project)});
+ if(result.code!==0)throw Error('Review wait failed: '+result.stderr);
+ return {status:'WAITING_REVIEW'};
+}`);
+  assert.equal((await f.cli()).status,3);
+  const store=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
+  const initial=await store.loadJob(f.id);const inv=initial.tasks[0].interactiveInvocation;
+  const oldSha='b'.repeat(40),nextSha='c'.repeat(40);
+  await store.mutateJob(f.id,j=>{const x=j.tasks[0];x.interactiveInvocation.revision=oldSha;
+    x.interactiveInvocation.status='changes_requested';x.interactiveInvocation.feedback='核对原声和时间戳';
+    x.interactiveInvocation.comments=[{text:'前半段不是这个动作'}];x.interactiveInvocation.decidedAt=new Date().toISOString();return j;});
+  const {resumeInteractiveTask}=await import('../dist/interactive-resume.js');
+  assert.equal(await resumeInteractiveTask(store,f.id,'initial',inv.invocationId,oldSha,'changes_requested'),true);
+  const {runAgentShortcut}=await import('../dist/agent-shortcut.js');
+  const {LocalAuthorityDurableStore}=await import('../dist/local-authority-store.js');
+  const {InMemoryStore}=await import('../dist/store.js');
+  const durable=new LocalAuthorityDurableStore(store,new InMemoryStore(await store.loadJob(f.id)),undefined,true);
+  let workerCalls=0;
+  const ready=await store.loadJob(f.id);
+  const pending=await runAgentShortcut({store:durable,job:ready,task:ready.tasks[0],projectPath:f.project,sharedRoot:f.neo,
+    runModelNode:async node=>{workerCalls++;assert.equal(node.reviewDecision.status,'changes_requested');
+      assert.equal(node.reviewDecision.revision,oldSha);assert.match(node.reviewDecision.feedback,/原声/);
+      return {status:'COMPLETED',output:{corrected:true},artifacts:[]};}});
+  assert.equal(pending.outcome.status,'WAITING_REVIEW');assert.equal(workerCalls,1);
+  const second=await store.loadJob(f.id);assert.equal(second.tasks.length,1,'no extra Review Task');
+  assert.equal(second.tasks[0].state,'AWAITING_DECISION');
+  assert.notEqual(second.tasks[0].interactiveInvocation.invocationId,inv.invocationId);
+  await store.mutateJob(f.id,j=>{const x=j.tasks[0];x.interactiveInvocation.revision=nextSha;
+    x.interactiveInvocation.status='approved';x.interactiveInvocation.decidedAt=new Date().toISOString();return j;});
+  assert.equal(await resumeInteractiveTask(store,f.id,'initial',second.tasks[0].interactiveInvocation.invocationId,nextSha,'approved'),true);
+  const finalHead=await store.loadJob(f.id);
+  const completed=await runAgentShortcut({store:durable,job:finalHead,task:finalHead.tasks[0],projectPath:f.project,sharedRoot:f.neo});
+  assert.equal(completed.outcome.status,'COMPLETED');
+  assert.equal((await store.loadJob(f.id)).state,'COMPLETED');store.close();
+});
+
 test('shortcut commands reject file-backed Jobs before mutation', async t => {
   const f = await fixture(t);
   const file = join(f.directory, 'legacy-job.json');
@@ -1299,4 +1352,40 @@ test('D02 artifact overlap: copied identical Run asset resolves to Run, differen
    }
   }finally{await stop();}
  });
+});
+
+test('shared Pool resumes approved foreground Shortcut without a second explicit user launch', async t=>{
+ const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:alpha]'});
+ const helper=join(f.directory,'host-review-auto.mjs');
+ await writeFile(helper,`import {SQLiteRelayStore} from ${JSON.stringify(new URL('../dist/relay-store.js',import.meta.url).href)};
+import {beginInteractiveReview} from ${JSON.stringify(new URL('../dist/interactive-request.js',import.meta.url).href)};
+import {tryTransitionTaskEvent} from ${JSON.stringify(new URL('../dist/task-transitions.js',import.meta.url).href)};
+const store=new SQLiteRelayStore(${JSON.stringify(join(f.directory,'relay.sqlite'))},${JSON.stringify(f.id)});
+const job=await store.loadJob(${JSON.stringify(f.id)}),task=job.tasks[0];
+const receipt=await beginInteractiveReview(store,job.id,task.id,task.executionId);
+await store.mutateJob(job.id,j=>{const t=j.tasks[0],d=tryTransitionTaskEvent(t,'task.interactive_waiting',{awaitingInteractiveDecision:true});if(!d.accepted)throw Error('cannot wait');t.leaseOwner=null;t.leaseExpiresAt=null;t.executionId=null;return j;});
+console.log(JSON.stringify(receipt));store.close();`);
+ await f.writeShortcut(f.project,'alpha',`export async function run({input,runCommand}){
+  if(input.reviewDecision?.status==='approved')return {status:'COMPLETED',output:{auto:true},artifacts:[]};
+  const result=await runCommand([process.execPath,${JSON.stringify(helper)}],${JSON.stringify(f.project)});
+  if(result.code!==0)throw Error(result.stderr);return {status:'WAITING_REVIEW'};
+ }`);
+ assert.equal((await f.cli()).status,3);
+ const store=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
+ const waiting=await store.loadJob(f.id),inv=waiting.tasks[0].interactiveInvocation,sha='d'.repeat(40);
+ assert.equal(waiting.shortcutRunnerContext.projectPath,f.project);
+ assert.equal(waiting.shortcutRunnerContext.noGitHub,true);
+ await store.mutateJob(f.id,j=>{j.tasks[0].interactiveInvocation.revision=sha;
+  j.tasks[0].interactiveInvocation.status='approved';j.tasks[0].interactiveInvocation.decidedAt=new Date().toISOString();return j;});
+ const {resumeInteractiveTask}=await import('../dist/interactive-resume.js');
+ assert.equal(await resumeInteractiveTask(store,f.id,'initial',inv.invocationId,sha,'approved'),true);
+ const {RepositoryWorkerPool}=await import('../dist/pool.js');
+ let calls=0;let finish;
+ const finished=new Promise(resolve=>finish=resolve);
+ const pool=new RepositoryWorkerPool(2,()=>{throw Error('not a managed worker')},
+  async()=>[{job:await store.loadJob(f.id)}],async()=>({job:await store.loadJob(f.id),store:{}}),
+  async job=>{calls++;const result=await f.cli();assert.equal(result.status,0,JSON.stringify(result));finish();});
+ await pool.reconcile();await finished;
+ assert.equal(calls,1);
+ assert.equal((await store.loadJob(f.id)).state,'COMPLETED');store.close();
 });

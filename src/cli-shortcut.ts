@@ -80,7 +80,22 @@ export async function runShortcutJobCommand(args: string[], id: string, makeRunn
   const projectRoot = await resolveManagedProjectPath(noGitHubMode(args) ? undefined : loaded.job.repository, arg(args, '--project-path') || loaded.job.projectPath || '', workspaceRoot);
   const projectPath = resolveRepositoryProjectPath(projectRoot, loaded.job.projectPath);
   const globalRoot = arg(args, '--global-root') || process.env.AGENTS_HOME || undefined;
-  const missing = await missingShortcutNodes(task.agentGraph!, projectPath, arg(args, '--shared-root') || process.env.AGENTS_RELAY_SHARED_ROOT || undefined, workspaceRoot, globalRoot);
+  const sharedRoot=arg(args, '--shared-root') || process.env.AGENTS_RELAY_SHARED_ROOT || undefined;
+  // The first trusted *explicit* invocation binds only resolved directories,
+  // not a command. Daemon recovery must never guess a Project path or execute
+  // argv serialized by an untrusted Task.
+  if (!loaded.store.mutateJob) throw new Error('Shortcut Runner requires atomic context binding');
+  await loaded.store.mutateJob(id,current=>{
+    if(current.executionMode!=='shortcut'||current.state!=='ACTIVE')throw Error('Cannot bind context to an inactive Shortcut');
+    const ctx={projectPath,workspaceRoot,...(sharedRoot?{sharedRoot}:{}),...(globalRoot?{globalRoot}:{}),noGitHub:noGitHubMode(args)};
+    const old=current.shortcutRunnerContext;
+    if(old && (old.projectPath!==ctx.projectPath||old.workspaceRoot!==ctx.workspaceRoot||
+      old.sharedRoot!==ctx.sharedRoot||old.globalRoot!==ctx.globalRoot||old.noGitHub!==ctx.noGitHub))
+      throw Error('Shortcut context changed from its original trusted launch; refusing inconsistent resume');
+    if(!old)current.shortcutRunnerContext=ctx;
+    return current;
+  });
+  const missing = await missingShortcutNodes(task.agentGraph!, projectPath, sharedRoot, workspaceRoot, globalRoot);
   const previous = task.result?.data?.shortcut as { workerFallback?:boolean } | undefined;
   if (previous?.workerFallback === true)
     throw new Error('Legacy whole-Graph Worker fallback is not compatible with per-node Shortcut execution; retain its original recovery ownership');
@@ -88,15 +103,18 @@ export async function runShortcutJobCommand(args: string[], id: string, makeRunn
   const onInterrupt=():void=>controller.abort(new Error('Interrupted by operator'));
   process.once('SIGINT',onInterrupt);process.once('SIGTERM',onInterrupt);
   const execute = async (bus: EventBus | undefined): Promise<void> => {
-    const workerReconciler = missing.length && bus && makeRunner ? makeRunner(loaded.store,bus) : undefined;
+    const hasSemanticRevision=task?.state==='QUEUED' && task.interactiveInvocation?.status==='changes_requested' &&
+      Boolean(task.interactiveInvocation.decidedAt) &&
+      Object.values((task.result?.data?.shortcut as {inFlight?:Record<string,string>}|undefined)?.inFlight??{}).includes(task.interactiveInvocation.executionId);
+    const workerReconciler = (missing.length || hasSemanticRevision) && bus && makeRunner ? makeRunner(loaded.store,bus) : undefined;
     const unwatch=workerReconciler ? await workerReconciler.watch(id) : undefined;
     try {
       const result = await runAgentShortcut({ store: loaded.store, job: loaded.job, task, projectPath,
-        sharedRoot: arg(args, '--shared-root') || process.env.AGENTS_RELAY_SHARED_ROOT || undefined,
+        sharedRoot,
         workspaceRoot, globalRoot,
         concurrency: integerArg(args, '--concurrency', 4), signal:controller.signal,
         ...(resumeReceiptSelected?{resumeReceiptSelected:true as const}:{}),
-        ...(missing.length ? { runModelNode: node => {
+        ...((missing.length || hasSemanticRevision) ? { runModelNode: node => {
           if (!workerReconciler) throw new Error('Model-backed node requires a reachable EventBus and existing Relay Worker Adapter');
           return runShortcutModelNode({store:loaded.store,reconciler:workerReconciler,jobId:id,parentTaskId:task!.id,node});
         } } : {}),
@@ -112,7 +130,7 @@ export async function runShortcutJobCommand(args: string[], id: string, makeRunn
     }
   };
   try {
-    if(missing.length) await withEventBus(args,execute);
+    if(missing.length || (task?.state==='QUEUED' && task.interactiveInvocation?.status==='changes_requested' && Boolean(task.interactiveInvocation.decidedAt))) await withEventBus(args,execute);
     else await execute(undefined);
   } finally {process.removeListener('SIGINT',onInterrupt);process.removeListener('SIGTERM',onInterrupt);}
 }

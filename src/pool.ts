@@ -13,6 +13,8 @@ import { pendingTroubleshooterTasks, pendingTroubleshooterReopens, pendingTroubl
 import { reviewPlanReady, reviewWorkSettled } from './review-replan.js';
 import { decideReviewLifecycle } from './workflow/review-v2.js';
 import { isFinalReviewAgent } from './final-review-role.js';
+import { shortcutAutoResumeTask } from './shortcut-auto-resume.js';
+import type { Task } from './types.js';
 
 const RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 type HydratableStore = DurableStore & { hydrate?: (job: Job) => Promise<void> };
@@ -60,11 +62,14 @@ export class RepositoryWorkerPool {
   private readonly coordinator: ReconcileCoordinator;
   private dispatchTail: Promise<void> = Promise.resolve();
   private watchedBus?: EventBus;
+  private readonly shortcutResumes = new Set<string>();
+  private readonly shortcutResumeFailures = new Map<string,{invocationId:string;attempts:number;retryAfter:number}>();
   constructor(
     private readonly concurrency: number,
     private readonly makeReconciler: (store: DurableStore, maxConcurrent: number) => Reconciler,
     private readonly localInventory: () => Promise<ManagedJobOverview[]>,
     private readonly resolveLocalJob: (jobId: string) => Promise<{ job: Job; store: DurableStore } | null>,
+    private readonly resumeShortcut?: (job: Job, task: Task) => Promise<void>,
   ) {
     const reportCoordinatorError = (error: unknown, signal: ReconcileSignal): void => {
       observability().record({
@@ -134,16 +139,41 @@ export class RepositoryWorkerPool {
       if (!signal.event) { shouldReconcile = true; continue; }
       if (signal.event.type === 'github.webhook') continue;
       const outcome = await reconciler.applyEvent(signal.event);
-      shouldReconcile ||= outcome.reconcile;
+      // A host may commit an accepted decision to SQLite before publishing its
+      // durable EventBus wake. Its replay is idempotently ignored by the Task
+      // reducer, but the shared Pool must still inspect QUEUED Shortcut work.
+      shouldReconcile ||= outcome.reconcile || signal.event.type === 'task.interactive_decision';
     }
     if (shouldReconcile) await this.reconcileLocalJob(jobId, 'local.signal');
   }
 
   private async reconcileDiscovered(discovered: ManagedJobOverview[]): Promise<void> {
     const jobs = runnableManagedJobs(discovered);
-    let capacity = Math.max(0, this.concurrency - jobs.filter(job => jobHasActiveExecution(job)).length);
+    let capacity = Math.max(0, this.concurrency - jobs.filter(job => jobHasActiveExecution(job)).length - this.shortcutResumes.size);
     for (const job of jobs) {
       if (capacity <= 0) break;
+      // The shared Pool resumes only previously launched human-reviewed
+      // Shortcut Tasks. A Shortcut created but never explicitly run is inert.
+      if (job.executionMode === 'shortcut') {
+        const resume = shortcutAutoResumeTask(job);
+        if (resume && this.resumeShortcut && !this.shortcutResumes.has(job.id)) {
+          const invocationId=resume.interactiveInvocation!.invocationId;
+          const old=this.shortcutResumeFailures.get(job.id);
+          const previous=old?.invocationId===invocationId ? old : undefined;
+          if (!previous || (previous.attempts<3 && previous.retryAfter<=Date.now())) {
+            this.shortcutResumes.add(job.id);
+            void this.resumeShortcut(job,resume).then(()=>this.shortcutResumeFailures.delete(job.id)).catch(error => {
+              const attempts=(previous?.attempts??0)+1;
+              this.shortcutResumeFailures.set(job.id,{invocationId,attempts,retryAfter:Date.now()+Math.min(120000,10000*2**(attempts-1))});
+              observability().record({stage:'reconcile',event:'shortcut.resume_failed',level:'warn',outcome:'failed',
+                message:'Shortcut automatic resume failed ('+attempts+'/3): '+errorMessage(error),
+                correlation:{jobId:job.id,repository:job.repository,taskId:resume.id}});
+            }).finally(()=>this.shortcutResumes.delete(job.id));
+            capacity--;
+          }
+        }
+        continue;
+      }
       const store = await this.requireLocalStore(job.id);
       await (store as HydratableStore).hydrate?.(job);
       const ready = job.tasks.filter(task => (task.state === 'QUEUED' && task.executionId === null) || (task.state === 'DRAFT' && task.dependencies.length > 0)).length;

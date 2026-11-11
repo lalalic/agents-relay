@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { resolve, relative, isAbsolute, sep, dirname, basename, join } from 'node:path';
 import { once } from 'node:events';
-import { pathToFileURL } from 'node:url';
+import { runShortcutRevisionNode } from './shortcut-node-revision.js';
 import { spawnOwnedProcess } from './owned-process.js';
 import { validateShortcutStageGate } from './shortcut-stage-contract.js';
 import { parseAgentGraph } from './agent-graph.js';
@@ -170,7 +170,7 @@ export async function runAgentShortcut(options: {
   store: DurableStore; job: Job; task: Task; projectPath: string; sharedRoot?: string; workspaceRoot?: string; globalRoot?: string; concurrency?: number;
   leaseMs?: number; heartbeatMs?: number; resumeReceiptSelected?: true;
   signal?: AbortSignal; onNodeEvent?: (event: ShortcutNodeEvent) => void;
-  runModelNode?: (node: { id: string; agent: string; predecessorOutputs: Record<string, unknown>; executionId: string; signal: AbortSignal }) => Promise<unknown>;
+  runModelNode?: (node: { id: string; agent: string; predecessorOutputs: Record<string, unknown>; executionId: string; signal: AbortSignal; reviewDecision?: {status:'changes_requested';revision:string;invocationId:string;feedback?:string;comments?:readonly unknown[]} }) => Promise<unknown>;
 }): Promise<{ outcome: ShortcutOutcome; task: Task; fallback: boolean }> {
   const { store, job, task, projectPath, sharedRoot, workspaceRoot, globalRoot } = options;
   if (!store.mutateJob) throw new Error('Shortcut execution requires atomic Relay SQLite mutation');
@@ -216,9 +216,7 @@ export async function runAgentShortcut(options: {
       throw new Error(`Durable shortcut receipt ${nodeId} no longer matches its wait, execution, or content fingerprint`);
   }
   state.inFlight ??={};
-  // A host-bound human review suspends the parent Task *during* an in-flight
-  // Shortcut module call. The exact accepted invocation authorizes replaying
-  // only that node after the same Task is requeued by the lifecycle Graph.
+  // An accepted human invocation authorizes replay of only its in-flight node.
   let resumedReview: {nodeId:string;status:'approved'|'changes_requested';revision:string;
     invocationId:string;feedback?:string;comments?:readonly unknown[]} | null = null;
   if(currentTask.state==='QUEUED'&&Object.keys(state.inFlight).length>0){
@@ -329,9 +327,7 @@ export async function runAgentShortcut(options: {
   const emit=(event: Omit<ShortcutNodeEvent,'timestamp'>):void=>options.onNodeEvent?.({...event,timestamp:new Date().toISOString()});
 
   try {
-  // The existing Graph executor owns node readiness for both code and model
-  // nodes. Model nodes execute using Relay's existing durable Worker adapter,
-  // never by routing the entire Agent Graph to one Worker.
+  // Graph executor runs Script and model nodes through their respective adapters.
   const missing = shortcuts.filter(item => !item.path);
   if (missing.length && !options.runModelNode) return await fail(
     `Incomplete Agent Graph shortcut coverage: ${missing.map(item => item.nodeId).join(', ')}`);
@@ -354,9 +350,13 @@ export async function runAgentShortcut(options: {
             return runCommand(args, cwd, executionAbort.signal);
           };
           emit({nodeId:id,type:'progress',data:{phase:shortcut?'shortcut.invoke':'worker.invoke'}});
+          const review=resumedReview?.nodeId===id?resumedReview:null;
           const raw = await raceAbort(shortcut
-            ? (async () => { const module = await import(pathToFileURL(shortcut).href) as ShortcutModule;
-                return module.run({ input: { ...safeShortcutTaskInput(task.input), projectPath, jobId: job.id, taskId: task.id, nodeId: id, agent: node.agent, predecessorOutputs, ...(resumedReview?.nodeId===id ? {reviewDecision:{status:resumedReview.status,revision:resumedReview.revision,invocationId:resumedReview.invocationId,feedback:resumedReview.feedback,comments:resumedReview.comments}} : {}) }, signal:executionAbort.signal, runCommand: trackedRunCommand }); })()
+            ? runShortcutRevisionNode({path:shortcut,signal:executionAbort.signal,
+                input:{...safeShortcutTaskInput(task.input),projectPath,jobId:job.id,taskId:task.id,nodeId:id,
+                  agent:node.agent,predecessorOutputs},runCommand:trackedRunCommand,
+                modelNode:{id,agent:node.agent,predecessorOutputs,executionId:currentTask!.executionId!,signal:executionAbort.signal},
+                review,runModelNode:options.runModelNode,validOutput})
             : options.runModelNode!({id,agent:node.agent,predecessorOutputs,executionId:currentTask!.executionId!,signal:executionAbort.signal}),executionAbort.signal);
           if(leaseHeartbeatError)throw new Error(`Shortcut lease renewal failed: ${String(leaseHeartbeatError)}`);
           if (!raw || typeof raw !== 'object') throw new Error('shortcut result must be an object');

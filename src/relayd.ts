@@ -10,6 +10,7 @@ import { ZAdapter } from './z-adapter.js';
 import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
 import { serveDashboard } from './dashboard.js';
 import { RepositoryWorkerPool } from './pool.js';
+import { resumeShortcutInOwnedProcess } from './shortcut-auto-resume-process.js';
 import { Reconciler } from './reconciler.js';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, resolvePullRequest, type DurableStore, type ManagedGitHubPullRequestSnapshot } from './store.js';
 import { GitHubProjectionWriter } from './projected-store.js';
@@ -327,11 +328,10 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     })();
     return githubBindingSyncInFlight;
   };
-  const pool = new RepositoryWorkerPool(
-    concurrency,
-    makeReconciler,
+  const pool = new RepositoryWorkerPool(concurrency,makeReconciler,
     inventoryFromLocal,
     localJobBinding,
+    resumeShortcutInOwnedProcess,
   );
   const initial = cachedOverviews; const fallback = initial[0]?.job;
   const dashboardStore = fallback ? (await requireLocalJobBinding(fallback.id)).store : new InMemoryStore();
