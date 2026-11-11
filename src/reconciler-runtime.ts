@@ -71,7 +71,7 @@ export abstract class ReconcilerRuntimeBase {
   abstract reconcile(jobId: string): Promise<Job>;
   protected abstract applyReviewEvent(event: EventRecord): Promise<EventHandlingResult>;
   protected async applyHostInvocationEvent(event: EventRecord): Promise<EventHandlingResult> { const result = await this.hostInvocations.applyEvent(event); const resumed = result.resumeWorker && result.decision ? await resumeInteractiveTask(this.store, result.decision.jobId, result.decision.taskId, result.decision.invocationId, result.decision.revision, result.decision.decision) : false; return { applied: result.outcome !== 'ignored', reconcile: resumed || result.outcome === 'accepted', reason: `task.interactive_decision.${result.outcome}` }; }
-  bindInteractiveInvocation(jobId: string, task: Task, executionId: string, invocationId: string, revision: string): Promise<{ decision: Promise<import('./interactive-invocation.js').AcceptedInteractiveDecision> }> { return this.hostInvocations.bind(jobId, task, executionId, invocationId, revision); }
+  bindInteractiveInvocation(jobId: string, task: Task, executionId: string): Promise<{ decision: Promise<import('./interactive-invocation.js').AcceptedInteractiveDecision> }> { return this.hostInvocations.bind(jobId, task, executionId); }
   protected async applyJobEffectOutcomes(job: Job, outcomes: readonly WorkflowEffectOutcome[]): Promise<void> {
     await applyJobEffectOutcomes(this.store, event => this.emit(event), job, outcomes);
   }

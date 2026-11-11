@@ -1,5 +1,4 @@
 /** Relay-owned admission/ready/failure for host-owned interactive review requests. */
-import {randomUUID} from 'node:crypto';
 import type {DurableStore} from './store.js';
 import type {Job,Task} from './types.js';
 import {tryTransitionTaskEvent} from './task-transitions.js';
@@ -14,14 +13,14 @@ export function interactiveWaitingEvent(jobId:string,taskId:string,parentTaskId:
     {id:`job/${jobId}/task/${taskId}/execution/${executionId}`,component:'interactive-review'});
 }
 
-export function interactiveTemplate(jobId:string,taskId:string,executionId:string,invocationId:string){
+export function interactiveTemplate(jobId:string,taskId:string,executionId:string){
   return {type:'task.interactive_decision',source:`job/${jobId}/task/${taskId}/execution/${executionId}`,
-    data:{interactive:{jobId,taskId,executionId,invocationId}}};
+    data:{interactive:{jobId,taskId,executionId}}};
 }
 export async function beginInteractiveReview(store:DurableStore,jobId:string,taskId:string,executionId:string){
   if(!store.mutateJob)throw new Error('Interactive review requires atomic durable Job mutation');
-  const proposedId=randomUUID();
-  let invocationId='';
+  // An execution owns at most one review. No separate review identity.
+  const invocationId=executionId;
   let reused=false;
   await store.mutateJob(jobId,(job:Job)=>{
     const task=job.tasks.find((item:Task)=>item.id===taskId);
@@ -29,7 +28,6 @@ export async function beginInteractiveReview(store:DurableStore,jobId:string,tas
       throw new Error('Interactive review requires current ACTIVE/RUNNING Task execution');
     const existing=task.interactiveInvocation;
     if(existing?.status==='awaiting_decision'&&existing.executionId===executionId){
-      invocationId=existing.invocationId;
       reused=true; // Wrapper rejects a second compile for this pending request.
     }else if(!existing || (existing.executionId!==executionId&&
       (existing.status==='changes_requested'||existing.status==='awaiting_decision'||existing.status==='approved'))){
@@ -37,8 +35,7 @@ export async function beginInteractiveReview(store:DurableStore,jobId:string,tas
       // a prior approval, requested revision, or stale undelivered preview.
       // The current execution guard prevents replacing an in-flight decision;
       // historical decisions remain in the ledger and Task comments.
-      invocationId=proposedId;
-      task.interactiveInvocation={invocationId,executionId,revision:`pending:${invocationId}`,
+      task.interactiveInvocation={invocationId,executionId,revision:executionId,
         status:'awaiting_decision',boundAt:new Date().toISOString()};
       task.updatedAt=new Date().toISOString();
     }else{
@@ -46,47 +43,29 @@ export async function beginInteractiveReview(store:DurableStore,jobId:string,tas
     }
     return job;
   });
-  return {jobId,taskId,executionId,invocationId,reused,
-    eventTemplate:interactiveTemplate(jobId,taskId,executionId,invocationId)};
+  return {jobId,taskId,executionId,reused,
+    eventTemplate:interactiveTemplate(jobId,taskId,executionId)};
 }
-export async function abortInteractiveReview(store:DurableStore,jobId:string,taskId:string,executionId:string,invocationId:string){
+export async function abortInteractiveReview(store:DurableStore,jobId:string,taskId:string,executionId:string){
   if(!store.mutateJob)throw new Error('Interactive review requires durable mutation');
   await store.mutateJob(jobId,job=>{
     const task=job.tasks.find(t=>t.id===taskId);
     if(task?.state==='RUNNING'&&task.executionId===executionId&&
-       task.interactiveInvocation?.invocationId===invocationId&&
+       task.interactiveInvocation?.executionId===executionId&&
        task.interactiveInvocation.status==='awaiting_decision'){
       task.interactiveInvocation=undefined;task.updatedAt=new Date().toISOString();
     }
     return job;
   });
 }
-export async function readyInteractiveReview(store:DurableStore,jobId:string,taskId:string,
-  executionId:string,invocationId:string,revision:string){
-  if(!/^[a-f0-9]{40}$/.test(revision))throw new Error('Immutable review revision must be full Git Commit SHA');
-  if(!store.mutateJob)throw new Error('Interactive review requires durable mutation');
-  await store.mutateJob(jobId,job=>{
-    const task=job.tasks.find(t=>t.id===taskId);
-    const inv=task?.interactiveInvocation;
-    if(!task||task.state!=='AWAITING_DECISION'||!inv||inv.executionId!==executionId||
-       inv.invocationId!==invocationId||inv.status!=='awaiting_decision')
-      throw new Error('Interactive review is not awaiting this execution/invocation');
-    if(inv.revision!==`pending:${invocationId}`&&inv.revision!==revision)
-      throw new Error('Conflicting immutable review revision');
-    inv.revision=revision;
-    task.updatedAt=new Date().toISOString();
-    return job;
-  });
-  return {ready:true,invocationId,revision};
-}
 export async function failInteractiveReview(store:DurableStore,jobId:string,taskId:string,
-  executionId:string,invocationId:string,reason:string){
+  executionId:string,reason:string){
   if(!store.mutateJob)throw new Error('Interactive review requires durable mutation');
   let requeued=false;
   await store.mutateJob(jobId,job=>{
     const task=job.tasks.find(t=>t.id===taskId);
     const inv=task?.interactiveInvocation;
-    if(!task||!inv||inv.executionId!==executionId||inv.invocationId!==invocationId||
+    if(!task||!inv||inv.executionId!==executionId||inv.executionId!==executionId||
        inv.status!=='awaiting_decision')return job;
     if(task.state==='AWAITING_DECISION'){
       if(!tryTransitionTaskEvent(task,'interactive.resume').accepted)

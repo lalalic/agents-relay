@@ -98,13 +98,10 @@ Usage: npx agents-relay review job --repo OWNER/REPO --id JOB_ID [--thread-id TH
 
 When provided, --thread-id persists a reviewer destination; otherwise the Job reviewer thread, then creator thread, then legacy review route is used. The command wakes Relay. Review Task creation, idempotency, routing and delivery remain graph/daemon-owned. Rejects in-flight/queued reviews; does not itself mark review delivered.
 
-Managed host interaction (Node Wrapper normally calls these automatically):
-  agents-relay review interactive begin --id JOB --task-id TASK --execution-id EXEC
-  agents-relay review interactive wait --id JOB --task-id TASK --execution-id EXEC --invocation-id INV
-  agents-relay review interactive ready --id JOB --task-id TASK --execution-id EXEC --invocation-id INV --revision GIT_COMMIT_SHA
-  agents-relay review interactive fail --id JOB --task-id TASK --execution-id EXEC --invocation-id INV --reason REASON
-  agents-relay review interactive abort --id JOB --task-id TASK --execution-id EXEC --invocation-id INV
-The CLI controls the running Relay daemon; this is not a separate Worker step.`,
+Worker-facing: agents-relay review interactive --path /absolute/file.md --id JOB --task-id TASK --execution-id EXEC
+This calls Neo review.preview and requests exactly one human review for the current execution. No Git commit or extra invocation ID.
+Internal Neo delivery: review interactive begin|wait|fail|abort with --id, --task-id and --execution-id; fail adds --reason.
+Task AWAITING_DECISION resumes on an execution-bound Approve or Request Changes event.`,
   artifact: `Check a JSON artifact against a project-owned JSON Schema. Read-only; does not affect Task state or planning.
 
 Usage: agents-relay artifact validate --artifact PATH --schema PATH

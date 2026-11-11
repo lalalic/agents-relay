@@ -18,7 +18,7 @@ export function eligibleShortcutReviewTask(job:Job, taskId:string):Task|null{
  const cp=task.result?.data?.shortcut as {inFlight?:Record<string,string>}|undefined;
  const pending=Object.values(cp?.inFlight??{});
  if(pending.length!==1||!rev?.decidedAt||!['approved','changes_requested'].includes(rev.status)||
-    !/^[a-f0-9]{40}$/.test(rev.revision)||rev.executionId!==pending[0]||!rev.invocationId)return null;
+    rev.revision!==rev.executionId||rev.executionId!==pending[0])return null;
  return task;
 }
 

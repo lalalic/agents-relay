@@ -11,7 +11,7 @@ import {fileURLToPath} from 'node:url';
 import {SQLiteRelayStore} from '../../dist/relay-store.js';
 import {createJobEntity,createTaskEntity} from '../../dist/workflow/entity-creation.js';
 import {applyJobActivateAction} from '../../dist/job-actions.js';
-import {beginInteractiveReview,readyInteractiveReview,interactiveWaitingEvent} from '../../dist/interactive-request.js';
+import {beginInteractiveReview,interactiveWaitingEvent} from '../../dist/interactive-request.js';
 import {resumeInteractiveTask} from '../../dist/interactive-resume.js';
 import {tryTransitionTaskEvent} from '../../dist/task-transitions.js';
 import {MemoryEventBus,eventFor} from '../../dist/events.js';
@@ -44,8 +44,7 @@ async function fixture(t,{reviews=[],missingScript=false}={}){
   threadId:null,result:null,error:null,timeoutMs:300000,createdAt:now,updatedAt:now}));
  const db=new SQLiteRelayStore(dbPath,id);try{await db.createJobIfAbsent(job);}finally{db.close()}
  const helper=join(dir,'review-helper.mjs');
- await writeFile(helper,`import {execFileSync} from 'node:child_process';
-import {writeFile,readFile,appendFile,mkdir} from 'node:fs/promises';
+ await writeFile(helper,`import {writeFile,readFile,appendFile,mkdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import {SQLiteRelayStore} from ${JSON.stringify(new URL('../../dist/relay-store.js',import.meta.url).href)};
 import {beginInteractiveReview} from ${JSON.stringify(new URL('../../dist/interactive-request.js',import.meta.url).href)};
@@ -57,17 +56,14 @@ try{const job=await db.loadJob(${JSON.stringify(id)}),task=job.tasks[0];
  const p=join(project,'artifacts',stage+'.json');
  let data;try{data=JSON.parse(await readFile(p,'utf8'));}catch{data={version:0};}
  data.preview=(data.preview??0)+1;await writeFile(p,JSON.stringify(data));
- execFileSync('git',['-C',project,'add','artifacts/'+stage+'.json']);
- execFileSync('git',['-C',project,'-c','user.name=Relay L3','-c','user.email=relay-l3@example.invalid','commit','-qm','preview '+stage]);
- const sha=execFileSync('git',['-C',project,'rev-parse','HEAD'],{encoding:'utf8'}).trim();
+ const sha=task.executionId;
  await db.mutateJob(job.id,j=>{const t=j.tasks[0];
-  if(t.interactiveInvocation?.invocationId!==receipt.invocationId)throw Error('Lost invocation identity');
-  t.interactiveInvocation.revision=sha;
+  if(t.interactiveInvocation?.executionId!==receipt.executionId)throw Error('Lost execution identity');
   const d=tryTransitionTaskEvent(t,'task.interactive_waiting',{awaitingInteractiveDecision:true});
   if(!d.accepted)throw Error('Review waiting Graph rejected');
   t.leaseOwner=null;t.leaseExpiresAt=null;t.executionId=null;return j;});
  await appendFile(join(dir,'trace.log'),'preview:'+stage+':'+sha+'\\n');
- process.stdout.write(JSON.stringify({stage,sha,invocationId:receipt.invocationId}));
+ process.stdout.write(JSON.stringify({stage,executionId:sha}));
 }finally{db.close()}`);
  for(const name of ['first','middle','last']){
   await writeFile(join(project,'agents',name+'.agent.md'),`---\nname: ${name}\n---\n# ${name}\n`);
@@ -97,7 +93,7 @@ try{const job=await db.loadJob(${JSON.stringify(id)}),task=job.tasks[0];
   const j=await load(),task=j.tasks.find(t=>t.id===taskId);
   assert.equal(task?.state,'AWAITING_DECISION',`Expected ${taskId} awaiting, got ${task?.state}`);
   const inv=task.interactiveInvocation;
-  assert.match(inv.revision,/^[a-f0-9]{40}$/);
+  assert.equal(inv.revision,inv.executionId);
   assert.equal(inv.status,'awaiting_decision');
   await mutate(fresh=>{const t=fresh.tasks.find(x=>x.id===taskId);t.interactiveInvocation.status=status;
    t.interactiveInvocation.feedback=feedback;t.interactiveInvocation.comments=feedback?[{text:feedback}]:[];
@@ -150,7 +146,7 @@ test('L3-S02: three-node Review / Approve / automatic event wake to next node',a
  try{
   for(const stage of ['first','middle','last']){
    const pending=await f.load(),task=pending.tasks[0];assert.equal(task.state,'AWAITING_DECISION');
-   const commit=git(f.project,'rev-parse','HEAD');assert.equal(task.interactiveInvocation.revision,commit);
+   assert.equal(task.interactiveInvocation.revision,task.interactiveInvocation.executionId);
    const d=await f.decision('initial','approved');
    await w.send(d);
    assert.equal(w.results.at(-1).status,stage==='last'?0:3,w.results.at(-1).stderr);
@@ -209,16 +205,14 @@ async function workerFixture(f,{mode}){
    let data;try{data=JSON.parse(await readFile(p,'utf8'))}catch{data={version:0}}
    data.version=(data.version??0)+1;data.revisedBy='model-worker';
    await writeFile(p,JSON.stringify(data));
-   git(f.project,'add','artifacts/middle.json');
-   git(f.project,'-c','user.name=Relay L3','-c','user.email=relay-l3@example.invalid','commit','-qm','model preview B');
-   const sha=git(f.project,'rev-parse','HEAD');
-   const inv=await beginInteractiveReview(store,f.id,task.id,task.executionId);
+   const sha=task.executionId;
+   await beginInteractiveReview(store,f.id,task.id,task.executionId);
    // Real worker lifecycle: publish the correlated waiting event. The
    // Reconciler clears the old live execution slot and lease atomically.
    await bus.publish(interactiveWaitingEvent(f.id,task.id,task.parentTaskId,task.executionId));
    await until(async()=>{const current=(await f.load()).tasks.find(t=>t.id===task.id);return current?.state==='AWAITING_DECISION'},'worker interactive_waiting Graph transition');
-   const ready=await readyInteractiveReview(store,f.id,task.id,task.executionId,inv.invocationId,sha);
-   assert.equal(ready.ready,true);
+   const bound=(await store.load(f.id)).tasks.find(t=>t.id===task.id).interactiveInvocation;
+   assert.equal(bound.revision,sha);
    await appendFile(join(f.dir,'trace.log'),`worker-review:middle:${sha}\n`);
   })().catch(error=>{errors.push(error?.stack??String(error));});
   return {id:'l3-worker-'+task.id,launched:Promise.resolve(),promise:work.then(()=>({summary:'L3 adapter settled'})),cancel(){}};
@@ -247,7 +241,7 @@ test('L3-S03: three nodes, Script B Request Changes uses durable Worker then re-
   assert.equal(child?.state,'SUCCEEDED','semantic correction must be durable Worker Task');
   assert.equal(current.tasks[0].state,'AWAITING_DECISION');
   const newSha=current.tasks[0].interactiveInvocation.revision;
-  assert.notEqual(newSha,initialSha);assert.equal(newSha,git(f.project,'rev-parse','HEAD'));
+  assert.notEqual(newSha,initialSha);assert.equal(newSha,current.tasks[0].interactiveInvocation.executionId);
   assert.equal(JSON.parse(await readFile(join(f.project,'artifacts','middle.json'),'utf8')).version,2);
   assert.equal((await f.trace()).filter(x=>x==='script:first:new').length,1);
   await f.decision('initial','approved');
@@ -271,7 +265,7 @@ test('L3-S04: three nodes, model-only B Request Changes resumes same Worker and 
   const taskId='shortcut-initial-B';
   const original=await until(async()=>{
    const j=await f.load(),t=j.tasks.find(x=>x.id===taskId);
-   return t?.state==='AWAITING_DECISION'&&/^[a-f0-9]{40}$/.test(t.interactiveInvocation?.revision??'')?t:null;
+   return t?.state==='AWAITING_DECISION'&&t.interactiveInvocation?.revision===t.interactiveInvocation?.executionId?t:null;
   },'model-only Stage B first human review');
   assert.equal((await f.load()).tasks.find(t=>t.id==='initial').state,'RUNNING');
   const sha1=original.interactiveInvocation.revision;
@@ -282,7 +276,7 @@ test('L3-S04: three nodes, model-only B Request Changes resumes same Worker and 
    return t?.state==='AWAITING_DECISION'&&t.interactiveInvocation.revision!==sha1?t:null;
   },'model-only Stage B new review after comments',4500);
   const sha2=revised.interactiveInvocation.revision;
-  assert.notEqual(sha1,sha2);assert.equal(sha2,git(f.project,'rev-parse','HEAD'));
+  assert.notEqual(sha1,sha2);assert.equal(sha2,revised.interactiveInvocation.executionId);
   assert.notEqual(revised.interactiveInvocation.invocationId,original.interactiveInvocation.invocationId);
   assert.equal(JSON.parse(await readFile(join(f.project,'artifacts','middle.json'),'utf8')).version,2);
   await f.decision(taskId,'approved');

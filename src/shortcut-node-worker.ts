@@ -17,7 +17,7 @@ export async function runShortcutModelNode(options: {
   if(!store.mutateJob) throw new Error('Model nodes require the durable Relay SQLite store');
   if(!/^[A-Za-z_][\w.-]*$/.test(node.id)) throw new Error('Invalid shortcut model node ID');
   const review=node.reviewDecision;
-  if(review && (!/^[a-f0-9]{40}$/.test(review.revision) || !/^[0-9a-f-]{36}$/i.test(review.invocationId)))
+  if(review && (review.revision!==review.invocationId))
     throw new Error('Invalid semantic Revision identity');
   const taskId=`shortcut-${parentTaskId}-${node.id}${review?'-revision-'+review.invocationId:''}`;
   const initial=await store.load(jobId);

@@ -1,5 +1,5 @@
 import { submitTargetedRevisionRequest } from './review-revision-model.js';
-import {beginInteractiveReview,abortInteractiveReview,readyInteractiveReview,failInteractiveReview,interactiveWaitingEvent} from './interactive-request.js';
+import {beginInteractiveReview,abortInteractiveReview,failInteractiveReview,interactiveWaitingEvent} from './interactive-request.js';
 import { localSourceHead, localWorkingHead } from './local-git-merge.js';
 import type { RevisionFinding } from './types.js';
 import { appendTaskComment } from './task-comments.js';
@@ -116,21 +116,19 @@ export function createWorkspaceControl(deps: any) {
     if (command.startsWith('review.interactive.')) {
       const taskId=typeof body.taskId==='string'?body.taskId:'';
       const executionId=typeof body.executionId==='string'?body.executionId:'';
-      const invocationId=typeof body.invocationId==='string'?body.invocationId:'';
       if(!taskId||!executionId)throw new Error('Interactive review requires taskId and executionId');
       if(command==='review.interactive.begin')
         return await beginInteractiveReview(store,jobId,taskId,executionId);
-      if(!invocationId)throw new Error('Interactive review requires invocationId');
       if(command==='review.interactive.abort'){
-        await abortInteractiveReview(store,jobId,taskId,executionId,invocationId);
+        await abortInteractiveReview(store,jobId,taskId,executionId);
         return {aborted:true};
       }
       if(command==='review.interactive.wait'){
         const current=(await store.load(jobId)).tasks.find((t:Task)=>t.id===taskId);
-        if(current?.state==='AWAITING_DECISION'&&current.interactiveInvocation?.invocationId===invocationId)
+        if(current?.state==='AWAITING_DECISION'&&current.interactiveInvocation?.executionId===executionId)
           return {waiting:true,taskState:'AWAITING_DECISION'};
         if(current?.state!=='RUNNING'||current.executionId!==executionId||
-           current.interactiveInvocation?.invocationId!==invocationId)
+           current.interactiveInvocation?.executionId!==executionId)
           throw new Error('Stale interactive waiting request');
         const reconciler=makeReconciler(store,concurrency);
         const event=interactiveWaitingEvent(jobId,taskId,current.parentTaskId,executionId);
@@ -145,11 +143,8 @@ export function createWorkspaceControl(deps: any) {
           return {waiting:true,taskState:'AWAITING_DECISION'};
         }finally{await reconciler.close();}
       }
-      if(command==='review.interactive.ready')
-        return await readyInteractiveReview(store,jobId,taskId,executionId,invocationId,
-          typeof body.revision==='string'?body.revision:'');
       if(command==='review.interactive.fail'){
-        const result=await failInteractiveReview(store,jobId,taskId,executionId,invocationId,
+        const result=await failInteractiveReview(store,jobId,taskId,executionId,
           typeof body.reason==='string'?body.reason:'Interactive review failed');
         if(result.requeued)await pool.reconcileLocalJob(jobId,'interactive.preview-failed');
         return result;

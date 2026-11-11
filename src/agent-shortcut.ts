@@ -223,7 +223,7 @@ export async function runAgentShortcut(options: {
     const pending=Object.entries(state.inFlight);
     const inv=currentTask.interactiveInvocation;
     if(pending.length!==1||!inv?.decidedAt||!['approved','changes_requested'].includes(inv.status)||
-      inv.executionId!==pending[0][1]||!/^[a-f0-9]{40}$/.test(inv.revision))
+      inv.executionId!==pending[0][1]||inv.revision!==inv.executionId)
       throw new Error('Shortcut checkpoint contains an interrupted module execution; refusing automatic replay');
     resumedReview={nodeId:pending[0][0],status:inv.status as 'approved'|'changes_requested',
       revision:inv.revision,invocationId:inv.invocationId,feedback:inv.feedback,comments:inv.comments};

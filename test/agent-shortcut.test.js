@@ -87,9 +87,9 @@ test('foreground Shortcut Runner resolves a stored repository when --repo is omi
   assert.equal((await f.load()).state, 'COMPLETED');
 });
 
-test('one Shortcut Task suspends for host Review and resumes after exact accepted Git SHA', async t => {
+test('one Shortcut Task suspends for host Review and resumes on execution-bound approval', async t => {
   const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:alpha]'});
-  const cli=join(root,'dist','cli.js'),sha='a'.repeat(40);
+  const cli=join(root,'dist','cli.js');
   const helper=join(f.directory,'host-review.mjs');
   await writeFile(helper,`import {SQLiteRelayStore} from ${JSON.stringify(new URL('../dist/relay-store.js',import.meta.url).href)};
 import {beginInteractiveReview} from ${JSON.stringify(new URL('../dist/interactive-request.js',import.meta.url).href)};
@@ -106,7 +106,7 @@ process.stdout.write(JSON.stringify({invocationId:receipt.invocationId}));store.
   await f.writeShortcut(f.project,'alpha',`
 export async function run({input,runCommand}) {
   if(input.reviewDecision){
-    if(input.reviewDecision.status!=='approved'||input.reviewDecision.revision!==${JSON.stringify(sha)})throw Error('unapproved revision');
+    if(input.reviewDecision.status!=='approved'||input.reviewDecision.revision!==input.reviewDecision.invocationId)throw Error('unapproved execution');
     return {status:'COMPLETED',output:{revision:input.reviewDecision.revision},artifacts:[]};
   }
   const wait=await runCommand([process.execPath,${JSON.stringify(helper)}],${JSON.stringify(f.project)});
@@ -123,7 +123,8 @@ export async function run({input,runCommand}) {
   assert.equal(waiting.state,'AWAITING_DECISION');
   assert.ok(waiting.result.data.shortcut.inFlight.A,'original node is durable until real decision');
   const store=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
-  await store.mutateJob(f.id,job=>{const t=job.tasks[0];t.interactiveInvocation.revision=sha;t.interactiveInvocation.status='approved';
+  const sha=waiting.interactiveInvocation.executionId;
+  await store.mutateJob(f.id,job=>{const t=job.tasks[0];t.interactiveInvocation.status='approved';
     t.interactiveInvocation.decidedAt=new Date().toISOString();return job;});
   const {resumeInteractiveTask}=await import('../dist/interactive-resume.js');
   assert.equal(await resumeInteractiveTask(store,f.id,'initial',waiting.interactiveInvocation.invocationId,sha,'approved'),true);
@@ -160,9 +161,8 @@ export async function run({input,runCommand}){
   assert.equal((await f.cli()).status,3);
   const store=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
   const initial=await store.loadJob(f.id);const inv=initial.tasks[0].interactiveInvocation;
-  const oldSha='b'.repeat(40),nextSha='c'.repeat(40);
-  await store.mutateJob(f.id,j=>{const x=j.tasks[0];x.interactiveInvocation.revision=oldSha;
-    x.interactiveInvocation.status='changes_requested';x.interactiveInvocation.feedback='核对原声和时间戳';
+  const oldSha=inv.executionId;
+  await store.mutateJob(f.id,j=>{const x=j.tasks[0];x.interactiveInvocation.status='changes_requested';x.interactiveInvocation.feedback='核对原声和时间戳';
     x.interactiveInvocation.comments=[{text:'前半段不是这个动作'}];x.interactiveInvocation.decidedAt=new Date().toISOString();return j;});
   const {resumeInteractiveTask}=await import('../dist/interactive-resume.js');
   assert.equal(await resumeInteractiveTask(store,f.id,'initial',inv.invocationId,oldSha,'changes_requested'),true);
@@ -180,7 +180,8 @@ export async function run({input,runCommand}){
   const second=await store.loadJob(f.id);assert.equal(second.tasks.length,1,'no extra Review Task');
   assert.equal(second.tasks[0].state,'AWAITING_DECISION');
   assert.notEqual(second.tasks[0].interactiveInvocation.invocationId,inv.invocationId);
-  await store.mutateJob(f.id,j=>{const x=j.tasks[0];x.interactiveInvocation.revision=nextSha;
+  const nextSha=second.tasks[0].interactiveInvocation.executionId;
+  await store.mutateJob(f.id,j=>{const x=j.tasks[0];
     x.interactiveInvocation.status='approved';x.interactiveInvocation.decidedAt=new Date().toISOString();return j;});
   assert.equal(await resumeInteractiveTask(store,f.id,'initial',second.tasks[0].interactiveInvocation.invocationId,nextSha,'approved'),true);
   const finalHead=await store.loadJob(f.id);
@@ -1372,11 +1373,10 @@ console.log(JSON.stringify(receipt));store.close();`);
  }`);
  assert.equal((await f.cli()).status,3);
  const store=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
- const waiting=await store.loadJob(f.id),inv=waiting.tasks[0].interactiveInvocation,sha='d'.repeat(40);
+ const waiting=await store.loadJob(f.id),inv=waiting.tasks[0].interactiveInvocation,sha=inv.executionId;
  assert.equal(waiting.shortcutRunnerContext.projectPath,f.project);
  assert.equal(waiting.shortcutRunnerContext.noGitHub,true);
- await store.mutateJob(f.id,j=>{j.tasks[0].interactiveInvocation.revision=sha;
-  j.tasks[0].interactiveInvocation.status='approved';j.tasks[0].interactiveInvocation.decidedAt=new Date().toISOString();return j;});
+ await store.mutateJob(f.id,j=>{j.tasks[0].interactiveInvocation.status='approved';j.tasks[0].interactiveInvocation.decidedAt=new Date().toISOString();return j;});
  const {resumeInteractiveTask}=await import('../dist/interactive-resume.js');
  assert.equal(await resumeInteractiveTask(store,f.id,'initial',inv.invocationId,sha,'approved'),true);
  const {RepositoryWorkerPool}=await import('../dist/pool.js');

@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import {eligibleShortcutReviewTask,createShortcutReviewWake} from '../dist/shortcut-review-wake.js';
 import {RepositoryWorkerPool} from '../dist/pool.js';
 import {MemoryEventBus,eventFor} from '../dist/events.js';
-const sha='a'.repeat(40), executionId='exec-old', invocationId='inv-one';
+const executionId='exec-old';
 const fixture=()=>({id:'611',repository:'local/vlog',state:'ACTIVE',executionMode:'shortcut',contentOnly:true,
  shortcutExecutionStartedAt:new Date().toISOString(),shortcutRunnerContext:{projectPath:'/fixture/project',workspaceRoot:'/fixture',noGitHub:true},
  tasks:[{id:'content-run',state:'QUEUED',executionId:null,leaseOwner:null,agentGraph:'flowchart TD\nA[agent:alpha]',
- interactiveInvocation:{status:'approved',invocationId,executionId,revision:sha,decidedAt:new Date().toISOString()},
+ interactiveInvocation:{status:'approved',invocationId:executionId,executionId,revision:executionId,decidedAt:new Date().toISOString()},
  result:{data:{shortcut:{inFlight:{A:executionId}}}}}]});
 test('Shortcut review event launches only a trusted previously started and decided Task',()=>{
  assert.equal(eligibleShortcutReviewTask(fixture(),'content-run')?.id,'content-run');
@@ -18,7 +18,7 @@ test('Shortcut review event launches only a trusted previously started and decid
   j=>j.tasks[0].executionId='still-leased',j=>j.tasks[0].leaseOwner='worker',
   j=>delete j.tasks[0].interactiveInvocation.decidedAt,
   j=>j.tasks[0].interactiveInvocation.status='awaiting_decision',
-  j=>j.tasks[0].interactiveInvocation.revision='not-sha',
+  j=>j.tasks[0].interactiveInvocation.revision='not-current-execution',
   j=>j.tasks[0].interactiveInvocation.executionId='different',
   j=>j.tasks[0].result.data.shortcut.inFlight={},
  ]){const j=fixture();modify(j);assert.equal(eligibleShortcutReviewTask(j,'content-run'),null);}

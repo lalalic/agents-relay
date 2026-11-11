@@ -26,20 +26,13 @@ const makeJob = (task = makeTask()) => ({
   repository: 'local/job', state: 'ACTIVE', continuation: null,
   createdAt: timestamp(), updatedAt: timestamp(), tasks: [task],
 });
-const decisionEvent = (jobId, taskId, invocationId, revision, decision, feedback) => ({
-  version: 1,
-  event_id: `${invocationId}-${revision}-${decision}`,
-  job_id: jobId,
-  task_id: taskId,
-  parent_task_id: null,
-  type: 'task.interactive_decision',
-  status: decision === 'approved' ? 'succeeded' : 'failed',
-  timestamp: new Date().toISOString(),
-  visibility: 'user',
-  level: decision === 'approved' ? 'info' : 'warning',
-  message: `${decision} ${revision}`,
-  source: { id: `job/${jobId}/task/${taskId}/execution/exec-1` },
-  data: { interactive: { jobId, taskId, executionId: 'exec-1', invocationId, revision, decision, feedback } },
+const decisionEvent = (jobId, taskId, executionId, decision, feedback='', id='') => ({
+  version: 1, event_id: id || `${executionId}-${decision}`,
+  job_id: jobId, task_id: taskId, parent_task_id: null, type: 'task.interactive_decision',
+  status: 'running', timestamp: timestamp(), visibility: 'user', level: 'info',
+  message: `${decision} ${executionId}`,
+  source: {id:`job/${jobId}/task/${taskId}/execution/${executionId}`},
+  data:{interactive:{jobId,taskId,executionId,decision,feedback,comments:[]}},
 });
 
 async function temporaryStore() {
@@ -48,217 +41,102 @@ async function temporaryStore() {
   return { store, dbPath: join(dir, 'relay.db'), dispose: async () => { store.close(); await rm(dir, { recursive: true, force: true }); } };
 }
 
-test('interactive invocation persists, deduplicates, rejects stale revisions, and continues worker', async () => {
-  const fixture = await temporaryStore();
-  const store = fixture.store;
-  const task = makeTask();
-  const job = makeJob(task);
-  await store.saveJob(job);
+test('execution-scoped review binds once, deduplicates, rejects stale decisions, and resumes',async()=>{
+ const fixture=await temporaryStore();
+ try{
+  const job=makeJob();await fixture.store.saveJob(job);
+  const reconciler=managedReconciler(new ProjectedDurableStore(fixture.store,new InMemoryStore(job)),{owner:'test',adapters:[]});
+  const task=(await fixture.store.loadJob(job.id)).tasks[0];
+  const bound=await reconciler.bindInteractiveInvocation(job.id,task,'exec-1');
+  const first=decisionEvent(job.id,task.id,'exec-1','changes_requested','Shorten ending');
+  assert.equal((await reconciler.applyEvent(first)).reason,'task.interactive_decision.accepted');
+  assert.equal((await bound.decision).decision,'changes_requested');
+  assert.match((await reconciler.applyEvent({...first,event_id:'duplicate-transport'})).reason,/duplicate/);
+  assert.match((await reconciler.applyEvent(decisionEvent(job.id,task.id,'exec-1','approved','late'))).reason,/stale/);
+  const sqlite=new DatabaseSync(fixture.dbPath);
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM host_invocation_decision').get().n,1);
+  sqlite.close();await reconciler.close();
+ }finally{await fixture.dispose()}
+});
 
-  const reconciler = managedReconciler(new ProjectedDurableStore(store, new InMemoryStore(job)), { owner: 'test', adapters: [] });
-  const fresh = await store.loadJob(job.id);
-  const runningTask = fresh.tasks.find(item => item.id === task.id);
-  const firstInvocation = await reconciler.bindInteractiveInvocation(job.id, runningTask, 'exec-1', 'inv-v1', 'v1');
-  await reconciler.applyEvent(decisionEvent(job.id, task.id, 'inv-v1', 'v1', 'changes_requested', 'make the ending shorter'));
-  assert.equal((await firstInvocation.decision).decision, 'changes_requested');
-  assert.equal((await store.loadJob(job.id)).tasks[0].interactiveInvocation.status, 'changes_requested');
+test('execution-bound decision normalization does not require invocation or Git SHA',()=>{
+ const event=decisionEvent('job','task','exec-1','approved','good');
+ const delivery=normalizeInteractiveDecision(event);
+ assert.ok(delivery);
+ assert.equal(delivery.invocationId,'exec-1');
+ assert.equal(delivery.revision,'exec-1');
+ assert.equal(interactiveDecisionFingerprint(delivery),interactiveDecisionFingerprint({...delivery,eventId:'other',deliveredAt:'later'}));
+ assert.notEqual(interactiveDecisionFingerprint(delivery),interactiveDecisionFingerprint({...delivery,feedback:'different'}));
+ for(const key of ['invocationId','revision','commitSha','revisionId','contentHash']){
+  const changed=structuredClone(event);changed.data.interactive[key]='unexpected';
+  assert.equal(normalizeInteractiveDecision(changed),null,key+' must not be accepted');
+ }
+});
 
-  const beforeApproval = await reconciler.applyEvent({ ...decisionEvent(job.id, task.id, 'inv-v1', 'v1', 'approved'), type: 'task.completed', event_id: 'premature-completion' });
-  assert.equal(beforeApproval.applied, false);
-  assert.equal((await store.loadJob(job.id)).tasks[0].state, 'RUNNING');
-
-  const duplicateDelivery = decisionEvent(job.id, task.id, 'inv-v1', 'v1', 'changes_requested', 'make the ending shorter');
-  const duplicate = await reconciler.applyEvent(duplicateDelivery);
-  assert.match(duplicate.reason, /duplicate/);
-  const sameSemanticNewId = await reconciler.applyEvent({ ...duplicateDelivery, event_id: 'redelivered-other-transport' });
-  assert.match(sameSemanticNewId.reason, /duplicate/);
-
-  const staleDelivery = decisionEvent(job.id, task.id, 'inv-v1', 'v1', 'approved', 'late approval');
-  const incompatible = await reconciler.applyEvent(staleDelivery);
-  assert.match(incompatible.reason, /stale/);
-  assert.equal((await store.loadJob(job.id)).tasks[0].state, 'RUNNING');
-
-  const secondJob = await store.loadJob(job.id);
-  const secondTask = secondJob.tasks.find(item => item.id === task.id);
-  const secondInvocation = await reconciler.bindInteractiveInvocation(job.id, secondTask, 'exec-1', 'inv-v2', 'v2');
-  await reconciler.applyEvent(decisionEvent(job.id, task.id, 'inv-v2', 'v2', 'changes_requested', 'adjust the audio mix'));
-  assert.equal((await secondInvocation.decision).revision, 'v2');
-
-  const thirdJob = await store.loadJob(job.id);
-  const thirdTask = thirdJob.tasks.find(item => item.id === task.id);
-  const thirdInvocation = await reconciler.bindInteractiveInvocation(job.id, thirdTask, 'exec-1', 'inv-v3', 'v3');
-  await reconciler.applyEvent(decisionEvent(job.id, task.id, 'inv-v3', 'v3', 'approved', 'ship this revision'));
-  const workerDecision = await thirdInvocation.decision;
-  assert.equal(workerDecision.revision, 'v3');
-  await reconciler.applyEvent({
-    ...decisionEvent(job.id, task.id, 'inv-v3', 'v3', 'approved'),
-    event_id: `complete-${workerDecision.invocationId}`,
-    type: 'task.completed',
-    status: 'succeeded',
-    message: 'Worker continued after latest approval',
-    data: { interactiveRevision: workerDecision.revision },
-  });
-
-  const latestJob = await store.loadJob(job.id);
-  assert.equal(latestJob.tasks[0].state, 'SUCCEEDED');
-  assert.equal(latestJob.tasks[0].result.data.interactiveRevision, 'v3');
-  const lateV1 = await reconciler.applyEvent({
-    ...staleDelivery,
-    event_id: 'late-v1-approval',
-    timestamp: new Date().toISOString(),
-  });
-  assert.equal(lateV1.applied, true);
-  assert.match(lateV1.reason, /stale$/);
-  const sql = new DatabaseSync(fixture.dbPath);
-  assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM host_invocation_decision').get().n, 3);
-  assert.equal(sql.prepare("SELECT COUNT(*) AS n FROM host_invocation_event WHERE outcome='accepted'").get().n, 3);
-  assert.ok(sql.prepare("SELECT feedback FROM host_invocation_decision WHERE revision='v2'").get().feedback.includes('audio'));
-  sql.close();
+test('iPhone decision releases waiting Task and only resumes same Task',async()=>{
+ const fixture=await temporaryStore();
+ try{
+  const job=makeJob();await fixture.store.saveJob(job);
+  const reconciler=managedReconciler(new ProjectedDurableStore(fixture.store,new InMemoryStore(job)),{owner:'test',adapters:[]});
+  const task=(await fixture.store.loadJob(job.id)).tasks[0];
+  await reconciler.bindInteractiveInvocation(job.id,task,'exec-1');
+  const wait={...decisionEvent(job.id,task.id,'exec-1','approved'),event_id:'waiting',type:'task.interactive_waiting',status:'waiting',data:{}};
+  assert.equal((await reconciler.applyEvent(wait)).applied,true);
+  assert.equal((await fixture.store.loadJob(job.id)).tasks[0].state,'AWAITING_DECISION');
+  const delivered=decisionEvent(job.id,task.id,'exec-1','changes_requested','Revise narration');
+  assert.equal((await reconciler.applyEvent(delivered)).reason,'task.interactive_decision.accepted');
+  const current=(await fixture.store.loadJob(job.id)).tasks[0];
+  assert.equal(current.state,'QUEUED');assert.equal(current.executionId,null);
+  assert.equal(current.interactiveInvocation.status,'changes_requested');
+  assert.equal(current.interactiveInvocation.feedback,'Revise narration');
+  assert.equal((await fixture.store.loadJob(job.id)).tasks.length,1);
+  assert.match((await reconciler.applyEvent(decisionEvent(job.id,task.id,'exec-1','approved'))).reason,/stale/);
   await reconciler.close();
-  await fixture.dispose();
+ }finally{await fixture.dispose()}
 });
 
-test('interactive decision events are normalized and fingerprints bind decision facts', () => {
-  const event = decisionEvent('job', 'task', 'invocation', 'revision-1', 'approved', 'good');
-  const delivery = normalizeInteractiveDecision(event);
-  assert.ok(delivery);
-  assert.equal(delivery.decision, 'approved');
-  assert.equal(interactiveDecisionFingerprint(delivery), interactiveDecisionFingerprint({ ...delivery, eventId: 'different', deliveredAt: 'later' }));
-  assert.notEqual(interactiveDecisionFingerprint(delivery), interactiveDecisionFingerprint({ ...delivery, feedback: 'different' }));
-});
-
-test('external decision releases an AWAITING_DECISION interactive Task and requeues the same Task', async () => {
-  const fixture = await temporaryStore();
-  const job = makeJob();
-  await fixture.store.saveJob(job);
-  const reconciler = managedReconciler(new ProjectedDurableStore(fixture.store, new InMemoryStore(job)), {
-    owner: 'test-interactive', adapters: [],
-  });
-  const task = (await fixture.store.loadJob(job.id)).tasks[0];
-  await reconciler.bindInteractiveInvocation(job.id, task, 'exec-1', 'inv-1', 'sha256:v1');
-  const blocked = {
-    ...decisionEvent(job.id, task.id, 'inv-1', 'sha256:v1', 'changes_requested'),
-    event_id: 'worker-review-wait',
-    type: 'task.interactive_waiting',
-    status: 'waiting',
-    message: 'External review required',
-    data: {},
-  };
-  assert.equal((await reconciler.applyEvent(blocked)).applied, true);
-  assert.equal((await fixture.store.loadJob(job.id)).tasks[0].state, 'AWAITING_DECISION');
-  const result = await reconciler.applyEvent(decisionEvent(job.id, task.id, 'inv-1', 'sha256:v1', 'changes_requested', 'revise narration'));
-  assert.equal(result.reconcile, true);
-  assert.equal(result.reason, 'task.interactive_decision.accepted');
-  const resumed = (await fixture.store.loadJob(job.id)).tasks[0];
-  assert.equal(resumed.state, 'QUEUED');
-  assert.equal(resumed.executionId, null);
-  assert.equal(resumed.interactiveInvocation.status, 'changes_requested');
-  assert.equal(resumed.interactiveInvocation.feedback, 'revise narration');
-  assert.equal((await fixture.store.loadJob(job.id)).tasks.length, 1);
-  assert.equal(resumed.attempt, 0);
-  assert.equal((await reconciler.applyEvent(decisionEvent(job.id, task.id, 'inv-1', 'sha256:v1', 'approved'))).reconcile, false);
-  await fixture.dispose();
-});
-
-test('SQLite decision recovers after event delivery loss and concurrent decisions are serialized', async () => {
-  const fixture = await temporaryStore();
-  const job = makeJob();
-  await fixture.store.saveJob(job);
-  const reconciler = managedReconciler(new ProjectedDurableStore(fixture.store, new InMemoryStore(job)), {
-    owner: 'test-interactive', adapters: [],
-  });
-  const task = (await fixture.store.loadJob(job.id)).tasks[0];
-  await reconciler.bindInteractiveInvocation(job.id, task, 'exec-1', 'inv-restart', 'immutable-revision');
-  await reconciler.applyEvent({
-    ...decisionEvent(job.id, task.id, 'inv-restart', 'immutable-revision', 'approved'),
-    type: 'task.interactive_waiting', status: 'waiting', message: 'Waiting for approval', data: {},
-  });
-  const chosenEvent = decisionEvent(job.id, task.id, 'inv-restart', 'immutable-revision', 'approved', 'ready');
-  const chosen = normalizeInteractiveDecision(chosenEvent);
-  assert.ok(chosen);
-  const receipt = await fixture.store.recordHostInvocationDecision(chosen, interactiveDecisionFingerprint(chosen));
-  assert.equal(receipt.outcome, 'accepted');
-  const { recoverInteractiveDecisions } = await import('../dist/interactive-resume.js');
-  assert.equal(await recoverInteractiveDecisions(new ProjectedDurableStore(fixture.store, new InMemoryStore(job)), job.id), true);
-  assert.equal(await recoverInteractiveDecisions(new ProjectedDurableStore(fixture.store, new InMemoryStore(job)), job.id), false);
-  assert.equal((await fixture.store.loadJob(job.id)).tasks[0].state, 'QUEUED');
-  const sql = new DatabaseSync(fixture.dbPath);
-  assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM host_invocation_decision').get().n, 1);
-  sql.close();
-  await fixture.dispose();
-});
-
-test('event-only preview review selects generic Graph without a prior invocation bind', async () => {
-  const fixture = await temporaryStore();
-  const job = makeJob();
-  await fixture.store.saveJob(job);
-  const reconciler = managedReconciler(new ProjectedDurableStore(fixture.store, new InMemoryStore(job)), {
-    owner: 'event-only-review', adapters: [],
-  });
-  const hash1 = 'a'.repeat(40);
-  const hash2 = 'b'.repeat(40);
-  const event = (invocationId, hash, decision, text) => {
-    const base = decisionEvent(job.id, job.tasks[0].id, invocationId, hash, decision, text);
-    base.data.interactive = {...base.data.interactive, commitSha: hash, previewId: `preview-${invocationId}`, requestId: `request-${invocationId}`,
-      idempotencyKey: `key-${invocationId}`, comments: [{sceneId:'opening', timeSeconds:3.2, text}]};
-    return base;
-  };
-  const first = event('new-preview-1', hash1, 'changes_requested', 'shorten introduction');
-  const acceptedFirst = await reconciler.applyEvent(first);
-  assert.equal(acceptedFirst.reason, 'task.interactive_decision.accepted');
-  assert.equal(acceptedFirst.reconcile, true);
-  assert.equal((await fixture.store.loadJob(job.id)).tasks[0].interactiveInvocation.status, 'changes_requested');
-  assert.match((await reconciler.applyEvent({...first, event_id:'replayed-first'})).reason, /duplicate/);
-  const second = event('new-preview-2', hash2, 'approved', 'looks good');
-  assert.equal((await reconciler.applyEvent(second)).reason, 'task.interactive_decision.accepted');
-  assert.equal((await fixture.store.loadJob(job.id)).tasks[0].interactiveInvocation.revision, hash2);
-  assert.match((await reconciler.applyEvent({...first, event_id:'old-after-new'})).reason, /stale|duplicate/);
-  const sql = new DatabaseSync(fixture.dbPath);
-  assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM host_invocation_decision').get().n, 2);
-  sql.close();
+test('SQLite durable decision recovers after event delivery loss',async()=>{
+ const fixture=await temporaryStore();
+ try{
+  const job=makeJob();await fixture.store.saveJob(job);
+  const reconciler=managedReconciler(new ProjectedDurableStore(fixture.store,new InMemoryStore(job)),{owner:'test',adapters:[]});
+  const task=(await fixture.store.loadJob(job.id)).tasks[0];
+  await reconciler.bindInteractiveInvocation(job.id,task,'exec-1');
+  await reconciler.applyEvent({...decisionEvent(job.id,task.id,'exec-1','approved'),event_id:'wait',type:'task.interactive_waiting',status:'waiting',data:{}});
+  const delivery=normalizeInteractiveDecision(decisionEvent(job.id,task.id,'exec-1','approved','ready'));
+  const receipt=await fixture.store.recordHostInvocationDecision(delivery,interactiveDecisionFingerprint(delivery));
+  assert.equal(receipt.outcome,'accepted');
+  const {recoverInteractiveDecisions}=await import('../dist/interactive-resume.js');
+  const projected=new ProjectedDurableStore(fixture.store,new InMemoryStore(job));
+  assert.equal(await recoverInteractiveDecisions(projected,job.id),true);
+  assert.equal(await recoverInteractiveDecisions(projected,job.id),false);
+  assert.equal((await fixture.store.loadJob(job.id)).tasks[0].state,'QUEUED');
   await reconciler.close();
-  await fixture.dispose();
+ }finally{await fixture.dispose()}
 });
 
-test('event-only decisions reject spoofed source, stale execution and unverified revision identity', async () => {
-  const fixture = await temporaryStore();
-  const job = makeJob();
-  await fixture.store.saveJob(job);
-  const reconciler = managedReconciler(new ProjectedDurableStore(fixture.store, new InMemoryStore(job)), {
-    owner: 'event-only-rejection', adapters: [],
-  });
-  const hash = 'a'.repeat(40);
-  const make = () => ({...decisionEvent(job.id, job.tasks[0].id, 'unbound-1', hash, 'approved', ''),
-    data:{interactive:{jobId:job.id,taskId:job.tasks[0].id,executionId:'exec-1',
-      invocationId:'unbound-1',revision:hash,commitSha:hash,
-      requestId:'q1',idempotencyKey:'k1',decision:'approved',feedback:'',comments:[]}}});
-  const forged = make();
-  forged.source = {id:'job/another/task/task-interactive/execution/exec-1'};
-  assert.equal((await reconciler.applyEvent(forged)).applied, false);
-  const bad = make(); bad.data.interactive.commitSha = 'b'.repeat(40);
-  assert.equal((await reconciler.applyEvent(bad)).applied, false);
-  const inactive = await fixture.store.loadJob(job.id);
-  inactive.state = 'CANCELLED';
-  await fixture.store.saveJob(inactive);
-  assert.match((await reconciler.applyEvent(make())).reason, /stale/);
-  assert.equal((await fixture.store.loadJob(job.id)).tasks[0].interactiveInvocation, undefined);
+test('an unbound decision cannot bypass CLI request, even with valid execution identity',async()=>{
+ const fixture=await temporaryStore();
+ try{
+  const job=makeJob();await fixture.store.saveJob(job);
+  const reconciler=managedReconciler(new ProjectedDurableStore(fixture.store,new InMemoryStore(job)),{owner:'test',adapters:[]});
+  const payload=decisionEvent(job.id,job.tasks[0].id,'exec-1','approved','');
+  assert.match((await reconciler.applyEvent(payload)).reason,/stale/);
+  const forged=structuredClone(payload);forged.event_id='forged';forged.source.id='job/other/task/task-interactive/execution/exec-1';
+  assert.equal((await reconciler.applyEvent(forged)).applied,false);
+  assert.equal((await fixture.store.loadJob(job.id)).tasks[0].interactiveInvocation,undefined);
   await reconciler.close();
-  await fixture.dispose();
+ }finally{await fixture.dispose()}
 });
 
-test('generic host adapter adds Relay identity outside the UI decision payload', async () => {
-  const { hostInteractiveDecisionEvent } = await import('../dist/interactive-invocation.js');
-  const generic = { eventId: 'review-1', invocationId: 'inv-1', revision: 'hash-v1',
-    decision: 'changes_requested', feedback: 'shorten credits' };
-  assert.equal('jobId' in generic, false);
-  assert.equal('taskId' in generic, false);
-  const bound = hostInteractiveDecisionEvent({
-    jobId: 'job', taskId: 'task', executionId: 'exec',
-  }, generic);
-  const normalized = normalizeInteractiveDecision(bound);
-  assert.equal(normalized.jobId, 'job');
-  assert.equal(normalized.taskId, 'task');
-  assert.equal(normalized.feedback, 'shorten credits');
+test('host review event binds external context but not a separate invocation',async()=>{
+ const {hostInteractiveDecisionEvent}=await import('../dist/interactive-invocation.js');
+ const generic={eventId:'review-1',decision:'changes_requested',feedback:'shorten credits'};
+ const event=hostInteractiveDecisionEvent({jobId:'job',taskId:'task',executionId:'exec-1'},generic);
+ const delivery=normalizeInteractiveDecision(event);
+ assert.equal(delivery.jobId,'job');assert.equal(delivery.taskId,'task');
+ assert.equal(delivery.invocationId,'exec-1');assert.equal(delivery.feedback,'shorten credits');
+ assert.equal(Object.hasOwn(event.data.interactive,'invocationId'),false);
 });
 
 test('an awaiting decision is a durable Task state, not an active execution or dependency draft', async () => {
@@ -269,9 +147,9 @@ test('an awaiting decision is a durable Task state, not an active execution or d
     owner: 'awaiting-lifecycle', adapters: [],
   });
   const task = (await fixture.store.loadJob(job.id)).tasks[0];
-  await reconciler.bindInteractiveInvocation(job.id, task, 'exec-1', 'inv-await', 'revision-await');
+  await reconciler.bindInteractiveInvocation(job.id, task, 'exec-1');
   const badBlock = {
-    ...decisionEvent(job.id, task.id, 'inv-await', 'revision-await', 'approved'),
+    ...decisionEvent(job.id, task.id, 'exec-1', 'approved'),
     event_id: 'invalid-task-blocked', type: 'task.blocked', status: 'blocked', data: {},
   };
   assert.equal((await reconciler.applyEvent(badBlock)).applied, false,
@@ -295,8 +173,7 @@ test('an awaiting decision is a durable Task state, not an active execution or d
   const { tryApplyTaskCancelAction } = await import('../dist/task-actions.js');
   assert.equal(tryApplyTaskCancelAction(waiting.tasks[0], 'Cancelled while awaiting user'), true);
   await fixture.store.saveJob(waiting);
-  const delayed = await reconciler.applyEvent(decisionEvent(job.id, task.id,
-    'inv-await', 'revision-await', 'approved', 'too late'));
+  const delayed = await reconciler.applyEvent(decisionEvent(job.id, task.id, 'exec-1', 'approved', 'too late'));
   assert.match(delayed.reason, /stale|ignored/);
   assert.equal((await fixture.store.loadJob(job.id)).tasks[0].state, 'CANCELLED');
   await reconciler.close();
