@@ -5,6 +5,8 @@ Agents Relay is a TypeScript runtime for durable asynchronous agent Jobs driven 
 V2 uses a read-only local SQLite Job Registry for discovery. The immutable jobId selects the Job Store even when prNumber is zero; lifecycle transitions are atomic across processes. GitHub is **audit-only**: its PR/head/publish events are persisted for reporting, never consulted to start, stop, or complete local Workflows. Local Git delivery and its confirmed merge receipt—not a remote PR MERGED fact—gate Graph completion. Job creation and local Task operations require no GitHub authentication or PR.
 
 
+Agent frontmatter hints (`skills`, `model`, `reasoning`) are described in [Agent Definition Contract](skills/agents-relay/contracts/agent-contract.md). They are advisory only and do not alter Skill resolution or Router constraints.
+
 The canonical V2 architecture contract is
 [DESIGN-PRINCIPLES.md](DESIGN-PRINCIPLES.md). README sections below describe
 the runtime; they do not replace that contract.

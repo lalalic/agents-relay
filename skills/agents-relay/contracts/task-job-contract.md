@@ -17,6 +17,10 @@ When creating a new Job from an active discussion, the orchestrator must consoli
 
 Use `job create` with standalone objective Markdown. Existing PRs are not imported as Jobs. Use Relay CLI for subsequent Job reads and updates; do not infer Job state or objective from GitHub.
 
+## Agent definitions and advisory frontmatter
+
+Agent frontmatter `skills`, `model`, and `reasoning` are optional **hints**, not Task requirements. See the canonical [Agent Definition Contract](agent-contract.md) for syntax, inheritance, the separate Worker/Router prompt consumers, and the unchanged hard-gate/Skill resolution semantics. Task producers must not turn those hints into durable Task routing constraints or required Skills.
+
 ## Task producers
 
 Any task producer — orchestrator, planner, or nested task-producing agent — must follow this contract.

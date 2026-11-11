@@ -41,7 +41,7 @@ Planner reads the Task/Job/Plan Contract, but not Task lifecycle event contracts
 
 Project and Neo Agent frontmatter may use `extends` with an absolute Markdown path (including a standalone external `SKILL.md`). The selected local Agent keeps its own name; the referenced base can have a different name. Existing `mode`/`sections` merge rules apply, and both canonical source paths contribute to the merged contract. Source paths must be explicitly trusted by the Project author; Relay does not discover or register the external roster. Missing or malformed bases fail before Worker launch. Specialist `review run` uses the same resolver.
 
-Optional Agent frontmatter hints use inline YAML values:
+The authoritative [Agent Definition Contract](../skills/agents-relay/contracts/agent-contract.md) defines these optional, non-enforcing fields. Optional Agent frontmatter hints use inline YAML values:
 ```yaml
 skills: [shotcraft, markcut]
 model: openai/gpt-6

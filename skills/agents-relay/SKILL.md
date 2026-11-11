@@ -31,7 +31,7 @@ Read `contracts/task-job-contract.md` before authoring or changing Jobs or Tasks
 
 Usually let `job create --initial-plan` establish the first Planner round; use `plan` for an existing create-only Job. Direct `task create` is for deliberately orchestrator-authored work. Tasks describe verifiable outcomes, **not shell commands**. Declare exactly one durable result (`task_pr` or `file`), meaningful dependencies, and `storySize`; Relay chooses worker/model routes unless the task truly needs a specific capability.
 
-Agent frontmatter `skills` suggests Worker skills; `model` and `reasoning` suggest a Router preference. None are mandatory.
+Agent `skills` suggests Worker skills; `model`/`reasoning` suggest Router preferences. Neither is mandatory (see `contracts/agent-contract.md`).
 
 An assigned **execution Prompt** pins a specific Skill version and supplies Role, Bootstrap, Contracts, Contexts, and Task/Plan identity. Preserve these references. Resolve the matching CLI as `../../dist/cli.js` relative to the pinned Skill directory; do **not** substitute an unrelated globally installed CLI. Before acting, load the exact execution-bound context:
 

@@ -38,6 +38,10 @@ Prefer zai until its quota resets; otherwise use the openai default.
 
 `[routing-instruction]` is opaque guidance forwarded to Laya verbatim; the active one-stage decision reads it as `facts.routing_instruction`. The section body is preserved byte-for-byte: leading/trailing whitespace, blank lines, and line endings are not trimmed or normalized, and the header line's own terminator is not attached to the instruction. Text outside both sections is ignored, so legacy free-text files remain valid but no longer influence routing. Non-OpenAI Codex profiles remain eligible only when their configured provider/model is present in the discovered profile defaults or an explicit `[choices]` entry.
 
+## Agent model preference (soft hint)
+
+An Agent may declare `model: openai/gpt-6` and/or `reasoning: high` in [frontmatter](../skills/agents-relay/contracts/agent-contract.md). Relay passes these preferences to the unified Router **decision prompt**; they are not Worker prompt instructions, hard requirements, or new `[choices]` entries. User-authored `[routing-instruction]` takes precedence, and the same availability, hard gates, eligible candidates, and deterministic fallback still apply. A missing preference leaves routing unchanged.
+
 ## Codex fallback
 
 Codex is the deterministic safety fallback, not the default winner. When the typed decision succeeds, any listed route may be selected. When the decision engine is unavailable, fails, times out, returns malformed data, or returns an out-of-contract choice, the router chooses a usable Codex route and prefers Codex's configured default profile. If no Codex route is executable, the first remaining executable route is used rather than fabricating a route.

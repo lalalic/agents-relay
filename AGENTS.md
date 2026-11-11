@@ -16,7 +16,7 @@ architecture-sensitive work.
 - Agents may submit child tasks; task lineage is explicit.
 - Any component that creates or manages jobs/tasks must follow `skills/agents-relay/contracts/task-job-contract.md`; task producers choose `storySize`, not raw timeout milliseconds.
 - Workers are replaceable and recoverable. Results and state must survive worker or daemon death.
-- Keep provider/model routing separate from roles and capabilities.
+- Keep provider/model routing separate from roles and capabilities. The optional Agent `skills`, `model`, and `reasoning` frontmatter fields are advisory only; follow `skills/agents-relay/contracts/agent-contract.md`. Do not turn hints into enforced Skill requirements, Router choices, or Task constraints.
 - Prefer standard library and small dependencies. SQLite is canonical lifecycle state, not a cache of GitHub comments. Do not hydrate/recover lifecycle from PR body/comments, or enqueue lifecycle projection writes. The outbox may hold only idempotent external PR actions.
 - TypeScript must use explicit types and avoid `any`.
 - UI must remain usable without a frontend framework unless a framework becomes necessary.
