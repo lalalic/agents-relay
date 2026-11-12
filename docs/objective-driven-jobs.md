@@ -14,6 +14,12 @@ from choosing its independent Final Review/Merge policy.
    as dependencies become ready. Script and Model Agents share the same Task
    lifecycle, retries, failure recovery, and human `review.preview` boundary.
    A Coordinator is not a Worker and holds no execution lease while children run.
+   Completed DAG Agent events immediately reconcile their parent Job and
+   dispatch every dependency-ready successor into available Worker Pool slots
+   before selecting another Job globally. `QUEUED` remains durable for crash
+   recovery or when the global resource budget is exhausted. Script, Model,
+   and parallel branches use this one continuation path; there is no special
+   DAG Worker lease or independent queue/scheduler.
 3. Completed Tasks release dependent Tasks and eventually complete the
    Coordinator. The canonical Job Graph owns completion, Final Review, and local
    Git merge according to the Job's policy. A plan-free Job can keep the

@@ -47,8 +47,14 @@ Graph Tasks use Relay's ordinary Task Reconciler: `agentGraph` becomes a
 ready. Script and Model are Task execution choices; each has the same
 Task-level retry, failure and review semantics. `job run --id JOB --task-id TASK` activates any create-only Graph Job and
 hands it to that same Reconciler; it is not a separate DAG scheduler or Job
-execution mode. Final Review is independently controlled by `--review`/`--no-review`;
-normal Git Merge is independently controlled by `--auto-merge`/`--no-auto-merge`. A Graph needs no Planner unless one is requested.
+execution mode. All DAG Agent Tasks continue immediately when predecessor
+results or human Review decisions are durably accepted: the event directly
+wakes this Job's ordinary Reconciler to dispatch dependency-ready Script and
+Model Tasks before global Job-queue selection. `QUEUED` remains a durable
+recovery/resource-wait state, not a required scheduler round-trip. Global
+Worker Pool capacity is still enforced. Final Review is independently
+controlled by `--review`/`--no-review`; normal Git Merge by
+`--auto-merge`/`--no-auto-merge`. A Graph needs no Planner unless requested.
 
 ## 3. Verify, review, and recover
 
