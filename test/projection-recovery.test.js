@@ -66,7 +66,7 @@ test('concurrent distinct divergence observations cannot replace an active recov
     const recovered = await store.loadJob(job483Fixture.id);
     assert.equal(recovered?.projectionRecovery?.status, 'repairing');
     assert.equal(recovered?.tasks.length, 1);
-    assert.equal(recovered?.tasks[0].id, `projection-recovery-${recovered.projectionRecovery.remoteSha}`);
+    assert.match(recovered?.tasks[0].id ?? '', /^[1-9][0-9]*$/);
     store.close();
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -96,8 +96,8 @@ test('new origin SHA replaces a failed retry record with a fresh normal recovery
     assert.equal(recovered?.projectionRecovery?.remoteSha, newSha);
     assert.equal(recovered?.projectionRecovery?.status, 'repairing');
     assert.equal(recovered?.tasks.length, 2);
-    assert.ok(recovered?.tasks.some(task => task.id === `projection-recovery-${oldSha}`));
-    assert.ok(recovered?.tasks.some(task => task.id === `projection-recovery-${newSha}`));
+    assert.equal(recovered?.tasks.filter(task => /^\d+$/.test(task.id)).length, 2);
+    assert.ok(recovered?.tasks.every(task => task.id !== `projection-recovery-${oldSha}` && task.id !== `projection-recovery-${newSha}`));
     store.close();
   } finally {
     await rm(directory, { recursive: true, force: true });

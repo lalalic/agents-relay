@@ -4,12 +4,13 @@ import { projectionConflictV2 } from './workflow/projection-conflict-v2.js';
 import type { Job, ProjectionRecovery, Task } from './types.js';
 import type { RelayStore } from './relay-store.js';
 import { taskOverallTimeoutMs } from './types.js';
+import { allocateEntityId } from './job-task-id-sequence.js';
+import { relayStoreDirectory } from './relay-store.js';
 
 const MAX_RECOVERY_ATTEMPTS = 2;
 
-function taskFor(job: Job, remoteSha: string, now: string): Task {
+function taskFor(job: Job, remoteSha: string, now: string, id: string): Task {
   const key = `${job.id}:${remoteSha}`;
-  const id = `projection-recovery-${remoteSha}`;
   return createTaskEntity(job, {
     jobId: job.id, id, title: `Reconcile main divergence for ${job.title}`, kind: 'work',
     priority: job.priority ?? 'P1', storySize: 'M', projectName: job.title,
@@ -74,6 +75,7 @@ export async function beginProjectionRecovery(store: RelayStore, jobId: string, 
       }
       if (actionId !== 'projection.createRecoveryTask') throw new Error(`Unexpected projection action ${actionId}`);
       const now = new Date().toISOString();
+      const taskId=allocateEntityId(relayStoreDirectory(),snapshot.repository,'task',`projection-recovery:${jobId}:${remoteSha}`);
       await store.mutateJob!(jobId, current => {
         if (current.state !== 'COMPLETED' || current.localMerge?.status !== 'succeeded'
           || (current.projectionRecovery?.key ?? null) !== expectedRecoveryKey
@@ -82,7 +84,7 @@ export async function beginProjectionRecovery(store: RelayStore, jobId: string, 
           || (current.projectionRecovery?.remoteSha ?? null) !== expectedRecoveryRemoteSha
           || current.projectionRecovery?.status === 'repairing'
           || current.projectionRecovery?.key === `${jobId}:${remoteSha}`) return current;
-        const task = taskFor(current, remoteSha, now);
+        const task = taskFor(current, remoteSha, now, taskId);
         if (!current.tasks.some(item => item.id === task.id)) current.tasks.push(task);
         const recovery: ProjectionRecovery = {
           key: `${jobId}:${remoteSha}`, remoteSha, status: 'repairing', taskId: task.id,

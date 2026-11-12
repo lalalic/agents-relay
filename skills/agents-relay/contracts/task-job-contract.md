@@ -25,6 +25,12 @@ Agent frontmatter `skills`, `model`, and `reasoning` are optional **hints**, not
 
 ## Task producers
 
+Every persisted Task ID is a store-global, monotonically allocated positive
+decimal string. Producers must use Relay's canonical allocator; a caller may
+provide a durable idempotency key but never an ID. Business identity belongs
+in structured fields and idempotency keys, not in Task IDs. Do not derive
+identity from ID prefixes or retain string-ID compatibility paths.
+
 Any task producer — orchestrator, planner, or nested task-producing agent — must follow this contract.
 Task producers choose semantic task properties such as objective, dependencies, worker requirements, priority, and `storySize`. They do not normally choose an adapter, provider/model, or raw timeout milliseconds.
 
@@ -49,7 +55,8 @@ A later Planner round must inspect the existing semantic tree and attach review,
 For an executable `agentGraph`, create the Job and its Coordinator Task
 atomically through `job create --coordinator-graph-file ...` (with input,
 output, project/workspace paths); activate it with
-`job run --id JOB --task-id coordinator`. This is an alternative to an
+`job run --id JOB --task-id NUMERIC_TASK_ID` using the Task ID returned by Job
+creation. This is an alternative to an
 initial Planner, **not** a separate Job mode or nested runner.
 
 The Coordinator stays durable and does not consume a Worker lease. Each graph

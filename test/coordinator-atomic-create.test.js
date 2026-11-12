@@ -28,14 +28,14 @@ test('Coordinator Job and Agent Graph Task are created atomically in SQLite, wit
  assert.equal(created.job.plans?.length??0,0);
  assert.equal(created.job.tasks.length,1);
  const task=created.job.tasks[0];
- assert.equal(task.id,'coordinator');assert.equal(task.title,'Coordinator');
+ assert.match(task.id,/^[1-9][0-9]*$/);assert.equal(task.title,'Coordinator');
  assert.equal(task.agentGraph,graph);assert.equal(task.state,'QUEUED');
  const duplicate=await ensureManagedGitHubJob({},'project',new Set(),options);
  assert.equal(duplicate.job.id,created.job.id);
  assert.equal(duplicate.job.tasks.length,1);
  const local=openLocalManagedStore('project',0,{directory:f.storeDirectory,jobId:created.job.id,noGitHub:true});
  try{const stored=await local.relay.loadJob(created.job.id);
-  assert.equal(stored.tasks.length,1);assert.equal(stored.tasks[0].id,'coordinator');
+  assert.equal(stored.tasks.length,1);assert.equal(stored.tasks[0].id,task.id);
   assert.equal(stored.graphStartContext.projectPath,f.project);
  }finally{local.relay.close()}
  await assert.rejects(()=>ensureManagedGitHubJob({},'project',new Set(),
@@ -52,7 +52,7 @@ test('Coordinator creation preserves independent final Review and Git Merge flag
   objective:'Final Review, manual Merge',projectRoot:f.project,coordinator:f.coordinator,
   storeDirectory:f.storeDirectory,noGitHub:true,reviewEnabled:true,autoMerge:false});
  assert.equal(noMerge.job.reviewEnabled,true);assert.equal(noMerge.job.autoMerge,false);
- assert.equal(noMerge.job.tasks[0].id,'coordinator');
+ assert.match(noMerge.job.tasks[0].id,/^[1-9][0-9]*$/);
 });
 
 test('Control preserves caller no-GitHub intent when creating a Coordinator Job', async () => {
@@ -62,12 +62,12 @@ test('Control preserves caller no-GitHub intent when creating a Coordinator Job'
       client:{},trusted:new Set(),noGitHub:serverNoGitHub,repositories:[],refreshAll:async()=>{},
       ensureManagedGitHubJob:async (_client,_repo,_trusted,options)=>{
         passed=options;
-        return {job:{id:'isolated',state:'DRAFT'},pr:{number:0}};
+        return {job:{id:'isolated',state:'DRAFT',tasks:[{id:'42',title:'Coordinator',agentGraph:'flowchart TD\nX[agent:x]'}]},pr:{number:0}};
       },
     });
     const response=await control({command:'job.create',repository:'project',
       options:{noGitHub:requestNoGitHub,coordinator:{graph,input:'x'}}});
     assert.equal(passed.noGitHub,true);
-    assert.equal(response.taskId,'coordinator');
+    assert.equal(response.taskId,'42');
   }
 });

@@ -4,6 +4,8 @@ import { arg, hasArg, textOption, integerArg, chatGptTabClosePolicy, storySize, 
 import { parseAgentGraph } from './agent-graph.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
 import { validateDependencyValidity } from './dependency-validity.js';
+import { allocateEntityId } from './job-task-id-sequence.js';
+import { relayStoreDirectory } from './relay-store.js';
 export function recoveryDiagnosisFromArgs(args: string[]) {
   const failureKind = arg(args, '--failure-kind');
   if (!failureKind) return undefined;
@@ -39,9 +41,11 @@ export async function workerTaskFromArgs(job: Job, args: string[], now: string):
   const dependencies = arg(args, '--deps').split(',').filter(Boolean);
   const dependencyValidity = dependencyValidityFromArgs(args, dependencies);
   const timeoutMs = hasArg(args, '--timeout') ? integerArg(args, '--timeout', taskOverallTimeoutMs(size, routing?.reasoning)) : routing ? taskOverallTimeoutMs(size, routing.reasoning) : 0;
+  if (hasArg(args, '--task-id')) throw new Error('Task IDs are allocated by Relay and cannot be supplied');
+  const id = allocateEntityId(arg(args, '--store-dir') || relayStoreDirectory(), job.repository, 'task');
   return createTaskEntity(job, {
     jobId: job.id,
-    id: arg(args, '--task-id', 'initial'),
+    id,
     title: arg(args, '--title') || undefined,
     priority: priority(args, job.priority ?? 'P2'),
     storySize: size,

@@ -8,10 +8,11 @@ import { parseAgentGraph } from './agent-graph.js';
 import { discoverScriptAgent } from './agent-script-discovery.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
 import { tryTransitionTaskEvent } from './task-transitions.js';
+import { allocateEntityId } from './job-task-id-sequence.js';
+import { relayStoreDirectory } from './relay-store.js';
 
 export type DAGChild = { parentTaskId: string; nodeId: string; graphHash: string; executor: 'script'|'model' };
 export type DAGCheckpoint = { version:1; graphHash:string };
-export function dagChildId(parentTaskId:string,nodeId:string):string {return `dag-${parentTaskId}-${nodeId}`;}
 export function unifiedDAG(_job:Job,task:Task):boolean {return Boolean(task.agentGraph);}
 
 export function dagCoordinator(task:Task):boolean {return Boolean(task.agentGraph && (task.result?.data?.dag as DAGCheckpoint|undefined)?.version===1);}
@@ -65,10 +66,11 @@ export async function reconcileDAGTasks(options:{store:DurableStore;jobId:string
    if((currentParent.result?.data?.dag as DAGCheckpoint).graphHash!==graphHash)throw Error('DAG changed after execution began');
    for(const wave of graph.waves){
      for(const nodeId of wave){
-       const childId=dagChildId(parent.id,nodeId);
-       if(currentJob.tasks.some(t=>t.id===childId))continue;
+       const findNode=(job:Job,node:string)=>job.tasks.find(t=>t.dagNode?.parentTaskId===parent.id&&t.dagNode.nodeId===node&&t.dagNode.graphHash===graphHash);
+       const existingNode=findNode(currentJob,nodeId);
+       if(existingNode)continue;
        const parents=graph.edges.filter(e=>e.to===nodeId).map(e=>e.from);
-       const incoming=parents.map(id=>currentJob.tasks.find(t=>t.id===dagChildId(parent.id,id)));
+       const incoming=parents.map(id=>findNode(currentJob,id));
        if(incoming.some(t=>!t||t.state!=='SUCCEEDED'))continue;
        const predecessorOutputs:Record<string,unknown>={};
        for(let i=0;i<parents.length;i++){
@@ -78,25 +80,27 @@ export async function reconcileDAGTasks(options:{store:DurableStore;jobId:string
        }
        const node=graph.nodes.find(n=>n.id===nodeId)!;
        const script=await discoverScriptAgent(node.agent,projectPath,options.roots?.sharedRoot??undefined,options.roots?.workspaceRoot??undefined,options.roots?.globalRoot??undefined);
+       const childId=allocateEntityId(relayStoreDirectory(),currentJob.repository,'task',`dag:${jobId}:${parent.id}:${graphHash}:${nodeId}`);
        const childOut=join(root,'.dag-node-results',childId+'.json');
        let supplied:Record<string,unknown>={taskInput:parent.input};
        try {const parsed:unknown=JSON.parse(parent.input);if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)) supplied=parsed as Record<string,unknown>;}
        catch {/* Plain Task Markdown remains taskInput. */}
        const {reviewDecision:_ignored,interactiveInvocation:_ignored2,jobId:_job,taskId:_task,projectPath:_project, ...projectInput}=supplied;
-       const input=JSON.stringify({...projectInput,source:'relay-dag-task',jobId,parentTaskId:parent.id,nodeId,taskId:childId,
+       const input=JSON.stringify({...projectInput,source:'relay-dag-task',jobId,taskId:childId,parentTaskId:parent.id,nodeId,
          agent:node.agent,projectPath,predecessorOutputs,taskInput:parent.input,outputPath:childOut,
          requiredResult:{status:'COMPLETED',output:{},artifacts:[]},
          instruction:'Execute this Agent DAG role using only declared predecessorOutputs and authorized project inputs. Write the structured result to outputPath. Do not invent source evidence, review decisions or publishing authorization.'});
        await mkdir(dirname(childOut),{recursive:true,mode:0o700});
        await store.mutateJob(jobId,job=>{
          const current=job.tasks.find(t=>t.id===parent.id);
-         if(job.state!=='ACTIVE'||job.pause||current?.state!=='RUNNING'||!dagCoordinator(current)||job.tasks.some(t=>t.id===childId))return job;
-         if(!parents.every(id=>job.tasks.some(t=>t.id===dagChildId(parent.id,id)&&t.state==='SUCCEEDED')))return job;
+         if(job.state!=='ACTIVE'||job.pause||current?.state!=='RUNNING'||!dagCoordinator(current)||job.tasks.some(t=>t.dagNode?.parentTaskId===parent.id&&t.dagNode.nodeId===nodeId&&t.dagNode.graphHash===graphHash))return job;
+         const dependencies=parents.map(id=>job.tasks.find(t=>t.dagNode?.parentTaskId===parent.id&&t.dagNode.nodeId===id&&t.dagNode.graphHash===graphHash));
+         if(!dependencies.every(t=>t?.state==='SUCCEEDED'))return job;
          const now=new Date().toISOString();
          const dagNode:DAGChild={parentTaskId:parent.id,nodeId,graphHash,executor:script?'script':'model'};
          job.tasks.push(createTaskEntity(job,{jobId,id:childId,parentTaskId:parent.id,
            dagNode,title:node.agent,kind:'work',agentName:node.agent,
-           dependencies:parents.map(id=>dagChildId(parent.id,id)),capabilities:script?['script']:['model'],
+           dependencies:dependencies.map(t=>t!.id),capabilities:script?['script']:['model'],
            adapter:script?'script':'codex',workerRequirements:script?undefined:{capabilities:['model']},
            input,output:{kind:'file',path:childOut},attempt:0,maxAttempts:3,
            leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,
@@ -106,16 +110,16 @@ export async function reconcileDAGTasks(options:{store:DurableStore;jobId:string
      }
    }
    const latest=await store.load(jobId);
-   const done=graph.nodes.map(n=>latest.tasks.find(t=>t.id===dagChildId(parent.id,n.id)));
+   const done=graph.nodes.map(n=>latest.tasks.find(t=>t.dagNode?.parentTaskId===parent.id&&t.dagNode.nodeId===n.id&&t.dagNode.graphHash===graphHash));
    if(done.length && done.every(t=>t?.state==='SUCCEEDED')){
      await store.mutateJob(jobId,job=>{
        const current=job.tasks.find(t=>t.id===parent.id);
        if(!current||current.state!=='RUNNING'||!dagCoordinator(current))return job;
-       if(!graph.nodes.every(n=>job.tasks.some(t=>t.id===dagChildId(parent.id,n.id)&&t.state==='SUCCEEDED')))return job;
+       if(!graph.nodes.every(n=>job.tasks.some(t=>t.dagNode?.parentTaskId===parent.id&&t.dagNode.nodeId===n.id&&t.dagNode.graphHash===graphHash&&t.state==='SUCCEEDED')))return job;
        const changed=tryTransitionTaskEvent(current,'task.completed');
        if(!changed.accepted||changed.target!=='SUCCEEDED')throw Error('Task Lifecycle rejected DAG completion');
        current.result={summary:'DAG completed',data:{dag:{version:1,graphHash},
-         nodes:Object.fromEntries(graph.nodes.map(n=>[n.id,dagChildId(parent.id,n.id)]))}};
+         nodes:Object.fromEntries(graph.nodes.map(n=>[n.id,job.tasks.find(t=>t.dagNode?.parentTaskId===parent.id&&t.dagNode.nodeId===n.id&&t.dagNode.graphHash===graphHash)!.id]))}};
        current.updatedAt=new Date().toISOString();return job;
      });
    }

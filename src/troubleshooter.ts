@@ -1,16 +1,14 @@
 import { Job, Task, taskOverallTimeoutMs } from './types.js';
 import { dispatchTroubleshooter } from './workflow/troubleshooter-v2.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
+import { allocateEntityId } from './job-task-id-sequence.js';
+import { relayStoreDirectory } from './relay-store.js';
 
-function slug(value: string): string {
-  return value.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 72) || 'task';
+export function troubleshooterTaskId(task: Task, repository = 'relay'): string {
+  return allocateEntityId(relayStoreDirectory(), repository, 'task', `troubleshooter:${task.jobId}:${task.id}`);
 }
 
-export function troubleshooterTaskId(task: Task): string {
-  return `troubleshoot-${slug(task.id)}`;
-}
-
-function failureInput(job: Job, task: Task, recoveryId = troubleshooterTaskId(task)): string {
+function failureInput(job: Job, task: Task): string {
   return `Recover the failed/blocked task below and make it move again if technically safe.
 
 Original repository: ${job.repository}
@@ -38,8 +36,7 @@ const ACTIVE_RECOVERY_STATES = new Set(['DRAFT', 'QUEUED', 'RUNNING', 'BLOCKED']
 
 function recoveryTargetsTask(recovery: Task, original: Task): boolean {
   if (recovery.agentName !== 'troubleshooter') return false;
-  if (recovery.parentTaskId) return recovery.parentTaskId === original.id;
-  return recovery.id === troubleshooterTaskId(original) || recovery.id.startsWith(`troubleshoot-${slug(original.id)}-a`);
+  return recovery.parentTaskId === original.id;
 }
 
 function hasRecoveryBarrier(job: Job, original: Task): boolean {
@@ -48,7 +45,7 @@ function hasRecoveryBarrier(job: Job, original: Task): boolean {
 }
 
 function recoveryEpisode(recovery: Task): number {
-  return recovery.recoveryForAttempt ?? Number(/-a(\d+)$/.exec(recovery.id)?.[1] ?? -1);
+  return recovery.recoveryForAttempt ?? -1;
 }
 
 /** Reuse the existing recovery rather than creating one child per worker retry. */
@@ -75,7 +72,7 @@ export function pendingTroubleshooterRetries(job: Job): Array<{ original: Task; 
 }
 
 export function refreshTroubleshooterInput(job: Job, original: Task, recovery: Task): void {
-  recovery.input = failureInput(job, original, recovery.id);
+  recovery.input = failureInput(job, original);
   recovery.recoveryForAttempt = original.attempt;
   recovery.maxAttempts = Math.max(recovery.maxAttempts, recovery.attempt + 3);
   recovery.routing = undefined;
@@ -83,25 +80,25 @@ export function refreshTroubleshooterInput(job: Job, original: Task, recovery: T
 }
 
 export function pendingTroubleshooterTasks(job: Job): Task[] {
-  const existing = new Set(job.tasks.filter(task => task.agentName === 'troubleshooter').map(task => task.id));
   const recoveries: Task[] = [];
   for (const task of job.tasks) {
-    const id = troubleshooterTaskId(task);
+    const existingForTask = job.tasks.some(candidate => candidate.agentName === 'troubleshooter' && candidate.parentTaskId === task.id);
     let create = false;
     const decision = dispatchTroubleshooter({
       failedWork: task.state === 'FAILED',
       ordinaryWork: task.kind !== 'planner' && task.agentName !== 'troubleshooter',
       currentRun: belongsToCurrentRun(job, task),
       needsRecovery: !(task.state === 'BLOCKED' && (Boolean(task.unblock) || Boolean(task.interactiveInvocation))),
-      idUnused: !existing.has(id),
+      idUnused: !existingForTask,
       noRecoveryBarrier: !hasRecoveryBarrier(job, task),
     }, () => { create = true; });
     if (!decision.accepted || !create) continue;
+    const id = troubleshooterTaskId(task, job.repository);
     const now = new Date().toISOString();
     recoveries.push(createTaskEntity(job, {
       jobId: job.id,
       id,
-      title: 'Troubleshoot',
+      title: 'Troubleshooter',
       recoveryForAttempt: task.attempt,
       kind: 'work',
       priority: 'P0',

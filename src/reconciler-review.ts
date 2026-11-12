@@ -1,5 +1,7 @@
 import { settleReviewRevisionRound } from './review-revision-settlement.js';
-import { isFinalReviewAgent, FINAL_REVIEW_AGENT, nextFinalReviewTaskId } from './final-review-role.js';
+import { isFinalReviewAgent, FINAL_REVIEW_AGENT } from './final-review-role.js';
+import { allocateEntityId } from './job-task-id-sequence.js';
+import { relayStoreDirectory } from './relay-store.js';
 import { normalizeReviewEvidence } from './review-evidence.js';
 import { browserWorkerPool } from './browser-worker-runtime.js';
 import { ChatGptThreadDelivery, Job, Task, EventRecord, ReviewOutcome, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements } from './types.js';
@@ -100,7 +102,8 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   }
 
   private async createFinalReviewTask(job: Job, headSha: string): Promise<string> {
-    const id = nextFinalReviewTaskId(job, headSha);
+    const reviewRound=job.tasks.filter(task=>task.reviewHeadSha===headSha&&isFinalReviewAgent(task.agentName)).length+1;
+    const id = allocateEntityId(relayStoreDirectory(), job.repository, 'task', `final-review:${job.id}:${headSha}:${reviewRound}`);
     const reviewPrNumber = job.prNumber;
     const now = new Date().toISOString();
     const reviewGateTasks = implementationTasks(job);
@@ -127,7 +130,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       'Do not treat historical failed attempts as current artifact defects; distinguish preserved baseline files from implementation.',
     ].join('\n\n');
     const task = createTaskEntity(job, {
-      jobId: job.id, id, title: 'Review', kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: FINAL_REVIEW_AGENT,
+      jobId: job.id, id, title: 'Final review', kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: FINAL_REVIEW_AGENT,
       parentTaskId: null, dependencies: [], capabilities: ['review'],
       workerSelection: reviewerRouting.selection, adapter: reviewerRouting.candidate.adapter,
       input,

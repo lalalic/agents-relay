@@ -74,12 +74,17 @@ To create a plan-free Coordinator Job, include its Graph and execution paths
   --coordinator-project-root /absolute/project \
   --coordinator-workspace-root /absolute/workspace \
   --coordinator-shared-root /absolute/shared
-npx agents-relay job run --id JOB_ID --task-id coordinator \
+npx agents-relay job run --id JOB_ID --task-id NUMERIC_TASK_ID \
   --project-path /absolute/project --workspace-root /absolute/workspace \
   --shared-root /absolute/shared
 ```
 
-Creation atomically persists **DRAFT Job + Coordinator Task**. Activation
+Creation atomically persists **DRAFT Job + Coordinator Task**. Every persisted
+Task ID is a store-global monotonically allocated positive decimal string.
+Use the `taskId` returned by `job create` for Coordinator activation and persist
+it in caller-owned run bindings. Task IDs are opaque references; DAG identity
+comes from `dagNode.parentTaskId`, `dagNode.nodeId`, and `dagNode.graphHash`.
+Activation
 returns a scheduled receipt, not completion. Neo's `neo project run` wraps this
 creation/binding/activation sequence and resumes an existing Run without
 creating a second Job. Do not use legacy `--shortcut-execution`, `--mode

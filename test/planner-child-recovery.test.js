@@ -2,6 +2,7 @@ import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { recoverPlannerChildren } from '../dist/planner-child-recovery.js';
 import { validateResolutionProposal } from '../dist/workflow/task-resolution.js';
+import { createFailedPlanRecovery } from '../dist/planner-recovery.js';
 
 const now = () => new Date().toISOString();
 
@@ -64,4 +65,11 @@ test('new same-Job dependency proposals still reject a terminal target', () => {
   assert.throws(() => validateResolutionProposal(job, original,
     { path: 'same_job_dependency', targetTaskId: 'target' }),
     /Same-Job dependency resolution requires an existing unresolved target Task in the same Job/);
+});
+
+test('Planner recovery materializes a numeric Troubleshooter Task',()=>{
+ const {job,plan}=fixture('SUCCEEDED');plan.status='FAILED';plan.error='planner runtime failed';
+ const recovery=createFailedPlanRecovery(job,plan);
+ assert.match(recovery.id,/^[1-9][0-9]*$/);
+ assert.equal(recovery.title,'Troubleshooter');
 });

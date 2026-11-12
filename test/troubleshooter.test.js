@@ -106,16 +106,6 @@ test('active recovery suppresses a new troubleshooter when the root attempt incr
   assert.deepEqual(pendingTroubleshooterTasks(job([retriedFailure, recovery])), []);
 });
 
-test('legacy active recovery without parent linkage still suppresses duplicate root recovery', () => {
-  const failed = failedReview();
-  const [recovery] = pendingTroubleshooterTasks(job([failed]));
-  recovery.parentTaskId = null;
-  recovery.state = 'BLOCKED';
-
-  const retriedFailure = { ...failed, attempt: 2, updatedAt: now() };
-  assert.deepEqual(pendingTroubleshooterTasks(job([retriedFailure, recovery])), []);
-});
-
 test('failed prior recovery suppresses another automatic recovery generation', () => {
   const failed = failedReview();
   const [recovery] = pendingTroubleshooterTasks(job([failed]));
@@ -158,13 +148,14 @@ test('one durable Troubleshooter reopens for a subsequent failed attempt', async
   assert.equal(emitted.filter(e => e.type === 'troubleshooter.created').length, 0);
 });
 
-test('legacy cancelled recovery can be reused without creating a third recovery', async () => {
+test('cancelled numeric recovery can be reused without creating a third recovery', async () => {
   const original = { ...failedReview(), attempt: 3 };
   const [first] = pendingTroubleshooterTasks(job([{...original,attempt:1}]));
-  first.id = `troubleshoot-${original.id}-a1`;
+  first.id = '610';
+  first.parentTaskId = original.id;
   first.state = 'SUCCEEDED';
-  first.recoveryForAttempt = undefined;
-  const second = { ...first, id: `troubleshoot-${original.id}-a2`, state: 'CANCELLED', createdAt: now(), updatedAt: now() };
+  first.recoveryForAttempt = 1;
+  const second = { ...first, id: '611', recoveryForAttempt: 2, state: 'CANCELLED', createdAt: now(), updatedAt: now() };
   const store = new InMemoryStore(job([original, first, second]));
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, emit() {} });
   await reconciler.reconcile(original.jobId);

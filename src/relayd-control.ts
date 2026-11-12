@@ -110,7 +110,7 @@ export function createWorkspaceControl(deps: any) {
           return { repository, pr: committed.prNumber, job: committed.id, state: committed.state, initialPlan: committed.plans?.at(-1)?.id };
         } finally { await reconciler.close(); }
       }
-      if(options.coordinator)return {repository,pr:result.pr.number,job:result.job.id,state:result.job.state,taskId:'coordinator'};
+      if(options.coordinator)return {repository,pr:result.pr.number,job:result.job.id,state:result.job.state,taskId:result.job?.tasks?.find((task: import('./types.js').Task)=>task.title==='Coordinator'&&task.agentGraph)?.id??result.taskId};
       return { repository, pr: result.pr.number, job: result.job.id, state: result.job.state };
     }
 

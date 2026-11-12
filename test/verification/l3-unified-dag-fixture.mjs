@@ -13,6 +13,8 @@ import {resumeInteractiveTask} from '../../dist/interactive-resume.js';
 import {tryTransitionTaskEvent} from '../../dist/task-transitions.js';
 import {managedReconciler} from '../test-runtime.js';
 import {ScriptTaskAdapter} from '../../dist/script-task-adapter.js';
+import {allocateEntityId} from '../../dist/job-task-id-sequence.js';
+import {relayStoreDirectory} from '../../dist/relay-store.js';
 export const graph='flowchart TD\nA[agent:first] --> B[agent:middle]\nB --> C[agent:last]';
 export const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 export async function until(fn,label,ms=10000){const start=Date.now();while(Date.now()-start<ms){const value=await fn();if(value)return value;await sleep(25)}throw Error('Timed out waiting for '+label)}
@@ -30,7 +32,8 @@ export async function fixture(t,{reviews=[],modelB=false,mode='normal',parallel=
  const job=createJobEntity({id,title:'Unified runtime L3',objective:'Three nodes',projectPath:'.',projectRoot:project,
   prNumber:0,repository:'project',continuation:null,autoMerge:normalJob,reviewEnabled:false,
   createdAt:now,updatedAt:now,tasks:[]});
- job.tasks.push(createTaskEntity(job,{jobId:id,id:'initial',parentTaskId:null,agentGraph:dag,kind:'work',
+ const coordinatorId=allocateEntityId(relayStoreDirectory(),'project','task');
+ job.tasks.push(createTaskEntity(job,{jobId:id,id:coordinatorId,parentTaskId:null,agentGraph:dag,kind:'work',
   input:'fixture original input',adapter:'codex',dependencies:[],capabilities:[],output:{kind:'file',path:out},
   attempt:0,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,
   timeoutMs:300000,createdAt:now,updatedAt:now}));
@@ -117,7 +120,7 @@ export async function run({input,runCommand}){
  async function startCLI(){
   const cli=fileURLToPath(new URL('../../dist/cli.js',import.meta.url));
   await mkdir(join(root,'stores'),{recursive:true});
-  const result=spawnSync(process.execPath,[cli,'job','run','--id',id,'--task-id','initial',
+  const result=spawnSync(process.execPath,[cli,'job','run','--id',id,'--task-id',coordinatorId,
    '--no-github','--store-dir',join(root,'stores'),'--project-path',project,'--workspace-root',root],
    {encoding:'utf8',timeout:15000,env:{...process.env,AGENTS_RELAY_STORE_DIR:root}});
   assert.equal(result.status,0,result.stderr);
@@ -128,8 +131,8 @@ export async function run({input,runCommand}){
  }
  async function load(){return store.loadJob(id)}
  async function decide(node,status='approved'){
-   const key='dag-initial-'+node;
-   const task=(await load()).tasks.find(t=>t.id===key);
+   const task=(await load()).tasks.find(t=>t.dagNode?.parentTaskId===coordinatorId&&t.dagNode.nodeId===node);
+   const key=task?.id;
    assert.equal(task?.state,'AWAITING_DECISION',key);
    const invocation=task.interactiveInvocation;
    await store.mutateJob(id,j=>{const current=j.tasks.find(t=>t.id===key);current.interactiveInvocation.status=status;
@@ -138,5 +141,5 @@ export async function run({input,runCommand}){
    assert.equal(await resumeInteractiveTask(store,id,key,invocation.invocationId,invocation.revision,status),true);
    await reconciler.reconcile(id);
  }
- return {root,project,store,reconciler,id,load,activate,startCLI,decide,trace:async()=>{try{return await readFile(join(root,'trace.log'),'utf8')}catch{return ''}},launches};
+ return {root,project,store,reconciler,id,coordinatorId,load,activate,startCLI,decide,trace:async()=>{try{return await readFile(join(root,'trace.log'),'utf8')}catch{return ''}},launches};
 }

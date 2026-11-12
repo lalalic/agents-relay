@@ -56,7 +56,7 @@ export async function ensureManagedGitHubJob(
     if (existing.repository !== repositoryName || existing.projectRoot !== projectRoot || (options.prNumber !== undefined && existing.prNumber !== requestedNumber)) throw new Error('Immutable Job ID is already bound to a different local repository, project root, or external PR');
     if (!options.id && !options.idempotencyKey) throw new Error('Automatically allocated Job ID unexpectedly belongs to an existing Job');
     if (options.idempotencyKey && ((options.objective && options.objective !== existing.objective) || (options.projectPath && options.projectPath !== existing.projectPath) || (options.title && options.title !== existing.title))) throw new Error('Job idempotency key reused for a different Job definition');
-    if(options.coordinator){const task=existing.tasks.find(task=>task.id==='coordinator');
+    if(options.coordinator){const task=existing.tasks.find(task=>task.title==='Coordinator' && Boolean(task.agentGraph));
       if(!task||task.agentGraph!==options.coordinator.graph||task.input!==options.coordinator.input||
          task.output?.kind!=='file'||task.output.path!==options.coordinator.outputPath||
          existing.graphStartContext?.projectPath!==options.coordinator.projectRoot)
@@ -113,7 +113,8 @@ export async function ensureManagedGitHubJob(
     });
     if(options.coordinator){
       const c=options.coordinator;
-      job.tasks.push(createTaskEntity(job,{jobId:id,id:'coordinator',title:'Coordinator',
+      const coordinatorId = allocateEntityId(directory, repositoryName, 'task', `coordinator:${id}`);
+      job.tasks.push(createTaskEntity(job,{jobId:id,id:coordinatorId,title:'Coordinator',
         parentTaskId:null,kind:'work',agentGraph:c.graph,input:c.input,
         output:{kind:'file',path:c.outputPath},adapter:'codex',capabilities:[],
         dependencies:[],attempt:0,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,

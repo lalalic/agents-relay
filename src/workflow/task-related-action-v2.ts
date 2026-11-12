@@ -36,7 +36,6 @@ export function relatedTaskActionFacts(task: Task, candidate: Task): Readonly<Re
     recoveryForTask: candidate.agentName === 'troubleshooter'
       && (
         candidate.parentTaskId === task.id
-        || (!candidate.parentTaskId && candidate.id.startsWith(`troubleshoot-${task.id}-a`))
       ),
     candidateCancellable: decideTaskLifecycle(candidate, 'cancel').accepted,
   };

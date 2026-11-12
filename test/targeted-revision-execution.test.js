@@ -17,7 +17,7 @@ function fixture() {
  const owner = task('owner'); const review = {...task('review','RUNNING'),agentName:'job-acceptance-reviewer',reviewHeadSha:'head',executionId:'exec',dependencies:['owner'],result:null};
  return {id:'test',title:'test',repository:'t/test',state:'ACTIVE',prNumber:0,continuation:null,headSha:'head',createdAt:now(),updatedAt:now(),review:{outcome:'started',taskId:'review',headSha:'head',evidence:null,updatedAt:now()},tasks:[owner,review]};
 }
-const request = (id, finding) => ({requestId:id,reviewTaskId:'review',reviewExecutionId:'exec',headSha:'head',originalTaskId:'owner',findings:[{id:finding,summary:finding}]});
+const request = (id, finding) => ({allocatedTaskId:'900',requestId:id,reviewTaskId:'review',reviewExecutionId:'exec',headSha:'head',originalTaskId:'owner',findings:[{id:finding,summary:finding}]});
 
 test('revision lifecycle is held until fully covered reviewer changes required verdict, then verified from actual child result', () => {
  const j=fixture();

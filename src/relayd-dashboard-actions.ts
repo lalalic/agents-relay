@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { allocateEntityId, isGeneratedEntityId } from './job-task-id-sequence.js';
+import { allocateEntityId } from './job-task-id-sequence.js';
 import { relayStoreDirectory } from './relay-store.js';
 import { dispatchJobLifecycleSync } from './workflow/lifecycle.js';
 import type { Job } from './types.js';
@@ -82,8 +82,8 @@ export function createDashboardActions(deps: any) {
     const store = (await requireLocalJobBinding(jobId)).store;
     const job = await store.load(jobId);
     if (['COMPLETED', 'CANCELLED'].includes(job.state)) throw new Error(`Cannot create task on terminal job ${job.id} (${job.state})`);
-    if (task.id && isGeneratedEntityId(task.id, job.repository, 'task')) throw new Error('Reserved auto-generated Task ID cannot be assigned manually');
-    if (!task.id) task.id = allocateEntityId(storeDirectory ?? relayStoreDirectory(), job.repository, 'task', idempotencyKey ? `${jobId}:${idempotencyKey}` : undefined);
+    if (task.id) throw new Error('Task IDs are allocated by Relay and cannot be supplied');
+    task.id = allocateEntityId(storeDirectory ?? relayStoreDirectory(), job.repository, 'task', idempotencyKey ? `${jobId}:${idempotencyKey}` : undefined);
     let alreadyCreated = false;
     if (store.mutateJob) {
       await store.mutateJob(jobId, (current: Job) => {

@@ -12,7 +12,7 @@ export function completionGateSatisfied(job: Job): boolean {
   // Plan-free Coordinator Graph Jobs have a durable Coordinator Task instead of a Planner.
   // Do not let unrelated successful work or an incomplete Coordinator satisfy this gate.
   const coordinatorSatisfied = (job.plans?.length ?? 0) === 0
-    && job.tasks.some(task => task.id === 'coordinator' && task.state === 'SUCCEEDED');
+    && job.tasks.some(task => task.title === 'Coordinator' && Boolean(task.agentGraph) && task.state === 'SUCCEEDED');
   const implementation = implementationTasks(job);
   return (planSatisfied || legacySatisfied || coordinatorSatisfied)
     && implementation.length > 0 && implementation.every(task => task.state === 'SUCCEEDED');

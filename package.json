@@ -1,6 +1,6 @@
 {
   "name": "agents-relay",
-  "version": "2.0.215",
+  "version": "2.0.258",
   "description": "Durable async agent jobs coordinated through GitHub pull requests",
   "repository": {
     "type": "git",
@@ -9,6 +9,7 @@
   "type": "module",
   "bin": {
     "agents-relay": "dist/cli.js",
+    "agents-relay-migrate-task-ids": "bin/migrate-task-ids.mjs",
     "agents-relayd": "dist/relayd-main.js"
   },
   "scripts": {
@@ -18,7 +19,7 @@
     "dev": "tsx src/cli.ts",
     "test:publish": "npm run build && node --import ./test/test-store-env.mjs --test --test-concurrency=1 --test-force-exit test/*.test.js test/verification/l3-coordinator-review.test.mjs test/verification/l3-unified-dag.test.mjs",
     "test:l3:dag": "npm run build && node --import ./test/test-store-env.mjs --test --test-concurrency=1 test/verification/l3-coordinator-review.test.mjs test/verification/l3-unified-dag.test.mjs",
-  "test:dag": "npm run build && node --import ./test/test-store-env.mjs --test --test-concurrency=1 test/verification/l3-coordinator-review.test.mjs test/verification/l3-unified-dag.test.mjs test/pool-dag-continuation.test.js test/coordinator-atomic-create.test.js",
+    "test:dag": "npm run build && node --import ./test/test-store-env.mjs --test --test-concurrency=1 test/verification/l3-coordinator-review.test.mjs test/verification/l3-unified-dag.test.mjs test/pool-dag-continuation.test.js test/coordinator-atomic-create.test.js",
     "test:fast": "npm run build && node --import ./test/test-store-env.mjs --test --test-concurrency=2 test/workflow-lifecycle.test.js test/workflow-v2-lifecycle-parity.test.js test/workflow-effects.test.js test/relay-store.test.js test/local-authority.test.js test/local-jobid-routing.test.js test/interactive-request.test.js test/local-sqlite-jobid.test.js test/no-github.test.js test/reconcile-coordinator.test.js test/service-publication.test.js test/github-webhook.test.js test/coordinator-atomic-create.test.js test/pool-dag-continuation.test.js",
     "test:full": "npm run build && node --import ./test/test-store-env.mjs --test --test-concurrency=1 test/*.test.js test/verification/l3-coordinator-review.test.mjs test/verification/l3-unified-dag.test.mjs && npm run test:verification:l3",
     "test:verification:l1": "npm run build && node --test test/verification/harness.test.mjs test/verification/contract.test.mjs test/browser-worker-pool-graph.test.js test/verification/graph-inventory.test.mjs test/verification/dashboard-drilldown.test.mjs test/verification/evidence-matrix.test.mjs test/verification/task-resolution-classification.test.mjs test/verification/planner-contract.test.mjs test/verification/force-restate-validation.test.mjs test/planner-child-recovery.test.js",
@@ -47,6 +48,7 @@
   },
   "files": [
     "dist",
+    "bin",
     "agents",
     "skills",
     "workflow",

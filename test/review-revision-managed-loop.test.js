@@ -52,6 +52,7 @@ test('managed Job review -> targeted fix -> exact SHA independent re-review -> a
  const submitted=await submitTargetedRevisionRequest(store,'managed-review',incoming);
  assert.equal(submitted.created,true);
  assert.ok(submitted.request.revisionTaskId);
+ assert.match(submitted.request.revisionTaskId,/^[1-9][0-9]*$/);
  const duplicate=await submitTargetedRevisionRequest(store,'managed-review',incoming);
  assert.equal(duplicate.created,false);
  assert.equal((await store.load('managed-review')).tasks.length,3);

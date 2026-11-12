@@ -4,10 +4,11 @@ import type {
   RevisionFinding, Task,
 } from './types.js';
 import { appendTaskComment } from './task-comments.js';
-import { createHash } from 'node:crypto';
 import { createTaskEntity } from './workflow/entity-creation.js';
 import { decideRevisionLifecycle } from './workflow/revision-v2.js';
 import type { RelayStore } from './relay-store.js';
+import { allocateEntityId } from './job-task-id-sequence.js';
+import { relayStoreDirectory } from './relay-store.js';
 
 export type SubmitReviewRevision = {
   requestId: string;
@@ -16,15 +17,12 @@ export type SubmitReviewRevision = {
   headSha: string;
   originalTaskId: string;
   findings: RevisionFinding[];
+  allocatedTaskId?: string;
 };
 
 /** A stable child identity per immutable review round and responsible owner.
  * The request IDs are append-only feedback attached to this single child.
  */
-export function targetedRevisionTaskId(reviewTaskId: string, ownerTaskId: string): string {
-  return 'revision-' + createHash('sha256').update(JSON.stringify([reviewTaskId, ownerTaskId])).digest('hex').slice(0, 24);
-}
-
 /** A request and its source Task comment are one atomic SQLite Job snapshot mutation.
  * The caller MUST execute this reducer inside RelayStore.mutateJob. It is never
  * an out-of-band Task write and never reopens the original result.
@@ -70,7 +68,8 @@ export function recordTargetedRevisionRequest(job: Job, input: SubmitReviewRevis
     throw new Error('revision rejected: reviewer, head, execution or original owner is not current/eligible');
   }
   const now = new Date().toISOString();
-  const childId = targetedRevisionTaskId(input.reviewTaskId, input.originalTaskId);
+  const childId = input.allocatedTaskId;
+  if (!childId || !/^[1-9][0-9]*$/.test(childId)) throw new Error('targeted revision requires a Relay-allocated Task ID');
   const request: ReviewRevisionRequest = {
     requestId: input.requestId,
     reviewTaskId: input.reviewTaskId,
@@ -132,12 +131,17 @@ export function recordTargetedRevisionRequest(job: Job, input: SubmitReviewRevis
  * authoritative Job mutation. The store is responsible for rollback.
  */
 export async function submitTargetedRevisionRequest(
-  store: Pick<RelayStore, 'mutateJob'>, jobId: string, input: SubmitReviewRevision,
+  store: Pick<RelayStore, 'mutateJob'> & Partial<Pick<RelayStore,'loadJob'>> & Partial<Pick<import('./store.js').DurableStore,'load'>>, jobId: string, input: SubmitReviewRevision,
 ): Promise<{ request: ReviewRevisionRequest; created: boolean }> {
   if (!store.mutateJob) throw new Error('targeted revision requires an authoritative atomic Job store');
+  const snapshot=store.loadJob ? await store.loadJob(jobId) : store.load ? await store.load(jobId) : null;
+  if(!snapshot)throw new Error(`Job ${jobId} not found`);
+  const allocatedTaskId=allocateEntityId(relayStoreDirectory(),snapshot.repository,'task',
+    `targeted-revision:${jobId}:${input.reviewTaskId}:${input.originalTaskId}:${input.headSha}`);
+  const assigned={...input,allocatedTaskId};
   let created = false;
   const committed = await store.mutateJob(jobId, current => {
-    created = recordTargetedRevisionRequest(current, input).created;
+    created = recordTargetedRevisionRequest(current, assigned).created;
     return current;
   });
   const request = committed.reviewRevisionRequests?.find(item => item.requestId === input.requestId);

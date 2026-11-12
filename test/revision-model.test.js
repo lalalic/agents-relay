@@ -29,7 +29,7 @@ const job = () => ({
   createdAt: at(), updatedAt: at(), tasks: [work('owner'), reviewer()],
 });
 const input = (overrides = {}) => ({
-  requestId: 'req-1', reviewTaskId: 'review', reviewExecutionId: 'review-exec-1',
+  allocatedTaskId: '900', requestId: 'req-1', reviewTaskId: 'review', reviewExecutionId: 'review-exec-1',
   headSha: 'head-1', originalTaskId: 'owner',
   findings: [{ id: 'F1', summary: 'Fix dependency fence' }], ...overrides,
 });

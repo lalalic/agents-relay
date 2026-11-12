@@ -13,7 +13,8 @@ from choosing its independent Final Review/Merge policy.
    --coordinator-output-path ... --coordinator-project-root ...
    --coordinator-workspace-root ...` instead. This atomically creates a DRAFT
    Job and its queued Coordinator Task in SQLite. No initial Planner is required.
-2. `job run --id JOB --task-id coordinator` activates that same ordinary Job
+2. `job run --id JOB --task-id NUMERIC_TASK_ID` using the Task ID returned by
+   creation activates that same ordinary Job
    and publishes a wake signal. It returns `ACTIVE`, not task completion.
    Neo `neo project run` persists an idempotent Run binding around these calls.
 3. The Reconciler materializes one durable Agent Task per ready DAG node.

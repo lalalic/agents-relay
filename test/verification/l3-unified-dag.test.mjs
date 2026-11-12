@@ -17,10 +17,10 @@ import {ScriptTaskAdapter} from '../../dist/script-task-adapter.js';
 import {fixture,until,sleep,graph} from './l3-unified-dag-fixture.mjs';
 test('L3-U01: three Script Tasks no review',async t=>{
  const f=await fixture(t);await f.activate();await f.reconciler.reconcile(f.id);
- const done=await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();if(j.tasks.some(t=>t.state==='FAILED'||t.state==='BLOCKED')){console.log('FAILED_TASKS',JSON.stringify(j.tasks.map(t=>({id:t.id,title:t.title,state:t.state,error:t.error,executionId:t.executionId})),null,2));throw Error('DAG failed');}return j.tasks.find(t=>t.id==='initial')?.state==='SUCCEEDED'?j:null},'DAG complete',5000);
- assert.equal(done.tasks.find(t=>t.id==='initial').title,'Coordinator');
+ const done=await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();if(j.tasks.some(t=>t.state==='FAILED'||t.state==='BLOCKED')){console.log('FAILED_TASKS',JSON.stringify(j.tasks.map(t=>({id:t.id,title:t.title,state:t.state,error:t.error,executionId:t.executionId})),null,2));throw Error('DAG failed');}return j.tasks.find(t=>t.title==='Coordinator'&&Boolean(t.agentGraph))?.state==='SUCCEEDED'?j:null},'DAG complete',5000);
+ assert.equal(done.tasks.find(t=>t.title==='Coordinator'&&Boolean(t.agentGraph)).title,'Coordinator');
  for(const [node,agent] of [['A','first'],['B','middle'],['C','last']]){
-  const task=done.tasks.find(t=>t.id==='dag-initial-'+node);
+  const task=done.tasks.find(t=>t.dagNode?.nodeId===node);
   assert.equal(task?.title,agent);assert.equal(task?.state,'SUCCEEDED');
  }
  assert.equal(done.tasks.length,4);
@@ -35,7 +35,7 @@ for(const [label,config,decisions] of [
   try{
    await until(async()=>{
     await f.reconciler.reconcile(f.id);
-    const j=await f.load();const current=j.tasks.find(t=>t.id==='dag-initial-'+node);
+    const j=await f.load();const current=j.tasks.find(t=>t.dagNode?.nodeId===node);
     if(current?.state==='FAILED'||current?.state==='BLOCKED')
       throw Error('Review Task failed: '+JSON.stringify({id:current.id,adapter:current.adapter,error:current.error,failureReason:current.failureReason}));
     return current?.state==='AWAITING_DECISION';
@@ -48,15 +48,15 @@ for(const [label,config,decisions] of [
  }
  const done=await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();
   if(j.tasks.some(t=>t.state==='FAILED'||t.state==='BLOCKED')){console.log('FAILED',j.tasks.map(t=>({id:t.id,state:t.state,error:t.error})));throw Error('Failed DAG');}
-  return j.tasks.find(t=>t.id==='initial')?.state==='SUCCEEDED'?j:null;
+  return j.tasks.find(t=>t.title==='Coordinator'&&Boolean(t.agentGraph))?.state==='SUCCEEDED'?j:null;
  },'DAG completed',20000);
- assert.equal(done.tasks.find(t=>t.id==='initial').title,'Coordinator');
+ assert.equal(done.tasks.find(t=>t.title==='Coordinator'&&Boolean(t.agentGraph)).title,'Coordinator');
  for(const [node,agent] of [['A','first'],['B','middle'],['C','last']]){
-  const task=done.tasks.find(t=>t.id==='dag-initial-'+node);
+  const task=done.tasks.find(t=>t.dagNode?.nodeId===node);
   assert.equal(task?.title,agent);assert.equal(task?.state,'SUCCEEDED');
  }
  assert.equal(done.tasks.length,4,'no revision worker subtask');
- if(label.includes('Script B Request Changes'))assert.equal(f.launches.some(l=>l.id==='dag-initial-B'),true,'same Task executes model revision');
+ if(label.includes('Script B Request Changes'))assert.equal(f.launches.some(l=>l.id===done.tasks.find(t=>t.dagNode?.nodeId==='B')?.id),true,'same Task executes model revision');
 });
 
 // Real production ingress: CLI only activates; the SAME normal Reconciler creates Tasks.
@@ -77,7 +77,7 @@ test('L3-U06: Normal Graph uses exactly the same Agent Tasks and Reconciler',asy
  const f=await fixture(t,{mode:'normal'});await f.activate();
  await f.reconciler.reconcile(f.id);
  const done=await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();return j.tasks[0]?.state==='SUCCEEDED'?j:null},'normal DAG',6500);
- assert.equal(done.state,'ACTIVE','Coordinator success is not a separate Job completion rule');
+ assert.equal(done.state,'COMPLETED','the Coordinator and all required nodes completed under the ordinary Job gate');
  assert.equal(done.tasks.length,4);
  assert.equal(done.tasks[0].title,'Coordinator');
  assert.deepEqual(done.tasks.filter(t=>t.dagNode).map(t=>t.title),['first','middle','last']);
@@ -108,13 +108,13 @@ test('L3-U08: fork/join runs independent DAG Tasks concurrently and joins result
 
 test('L3-U09: invalid Model result fails only the Agent Task; Coordinator awaits ordinary recovery',async t=>{
  const f=await fixture(t,{modelB:true,badModelOutput:true});await f.activate();
- const failed=await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();return j.tasks.some(x=>x.id==='dag-initial-B'&&x.state==='FAILED')?j:null},'invalid-model failure',5000);
- const parent=failed.tasks.find(x=>x.id==='initial'),a=failed.tasks.find(x=>x.id==='dag-initial-A');
- const b=failed.tasks.find(x=>x.id==='dag-initial-B');
+ const failed=await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();return j.tasks.some(x=>x.dagNode?.nodeId==='B'&&x.state==='FAILED')?j:null},'invalid-model failure',5000);
+ const parent=failed.tasks.find(x=>x.title==='Coordinator'&&Boolean(x.agentGraph)),a=failed.tasks.find(x=>x.dagNode?.nodeId==='A');
+ const b=failed.tasks.find(x=>x.dagNode?.nodeId==='B');
  assert.equal(parent.state,'RUNNING');assert.equal(a.state,'SUCCEEDED');
  assert.equal(b.failureReason,'invalid_dag_result');
- assert.equal(failed.tasks.filter(x=>x.id==='dag-initial-B').length,1);
- assert.equal(failed.tasks.some(x=>x.id==='dag-initial-C'),false,'downstream must remain unscheduled');
+ assert.equal(failed.tasks.filter(x=>x.dagNode?.nodeId==='B').length,1);
+ assert.equal(failed.tasks.some(x=>x.dagNode?.nodeId==='C'),false,'downstream must remain unscheduled');
  await f.reconciler.reconcile(f.id);
  const recovery=await f.load();
  assert.ok(recovery.tasks.some(x=>x.agentName==='troubleshooter'&&x.parentTaskId===b.id),'ordinary Task Troubleshooter owns failure');
@@ -162,7 +162,7 @@ test('L3-U13: a plan-free Graph Job with Final Review/Merge enabled does not byp
  const f=await fixture(t,{mode:'normal'});
  await f.store.mutateJob(f.id,j=>{j.autoMerge=true;j.reviewEnabled=true;return j});
  await f.startCLI();
- const done=await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();return j.tasks.find(t=>t.id==='initial')?.state==='SUCCEEDED'?j:null},'non-content DAG',7000);
+ const done=await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();return j.tasks.find(t=>t.title==='Coordinator'&&Boolean(t.agentGraph))?.state==='SUCCEEDED'?j:null},'non-content DAG',7000);
  assert.equal(done.state,'ACTIVE','Implementation success does not approve final Job review or merge');
  assert.equal(done.reviewEnabled,true);
  assert.equal(done.autoMerge,true);
@@ -176,7 +176,7 @@ test('L3-U14: duplicate normal Job start is idempotent and rejects changed trust
  assert.equal(job.tasks.length,1,'activation is not a second DAG executor');
  assert.ok(job.graphStartContext?.projectPath);
  const cli=fileURLToPath(new URL('../../dist/cli.js',import.meta.url));
- const result=spawnSync(process.execPath,[cli,'job','run','--id',f.id,'--task-id','initial',
+ const result=spawnSync(process.execPath,[cli,'job','run','--id',f.id,'--task-id',f.coordinatorId,
    '--no-github','--store-dir',join(f.root,'stores'),'--project-path',f.project,
    '--workspace-root',f.root,'--shared-root',join(f.root,'other-agents')],
    {encoding:'utf8',timeout:15000,env:{...process.env,AGENTS_RELAY_STORE_DIR:f.root}});
@@ -203,15 +203,16 @@ test('L3-U16: DAG Troubleshooter inherits bound Coordinator checkout',async t=>{
  await f.store.mutateJob(f.id,j=>{j.graphStartContext={projectPath:'/ignored/legacy-path',workspaceRoot:f.root,noGitHub:true};return j});
  f.reconciler.options.projectPathForJob=async job=>job.projectRoot;
  await f.activate();
- await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();return j.tasks.find(t=>t.id==='dag-initial-A')?.state==='SUCCEEDED'},'first Graph Task',7500);
+ await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();return j.tasks.find(t=>t.dagNode?.nodeId==='A')?.state==='SUCCEEDED'},'first Graph Task',7500);
+ let parentTaskId;
  await f.store.mutateJob(f.id,j=>{
-  const parent=j.tasks.find(t=>t.id==='dag-initial-A');
-  const trouble={...structuredClone(parent),id:'troubleshoot-dag-initial-A',title:'Recover first',
+  const parent=j.tasks.find(t=>t.dagNode?.nodeId==='A');parentTaskId=parent.id;
+  const trouble={...structuredClone(parent),id:'987654',title:'Troubleshooter',
    parentTaskId:parent.id,dagNode:undefined,agentName:'troubleshooter',adapter:'codex',
    state:'QUEUED',attempt:0,executionId:null,leaseOwner:null,leaseExpiresAt:null,
    error:null,result:null,output:{kind:'file',path:join(f.project,'troubleshooter-result.json')}};
   j.tasks.push(trouble);return j;
  });
- const completed=await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();return j.tasks.find(t=>t.id==='troubleshoot-dag-initial-A')?.state==='SUCCEEDED'?j:null},'bound Graph Troubleshooter',7500);
- assert.equal(completed.tasks.find(t=>t.id==='troubleshoot-dag-initial-A').state,'SUCCEEDED');
+ const completed=await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();return j.tasks.find(t=>t.agentName==='troubleshooter'&&t.parentTaskId===parentTaskId)?.state==='SUCCEEDED'?j:null},'bound Graph Troubleshooter',7500);
+ assert.equal(completed.tasks.find(t=>t.agentName==='troubleshooter'&&t.parentTaskId===parentTaskId).state,'SUCCEEDED');
 });

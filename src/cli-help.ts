@@ -58,7 +58,7 @@ Coordinator/DAG creation and activation (no initial Planner required):
     --coordinator-graph-file /abs/graph.mmd --coordinator-input-file /abs/input.md
     --coordinator-output-path /abs/result.json --coordinator-project-root /abs/project
     --coordinator-workspace-root /abs/workspace [--coordinator-shared-root /abs/shared]
-  agents-relay job run --id JOB --task-id coordinator
+  agents-relay job run --id JOB --task-id NUMERIC_TASK_ID
     [--project-path /abs/project] [--workspace-root /abs/workspace]
 
 Creation atomically stores DRAFT Job and Coordinator Task; activation only
@@ -195,7 +195,7 @@ Actions:
   'task create': `Create one durable Task under an existing Job.
 
 Required: normal Job storage options plus --input-file PATH|- (preferred) or --input MARKDOWN, and --output task-pr|file. --input and --input-file are mutually exclusive.
-Common: --task-id ID (optional; Relay auto-assigns a global increasing integer Task ID), --title TITLE (optional; otherwise derived from the first non-empty input line), --idempotency-key KEY, --priority P0|P1|P2|P3, --story-size S|M|L, --agent NAME, --agent-graph-file PATH|-, --deps a,b, --dependency-validity JSON, --parent ID, --draft. The JSON maps declared dependency Task IDs to order-only, revalidate, or rerun. Normal model-backed Tasks omit adapter/provider/model so Relay runs one Execution Router decision over complete worker+model routes. New Tasks are worker-routed; legacy adapter=orchestrator records are recovery-only and cannot be created or manually executed.\nTasks with dependencies start DRAFT; tasks without dependencies start QUEUED unless --draft is given.
+Common: --title TITLE (optional; otherwise derived from the first non-empty input line), --idempotency-key KEY, --priority P0|P1|P2|P3, --story-size S|M|L, --agent NAME, --agent-graph-file PATH|-, --deps a,b, --dependency-validity JSON, --parent ID, --draft. Relay allocates the store-global increasing numeric Task ID and rejects caller-supplied IDs. The JSON maps declared dependency Task IDs to order-only, revalidate, or rerun. Normal model-backed Tasks omit adapter/provider/model so Relay runs one Execution Router decision over complete worker+model routes. New Tasks are worker-routed; legacy adapter=orchestrator records are recovery-only and cannot be created or manually executed.\nTasks with dependencies start DRAFT; tasks without dependencies start QUEUED unless --draft is given.
 Directly-created Tasks are not wrapped in a synthetic Plan. Planner-generated Tasks are created internally by Relay from planner output.
 
 Example:

@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { createTaskEntity } from './workflow/entity-creation.js';
 import { tryApplyTaskCancelAction } from './task-actions.js';
 import { decideDependencyRevision } from './workflow/dependency-revision-v2.js';
@@ -6,6 +5,8 @@ import { dependencyRevisionVector, dependencyValidity, sameDependencyRevisionVec
 import { isFinalReviewAgent } from './final-review-role.js';
 import type { DurableStore } from './store.js';
 import type { DependencyRevisionVector, Job, Task } from './types.js';
+import { allocateEntityId } from './job-task-id-sequence.js';
+import { relayStoreDirectory } from './relay-store.js';
 
 function latestDirectRevision(job: Job, original: Task): Task | undefined {
   return job.tasks.filter(task => task.revision?.originalTaskId === original.id && task.state === 'SUCCEEDED')
@@ -39,7 +40,7 @@ export function dependencyRevisionStillCurrent(job: Job, task: Task): boolean {
   } catch { return false; }
 }
 
-export function reconcileDependencyRevisionFacts(job: Job): string[] {
+export function reconcileDependencyRevisionFacts(job: Job, reservedIds: readonly string[] = []): string[] {
   const created: string[] = [];
   const changedStale: string[] = [];
   const originals = job.tasks.filter(task => task.kind !== 'planner' && !isFinalReviewAgent(task.agentName)
@@ -58,6 +59,7 @@ export function reconcileDependencyRevisionFacts(job: Job): string[] {
     sorted.push(task);
   };
   originals.forEach(visit);
+  let allocatedIndex=0;
   for (const original of sorted) {
     // A queued/DRAFT child whose upstream evidence moved is superseded by the
     // authoritative Task cancellation graph. Running work is settled via the
@@ -81,9 +83,7 @@ export function reconcileDependencyRevisionFacts(job: Job): string[] {
     const previous = priorVector(job, original);
     const changed = !sameDependencyRevisionVector(vector, previous);
     const rerunRequired = policies.some(id => vector[id] !== previous[id] && dependencyValidity(original, id) === 'rerun');
-    const stableKey = JSON.stringify([original.id, vector]);
-    const id = 'dependency-revision-' + createHash('sha256').update(stableKey).digest('hex').slice(0, 24);
-    const duplicate = job.tasks.some(task => task.id === id || task.revision?.originalTaskId === original.id
+    const duplicate = job.tasks.some(task => task.revision?.originalTaskId === original.id
       && task.revision.kind !== 'targeted' && sameDependencyRevisionVector(task.revision.dependencyVector ?? {}, vector));
     const decision = decideDependencyRevision('dependency.reconcile', {
       upstreamEvidenceChanged: changed, explicitValidityPolicy: policies.length > 0,
@@ -97,6 +97,8 @@ export function reconcileDependencyRevisionFacts(job: Job): string[] {
       throw new Error('Dependency Revision Graph did not select exactly one child action');
     }
     const mode = selectedActions[0] === 'dependencyRevision.createRerun' ? 'rerun' : 'revalidate';
+    const id=reservedIds[allocatedIndex++];
+    if(!id)throw new Error('Dependency Revision reconciliation requires preallocated numeric Task IDs');
     const inputs = policies.map(id => {
       const originalDependency = job.tasks.find(task => task.id === id)!;
       return latestDirectRevision(job, originalDependency) ?? originalDependency;
@@ -134,11 +136,17 @@ export function reconcileDependencyRevisionFacts(job: Job): string[] {
   return created;
 }
 
-export async function reconcileDependencyRevisions(store: Pick<DurableStore, 'mutateJob'>, jobId: string): Promise<string[]> {
+export async function reconcileDependencyRevisions(store: Pick<DurableStore, 'mutateJob'|'load'>, jobId: string): Promise<string[]> {
   if (!store.mutateJob) return [];
+  const snapshot=await store.load(jobId);
+  // Preview the pure reducer against a clone: allocate only IDs for actual new Tasks,
+  // not one unused global ID for every historical Task on every reconcile.
+  const previewIds=snapshot.tasks.map((_,index)=>`preview-dependency-${index}`);
+  const planned=reconcileDependencyRevisionFacts(structuredClone(snapshot),previewIds);
+  const reservedIds=planned.map(()=>allocateEntityId(relayStoreDirectory(),snapshot.repository,'task'));
   let created: string[] = [];
   await store.mutateJob(jobId, job => {
-    created = reconcileDependencyRevisionFacts(job);
+    created = reconcileDependencyRevisionFacts(job,reservedIds);
     return job;
   });
   return created;

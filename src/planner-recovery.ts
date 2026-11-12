@@ -1,16 +1,20 @@
 import type {Job,Plan,Task} from './types.js';
 import {taskOverallTimeoutMs} from './types.js';
 import {createTaskEntity} from './workflow/entity-creation.js';
+import {allocateEntityId} from './job-task-id-sequence.js';
+import {relayStoreDirectory} from './relay-store.js';
 
 /** Only the Planner orchestration Graph may select this durable recovery effect. */
 export function createFailedPlanRecovery(job:Job, plan:Plan):Task {
   if(plan.status!=='FAILED')throw Error('Plan recovery requires a terminal FAILED Plan');
-  const id='recover-'+plan.id;
-  if(job.tasks.some(task=>task.id===id||task.recoveryPlanId===plan.id))
+  const existing=job.tasks.find(task=>task.recoveryPlanId===plan.id);
+  if(existing)return existing;
+  const id=allocateEntityId(relayStoreDirectory(),job.repository,'task',`planner-recovery:${job.id}:${plan.id}`);
+  if(job.tasks.some(task=>task.recoveryPlanId===plan.id))
     throw Error('Plan recovery identity already exists');
   const now=new Date().toISOString();
   return createTaskEntity(job,{
-    jobId:job.id,id,title:'Troubleshoot',
+    jobId:job.id,id,title:'Troubleshooter',
     recoveryPlanId:plan.id,
     kind:'work',priority:'P0',storySize:'M',projectName:job.title,
     agentName:'troubleshooter',parentTaskId:null,dependencies:[],
