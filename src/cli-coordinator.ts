@@ -2,8 +2,9 @@ import { parseAgentGraph } from './agent-graph.js';
 import { tryTransitionTaskEvent } from './task-transitions.js';
 import { dispatchJobLifecycleSync } from './workflow/lifecycle.js';
 import { noGitHubMode } from './no-github.js';
-import { resolveManagedProjectPath,resolveRepositoryProjectPath,resolveWorkspaceRoot } from './workspace.js';
+import { resolveJobProjectRoot,resolveRepositoryProjectPath,resolveWorkspaceRoot } from './workspace.js';
 import { arg,hasArg,publishWake,storeFor,textOption,withEventBus } from './cli-support.js';
+import { isAbsolute, resolve } from 'node:path';
 
 /** Starts an ordinary DRAFT Job. DAG execution, review and recovery are
  * owned by the same Reconciler and global capacity pool as every other Job. */
@@ -22,8 +23,13 @@ export async function runCoordinatorJobCommand(args:string[],id:string):Promise<
  if(!graph)throw Error('job run requires a durable Agent Graph Task');
  parseAgentGraph(graph);
  const workspaceRoot=await resolveWorkspaceRoot(arg(args,'--workspace-root')||undefined);
- const checkout=await resolveManagedProjectPath(noGitHubMode(args)?undefined:job.repository,arg(args,'--project-path')||job.projectPath||'',workspaceRoot);
+ const checkout=await resolveJobProjectRoot(job);
  const projectPath=resolveRepositoryProjectPath(checkout,job.projectPath);
+ if(hasArg(args,'--project-path')){
+   const supplied=arg(args,'--project-path');
+   const bound=isAbsolute(supplied)?resolve(supplied):resolveRepositoryProjectPath(checkout,supplied);
+   if(bound!==projectPath)throw Error('--project-path cannot change the immutable Job project binding');
+ }
  const globalRoot=arg(args,'--global-root')||process.env.AGENTS_HOME||undefined;
  const sharedRoot=arg(args,'--shared-root')||process.env.AGENTS_RELAY_SHARED_ROOT||undefined;
  await loaded.store.mutateJob(id,current=>{

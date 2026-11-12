@@ -33,7 +33,7 @@ export function needsLifecycleReconciliation(job: Job, now = Date.now()): boolea
   // A persisted Coordinator may finish before the local Git head is captured.
   // Wake once to bind that head through Reconciler rather than leaving the
   // completed DAG permanently ACTIVE/IDLE without a Final Review.
-  if (job.state === 'ACTIVE' && !job.headSha && job.graphStartContext?.projectPath &&
+  if (job.state === 'ACTIVE' && !job.headSha && job.projectRoot &&
       job.reviewEnabled !== false && reviewWorkSettled(job)) return true;
   if (job.state === 'ACTIVE' && job.headSha && job.reviewEnabled !== false) {
     const reviewTasks = job.tasks.filter(task => isFinalReviewAgent(task.agentName) && task.reviewHeadSha === job.headSha);

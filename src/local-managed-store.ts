@@ -12,8 +12,8 @@ export function openLocalManagedStore(
   prNumber: number,
   options: { client?: GitHubClient; trustedAuthors?: ReadonlySet<string>; directory?: string; noGitHub?: boolean; jobId?: string } = {},
 ): LocalManagedStore {
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || repository.includes('..') || !Number.isInteger(prNumber) || prNumber < 0 || (prNumber === 0 && !options.jobId)) {
-    throw new Error('Local managed store requires a repository and either a positive PR number or immutable jobId');
+  if (!/^[A-Za-z0-9_.-]+$/.test(repository) || repository === '.' || repository === '..' || !Number.isInteger(prNumber) || prNumber < 0 || (prNumber === 0 && !options.jobId)) {
+    throw new Error('Local managed store requires a local repository identity and either a positive PR number or immutable jobId');
   }
   const directory = options.directory ?? relayStoreDirectory();
   const path = relayUnifiedStorePath(directory);

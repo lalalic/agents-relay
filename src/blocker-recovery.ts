@@ -10,6 +10,7 @@ import { dispatchBlockerRecovery } from './workflow/blocker-recovery.js';
 export type BlockerRecoveryInput = {
   requestId: string;
   targetRepository: string;
+  targetProjectRoot: string;
   dependentRepository: string;
   dependentJobId: string;
   dependentTaskId: string;
@@ -29,15 +30,11 @@ type OpenedStore = LocalManagedStore;
 type RecoveryCandidate = { store: OpenedStore; job: Job; request: BlockerRecoveryRequest };
 
 function normalizeRepository(value: string): string {
-  const trimmed = value.trim().replace(/\.git$/, '');
-  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9_.-]+$/.test(trimmed) || trimmed.includes('..')) {
+  const trimmed = value.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(trimmed) || trimmed.includes('..')) {
     throw new Error(`Invalid repository identity: ${value}`);
   }
   return trimmed;
-}
-
-function repositoryOwner(value: string): string {
-  return value.split('/')[0].toLowerCase();
 }
 
 function normalizedIntent(value: string): string {
@@ -81,9 +78,7 @@ function validateInput(input: BlockerRecoveryInput): void {
     throw new Error('Blocker recovery projectPath must be a normalized repository-relative path');
   }
   if (targetRepository === dependentRepository) throw new Error('Blocker recovery requires a distinct target repository');
-  if (repositoryOwner(targetRepository) !== repositoryOwner(dependentRepository)) {
-    throw new Error('Blocker recovery target and dependent repositories must share one owner/workspace trust boundary');
-  }
+  if (!input.targetProjectRoot) throw new Error('Blocker recovery requires an explicit targetProjectRoot');
 }
 
 function receipt(
@@ -225,7 +220,7 @@ export async function ensureBlockerRecovery(input: BlockerRecoveryInput): Promis
     }
     const authorizedRepositories = input.authorizedRepositories.map(normalizeRepository);
     const targetResolvable = authorizedRepositories.includes(request.targetRepository);
-    const trustBoundaryValid = repositoryOwner(request.targetRepository) === repositoryOwner(request.dependentRepository);
+    const trustBoundaryValid = input.authorizedRepositories.map(normalizeRepository).includes(dependentRepository);
     const knownRequest = known !== null;
     const authoritativeDependency = !knownRequest && candidate !== null;
     const validAdoption = candidate ? adoptionValid(candidate, request) : false;
@@ -246,6 +241,7 @@ export async function ensureBlockerRecovery(input: BlockerRecoveryInput): Promis
           title: request.title,
           objective: request.objective,
           projectPath: request.projectPath,
+          projectRoot: input.targetProjectRoot,
           noGitHub: true,
           storeDirectory: directory,
         });

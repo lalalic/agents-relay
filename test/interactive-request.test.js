@@ -15,7 +15,7 @@ const task=()=>({jobId:'job-preview',id:'producer',parentTaskId:null,dependencie
  adapter:'orchestrator',input:'make preview',state:'RUNNING',attempt:1,maxAttempts:3,
  leaseOwner:'owner',leaseExpiresAt:now(),executionId:'exec-1',threadId:null,result:null,error:null,
  timeoutMs:60000,createdAt:now(),updatedAt:now(),continuation:null,continuationDeliveredAt:null});
-const job=(t=task())=>({id:t.jobId,title:'Preview',prNumber:0,repository:'local/job',state:'ACTIVE',
+const job=(t=task())=>({id:t.jobId,title:'Preview',prNumber:0,repository:'job',state:'ACTIVE',
  continuation:null,createdAt:now(),updatedAt:now(),tasks:[t]});
 async function fixture({localAuthority=false}={}){const dir=await mkdtemp(join(tmpdir(),'relay-preview-'));const store=new SQLiteRelayStore(join(dir,'db.sqlite'));
  const j=job();await store.saveJob(j);

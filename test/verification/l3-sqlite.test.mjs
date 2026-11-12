@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {join} from 'node:path';
+import {basename,join} from 'node:path';
 import {createIsolatedEnvironment} from './harness.mjs';
 import {SQLiteRelayStore} from '../../dist/relay-store.js';
 import {refreshTaskDependencies, transitionTaskEvent} from '../../dist/task-transitions.js';
 
 const stamp='2026-10-17T00:00:00.000Z';
 const task=(id,dependencies=[])=>({jobId:'481-sim',id,parentTaskId:null,dependencies,capabilities:[],adapter:'orchestrator',input:'test',state:dependencies.length?'DRAFT':'QUEUED',attempt:0,maxAttempts:2,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:0,createdAt:stamp,updatedAt:stamp,continuation:null,continuationDeliveredAt:null});
-const job=tasks=>({id:'481-sim',title:'isolated graph sqlite replay',repository:'local/isolated',prNumber:0,state:'ACTIVE',continuation:null,createdAt:stamp,updatedAt:stamp,tasks});
+const job=tasks=>({id:'481-sim',title:'isolated graph sqlite replay',repository:basename(process.cwd()),projectRoot:process.cwd(),prNumber:0,state:'ACTIVE',reviewEnabled:false,continuation:null,createdAt:stamp,updatedAt:stamp,tasks});
 
 test('graph transitions, dependency reconciliation and restart derive authority from isolated SQLite',async()=>{
   const env=createIsolatedEnvironment('relay-l3-sqlite-');

@@ -24,8 +24,8 @@ export async function fixture(t,{reviews=[],modelB=false,mode='normal',parallel=
  execFileSync('git',['-C',project,'add','README.md']);execFileSync('git',['-C',project,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','init']);
  const id='19002',now=new Date().toISOString(),out=join(project,'result.json'),dbPath=join(root,'relay.sqlite');
  const dag=parallel?'flowchart TD\nA[agent:first] --> C[agent:last]\nB[agent:middle] --> C':graph;
- const job=createJobEntity({id,title:'Unified runtime L3',objective:'Three nodes',projectPath:'.',
-  prNumber:0,repository:'local/unified',continuation:null,autoMerge:normalJob,reviewEnabled:false,
+ const job=createJobEntity({id,title:'Unified runtime L3',objective:'Three nodes',projectPath:'.',projectRoot:project,
+  prNumber:0,repository:'project',continuation:null,autoMerge:normalJob,reviewEnabled:false,
   createdAt:now,updatedAt:now,tasks:[]});
  job.tasks.push(createTaskEntity(job,{jobId:id,id:'initial',parentTaskId:null,agentGraph:dag,kind:'work',
   input:'fixture original input',adapter:'codex',dependencies:[],capabilities:[],output:{kind:'file',path:out},

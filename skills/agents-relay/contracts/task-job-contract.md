@@ -8,6 +8,8 @@ Job objectives and Task inputs are **Markdown** and are durable execution contex
 
 Create, update, and read Job objectives and Task inputs only through the version-matched Relay CLI. Do not parse or edit PR bodies, comments, hidden markers, or private files to obtain or alter Relay state.
 
+Every Job has one immutable local repository identity: `repository` is the canonical Git root directory name and `projectRoot` is the validated absolute canonical Git root. `projectPath` is an optional repository-relative subdirectory. `githubRepo` is optional GitHub remote metadata used only for explicit external publishing effects. Never use a GitHub owner/repository string or a `local/...` alias as `repository`, and never infer project ownership from `graphStartContext.projectPath`. Jobs for separate Git worktrees must bind to the canonical root, not a worktree. Local Git remains authoritative for final review and merge.
+
 For long-form content, use files instead of shell-quoted arguments:
 
 - Job create/update: `--objective-file PATH` (or `--objective-file -` for stdin) is preferred. `--objective` is for short/simple content only. They are mutually exclusive.

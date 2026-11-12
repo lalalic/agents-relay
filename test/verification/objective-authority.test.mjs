@@ -30,7 +30,7 @@ test('retired Job mode and cron data migrate on read and never serialize on writ
  const sqlite = new SQLiteRelayStore(':memory:');
  try {
   const at = '2026-10-26T00:00:00Z';
-  const old = {id:'legacy-mode',title:'legacy mode',repository:'local/isolated',prNumber:0,state:'DRAFT',objective:'ship',createdAt:at,updatedAt:at,tasks:[],executionMode:'autonomous',schedule:{kind:'cron',expression:'* * * * *'}};
+  const old = {id:'legacy-mode',title:'legacy mode',repository:'isolated',prNumber:0,state:'DRAFT',objective:'ship',createdAt:at,updatedAt:at,tasks:[],executionMode:'autonomous',schedule:{kind:'cron',expression:'* * * * *'}};
   const parsed = parseJob(renderJobComment(old));
   assert.equal(parsed.executionMode,undefined);
   assert.equal(parsed.schedule,undefined);

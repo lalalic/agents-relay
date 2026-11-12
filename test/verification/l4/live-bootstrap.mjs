@@ -15,7 +15,7 @@ const result = {schema:'relay.l4.provider-bootstrap.v1',project,generatedAt:new 
 const check=(id,status,evidence)=>result.checks[id]={status,evidence};
 
 const context=await resolveExecutionContext(project,'planner');
-const prompt=await buildPlannerExecutionPrompt({job:{id:'L4-PREVIEW',repository:'local/l4',title:'Read only',objective:'Read only L4',tasks:[],plans:[]},tasks:[],objective:'Read only L4',previousPlannerTaskId:null,
+const prompt=await buildPlannerExecutionPrompt({job:{id:'L4-PREVIEW',repository:'l4',title:'Read only',objective:'Read only L4',tasks:[],plans:[]},tasks:[],objective:'Read only L4',previousPlannerTaskId:null,
   planExecution:{planId:'plan-1',executionId:'123e4567-e89b-12d3-a456-426614174000'},executionContext:context},undefined,'z');
 const role=/with responsibility at (\/\S+\.md)/.exec(prompt);
 if (!role)throw new Error('L4 cannot find the actual Planner Agent snapshot');
@@ -59,7 +59,7 @@ try{
  const workContext=await resolveExecutionContext(project,'worker');
  const task={id:'L4-TASK',jobId:'L4-JOB',kind:'work',state:'QUEUED',agentName:'implementation',adapter:'z',
    input:'L4 private task details',output:{kind:'file',path:'runs/l4-evidence.txt'},executionId:'123e4567-e89b-12d3-a456-426614174000',dependencies:[]};
- const work=await managedWorkerInput({id:'L4-JOB',repository:'local/l4',title:'L4',objective:'Read only',tasks:[task],plans:[]},task,workContext);
+ const work=await managedWorkerInput({id:'L4-JOB',repository:'l4',title:'L4',objective:'Read only',tasks:[task],plans:[]},task,workContext);
  const references=[role[1],
    ...[...work.matchAll(/^\d+\. (?:\[[^\]]+\] )?(\/\S+\.md)$/gm)].map(x=>x[1])];
  let readCount=0;

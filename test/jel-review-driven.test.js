@@ -89,17 +89,17 @@ test('a stale changes-required review still provides the original findings to Pl
   assert.match(prompt.review_feedback.findings,/Preserve cancellation behavior/);
 });
 
-test('a completed review Plan with no revision Tasks still reaches re-review, never deadlocks', () => {
+test('a no-op review Plan cannot spin Final Review without a real fix', () => {
   const j=job();
   j.review={outcome:'changes_required',taskId:'review1',headSha:'SHA',revisionDisposition:'needs-ownership'};
   j.tasks.push({id:'review1',kind:'work',agentName:'job-acceptance-reviewer',state:'SUCCEEDED'});
   j.plans.push({id:'plan-2',round:2,status:'SUCCEEDED',trigger:{source:'review',reviewTaskId:'review1'},
     objectiveStatus:'satisfied',generatedTaskIds:[]});
   assert.equal(reviewNeedsReplan(j),false,'the review finding was already assigned one planning round');
-  assert.equal(reviewPlanReady(j),true,'empty revision plan must permit a new independent review');
+  assert.equal(reviewPlanReady(j),false,'no-op plan does not satisfy finding-driven re-review gate');
   const decision=decideReviewLifecycle('changes_required','reconcile',reviewFacts(j));
-  assert.equal(decision.target,'PENDING');
-  assert.deepEqual(decision.actions.map(action=>action.id),['review.create']);
+  assert.equal(decision.target,'CHANGES_REQUIRED');
+  assert.deepEqual(decision.actions.map(action=>action.id),[]);
 });
 
 test('failed review-triggered Plan is retried only after verified Planner recovery', () => {

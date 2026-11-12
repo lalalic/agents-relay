@@ -94,7 +94,7 @@ Usage:
 
 Options:
   --no-github             Local-only mode: no GitHub auth, transport, PR, merge, or fetch
-  --repo OWNER/REPO       Watch one repository
+  --repo LOCAL_ROOT_NAME       Watch local Git root identity
   --workspace-root PATH  Workspace Root (default: AGENTS_RELAY_WORKSPACE_ROOT, shared Neo config, or ~/Workspace)
   --workspace PATH       Legacy alias for --workspace-root
   --port PORT             Dashboard port (default: 8787)
@@ -105,10 +105,10 @@ Options:
                          Router Rules file (default: ~/.agents-relay/execution-router-rules.md)
   --events nats            Require NATS event wakeups (otherwise auto-detect reachable NATS)
 
-Legacy single-job mode also accepts --repo OWNER/REPO --pr NUMBER --id JOB_ID.
+Legacy single-job mode also accepts --repo LOCAL_ROOT_NAME --pr NUMBER --id JOB_ID.
 
 Examples:
-  npx agents-relayd --repo OWNER/REPO
+  npx agents-relayd --repo LOCAL_ROOT_NAME
   npx agents-relayd --workspace-root ~/Workspace`;
 export function firstStageChoices(decisionInput: Record<string, unknown> | undefined): string[] {
   const stages = decisionInput?.stages;

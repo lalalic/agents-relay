@@ -284,6 +284,11 @@ export class SQLiteRelayStore implements RelayStore {
     }
   }
   private writeJobSnapshot(job: Job, now: string): void {
+    const existing = this.db.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(job.id) as { json?: string } | undefined;
+    if (existing?.json) {
+      const current = JSON.parse(existing.json) as Job;
+      if (current.projectRoot !== job.projectRoot) throw new Error(`Job ${job.id} projectRoot is immutable`);
+    }
     if (this.scopeJobId) ensureUnifiedJobRegistry(this.db, job, this.scopeJobId);
     this.db.prepare(`
       INSERT INTO job_snapshot(job_id,json,updated_at) VALUES(?,?,?)

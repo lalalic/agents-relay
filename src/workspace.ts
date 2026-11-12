@@ -18,6 +18,25 @@ async function gitOutput(args: readonly string[]): Promise<string> {
 
 export type DiscoveredRepository = { path: string; repository: string };
 
+/** Canonical local identity is the Git root directory name; GitHub is a separate optional remote. */
+export async function validateProjectRoot(projectRoot: string, repository: string): Promise<string> {
+  if (!isAbsolute(projectRoot)) throw new Error('Job projectRoot must be absolute');
+  const canonical = await realpath(projectRoot);
+  const root = await git(canonical, ['rev-parse', '--show-toplevel']);
+  const realRoot = await realpath(root);
+  if (canonical !== realRoot) throw new Error(`Job projectRoot must be the canonical Git root: ${realRoot}`);
+  const gitDir = await realpath(await git(canonical, ['rev-parse', '--absolute-git-dir']));
+  const gitCommonDir = await realpath(await git(canonical, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
+  if (gitDir !== gitCommonDir) throw new Error('Job projectRoot must be the primary Git checkout, not a linked worktree');
+  if (basename(realRoot) !== repository) throw new Error(`Local repository identity ${repository} does not match Git root name ${basename(realRoot)}`);
+  return realRoot;
+}
+
+export async function optionalGitHubRepository(projectRoot: string): Promise<string | undefined> {
+  try { return githubRepositoryFromRemote(await git(projectRoot, ['remote', 'get-url', 'origin'])) ?? undefined; }
+  catch { return undefined; }
+}
+
 export function defaultWorkspaceRoot(): string {
   return join(homedir(), 'Workspace');
 }
@@ -64,17 +83,14 @@ async function origin(path: string): Promise<string | null> {
 
 export async function discoverWorkspaceRepositories(root: string): Promise<DiscoveredRepository[]> {
   const paths = await discoverGitRepositories(root);
-  const discovered = await Promise.all(paths.map(async path => {
-    const repository = githubRepositoryFromRemote(await origin(path) ?? '');
-    return repository ? { path, repository } : null;
-  }));
-  const unique = new Map<string, DiscoveredRepository>();
+  const discovered = await Promise.all(paths.map(async path => ({ path: await realpath(path), repository: basename(path), githubRepo: githubRepositoryFromRemote(await origin(path) ?? '') })));
+  const identities = new Map<string, string>();
   for (const item of discovered) {
-    if (!item) continue;
-    const current = unique.get(item.repository);
-    if (!current || repositoryPathRank(item.path, root) < repositoryPathRank(current.path, root)) unique.set(item.repository, item);
+    const previous = identities.get(item.repository);
+    if (previous && previous !== item.path) throw new Error(`Local repository identity collision ${item.repository}: ${previous} and ${item.path}`);
+    identities.set(item.repository, item.path);
   }
-  return [...unique.values()].sort((a, b) => a.repository.localeCompare(b.repository));
+  return discovered.map(({path, repository}) => ({path, repository})).sort((a, b) => a.repository.localeCompare(b.repository));
 }
 
 
@@ -89,14 +105,15 @@ export async function resolveManagedProjectPath(repository: string | undefined, 
   return repository ? resolveWorkspaceRepositoryPath(repository, root) : resolve(cwd);
 }
 
+export async function resolveJobProjectRoot(job: Job): Promise<string> {
+  if (!job.projectRoot) throw new Error(`Job ${job.id} is missing its immutable local projectRoot`);
+  return validateProjectRoot(job.projectRoot, job.repository);
+}
+
 export function resolveRepositoryProjectPath(repositoryRoot: string, projectPath?: string): string {
   const root = resolve(repositoryRoot);
   if (!projectPath) return root;
   if (isAbsolute(projectPath)) throw new Error('Job projectPath must be repository-relative');
-  // Legacy Jobs sometimes stored the repository folder name itself (for example
-  // projectPath='agents-relay' for the agents-relay repository). Interpret that
-  // historical form as the repository root instead of appending it twice.
-  if (projectPath === basename(root)) return root;
   const target = resolve(root, projectPath);
   const rel = relative(root, target);
   if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new Error('Job projectPath escapes repository root');
@@ -186,15 +203,15 @@ export function managedJobWorktreePath(repository: string, prNumber: number, wor
 }
 
 export function managedLocalJobWorktreePath(repository: string, jobId: string, workspaceRoot = defaultWorkspaceRoot()): string {
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !jobId.trim()) throw new Error('Invalid local Job checkout identity');
+  if (!/^[A-Za-z0-9_.-]+$/.test(repository) || !jobId.trim()) throw new Error('Invalid local Job checkout identity');
   const safeJob = jobId.replace(/[^A-Za-z0-9_.-]+/g, '-').slice(0, 72) || 'job';
   const digest = createHash('sha256').update(jobId).digest('hex').slice(0, 12);
-  return join(workspaceRoot, '.worktrees', 'agents-relay', `${repository.replace('/', '-')}-job-${safeJob}-${digest}`, 'job');
+  return join(workspaceRoot, '.worktrees', 'agents-relay', `${repository}-job-${safeJob}-${digest}`, 'job');
 }
 
 /** Only code artifacts need an isolated Git source branch and worktree. */
 export function jobRequiresManagedWorktree(job: Job): boolean {
-  return !(job.prNumber > 0) && (Boolean(job.localMerge?.sourceRef) || job.tasks.some(task => task.output?.kind === 'task_pr'));
+  return Boolean(job.localMerge?.sourceRef) || job.tasks.some(task => task.output?.kind === 'task_pr');
 }
 
 export function taskRequiresManagedWorktree(job: Job, task?: Task): boolean {
@@ -214,6 +231,7 @@ export async function ensureLocalJobSourceBranch(projectPath: string, job: Job):
   const digest = createHash('sha256').update(job.id).digest('hex').slice(0, 12);
   const sourceRef = `refs/heads/relay/job-${safe}-${digest}`;
   const primary = (await git(projectPath, ['rev-parse', '--show-toplevel'])).trim();
+  if (await realpath(primary) !== await realpath(job.projectRoot) || basename(primary) !== job.repository) throw new Error(`Job ${job.id} projectRoot identity mismatch`);
   await git(primary, ['rev-parse', '--verify', 'refs/heads/main']);
   const exists = await gitOutput(['-C', primary, 'show-ref', '--verify', '--quiet', sourceRef]).then(() => true, () => false);
   if (!exists) {
@@ -233,14 +251,11 @@ export async function prepareLocalJobExecutionWorktree(projectPath: string, job:
   if (!/^refs\/heads\/[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(sourceRef) || sourceRef.includes('..') || sourceRef.endsWith('.lock'))
     throw new Error('Local Job execution requires a valid refs/heads sourceRef');
   const primary = await git(projectPath, ['rev-parse', '--show-toplevel']);
+  if (await realpath(primary) !== await realpath(job.projectRoot) || basename(primary) !== job.repository) throw new Error(`Job ${job.id} projectRoot identity mismatch`);
   const projectRelative = (await git(projectPath, ['rev-parse', '--show-prefix'])).replace(/\/$/, '');
   const effectiveProject = (checkoutRoot: string): string => job.projectPath
     ? resolveRepositoryProjectPath(checkoutRoot, job.projectPath)
     : (projectRelative ? join(checkoutRoot, projectRelative) : checkoutRoot);
-  let remote = '';
-  try { remote = await git(primary, ['config', '--get', 'remote.origin.url']); } catch { /* Local-only repositories may have no origin. */ }
-  const remoteRepository = remote ? githubRepositoryFromRemote(remote) : null;
-  if (remoteRepository && remoteRepository !== job.repository) throw new Error(`Primary checkout ${primary} does not match ${job.repository}`);
   const sourceSha = await git(primary, ['rev-parse', '--verify', sourceRef]);
   // If the canonical checkout already owns this exact source branch, Git
   // cannot create a second worktree for it. Reuse the canonical checkout
@@ -308,11 +323,8 @@ export async function cleanupCompletedJobWorktree(
     return { status: 'blocked', reason: 'Worktree path is not an owned directory' };
 
   const primary = await git(projectPath, ['rev-parse', '--show-toplevel']);
-  let origin = '';
-  try { origin = await git(primary, ['config', '--get', 'remote.origin.url']); } catch { /* Local-only repositories may have no origin. */ }
-  const originRepository = origin ? githubRepositoryFromRemote(origin) : null;
-  if ((job.prNumber > 0 && !isLocalJob && originRepository !== job.repository) || (isLocalJob && originRepository && originRepository !== job.repository))
-    return { status: 'blocked', reason: 'Canonical repository identity mismatch' };
+  if (await realpath(primary) !== await realpath(job.projectRoot) || basename(primary) !== job.repository)
+    return { status: 'blocked', reason: 'Canonical local repository identity mismatch' };
   const registered = await git(primary, ['worktree', 'list', '--porcelain']);
   const ownedRoot = await realpath(worktree);
   const registeredPaths = registered.split('\n').filter(line => line.startsWith('worktree '));

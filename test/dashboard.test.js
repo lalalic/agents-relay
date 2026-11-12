@@ -1492,7 +1492,7 @@ test('Jobs display one lifecycle without an execution-mode badge and refresh aut
 
 test('CLI foreground reconciler forwards configured shared root to Shortcut Worker context',async()=>{
  const {runtime}=await import('../dist/cli.js');
- const reconciler=runtime(new InMemoryStore({id:'test',title:'test',repository:'local/test',state:'DRAFT',tasks:[]}),['--no-github','--workspace-root','/tmp','--shared-root','/tmp/shared-visioner','--global-root','/tmp/global-agents'],undefined,undefined,true);
+ const reconciler=runtime(new InMemoryStore({id:'test',title:'test',repository:'test',state:'DRAFT',tasks:[]}),['--no-github','--workspace-root','/tmp','--shared-root','/tmp/shared-visioner','--global-root','/tmp/global-agents'],undefined,undefined,true);
  try{assert.equal(reconciler.options.executionContextRoots.sharedRoot,'/tmp/shared-visioner');assert.equal(reconciler.options.executionContextRoots.globalRoot,'/tmp/global-agents');}
  finally{await reconciler.close();}
 });

@@ -5,9 +5,11 @@ import { openLocalManagedStore } from './local-managed-store.js';
 import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js';
 import { parseAgentGraph } from './agent-graph.js';
 import { taskOverallTimeoutMs } from './types.js';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import { normalizeThreadId } from './reviewer-thread.js';
 import { discoverLocalRelayStoreSnapshots, relayStoreDirectory } from './relay-store.js';
+import { validateProjectRoot } from './workspace.js';
+import { resolveRepositoryProjectPath } from './workspace.js';
 
 /** Create a local SQLite-authoritative Job; external PR metadata is optional compatibility data. */
 export async function ensureManagedGitHubJob(
@@ -15,7 +17,7 @@ export async function ensureManagedGitHubJob(
   repositoryName: string,
   _trustedAuthors: ReadonlySet<string>,
   options: {
-    id?: string; idempotencyKey?: string; title?: string; objective?: string; projectPath?: string;
+    id?: string; idempotencyKey?: string; title?: string; objective?: string; projectRoot?: string; projectPath?: string; githubRepo?: string;
     priority?: Priority;
     tag?: Job['tag']; reviewEnabled?: boolean; autoMerge?: boolean; continuation?: Job['continuation'];
     coordinator?: { graph: string; input: string; outputPath: string; projectRoot: string; workspaceRoot: string; sharedRoot?: string; globalRoot?: string };
@@ -35,7 +37,13 @@ export async function ensureManagedGitHubJob(
       throw Error('Coordinator paths must be absolute');
   }
   const directory = options.storeDirectory ?? relayStoreDirectory();
+  const projectRoot = await validateProjectRoot(resolve(options.projectRoot ?? options.coordinator?.projectRoot ?? process.cwd()), repositoryName);
+  if (options.projectPath) resolveRepositoryProjectPath(projectRoot, options.projectPath);
+  const githubRepo = options.githubRepo;
+  if (githubRepo && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(githubRepo)) throw new Error('githubRepo must be OWNER/REPO');
   const knownJobs = (await discoverLocalRelayStoreSnapshots(directory)).flatMap(snapshot => snapshot.jobs);
+  const identityCollision = knownJobs.find(job => job.repository === repositoryName && job.projectRoot && job.projectRoot !== projectRoot);
+  if (identityCollision) throw new Error(`Local repository identity collision ${repositoryName}: Job ${identityCollision.id} binds ${identityCollision.projectRoot}, requested ${projectRoot}`);
   const id = options.id || allocateEntityId(directory, repositoryName, 'job', options.idempotencyKey, new Set(knownJobs.map(job => job.id)));
   const requestedNumber = options.prNumber ?? 0;
   if (!Number.isInteger(requestedNumber) || requestedNumber < 0) throw new Error('Invalid external PR binding number');
@@ -45,7 +53,7 @@ export async function ensureManagedGitHubJob(
   if (alreadyKnown.length > 1) throw new Error('Duplicate immutable Job ID across SQLite stores: ' + id);
   if (alreadyKnown.length === 1) {
     const existing = alreadyKnown[0];
-    if (existing.repository !== repositoryName || (options.prNumber !== undefined && existing.prNumber !== requestedNumber)) throw new Error('Immutable Job ID is already bound to a different repository or external PR');
+    if (existing.repository !== repositoryName || existing.projectRoot !== projectRoot || (options.prNumber !== undefined && existing.prNumber !== requestedNumber)) throw new Error('Immutable Job ID is already bound to a different local repository, project root, or external PR');
     if (!options.id && !options.idempotencyKey) throw new Error('Automatically allocated Job ID unexpectedly belongs to an existing Job');
     if (options.idempotencyKey && ((options.objective && options.objective !== existing.objective) || (options.projectPath && options.projectPath !== existing.projectPath) || (options.title && options.title !== existing.title))) throw new Error('Job idempotency key reused for a different Job definition');
     if(options.coordinator){const task=existing.tasks.find(task=>task.id==='coordinator');
@@ -74,6 +82,8 @@ export async function ensureManagedGitHubJob(
       title: options.title || pr.title || 'Agents Relay job',
       objective: options.objective || pr.body || undefined,
       projectPath: options.projectPath,
+      projectRoot,
+      ...(githubRepo ? { githubRepo } : {}),
       description: pr.body || undefined,
       priority: options.priority ?? 'P2',
       tag: options.tag,

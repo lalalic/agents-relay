@@ -7,9 +7,10 @@ Lease, and Recovery. Canonical `workflow/*.mmd` graphs alone decide transitions.
 EventBus is a wake-up/observability channel, not a second database. GitHub is
 an optional audit-only adapter. No GitHub read, write, or acknowledgement can drive a local lifecycle transition.
 
-This change does **not** migrate old GitHub-marker Jobs; existing Job ID strings
-remain valid, but only Jobs established in the local registry are discovered.
-Do not change or run the separate E2E worktree when validating this branch.
+This change migrates every existing Job in canonical SQLite to an explicit local
+Git root identity. Existing Job IDs and history remain durable. Every Job must
+receive an operator-verified checkout mapping; the migration never guesses a
+path for inactive or missing historical repositories.
 
 ## Audited dependencies and phases
 
@@ -79,21 +80,31 @@ restarted; the running E2E checkout stays on its own branch. Rollout and
 production restart belong to an explicit later deployment step after review.
 
 
-## `--no-github`: local-only execution and Git delivery
+## Local repository identity and local-only execution
 
-In local-only mode SQLite is authoritative, EventBus wakes the Graph Engine, and no GitHub authentication, API, GraphQL, PR discovery, or remote push/merge is performed. Planner, Worker, Review, Troubleshooter, recovery, and scheduling remain local. A local Git repository is still supported.
+Every Job binds `repository` to the local Git root directory name and immutable `projectRoot` to its validated canonical absolute path. `projectPath` is an optional nested path within that root; `githubRepo` is optional remote metadata. No `local/...` aliases or GitHub owner/repository identity belongs in `repository`. Worktrees are execution checkouts and never become Job roots. Local Git is the source of truth for JEL, final review, and merge; GitHub is optional publishing only.
 
 A code Job must configure a source branch and an integration branch explicitly. Both are local full Git refs (`refs/heads/...`). An example from inside the intended Git repository:
 
 ```bash
-npx agents-relay job create --repo local/project --id local-101 \
-  --objective 'Implement and locally integrate the change' \
-  --local-merge-source refs/heads/feature/local-101 \
-  --local-merge-target refs/heads/integration/local-101
-
-npx agents-relay --no-github reconcile --repo local/project --id local-101 \
-  --project-path "$PWD" --events none
+npx agents-relay job create --repo project --project-root "$PWD" \
+  --objective 'Implement and locally integrate the change' --initial-plan
 ```
+
+## Migration from GitHub-keyed and `local/...` identities
+
+Use `agents-relay migrate-local-repositories --database PATH --mapping PATH` once
+after stopping the daemon. The version 1 mapping is JSON with one entry for
+every durable Job ID and a real `projectRoot` checkout path (plus optional
+`githubRepo`). Paths must resolve to Git roots whose directory names are unique.
+There is no inferred path for an inactive historical checkout: provide a
+verified checkout or do not migrate that Job yet. Preflight rejects absent,
+ambiguous, noncanonical, or colliding mappings before writes. The tool makes
+and verifies a `.pre-local-repository-v1.bak` SQLite copy, updates Job JSON and
+`source_registry` atomically, and leaves Job IDs, Events, Task/Review history,
+and pending operations intact. The daemon must remain stopped for the entire
+operation; inspect migration output and backup before restarting it. Re-running
+the same mapping is idempotent.
 
 When the integration target is **checked out**, the target worktree must be clean. Delivery uses normal Git `merge --no-ff`, keeping its HEAD, index and files coherent; conflicts are aborted and recorded for retry. When the target is **not checked out**, delivery uses `merge-tree`, `commit-tree` and atomic compare-and-swap `update-ref`. No delivery step touches the separate running E2E worktree. A merge failure or conflict leaves the Job ACTIVE, persists the error, and applies a bounded retry delay. The successful merge commit SHA is persisted as `job.localMerge.mergedCommitSha` and only then may the Graph transition to COMPLETED. A subsequent reconcile or daemon restart must not create another merge commit. Review approval does not substitute for this delivery.
 

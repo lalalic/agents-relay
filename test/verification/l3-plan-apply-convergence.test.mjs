@@ -27,7 +27,7 @@ async function fixture(forceRestate = true, includeFailed = true) {
   const old = task(jobId, 'failed-old', 'FAILED');
   const reviewer = task(jobId, 'failed-review', 'FAILED', { agentName: 'reviewer' });
   const target = task(jobId, 'verified', 'SUCCEEDED', { error: null, failureReason: undefined });
-  const job = { id: jobId, title: 'Atomic plan apply', objective: 'Apply only converged plans', repository: 'local/isolated', prNumber: 0,
+  const job = { id: jobId, title: 'Atomic plan apply', objective: 'Apply only converged plans', repository: env.repository, projectRoot: env.root, prNumber: 0,
     state: 'ACTIVE', autoMerge: false, reviewEnabled: false,
     createdAt: at, updatedAt: at, tasks: includeFailed ? [old, reviewer, target] : [target], plans: [] };
   const plan = createPlanRound(job, { manual: true, now: at });
@@ -139,7 +139,7 @@ test('L3 satisfied Plan Apply accepts resolved cancellations and reconciliation 
     const reviewTask = reconciled.tasks.find(item => item.id === reconciled.review?.taskId);
     assert.equal(reviewTask?.agentName, 'job-acceptance-reviewer');
     assert.equal(reviewTask?.reviewHeadSha, headSha);
-    assert.deepEqual(reviewTask?.dependencies, ['verified'], 'resolved cancelled history is not part of the acceptance review gate');
+    assert.deepEqual(reviewTask?.dependencies, [], 'Final Review is a Job gate, not an implementation task dependency');
     await reconciler.reconcile(f.job.id);
     const again = await f.sqlite.loadJob(f.job.id);
     assert.equal(again.tasks.filter(item => item.reviewHeadSha === headSha && ['reviewer', 'job-acceptance-reviewer'].includes(item.agentName)).length, 1, 'reconciliation must not duplicate the final review');

@@ -1,5 +1,6 @@
 // Full-path L3 simulator: real Reconciler/Graph/dependencies/SQLite, mocked workers and Git.
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { createIsolatedEnvironment } from './harness.mjs';
 import { SQLiteRelayStore } from '../../dist/relay-store.js';
@@ -17,6 +18,7 @@ function task(id, dependencies = [], agentName = 'implementation', jobId = 'l3-f
 }
 
 function fakeAdapter(bus, outcomes, verdicts, heads, startedWaiters) {
+  const lastReviewResult = new Map();
   return {
     name: 'codex', id: 'l3-worker', capabilities: ['model', 'codex'],
     launch(currentTask, signal) {
@@ -37,8 +39,11 @@ function fakeAdapter(bus, outcomes, verdicts, heads, startedWaiters) {
         }
         await new Promise(resolve => setTimeout(resolve, 0));
         const key = ['reviewer','job-acceptance-reviewer'].includes(currentTask.agentName) ? currentTask.id : currentTask.id;
-        const queue = ['reviewer','job-acceptance-reviewer'].includes(currentTask.agentName) ? verdicts[key] ?? verdicts['*'] ?? ['approved'] : outcomes[key] ?? ['completed'];
-        const result = queue.shift() ?? 'completed';
+        const isReview = ['reviewer','job-acceptance-reviewer'].includes(currentTask.agentName);
+        const queue = isReview ? verdicts[key] ?? verdicts['*'] : outcomes[key];
+        const queuedResult = queue?.shift();
+        if (isReview && queuedResult) { lastReviewResult.set(key, queuedResult); lastReviewResult.set('*', queuedResult); }
+        const result = queuedResult ?? (isReview ? lastReviewResult.get(key) ?? lastReviewResult.get('*') ?? 'approved' : 'completed');
         if (result === 'failed') {
           await bus.publish(eventFor(currentTask.jobId, currentTask.id, currentTask.parentTaskId, 'task.failed', 'failed', 'simulated worker failure', 'orchestrator', { phase: currentTask.agentName, reason: 'fault injection' }, source));
         } else if (['reviewer','job-acceptance-reviewer'].includes(currentTask.agentName)) {
@@ -57,6 +62,16 @@ function fakeAdapter(bus, outcomes, verdicts, heads, startedWaiters) {
 export async function runFullPath(scenario) {
   if (!scenario || !/^[a-z0-9-]+$/.test(scenario.id ?? '')) throw new Error('invalid scenario');
   const env = createIsolatedEnvironment('relay-l3-full-');
+  // A local Job has a real Git root and source ref even when worker and merge effects
+  // are simulated. Seed both to exercise the normal checkout validation.
+  const git = (...args) => execFileSync('git', ['-C', env.root, ...args], { stdio: 'ignore' });
+  git('config', 'user.name', 'Relay L3');
+  git('config', 'user.email', 'relay-l3@example.invalid');
+  writeFileSync(join(env.root, 'source.txt'), 'source baseline\n');
+  git('add', 'source.txt');
+  git('commit', '-m', 'Seed local L3 source');
+  git('branch', '-M', 'main');
+  git('branch', 'sim-source');
   const jobId = `l3-${scenario.id}`;
   let sqlite = new SQLiteRelayStore(join(env.storeDir, 'relay.sqlite'), jobId);
   let store = new LocalAuthorityDurableStore(sqlite, new InMemoryStore(), undefined, true);
@@ -93,7 +108,7 @@ export async function runFullPath(scenario) {
   const tick = async () => { await new Promise(resolve => setTimeout(resolve, 10)); await runtime.idle(); await runtime.reconcile(jobId); await runtime.idle(); };
   try {
     const tasks = (scenario.tasks ?? [{ id: 'a' }, { id: 'b', dependencies: ['a'] }]).map(item => task(item.id, item.dependencies ?? [], item.agentName ?? 'implementation', jobId));
-    await store.saveJob({ id: jobId, title: scenario.id, objective: scenario.objective ?? scenario.id, repository: 'local/isolated', prNumber: 0, state: 'ACTIVE', autoMerge: scenario.autoMerge ?? true, reviewEnabled: scenario.reviewEnabled ?? true, headSha: heads.current, localMerge: { sourceRef: 'refs/heads/sim-source', targetRef: 'refs/heads/main', status: 'pending' }, createdAt: stamp, updatedAt: stamp, tasks });
+    await store.saveJob({ id: jobId, title: scenario.id, objective: scenario.objective ?? scenario.id, repository: env.repository, projectRoot: env.root, prNumber: 0, state: 'ACTIVE', autoMerge: scenario.autoMerge ?? true, reviewEnabled: scenario.reviewEnabled ?? true, headSha: heads.current, localMerge: { sourceRef: 'refs/heads/sim-source', targetRef: 'refs/heads/main', status: 'pending' }, createdAt: stamp, updatedAt: stamp, tasks });
     await store.saveAgent({
       id: 'l3-worker', name: 'L3 mock worker', responsibility: 'simulated external agent', role: 'worker', capabilities: ['model', 'codex'], boundaries: [],
       endpoint: { kind: 'adapter', target: 'l3-worker' }, runtime: { adapter: 'codex', provider: 'simulator', model: 'mock-agent' }, availability: 'available', routing: {},

@@ -36,7 +36,7 @@ import { applyJobActivateAction } from './job-actions.js';
 import { managedTaskUpdateHandler } from './task-update.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
-import { discoverWorkspaceRepositories, ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath, resolveWorkspaceRoot, taskRequiresManagedWorktree } from './workspace.js';
+import { discoverWorkspaceRepositories, ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveJobProjectRoot, resolveManagedProjectPath, resolveRepositoryProjectPath, resolveWorkspaceRoot, taskRequiresManagedWorktree } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { createRuntimeStatusPublisher } from './runtime-status-events.js';
@@ -88,7 +88,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const localProjectPath = noGitHub && !explicitProjectPath && !argv.includes('--workspace') && !argv.includes('--workspace-root') && !process.env.AGENTS_RELAY_WORKSPACE_ROOT
     ? process.cwd() : explicitProjectPath || workspaceRoot;
   const discoveredRepositories = normalized.repository || noGitHub ? [] : await discoverWorkspaceRepositories(workspaceRoot).catch(() => []);
-  const repositories = noGitHub && !normalized.repository ? [`local/${basename(localProjectPath)}`] : normalized.repository ? [normalized.repository] : discoveredRepositories.map(item => item.repository);
+  const repositories = normalized.repository ? [normalized.repository] : noGitHub ? [basename(localProjectPath)] : discoveredRepositories.map(item => item.repository);
   const repositoryPaths = new Map(discoveredRepositories.map(item => [item.repository, item.path]));
   if (noGitHub) for (const repo of repositories) repositoryPaths.set(repo, localProjectPath);
   const usageRegistry = codexAndZaiUsageRegistry();
@@ -116,7 +116,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   for (const snapshot of existingInventory) for (const job of snapshot.jobs) {
     if (!repositories.includes(job.repository)) repositories.push(job.repository);
   }
-  if (repositories.length === 0) repositories.push('local/' + basename(workspaceRoot));
+  if (repositories.length === 0) repositories.push(basename(workspaceRoot));
   const inventoryFromLocal = async (limitHistory = true): Promise<ManagedJobOverview[]> => {
     const snapshots = await discoverLocalRelayStoreSnapshots(relayStoreDirectory());
     const known = new Set(repositories);
@@ -135,7 +135,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     return limitHistory ? dashboardManagedJobs(visible) : visible;
   };
   cachedOverviews = await inventoryFromLocal();
-  const makeReconciler = (store: DurableStore, maxConcurrent: number) => new Reconciler(store,{ noGitHub, owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter(), new ZAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), runtimeSummaryProvider: () => ({ chatgptRunning: summarizeRuntime(cachedOverviews.map(item => item.job)).workers.chatgpt }), decisionEngine:executionDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, escalationNotifier:escalationNotifierFromEnvironment(), reviewer:runtimeReviewer(argv), executionContextRoots: { workspaceRoot }, agentPreferenceContextPathForJob: async job => job.graphStartContext?.projectPath ?? resolveRepositoryProjectPath(repositoryPaths.get(job.repository) ?? await resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot), job.projectPath), projectPathForJob: async (job, task) => { if (job.graphStartContext?.projectPath && !job.localMerge?.sourceRef) return job.graphStartContext.projectPath; const canonical = repositoryPaths.get(job.repository) ?? await resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot); if (!(task ? taskRequiresManagedWorktree(job, task) : Boolean(job.localMerge?.sourceRef))) return resolveRepositoryProjectPath(canonical, job.projectPath);
+  const makeReconciler = (store: DurableStore, maxConcurrent: number) => new Reconciler(store,{ noGitHub, owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter(), new ZAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), runtimeSummaryProvider: () => ({ chatgptRunning: summarizeRuntime(cachedOverviews.map(item => item.job)).workers.chatgpt }), decisionEngine:executionDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, escalationNotifier:escalationNotifierFromEnvironment(), reviewer:runtimeReviewer(argv), executionContextRoots: { workspaceRoot }, agentPreferenceContextPathForJob: async job => resolveRepositoryProjectPath(await resolveJobProjectRoot(job), job.projectPath), projectPathForJob: async (job, task) => { const canonical = await resolveJobProjectRoot(job); if (!(task ? taskRequiresManagedWorktree(job, task) : Boolean(job.localMerge?.sourceRef))) return resolveRepositoryProjectPath(canonical, job.projectPath);
     const sourceRef = job.localMerge?.sourceRef ?? await ensureLocalJobSourceBranch(canonical, job);
     if (!job.localMerge?.sourceRef) {
       if (!task || !store.mutateJob) throw new Error('Managed source branch binding requires an executing code Task and atomic SQLite mutation');
@@ -203,14 +203,14 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       const snapshot = { path: candidate.snapshotPath };
       const discovered = candidate.job;
       try {
-      if (!repositoryPaths.has(discovered.repository) || !discovered.localMerge?.sourceRef || !discovered.localMerge?.targetRef) continue;
+      if (!repositoryPaths.has(discovered.repository) || !discovered.githubRepo || !discovered.localMerge?.sourceRef || !discovered.localMerge?.targetRef) continue;
       const sourceRef = discovered.localMerge.sourceRef, targetRef = discovered.localMerge.targetRef;
       if (!sourceRef.startsWith('refs/heads/') || !targetRef.startsWith('refs/heads/')) continue;
       if (targetRef !== 'refs/heads/main') throw new Error('GitHub sync only supports local main as merge target');
       const branch = sourceRef.slice('refs/heads/'.length), base = targetRef.slice('refs/heads/'.length);
       const scopedKey = `${snapshot.path}#${discovered.id}`;
       let relay = relayStores.get(scopedKey); if (!relay) { relay = new SQLiteRelayStore(snapshot.path, discovered.id); relayStores.set(scopedKey, relay); }
-      const canonical = repositoryPaths.get(discovered.repository) ?? await resolveManagedProjectPath(discovered.repository, explicitProjectPath, workspaceRoot);
+      const canonical = await resolveJobProjectRoot(discovered);
       // A completed local Job may never have had a display PR. Publish main
       // regardless: GitHub availability cannot determine SQLite completion.
       if (discovered.state === 'COMPLETED' && discovered.localMerge?.status === 'succeeded'
@@ -242,7 +242,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
         await relay.mutateJob(job.id, current => ({ ...current, prNumber: pr.number, githubProjection: { status: 'pr_bound', sourceSha, observedAt: new Date().toISOString() }, updatedAt: new Date().toISOString() }));
         observability().record({ stage: 'projection', event: 'github.pr_bound', outcome: 'succeeded', message: `Bound local Job ${job.id} to GitHub PR #${pr.number}`, correlation: { repository: job.repository, prNumber: pr.number, jobId: job.id }, data: { head: branch, base } });
       };
-      projectionWriters.set(`job:${job.id}`, new GitHubProjectionWriter(relay, prNumber > 0 ? new GitHubStore(client, job.repository, prNumber, trusted) : new InMemoryStore(job), undefined, true, effect));
+      projectionWriters.set(`job:${job.id}`, new GitHubProjectionWriter(relay, prNumber > 0 ? new GitHubStore(client, job.githubRepo!, prNumber, trusted) : new InMemoryStore(job), undefined, true, effect));
       if (job.state === 'CANCELLED') continue; // Drain committed effects only; never push.
       if (prNumber === 0) {
         // Do not bootstrap an empty remote-only PR commit: it would diverge from
@@ -264,7 +264,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
         }
         // A terminal Job may drain an already-committed intent, but terminal
         // state is never permission to create a new external PR intent.
-        if (!terminal && relay.enqueueExternalActionOnce) await relay.enqueueExternalActionOnce({ idempotencyKey: `create_pull_request:${job.id}:${sourceSha}`, operation: 'create_pull_request', payload: { operation: 'create_pull_request', repository: job.repository, head: branch, base, title: job.title, body: job.objective ?? job.description ?? '', sourceRef, targetRef }, priority: 100 });
+        if (!terminal && relay.enqueueExternalActionOnce) await relay.enqueueExternalActionOnce({ idempotencyKey: `create_pull_request:${job.id}:${sourceSha}`, operation: 'create_pull_request', payload: { operation: 'create_pull_request', repository: job.githubRepo, head: branch, base, title: job.title, body: job.objective ?? job.description ?? '', sourceRef, targetRef }, priority: 100 });
         if (terminal) continue;
         continue;
       }
@@ -279,7 +279,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       const latestFacts = await relay.loadPullRequestFacts(); if (latestFacts?.state !== 'MERGED' && (latestFacts?.head?.sha !== sourceSha || latestFacts?.head?.ref !== branch)) {
         await relay.savePullRequestFacts({ state: latestFacts?.state === 'CLOSED' ? 'CLOSED' : 'OPEN', head: { ref: branch, sha: sourceSha }, observedAt: new Date().toISOString() });
       }
-      const github = new GitHubStore(client, job.repository, prNumber, trusted);
+      const github = new GitHubStore(client, job.githubRepo!, prNumber, trusted);
       projectionWriters.set(`job:${job.id}`, new GitHubProjectionWriter(relay, github, undefined, true, effect));
       if (job.state === 'COMPLETED' && job.localMerge?.status === 'succeeded' && job.localMerge.projectionStrategy === 'target_ref_push') {
         const projection = await projectBindingLocalMerge(job, relay, {
@@ -298,7 +298,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
         // A review-only PR is never merged by GitHub. Close it after local main
         // has been safely published, retaining the diff, comments and commit link.
         const remotePr = await github.pullRequestState();
-        await archiveDisplayPullRequest(client,job.repository,prNumber,job.id,projectedMerge.projectedCommitSha,remotePr);
+        await archiveDisplayPullRequest(client,job.githubRepo!,prNumber,job.id,projectedMerge.projectedCommitSha,remotePr);
         const projectedState = await github.pullRequestState();
         const projectedHead = await github.pullRequestHead();
         await relay.savePullRequestFacts({ state: projectedState, head: projectedHead, observedAt: new Date().toISOString() });
@@ -332,14 +332,14 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const initial = cachedOverviews; const fallback = initial[0]?.job;
   const dashboardStore = fallback ? (await requireLocalJobBinding(fallback.id)).store : new InMemoryStore();
   const {dashboardOverview,workspaceJobAction,workspaceJobSetState,workspaceTaskCreate,workspaceTaskAction,workspaceTaskSetState} = createDashboardActions({getOverviews: () => cachedOverviews, requireLocalJobBinding, pool, dashboardJobAction, makeReconciler, concurrency, dashboardJobSetState, refreshAll, applyJobActivateAction, bus, dashboardTaskAction, dashboardTaskSetState});
-  const workspaceControl = createWorkspaceControl({client, trusted, noGitHub, repositories, refreshAll, requireLocalJobBinding, makeReconciler, concurrency, pool, bus, isEffectivelyBlocked, unblockTask, publishTaskUnblocked, dispatchTaskAction, registerBlockerDependency, discoverAgents, ensureManagedGitHubJob});
+  const workspaceControl = createWorkspaceControl({client, trusted, noGitHub, repositories, repositoryPaths, refreshAll, requireLocalJobBinding, makeReconciler, concurrency, pool, bus, isEffectivelyBlocked, unblockTask, publishTaskUnblocked, dispatchTaskAction, registerBlockerDependency, discoverAgents, ensureManagedGitHubJob});
   const secretFile = value(argv,'--github-webhook-secret-file');
   const secret = noGitHub ? '' : value(argv,'--github-webhook-secret') || process.env.AGENTS_RELAY_GITHUB_WEBHOOK_SECRET || (secretFile ? (await readFile(secretFile,'utf8')).trim() : '');
   const webhook = secret ? {
     secret,
-    repositories: new Set(repositories),
+    repositories: new Set(cachedOverviews.map(item => item.job.githubRepo).filter((repository): repository is string => Boolean(repository))),
     wake: async (event: GitHubWebhookWake): Promise<void> => {
-      const targets = cachedOverviews.filter(item => item.job.repository === event.repository && (event.jobId ? item.job.id === event.jobId : item.job.prNumber === event.pullRequest));
+      const targets = cachedOverviews.filter(item => item.job.githubRepo === event.repository && (event.jobId ? item.job.id === event.jobId : item.job.prNumber === event.pullRequest));
       if (targets.length === 0) return;
       for (const target of targets) {
         const binding = await requireLocalJobBinding(target.job.id);

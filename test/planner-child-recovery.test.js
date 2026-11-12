@@ -34,7 +34,7 @@ function fixture(targetState) {
     assessment: 'Continue work.', createdAt: now(), updatedAt: now(),
     plannerResult: { objective_status: 'in_progress', assessment: 'Continue work.', next_tasks: [spec], unblocks: [] },
   };
-  const job = { id: 'job-473', title: 'Job 473', objective: 'Complete the objective', repository: 'local/test',
+  const job = { id: 'job-473', title: 'Job 473', objective: 'Complete the objective', repository: 'test',
     prNumber: 0, state: 'ACTIVE', autoMerge: false, reviewEnabled: false,
     createdAt: now(), updatedAt: now(), plans: [plan], tasks: [target, child] };
   return { job, child, plan, spec };

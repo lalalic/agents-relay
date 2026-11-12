@@ -16,6 +16,6 @@ export async function runProjectionCommand(action: string, args: string[]): Prom
 }
 
 export function projectionHelp(action?: string): string {
-  if (action === 'resolve') return `Explicitly repair one classified projection conflict.\n\nRequired: --repo OWNER/REPO --id JOB_ID --projection-id ID --action requeue|discard-local.`;
-  return `Inspect and explicitly repair deterministic V2 GitHub projection conflicts.\n\nUsage:\n  npx agents-relay projection conflicts --repo OWNER/REPO --id JOB_ID\n  npx agents-relay projection resolve --repo OWNER/REPO --id JOB_ID --projection-id ID --action requeue|discard-local`;
+  if (action === 'resolve') return `Explicitly repair one classified projection conflict.\n\nRequired: --repo LOCAL_ROOT_NAME --id JOB_ID --projection-id ID --action requeue|discard-local.`;
+  return `Inspect and explicitly repair deterministic V2 GitHub projection conflicts.\n\nUsage:\n  npx agents-relay projection conflicts --repo LOCAL_ROOT_NAME --id JOB_ID\n  npx agents-relay projection resolve --repo LOCAL_ROOT_NAME --id JOB_ID --projection-id ID --action requeue|discard-local`;
 }

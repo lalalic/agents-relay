@@ -6,7 +6,7 @@ import type { ProjectionFailureDeduplicator } from './projection-failure-dedupe.
 import type { Job } from './types.js';
 import { SQLiteRelayStore } from './relay-store.js';
 import { classifyFailure, errorMessage, observability } from './observability.js';
-import { resolveManagedProjectPath } from './workspace.js';
+import { resolveJobProjectRoot } from './workspace.js';
 import type { ProjectionRecoveryOptions } from './projection-recovery-runtime.js';
 
 export async function reconcileBindingProjectionRecovery(
@@ -52,7 +52,7 @@ export async function handleGitHubProjectionFailure(
       ?? new SQLiteRelayStore(snapshotPath, job.id);
     options.relayStores.set(`${snapshotPath}#${job.id}`, recoveryStore);
     const recoveryPath = options.repositoryPaths.get(job.repository)
-      ?? await resolveManagedProjectPath(job.repository, options.explicitProjectPath, options.workspaceRoot);
+      ?? await resolveJobProjectRoot(job);
     const remoteSha = await options.gitText(recoveryPath, ['fetch','--no-tags','origin','+refs/heads/main:refs/remotes/origin/main'])
       .then(() => options.gitText(recoveryPath, ['rev-parse','--verify','refs/remotes/origin/main']))
       .catch(() => '');

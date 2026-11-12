@@ -32,13 +32,6 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     // immutable input SHA is already present in the authoritative Job.
     if (this.options.noGitHub && this.options.localMergeEffect) return job.headSha ?? job.review?.headSha ?? null;
     if (this.options.headShaProvider) return this.options.headShaProvider(job);
-    // Plan-free Coordinator Jobs execute in their explicitly bound project Git root.
-    // Local-only repository aliases (e.g. local/vlog) may not resolve through
-    // the managed repository inventory. Use the durable DAG start context.
-    if (job.graphStartContext?.projectPath && !job.localMerge?.sourceRef) {
-      try { return localWorkingHead(job.graphStartContext.projectPath); }
-      catch { return job.headSha ?? job.review?.headSha ?? null; }
-    }
     // GitHub PR head facts are audit-only. Source identity is local Git.
     if (!this.options.projectPathForJob) return job.headSha ?? job.review?.headSha ?? null;
     try {

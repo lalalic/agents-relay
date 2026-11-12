@@ -20,6 +20,15 @@ export function createUnifiedJobIfAbsent(db: DatabaseSync, job: Job, writeSnapsh
   try {
     const existing = db.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(job.id) as {json?:string}|undefined;
     if (existing?.json) { db.exec('COMMIT'); return JSON.parse(existing.json) as Job; }
+    // Repository names are local identities, not freely reused GitHub labels.
+    // Across Jobs they must always resolve to the same immutable canonical root.
+    const siblings = db.prepare("SELECT job_id,json FROM job_snapshot WHERE job_id<>? AND json_extract(json,'$.repository')=?")
+      .all(job.id,job.repository) as Array<{job_id:string;json:string}>;
+    for (const sibling of siblings) {
+      const registered = JSON.parse(sibling.json) as Job;
+      if (!registered.projectRoot || registered.projectRoot !== job.projectRoot)
+        throw new Error(`Local repository identity collision: ${job.repository} belongs to ${registered.projectRoot ?? 'unmigrated Job ' + sibling.job_id}, not ${job.projectRoot}`);
+    }
     writeSnapshot(new Date().toISOString());
     db.exec('COMMIT');
     return structuredClone(job);

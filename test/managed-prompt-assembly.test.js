@@ -119,7 +119,7 @@ test('managed worker receives provider instructions only from Job Execution Cont
     providerInstructions:{codex:['Use caller-provided Codex local executor.'],chatgpt:['Use caller-provided remote file tools.']},
   });
   assert.equal(context.project.gitRoot,await (await import('node:fs/promises')).realpath(repository));
-  const job={id:'repo-context',repository:'local/repo',title:'Context',objective:'Contract',state:'ACTIVE',tasks:[],plans:[]};
+  const job={id:'repo-context',repository:'repo',title:'Context',objective:'Contract',state:'ACTIVE',tasks:[],plans:[]};
   const task={id:'work',jobId:'repo-context',kind:'work',agentName:'implementation',state:'QUEUED',adapter:'codex',input:'untrusted',
     output:{kind:'task_pr'},executionId:'exec-1',attempt:1,maxAttempts:1,dependencies:[]};
   const codex=await managedWorkerInput(job,task,context);

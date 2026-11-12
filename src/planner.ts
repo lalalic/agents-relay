@@ -240,7 +240,7 @@ export function parsePlannerResult(value: unknown): PlannerResult {
     const repository = optionalString(unblock.repository, `unblocks[${index}].repository`);
     const jobId = optionalString(unblock.jobId, `unblocks[${index}].jobId`);
     const taskId = optionalString(unblock.taskId, `unblocks[${index}].taskId`);
-    if (!repository || !/^[^/\s]+\/[^/\s]+$/.test(repository)) throw new Error(`Planner unblocks[${index}].repository must be OWNER/REPO`);
+    if (!repository || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(repository) || repository.includes('..')) throw new Error(`Planner unblocks[${index}].repository must be a local Git root identity`);
     if (!jobId) throw new Error(`Planner unblocks[${index}].jobId is required`);
     if (!taskId) throw new Error(`Planner unblocks[${index}].taskId is required`);
     const prNumber = unblock.prNumber;

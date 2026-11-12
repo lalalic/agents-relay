@@ -1,6 +1,5 @@
 import { readFile, writeFile } from 'node:fs/promises';
-import { InMemoryStore, DurableStore, GitHubStore } from './store.js';
-import { githubAuthContext } from './github-auth.js';
+import { InMemoryStore, DurableStore } from './store.js';
 import { noGitHubMode } from './no-github.js';
 import { basename } from 'node:path';
 import { createJobIdRegistryResolver, findJobIdSnapshot } from './local-job-registry.js';
@@ -48,10 +47,9 @@ export async function textOption(args: string[], inlineFlag: string, fileFlag: s
   return arg(args, inlineFlag);
 }
 export function integerArg(args: string[], name: string, fallback: number): number { if (!hasArg(args, name)) return fallback; const value = Number(arg(args, name)); if (!Number.isInteger(value) || value < 0) throw new Error(`${name} must be a non-negative integer`); return value; }
-export function repository(args: string[]): string { const value = arg(args, '--repo'); if (!value && noGitHubMode(args)) return 'local/' + basename(process.cwd()); if (!value) throw new Error('--repo is required for GitHub-backed operation'); return value; }
+export function repository(args: string[]): string { const value = arg(args, '--repo'); if (!value && noGitHubMode(args)) return basename(process.cwd()); if (!value) throw new Error('--repo must name the local Git root directory'); return value; }
 export function pullRequest(args: string[]): number { const value = Number(arg(args, '--pr')); if (!Number.isInteger(value) || value <= 0) throw new Error('--pr is required for GitHub-backed operation'); return value; }
 async function localStore(file: string): Promise<{ store: InMemoryStore; job: Job }> { const parsed = JSON.parse(await readFile(file, 'utf8')) as Job; const store = new InMemoryStore(parsed); return { store, job: await store.load(parsed.id) }; }
-export async function githubStore(args: string[]): Promise<GitHubStore> { const auth = await githubAuthContext(args); return new GitHubStore(auth.client, repository(args), pullRequest(args), auth.trustedAuthors); }
 /** The public read-only commands must fail closed on ambiguous Job bindings. */
 function validateReadOnlyJobBinding(args: string[]): void {
   for (const flag of ['--id','--repo','--pr','--file','--store-dir','--task-id','--plan-id','--execution-id']) {

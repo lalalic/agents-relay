@@ -40,6 +40,11 @@ export function reviewPlanReady(job: Job): boolean {
     || (review.outcome === 'stale' && (job.reviewRevisionRounds ?? []).some(round =>
       round.reviewTaskId === review.taskId && round.status === 'changes_required'));
   if (!requiresRevision) return true;
+  // A Review-driven Plan with no actual fix cannot authorize another Review at
+  // the same immutable head. Otherwise satisfied/empty Planner responses loop
+  // indefinitely through Final Review -> Plan -> Final Review.
   return (job.plans ?? []).some(plan => plan.status === 'SUCCEEDED'
-    && plan.trigger.source === 'review' && plan.trigger.reviewTaskId === review.taskId);
+    && plan.trigger.source === 'review' && plan.trigger.reviewTaskId === review.taskId
+    && plan.generatedTaskIds.length > 0
+    && plan.generatedTaskIds.every(id => job.tasks.some(task => task.id === id && task.state === 'SUCCEEDED')));
 }

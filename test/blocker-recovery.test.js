@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { openLocalManagedStore } from '../dist/local-managed-store.js';
 import { ensureBlockerRecovery } from '../dist/blocker-recovery.js';
 import { resolveBlockerDependencies } from '../dist/blockers.js';
@@ -24,7 +25,7 @@ function task(id, jobId, state = 'FAILED', attempt = 1) {
 
 function job(id, repository, tasks = [], state = 'ACTIVE') {
   return {
-    id, title: id, objective: `${id} objective`, prNumber: 0, repository, state,
+    id, title: id, objective: `${id} objective`, prNumber: 0, repository, projectRoot: '/tmp/' + repository, state,
     continuation: null, createdAt: now, updatedAt: now, tasks,
   };
 }
@@ -33,10 +34,16 @@ async function withDirectory(run) {
   const root = await mkdtemp(join(tmpdir(), 'relay-blocker-recovery-'));
   const directory = join(root, 'store');
   await mkdir(directory, { recursive: true });
+  for (const name of ['gateway', 'consumer', 'foreign_gateway', 'unlisted']) {
+    const repo = join(root, name);
+    await mkdir(repo, { recursive: true });
+    execFileSync('git', ['init', '-q', repo]);
+  }
   try { await run(directory); } finally { await rm(root, { recursive: true, force: true }); }
 }
 
 async function saveJob(directory, value) {
+  value.projectRoot = join(directory, '..', value.repository);
   const opened = openLocalManagedStore(value.repository, 0, { directory, jobId: value.id, noGitHub: true });
   try { await opened.store.createJobIfAbsent(value); } finally { opened.relay.close(); }
 }
@@ -44,21 +51,21 @@ async function saveJob(directory, value) {
 function input(directory, patch = {}) {
   return {
     requestId: 'cross-repo-gateway-589-task-877',
-    targetRepository: 'owner/gateway', dependentRepository: 'owner/consumer',
+    targetRepository: 'gateway', targetProjectRoot: join(directory, '..', 'gateway'), dependentRepository: 'consumer',
     dependentJobId: '589', dependentTaskId: '877',
     reason: 'The dependent integration is blocked by a missing authorized gateway API.',
     title: 'Add the missing gateway activity API',
-    objective: 'Implement the authorized gateway API in owner/gateway for dependent Task 877 from owner/consumer. Keep scope to the requested technical prerequisite.',
+    objective: 'Implement the authorized gateway API in gateway for dependent Task 877 from consumer. Keep scope to the requested technical prerequisite.',
     resolutionMode: 'verified', origin: 'troubleshooter', authorized: true,
-    authorizedRepositories: ['owner/consumer', 'owner/gateway'],
+    authorizedRepositories: ['consumer', 'gateway'],
     storeDirectory: directory, now: '2026-11-10T14:01:00.000Z', ...patch,
   };
 }
 
 test('blocker ensure creates one no-PR Job and registers an exact reverse dependency idempotently', async () => withDirectory(async directory => {
-  await saveJob(directory, job('589', 'owner/consumer', [task('877', '589')]));
+  await saveJob(directory, job('589', 'consumer', [task('877', '589')]));
   const first = await ensureBlockerRecovery(input(directory));
-  assert.equal(first.blockerRepository, 'owner/gateway');
+  assert.equal(first.blockerRepository, 'gateway');
   assert.equal(first.dependentJobId, '589');
   assert.equal(first.dependentTaskId, '877');
   assert.equal(first.resolutionMode, 'verified');
@@ -67,7 +74,7 @@ test('blocker ensure creates one no-PR Job and registers an exact reverse depend
   assert.match(first.reason, /missing authorized gateway API/);
   assert.equal(first.planningRecoveryRequired, true);
 
-  const dependent = openLocalManagedStore('owner/consumer', 0, { directory, jobId: '589', noGitHub: true });
+  const dependent = openLocalManagedStore('consumer', 0, { directory, jobId: '589', noGitHub: true });
   let taskAfter;
   try {
     const persisted = await dependent.store.load('589');
@@ -79,7 +86,7 @@ test('blocker ensure creates one no-PR Job and registers an exact reverse depend
     assert.equal(taskAfter.blockedBy.blockedAttempt, 1);
   } finally { dependent.relay.close(); }
 
-  const blocker = openLocalManagedStore('owner/gateway', 0, { directory, jobId: first.blockerJobId, noGitHub: true });
+  const blocker = openLocalManagedStore('gateway', 0, { directory, jobId: first.blockerJobId, noGitHub: true });
   try {
     const persisted = await blocker.store.load(first.blockerJobId);
     assert.equal(persisted.prNumber, 0);
@@ -87,11 +94,11 @@ test('blocker ensure creates one no-PR Job and registers an exact reverse depend
     assert.equal(persisted.blockerRecoveryRequest.blockedAttempt, 1);
     assert.equal(persisted.blockerRecoveryRequest.status, 'planning_required');
     assert.deepEqual(persisted.unblocks.map(relation => [relation.repository, relation.jobId, relation.taskId, relation.blockedAttempt]), [
-      ['owner/consumer', '589', '877', 1],
+      ['consumer', '589', '877', 1],
     ]);
   } finally { blocker.relay.close(); }
 
-  const blockerForRetry = openLocalManagedStore('owner/gateway', 0, { directory, jobId: first.blockerJobId, noGitHub: true });
+  const blockerForRetry = openLocalManagedStore('gateway', 0, { directory, jobId: first.blockerJobId, noGitHub: true });
   try {
     await blockerForRetry.store.mutateJob(first.blockerJobId, current => ({
       ...current,
@@ -109,14 +116,14 @@ test('blocker ensure creates one no-PR Job and registers an exact reverse depend
 
 test('blocker ensure adopts the exact pre-existing reverse relation without making a duplicate', async () => withDirectory(async directory => {
   const dependentTask = task('877', '589');
-  dependentTask.blockedBy = { repository: 'owner/gateway', prNumber: 0, jobId: '592', blockedAttempt: 1, registeredAt: now };
-  await saveJob(directory, job('589', 'owner/consumer', [dependentTask]));
-  const blockerJob = job('592', 'owner/gateway', [], 'COMPLETED');
+  dependentTask.blockedBy = { repository: 'gateway', prNumber: 0, jobId: '592', blockedAttempt: 1, registeredAt: now };
+  await saveJob(directory, job('589', 'consumer', [dependentTask]));
+  const blockerJob = job('592', 'gateway', [], 'COMPLETED');
   blockerJob.blockerResolutionMode = 'verified';
-  blockerJob.unblocks = [{ repository: 'owner/consumer', prNumber: 0, jobId: '589', taskId: '877', blockedAttempt: 1, registeredAt: now, state: 'waiting' }];
+  blockerJob.unblocks = [{ repository: 'consumer', prNumber: 0, jobId: '589', taskId: '877', blockedAttempt: 1, registeredAt: now, state: 'waiting' }];
   await saveJob(directory, blockerJob);
 
-  const check = openLocalManagedStore('owner/consumer', 0, { directory, jobId: '589', noGitHub: true });
+  const check = openLocalManagedStore('consumer', 0, { directory, jobId: '589', noGitHub: true });
   try {
     const persisted = await check.store.load('589');
     assert.ok(persisted.tasks[0].blockedBy, JSON.stringify(persisted.tasks[0]));
@@ -126,8 +133,8 @@ test('blocker ensure adopts the exact pre-existing reverse relation without maki
   const result = await ensureBlockerRecovery(input(directory));
   assert.equal(result.blockerJobId, '592');
   assert.equal(result.outcome, 'reused');
-  const dependent = openLocalManagedStore('owner/consumer', 0, { directory, jobId: '589', noGitHub: true });
-  const store = openLocalManagedStore('owner/gateway', 0, { directory, jobId: '592', noGitHub: true });
+  const dependent = openLocalManagedStore('consumer', 0, { directory, jobId: '589', noGitHub: true });
+  const store = openLocalManagedStore('gateway', 0, { directory, jobId: '592', noGitHub: true });
   try {
     const persisted = await store.store.load('592');
     assert.equal(persisted.unblocks.length, 1);
@@ -148,7 +155,7 @@ test('blocker ensure adopts the exact pre-existing reverse relation without maki
 }));
 
 test('blocker ensure rejects changed intent, different owners, stale tasks, and unsafe project paths', async () => withDirectory(async directory => {
-  await saveJob(directory, job('589', 'owner/consumer', [task('877', '589')]));
+  await saveJob(directory, job('589', 'consumer', [task('877', '589')]));
   const first = await ensureBlockerRecovery(input(directory));
   await assert.rejects(
     ensureBlockerRecovery(input(directory, { title: 'Different scoped gateway work' })),
@@ -157,20 +164,20 @@ test('blocker ensure rejects changed intent, different owners, stale tasks, and 
   // Existing recovery identity must not bypass workspace authorization after a
   // provider/repository is deauthorized between retries.
   await assert.rejects(
-    ensureBlockerRecovery(input(directory, { authorizedRepositories: ['owner/consumer'] })),
+    ensureBlockerRecovery(input(directory, { authorizedRepositories: ['consumer'] })),
     /graph did not produce ready/,
   );
   await assert.rejects(
     ensureBlockerRecovery(input(directory, {
-      requestId: 'cross-repo-foreign-owner', targetRepository: 'other/gateway',
-      objective: 'Implement the authorized gateway API in other/gateway for dependent Task 877 from owner/consumer. Keep scope to the requested technical prerequisite.',
+      requestId: 'cross-repo-foreign-owner', targetRepository: 'foreign_gateway',
+      objective: 'Implement the authorized gateway API in foreign_gateway for dependent Task 877 from consumer. Keep scope to the requested technical prerequisite.',
     })),
-    /owner.*workspace/,
+    /graph did not produce ready/,
   );
   await assert.rejects(
     ensureBlockerRecovery(input(directory, {
-      requestId: 'cross-repo-unconfigured', targetRepository: 'owner/unlisted',
-      objective: 'Implement the authorized technical API in owner/unlisted for dependent Task 877 from owner/consumer. Keep scope to the requested technical prerequisite.',
+      requestId: 'cross-repo-unconfigured', targetRepository: 'unlisted',
+      objective: 'Implement the authorized technical API in unlisted for dependent Task 877 from consumer. Keep scope to the requested technical prerequisite.',
     })),
     /graph did not produce ready/,
   );
@@ -179,26 +186,26 @@ test('blocker ensure rejects changed intent, different owners, stale tasks, and 
     /repository-relative path/,
   );
 
-  const dependent = openLocalManagedStore('owner/consumer', 0, { directory, jobId: '589', noGitHub: true });
+  const dependent = openLocalManagedStore('consumer', 0, { directory, jobId: '589', noGitHub: true });
   try {
     const persisted = await dependent.store.load('589');
     persisted.tasks[0].attempt = 2;
     await dependent.store.saveTask(persisted.tasks[0]);
   } finally { dependent.relay.close(); }
   await assert.rejects(ensureBlockerRecovery(input(directory)), /different durable intent/);
-  const registry = openLocalManagedStore('owner/gateway', 0, { directory, jobId: first.blockerJobId, noGitHub: true });
-  try { assert.equal((await registry.relay.listJobs()).filter(value => value.repository === 'owner/gateway').length, 1); }
+  const registry = openLocalManagedStore('gateway', 0, { directory, jobId: first.blockerJobId, noGitHub: true });
+  try { assert.equal((await registry.relay.listJobs()).filter(value => value.repository === 'gateway').length, 1); }
   finally { registry.relay.close(); }
 }));
 
 test('overlapping ensure requests converge on one blocker and one reverse relation', async () => withDirectory(async directory => {
-  await saveJob(directory, job('589', 'owner/consumer', [task('877', '589')]));
+  await saveJob(directory, job('589', 'consumer', [task('877', '589')]));
   const [left, right] = await Promise.all([
     ensureBlockerRecovery(input(directory)),
     ensureBlockerRecovery(input(directory)),
   ]);
   assert.equal(left.blockerJobId, right.blockerJobId);
-  const blocker = openLocalManagedStore('owner/gateway', 0, { directory, jobId: left.blockerJobId, noGitHub: true });
+  const blocker = openLocalManagedStore('gateway', 0, { directory, jobId: left.blockerJobId, noGitHub: true });
   try {
     const persisted = await blocker.store.load(left.blockerJobId);
     assert.equal(persisted.unblocks.length, 1);
@@ -208,15 +215,15 @@ test('overlapping ensure requests converge on one blocker and one reverse relati
 
 test('cancelled blocker Jobs are never adopted as successful recovery', async () => withDirectory(async directory => {
   const dependentTask = task('877', '589');
-  dependentTask.blockedBy = { repository: 'owner/gateway', prNumber: 0, jobId: '592', blockedAttempt: 1, registeredAt: now };
-  await saveJob(directory, job('589', 'owner/consumer', [dependentTask]));
-  const cancelled = job('592', 'owner/gateway', [], 'CANCELLED');
+  dependentTask.blockedBy = { repository: 'gateway', prNumber: 0, jobId: '592', blockedAttempt: 1, registeredAt: now };
+  await saveJob(directory, job('589', 'consumer', [dependentTask]));
+  const cancelled = job('592', 'gateway', [], 'CANCELLED');
   cancelled.blockerResolutionMode = 'merge';
-  cancelled.unblocks = [{ repository: 'owner/consumer', prNumber: 0, jobId: '589', taskId: '877', blockedAttempt: 1, registeredAt: now, state: 'waiting' }];
+  cancelled.unblocks = [{ repository: 'consumer', prNumber: 0, jobId: '589', taskId: '877', blockedAttempt: 1, registeredAt: now, state: 'waiting' }];
   await saveJob(directory, cancelled);
 
   await assert.rejects(ensureBlockerRecovery(input(directory, { resolutionMode: 'merge' })), /graph did not produce ready/);
-  const dependent = openLocalManagedStore('owner/consumer', 0, { directory, jobId: '589', noGitHub: true });
+  const dependent = openLocalManagedStore('consumer', 0, { directory, jobId: '589', noGitHub: true });
   try {
     const persisted = await dependent.store.load('589');
     assert.equal(persisted.tasks[0].state, 'FAILED');
@@ -225,9 +232,9 @@ test('cancelled blocker Jobs are never adopted as successful recovery', async ()
 }));
 
 test('blocker ensure fails closed when a task is not in a failed or blocked lifecycle state', async () => withDirectory(async directory => {
-  await saveJob(directory, job('589', 'owner/consumer', [task('877', '589', 'SUCCEEDED')]));
+  await saveJob(directory, job('589', 'consumer', [task('877', '589', 'SUCCEEDED')]));
   await assert.rejects(ensureBlockerRecovery(input(directory)), /must be failed or blocked/);
-  const store = openLocalManagedStore('owner/consumer', 0, { directory, jobId: '589', noGitHub: true });
+  const store = openLocalManagedStore('consumer', 0, { directory, jobId: '589', noGitHub: true });
   try { assert.equal((await store.relay.listJobs()).length, 1); } finally { store.relay.close(); }
 }));
 

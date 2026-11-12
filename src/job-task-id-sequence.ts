@@ -3,8 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { relayUnifiedStorePath } from './relay-store-discovery.js';
 
 function validateRepository(repository: string): void {
-  const [owner, repo, extra] = repository.split('/');
-  if (!owner || !repo || extra || !/^[\w.-]+$/.test(owner) || !/^[\w.-]+$/.test(repo) || owner === '..' || repo === '..') throw new Error('Invalid repository');
+  if (!repository || repository === '.' || repository === '..' || repository.includes('/') || !/^[\w.-]+$/.test(repository)) throw new Error('Invalid local repository identity; use the Git root directory name');
 }
 
 /** A generated ID is always a positive decimal. Historic nonnumeric Task IDs remain ordinary Task identifiers. */

@@ -66,7 +66,7 @@ const context=()=>contextPromise??=resolveExecutionContext(vlog,'worker',{shared
 for(const adapter of adapters)for(const role of roles) {
   test(`L4 generated prompt: ${role} × ${adapter}`,async()=>{
     const cx=await context();
-    const job={id:jobId,repository:'local/l4',title:'Vlog L4 evaluation',objective:'Use actual Vlog project policies',state:'ACTIVE',plans:[],tasks:[],prNumber:0};
+    const job={id:jobId,repository:'l4',title:'Vlog L4 evaluation',objective:'Use actual Vlog project policies',state:'ACTIVE',plans:[],tasks:[],prNumber:0};
     const gate=deliveryGate(role,adapter);
     let prompt;
     if(role==='planner'){
@@ -227,7 +227,7 @@ test('L4 execution-scoped CLI loads a real isolated SQLite Plan and Task, reject
     output:{kind:'file',path:'l4-output.txt'},dependencies:[],createdAt:at,updatedAt:at};
   const plan={jobId,id:'plan-1',round:1,status:'PLANNING',source:'model-planner',executionId:execution,generatedTaskIds:[],trigger:{source:'manual'},previousPlanId:null,
     assessment:'Planning',attempt:1,maxAttempts:1,createdAt:at,updatedAt:at};
-  const job={id:jobId,repository:'local/l4',prNumber:0,title:'L4 isolated Job',objective:'PRIVATE OBJECTIVE FROM SQLITE',state:'ACTIVE',
+  const job={id:jobId,repository:'l4',prNumber:0,title:'L4 isolated Job',objective:'PRIVATE OBJECTIVE FROM SQLITE',state:'ACTIVE',
     createdAt:at,updatedAt:at,tasks:[task],plans:[plan],projectPath:vlog};
   try {
     await store.saveJob(job);

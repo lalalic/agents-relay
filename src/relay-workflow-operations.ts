@@ -122,6 +122,7 @@ export class SQLiteWorkflowOperations {
       const next = mutation(current);
       const history = recordTaskStateHistory(previous, next);
       if (next.id !== jobId) throw new Error('Cannot change authoritative Job identity');
+      if (next.repository !== previous.repository || next.projectRoot !== previous.projectRoot) throw new Error('Job local repository identity and projectRoot are immutable');
       if (JSON.stringify(next) !== before && next.updatedAt <= JSON.parse(before).updatedAt) {
         next.updatedAt = monotonicJobTimestamp(JSON.parse(before).updatedAt);
       }

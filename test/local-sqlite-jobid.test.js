@@ -20,7 +20,7 @@ test('L3 no-PR SQLite registry recovers startup and routes targeted worker event
   const store = new LocalAuthorityDurableStore(sqlite, remote, undefined, true);
   const at = '2026-10-09T11:00:00.000Z';
   const job = {
-    id: 'local-jobid-sqlite', repository: 'local/project', prNumber: 0, title: 'Local only',
+    id: 'local-jobid-sqlite', repository: 'project', prNumber: 0, title: 'Local only',
     state: 'ACTIVE', autoMerge: false, reviewEnabled: false,
     continuation: null, createdAt: at, updatedAt: at, tasks: [],
   };
@@ -63,7 +63,7 @@ test('L3 one unified SQLite registry rejects conflicting identity for an immutab
   const sqlite = new SQLiteRelayStore(join(root,'relay.sqlite'),'same-job');
   try {
     const at='2026-10-01T00:00:00.000Z';
-    const job={id:'same-job',repository:'local/work',prNumber:0,title:'current',state:'ACTIVE',
+    const job={id:'same-job',repository:'work',prNumber:0,title:'current',state:'ACTIVE',
       continuation:null,createdAt:at,updatedAt:at,tasks:[]};
     await sqlite.saveJob(job);
     const resolve=createJobIdRegistryResolver(join(root,'stores'),new Map(),{noGitHub:true});
@@ -108,13 +108,13 @@ test('unified SQLite normalizes old PR projection metadata without losing immuta
 });
 
 
-test('registry upgrades a local Job to external GitHub merge capability after PR binding', async () => {
+test('registry upgrades a local Job to optional GitHub merge capability after explicit remote binding', async () => {
   const { createJobIdRegistryResolver } = await import('../dist/local-job-registry.js');
   const root=await mkdtemp(join(tmpdir(),'relay-external-binding-'));
   const relay=new SQLiteRelayStore(join(root,'relay.sqlite'),'bound-job');
   try {
     const at='2026-10-09T12:00:00.000Z';
-    await relay.saveJob({id:'bound-job',repository:'owner/repo',prNumber:77,title:'bound',state:'COMPLETED',continuation:null,createdAt:at,updatedAt:at,tasks:[],localMerge:{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'succeeded',sourceSha:'abcdef1234567890'}});
+    await relay.saveJob({id:'bound-job',repository:'repo',projectRoot:'/tmp/repo',githubRepo:'owner/repo',prNumber:77,title:'bound',state:'COMPLETED',continuation:null,createdAt:at,updatedAt:at,tasks:[],localMerge:{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'succeeded',sourceSha:'abcdef1234567890'}});
     const resolved=await createJobIdRegistryResolver(join(root,'stores'),new Map(),{client:{},noGitHub:false})('bound-job');
     assert.ok(resolved);
     await resolved.store.mergePullRequest('abcdef1234567890');

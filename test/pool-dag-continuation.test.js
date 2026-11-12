@@ -5,7 +5,7 @@ import { RepositoryWorkerPool, activeWorkerSlots } from '../dist/pool.js';
 import { MemoryEventBus, eventFor } from '../dist/events.js';
 
 const stamp='2026-11-11T14:00:00Z';
-const base={repository:'local/agent-graph',state:'ACTIVE',createdAt:stamp,updatedAt:stamp,
+const base={repository:'agent-graph',state:'ACTIVE',createdAt:stamp,updatedAt:stamp,
   autoMerge:true,reviewEnabled:false,prNumber:0,priority:'P2',plans:[],pause:false};
 const task=(id,state,extra={})=>({id,jobId:'dag',state,createdAt:stamp,updatedAt:stamp,
   kind:'work',adapter:'script',dependencies:[],parentTaskId:null,

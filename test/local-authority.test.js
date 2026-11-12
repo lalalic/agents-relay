@@ -510,7 +510,7 @@ test('UNKNOWN PR still creates a local final Review without requesting Merge', a
 test('local managed store rejects repository identities that can escape the stores directory', async () => {
   const { openLocalManagedStore } = await import('../dist/local-managed-store.js');
   for (const repository of ['owner/../escape','../owner/repo','owner/repo/extra','owner//repo','owner/repo..']) {
-    assert.throws(() => openLocalManagedStore(repository,1,{directory:'/tmp/relay-safe-store',noGitHub:true}),/requires a repository/);
+    assert.throws(() => openLocalManagedStore(repository,1,{directory:'/tmp/relay-safe-store',noGitHub:true}),/requires a local repository identity/);
   }
 });
 

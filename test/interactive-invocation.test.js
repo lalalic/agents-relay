@@ -23,7 +23,7 @@ const makeTask = () => ({
 });
 const makeJob = (task = makeTask()) => ({
   id: task.jobId, title: 'Interactive contract', prNumber: 0,
-  repository: 'local/job', state: 'ACTIVE', continuation: null,
+  repository: 'job', state: 'ACTIVE', continuation: null,
   createdAt: timestamp(), updatedAt: timestamp(), tasks: [task],
 });
 const decisionEvent = (jobId, taskId, executionId, decision, feedback='', id='') => ({

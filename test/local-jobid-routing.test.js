@@ -6,7 +6,7 @@ import { MemoryEventBus, eventFor } from '../dist/events.js';
 
 const stamp = '2026-10-09T10:00:00.000Z';
 const baseJob = {
-  id:'local-no-pr', title:'No remote binding', repository:'local/work', prNumber:0,
+  id:'local-no-pr', title:'No remote binding', repository:'work', prNumber:0,
   state:'ACTIVE', createdAt:stamp, updatedAt:stamp,
   continuation:null, tasks:[], autoMerge:false, reviewEnabled:false,
 };

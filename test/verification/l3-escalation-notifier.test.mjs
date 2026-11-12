@@ -22,7 +22,7 @@ async function withEscalation(fn){
  let sqlite=new SQLiteRelayStore(join(env.storeDir,'relay.sqlite'),'notify');
  let store=new LocalAuthorityDurableStore(sqlite,new InMemoryStore(),undefined,true);
  try{
-  await store.saveJob({id:'notify',title:'Escalation notifier test',repository:'local/isolated',prNumber:0,state:'ACTIVE',
+  await store.saveJob({id:'notify',title:'Escalation notifier test',repository:'isolated',prNumber:0,state:'ACTIVE',
    autoMerge:false,reviewEnabled:false,createdAt:stamp,updatedAt:stamp,
    tasks:[makeTask('original','FAILED'),makeTask('troubleshoot-original','QUEUED','original','troubleshooter')]});
   const request=await requestTroubleshooterEscalation(store,'notify','troubleshoot-original',

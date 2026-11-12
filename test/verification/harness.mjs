@@ -1,6 +1,7 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
 export const OUTCOMES = Object.freeze(['PASS', 'FAIL', 'NOT_RUN', 'UNSUPPORTED']);
@@ -74,12 +75,13 @@ export function classifyTrace(scenario, trace, { terminal = null, maxSteps = 100
 
 export function createIsolatedEnvironment(prefix = 'relay-verification-') {
   const root = mkdtempSync(join(tmpdir(), prefix));
+  execFileSync('git', ['init', '-q', root]);
   const storeDir = join(root, 'stores');
   const logDir = join(root, 'logs');
   mkdirSync(storeDir);
   mkdirSync(logDir);
   const env = { ...process.env, AGENTS_RELAY_STORE_DIR: storeDir, AGENTS_RELAY_LOG_DIR: logDir };
-  return { root, storeDir, logDir, env, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  return { root, repository: basename(root), storeDir, logDir, env, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
 export function writeReport(report, dir) {

@@ -2,7 +2,7 @@
 
 Agents Relay is a TypeScript runtime for durable asynchronous agent Jobs driven locally by SQLite and canonical workflow Graphs. The EventBus wakes reconciliation; an EventBus message or GitHub PR comment is never the lifecycle authority. Job, Plan, Task, Review, Execution, Lease and Recovery state survive daemon restarts in SQLite.
 
-V2 uses a read-only local SQLite Job Registry for discovery. The immutable jobId selects the Job Store even when prNumber is zero; lifecycle transitions are atomic across processes. GitHub is **audit-only**: its PR/head/publish events are persisted for reporting, never consulted to start, stop, or complete local Workflows. Local Git delivery and its confirmed merge receipt—not a remote PR MERGED fact—gate Graph completion. Job creation and local Task operations require no GitHub authentication or PR.
+Every Job is keyed by an immutable local Git identity: `repository` is the Git root directory name and `projectRoot` is its validated canonical path. `projectPath` can select a nested directory; worktrees never become Job roots. SQLite owns the durable Job/Task/Review state. Local Git is the source of truth for review and merge. `githubRepo` is optional explicit publishing metadata; GitHub authentication and a PR are unnecessary for the default local workflow.
 
 
 Agent frontmatter hints (`skills`, `model`, `reasoning`) are described in [Agent Definition Contract](skills/agents-relay/contracts/agent-contract.md). They are advisory only and do not alter Skill resolution or Router constraints.
@@ -91,7 +91,7 @@ These paths always represent the current canonical graphs. Historical graph defi
 
 ## Quick start
 
-For new work, create a local Job through Agents Relay. The external GitHub projection may create a display PR after the first meaningful code commit. Tasks are validated against the SQLite Job, not GitHub markers; existing PR-bound Jobs remain readable.
+For new work, create a local Job through Agents Relay. GitHub publication requires an explicit `--github-repo OWNER/REPO`; local execution, review, and merge do not depend on GitHub. Tasks are validated against the SQLite Job, not GitHub markers.
 
 ~~~sh
 cat > job.md <<'EOF'
@@ -100,8 +100,8 @@ cat > job.md <<'EOF'
 Standalone Job context. Put a Mermaid block first when a workflow/state/architecture diagram helps.
 EOF
 
-npx agents-relay job create --repo OWNER/REPO \
-  --title "Objective" --objective-file job.md
+npx agents-relay job create --repo LOCAL_ROOT_NAME --project-root "$PWD" \
+  --title "Objective" --objective-file job.md --initial-plan
 
 # Create-only example: the orchestrator explicitly adds these Tasks.
 # For normal autonomous execution, instead pass --initial-plan at creation
@@ -111,14 +111,14 @@ cat > task.md <<'EOF'
 
 Implement this phase using the Job objective as context.
 EOF
-npx agents-relay task create --repo OWNER/REPO --id JOB_ID \
+npx agents-relay task create --repo LOCAL_ROOT_NAME --id JOB_ID \
   --task-id initial --output task-pr --input-file task.md
 
-npx agents-relay task create --repo OWNER/REPO --id JOB_ID \
+npx agents-relay task create --repo LOCAL_ROOT_NAME --id JOB_ID \
   --task-id child --output task-pr \
   --input "Implement the described child task and publish a terminal event."
 
-npx agents-relay reconcile --repo OWNER/REPO --id JOB_ID
+npx agents-relay reconcile --repo LOCAL_ROOT_NAME --id JOB_ID
 npx agents-relay job show --id JOB_ID
 ~~~
 
@@ -127,12 +127,12 @@ Task readiness is explicit: `DRAFT` means the durable task exists but is not exe
 Mutable draft/queued/retryable task fields can be changed in place without replacing the durable task identity. `task update` rejects `RUNNING`, `SUCCEEDED`, and `CANCELLED` tasks so active execution and terminal history cannot be rewritten. For example:
 
 ~~~sh
-npx agents-relay task update --repo OWNER/REPO --id JOB_ID --task-id child \
+npx agents-relay task update --repo LOCAL_ROOT_NAME --id JOB_ID --task-id child \
   --adapter chatgpt --provider chatgpt --model gpt-5.6-sol --reasoning high \
   --capabilities model,chatgpt,browser-harness
 
 # Explicitly release a held DRAFT task
-npx agents-relay task update --repo OWNER/REPO --id JOB_ID --task-id child --queue
+npx agents-relay task update --repo LOCAL_ROOT_NAME --id JOB_ID --task-id child --queue
 ~~~
 
 Jobs separate durable lifecycle from derived runtime status. Durable lifecycle is `DRAFT | ACTIVE | COMPLETED | CANCELLED`: a newly created Job is DRAFT, and creating executable work or starting the Planner activates it. Runtime status (`IDLE`, `WAITING`, `QUEUED`, `RUNNING`, `BLOCKED`, `FAILED`, `REVIEWING`, `MERGE_PENDING`, `MERGED`, or `CANCELLED`) is computed from Tasks, Review, and locally confirmed merge facts and is never persisted as lifecycle truth.
@@ -162,8 +162,8 @@ can start the next Planner round; PASS proceeds to the local merge gate.
 Manual planning syntax:
 
 ~~~sh
-npx agents-relay plan --repo OWNER/REPO --id JOB_ID --prompt "Plan the implementation from the durable objective"
-npx agents-relay plan --repo OWNER/REPO --id JOB_ID --prompt-file guidance.md
+npx agents-relay plan --repo LOCAL_ROOT_NAME --id JOB_ID --prompt "Plan the implementation from the durable objective"
+npx agents-relay plan --repo LOCAL_ROOT_NAME --id JOB_ID --prompt-file guidance.md
 ~~~
 
 The optional prompt is additional round guidance; it does not replace the durable Job objective. New planning rounds use `plan-N`; historical `planner-N` records remain readable.
@@ -179,7 +179,7 @@ All task producers use the same story-size contract: `S`≈5 minutes, `M`≈15 m
 
 There is no Job scheduling or cron support. Reconciliation resumes objective planning from durable state, including after a missed wake-up or restart. See [objective-driven Jobs](docs/objective-driven-jobs.md).
 
-GitHub projection creates or reuses a display PR after a meaningful source-branch commit. Job creation is create-only by default and enables auto-merge unless `--no-auto-merge` is set. A Coordinator may be included atomically by supplying its Graph, input and absolute execution paths. Existing Jobs can still change that setting with `job update`. Task execution options belong to `task create`, and the orchestrator may create zero, one, or multiple initial Tasks according to user intent.
+GitHub publication is optional and requires an explicit `--github-repo OWNER/REPO`; it is never inferred from the local Git remote. Job creation is create-only by default. A Coordinator may be included atomically by supplying its Graph, input and absolute execution paths. Task execution options belong to `task create`, and the orchestrator may create zero, one, or multiple initial Tasks according to user intent.
 
 Use `job update` for partial mutable metadata changes on an already healthy Job marker/binding:
 
@@ -187,7 +187,7 @@ Use `job update` for partial mutable metadata changes on an already healthy Job 
 npx agents-relay job update --id JOB_ID --priority P0 --no-auto-merge
 ~~~
 
-Request an eligible new review with `npx agents-relay review job --repo OWNER/REPO --id JOB_ID`.
+Request an eligible new review with `npx agents-relay review job --repo LOCAL_ROOT_NAME --id JOB_ID`.
 Pass optional `--thread-id THREAD_ID` to persist a reviewer-thread override for subsequent
 review routing. Without it, Relay uses the stored reviewer thread, then creator thread,
 or the legacy review path when neither exists. This request wakes graph-owned
@@ -207,10 +207,10 @@ review delivery.
 
 Managed GitHub task create/update/show/list/retry/cancel and reconcile/serve commands also require a durable Job marker. Orchestrators do not need raw GitHub commands for normal Job creation or metadata updates: Agents Relay uses its authenticated GitHub client internally.
 
-The original init command remains supported for backward compatibility:
+The init command creates a local demo Job from the current Git root:
 
 ~~~sh
-npx agents-relay init --repo OWNER/REPO --pr 1 --id JOB_ID --title "Objective"
+npx agents-relay init --repo LOCAL_ROOT_NAME --pr 1 --id JOB_ID --title "Objective"
 ~~~
 
 ## npm publishing
@@ -250,7 +250,7 @@ events, durable-thread reuse, resume, or retry behavior.
 
 Open the dashboard on localhost port 8787. The marker format is intentionally public and append-friendly. Daemon/workspace operation uses `ProjectedDurableStore` over SQLite RelayStore plus the authenticated GitHub projection adapter; GitHubStore is not the daemon operational state database.
 
-Deterministic projection conflicts are safe and observable. A same-id/different-definition `append_task`/`append_plan` is classified once into a durable `conflict` state, stops consuming retry budget, keeps structured divergence evidence, and is never auto-overwritten. Inspect with `agents-relay projection conflicts --repo OWNER/REPO --pr NUMBER` and repair explicitly with `agents-relay projection resolve --repo OWNER/REPO --pr NUMBER --projection-id ID --action requeue|discard-local`. See [docs/architecture-v2.md](docs/architecture-v2.md).
+Deterministic projection conflicts are safe and observable. A same-id/different-definition `append_task`/`append_plan` is classified once into a durable `conflict` state, stops consuming retry budget, keeps structured divergence evidence, and is never auto-overwritten. Inspect with `agents-relay projection conflicts --repo LOCAL_ROOT_NAME --pr NUMBER` and repair explicitly with `agents-relay projection resolve --repo LOCAL_ROOT_NAME --pr NUMBER --projection-id ID --action requeue|discard-local`. See [docs/architecture-v2.md](docs/architecture-v2.md).
 
 External product feedback uses the reusable `src/feedback.ts` contract. See [docs/feedback-intake.md](docs/feedback-intake.md) for the schema, attachment limits, privacy rules, materialization path, and provenance envelope for later Jobs/Tasks/PRs.
 
@@ -258,7 +258,7 @@ reconcile leases and launches ready tasks without waiting inside the runtime sch
 
 Router Rules are stored at `~/.agents-relay/execution-router-rules.md` by default and use `[choices]` plus `[routing-instruction]` sections (see the Execution Router doc). `agents-relayd --execution-router-rules PATH` selects a different file for that daemon process; the explicit CLI path takes precedence over `AGENTS_RELAY_EXECUTION_ROUTER_RULES`, which remains supported for compatibility.
 
-`agents-relayd` without `--pr`/`--id` runs in workspace mode by default: it discovers nested Git repositories under `~/Workspace`, keeps only GitHub `origin` remotes, and aggregates their managed PR jobs into one dashboard and worker pool. Pass `--workspace PATH` to use another root. `--repo OWNER/REPO` remains the single-repository pool mode.
+`agents-relayd` without `--pr`/`--id` runs in workspace mode by default: it discovers nested Git repositories under `~/Workspace`, identifies each Git root by its unique directory name, and aggregates its local Jobs into one dashboard and worker pool. Pass `--workspace PATH` to use another root. `--repo LOCAL_ROOT_NAME` selects one local repository identity.
 
 For automation, Agents Relay can use GitHub App installation authentication via `AGENTS_RELAY_GITHUB_APP_ID`, `AGENTS_RELAY_GITHUB_APP_INSTALLATION_ID`, and `AGENTS_RELAY_GITHUB_APP_PRIVATE_KEY_FILE` (or matching CLI flags). Webhook mode is local-first: targeted webhook reconciliation is primary, dashboard auto-refresh reads the disposable in-process view restored from SQLite RelayStore state, and the broad watchdog drops to a 30-minute fallback. No separate persisted dashboard Job cache is maintained. See [docs/github-app-rate-limit.md](docs/github-app-rate-limit.md).
 
@@ -295,7 +295,7 @@ Relay does not discover Skill directories or invoke a separate runtime.
 The ChatGPT adapter uses Relay's `agents/chatgpt-worker.agent.md` lifecycle contract. A new worker uses `webhelm platform run chatgpt new-thread --session-id SESSION_ID --config <file>` in a caller-owned Session. This is a regular persistent ChatGPT thread, which supports the connected Neo MCP in the verified account. Relay closes the Session after submission, but the ChatGPT thread remains in history. Existing-thread review and handoff continue through `new-turn`. File paths are included in the worker message for Neo MCP reading; they are not uploaded as browser attachments. Submission receipts retain `status: submitted`; the event bus owns task completion.
 
 ~~~sh
-npx agents-relay task create --repo OWNER/REPO --pr 5 --id JOB_ID \
+npx agents-relay task create --repo LOCAL_ROOT_NAME --pr 5 --id JOB_ID \
   --task-id research-ui --adapter chatgpt \
   --capabilities model,chatgpt,browser-harness \
   --provider openai --model MODEL \

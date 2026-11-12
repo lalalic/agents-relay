@@ -30,9 +30,9 @@ export function createJobIdRegistryResolver(
     }
     // SQLite remains lifecycle authority. A positive PR binding only enables
     // the external collaboration adapter for projection/merge side effects.
-    const githubEnabled = !options.noGitHub && job.prNumber > 0 && options.client;
+    const githubEnabled = !options.noGitHub && !!job.githubRepo && job.prNumber > 0 && options.client;
     const github = githubEnabled
-      ? new GitHubStore(options.client!, job.repository, job.prNumber, options.trustedAuthors ?? new Set())
+      ? new GitHubStore(options.client!, job.githubRepo!, job.prNumber, options.trustedAuthors ?? new Set())
       : new InMemoryStore();
     return { job, relay, store: new LocalAuthorityDurableStore(relay, github, undefined, !githubEnabled) };
   };

@@ -26,7 +26,7 @@ test('agent frontmatter is advisory in worker prompt and model routing, includin
     assert.equal(editor.preferredReasoning, 'high');
     assert.deepEqual(context.skills, [], 'suggestions do not install, filter, or require skills');
 
-    const job = { id: 'test-job', repository: 'local/repo', title: 'Make vlog', tasks: [], plans: [] };
+    const job = { id: 'test-job', repository: 'repo', title: 'Make vlog', tasks: [], plans: [] };
     const task = { id: 'test-task', title: 'Compose video', executionId: 'exec-test', agentName: 'vlog-editor',
       adapter: 'codex', output: { kind: 'task_pr' }, input: 'private task input', kind: 'work' };
     const prompt = await managedWorkerInput(job, task, context);
@@ -110,7 +110,7 @@ test('reconciler forwards the selected task Agent preference to the real unified
     const task = { id: 'task-1', jobId: 'job-1', kind: 'work', agentName: 'implementation', state: 'QUEUED',
       adapter: 'codex', capabilities: ['model'], input: 'Implement', output: { kind: 'task_pr' }, storySize: 'M', attempt: 0, maxAttempts: 1,
       dependencies: [], executionId: null, leaseOwner: null, leaseExpiresAt: null, createdAt: now, updatedAt: now };
-    const job = { id: 'job-1', repository: 'local/project', prNumber: 1, title: 'Test',
+    const job = { id: 'job-1', repository: 'project', prNumber: 1, title: 'Test',
       state: 'ACTIVE', tasks: [task], createdAt: now, updatedAt: now };
     const store = new InMemoryStore(job);
     const calls = [];
@@ -157,7 +157,7 @@ test('Planner Agent skill suggestions appear in Planner User Assignment without 
     const context = await resolveExecutionContext(project, 'planner', { workspaceRoot: root, globalRoot });
     const { buildPlannerExecutionPrompt } = await import('../dist/planner.js');
     const prompt = await buildPlannerExecutionPrompt({
-      job: { id: 'job-planner', repository: 'local/project', title: 'Plan' },
+      job: { id: 'job-planner', repository: 'project', title: 'Plan' },
       planExecution: { planId: 'plan-1', executionId: 'exec-planner' },
       executionContext: context,
     });

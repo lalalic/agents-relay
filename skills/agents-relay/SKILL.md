@@ -7,6 +7,15 @@ description: Use Agents Relay for durable multi-step or multi-agent work that ne
 
 Relay owns durable Jobs and Tasks. Use its CLI—not private storage or GitHub projections. Handle one-shot work directly.
 
+## Capability tree
+
+Goal: reliably create, inspect, resume, review, and merge a local Git Job, with optional GitHub publishing.
+
+- Create: bind one Job ID to a validated canonical local Git root; optionally create the first Plan or a Coordinator DAG.
+- Inspect and resume: use the version-matched CLI and SQLite-backed Job/Task history.
+- Review and merge: review the local Git head, then merge through the normal Job gate.
+- Publish: use an explicitly configured GitHub remote for external PR effects; publishing is never required for local completion.
+
 ## Job Execution Lifecycle (JEL)
 
 Explain **JEL** to the user: **Create → [optional Plan] → Execute → Final Review → Merge → Completed**. A Coordinator Agent Graph does not need an initial Planner; otherwise the same Task/Review/Merge lifecycle applies. After work/recovery Tasks terminate (SUCCEEDED/FAILED/CANCELLED), Final Review judges completion: PASS merges; CHANGES_REQUIRED persists findings, starts Planner N+1 for minimal fixes, then re-reviews. No automatic post-success Plan. Planner/Workers use discovered **ponytail** Skill (YAGNI, reuse, minimal Tasks); preserve mandatory safeguards.
@@ -18,12 +27,12 @@ Use Relay for durable multi-Task work with explicit objectives and acceptance cr
 Consult CLI help; examples:
 
 ```sh
-npx agents-relay job create --repo OWNER/REPO --title "Objective" --objective-file job.md --initial-plan
+npx agents-relay job create --repo LOCAL_ROOT_NAME --project-root /absolute/path/to/git-root --title "Objective" --objective-file job.md --initial-plan
 npx agents-relay job show --id JOB_ID
-npx agents-relay task list --repo OWNER/REPO --id JOB_ID
+npx agents-relay task list --repo LOCAL_ROOT_NAME --id JOB_ID
 ```
 
-Use returned Job IDs. Omit `--initial-plan` for DRAFT-only or Coordinator Graph work. GitHub is audit-only; local Git owns merge. For local-only operations use `--no-github`.
+`job.repository` is the local Git root directory name and `job.projectRoot` is its immutable canonical path. `job.projectPath` may select a nested directory such as `vlog`. `job.githubRepo` is optional remote metadata for explicit publishing effects. Use returned Job IDs. Omit `--initial-plan` for DRAFT-only or Coordinator Graph work. Local Git is the source of truth for review and merge; no GitHub login is needed for the default workflow.
 
 Read `contracts/task-job-contract.md` before authoring or changing Jobs or Tasks and `contracts/orchestrator-workflows.md` when handling initial planning, P0/self Jobs, or merge/delivery boundaries. For content work, load the active Neo Project rules, its Agent Graph if present, and the relevant stage contracts—not a presumed universal production sequence.
 
@@ -57,7 +66,7 @@ To create a plan-free Coordinator Job, include its Graph and execution paths
 **in the original Job creation**, atomically with the durable Job. For example:
 
 ```sh
-npx agents-relay job create --repo OWNER/REPO --title "Episode" \
+  npx agents-relay job create --repo LOCAL_ROOT_NAME --project-root /absolute/project/root --title "Episode" \
   --objective-file job.md \
   --coordinator-graph-file /absolute/project/graph.mmd \
   --coordinator-input-file /absolute/run/neo-project-run.input.md \
@@ -81,7 +90,7 @@ there is no automatic Plan or special content-only completion mode.
 
 ## 3. Verify, review, and recover
 
-Inspect Task status/events with pinned CLI. Final Review: `agents-relay review job --repo OWNER/REPO --id JOB_ID [--thread-id THREAD_ID]`. Agent review: `agents-relay review run --prompt-file PATH --project-path DIR`.
+Inspect Task status/events with pinned CLI. Final Review: `agents-relay review job --repo LOCAL_ROOT_NAME --id JOB_ID [--thread-id THREAD_ID]`. Agent review: `agents-relay review run --prompt-file PATH --project-path DIR`.
 
 Process exit and delivery are not Task completion. Agents publish `task.started`, optional `task.progress`, and one correlated terminal `task.completed` or `task.failed` via `events-bus`; never `task.blocked`. See `contracts/event-contract.md` and `contracts/worker-self-review.md`.
 

@@ -64,7 +64,7 @@ async function makePrompt(role, scenario, work, context, index) {
     state: 'QUEUED', error: null, timeoutMs,
   };
   const job = {
-    id: jobId, repository: 'local/l2-isolated', title: `L2 ${role} fixture`,
+    id: jobId, repository: 'l2-isolated', title: `L2 ${role} fixture`,
     objective: `Evaluate the ${role} contract against isolated synthetic evidence.`,
     state: 'ACTIVE', localMerge: { sourceRef: `l2-${index}` }, tasks: [task], plans: [], prNumber: 0,
   };

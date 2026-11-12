@@ -41,7 +41,7 @@ import { applyJobActivateAction } from './job-actions.js';
 import { managedTaskUpdateHandler } from './task-update.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
-import { defaultWorkspaceRoot, discoverWorkspaceRepositories, ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
+import { defaultWorkspaceRoot, discoverWorkspaceRepositories, ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveJobProjectRoot, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { createRuntimeStatusPublisher } from './runtime-status-events.js';
@@ -56,7 +56,7 @@ import { routeExecution } from './execution-routing.js';
 import { RelayObservability, classifyFailure, errorMessage, observability, setObservability } from './observability.js';
 
 export function createWorkspaceControl(deps: any) {
-  const { client, trusted, noGitHub, repositories, refreshAll, requireLocalJobBinding, makeReconciler, concurrency, pool, bus, isEffectivelyBlocked, unblockTask, publishTaskUnblocked, dispatchTaskAction, registerBlockerDependency, discoverAgents, ensureManagedGitHubJob, ensureBlockerRecovery: runBlockerRecovery = ensureBlockerRecovery } = deps;
+  const { client, trusted, noGitHub, repositories, repositoryPaths, refreshAll, requireLocalJobBinding, makeReconciler, concurrency, pool, bus, isEffectivelyBlocked, unblockTask, publishTaskUnblocked, dispatchTaskAction, registerBlockerDependency, discoverAgents, ensureManagedGitHubJob, ensureBlockerRecovery: runBlockerRecovery = ensureBlockerRecovery } = deps;
   const workspaceControl = async (body: Record<string, unknown>): Promise<unknown> => {
     const command = typeof body.command === 'string' ? body.command : '';
     const jobId = typeof body.jobId === 'string' ? body.jobId : '';
@@ -74,6 +74,8 @@ export function createWorkspaceControl(deps: any) {
         idempotencyKey: typeof options.idempotencyKey === 'string' ? options.idempotencyKey : undefined,
         title: typeof options.title === 'string' ? options.title : undefined,
         objective: typeof options.objective === 'string' ? options.objective : undefined,
+        projectRoot: typeof options.projectRoot === 'string' ? options.projectRoot : undefined,
+        githubRepo: typeof options.githubRepo === 'string' ? options.githubRepo : undefined,
         projectPath: typeof options.projectPath === 'string' ? options.projectPath : undefined,
         priority: options.priority as import('./types.js').Priority | undefined,
                 tag: options.tag as import('./types.js').Job['tag'] | undefined,
@@ -197,7 +199,7 @@ export function createWorkspaceControl(deps: any) {
         throw new Error('task.revise requires matching repository, original/reviewer IDs, active execution ID, valid SHA, stable request ID and nonempty findings');
       // Trust fresh local Git truth, not the caller or PR projection. The
       // atomic reducer independently checks durable head and execution.
-      const projectRoot = await resolveManagedProjectPath(job.repository);
+      const projectRoot = await resolveJobProjectRoot(job);
       const projectPath = resolveRepositoryProjectPath(projectRoot, job.projectPath);
       const liveHead = job.localMerge?.sourceRef
         ? localSourceHead(projectPath, job.localMerge.sourceRef)
@@ -296,6 +298,7 @@ export function createWorkspaceControl(deps: any) {
       const recoveryInput: BlockerRecoveryInput = {
         requestId: readText('requestId'),
         targetRepository: readText('targetRepository'),
+        targetProjectRoot: repositoryPaths.get(readText('targetRepository')) ?? '',
         dependentRepository: readText('dependentRepository'),
         dependentJobId: readText('dependentJobId'),
         dependentTaskId: readText('dependentTaskId'),
