@@ -85,7 +85,7 @@ export function createWorkspaceControl(deps: any) {
         reviewerThreadId: typeof options.reviewerThreadId === 'string' ? options.reviewerThreadId : undefined,
         creatorThreadId: typeof options.creatorThreadId === 'string' ? options.creatorThreadId : undefined,
         implementationThreadId: typeof options.implementationThreadId === 'string' ? options.implementationThreadId : undefined,
-        noGitHub,
+        noGitHub: noGitHub || options.noGitHub === true,
         coordinator: options.coordinator as {graph:string;input:string;outputPath:string;projectRoot:string;workspaceRoot:string;sharedRoot?:string;globalRoot?:string}|undefined,
         persist: body.initialPlan !== true,
       });

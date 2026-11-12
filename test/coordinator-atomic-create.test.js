@@ -54,3 +54,20 @@ test('Coordinator creation preserves independent final Review and Git Merge flag
  assert.equal(noMerge.job.reviewEnabled,true);assert.equal(noMerge.job.autoMerge,false);
  assert.equal(noMerge.job.tasks[0].id,'coordinator');
 });
+
+test('Control preserves caller no-GitHub intent when creating a Coordinator Job', async () => {
+  for(const [serverNoGitHub,requestNoGitHub] of [[false,true],[true,false]]){
+    let passed;
+    const control=createWorkspaceControl({
+      client:{},trusted:new Set(),noGitHub:serverNoGitHub,repositories:[],refreshAll:async()=>{},
+      ensureManagedGitHubJob:async (_client,_repo,_trusted,options)=>{
+        passed=options;
+        return {job:{id:'isolated',state:'DRAFT'},pr:{number:0}};
+      },
+    });
+    const response=await control({command:'job.create',repository:'project',
+      options:{noGitHub:requestNoGitHub,coordinator:{graph,input:'x'}}});
+    assert.equal(passed.noGitHub,true);
+    assert.equal(response.taskId,'coordinator');
+  }
+});

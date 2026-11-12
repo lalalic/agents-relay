@@ -226,7 +226,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     const result = await relayControlCommand(args, { command: 'job.create', repository: repo, initialPlan: hasArg(args, '--initial-plan'), options: {
       id: id || undefined, idempotencyKey: arg(args, '--idempotency-key') || undefined, title: arg(args, '--title') || undefined, objective: objective || undefined, projectRoot: coordinator?.projectRoot ?? (arg(args, '--project-root') || process.cwd()), projectPath: arg(args, '--project-path') || undefined, githubRepo: arg(args, '--github-repo') || undefined,
       priority: priority(args), tag: jobTagFromArgs(args), reviewEnabled: !hasArg(args, '--no-review'), autoMerge: !hasArg(args,'--no-auto-merge'), continuation: continuation(args),
-      coordinator,
+      coordinator, noGitHub: noGitHubMode(args),
       reviewerThreadId: hasArg(args, '--reviewer-thread-id') ? arg(args, '--reviewer-thread-id') : undefined, creatorThreadId: hasArg(args, '--creator-thread-id') ? arg(args, '--creator-thread-id') : undefined, implementationThreadId: hasArg(args, '--implementation-thread-id') ? arg(args, '--implementation-thread-id') : undefined,
     }}); console.log(JSON.stringify(result, null, 2)); return;
   }
