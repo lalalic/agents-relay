@@ -77,6 +77,8 @@ To create a plan-free Coordinator Job, include its Graph and execution paths
 npx agents-relay job run --id JOB_ID --task-id NUMERIC_TASK_ID \
   --project-path /absolute/project --workspace-root /absolute/workspace \
   --shared-root /absolute/shared
+# Immediate CLI execution and live events (no background scheduling wait):
+# append --foreground to the `job run` invocation.
 ```
 
 Creation atomically persists **DRAFT Job + Coordinator Task**. Every persisted
@@ -84,8 +86,10 @@ Task ID is a store-global monotonically allocated positive decimal string.
 Use the `taskId` returned by `job create` for Coordinator activation and persist
 it in caller-owned run bindings. Task IDs are opaque references; DAG identity
 comes from `dagNode.parentTaskId`, `dagNode.nodeId`, and `dagNode.graphHash`.
-Activation
-returns a scheduled receipt, not completion. Neo's `neo project run` wraps this
+Normal activation returns a scheduled receipt, not completion. With
+`--foreground`, the same Reconciler executes immediately and prints Task
+events until Job completion; Ctrl+C interrupts local workers while retaining
+durable Job state for normal recovery. Neo's `neo project run` wraps this
 creation/binding/activation sequence and resumes an existing Run without
 creating a second Job. Do not use legacy `--shortcut-execution`, `--mode
 shortcut`, `--shortcut-local`, `--legacy-shortcut-runtime` or receipts.

@@ -216,3 +216,28 @@ test('L3-U16: DAG Troubleshooter inherits bound Coordinator checkout',async t=>{
  const completed=await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();return j.tasks.find(t=>t.agentName==='troubleshooter'&&t.parentTaskId===parentTaskId)?.state==='SUCCEEDED'?j:null},'bound Graph Troubleshooter',7500);
  assert.equal(completed.tasks.find(t=>t.agentName==='troubleshooter'&&t.parentTaskId===parentTaskId).state,'SUCCEEDED');
 });
+
+test('L3-U17: foreground CLI immediately executes all DAG stages and prints live events',async t=>{
+ const f=await fixture(t,{mode:'normal'});
+ const cli=fileURLToPath(new URL('../../dist/cli.js',import.meta.url));
+ await mkdir(join(f.root,'stores'),{recursive:true});
+ const result=spawnSync(process.execPath,[cli,'job','run','--id',f.id,'--task-id',f.coordinatorId,
+   '--no-github','--events','none','--foreground','--store-dir',join(f.root,'stores'),
+   '--project-path',f.project,'--workspace-root',f.root,'--concurrency','3'],
+   {encoding:'utf8',timeout:25000,env:{...process.env,AGENTS_RELAY_STORE_DIR:f.root}});
+ assert.equal(result.status,0,`stdout=${result.stdout}\nstderr=${result.stderr}`);
+ assert.match(result.stdout,/foreground execution/);
+ assert.match(result.stdout,/task.started/);
+ assert.match(result.stdout,/task.completed/);
+ assert.match(result.stdout,/Job 19002: COMPLETED/);
+ const finished=await f.load();
+ assert.equal(finished.state,'COMPLETED');
+ assert.deepEqual(finished.tasks.filter(task=>task.dagNode).map(task=>task.state),['SUCCEEDED','SUCCEEDED','SUCCEEDED']);
+ const second=spawnSync(process.execPath,[cli,'job','run','--id',f.id,'--task-id',f.coordinatorId,
+   '--no-github','--events','none','--foreground','--store-dir',join(f.root,'stores'),
+   '--project-path',f.project,'--workspace-root',f.root],
+   {encoding:'utf8',timeout:10000,env:{...process.env,AGENTS_RELAY_STORE_DIR:f.root}});
+ assert.equal(second.status,0,second.stderr);
+ assert.match(second.stdout,/Job 19002: COMPLETED/);
+ assert.equal((await f.trace()).match(/script:first:new/g)?.length,1,'reattach must not relaunch completed nodes');
+});

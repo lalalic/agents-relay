@@ -41,7 +41,7 @@ Actions:
   create  Atomically create a durable Job, optionally with its Coordinator DAG Task
   update  Partially update mutable metadata on a healthy existing Job
   show    Show one durable Job
-  run     Activate an ordinary DRAFT Coordinator Graph Job; Relay schedules its Tasks
+  run     Activate a Coordinator Graph Job; --foreground runs immediately and streams console events
   list    List managed Jobs in a repository
   merge   Legacy entry point; local Git merge is Graph-owned (no CLI PR merge)
   unblock Authoritatively invalidate current BLOCKED decisions and trigger replanning/resume
@@ -60,9 +60,13 @@ Coordinator/DAG creation and activation (no initial Planner required):
     --coordinator-workspace-root /abs/workspace [--coordinator-shared-root /abs/shared]
   agents-relay job run --id JOB --task-id NUMERIC_TASK_ID
     [--project-path /abs/project] [--workspace-root /abs/workspace]
+    [--foreground] [--concurrency 4]
 
 Creation atomically stores DRAFT Job and Coordinator Task; activation only
-wakes the ordinary Task Reconciler and returns ACTIVE. The Coordinator owns
+wakes the ordinary Task Reconciler and returns ACTIVE. With --foreground,
+the CLI runs that Reconciler directly, prints live Task events, and waits for the
+Job to reach a terminal state (Ctrl+C interrupts local workers, but keeps the Job durable for recovery).
+The Coordinator owns
 one durable Script/Model Task per ready DAG node. After a terminal event,
 its successors are dispatched immediately when capacity permits. Independent
 Final Review and Git Merge policies remain in force. Review previews do not

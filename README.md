@@ -402,7 +402,12 @@ Agent lookup has exactly two layers: Relay built-in `skills/agents-relay/agents/
 
 Create a Job without `--initial-plan`, materialize one queued Agent Graph Task,
 then activate it with `agents-relay job run --id JOB --task-id TASK`. No
-`executionMode` is stored; `job run` only activates and publishes a wake-up.
+`executionMode` is stored; normal `job run` only activates and publishes a wake-up.
+For an immediate foreground run with streaming Task events (no scheduler wait), use
+`agents-relay job run --id JOB --task-id TASK --foreground`. This runs the
+ordinary Reconciler and waits for a terminal Job state; Ctrl+C interrupts
+local workers but preserves durable Job state for normal recovery. Model-backed
+Tasks still require the configured Event Bus.
 The ordinary Reconciler creates the Coordinator and durable Agent-named Tasks,
 with the same Script/Model execution, Task Review, Retry and recovery used by
 all other Jobs. Final Review follows the normal `--review`/`--no-review`

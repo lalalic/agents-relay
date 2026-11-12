@@ -28,9 +28,9 @@ async function start(f){
  await f.reconciler.reconcile(f.id);
 }
 async function waiting(f,node){
- const id='dag-initial-'+node;
  return until(async()=>{
-  const job=await f.load(),task=job.tasks.find(t=>t.id===id);
+  const job=await f.load(),task=job.tasks.find(t=>t.dagNode?.nodeId===node);
+  const id=task?.id;
   if(task?.state==='FAILED'||task?.state==='BLOCKED')
    throw Error('Unexpected Task failure: '+JSON.stringify({id,state:task.state,error:task.error,executionId:task.executionId,attempt:task.attempt,history:task.executionHistory})+'; trace='+(await f.trace()).slice(-800));
   return task?.state==='AWAITING_DECISION'?task:null;
@@ -66,7 +66,7 @@ test('L3-C01: mixed three-node DAG A/C Shortcut + B Model completes without Agen
  const done=await completed(f);
  assert.deepEqual(done.tasks.filter(task=>task.dagNode).map(task=>task.dagNode.executor),['script','model','script']);
  assert.deepEqual((await f.trace()).trim().split('\n'),['script:first:new','script:last:new']);
- assert.deepEqual(f.launches.filter(item=>item.id==='dag-initial-B').map(item=>item.review),[undefined]);
+ assert.deepEqual(f.launches.filter(item=>item.id===done.tasks.find(t=>t.dagNode?.nodeId==='B')?.id).map(item=>item.review),[undefined]);
  assert.equal(done.review,undefined,'no Job Review is pending');
  assert.ok(done.tasks.every(task=>!task.interactiveInvocation),'no Agent requested interactive review');
  await access(join(f.root,'relay.sqlite')); // Confirm durable SQLite exists within the disposable fixture.
@@ -79,12 +79,13 @@ test('L3-C02: three-node Review / Approve / direct event continuation to the nex
   const task=await waiting(f,node),inv=task.interactiveInvocation;
   assert.equal(inv.revision,inv.executionId);
   assert.equal(inv.status,'awaiting_decision');
-  assert.equal(task.id,'dag-initial-'+node,'Review attaches to Agent, not Coordinator');
+  assert.match(task.id,/^[1-9][0-9]*$/,'durable Task IDs are global numeric IDs');
+  assert.equal(task.parentTaskId,f.coordinatorId,'Review attaches to the Agent');
   await f.decide(node,'approved');
  }
  await completed(f);
  const trace=await f.trace();
- assert.equal(trace.split('\n').filter(x=>x.startsWith('preview:dag-initial-')).length,3);
+ assert.equal(trace.split('\n').filter(x=>/^preview:[1-9][0-9]*$/.test(x)).length,3);
  for(const agent of ['first','middle','last'])
   assert.equal(trace.split('\n').filter(x=>x==='script:'+agent+':new').length,1);
 });
@@ -102,8 +103,8 @@ test('L3-C03: Script B Request Changes uses the SAME durable Agent Task, then re
  const correction=JSON.parse(await readFile(join(f.project,'middle-correction.json'),'utf8'));
  assert.equal(correction.corrected,true);
  assert.equal(correction.feedback,'change the hook');
- assert.equal((await readFile(join(f.project,'middle-correction.meta'),'utf8')),'dag-initial-B');
- assert.ok(f.launches.some(l=>l.id==='dag-initial-B' && l.review==='changes_requested'),
+ assert.equal((await readFile(join(f.project,'middle-correction.meta'),'utf8')),initial.id);
+ assert.ok(f.launches.some(l=>l.id===initial.id && l.review==='changes_requested'),
   'Model corrects source artifacts within the same Agent Task');
  await f.decide('B','approved');
  await completed(f);
@@ -126,7 +127,7 @@ test('L3-C04: model-only B Request Changes resumes SAME Model Task and re-review
  assert.equal(correction.feedback,'change the hook');
  await f.decide('B','approved');
  await completed(f);
- assert.deepEqual(f.launches.filter(l=>l.id==='dag-initial-B').map(l=>l.review),
+ assert.deepEqual(f.launches.filter(l=>l.id===first.id).map(l=>l.review),
   [undefined,'changes_requested','approved'],'every revision stays on the same durable Model Agent Task');
  assert.deepEqual((await f.trace()).trim().split('\n').filter(x=>x.startsWith('script:')),
   ['script:first:new','script:last:new'],'model-only B never runs Script');
@@ -141,37 +142,37 @@ test('L3-C05: mixed Shortcut A and Model B each Request Changes -> re-review -> 
  const first=await waiting(f,'A');
  assert.equal(first.dagNode.executor,'script');
  let current=await f.load();
- assert.equal(current.tasks.some(task=>task.id==='dag-initial-B'||task.id==='dag-initial-C'),false);
+ assert.equal(current.tasks.some(task=>['B','C'].includes(task.dagNode?.nodeId)),false);
  await f.decide('A','changes_requested');
  const revisedA=await waiting(f,'A');
  assert.equal(revisedA.id,first.id);
  assert.notEqual(revisedA.interactiveInvocation.invocationId,first.interactiveInvocation.invocationId);
  assert.notEqual(revisedA.interactiveInvocation.revision,first.interactiveInvocation.revision);
- assert.equal((await f.load()).tasks.some(task=>task.id==='dag-initial-B'),false,'B cannot run before Shortcut A approval');
+ assert.equal((await f.load()).tasks.some(task=>task.dagNode?.nodeId==='B'),false,'B cannot run before Shortcut A approval');
  assert.equal(JSON.parse(await readFile(join(f.project,'first-correction.json'),'utf8')).feedback,'change the hook');
  await f.decide('A','approved');
  const second=await waiting(f,'B');
  assert.equal(second.dagNode.executor,'model');
  current=await f.load();
- assert.equal(current.tasks.some(task=>task.id==='dag-initial-C'),false,'C cannot run before Model B approval');
+ assert.equal(current.tasks.some(task=>task.dagNode?.nodeId==='C'),false,'C cannot run before Model B approval');
  await f.decide('B','changes_requested');
  const revisedB=await waiting(f,'B');
  assert.equal(revisedB.id,second.id);
  assert.notEqual(revisedB.interactiveInvocation.invocationId,second.interactiveInvocation.invocationId);
  assert.notEqual(revisedB.interactiveInvocation.revision,second.interactiveInvocation.revision);
- assert.equal((await f.load()).tasks.some(task=>task.id==='dag-initial-C'),false);
+ assert.equal((await f.load()).tasks.some(task=>task.dagNode?.nodeId==='C'),false);
  assert.equal(JSON.parse(await readFile(join(f.project,'middle-correction.json'),'utf8')).feedback,'change the hook');
  await f.decide('B','approved');
  const finished=await completed(f);
  assert.deepEqual(finished.tasks.filter(task=>task.dagNode).map(task=>task.dagNode.executor),['script','model','script']);
- assert.deepEqual(f.launches.filter(task=>task.id==='dag-initial-A').map(task=>task.review),['changes_requested'],
+ assert.deepEqual(f.launches.filter(task=>task.id===first.id).map(task=>task.review),['changes_requested'],
   'Shortcut A reuses its declared Script executor after Approve; its changes-requested revision used Model');
- assert.deepEqual(f.launches.filter(task=>task.id==='dag-initial-B').map(task=>task.review),[undefined,'changes_requested','approved']);
+ assert.deepEqual(f.launches.filter(task=>task.id===second.id).map(task=>task.review),[undefined,'changes_requested','approved']);
  assert.deepEqual((await f.trace()).trim().split('\n').filter(item=>item.startsWith('script:')),
   ['script:first:new','script:first:approved','script:last:new']);
  assert.equal(finished.tasks.length,4,'reviews must resume the original Task, not spawn separate revision Tasks');
  for(const node of ['A','B']){
-  const task=finished.tasks.find(task=>task.id==='dag-initial-'+node);
+  const task=finished.tasks.find(task=>task.dagNode?.nodeId===node);
   assert.equal(task.state,'SUCCEEDED');
   assert.ok(task.executionHistory?.length>=2,'review must retain execution generations');
  }

@@ -11,6 +11,7 @@ import { ensureManagedGitHubJob } from './cli-job-create.js';
 import { pauseJob, resumeJob } from './job-pause.js';
 export { ensureManagedGitHubJob } from './cli-job-create.js';
 import { runCoordinatorJobCommand } from './cli-coordinator.js';
+import { runForegroundCoordinator, type ForegroundReporter } from './cli-foreground.js';
 import { runContextCommand } from './cli-context.js';
 import { migrateJobLocalRepositories } from './job-local-repository-migration.js';
 async function runManagedTaskCommand(action: 'create'|'retry'|'cancel', args: string[]): Promise<void> {
@@ -230,7 +231,13 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
       reviewerThreadId: hasArg(args, '--reviewer-thread-id') ? arg(args, '--reviewer-thread-id') : undefined, creatorThreadId: hasArg(args, '--creator-thread-id') ? arg(args, '--creator-thread-id') : undefined, implementationThreadId: hasArg(args, '--implementation-thread-id') ? arg(args, '--implementation-thread-id') : undefined,
     }}); console.log(JSON.stringify(result, null, 2)); return;
   }
-  if (action === 'run') { await runCoordinatorJobCommand(args,id); return; }
+  if (action === 'run') { await runCoordinatorJobCommand(args,id,async (store,jobId,taskId)=>{
+    await withEventBus(args,async bus=>{
+      const reporter: ForegroundReporter = event => process.stdout.write(event+'\n');
+      const reconciler=runtime(store,args,bus,undefined,event=>reporter.event?.(event));
+      await runForegroundCoordinator({store,reconciler,bus,jobId,taskId,reporter});
+    });
+  }); return; }
   const job = await relayControlJob(args, id);
   if (action === 'unblock') { const reason = arg(args, '--reason'); if (!reason.trim()) throw new Error('job unblock requires --reason'); const updated = await relayControlCommand<Job>(args, { command: 'job.unblock', jobId: id, reason }); console.log(JSON.stringify(updated, null, 2)); return; }
   if (action === 'show') { console.log(JSON.stringify(job, null, 2)); return; }
@@ -271,7 +278,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   console.log(JSON.stringify(await relayControlCommand<Job>(args, { command: 'job.update', jobId: id, patch }), null, 2));
 }
 export function runtimePlanner(args: readonly string[]): AgentObjectivePlanner | CommandObjectivePlanner { const plannerCommand = arg([...args], '--planner-command'); const modelRuntime = arg([...args], '--codex', 'codex'); return plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); }
-export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined, usageRegistry = codexAndZaiUsageRegistry()): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const modelRuntime = arg(args, '--codex', 'codex'); const policy = chatGptTabClosePolicy(args); const planner = runtimePlanner(args); return new Reconciler(store, { noGitHub: noGitHubMode(args), owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter({ tabClosePolicy: policy }), new ZAdapter()], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, usageSnapshotProvider: () => usageRegistry.snapshot(), decisionEngine: executionDecisionEngine(), decisionMode: decisionMode(), reviewer: runtimeReviewer(args), eventBus: bus, emit, chatgptTabClosePolicy: policy, executionContextRoots: { workspaceRoot: arg(args, '--workspace-root') || process.env.AGENTS_RELAY_WORKSPACE_ROOT, sharedRoot: arg(args, '--shared-root') || process.env.AGENTS_RELAY_SHARED_ROOT || undefined, globalRoot: arg(args, '--global-root') || process.env.AGENTS_HOME || undefined }, projectPathForJob: async (job, task) => { const workspaceRoot = await resolveWorkspaceRoot(arg(args, '--workspace-root') || undefined); const canonical = await resolveJobProjectRoot(job); if (!(task ? taskRequiresManagedWorktree(job, task) : Boolean(job.localMerge?.sourceRef))) return resolveRepositoryProjectPath(canonical, job.projectPath);
+export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined, usageRegistry = codexAndZaiUsageRegistry(), customEmit?: (event: EventRecord) => void | Promise<void>): Reconciler { const emit = customEmit ?? ((event: EventRecord): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }); const modelRuntime = arg(args, '--codex', 'codex'); const policy = chatGptTabClosePolicy(args); const planner = runtimePlanner(args); return new Reconciler(store, { noGitHub: noGitHubMode(args), owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter({ tabClosePolicy: policy }), new ZAdapter()], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, usageSnapshotProvider: () => usageRegistry.snapshot(), decisionEngine: executionDecisionEngine(), decisionMode: decisionMode(), reviewer: runtimeReviewer(args), eventBus: bus, emit, chatgptTabClosePolicy: policy, executionContextRoots: { workspaceRoot: arg(args, '--workspace-root') || process.env.AGENTS_RELAY_WORKSPACE_ROOT, sharedRoot: arg(args, '--shared-root') || process.env.AGENTS_RELAY_SHARED_ROOT || undefined, globalRoot: arg(args, '--global-root') || process.env.AGENTS_HOME || undefined }, projectPathForJob: async (job, task) => { const workspaceRoot = await resolveWorkspaceRoot(arg(args, '--workspace-root') || undefined); const canonical = await resolveJobProjectRoot(job); if (!(task ? taskRequiresManagedWorktree(job, task) : Boolean(job.localMerge?.sourceRef))) return resolveRepositoryProjectPath(canonical, job.projectPath);
     const sourceRef = job.localMerge?.sourceRef ?? await ensureLocalJobSourceBranch(canonical, job);
     if (!job.localMerge?.sourceRef) {
       if (!task || !store.mutateJob) throw new Error('Managed source branch binding requires an executing code Task and atomic SQLite mutation');
