@@ -26,3 +26,14 @@ test('legacy in-progress Planner Task delegates completion to Final Review when 
   assert.equal(completionGateSatisfied({...reviewed,reviewEnabled:false}),false);
   assert.equal(completionGateSatisfied({...reviewed,tasks:[{...work,state:'FAILED'},legacy]}),false);
 });
+
+test('plan-free Coordinator Graph completion requires successful Coordinator and all implementation nodes',()=>{
+  const coordinator={id:'coordinator',kind:'work',agentName:'coordinator',state:'SUCCEEDED'};
+  const graph={plans:[],reviewEnabled:false,tasks:[coordinator,work]};
+  assert.equal(completionGateSatisfied(graph),true);
+  assert.equal(completionGateSatisfied({...graph,tasks:[{...coordinator,state:'RUNNING'},work]}),false);
+  assert.equal(completionGateSatisfied({...graph,tasks:[coordinator,{...work,state:'FAILED'}]}),false);
+  assert.equal(completionGateSatisfied({...graph,tasks:[work]}),false);
+  assert.equal(completionGateSatisfied({...graph,plans:[{round:1,status:'FAILED'}]}),false);
+  assert.equal(completionGateSatisfied({...graph,tasks:[coordinator,work,{id:'recovery',kind:'work',agentName:'troubleshooter',state:'CANCELLED'}]}),true);
+});

@@ -9,8 +9,13 @@ export function completionGateSatisfied(job: Job): boolean {
   const latest = [...(job.plans ?? [])].sort((a, b) => a.round - b.round).at(-1);
   const planSatisfied = latest?.status === 'SUCCEEDED' && (job.reviewEnabled !== false || latest.objectiveStatus === 'satisfied');
   const legacySatisfied = (job.plans?.length ?? 0) === 0 && job.tasks.some(task => task.kind === 'planner' && task.state === 'SUCCEEDED' && (job.reviewEnabled !== false || task.plannerResult?.objective_status === 'satisfied'));
+  // Plan-free Coordinator Graph Jobs have a durable Coordinator Task instead of a Planner.
+  // Do not let unrelated successful work or an incomplete Coordinator satisfy this gate.
+  const coordinatorSatisfied = (job.plans?.length ?? 0) === 0
+    && job.tasks.some(task => task.id === 'coordinator' && task.state === 'SUCCEEDED');
   const implementation = implementationTasks(job);
-  return (planSatisfied || legacySatisfied) && implementation.length > 0 && implementation.every(task => task.state === 'SUCCEEDED');
+  return (planSatisfied || legacySatisfied || coordinatorSatisfied)
+    && implementation.length > 0 && implementation.every(task => task.state === 'SUCCEEDED');
 }
 export function refreshTaskDependencies(job: Job): Job {
   if (job.pause) return job;
