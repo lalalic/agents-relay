@@ -65,6 +65,7 @@ export function createWorkspaceControl(deps: any) {
     if (command === 'job.create') {
       const repository = typeof body.repository === 'string' ? body.repository : '';
       const options = (body.options && typeof body.options === 'object' ? body.options : {}) as Record<string, unknown>;
+      if (options.contentOnly !== undefined || options.executionMode !== undefined) throw new Error('Execution mode/content-only is obsolete; use normal Job reviewEnabled and autoMerge policy');
       if (!repository) throw new Error('job.create requires repository');
       if ('schedule' in options) throw new Error('Job schedules are unsupported');
       const result = await ensureManagedGitHubJob(client, repository, trusted, {
@@ -76,7 +77,7 @@ export function createWorkspaceControl(deps: any) {
         priority: options.priority as import('./types.js').Priority | undefined,
                 tag: options.tag as import('./types.js').Job['tag'] | undefined,
         reviewEnabled: typeof options.reviewEnabled === 'boolean' ? options.reviewEnabled : undefined,
-        contentOnly: options.contentOnly === true || options.executionMode === 'shortcut',
+        autoMerge: typeof options.autoMerge === 'boolean' ? options.autoMerge : undefined,
         continuation: options.continuation as import('./types.js').Job['continuation'] | undefined,
         reviewerThreadId: typeof options.reviewerThreadId === 'string' ? options.reviewerThreadId : undefined,
         creatorThreadId: typeof options.creatorThreadId === 'string' ? options.creatorThreadId : undefined,
@@ -154,14 +155,13 @@ export function createWorkspaceControl(deps: any) {
     if (command === 'job.update') {
       const patch = (body.patch && typeof body.patch === 'object' ? body.patch : {}) as Record<string, unknown>;
       if ('executionMode' in patch || 'schedule' in patch) throw new Error('Job execution modes and schedules are unsupported');
-      const mutable = ['title','objective','projectPath','priority','tag','autoMerge','reviewEnabled','contentOnly','reviewerThreadId','creatorThreadId','implementationThreadId','continuation','localMerge'] as const;
+      const mutable = ['title','objective','projectPath','priority','tag','autoMerge','reviewEnabled','reviewerThreadId','creatorThreadId','implementationThreadId','continuation','localMerge'] as const;
       for (const key of mutable) if (Object.prototype.hasOwnProperty.call(patch, key)) {
         const value = patch[key];
         if (['reviewerThreadId', 'creatorThreadId', 'implementationThreadId'].includes(key)) {
           (job as unknown as Record<string, unknown>)[key] = value === undefined || value === null ? undefined : normalizeThreadId(value, `Job ${key}`);
         } else (job as unknown as Record<string, unknown>)[key] = value;
       }
-      if (job.contentOnly === true && (job.prNumber !== 0 || job.localMerge || job.autoMerge === true || job.reviewEnabled === true || job.review)) throw new Error('Content-only policy requires no PR, merge, or review requirements');
       job.updatedAt = new Date().toISOString();
       await store.saveJob(job); await refreshAll(); return await store.load(jobId);
     }

@@ -304,7 +304,7 @@ npx agents-relay task create --repo OWNER/REPO --pr 5 --id JOB_ID \
   --input "Research the dashboard UX and write the final report to the declared output file."
 ~~~
 
-SQLite and the canonical Graphs are authoritative for terminal lifecycle. A remote PR merge/close is an audit observation, not a state transition. Final Review PASS authorizes local Git merge; confirmed local-merge evidence gates `COMPLETED`. The dashboard exposes `/api/jobs` and distinguishes durable Job lifecycle from derived runtime status. The `/api/runtime-summary` Running Tasks, worker, and model totals count only `RUNNING` Tasks belonging to `ACTIVE` Jobs with an execution ID, lease owner, and unexpired lease; old durable RUNNING flags without a current lease are not active workload. Shortcut execution is shown separately from managed queue execution: an externally triggered Shortcut is WAITING until its foreground runner starts, then RUNNING, and never shows MERGE_PENDING solely because its content-only Task completed. The Shortcut badge and selected Job details expose execution mode and graph-node progress. Shortcut artifact hashing accepts a relative file present in both the Project and its canonical Run only if the two resolved files have identical bytes; it records the Run copy and still rejects different contents, path escapes and ambiguous provenance. Daemon startup orphan-recovery must not reclaim externally owned Shortcut Worker leases; only the foreground Shortcut Runner owns their recovery. For model-backed Shortcut nodes, the same caller-configured `--shared-root` (or `AGENTS_RELAY_SHARED_ROOT`) must be supplied to child Worker execution context, not just Shortcut discovery.
+SQLite and the canonical Graphs are authoritative for terminal lifecycle. A remote PR merge/close is an audit observation, not a state transition. Final Review PASS authorizes local Git merge; confirmed local-merge evidence gates `COMPLETED`. The dashboard exposes `/api/jobs` and distinguishes durable Job lifecycle from derived runtime status. The `/api/runtime-summary` Running Tasks, worker, and model totals count only `RUNNING` Tasks belonging to `ACTIVE` Jobs with an execution ID, lease owner, and unexpired lease; old durable RUNNING flags without a current lease are not active workload. Archived direct Shortcut records remain readable, but current Coordinator Jobs use the normal managed Job queue and display. Shortcut artifact hashing accepts a relative file present in both the Project and its canonical Run only if the two resolved files have identical bytes; it records the Run copy and still rejects different contents, path escapes and ambiguous provenance. Daemon startup orphan-recovery must not reclaim externally owned Shortcut Worker leases; only the foreground Shortcut Runner owns their recovery. For model-backed Shortcut nodes, the same caller-configured `--shared-root` (or `AGENTS_RELAY_SHARED_ROOT`) must be supplied to child Worker execution context, not just Shortcut discovery.
 
 Relay has no orchestrator worker adapter for new work. Orchestrators are external clients that create/plan durable Tasks; Execution Router selects a real worker route (`codex` or `chatgpt`). The CLI and dashboard do not expose manual orchestrator-only `task start`, `task complete`, or synthetic `record` paths.
 
@@ -388,8 +388,8 @@ then activate it with `agents-relay job run --id JOB --task-id TASK`. No
 `executionMode` is stored; `job run` only activates and publishes a wake-up.
 The ordinary Reconciler creates the Coordinator and durable Agent-named Tasks,
 with the same Script/Model execution, Task Review, Retry and recovery used by
-all other Jobs. `--content-only` is an **independent Job policy** that disables
-Final Job Review and merge; omit it to keep the ordinary Job completion gates.
-The old `--shortcut-execution` input aliases this policy for existing callers,
-but creates no special execution mode. Historical completed/cancelled Shortcut
+all other Jobs. Final Review follows the normal `--review`/`--no-review`
+policy, and local Git Merge follows `--auto-merge`/`--no-auto-merge`.
+Neither policy is affected by starting directly from a Coordinator Task.
+New Job creation no longer accepts `--content-only` or `--shortcut-execution`. Historical completed/cancelled Shortcut
 records retain their old fields for read-only compatibility.

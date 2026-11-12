@@ -17,7 +17,8 @@ from choosing its independent Final Review/Merge policy.
 3. Completed Tasks release dependent Tasks and eventually complete the
    Coordinator. The canonical Job Graph owns completion, Final Review, and local
    Git merge according to the Job's policy. A plan-free Job can keep the
-   standard review/merge gates; `--content-only` explicitly disables both.
+   standard review/merge gates; use the independent `--no-review` and
+   `--no-auto-merge` flags only when each specific policy is unwanted.
    Initial execution needs no Planner. An explicit Final Review CHANGES_REQUIRED
    can still invoke the established finding-driven repair Plan, not a startup Plan.
 4. An optional Planner-based Job follows the normal `plan-N` recovery and
@@ -26,8 +27,8 @@ from choosing its independent Final Review/Merge policy.
 
 Historical completed or cancelled direct Shortcut records retain archived
 `executionMode` metadata for read compatibility, but new Jobs never set this
-field. The deprecated `--shortcut-execution` input aliases `--content-only`;
-it does **not** select an executor or a separate Scheduler. The old direct
+field. Neither `--shortcut-execution` nor `--content-only` is accepted for new Jobs.
+Both are legacy metadata only; the Coordinator is a normal Job Task. The old direct
 Shortcut runtime only serves historical checkpoints and is not used for new
 Job runs.
 

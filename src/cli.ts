@@ -20,7 +20,6 @@ async function runManagedTaskCommand(action: 'create'|'retry'|'cancel', args: st
   if (!id && action !== 'create') throw new Error(`task ${action} requires --task-id`);
   let result: Job;
   if (action === 'create') {
-    if ((hasArg(args, '--shortcut-execution') || hasArg(args,'--content-only')) && hasArg(args, '--initial-plan')) throw new Error('--shortcut-execution currently requires create-only job creation; materialize Graph Tasks after the durable shortcut policy is stored');
     const job = await relayControlJob(args, jobId);
     if (['COMPLETED','CANCELLED'].includes(job.state)) throw new Error(`Cannot create task on terminal job ${job.id} (${job.state})`);
     const task = await workerTaskFromArgs(job, args, new Date().toISOString());
@@ -181,12 +180,14 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
 }
 async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (hasArg(args, '--shortcut-local')) return runLocalShortcutBinding('job',action,args);
+  const obsolete=['--content-only','--no-content-only','--shortcut-execution'].find(flag=>hasArg(args,flag));
+  if (obsolete && ['create','update'].includes(action)) throw new Error(`${obsolete} is obsolete; configure normal --review/--no-review and --auto-merge/--no-auto-merge independently`);
   if (!['create', 'update', 'show', 'list', 'merge', 'unblock', 'cancel', 'pause', 'resume', 'run', 'shortcut-receipt'].includes(action)) throw new Error(usage);
   const repo = action === 'create' ? repository(args) : arg(args, '--repo');
   if (action !== 'create') optionalLegacyPr(args);
   let createObjective: string | undefined;
   if (action === 'create') {
-    if(hasArg(args,'--no-auto-merge') && !hasArg(args,'--content-only')) throw new Error('Use --content-only for an explicit no-merge content Job');
+    if (hasArg(args,'--auto-merge') && hasArg(args,'--no-auto-merge')) throw new Error('Choose only one of --auto-merge or --no-auto-merge');
     const taskOnlyFlags = ['--start','--task-id','--input','--input-file','--adapter','--provider','--model','--profile','--reasoning','--story-size','--project','--agent','--parent','--deps','--capabilities','--attachments','--max-attempts','--timeout','--cwd','--chatgpt-project','--chatgpt-tab-close-policy','--output','--output-path','--draft','--queue'];
     const invalid = taskOnlyFlags.find(flag => hasArg(args, flag));
     if (invalid) throw new Error(`job create does not accept task execution option ${invalid}; create the job first, then let the orchestrator create the initial plan/task batch`);
@@ -207,14 +208,12 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     console.log(JSON.stringify(updated, null, 2)); return;
   }
   if (action === 'create') {
-    if ((hasArg(args, '--shortcut-execution') || hasArg(args,'--content-only')) && hasArg(args, '--initial-plan')) throw new Error('--shortcut-execution requires create-only Job creation; materialize Agent Graph Tasks only after durable shortcut policy is stored');
     rejectRemovedJobOptions(args);
     const objective = createObjective ?? '';
     if (hasArg(args, '--local-merge-source') !== hasArg(args, '--local-merge-target')) throw new Error('Supply both --local-merge-source and --local-merge-target');
     const result = await relayControlCommand(args, { command: 'job.create', repository: repo, initialPlan: hasArg(args, '--initial-plan'), options: {
       id: id || undefined, idempotencyKey: arg(args, '--idempotency-key') || undefined, title: arg(args, '--title') || undefined, objective: objective || undefined, projectPath: arg(args, '--project-path') || undefined,
-      priority: priority(args), tag: jobTagFromArgs(args), reviewEnabled: !hasArg(args, '--no-review'), continuation: continuation(args),
-      contentOnly: hasArg(args,'--content-only') || hasArg(args,'--shortcut-execution'),
+      priority: priority(args), tag: jobTagFromArgs(args), reviewEnabled: !hasArg(args, '--no-review'), autoMerge: !hasArg(args,'--no-auto-merge'), continuation: continuation(args),
       reviewerThreadId: hasArg(args, '--reviewer-thread-id') ? arg(args, '--reviewer-thread-id') : undefined, creatorThreadId: hasArg(args, '--creator-thread-id') ? arg(args, '--creator-thread-id') : undefined, implementationThreadId: hasArg(args, '--implementation-thread-id') ? arg(args, '--implementation-thread-id') : undefined,
     }}); console.log(JSON.stringify(result, null, 2)); return;
   }
@@ -247,12 +246,6 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (hasArg(args, '--review') && hasArg(args, '--no-review')) throw new Error('choose only one of --review or --no-review');
   if (hasArg(args, '--review')) job.reviewEnabled = true;
   if (hasArg(args, '--no-review')) job.reviewEnabled = false;
-  if (hasArg(args, '--content-only')) {
-    if (hasArg(args, '--no-content-only')) throw new Error('choose only one of --content-only or --no-content-only');
-    if (job.prNumber !== 0 || job.localMerge || job.autoMerge === true || job.reviewEnabled === true || job.review) throw new Error('--content-only requires a Job with no PR, merge, or review requirements; set --no-auto-merge --no-review first');
-    job.contentOnly = true;
-  }
-  if (hasArg(args, '--no-content-only')) job.contentOnly = false;
   if (hasArg(args, '--reviewer-thread-id')) job.reviewerThreadId = normalizeThreadId(arg(args, '--reviewer-thread-id'), '--reviewer-thread-id');
   if (hasArg(args, '--creator-thread-id')) job.creatorThreadId = normalizeThreadId(arg(args, '--creator-thread-id'), '--creator-thread-id');
   if (hasArg(args, '--implementation-thread-id')) job.implementationThreadId = normalizeThreadId(arg(args, '--implementation-thread-id'), '--implementation-thread-id');
@@ -262,7 +255,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     job.continuation = next;
   }
   const patch: Record<string, unknown> = {};
-  for (const key of ['title','objective','projectPath','priority','tag','autoMerge','reviewEnabled','contentOnly','reviewerThreadId','creatorThreadId','implementationThreadId','continuation','localMerge'] as const) patch[key] = (job as unknown as Record<string, unknown>)[key];
+  for (const key of ['title','objective','projectPath','priority','tag','autoMerge','reviewEnabled','reviewerThreadId','creatorThreadId','implementationThreadId','continuation','localMerge'] as const) patch[key] = (job as unknown as Record<string, unknown>)[key];
   console.log(JSON.stringify(await relayControlCommand<Job>(args, { command: 'job.update', jobId: id, patch }), null, 2));
 }
 export function runtimePlanner(args: readonly string[]): AgentObjectivePlanner | CommandObjectivePlanner { const plannerCommand = arg([...args], '--planner-command'); const modelRuntime = arg([...args], '--codex', 'codex'); return plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); }
