@@ -367,7 +367,13 @@ export class Reconciler extends ReconcilerReviewBase {
       const reserved=await this.store.reserveWorkflowLaunch({jobId:job.id,taskId:task.id,executionId:task.executionId,attempt:task.attempt,leaseOwner:task.leaseOwner});
       if (!reserved) throw new Error('already reserved launch attempt: reconcile existing generation');
     }
-    const adapter: WorkerAdapter | undefined = task.adapter === 'script' ? new ScriptTaskAdapter(event => this.options.eventBus ? this.emit(event) : this.handleEvent(event), this.options.executionContextRoots) : this.options.adapters.find(x => x.name === task.adapter);
+    const adapter: WorkerAdapter | undefined = task.adapter === 'script' ? new ScriptTaskAdapter(async event => {
+      // Local Script Worker events must update Relay state even if an Event Bus
+      // subscriber is not attached to this Reconciler instance. Broadcasting
+      // alone is not an acknowledgement of a Task terminal transition.
+      await this.handleEvent(event);
+      await this.emit(event);
+    }, this.options.executionContextRoots) : this.options.adapters.find(x => x.name === task.adapter);
     if (!adapter) {
       await this.failLaunch(job.id, task.id, task.executionId, 'No adapter ' + task.adapter);
       return;
