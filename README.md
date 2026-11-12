@@ -19,11 +19,15 @@ Relay appends `--handoff-file`, optional `--on-needs-user-file`, and `--cwd`
 without using a shell. No Neo executable is assumed. Missing/failed executors
 produce `technical_failure` rather than silently resolving a blocker.
 
-**Unified Coordinator/DAG L3 gate:** `npm run test:l3:dag` exercises four
-three-Agent scenarios: Script without Review, all Approve, Script Request
-Changes then re-Approve, and Model Request Changes then re-Approve. Further
-coverage tests real Job activation, atomically created Coordinator, event-driven
-direct successor dispatch (including parallel branches and resource starvation),
+**Unified Coordinator/DAG L3 gate:** `npm run test:l3:dag` exercises five
+three-Agent scenarios: mixed Shortcut/Model without Agent Review, all Shortcut
+Approve, Shortcut Request Changes → re-review → Approve, Model Request Changes
+→ re-review → Approve, and both Shortcut and Model Request Changes → Approve
+within one DAG. The classic five are also part of `npm run test:verification:l3`.
+Each scenario uses a disposable local Git repo and isolated SQLite, and verifies
+that its temporary directory is removed. Further coverage tests real Job
+activation, atomically created Coordinator, event-driven direct successor
+dispatch (including parallel branches and resource starvation),
 failed Agent recovery and restart/idempotency. Every Agent is a durable Task;
 `QUEUED` does not impose another global Job scheduling pass when capacity is
 available. The Coordinator has no Worker lease. There is no Shortcut Runner,

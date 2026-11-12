@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
-import {mkdtemp,realpath,mkdir,writeFile,readFile,rm} from 'node:fs/promises';
+import {mkdtemp,realpath,mkdir,writeFile,readFile,rm,access} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {SQLiteRelayStore} from '../../dist/relay-store.js';
@@ -18,7 +18,10 @@ export const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 export async function until(fn,label,ms=10000){const start=Date.now();while(Date.now()-start<ms){const value=await fn();if(value)return value;await sleep(25)}throw Error('Timed out waiting for '+label)}
 export async function fixture(t,{reviews=[],modelB=false,mode='normal',parallel=false,badModelOutput=false,normalJob=true}={}) {
  const root=await realpath(await mkdtemp(join(tmpdir(),'relay-unified-l3-')));
- t.after(()=>rm(root,{recursive:true,force:true}));
+ t.after(async()=>{
+  await rm(root,{recursive:true,force:true});
+  await assert.rejects(access(root),{code:'ENOENT'},'temporary local Git and SQLite test directory must be removed');
+ });
  const project=join(root,'project');await mkdir(join(project,'agents','.shortcut'),{recursive:true});
  execFileSync('git',['init','-q',project]);await writeFile(join(project,'README.md'),'fixture\n');
  execFileSync('git',['-C',project,'add','README.md']);execFileSync('git',['-C',project,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','init']);
@@ -89,10 +92,10 @@ export async function run({input,runCommand}){
      if(task.interactiveInvocation?.status==='changes_requested') {
        assert.match(task.interactiveInvocation.feedback||'',/change the hook/);
        assert.equal(task.interactiveInvocation.comments?.[0]?.text,'change the hook');
-       await writeFile(join(project,'middle-correction.json'),JSON.stringify({corrected:true,executionId:task.executionId,feedback:task.interactiveInvocation.feedback}));
-       await writeFile(join(project,'middle-correction.meta'),task.id);
+       await writeFile(join(project,task.agentName+'-correction.json'),JSON.stringify({corrected:true,executionId:task.executionId,feedback:task.interactiveInvocation.feedback}));
+       await writeFile(join(project,task.agentName+'-correction.meta'),task.id);
      }
-     if(reviews.includes('middle')&&(!task.interactiveInvocation?.decidedAt||task.interactiveInvocation.status==='changes_requested')){
+     if(reviews.includes(task.agentName)&&(!task.interactiveInvocation?.decidedAt||task.interactiveInvocation.status==='changes_requested')){
        const inv=await beginInteractiveReview(store,id,task.id,task.executionId);
        await store.mutateJob(id,j=>{const current=j.tasks.find(t=>t.id===task.id);
          if(current.interactiveInvocation?.executionId!==inv.executionId)throw Error('Review lost');
@@ -101,7 +104,7 @@ export async function run({input,runCommand}){
          current.leaseOwner=null;current.leaseExpiresAt=null;current.executionId=null;return j;});
        return {summary:'Model awaiting review'};
      }
-     const result=badModelOutput ? {status:'COMPLETED',output:null,artifacts:[]} : {status:'COMPLETED',output:{stage:'middle',review:task.interactiveInvocation?.status??null},artifacts:[]};
+     const result=badModelOutput ? {status:'COMPLETED',output:null,artifacts:[]} : {status:'COMPLETED',output:{stage:task.agentName,review:task.interactiveInvocation?.status??null},artifacts:[]};
      await writeFile(task.output.path,JSON.stringify(result));
      await publish('task.completed','succeeded','Model done',result);
      return {summary:'Model completed'};

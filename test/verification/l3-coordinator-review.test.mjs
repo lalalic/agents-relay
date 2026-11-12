@@ -6,8 +6,10 @@
  */
 import test from '../test-runtime.js';
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
+import {readFile,access,realpath} from 'node:fs/promises';
 import {join} from 'node:path';
+import {execFileSync} from 'node:child_process';
+import {tmpdir} from 'node:os';
 import {fixture,until} from './l3-unified-dag-fixture.mjs';
 
 async function start(f){
@@ -21,20 +23,21 @@ async function start(f){
  assert.equal(job.autoMerge,true,'Coordinator uses normal Merge policy');
  assert.equal(job.reviewEnabled,false,'This L3 isolates Agent Review without a Final Job Reviewer');
  assert.equal(job.tasks.length,1,'CLI only activates: Scheduler materializes children');
+ // One ingress tick starts the Coordinator; later Agent transitions must wake
+ // the Reconciler through the real event bus, not a test polling scheduler.
+ await f.reconciler.reconcile(f.id);
 }
 async function waiting(f,node){
  const id='dag-initial-'+node;
  return until(async()=>{
-  await f.reconciler.reconcile(f.id);
   const job=await f.load(),task=job.tasks.find(t=>t.id===id);
   if(task?.state==='FAILED'||task?.state==='BLOCKED')
-   throw Error('Unexpected Task failure: '+JSON.stringify({id,state:task.state,error:task.error}));
+   throw Error('Unexpected Task failure: '+JSON.stringify({id,state:task.state,error:task.error,executionId:task.executionId,attempt:task.attempt,history:task.executionHistory})+'; trace='+(await f.trace()).slice(-800));
   return task?.state==='AWAITING_DECISION'?task:null;
  },'normal Agent Review '+node,20000);
 }
 async function completed(f){
  const job=await until(async()=>{
-  await f.reconciler.reconcile(f.id);
   const current=await f.load();
   if(current.tasks.some(task=>['FAILED','BLOCKED'].includes(task.state)))
    throw Error('Agent Task failed: '+JSON.stringify(current.tasks.map(t=>({id:t.id,state:t.state,error:t.error}))));
@@ -51,12 +54,22 @@ async function completed(f){
  return job;
 }
 
-test('L3-C01: three-node Script happy path without Review',async t=>{
- const f=await fixture(t,{normalJob:true,mode:'normal'});
+test('L3-C01: mixed three-node DAG A/C Shortcut + B Model completes without Agent Review',async t=>{
+ const f=await fixture(t,{normalJob:true,mode:'normal',modelB:true});
+ assert.ok(f.root.startsWith(await realpath(tmpdir())),'fixture must be under temporary system directory');
+ assert.equal(execFileSync('git',['-C',f.project,'rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),f.project);
+ const initial=await f.load();
+ assert.equal(initial.projectRoot,f.project);
+ assert.equal(initial.repository,'project');
+ assert.equal(initial.reviewEnabled,false);
  await start(f);
- await completed(f);
- assert.deepEqual((await f.trace()).trim().split('\n'),
-  ['script:first:new','script:middle:new','script:last:new']);
+ const done=await completed(f);
+ assert.deepEqual(done.tasks.filter(task=>task.dagNode).map(task=>task.dagNode.executor),['script','model','script']);
+ assert.deepEqual((await f.trace()).trim().split('\n'),['script:first:new','script:last:new']);
+ assert.deepEqual(f.launches.filter(item=>item.id==='dag-initial-B').map(item=>item.review),[undefined]);
+ assert.equal(done.review,undefined,'no Job Review is pending');
+ assert.ok(done.tasks.every(task=>!task.interactiveInvocation),'no Agent requested interactive review');
+ await access(join(f.root,'relay.sqlite')); // Confirm durable SQLite exists within the disposable fixture.
 });
 
 test('L3-C02: three-node Review / Approve / direct event continuation to the next Agent',async t=>{
@@ -117,4 +130,49 @@ test('L3-C04: model-only B Request Changes resumes SAME Model Task and re-review
   [undefined,'changes_requested','approved'],'every revision stays on the same durable Model Agent Task');
  assert.deepEqual((await f.trace()).trim().split('\n').filter(x=>x.startsWith('script:')),
   ['script:first:new','script:last:new'],'model-only B never runs Script');
+});
+
+// One real local Coordinator Job proves both review paths can coexist on the
+// same three-node Graph: a Shortcut requests changes at A, a Model at B,
+// and C must not be materialized until both approvals have been persisted.
+test('L3-C05: mixed Shortcut A and Model B each Request Changes -> re-review -> Approve; C remains gated',async t=>{
+ const f=await fixture(t,{normalJob:true,mode:'normal',modelB:true,reviews:['first','middle']});
+ await start(f);
+ const first=await waiting(f,'A');
+ assert.equal(first.dagNode.executor,'script');
+ let current=await f.load();
+ assert.equal(current.tasks.some(task=>task.id==='dag-initial-B'||task.id==='dag-initial-C'),false);
+ await f.decide('A','changes_requested');
+ const revisedA=await waiting(f,'A');
+ assert.equal(revisedA.id,first.id);
+ assert.notEqual(revisedA.interactiveInvocation.invocationId,first.interactiveInvocation.invocationId);
+ assert.notEqual(revisedA.interactiveInvocation.revision,first.interactiveInvocation.revision);
+ assert.equal((await f.load()).tasks.some(task=>task.id==='dag-initial-B'),false,'B cannot run before Shortcut A approval');
+ assert.equal(JSON.parse(await readFile(join(f.project,'first-correction.json'),'utf8')).feedback,'change the hook');
+ await f.decide('A','approved');
+ const second=await waiting(f,'B');
+ assert.equal(second.dagNode.executor,'model');
+ current=await f.load();
+ assert.equal(current.tasks.some(task=>task.id==='dag-initial-C'),false,'C cannot run before Model B approval');
+ await f.decide('B','changes_requested');
+ const revisedB=await waiting(f,'B');
+ assert.equal(revisedB.id,second.id);
+ assert.notEqual(revisedB.interactiveInvocation.invocationId,second.interactiveInvocation.invocationId);
+ assert.notEqual(revisedB.interactiveInvocation.revision,second.interactiveInvocation.revision);
+ assert.equal((await f.load()).tasks.some(task=>task.id==='dag-initial-C'),false);
+ assert.equal(JSON.parse(await readFile(join(f.project,'middle-correction.json'),'utf8')).feedback,'change the hook');
+ await f.decide('B','approved');
+ const finished=await completed(f);
+ assert.deepEqual(finished.tasks.filter(task=>task.dagNode).map(task=>task.dagNode.executor),['script','model','script']);
+ assert.deepEqual(f.launches.filter(task=>task.id==='dag-initial-A').map(task=>task.review),['changes_requested'],
+  'Shortcut A reuses its declared Script executor after Approve; its changes-requested revision used Model');
+ assert.deepEqual(f.launches.filter(task=>task.id==='dag-initial-B').map(task=>task.review),[undefined,'changes_requested','approved']);
+ assert.deepEqual((await f.trace()).trim().split('\n').filter(item=>item.startsWith('script:')),
+  ['script:first:new','script:first:approved','script:last:new']);
+ assert.equal(finished.tasks.length,4,'reviews must resume the original Task, not spawn separate revision Tasks');
+ for(const node of ['A','B']){
+  const task=finished.tasks.find(task=>task.id==='dag-initial-'+node);
+  assert.equal(task.state,'SUCCEEDED');
+  assert.ok(task.executionHistory?.length>=2,'review must retain execution generations');
+ }
 });
