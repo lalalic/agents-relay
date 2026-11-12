@@ -67,6 +67,11 @@ export function deriveJobRuntimeStatus(job: Job, _prState: PullRequestRuntimeSta
     return 'WAITING'; // External Shortcut Runner has not started or needs a resume.
   }
 
+  // A DAG Coordinator is not a leased worker. Human review waiting takes
+  // precedence unless another Agent Task is genuinely running.
+  if (job.tasks.some(t=>t.state==='AWAITING_DECISION') &&
+      !job.tasks.some(t=>t.state==='RUNNING' && t.executionId!==null && t.leaseOwner)) return 'WAITING';
+
   const currentPlan = job.plans?.at(-1);
   // An unresolved planner failure is a Job failure, not an idle Job.
   // Active task execution still takes precedence below.

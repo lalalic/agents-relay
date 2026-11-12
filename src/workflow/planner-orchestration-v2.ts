@@ -6,7 +6,7 @@ import { reviewNeedsReplan } from '../review-replan.js';
 import { isEffectivelyBlocked, unblockNeedsNewPlan, unconsumedUnblockTrigger } from '../unblock.js';
 
 export type PlannerOrchestrationState =
-  | 'idle' | 'check_legacy_pending' | 'check_recover' | 'check_plan_failure' | 'check_plan_recovery' | 'check_plan_recovery_exists' | 'check_seed' | 'check_planner'
+  | 'idle' | 'check_legacy_pending' | 'check_recover' | 'check_plan_failure' | 'check_plan_recovery' | 'check_plan_recovery_exists' | 'check_seed' | 'check_planner_opt_in' | 'check_planner'
   | 'check_resolution_ownership' | 'check_blocked' | 'check_work' | 'check_materialized' | 'check_review'
   | 'wait' | 'recovered' | 'created';
 
@@ -15,7 +15,7 @@ const boolGuard = (name: string) => (facts: { readonly durableFacts: Readonly<Re
 
 export const plannerOrchestrationV2 = new GraphRuntime(source, {
   states: new Set<PlannerOrchestrationState>([
-    'idle','check_legacy_pending','check_recover','check_plan_failure','check_plan_recovery','check_plan_recovery_exists','check_seed','check_planner','check_resolution_ownership',
+    'idle','check_legacy_pending','check_recover','check_plan_failure','check_plan_recovery','check_plan_recovery_exists','check_seed','check_planner_opt_in','check_planner','check_resolution_ownership',
     'check_blocked','check_work','check_materialized','check_review','wait','recovered','created',
   ]),
   guards: {
@@ -25,6 +25,7 @@ export const plannerOrchestrationV2 = new GraphRuntime(source, {
     planRecoveryExists: boolGuard('planRecoveryExists'),
     planRecoveryVerified: boolGuard('planRecoveryVerified'),
     hasSeedWork: boolGuard('hasSeedWork'),
+    planningRequested: boolGuard('planningRequested'),
     noActivePlanner: boolGuard('noActivePlanner'),
     resolutionOwnedByTroubleshooter: boolGuard('resolutionOwnedByTroubleshooter'),
     noBlockedWork: boolGuard('noBlockedWork'),
@@ -72,6 +73,7 @@ export function plannerOrchestrationFacts(job: Job, recoverablePendingPlan: bool
     planRecoveryExists: Boolean(recovery),
     planRecoveryVerified: recoveryVerified,
     hasSeedWork: !((job.plans?.length ?? 0) === 0 && job.tasks.filter(task => task.kind !== 'planner').length === 0),
+    planningRequested: Boolean(job.initialPlanning || scopedPlans.length || scopedTasks.some(task => task.kind === 'planner') || !scopedTasks.some(task => Boolean(task.agentGraph)) || reviewNeedsReplan(job)),
     noActivePlanner: failedPlan?.manualPlanning ? false : unblockNeedsNewPlan(job) || !unconsumedUnblockTrigger(job) ? !scopedPlans.some(plan => plan.status === 'PLANNING') : false,
     noBlockedWork: Boolean(unconsumedUnblockTrigger(job)) || !scopedTasks.some(task => task.kind !== 'planner' && isEffectivelyBlocked(task)),
     noActiveImplementation: !scopedTasks.some(task => task.kind !== 'planner' && (['QUEUED', 'RUNNING', 'AWAITING_DECISION'].includes(task.state) || (task.state === 'DRAFT' && !task.unblock))),

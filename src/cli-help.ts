@@ -40,7 +40,7 @@ Actions:
   create  Create a durable SQLite-authoritative Job
   update  Partially update mutable metadata on a healthy existing Job
   show    Show one durable Job
-  run     Opt in to direct Agent Graph shortcuts for one existing Task
+  run     Activate a create-only Job with a durable Agent Graph Task
   shortcut-receipt  Atomically record a validated nonhuman result for a persisted wait
   list    List managed Jobs in a repository
   merge   Legacy entry point; local Git merge is Graph-owned (no CLI PR merge)
@@ -53,17 +53,15 @@ Common options:
   --repo OWNER/REPO       Required for create; optional Job identity check otherwise
   --id JOB_ID             Durable job identifier
 
-Shortcut execution:
-  agents-relay job run --mode shortcut --id JOB --task-id TASK
-    [--store-dir DIR] [--project-path DIR] [--shared-root DIR] [--concurrency 4]
+Graph Job activation:
+  agents-relay job run --id JOB --task-id TASK
+    [--project-path DIR] [--workspace-root DIR]
 
-The selected Task must have an Agent Graph. Project shortcuts at
-agents/.shortcut/<agent>.agent.mjs override configured shared shortcuts. A Graph
-with any missing shortcut falls back to the normal durable Worker before
-executing any module; mixing shortcut and Worker nodes in one Graph is unsupported.
-Shortcuts that fail before effects also return to the Worker queue. Nonhuman waits resume only from a matching SQLite Task receipt; EventBus
-events are wake signals. Human approval remains hostInvocation-only.
-Shortcut Job completion requires durable contentOnly=true and no PR, merge, or review gates.
+The Job is created DRAFT without a Planner. This command activates its Graph
+Task, then the same Relay Reconciler schedules all durable Agent child Tasks.
+Use --content-only on job create only when no Final Review or Merge is wanted.
+The --mode shortcut flag is accepted only as a deprecated CLI input alias.
+Historical direct Shortcut checkpoints are read for compatibility.
 
 Record an asynchronous result with:
   agents-relay job shortcut-receipt --id JOB --task-id TASK
@@ -118,11 +116,20 @@ Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job r
   'job create': `Create a SQLite-authoritative Job (objective-only).
 
 Required: --repo OWNER/REPO and a standalone Job objective. Job ID defaults to an auto-incrementing store-global number; --id may only reference an existing numeric Job.
-Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --initial-plan, --no-review, --shortcut-execution, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
-Job creation enables auto-merge by default. By default it is create-only; --initial-plan validates the first real Planner round before atomically creating the durable Job and Plan, then publishes the normal wake. --shortcut-execution creates a create-only content-only Job with durable direct Graph execution policy, no auto-merge, and no review; select it before Tasks are materialized and do not combine it with --initial-plan. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
+Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --initial-plan, --no-review, --content-only, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
+Job creation enables auto-merge by default. By default it is create-only; --initial-plan validates the first real Planner round before atomically creating the durable Job and Plan, then publishes the normal wake. --content-only disables Final Review and Merge independent of how the Job starts; do not combine it with --initial-plan. The deprecated --shortcut-execution input is an alias for --content-only and is never persisted as an execution mode. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
 
 Example:
   npx agents-relay job create --repo OWNER/REPO --project-path vlog --title "Episode" --objective-file episode.md --initial-plan`,
+  'job run': `Activate a create-only Job with a durable Agent Graph Task. No Planner or execution mode is required.
+
+Usage: agents-relay job run --id JOB --task-id TASK [--project-path DIR] [--no-github]
+
+The command activates the normal Job lifecycle and emits a wake-up. The ordinary
+Relay Scheduler creates runtime Agent Tasks, runs Script or Model executors,
+waits for human review, retries failures and handles completion. A Job may use
+--content-only independent of how it starts. --mode shortcut is a deprecated
+input alias; it does not choose an execution engine.`,
   'job update': `Partially update mutable metadata on a healthy existing Job.
 
 Required: --id JOB_ID. Optional: --repo OWNER/REPO verifies the stored Job identity.

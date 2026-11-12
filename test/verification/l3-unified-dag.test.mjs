@@ -109,7 +109,7 @@ export async function run({input,runCommand}){
  async function startCLI(){
   const cli=fileURLToPath(new URL('../../dist/cli.js',import.meta.url));
   await mkdir(join(root,'stores'),{recursive:true});
-  const result=spawnSync(process.execPath,[cli,'job','run','--mode','shortcut','--id',id,'--task-id','initial',
+  const result=spawnSync(process.execPath,[cli,'job','run','--id',id,'--task-id','initial',
    '--no-github','--store-dir',join(root,'stores'),'--project-path',project,'--workspace-root',root],
    {encoding:'utf8',timeout:15000,env:{...process.env,AGENTS_RELAY_STORE_DIR:root}});
   assert.equal(result.status,0,result.stderr);
@@ -176,9 +176,10 @@ for(const [label,config,decisions] of [
 });
 
 // Real production ingress: CLI only activates; the SAME normal Reconciler creates Tasks.
-test('L3-U05: Shortcut CLI only starts the Job; Reconciler executes durable DAG children',async t=>{
- const f=await fixture(t);await f.startCLI();
+test('L3-U05: CLI starts ordinary no-plan Job; normal Reconciler executes durable DAG children',async t=>{
+ const f=await fixture(t,{mode:'normal'});await f.startCLI();
  const started=await f.load();assert.equal(started.state,'ACTIVE');
+ assert.equal(started.executionMode,undefined,'Job start must not store executionMode');
  assert.equal(started.tasks.length,1,'CLI must not itself execute graph nodes');
  await f.reconciler.reconcile(f.id);
  const done=await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();return j.state==='COMPLETED'?j:null},'Shortcut job terminal',6500);
@@ -257,4 +258,48 @@ test('L3-U11: an ordinary single Agent Task can use the Script Adapter without a
  assert.equal(events.filter(e=>e.type==='task.failed').length,0);
  assert.equal(JSON.parse(await readFile(task.output.path,'utf8')).output.stage,'first');
  assert.match(await f.trace(),/script:first:new/);
+});
+
+test('L3-U12: job run queues a DRAFT Agent Graph root with no Planner and no mode flag',async t=>{
+ const f=await fixture(t,{mode:'normal'});
+ await f.store.mutateJob(f.id,j=>{j.tasks[0].state='DRAFT';return j});
+ await f.startCLI();
+ const started=await f.load();
+ assert.equal(started.executionMode,undefined);
+ assert.equal(started.state,'ACTIVE');
+ assert.equal(started.tasks[0].state,'QUEUED');
+ assert.equal(started.plans?.length??0,0);
+ const done=await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();return j.state==='COMPLETED'?j:null},'DRAFT Graph Job terminal',7000);
+ assert.equal(done.tasks.length,4);
+ assert.deepEqual(done.tasks.filter(t=>t.dagNode).map(t=>t.title),['first','middle','last']);
+});
+
+test('L3-U13: a plan-free Graph Job with Final Review/Merge enabled does not bypass those gates',async t=>{
+ const f=await fixture(t,{mode:'normal'});
+ await f.store.mutateJob(f.id,j=>{j.contentOnly=false;j.autoMerge=true;j.reviewEnabled=true;return j});
+ await f.startCLI();
+ const done=await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();return j.tasks.find(t=>t.id==='initial')?.state==='SUCCEEDED'?j:null},'non-content DAG',7000);
+ assert.equal(done.state,'ACTIVE','Implementation success does not approve final Job review or merge');
+ assert.equal(done.reviewEnabled,true);
+ assert.equal(done.autoMerge,true);
+ assert.equal(done.executionMode,undefined);
+});
+
+test('L3-U14: duplicate normal Job start is idempotent and rejects changed trusted roots',async t=>{
+ const f=await fixture(t,{mode:'normal'});
+ await f.startCLI();
+ const job=await f.load();
+ assert.equal(job.tasks.length,1,'activation is not a second DAG executor');
+ assert.ok(job.graphStartContext?.projectPath);
+ const cli=fileURLToPath(new URL('../../dist/cli.js',import.meta.url));
+ const result=spawnSync(process.execPath,[cli,'job','run','--id',f.id,'--task-id','initial',
+   '--no-github','--store-dir',join(f.root,'stores'),'--project-path',f.project,
+   '--workspace-root',f.root,'--shared-root',join(f.root,'other-agents')],
+   {encoding:'utf8',timeout:15000,env:{...process.env,AGENTS_RELAY_STORE_DIR:f.root}});
+ assert.notEqual(result.status,0);
+ assert.match(result.stderr,/Graph start context changed/);
+ const after=await f.load();
+ assert.equal(after.state,'ACTIVE');
+ assert.equal(after.tasks.length,1);
+ assert.equal(after.graphStartContext.sharedRoot,undefined);
 });

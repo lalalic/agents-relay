@@ -47,7 +47,7 @@ test('agent graph loads every node contract and preserves fan-in dependencies', 
     assert.match(prompt,/\[Node synthesis; predecessors=strategy,product\]/);
     assert.match(prompt,/strategy CONTRACT/);
     assert.match(prompt,/planner CONTRACT/);
-    assert.match(prompt,/NOT durable child Tasks/);
+    assert.match(prompt,/each graph node as its own durable Agent Task/);
   } finally { await rm(root,{recursive:true,force:true}); }
 });
 

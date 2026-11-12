@@ -20,7 +20,7 @@ async function runManagedTaskCommand(action: 'create'|'retry'|'cancel', args: st
   if (!id && action !== 'create') throw new Error(`task ${action} requires --task-id`);
   let result: Job;
   if (action === 'create') {
-    if (hasArg(args, '--shortcut-execution') && hasArg(args, '--initial-plan')) throw new Error('--shortcut-execution currently requires create-only job creation; materialize Graph Tasks after the durable shortcut policy is stored');
+    if ((hasArg(args, '--shortcut-execution') || hasArg(args,'--content-only')) && hasArg(args, '--initial-plan')) throw new Error('--shortcut-execution currently requires create-only job creation; materialize Graph Tasks after the durable shortcut policy is stored');
     const job = await relayControlJob(args, jobId);
     if (['COMPLETED','CANCELLED'].includes(job.state)) throw new Error(`Cannot create task on terminal job ${job.id} (${job.state})`);
     const task = await workerTaskFromArgs(job, args, new Date().toISOString());
@@ -186,7 +186,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (action !== 'create') optionalLegacyPr(args);
   let createObjective: string | undefined;
   if (action === 'create') {
-    if (hasArg(args, '--no-auto-merge')) throw new Error('job create does not accept --no-auto-merge; new Jobs always enable auto-merge');
+    if(hasArg(args,'--no-auto-merge') && !hasArg(args,'--content-only')) throw new Error('Use --content-only for an explicit no-merge content Job');
     const taskOnlyFlags = ['--start','--task-id','--input','--input-file','--adapter','--provider','--model','--profile','--reasoning','--story-size','--project','--agent','--parent','--deps','--capabilities','--attachments','--max-attempts','--timeout','--cwd','--chatgpt-project','--chatgpt-tab-close-policy','--output','--output-path','--draft','--queue'];
     const invalid = taskOnlyFlags.find(flag => hasArg(args, flag));
     if (invalid) throw new Error(`job create does not accept task execution option ${invalid}; create the job first, then let the orchestrator create the initial plan/task batch`);
@@ -207,14 +207,14 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     console.log(JSON.stringify(updated, null, 2)); return;
   }
   if (action === 'create') {
-    if (hasArg(args, '--shortcut-execution') && hasArg(args, '--initial-plan')) throw new Error('--shortcut-execution requires create-only Job creation; materialize Agent Graph Tasks only after durable shortcut policy is stored');
+    if ((hasArg(args, '--shortcut-execution') || hasArg(args,'--content-only')) && hasArg(args, '--initial-plan')) throw new Error('--shortcut-execution requires create-only Job creation; materialize Agent Graph Tasks only after durable shortcut policy is stored');
     rejectRemovedJobOptions(args);
     const objective = createObjective ?? '';
     if (hasArg(args, '--local-merge-source') !== hasArg(args, '--local-merge-target')) throw new Error('Supply both --local-merge-source and --local-merge-target');
     const result = await relayControlCommand(args, { command: 'job.create', repository: repo, initialPlan: hasArg(args, '--initial-plan'), options: {
       id: id || undefined, idempotencyKey: arg(args, '--idempotency-key') || undefined, title: arg(args, '--title') || undefined, objective: objective || undefined, projectPath: arg(args, '--project-path') || undefined,
       priority: priority(args), tag: jobTagFromArgs(args), reviewEnabled: !hasArg(args, '--no-review'), continuation: continuation(args),
-      executionMode: hasArg(args, '--shortcut-execution') ? 'shortcut' : undefined,
+      contentOnly: hasArg(args,'--content-only') || hasArg(args,'--shortcut-execution'),
       reviewerThreadId: hasArg(args, '--reviewer-thread-id') ? arg(args, '--reviewer-thread-id') : undefined, creatorThreadId: hasArg(args, '--creator-thread-id') ? arg(args, '--creator-thread-id') : undefined, implementationThreadId: hasArg(args, '--implementation-thread-id') ? arg(args, '--implementation-thread-id') : undefined,
     }}); console.log(JSON.stringify(result, null, 2)); return;
   }

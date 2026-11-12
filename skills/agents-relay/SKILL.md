@@ -45,8 +45,10 @@ Task and Planner context commands reject stale identities. Optional `--repo` con
 Graph Tasks use Relay's ordinary Task Reconciler: `agentGraph` becomes a
 **Coordinator** with durable Agent-named children created as dependencies become
 ready. Script and Model are Task execution choices; each has the same
-Task-level retry, failure and review semantics. A Shortcut CLI starts an idle
-Job and hands it to that same Reconciler; it is not a separate DAG scheduler.
+Task-level retry, failure and review semantics. `job run --id JOB --task-id TASK` activates any create-only Graph Job and
+hands it to that same Reconciler; it is not a separate DAG scheduler or Job
+execution mode. Set `--content-only` at creation only when Final Review and
+Merge are not required. A Graph needs no Planner unless one is requested.
 
 ## 3. Verify, review, and recover
 

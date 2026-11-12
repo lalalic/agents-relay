@@ -32,7 +32,7 @@ The registry does not yet execute remote agents or expose a public marketplace. 
 
 ## Objective-driven Jobs
 
-All Jobs use the same durable Planner workflow. After the executable Task batch settles, reconciliation requests another `plan-N` round until the latest successful Plan records `objective_status: satisfied`. Each generated Task retains its `planningDecisionId` and `planningRound`, while semantic `parentTaskId` never targets a Plan. Failed or blocked work requires recovery, not false completion. Legacy `executionMode` and `schedule` marker fields are ignored on read and never written by current code. There is no Scheduler entity or time-driven Job cadence.
+Jobs use the same durable Reconciler and Task lifecycle; a Planner is optional. After the executable Task batch settles, reconciliation requests another `plan-N` round until the latest successful Plan records `objective_status: satisfied`. Each generated Task retains its `planningDecisionId` and `planningRound`, while semantic `parentTaskId` never targets a Plan. Failed or blocked work requires recovery, not false completion. Legacy `executionMode` and `schedule` marker fields are ignored on read and never written by current code. There is no Scheduler entity or time-driven Job cadence.
 
 ## Reconciliation rule
 

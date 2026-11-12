@@ -75,8 +75,10 @@ code change and classify it afterward.
 
 An `agentGraph` creates runtime Agent Tasks under one Coordinator Task. Each child
 uses the ordinary Task lifecycle and either the Script or Model executor; the
-Coordinator is not a Worker/lease/retry layer. New Shortcut Jobs only differ
-by their explicit CLI activation. Do not add independent DAG failure/recovery
+Coordinator is not a Worker/lease/retry layer. A create-only Job with a Graph is activated
+by `job run --id JOB --task-id TASK` without an execution mode or Planner.
+The regular Scheduler owns its lifecycle thereafter. Content-only completion
+is a separate explicit Job policy, not a consequence of the start command. Do not add independent DAG failure/recovery
 state, model-only revision Tasks, or Shortcut-only Task schedulers. Preserve
 legacy in-flight direct Shortcut checkpoints until they complete.
 

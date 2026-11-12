@@ -30,7 +30,10 @@ export function reviewPlanReady(job: Job): boolean {
   if ((job.plans ?? []).some(plan => plan.status === 'PLANNING')) return false;
   const latest = (job.plans ?? []).at(-1);
   const legacy = !latest && job.tasks.some(task => task.kind === 'planner' && task.state === 'SUCCEEDED');
-  if (!legacy && (latest?.status !== 'SUCCEEDED' || !job.tasks.some(task => task.kind !== 'planner' && !isFinalReviewAgent(task.agentName)))) return false;
+  // A plan-free Graph Job has no Planner round to wait for. Final Review
+  // still validates its durable Agent Tasks under the same Job lifecycle.
+  if (!legacy && latest && latest.status !== 'SUCCEEDED') return false;
+  if (!job.tasks.some(task => task.kind !== 'planner' && !isFinalReviewAgent(task.agentName))) return false;
   const review = job.review;
   if (!review?.taskId || review.revisionDisposition === 'targeted') return true;
   const requiresRevision = review.outcome === 'changes_required'

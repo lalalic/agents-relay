@@ -96,7 +96,8 @@ test('local SQLite Job pause/resume and Shortcut CLI resolve --id without reposi
     });
     const run = ['run','--mode','shortcut','--id',shortcut.id,'--task-id','unknown',...isolatedFlags];
     await assert.rejects(execute(run,env), /Task unknown not found/);
-    assert.equal(JSON.parse((await execute(['show','--shortcut-local','--id',shortcut.id,...isolatedFlags],env)).stdout).id, shortcut.id);
+    assert.equal(shortcut.id, (await ensureManagedGitHubJob({},'team/shortcuts',new Set(),{id:shortcut.id,storeDirectory:stores})).job.id);
+    assert.equal((await ensureManagedGitHubJob({},'team/shortcuts',new Set(),{id:shortcut.id,storeDirectory:stores})).job.executionMode,undefined);
 
     const outputFile = join(dir, 'receipt.json');
     await writeFile(outputFile, '{}');

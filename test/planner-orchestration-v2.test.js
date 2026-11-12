@@ -2,7 +2,7 @@ import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { decidePlannerOrchestration, plannerOrchestrationFacts } from '../dist/workflow/planner-orchestration-v2.js';
 
-const base={legacyPlanningPending:false,recoverablePendingPlan:false,hasSeedWork:true,noActivePlanner:true,noBlockedWork:true,noActiveImplementation:true,continuationMaterialized:true,reviewNeedsReplan:false};
+const base={legacyPlanningPending:false,recoverablePendingPlan:false,hasSeedWork:true,planningRequested:true,noActivePlanner:true,noBlockedWork:true,noActiveImplementation:true,continuationMaterialized:true,reviewNeedsReplan:false};
 test('Planner orchestration v2 graph owns wait/recover/create decisions', () => {
   assert.equal(decidePlannerOrchestration({...base,legacyPlanningPending:true}).target,'wait');
   const recover=decidePlannerOrchestration({...base,recoverablePendingPlan:true});
@@ -48,4 +48,25 @@ test('review-disabled Jobs retain Planner continuation until objective is satisf
   root.plans[0].objectiveStatus='satisfied';
   assert.equal(plannerOrchestrationFacts(root,false).reviewNeedsReplan,false);
   assert.equal(decidePlannerOrchestration(plannerOrchestrationFacts(root,false)).target,'wait');
+});
+
+
+test('Plan-free Jobs never spawn an unsolicited Planner after seeded Tasks finish',()=>{
+ const job={id:'plan-free',state:'ACTIVE',reviewEnabled:true,tasks:[{id:'root',kind:'work',state:'SUCCEEDED',agentGraph:'flowchart TD\nA[agent:worker]'}],plans:[]};
+ const facts=plannerOrchestrationFacts(job,false);
+ assert.equal(facts.planningRequested,false);
+ assert.equal(decidePlannerOrchestration(facts).target,'wait');
+ const enabled=plannerOrchestrationFacts({...job,plans:[{id:'plan-1',round:1,status:'SUCCEEDED',trigger:{source:'initial'},objectiveStatus:'in_progress'}]},false);
+ assert.equal(enabled.planningRequested,true);
+});
+
+
+test('a plan-free Graph Job only starts a repair Planner when Final Review explicitly requests changes',()=>{
+ const completed={id:'root',kind:'work',state:'SUCCEEDED',agentGraph:'flowchart TD\nA[agent:worker]'};
+ const job={id:'plan-free-review',state:'ACTIVE',reviewEnabled:true,tasks:[completed,
+   {id:'final-review',kind:'work',agentName:'job-acceptance-reviewer',state:'SUCCEEDED'}],plans:[],
+   review:{taskId:'final-review',outcome:'changes_required',headSha:'abc',revisionDisposition:'needs-ownership'}};
+ const facts=plannerOrchestrationFacts(job,false);
+ assert.equal(facts.planningRequested,true);
+ assert.equal(decidePlannerOrchestration(facts).target,'created');
 });

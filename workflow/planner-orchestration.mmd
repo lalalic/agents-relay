@@ -12,6 +12,7 @@ checkPlanRecovery["state: check_plan_recovery"]
 checkPlanRecoveryExists["state: check_plan_recovery_exists"]
 checkSeed["state: check_seed"]
 checkPlanner["state: check_planner"]
+checkOptIn["state: check_planner_opt_in"]
 checkResolution["state: check_resolution_ownership"]
 checkBlocked["state: check_blocked"]
 checkWork["state: check_work"]
@@ -27,6 +28,7 @@ terminalFailure["guard: terminalPlanFailure"]
 recoveryVerified["guard: planRecoveryVerified"]
 recoveryExists["guard: planRecoveryExists"]
 hasSeed["guard: hasSeedWork"]
+planningEnabled["guard: planningRequested"]
 noActivePlanner["guard: noActivePlanner"]
 resolutionOwned["guard: resolutionOwnedByTroubleshooter"]
 noBlocked["guard: noBlockedWork"]
@@ -64,7 +66,10 @@ createRecovery --> created
 
 checkSeed -->|on: planner.reconcile| hasSeed
 hasSeed -->|false| wait
-hasSeed -->|true| checkPlanner
+hasSeed -->|true| checkOptIn
+checkOptIn -->|on: planner.reconcile| planningEnabled
+planningEnabled -->|false| wait
+planningEnabled -->|true| checkPlanner
 
 checkPlanner -->|on: planner.reconcile| noActivePlanner
 noActivePlanner -->|false| wait

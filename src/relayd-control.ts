@@ -76,7 +76,7 @@ export function createWorkspaceControl(deps: any) {
         priority: options.priority as import('./types.js').Priority | undefined,
                 tag: options.tag as import('./types.js').Job['tag'] | undefined,
         reviewEnabled: typeof options.reviewEnabled === 'boolean' ? options.reviewEnabled : undefined,
-        executionMode: options.executionMode === 'shortcut' ? 'shortcut' : undefined,
+        contentOnly: options.contentOnly === true || options.executionMode === 'shortcut',
         continuation: options.continuation as import('./types.js').Job['continuation'] | undefined,
         reviewerThreadId: typeof options.reviewerThreadId === 'string' ? options.reviewerThreadId : undefined,
         creatorThreadId: typeof options.creatorThreadId === 'string' ? options.creatorThreadId : undefined,
