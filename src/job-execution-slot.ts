@@ -1,17 +1,9 @@
 import type { Job, Task } from './types.js';
 
-/** A Coordinator is a durable Task but does not occupy a Worker execution slot.
- * Legacy delegated Shortcut Workers preserve their original foreground semantics. */
-function occupiesSlot(job:Job,task:Task):boolean {
+/** Coordinator Tasks hold no Worker slot. Actual Agent executions are leased. */
+function occupiesSlot(_job:Job,task:Task):boolean {
   if(task.agentGraph && (task.result?.data?.dag as {version?:number}|undefined)?.version===1)return false;
-  const shortcut=task.result?.data?.shortcut;
-  const delegatedWorker=job.executionMode==='shortcut' && job.contentOnly===true && task.state==='RUNNING'
-    && shortcut && typeof shortcut==='object'
-    && Object.keys((shortcut as {workerNodes?:Record<string,string>}).workerNodes??{}).length>0;
-  const durableWait=job.executionMode==='shortcut' && job.contentOnly===true && task.state==='RUNNING'
-    && task.leaseOwner===null && shortcut && typeof shortcut==='object'
-    && Object.keys((shortcut as {waits?:Record<string,unknown>}).waits??{}).length>0;
-  return task.state!=='AWAITING_DECISION' && !durableWait && !delegatedWorker &&
+  return task.state!=='AWAITING_DECISION' &&
     (task.state==='RUNNING' || (task.executionId!==null && !['SUCCEEDED','FAILED','CANCELLED'].includes(task.state)));
 }
 function plannerOccupies(job:Job,planId?:string):boolean {

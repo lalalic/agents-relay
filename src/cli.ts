@@ -10,8 +10,7 @@ import { dependencyValidityFromArgs, recoveryDiagnosisFromArgs, workerTaskFromAr
 import { ensureManagedGitHubJob } from './cli-job-create.js';
 import { pauseJob, resumeJob } from './job-pause.js';
 export { ensureManagedGitHubJob } from './cli-job-create.js';
-import { recordShortcutReceiptCommand, runShortcutJobCommand } from './cli-shortcut.js';
-import { runLocalShortcutBinding } from './cli-shortcut-local.js';
+import { runCoordinatorJobCommand } from './cli-coordinator.js';
 import { runContextCommand } from './cli-context.js';
 async function runManagedTaskCommand(action: 'create'|'retry'|'cancel', args: string[]): Promise<void> {
   const jobId = arg(args, '--id');
@@ -32,7 +31,7 @@ async function runManagedTaskCommand(action: 'create'|'retry'|'cancel', args: st
   console.log(JSON.stringify(task, null, 2));
 }
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
-  if (hasArg(args, '--shortcut-local')) return runLocalShortcutBinding('task',action,args);
+  if(hasArg(args,'--shortcut-local'))throw Error('Legacy Shortcut local binding is removed');
   if (!['create', 'update', 'show', 'context', 'events', 'comment', 'comments', 'list', 'retry', 'recover', 'unblock', 'escalate', 'resume-troubleshooter', 'cancel', 'supersede', 'classify', 'revise'].includes(action)) throw new Error(usage);
   if (action === 'revise') { await runTaskReviseCommand(args); return; }
   if (action === 'context' || action === 'events') { await (action === 'context' ? runTaskContextCommand(args) : runTaskEventsCommand(args)); return; }
@@ -179,10 +178,10 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   console.log(JSON.stringify(task, null, 2));
 }
 async function runJobCommand(action: string, args: string[]): Promise<void> {
-  if (hasArg(args, '--shortcut-local')) return runLocalShortcutBinding('job',action,args);
+  if(hasArg(args,'--shortcut-local'))throw Error('Legacy Shortcut local binding is removed');
   const obsolete=['--content-only','--no-content-only','--shortcut-execution'].find(flag=>hasArg(args,flag));
   if (obsolete && ['create','update'].includes(action)) throw new Error(`${obsolete} is obsolete; configure normal --review/--no-review and --auto-merge/--no-auto-merge independently`);
-  if (!['create', 'update', 'show', 'list', 'merge', 'unblock', 'cancel', 'pause', 'resume', 'run', 'shortcut-receipt'].includes(action)) throw new Error(usage);
+  if (!['create', 'update', 'show', 'list', 'merge', 'unblock', 'cancel', 'pause', 'resume', 'run'].includes(action)) throw new Error(usage);
   const repo = action === 'create' ? repository(args) : arg(args, '--repo');
   if (action !== 'create') optionalLegacyPr(args);
   let createObjective: string | undefined;
@@ -211,14 +210,26 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     rejectRemovedJobOptions(args);
     const objective = createObjective ?? '';
     if (hasArg(args, '--local-merge-source') !== hasArg(args, '--local-merge-target')) throw new Error('Supply both --local-merge-source and --local-merge-target');
+    const coordinatorFile=arg(args,'--coordinator-graph-file');
+    const coordinatorOutput=arg(args,'--coordinator-output-path');
+    const coordinatorRoot=arg(args,'--coordinator-project-root');
+    const coordinatorWorkspace=arg(args,'--coordinator-workspace-root');
+    const hasCoordinator=Boolean(coordinatorFile||coordinatorOutput||coordinatorRoot||coordinatorWorkspace||hasArg(args,'--coordinator-input-file'));
+    if(hasCoordinator && !(coordinatorFile&&coordinatorOutput&&coordinatorRoot&&coordinatorWorkspace&&hasArg(args,'--coordinator-input-file')))
+      throw Error('Coordinator requires graph-file, input-file, output-path, project-root and workspace-root');
+    if(hasCoordinator && hasArg(args,'--initial-plan'))throw Error('Coordinator starts directly without a Planner');
+    const coordinator=hasCoordinator?{graph:await textOption(args,'--coordinator-graph','--coordinator-graph-file'),
+      input:await textOption(args,'--coordinator-input','--coordinator-input-file'),
+      outputPath:coordinatorOutput,projectRoot:coordinatorRoot,workspaceRoot:coordinatorWorkspace,
+      sharedRoot:arg(args,'--coordinator-shared-root')||undefined}:undefined;
     const result = await relayControlCommand(args, { command: 'job.create', repository: repo, initialPlan: hasArg(args, '--initial-plan'), options: {
       id: id || undefined, idempotencyKey: arg(args, '--idempotency-key') || undefined, title: arg(args, '--title') || undefined, objective: objective || undefined, projectPath: arg(args, '--project-path') || undefined,
       priority: priority(args), tag: jobTagFromArgs(args), reviewEnabled: !hasArg(args, '--no-review'), autoMerge: !hasArg(args,'--no-auto-merge'), continuation: continuation(args),
+      coordinator,
       reviewerThreadId: hasArg(args, '--reviewer-thread-id') ? arg(args, '--reviewer-thread-id') : undefined, creatorThreadId: hasArg(args, '--creator-thread-id') ? arg(args, '--creator-thread-id') : undefined, implementationThreadId: hasArg(args, '--implementation-thread-id') ? arg(args, '--implementation-thread-id') : undefined,
     }}); console.log(JSON.stringify(result, null, 2)); return;
   }
-  if (action === 'run') { await runShortcutJobCommand(args, id, (store, bus) => runtime(store, args, bus, codexAndZaiUsageRegistry(), true)); return; }
-  if (action === 'shortcut-receipt') { await recordShortcutReceiptCommand(args, id); return; }
+  if (action === 'run') { await runCoordinatorJobCommand(args,id); return; }
   const job = await relayControlJob(args, id);
   if (action === 'unblock') { const reason = arg(args, '--reason'); if (!reason.trim()) throw new Error('job unblock requires --reason'); const updated = await relayControlCommand<Job>(args, { command: 'job.unblock', jobId: id, reason }); console.log(JSON.stringify(updated, null, 2)); return; }
   if (action === 'show') { console.log(JSON.stringify(job, null, 2)); return; }
@@ -259,7 +270,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   console.log(JSON.stringify(await relayControlCommand<Job>(args, { command: 'job.update', jobId: id, patch }), null, 2));
 }
 export function runtimePlanner(args: readonly string[]): AgentObjectivePlanner | CommandObjectivePlanner { const plannerCommand = arg([...args], '--planner-command'); const modelRuntime = arg([...args], '--codex', 'codex'); return plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); }
-export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined, usageRegistry = codexAndZaiUsageRegistry(), shortcutRunnerOwner = false): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const modelRuntime = arg(args, '--codex', 'codex'); const policy = chatGptTabClosePolicy(args); const planner = runtimePlanner(args); return new Reconciler(store, { shortcutRunnerOwner, noGitHub: noGitHubMode(args), owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter({ tabClosePolicy: policy }), new ZAdapter()], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, usageSnapshotProvider: () => usageRegistry.snapshot(), decisionEngine: executionDecisionEngine(), decisionMode: decisionMode(), reviewer: runtimeReviewer(args), eventBus: bus, emit, chatgptTabClosePolicy: policy, executionContextRoots: { workspaceRoot: arg(args, '--workspace-root') || process.env.AGENTS_RELAY_WORKSPACE_ROOT, sharedRoot: arg(args, '--shared-root') || process.env.AGENTS_RELAY_SHARED_ROOT || undefined, globalRoot: arg(args, '--global-root') || process.env.AGENTS_HOME || undefined }, projectPathForJob: async (job, task) => { const workspaceRoot = await resolveWorkspaceRoot(arg(args, '--workspace-root') || undefined); const canonical = await resolveManagedProjectPath(noGitHubMode(args) ? undefined : job.repository, arg(args, '--project-path'), workspaceRoot); if (!(task ? taskRequiresManagedWorktree(job, task) : Boolean(job.localMerge?.sourceRef))) return resolveRepositoryProjectPath(canonical, job.projectPath);
+export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined, usageRegistry = codexAndZaiUsageRegistry()): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const modelRuntime = arg(args, '--codex', 'codex'); const policy = chatGptTabClosePolicy(args); const planner = runtimePlanner(args); return new Reconciler(store, { noGitHub: noGitHubMode(args), owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter({ tabClosePolicy: policy }), new ZAdapter()], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, usageSnapshotProvider: () => usageRegistry.snapshot(), decisionEngine: executionDecisionEngine(), decisionMode: decisionMode(), reviewer: runtimeReviewer(args), eventBus: bus, emit, chatgptTabClosePolicy: policy, executionContextRoots: { workspaceRoot: arg(args, '--workspace-root') || process.env.AGENTS_RELAY_WORKSPACE_ROOT, sharedRoot: arg(args, '--shared-root') || process.env.AGENTS_RELAY_SHARED_ROOT || undefined, globalRoot: arg(args, '--global-root') || process.env.AGENTS_HOME || undefined }, projectPathForJob: async (job, task) => { const workspaceRoot = await resolveWorkspaceRoot(arg(args, '--workspace-root') || undefined); const canonical = await resolveManagedProjectPath(noGitHubMode(args) ? undefined : job.repository, arg(args, '--project-path'), workspaceRoot); if (!(task ? taskRequiresManagedWorktree(job, task) : Boolean(job.localMerge?.sourceRef))) return resolveRepositoryProjectPath(canonical, job.projectPath);
     const sourceRef = job.localMerge?.sourceRef ?? await ensureLocalJobSourceBranch(canonical, job);
     if (!job.localMerge?.sourceRef) {
       if (!task || !store.mutateJob) throw new Error('Managed source branch binding requires an executing code Task and atomic SQLite mutation');

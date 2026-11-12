@@ -11,7 +11,7 @@ const TASK_STATES = ['DRAFT','QUEUED','RUNNING','AWAITING_DECISION','BLOCKED','S
 const JOB_STATES = ['DRAFT','ACTIVE','COMPLETED','CANCELLED'] as const;
 
 const conditionRegistry = new ConditionRegistry([
-  ...new Set(['dependenciesSatisfied','dependenciesUnsatisfied','runnable','dispatchable','recoverableExecution','troubleshooterRecovery','troubleshooterTask','awaitingInteractiveDecision','retryAvailable','notMerged','autoMerge','prOpen','reviewDisabled','implementationComplete','headAvailable','mergeCapable','localCompletionAllowed','localMergeReady','shortcutCompletionAllowed','contentCompletionAllowed'])
+  ...new Set(['dependenciesSatisfied','dependenciesUnsatisfied','runnable','dispatchable','recoverableExecution','troubleshooterRecovery','troubleshooterTask','awaitingInteractiveDecision','retryAvailable','notMerged','autoMerge','prOpen','reviewDisabled','implementationComplete','headAvailable','mergeCapable','localCompletionAllowed','localMergeReady'])
 ].map(booleanCondition));
 const boolGuard = (name: string) => conditionRegistry.guard(name);
 export const lifecycleConditions = conditionRegistry;
@@ -41,12 +41,7 @@ export const taskLifecycleV2 = load('task-lifecycle', TASK_STATES, {
   dependenciesUnsatisfied: boolGuard('dependenciesUnsatisfied'),
   runnable: boolGuard('runnable'),
   dispatchable: boolGuard('dispatchable'),
-  shortcutExecution: facts => facts.durableFacts.shortcutExecution === true,
-  shortcutFallback: facts => facts.durableFacts.shortcutFallback === true,
-  shortcutHasGraph: facts => facts.durableFacts.shortcutHasGraph === true,
-  shortcutDirectInvocation: facts => facts.durableFacts.shortcutDirectInvocation === true,
   shortcutEffectsSafe: facts => facts.durableFacts.shortcutEffectsSafe === true,
-  shortcutResultCorrelated: facts => facts.durableFacts.shortcutResultCorrelated === true,
   recoverableExecution: boolGuard('recoverableExecution'),
   troubleshooterRecovery: boolGuard('troubleshooterRecovery'),
   troubleshooterTask: boolGuard('troubleshooterTask'),
@@ -76,8 +71,6 @@ export const jobLifecycleV2 = load('job-lifecycle', JOB_STATES, {
       && values.reviewSatisfied === true && values.localMergePresent === true
       && values.reviewHeadCurrent === true && values.mergeAttemptReady === true;
   },
-  shortcutCompletionAllowed: facts => facts.durableFacts.shortcutCompletionAllowed === true,
-  contentCompletionAllowed: facts => facts.durableFacts.contentCompletionAllowed === true,
 });
 
 function topologyTargets(graph: Graph, from: string): Set<string> {

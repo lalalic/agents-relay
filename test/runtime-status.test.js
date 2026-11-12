@@ -57,42 +57,29 @@ test('stale targeted revision children are preserved but do not block implementa
 });
 
 
-test('Shortcut Job runtime distinguishes external trigger from Relay queue and merge',()=>{
- const base={executionMode:'shortcut',contentOnly:true,prNumber:0,autoMerge:false,reviewEnabled:false};
- assert.equal(deriveJobRuntimeStatus(job([task('entry','QUEUED')],base)),'WAITING');
- const active={...task('entry','RUNNING'),executionId:'exec-1',leaseOwner:'shortcut-owner',leaseExpiresAt:new Date(Date.now()+60_000).toISOString()};
- assert.equal(deriveJobRuntimeStatus(job([active],base)),'RUNNING');
- assert.equal(deriveJobRuntimeStatus(job([task('entry','SUCCEEDED')],base)),'WAITING');
- assert.equal(deriveJobRuntimeStatus(job([task('entry','QUEUED')],{...base,state:'DRAFT'})),'IDLE');
- assert.equal(deriveJobRuntimeStatus(job([task('entry','SUCCEEDED')],{...base,state:'COMPLETED'})),'COMPLETED');
- const parent=active;const child={...task('shortcut-entry-director','BLOCKED'),parentTaskId:'entry'};
- assert.equal(deriveJobRuntimeStatus(job([parent,child],base)),'BLOCKED');
- assert.equal(deriveJobRuntimeStatus(job([parent,{...child,state:'RUNNING',executionId:'child-exec',leaseOwner:'child-owner',leaseExpiresAt:new Date(Date.now()+60_000).toISOString()}],base)),'RUNNING');
+test('plan-free Coordinator/DAG Job uses ordinary Job runtime status',()=>{
+  const coordinator={...task('coordinator','RUNNING'),agentGraph:'flowchart TD\nA[agent:first] --> B[agent:second]'};
+  const child=task('dag-coordinator-A','RUNNING');
+  assert.equal(deriveJobRuntimeStatus(job([coordinator,child])),'RUNNING');
+  assert.equal(deriveJobRuntimeStatus(job([coordinator,{...child,state:'QUEUED'}])),'RUNNING');
+  assert.equal(deriveJobRuntimeStatus(job([task('coordinator','SUCCEEDED'),task('dag-coordinator-A','SUCCEEDED')])),'MERGE_PENDING');
+  assert.equal(deriveJobRuntimeStatus(job([coordinator,child],{state:'DRAFT'})),'IDLE');
+  assert.equal(deriveJobRuntimeStatus(job([coordinator,child],{state:'COMPLETED'})),'COMPLETED');
 });
 
-test('Shortcut runtime requires a live durable execution lease to display RUNNING',()=>{
- const base={executionMode:'shortcut',contentOnly:true,prNumber:0,reviewEnabled:false};
- const active={...task('entry','RUNNING'),executionId:'exec-1',leaseOwner:'shortcut-owner',leaseExpiresAt:new Date(Date.now()+60_000).toISOString()};
- const cases=[
-   {...active,leaseExpiresAt:new Date(Date.now()-60_000).toISOString()},
-   {...active,leaseExpiresAt:'not-a-date'},
-   {...active,leaseExpiresAt:null},
-   {...active,leaseOwner:null},
-   {...active,executionId:null},
-   task('entry','RUNNING'),
- ];
- for(const stale of cases)assert.equal(deriveJobRuntimeStatus(job([stale],base)),'BLOCKED');
- assert.equal(deriveJobRuntimeStatus(job([active],base)),'RUNNING');
- assert.equal(deriveJobRuntimeStatus(job([active],{...base,pause:{generation:1,requestedAt:now()}})),'WAITING');
- assert.equal(deriveJobRuntimeStatus(job([task('entry','RUNNING')],{state:'ACTIVE'})),'RUNNING','normal jobs retain their original status mapping');
+test('Agent interactive review waits without counting Coordinator as leased Worker',()=>{
+  const root={...task('coordinator','RUNNING'),agentGraph:'flowchart TD\nA[agent:first]'};
+  const waiting={...task('dag-coordinator-A','AWAITING_DECISION'),parentTaskId:'coordinator'};
+  assert.equal(deriveJobRuntimeStatus(job([root,waiting])),'WAITING');
+  const active={...task('dag-coordinator-B','RUNNING'),parentTaskId:'coordinator',executionId:'exec-b',leaseOwner:'relay'};
+  assert.equal(deriveJobRuntimeStatus(job([root,waiting,active])),'RUNNING');
+  assert.equal(deriveJobRuntimeStatus(job([root,{...waiting,state:'FAILED'}])),'RUNNING');
 });
 
-test('Shortcut event wait is WAITING without an active runner, but not on stale receipts',()=>{
- const base={executionMode:'shortcut',contentOnly:true,prNumber:0,reviewEnabled:false};
- const wait={...task('entry','RUNNING'),executionId:'exec-1',result:{summary:'waiting',data:{shortcut:{waits:{visioner:{executionId:'exec-1'}}}}}};
- assert.equal(deriveJobRuntimeStatus(job([wait],base)),'WAITING');
- assert.equal(deriveJobRuntimeStatus(job([{...wait,leaseExpiresAt:new Date(Date.now()-60_000).toISOString()}],base)),'WAITING');
- assert.equal(deriveJobRuntimeStatus(job([{...wait,result:{summary:'old',data:{shortcut:{waits:{visioner:{executionId:'exec-old'}}}}}}],base)),'BLOCKED');
- assert.equal(deriveJobRuntimeStatus(job([{...wait,state:'AWAITING_DECISION'}],base)),'WAITING');
- assert.equal(deriveJobRuntimeStatus(job([{...wait,state:'FAILED'}],base)),'FAILED');
+test('retired Shortcut metadata never creates a separate runtime status path',()=>{
+  for(const state of ['QUEUED','RUNNING','AWAITING_DECISION','SUCCEEDED','FAILED','BLOCKED']){
+    const normal=job([task('entry',state)]);
+    const obsolete={...normal,executionMode:'shortcut',contentOnly:true};
+    assert.equal(deriveJobRuntimeStatus(obsolete),deriveJobRuntimeStatus(normal));
+  }
 });

@@ -67,7 +67,6 @@ export class RepositoryWorkerPool {
     private readonly makeReconciler: (store: DurableStore, maxConcurrent: number) => Reconciler,
     private readonly localInventory: () => Promise<ManagedJobOverview[]>,
     private readonly resolveLocalJob: (jobId: string) => Promise<{ job: Job; store: DurableStore } | null>,
-    private readonly onShortcutDecision?: (jobId:string,taskId:string) => Promise<boolean>,
   ) {
     const reportCoordinatorError = (error: unknown, signal: ReconcileSignal): void => {
       observability().record({
@@ -137,11 +136,6 @@ export class RepositoryWorkerPool {
       if (!signal.event) { shouldReconcile = true; continue; }
       if (signal.event.type === 'github.webhook') continue;
       const outcome = await reconciler.applyEvent(signal.event);
-      // The decision is durably applied before invoking the Shortcut CLI hook.
-      // A replay can also wake a still-QUEUED Task without a new decision.
-      if (signal.event.type === 'task.interactive_decision' && !target.job.tasks.some(t=>unifiedDAG(target.job,t)) &&
-          ['task.interactive_decision.accepted','task.interactive_decision.duplicate'].includes(outcome.reason) &&
-          await this.onShortcutDecision?.(jobId,signal.event.task_id)) continue;
       shouldReconcile ||= outcome.reconcile;
     }
     if (shouldReconcile) await this.reconcileLocalJob(jobId, 'local.signal');
@@ -152,8 +146,6 @@ export class RepositoryWorkerPool {
     let capacity = Math.max(0, this.concurrency - jobs.filter(job => jobHasActiveExecution(job)).length);
     for (const job of jobs) {
       if (capacity <= 0) break;
-      // Legacy in-flight Shortcut Jobs retain their original foreground owner.
-      if (job.executionMode === 'shortcut' && !job.tasks.some(t=>unifiedDAG(job,t))) continue;
       const store = await this.requireLocalStore(job.id);
       await (store as HydratableStore).hydrate?.(job);
       const ready = job.tasks.filter(task => (task.state === 'QUEUED' && task.executionId === null) || (task.state === 'DRAFT' && task.dependencies.length > 0)).length;
@@ -220,7 +212,7 @@ export class RepositoryWorkerPool {
         'task.interactive_decision'].includes(event.type);
       // GitHub transport is observational. It must never wake lifecycle execution.
       if (event.type === 'github.webhook') return;
-      const wake = event.type === 'job.wake' || event.type === 'review.created' || event.type === 'planner.completed' || event.type === 'shortcut.result';
+      const wake = event.type === 'job.wake' || event.type === 'review.created' || event.type === 'planner.completed';
       if (!lifecycle && !wake) return;
       await this.coordinator.acceptTransport({
         jobId: event.job_id,

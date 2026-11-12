@@ -10,7 +10,6 @@ import { ZAdapter } from './z-adapter.js';
 import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
 import { serveDashboard } from './dashboard.js';
 import { RepositoryWorkerPool } from './pool.js';
-import { createShortcutReviewWake } from './shortcut-review-wake.js';
 import { Reconciler } from './reconciler.js';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, resolvePullRequest, type DurableStore, type ManagedGitHubPullRequestSnapshot } from './store.js';
 import { GitHubProjectionWriter } from './projected-store.js';
@@ -328,11 +327,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     })();
     return githubBindingSyncInFlight;
   };
-  const shortcutReviewWake=createShortcutReviewWake(async jobId => (await localJobBinding(jobId))?.job ?? null); const pool = new RepositoryWorkerPool(concurrency,makeReconciler,
-    inventoryFromLocal,
-    localJobBinding,
-    shortcutReviewWake,
-  );
+  const pool = new RepositoryWorkerPool(concurrency,makeReconciler,
+    inventoryFromLocal,localJobBinding);
   const initial = cachedOverviews; const fallback = initial[0]?.job;
   const dashboardStore = fallback ? (await requireLocalJobBinding(fallback.id)).store : new InMemoryStore();
   const {dashboardOverview,workspaceJobAction,workspaceJobSetState,workspaceTaskCreate,workspaceTaskAction,workspaceTaskSetState} = createDashboardActions({getOverviews: () => cachedOverviews, requireLocalJobBinding, pool, dashboardJobAction, makeReconciler, concurrency, dashboardJobSetState, refreshAll, applyJobActivateAction, bus, dashboardTaskAction, dashboardTaskSetState});

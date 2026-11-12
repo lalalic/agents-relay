@@ -3,7 +3,7 @@
 import {readFile,realpath} from 'node:fs/promises';
 import {resolve,relative,isAbsolute,sep,join} from 'node:path';
 const within=(root:string,target:string):boolean=>{const rel=relative(root,target);return rel===''||(rel!=='..'&&!rel.startsWith('..'+sep)&&!isAbsolute(rel));};
-export async function validateShortcutStageGate(options:{projectPath:string;agent:string;runPath:string;execute:(args:string[],cwd:string)=>Promise<{stdout:string;stderr:string;code:number}>}):Promise<void>{
+export async function validateDAGStageGate(options:{projectPath:string;agent:string;runPath:string;execute:(args:string[],cwd:string)=>Promise<{stdout:string;stderr:string;code:number}>}):Promise<void>{
  const root=await realpath(options.projectPath);
  let manifest:unknown;
  try{manifest=JSON.parse(await readFile(join(root,'project.run.json'),'utf8'));}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return;throw error;}

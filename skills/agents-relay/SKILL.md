@@ -5,15 +5,15 @@ description: Use Agents Relay for durable multi-step or multi-agent work that ne
 
 # Agents Relay
 
-Agents Relay manages durable Jobs and Tasks. Use its CLI for Job/Task state and actions; do not read its private storage, GitHub projections, or internal service APIs. Prefer completing simple, non-delegated work directly without Relay.
+Relay owns durable Jobs and Tasks. Use its CLI—not private storage or GitHub projections. Handle one-shot work directly.
 
 ## Job Execution Lifecycle (JEL)
 
-Explain **JEL** to the user: **Create → Plan → Execute → Final Review → Merge → Completed**. After work/recovery Tasks terminate (SUCCEEDED/FAILED/CANCELLED), Final Review judges completion: PASS merges; CHANGES_REQUIRED persists findings, starts Planner N+1 for minimal fixes, then re-reviews. No automatic post-success Plan. Planner/Workers use discovered **ponytail** Skill (YAGNI, reuse, minimal Tasks); preserve mandatory safeguards.
+Explain **JEL** to the user: **Create → [optional Plan] → Execute → Final Review → Merge → Completed**. A Coordinator Agent Graph does not need an initial Planner; otherwise the same Task/Review/Merge lifecycle applies. After work/recovery Tasks terminate (SUCCEEDED/FAILED/CANCELLED), Final Review judges completion: PASS merges; CHANGES_REQUIRED persists findings, starts Planner N+1 for minimal fixes, then re-reviews. No automatic post-success Plan. Planner/Workers use discovered **ponytail** Skill (YAGNI, reuse, minimal Tasks); preserve mandatory safeguards.
 
 ## 1. Choose and start a Job
 
-Use Relay for durable multi-Task work. Record the standalone objective, constraints, acceptance checks, and deliverables before Job creation.
+Use Relay for durable multi-Task work with explicit objectives and acceptance criteria.
 
 Consult CLI help; examples:
 
@@ -23,7 +23,7 @@ npx agents-relay job show --id JOB_ID
 npx agents-relay task list --repo OWNER/REPO --id JOB_ID
 ```
 
-Use the returned Job ID; never invent IDs. Omit `--initial-plan` only for create-only work. GitHub is audit-only; local Git owns merge. For local-only operations use `--no-github`.
+Use returned Job IDs. Omit `--initial-plan` for DRAFT-only or Coordinator Graph work. GitHub is audit-only; local Git owns merge. For local-only operations use `--no-github`.
 
 Read `contracts/task-job-contract.md` before authoring or changing Jobs or Tasks and `contracts/orchestrator-workflows.md` when handling initial planning, P0/self Jobs, or merge/delivery boundaries. For content work, load the active Neo Project rules, its Agent Graph if present, and the relevant stage contracts—not a presumed universal production sequence.
 
@@ -42,13 +42,42 @@ node <matching-absolute-dist/cli.js> plan context --id JOB --plan-id PLAN --exec
 
 Task and Planner context commands reject stale identities. Optional `--repo` constrains the Job. Never infer Task content from GitHub. Planner submits via `apply_cli`; only `PLAN_APPLIED:<plan-id>:<execution-id>` proves application. Authorized delegation creates durable child Tasks.
 
-Graph Tasks use Relay's ordinary Task Reconciler: `agentGraph` becomes a
-**Coordinator** with durable Agent-named children created as dependencies become
-ready. Script and Model are Task execution choices; each has the same
-Task-level retry, failure and review semantics. `job run --id JOB --task-id TASK` activates any create-only Graph Job and
-hands it to that same Reconciler; it is not a separate DAG scheduler or Job
-execution mode. Final Review is independently controlled by `--review`/`--no-review`;
-normal Git Merge is independently controlled by `--auto-merge`/`--no-auto-merge`. A Graph needs no Planner unless one is requested.
+### Plan-free Coordinator / DAG execution
+
+`agentGraph` is a declarative dependency DAG. Relay persists one Coordinator
+Task and one independent **Agent Task for each node as its dependencies become
+ready**. The Coordinator owns the Graph but does not lease a Worker or use a
+second execution state machine. Script and Model nodes have identical durable
+Task lifecycle, retry, recovery, human review and terminal event semantics.
+An Agent terminal event **immediately** reconciles and dispatches ready
+successors when capacity allows. Otherwise QUEUED retains recovery and fair
+admission. Branches can run concurrently; fan-ins await dependencies.
+
+To create a plan-free Coordinator Job, include its Graph and execution paths
+**in the original Job creation**, atomically with the durable Job. For example:
+
+```sh
+npx agents-relay job create --repo OWNER/REPO --title "Episode" \
+  --objective-file job.md \
+  --coordinator-graph-file /absolute/project/graph.mmd \
+  --coordinator-input-file /absolute/run/neo-project-run.input.md \
+  --coordinator-output-path /absolute/run/neo-project-run.result.json \
+  --coordinator-project-root /absolute/project \
+  --coordinator-workspace-root /absolute/workspace \
+  --coordinator-shared-root /absolute/shared
+npx agents-relay job run --id JOB_ID --task-id coordinator \
+  --project-path /absolute/project --workspace-root /absolute/workspace \
+  --shared-root /absolute/shared
+```
+
+Creation atomically persists **DRAFT Job + Coordinator Task**. Activation
+returns a scheduled receipt, not completion. Neo's `neo project run` wraps this
+creation/binding/activation sequence and resumes an existing Run without
+creating a second Job. Do not use legacy `--shortcut-execution`, `--mode
+shortcut`, `--shortcut-local`, `--legacy-shortcut-runtime` or receipts.
+Final Review (`--review`/`--no-review`) and local Git Merge
+(`--auto-merge`/`--no-auto-merge`) are independent ordinary Job policies;
+there is no automatic Plan or special content-only completion mode.
 
 ## 3. Verify, review, and recover
 
@@ -82,9 +111,7 @@ Markcut). The reviewed Task enters `AWAITING_DECISION`. An inbox/compile receipt
 is **not approval**. An accepted Approve resumes the same Agent Task; Request
 Changes resumes the same Task with feedback (a scripted Task can switch to its
 Model executor for semantic revision, then return to Script for validation).
-One execution ID identifies at most one review. Preview does **not** create Git
-commits, snapshots or independent reviewer Tasks. Legacy in-flight Shortcut
-checkpoints remain compatible. See `contracts/event-contract.md`.
+One execution ID identifies at most one review. Preview does **not** create Git commits, snapshots or independent reviewer Tasks. Review feedback and decisions live in Relay's durable Task history, not a synthetic Git revision. See `contracts/event-contract.md`.
 
 ## 5. Manage services when needed
 

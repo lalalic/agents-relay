@@ -85,13 +85,13 @@ test('project Visioner explicitly extends differently named shared Visioner with
   assert.match(result.content, /Reusable perception contract/);
   assert.match(result.content, /Project evidence contract/);
   assert.deepEqual(result.sources.map(source => source.split('/').at(-1)), ['visioner.agent.md', 'vlog-visioner.agent.md']);
-  const { missingShortcutNodes } = await import('../dist/agent-shortcut.js');
-  assert.deepEqual(await missingShortcutNodes('flowchart TD\nA[agent:vlog-visioner]', f.project, shared), []);
+  const { missingScriptAgents } = await import('../dist/agent-script-discovery.js');
+  assert.deepEqual(await missingScriptAgents('flowchart TD\nA[agent:vlog-visioner]', f.project, shared), []);
   await assert.rejects(resolveAgentMarkdown('vlog-visioner', f.builtin, f.project), /Missing shared base/);
   await writeFile(join(f.project, 'agents', 'vlog-visioner.agent.md'),
     '---\nname: vlog-visioner\nextends: shared/../visioner\n---\nUnsafe');
   await assert.rejects(resolveAgentMarkdown('vlog-visioner', f.builtin, f.project, shared), /Only extends:/);
   await writeFile(join(f.project, 'agents', 'vlog-visioner.agent.md'),
     '---\nname: vlog-visioner\n---\nStandalone');
-  assert.deepEqual(await missingShortcutNodes('flowchart TD\nA[agent:vlog-visioner]', f.project, shared), ['A']);
+  assert.deepEqual(await missingScriptAgents('flowchart TD\nA[agent:vlog-visioner]', f.project, shared), ['A']);
 });

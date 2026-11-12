@@ -19,16 +19,15 @@ Relay appends `--handoff-file`, optional `--on-needs-user-file`, and `--cwd`
 without using a shell. No Neo executable is assumed. Missing/failed executors
 produce `technical_failure` rather than silently resolving a blocker.
 
-**Unified DAG/Shortcut L3 gate:** `npm run test:l3:shortcut` covers both
-legacy in-flight Shortcut recovery (four three-agent scenarios) and the new
-ordinary Task Runtime: three Script Tasks without Review; all approvals;
-Request Changes and fresh approval for Script and Model Agents; actual Shortcut
-CLI activation; Normal-vs-Shortcut DAG equivalence; restart/idempotency;
-fork/join concurrency; failed child Task using ordinary Relay recovery; EventBus
-wake; and single-Agent Script execution. `Coordinator` only creates dependency-
-ready Agent Tasks; each child uses existing Retry, Troubleshooter and Review.
-No `NodeExecution`, Git Review commit, or second task scheduler. An inbox
-receipt is not user approval. The L3 gate is included in `test:publish`.
+**Unified Coordinator/DAG L3 gate:** `npm run test:l3:dag` exercises four
+three-Agent scenarios: Script without Review, all Approve, Script Request
+Changes then re-Approve, and Model Request Changes then re-Approve. Further
+coverage tests real Job activation, atomically created Coordinator, event-driven
+direct successor dispatch (including parallel branches and resource starvation),
+failed Agent recovery and restart/idempotency. Every Agent is a durable Task;
+`QUEUED` does not impose another global Job scheduling pass when capacity is
+available. The Coordinator has no Worker lease. There is no Shortcut Runner,
+separate DAG state machine, Git Review commit, or hidden approval.
 
 **Interactive Review:** Relay owns the generic
 `review.interactive.begin/wait/fail/abort` lifecycle, execution-bound
@@ -140,7 +139,7 @@ Jobs separate durable lifecycle from derived runtime status. Durable lifecycle i
 
 The **Job Execution Lifecycle (JEL)** is Create → Plan → Execute → Final Review → Merge → Completed. All work/recovery Tasks must reach a terminal state (SUCCEEDED, FAILED, or CANCELLED) before Final Review is eligible; terminal failure is evidence for the reviewer, not automatic acceptance. The independent Final Reviewer records findings. A PASS goes to the merge gate; CHANGES_REQUIRED persists findings and starts a minimal Planner N+1 repair round, then another Final Review. No automatic Plan N+1 is created after successful work. Planner and Workers use the discovered `ponytail` Skill to avoid unnecessary tasks without omitting required verification. For operator discussion, call this lifecycle **JEL**.
 
-The Dashboard Job detail includes a **View JEL chart** link. It opens the full-screen graph viewer (Fit, zoom in/out, Ctrl/⌘-wheel zoom, and drag-to-pan) with a read-only Mermaid diagram that shows each persisted Plan, execution round, Final Review (including CHANGES_REQUIRED → Plan N+1), merge stage, and completion status. Every node displays wall-clock elapsed time derived from persisted timestamps (including queued time); missing timing data is labeled **unknown**, not estimated. The JEL popup highlights failed attempts in red, repeated worker attempts (Retry) in purple, and Troubleshooter tasks in amber, as dashed read-only diagnostic branches off their Execute round. Historical failure is shown only when a persisted `recoveryForAttempt` record supports it. The chart never changes Job state. Shortcut-runner jobs display their direct execution path instead of fictitious planning, review, or merge stages.
+The Dashboard Job detail includes a **View JEL chart** link. It opens the full-screen graph viewer (Fit, zoom in/out, Ctrl/⌘-wheel zoom, and drag-to-pan) with a read-only Mermaid diagram that shows each persisted Plan, execution round, Final Review (including CHANGES_REQUIRED → Plan N+1), merge stage, and completion status. Every node displays wall-clock elapsed time derived from persisted timestamps (including queued time); missing timing data is labeled **unknown**, not estimated. The JEL popup highlights failed attempts in red, repeated worker attempts (Retry) in purple, and Troubleshooter tasks in amber, as dashed read-only diagnostic branches off their Execute round. Historical failure is shown only when a persisted `recoveryForAttempt` record supports it. The chart never changes Job state. Plan-free Coordinator Jobs show direct execution without a fictitious Plan, followed by normal Final Review and Git Merge.
 
 Lifecycle transition authority lives in the directly renderable canonical flowchart sources linked in [Workflow graph navigation](#workflow-graph-navigation). Git history owns prior graph versions; the working tree contains only the current graph set.
 
@@ -180,7 +179,7 @@ All task producers use the same story-size contract: `S`≈5 minutes, `M`≈15 m
 
 There is no Job scheduling or cron support. Reconciliation resumes objective planning from durable state, including after a missed wake-up or restart. See [objective-driven Jobs](docs/objective-driven-jobs.md).
 
-GitHub projection creates or reuses a display PR after a meaningful source-branch commit. Job creation is always create-only and always enables auto-merge; `--no-auto-merge` is not a `job create` option. Existing Jobs can still change that setting with `job update`. Task execution options belong to `task create`, and the orchestrator may create zero, one, or multiple initial Tasks according to user intent.
+GitHub projection creates or reuses a display PR after a meaningful source-branch commit. Job creation is create-only by default and enables auto-merge unless `--no-auto-merge` is set. A Coordinator may be included atomically by supplying its Graph, input and absolute execution paths. Existing Jobs can still change that setting with `job update`. Task execution options belong to `task create`, and the orchestrator may create zero, one, or multiple initial Tasks according to user intent.
 
 Use `job update` for partial mutable metadata changes on an already healthy Job marker/binding:
 
@@ -304,7 +303,21 @@ npx agents-relay task create --repo OWNER/REPO --pr 5 --id JOB_ID \
   --input "Research the dashboard UX and write the final report to the declared output file."
 ~~~
 
-SQLite and the canonical Graphs are authoritative for terminal lifecycle. A remote PR merge/close is an audit observation, not a state transition. Final Review PASS authorizes local Git merge; confirmed local-merge evidence gates `COMPLETED`. The dashboard exposes `/api/jobs` and distinguishes durable Job lifecycle from derived runtime status. The `/api/runtime-summary` Running Tasks, worker, and model totals count only `RUNNING` Tasks belonging to `ACTIVE` Jobs with an execution ID, lease owner, and unexpired lease; old durable RUNNING flags without a current lease are not active workload. Archived direct Shortcut records remain readable, but current Coordinator Jobs use the normal managed Job queue and display. Shortcut artifact hashing accepts a relative file present in both the Project and its canonical Run only if the two resolved files have identical bytes; it records the Run copy and still rejects different contents, path escapes and ambiguous provenance. Daemon startup orphan-recovery must not reclaim externally owned Shortcut Worker leases; only the foreground Shortcut Runner owns their recovery. For model-backed Shortcut nodes, the same caller-configured `--shared-root` (or `AGENTS_RELAY_SHARED_ROOT`) must be supplied to child Worker execution context, not just Shortcut discovery.
+SQLite and the canonical Graphs are authoritative for terminal lifecycle.
+A remote PR merge/close is audit metadata, not completion evidence. Final
+Review PASS authorizes local Git merge; confirmed local-merge evidence gates
+`COMPLETED`. The dashboard distinguishes durable Job lifecycle from derived
+runtime status. `/api/runtime-summary` counts only RUNNING Tasks of ACTIVE
+Jobs with a valid current Worker execution and lease. The Coordinator itself
+has no Worker lease, and every Script/Model DAG node is an ordinary Task.
+Terminal Task events trigger immediate same-Job Reconciler continuation for
+ready successors; the global pool still enforces total Worker capacity.
+A human Preview is Task-bound and never auto-commits Git. The retired
+Shortcut runtime and receipt path are no longer executable or displayed as
+a separate Job mode; normalized historical metadata is ignored. Child Agent
+resolution receives configured `--workspace-root` and `--shared-root` roots
+identically for Script and Model execution.
+
 
 Relay has no orchestrator worker adapter for new work. Orchestrators are external clients that create/plan durable Tasks; Execution Router selects a real worker route (`codex` or `chatgpt`). The CLI and dashboard do not expose manual orchestrator-only `task start`, `task complete`, or synthetic `record` paths.
 

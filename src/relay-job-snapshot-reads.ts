@@ -2,14 +2,14 @@ import type {DatabaseSync} from 'node:sqlite';
 import type {Job} from './types.js';
 import {normalizeLegacyTaskLifecycle} from './types.js';
 import {normalizeLegacyJobPrNumber} from './job-pr-number-migration.js';
-export function currentJobMetadata<T extends object>(job: T): T {
- // Retired historical modes must not survive reads or writes. Only the
- // supported opt-in Direct Shortcut mode is part of the active Job contract.
- const { schedule: _schedule, executionMode, ...current } = job as T & {
-  schedule?: unknown; executionMode?: unknown;
+export function currentJobMetadata<T extends object>(job:T):T {
+ const { schedule:_schedule, executionMode:_executionMode,contentOnly:_contentOnly,
+   shortcutExecutionStartedAt:_shortcutStarted,shortcutRunnerContext:_shortcutContext,
+   shortcutExecutionDeadlineAt:_shortcutDeadline,...current}=job as T & {
+   schedule?:unknown;executionMode?:unknown;contentOnly?:unknown;
+   shortcutExecutionStartedAt?:unknown;shortcutRunnerContext?:unknown;shortcutExecutionDeadlineAt?:unknown;
  };
- return (executionMode === 'shortcut'
-  ? { ...current, executionMode: 'shortcut' } : current) as T;
+ return current as T;
 }
 export function normalizeRelayJob(json:string):Job {
  const job = currentJobMetadata(normalizeLegacyJobPrNumber(JSON.parse(json) as Job));

@@ -2,7 +2,7 @@ import {readFile} from 'node:fs/promises';
 import {dirname} from 'node:path';
 import {once} from 'node:events';
 import {spawnOwnedProcess} from './owned-process.js';
-import {validateShortcutStageGate} from './shortcut-stage-contract.js';
+import {validateDAGStageGate} from './dag-stage-contract.js';
 import type {Task} from './types.js';
 
 /** Validate an Agent DAG Task's required on-disk result before accepting
@@ -23,7 +23,7 @@ export async function dagCompletionError(task:Task,projectPath?:string):Promise<
    return 'DAG Agent result must contain a list or object of artifacts';
  if(projectPath && task.agentName){
    try{
-     await validateShortcutStageGate({projectPath,agent:task.agentName,runPath:dirname(dirname(task.output.path)),
+     await validateDAGStageGate({projectPath,agent:task.agentName,runPath:dirname(dirname(task.output.path)),
        execute:async(args,cwd)=>{
          const abort=AbortSignal.timeout(300_000);
          const child=spawnOwnedProcess(args[0],args.slice(1),{invocation:'dag.stage-validation',signal:abort,

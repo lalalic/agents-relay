@@ -8,7 +8,7 @@ Usage:
 --no-github: SQLite/Graph-only mode. GitHub auth/API, PR creation, merge and fetch are disabled. Local completion is Graph-owned.
 
 Commands:
-  job create|update|show|list|run|shortcut-receipt|merge|unblock|cancel|pause|resume  Manage SQLite-authoritative jobs with optional GitHub PRs
+  job create|update|show|list|run|merge|unblock|cancel|pause|resume  Manage SQLite-authoritative jobs with optional GitHub PRs
   task create|update|show|list|revise|classify|complete|retry|unblock|cancel  Manage durable tasks
   review job               Request graph-owned review (optional thread override)
   review interactive       Bind, wait, ready, fail or abort a host-owned human review
@@ -34,14 +34,13 @@ Use 'node dist/cli.js' only for explicit local development/demo mode.`,
   job: `Manage SQLite-authoritative durable jobs.
 
 Usage:
-  npx agents-relay job <create|update|show|list|run|shortcut-receipt|merge|unblock|cancel|pause|resume> [options]
+  npx agents-relay job <create|update|show|list|run|merge|unblock|cancel|pause|resume> [options]
 
 Actions:
-  create  Create a durable SQLite-authoritative Job
+  create  Atomically create a durable Job, optionally with its Coordinator DAG Task
   update  Partially update mutable metadata on a healthy existing Job
   show    Show one durable Job
-  run     Activate a create-only Job with a durable Agent Graph Task
-  shortcut-receipt  Atomically record a validated nonhuman result for a persisted wait
+  run     Activate an ordinary DRAFT Coordinator Graph Job; Relay schedules its Tasks
   list    List managed Jobs in a repository
   merge   Legacy entry point; local Git merge is Graph-owned (no CLI PR merge)
   unblock Authoritatively invalidate current BLOCKED decisions and trigger replanning/resume
@@ -53,24 +52,20 @@ Common options:
   --repo OWNER/REPO       Required for create; optional Job identity check otherwise
   --id JOB_ID             Durable job identifier
 
-Graph Job activation:
-  agents-relay job run --id JOB --task-id TASK
-    [--project-path DIR] [--workspace-root DIR]
+Coordinator/DAG creation and activation (no initial Planner required):
+  agents-relay job create --repo OWNER/REPO --objective-file job.md
+    --coordinator-graph-file /abs/graph.mmd --coordinator-input-file /abs/input.md
+    --coordinator-output-path /abs/result.json --coordinator-project-root /abs/project
+    --coordinator-workspace-root /abs/workspace [--coordinator-shared-root /abs/shared]
+  agents-relay job run --id JOB --task-id coordinator
+    [--project-path /abs/project] [--workspace-root /abs/workspace]
 
-The Job is created DRAFT without a Planner. This command activates its Graph
-Task, then the same Relay Reconciler schedules all durable Agent child Tasks.
-Final Review uses --review/--no-review; Merge uses --auto-merge/--no-auto-merge. Both are normal Job policies, independent of the Coordinator start.
-The --mode shortcut flag is accepted only as a deprecated CLI input alias.
-Historical direct Shortcut checkpoints are read for compatibility.
-
-Record an asynchronous result with:
-  agents-relay job shortcut-receipt --id JOB --task-id TASK
-    --node-id NODE --wait-id WAIT --revision REV --execution-id EXECUTION
-    --output-file result.json --content-sha256 SHA256
-
-The file must contain the completed shortcut result object. SHA256 is computed
-over its canonical JSON content and must equal the persisted wait content hash.
-
+Creation atomically stores DRAFT Job and Coordinator Task; activation only
+wakes the ordinary Task Reconciler and returns ACTIVE. The Coordinator owns
+one durable Script/Model Task per ready DAG node. After a terminal event,
+its successors are dispatched immediately when capacity permits. Independent
+Final Review and Git Merge policies remain in force. Review previews do not
+create Git commits. No Shortcut Runner or execution mode remains.
 Example:
   npx agents-relay job show --id 101`,
   prompt: `Read-only exact PromptBuilder output for a durable Plan or Task.
@@ -117,19 +112,30 @@ Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job r
 
 Required: --repo OWNER/REPO and a standalone Job objective. Job ID defaults to an auto-incrementing store-global number; --id may only reference an existing numeric Job.
 Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --initial-plan, --review|--no-review, --auto-merge|--no-auto-merge, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
-Job creation enables auto-merge and Final Review by default. By default it is create-only; --initial-plan validates the first real Planner round before atomically creating the durable Job and Plan, then publishes the normal wake. A Coordinator Job does not require an initial Plan; neither review nor merge behavior changes based on its start point. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
+Creation enables auto-merge and Final Review by default. For plan-free DAG
+jobs, pass --coordinator-graph-file GRAPH --coordinator-input-file INPUT
+--coordinator-output-path ABS --coordinator-project-root ABS
+--coordinator-workspace-root ABS [--coordinator-shared-root ABS] to atomically
+persist the Job plus one Coordinator Task. Use job run to activate it.
+Without a Coordinator, create-only DRAFT Jobs can start the Planner with
+--initial-plan. Final Review and Git Merge are independent of how work starts.
+The --no-review and --no-auto-merge policies are separate; creation is
+idempotent and does not rewrite an existing Job.
 
 Example:
   npx agents-relay job create --repo OWNER/REPO --project-path vlog --title "Episode" --objective-file episode.md --initial-plan`,
-  'job run': `Activate a create-only Job with a durable Agent Graph Task. No Planner or execution mode is required.
+  'job run': `Activate a DRAFT Job with a durable Coordinator Agent Graph Task. No Planner or execution mode is required.
 
 Usage: agents-relay job run --id JOB --task-id TASK [--project-path DIR] [--no-github]
 
-The command activates the normal Job lifecycle and emits a wake-up. The ordinary
-Relay Scheduler creates runtime Agent Tasks, runs Script or Model executors,
-waits for human review, retries failures and handles completion. A Job may use
-ordinary Final Review and Merge policies. The --mode shortcut argument is a
-deprecated start alias only; it does not choose an execution engine.`,
+The command activates ordinary Job lifecycle and emits a wake-up. It returns
+ACTIVE without blocking for all Agent Tasks. The same Job Reconciler creates
+Script and Model Tasks, accepts terminal events and directly dispatches newly
+ready DAG successors when capacity is available. QUEUED is only the durable
+capacity/recovery boundary, not a second scheduled Job. Human review waits,
+retry and recovery use the normal Task lifecycle. Final Review and Git Merge
+remain ordinary Job policies. No Git commit occurs on interactive review.
+There is no Shortcut execution mode.`,
   'job update': `Partially update mutable metadata on a healthy existing Job.
 
 Required: --id JOB_ID. Optional: --repo OWNER/REPO verifies the stored Job identity.

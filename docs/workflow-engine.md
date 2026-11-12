@@ -110,22 +110,36 @@ These boundaries keep the executable Mermaid profile small while preventing life
 
 ## Task Agent Graph execution
 
-A durable Task may select one canonical agent contract with `agentName`, or declare an Agent Graph with `agentGraph`. These are execution semantics inside one Task; they are not additional durable Tasks and do not create a second Job/Task lifecycle.
+A normal durable Task may bind one Agent using `agentName`. An executable
+`agentGraph` instead defines a **Coordinator Task** and independently durable
+Agent-named child Tasks. This is still the ordinary Task lifecycle—there is
+no `NodeExecution` record, separate DAG retry engine or special Job mode.
 
-Single-agent execution resolves `<name>.agent.md` through the shared execution-context precedence and injects that Markdown as the authoritative behavioral contract. Worker/model routing remains separate from agent identity. The final-review path uses this mechanism: a final-review Task declares `agentName=reviewer`, while the PR/head SHA and Job objective remain Task context rather than a duplicated review protocol.
+The Agent identity resolves `<name>.agent.md` using normal execution-context
+precedence; Worker/model routing is separate. The bundled Planner and
+Reviewer Agent contracts remain fallback definitions in the same discovery
+system, not hard-coded DAG runtimes.
 
-The canonical Agents Relay Planner contract is bundled at `skills/agents-relay/agents/planner.agent.md` and is exposed as a lowest-precedence built-in agent so Task Agent Graphs can use `planner` without copying that contract into each project. Project, Neo, or global agents with the same name still override the built-in definition through normal context precedence.
-
-Agent Graphs use a minimal directly renderable Mermaid `flowchart` profile. Node IDs default to agent names; `node[agent:name]` may bind a different canonical agent. Edges are dependencies. Relay validates acyclicity and compiles the graph into execution waves. Nodes in the same wave reason independently from the same original Job/Task context; fan-in nodes receive the original context plus structured predecessor outputs. The outer durable Task owns exactly one `task.started` and one terminal event; graph nodes never masquerade as child Tasks.
+Agent Graph syntax uses the supported Mermaid `flowchart` profile. A node
+`id[agent:name]` selects the Agent contract, and `-->` creates a dependency.
+Relay validates acyclicity, creates children as their dependencies become
+ready, and passes structured predecessor outputs to fan-in children.
 
 ```mermaid
 flowchart TD
-    strategy[agent:business-strategist] --> business-loop
-    product[agent:product-manager] --> business-loop
-    business-loop --> planner
+    strategy[agent:business-strategist] --> integrate[agent:product-manager]
+    finance[agent:financial-analyst] --> integrate
+    integrate --> publish[agent:publisher]
 ```
 
-This keeps three boundaries distinct: the Job's durable Task dependency graph, the Agent Graph inside one Task, and worker/model routing used to execute that Task.
+An Agent Task's accepted terminal event immediately reconciles its own Job;
+with available Worker capacity the successors can be dispatched before any
+new global Job scheduling pass. The Coordinator itself consumes no Worker
+lease. Each Script/Model child has a separate execution identity, retries,
+recovery, `task.interactive_waiting` / `AWAITING_DECISION` boundary, and
+correlated terminal event. Human Request Changes resumes **the same Task**;
+preview delivery never auto-commits source. Normal Final Review and Git
+Merge continue unchanged after all work settles.
 
 ## Troubleshooter execution fallback
 

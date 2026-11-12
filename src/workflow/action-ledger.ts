@@ -53,7 +53,7 @@ export class WorkflowActionLedger {
     decision: GraphDecision, conditionId: string,
   ): boolean {
     if (!decision.accepted || decision.source!=='QUEUED' || decision.target!=='QUEUED'
-      || !['effect.launchTask','effect.launchShortcut'].includes(identity.actionId))throw Error('dispatch reservation requires canonical QUEUED Graph launch decision');
+      || identity.actionId!=='effect.launchTask')throw Error('dispatch reservation requires canonical QUEUED Graph launch decision');
     return this.reserveForRunningTask(identity,decision,conditionId,new Date().toISOString(),'QUEUED');
   }
   trace(attemptKey: string): ActionTrace | null {

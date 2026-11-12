@@ -3,7 +3,6 @@ export interface JelJob {
   state?: string;
   createdAt?: string;
   updatedAt?: string;
-  executionMode?: string;
   reviewEnabled?: boolean;
   plans?: Array<{ id?: string; round?: number; status?: string; createdAt?: string; updatedAt?: string; generatedTaskIds?: string[]; trigger?: { source?: string } }>;
   tasks?: Array<{ id?: string; state?: string; planningDecisionId?: string; agentName?: string; parentTaskId?: string | null; recoveryForAttempt?: number; attempt?: number; executionHistory?: Array<{ attempt?: number; startedAt?: string }>; createdAt?: string; updatedAt?: string }>;
@@ -104,15 +103,6 @@ export function jobJelDiagram(job: JelJob): string {
   const jobEnd = ['COMPLETED','CANCELLED'].includes(job.state || '') ? job.updatedAt : 'NOW';
   const firstStart = plans[0]?.createdAt || (job.tasks || []).map(task => task.createdAt).filter(Boolean).sort()[0];
   node('created', 'Create / recorded', elapsed(job.createdAt, firstStart || jobEnd));
-  if (job.executionMode === 'shortcut') {
-    const work = tasks.filter(task => !isReviewer(task) && !isTroubleshooter(task));
-    node('execute', 'Shortcut execute / ' + workLabel(work), workElapsed(work));
-    diagnostics('execute', 'shortcut', work, tasks.filter(isTroubleshooter));
-    node('finished', 'Job / ' + state(job.state, 'UNKNOWN'), elapsed(job.createdAt, jobEnd));
-    edge('created', 'execute');
-    edge('execute', 'finished');
-    return finish();
-  }
   const rounds = plans.length ? plans : [{ id: '', round: 1, status: 'NOT STARTED', generatedTaskIds: [] as string[] }];
   let previous = 'created';
   for (let i = 0; i < rounds.length; i++) {
@@ -124,7 +114,7 @@ export function jobJelDiagram(job: JelJob): string {
     const reviewId = 'review_' + suffix;
     const assigned = new Set(Array.isArray(plan.generatedTaskIds) ? plan.generatedTaskIds : []);
     const work = (plans.length ? tasks.filter(task => !isReviewer(task) && !isTroubleshooter(task) && (task.planningDecisionId === plan.id || assigned.has(task.id || ''))) : tasks.filter(task => !isReviewer(task) && !isTroubleshooter(task)));
-    node(planId, 'Plan ' + number + ' / ' + state(plan.status, 'NOT STARTED'), elapsed(plan.createdAt, plan.status === 'PLANNING' ? 'NOW' : plan.updatedAt));
+    if(plans.length)node(planId, 'Plan ' + number + ' / ' + state(plan.status, 'NOT STARTED'), elapsed(plan.createdAt, plan.status === 'PLANNING' ? 'NOW' : plan.updatedAt));
     node(executeId, 'Execute ' + number + ' / ' + workLabel(work), workElapsed(work));
     const workIds = new Set(work.map(task => task.id));
     const troubleshoot = tasks.filter(task => isTroubleshooter(task) &&
@@ -137,8 +127,8 @@ export function jobJelDiagram(job: JelJob): string {
     const reviewTasks = tasks.filter(task => isReviewer(task) && instant(task.createdAt) !== null && instant(plan.createdAt) !== null &&
       instant(task.createdAt)! >= instant(plan.createdAt)! && (!nextPlan?.createdAt || (instant(nextPlan.createdAt) !== null && instant(task.createdAt)! < instant(nextPlan.createdAt)!)));
     node(reviewId, 'Final Review ' + number + ' / ' + review, workElapsed(reviewTasks));
-    edge(previous, planId, i > 0 && plan.trigger?.source === 'review' ? 'changes required' : '');
-    edge(planId, executeId);
+    if(plans.length){edge(previous, planId, i > 0 && plan.trigger?.source === 'review' ? 'changes required' : '');edge(planId, executeId);}
+    else edge(previous,executeId);
     edge(executeId, reviewId);
     previous = reviewId;
   }

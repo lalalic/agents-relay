@@ -51,7 +51,7 @@ export async function handleWorkerLaunchFailure(
     && currentTask.executionId === executionId
     && !currentTask.lastProgressEventAt
     && !activeExecution?.workerStarted;
-  const canRetryNoStart = noStarted && currentJob.executionMode !== 'shortcut'
+  const canRetryNoStart = noStarted
     && (currentTask?.adapter === 'chatgpt' || currentTask?.adapter === 'z')
     && !isFinalReviewAgent(currentTask.agentName)
     && currentTask.agentName !== 'troubleshooter' && currentTask.kind !== 'planner'

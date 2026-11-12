@@ -27,17 +27,19 @@ test('JEL chart renders persisted plan rounds, task counts and review-driven rep
   assert.match(diagram,/Job \/ ACTIVE/);
 });
 
-test('JEL chart handles no plans, completed merge, and shortcut-mode jobs without fictitious review', () => {
+test('JEL chart handles plan-free Coordinator, completed merge, and ordinary Review', () => {
   const missing=jobJelDiagram({state:'DRAFT',tasks:[]});
-  assert.match(missing,/Plan 1 \/ NOT STARTED/);
+  assert.doesNotMatch(missing,/Plan 1 \/ NOT STARTED/);
+  assert.match(missing,/Execute 1/);
   assert.match(missing,/Final Review 1 \/ NOT STARTED/);
   const complete=jobJelDiagram({state:'COMPLETED',review:{outcome:'approved'},githubState:'MERGED',plans:[{id:'p',round:1,status:'SUCCEEDED'}]});
   assert.match(complete,/Final Review 1 \/ APPROVED/);
   assert.match(complete,/Merge \/ DONE/);
   assert.match(complete,/Job \/ COMPLETED/);
-  const shortcut=jobJelDiagram({state:'ACTIVE',executionMode:'shortcut',tasks:[{state:'RUNNING'}]});
-  assert.match(shortcut,/Shortcut execute \/ 1 tasks/);
-  assert.doesNotMatch(shortcut,/Final Review|Plan 1|Merge/);
+  const planFree=jobJelDiagram({state:'ACTIVE',reviewEnabled:true,tasks:[{state:'RUNNING',agentGraph:'flowchart TD\nA[agent:first]'}]});
+  assert.doesNotMatch(planFree,/Plan 1/);
+  assert.match(planFree,/Execute 1/);
+  assert.match(planFree,/Final Review/);
 });
 
 test('JEL chart rejects Mermaid syntax injection from persisted status fields', () => {

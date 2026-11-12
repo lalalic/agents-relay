@@ -42,8 +42,8 @@ test('CLI audits every executable graph action without bypassing guards', () => 
  assert.deepEqual(catalog.actions.map(action=>action.id),canonicalActions);
  assert.ok(catalog.actions.every(action=>action.graphReferences.length>0 && action.cli.includes('inspect-only')));
  assert.ok(catalog.actions.every(action=>action.graphReferences.every(reference=>canonicalActions.includes(action.id) && reference.kind==='action')));
- assert.ok(catalog.actions.some(action=>action.id==='effect.launchShortcut'));
- assert.ok(catalog.actions.some(action=>action.id==='effect.resumeShortcut'));
+ assert.equal(catalog.actions.some(action=>action.id==='effect.launchShortcut'),false);
+ assert.equal(catalog.actions.some(action=>action.id==='effect.resumeShortcut'),false);
  assert.ok(catalog.actions.some(action=>action.id==='effect.launchTask'));
  const taskGraph=executableGraphs(defaultWorkflowDirectory()).get('task-lifecycle.mmd');
  assert.ok(taskGraph);
@@ -55,8 +55,9 @@ test('CLI audits every executable graph action without bypassing guards', () => 
    return predecessor?.kind==='guard'&&predecessor.semanticId===guard;
   });
  };
- assert.ok(guardedBy('effect.launchShortcut','shortcutDirectInvocation'));
- assert.ok(guardedBy('effect.resumeShortcut','shortcutResultCorrelated'));
+ assert.ok([...taskGraph.nodes.values()].some(n=>n.kind==='action'&&n.semanticId==='effect.launchTask'));
+ assert.equal([...taskGraph.nodes.values()].some(n=>n.kind==='action'&&n.semanticId==='effect.launchShortcut'),false);
+
  assert.equal(catalog.taskControls.length,6);
  assert.match(catalog.warning,/No direct CLI bypass/);
 });

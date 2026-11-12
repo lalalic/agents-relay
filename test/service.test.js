@@ -278,12 +278,12 @@ test('release version selection honors an explicit newer major baseline then inc
 test('CLI and daemon help are successful and do not require job storage', () => {
   for (const [entry, args, expected] of [
     ['dist/cli.js', ['--help'], 'npx agents-relay <command>'],
-    ['dist/cli.js', ['job', '--help'], 'npx agents-relay job <create|update|show|list|run|shortcut-receipt|merge|unblock|cancel|pause|resume>'],
+    ['dist/cli.js', ['job', '--help'], 'npx agents-relay job <create|update|show|list|run|merge|unblock|cancel|pause|resume>'],
     ['dist/cli.js', ['job', 'create', '--help'], 'Create a SQLite-authoritative Job'],
     ['dist/cli.js', ['job', 'update', '--help'], 'Partially update mutable metadata'],
     ['dist/cli.js', ['job', 'show', '--help'], 'Show one durable Job'],
-    ['dist/cli.js', ['job', 'run', '--help'], 'Activate a create-only Job with a durable Agent Graph Task'],
-    ['dist/cli.js', ['job', '--help'], 'Atomically record a validated nonhuman result'],
+    ['dist/cli.js', ['job', 'run', '--help'], 'Activate a DRAFT Job with a durable Coordinator Agent Graph Task'],
+    ['dist/cli.js', ['job', '--help'], 'Coordinator/DAG creation and activation'],
     ['dist/cli.js', ['job', 'list', '--help'], 'List managed Jobs'],
     ['dist/cli.js', ['job', 'merge', '--help'], 'Legacy entry point; external GitHub PR merges are not initiated by this CLI.'],
     ['dist/cli.js', ['job', 'unblock', '--help'], 'Authoritatively unblock'],
@@ -318,12 +318,14 @@ test('job create help supports initial planner bootstrap and rejects task execut
   assert.equal(help.status, 0, help.stderr);
   assert.doesNotMatch(help.stdout, /--start/);
   assert.match(help.stdout, /--no-auto-merge/);
-  assert.match(help.stdout, /Job creation enables auto-merge and Final Review by default/);
+  assert.match(help.stdout, /Creation enables auto-merge and Final Review by default/);
   assert.match(help.stdout, /--no-review/);
   assert.doesNotMatch(help.stdout, /--content-only/);
   assert.match(help.stdout, /--initial-plan/);
-  assert.match(help.stdout, /By default it is create-only/);
-  assert.match(help.stdout, /first real Planner round/);
+  assert.match(help.stdout, /--coordinator-graph-file GRAPH/);
+  assert.match(help.stdout, /--coordinator-project-root ABS/);
+  assert.match(help.stdout, /atomically[\s\S]*one Coordinator Task/);
+  assert.match(help.stdout, /Without a Coordinator, create-only DRAFT Jobs/);
 
   const noAutoMerge = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'owner/repo', '--objective', 'Test create validation', '--head', 'feat/demo', '--no-auto-merge'], { encoding: 'utf8' });
   assert.notEqual(noAutoMerge.status, 0);

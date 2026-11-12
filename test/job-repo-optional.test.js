@@ -71,7 +71,7 @@ test('existing Job CLI uses --id without --repo, preserves repository validation
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
 
-test('local SQLite Job pause/resume and Shortcut CLI resolve --id without repository or cwd-derived identity', async () => {
+test('local SQLite Job pause/resume and Coordinator CLI resolve --id without repository or cwd-derived identity', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'relay-optional-repo-'));
   const stores = join(dir, 'stores');
   await mkdir(stores);
@@ -94,20 +94,15 @@ test('local SQLite Job pause/resume and Shortcut CLI resolve --id without reposi
     const { job: shortcut } = await ensureManagedGitHubJob({}, 'team/shortcuts', new Set(), {
       objective: 'External start', storeDirectory: stores,
     });
-    const run = ['run','--mode','shortcut','--id',shortcut.id,'--task-id','unknown',...isolatedFlags];
+    const run = ['run','--id',shortcut.id,'--task-id','unknown',...isolatedFlags];
     await assert.rejects(execute(run,env), /Task unknown not found/);
     assert.equal(shortcut.id, (await ensureManagedGitHubJob({},'team/shortcuts',new Set(),{id:shortcut.id,storeDirectory:stores})).job.id);
     assert.equal((await ensureManagedGitHubJob({},'team/shortcuts',new Set(),{id:shortcut.id,storeDirectory:stores})).job.executionMode,undefined);
 
-    const outputFile = join(dir, 'receipt.json');
-    await writeFile(outputFile, '{}');
-    await assert.rejects(execute(['shortcut-receipt','--id',shortcut.id,
-      '--task-id','unknown','--node-id','node-1','--wait-id','wait-1',
-      '--revision','rev','--execution-id','exec',
-      '--output-file',outputFile,'--content-sha256','invalid',...isolatedFlags],env),
-    /Task unknown not found|not found|content hash|contentSha256|completed shortcut result contract/);
-    await assert.rejects(execute(['run','--mode','shortcut','--id',shortcut.id,
+    await assert.rejects(execute(['run','--id',shortcut.id,
       '--task-id','unknown','--repo','team/other',...isolatedFlags],env), /not found for repository/);
+    await assert.rejects(execute(['run','--legacy-shortcut-runtime','--id',shortcut.id,
+      '--task-id','unknown',...isolatedFlags],env), /Legacy Shortcut runners and execution modes are removed/);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

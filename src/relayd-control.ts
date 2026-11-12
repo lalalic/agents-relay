@@ -68,6 +68,7 @@ export function createWorkspaceControl(deps: any) {
       if (options.contentOnly !== undefined || options.executionMode !== undefined) throw new Error('Execution mode/content-only is obsolete; use normal Job reviewEnabled and autoMerge policy');
       if (!repository) throw new Error('job.create requires repository');
       if ('schedule' in options) throw new Error('Job schedules are unsupported');
+      if(options.coordinator && body.initialPlan===true)throw Error('Coordinator Job must not request an initial Planner');
       const result = await ensureManagedGitHubJob(client, repository, trusted, {
         id: typeof options.id === 'string' && options.id ? options.id : undefined,
         idempotencyKey: typeof options.idempotencyKey === 'string' ? options.idempotencyKey : undefined,
@@ -83,6 +84,7 @@ export function createWorkspaceControl(deps: any) {
         creatorThreadId: typeof options.creatorThreadId === 'string' ? options.creatorThreadId : undefined,
         implementationThreadId: typeof options.implementationThreadId === 'string' ? options.implementationThreadId : undefined,
         noGitHub,
+        coordinator: options.coordinator as {graph:string;input:string;outputPath:string;projectRoot:string;workspaceRoot:string;sharedRoot?:string;globalRoot?:string}|undefined,
         persist: body.initialPlan !== true,
       });
       if (!repositories.includes(repository)) repositories.push(repository);
@@ -106,6 +108,7 @@ export function createWorkspaceControl(deps: any) {
           return { repository, pr: committed.prNumber, job: committed.id, state: committed.state, initialPlan: committed.plans?.at(-1)?.id };
         } finally { await reconciler.close(); }
       }
+      if(options.coordinator)return {repository,pr:result.pr.number,job:result.job.id,state:result.job.state,taskId:'coordinator'};
       return { repository, pr: result.pr.number, job: result.job.id, state: result.job.state };
     }
 

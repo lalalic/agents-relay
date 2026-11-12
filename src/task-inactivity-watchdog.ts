@@ -2,12 +2,9 @@ import type { Job, Task, EventRecord } from './types.js';
 import type { DurableTaskTransitionRuntime } from './workflow/durable-transition.js';
 import { executionEventSource, eventSourceId } from './execution-event-identity.js';
 
-/** A foreground Shortcut Graph parent is not a Worker: its elapsed budget
- * belongs to the direct runner. Real Worker child Tasks keep standard timeouts. */
-export function requiresWorkerInactivityWatchdog(job: Job, task: Task): boolean {
-  const shortcut=task.result?.data?.shortcut as {workerFallback?:boolean}|undefined;
-  return !(job.executionMode==='shortcut' && job.contentOnly===true
-    && Boolean(task.agentGraph) && shortcut?.workerFallback!==true);
+/** A Coordinator has no Worker execution; Agent Tasks retain all watchdogs. */
+export function requiresWorkerInactivityWatchdog(_job: Job, task: Task): boolean {
+ return !(task.agentGraph && task.executionId===null);
 }
 
 export function isRecoverableWatchdogFailure(task: Task): boolean {

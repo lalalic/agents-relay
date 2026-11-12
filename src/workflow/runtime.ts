@@ -41,15 +41,8 @@ export function applyTaskMutation(task: Task, mutation: WorkflowMutationName): v
     task.failureReason = 'worker_outcome_unknown';
   }
   if (mutation === 'mutation.markPlannerUnavailable') task.error = 'No objective planner configured';
-  if (mutation === 'mutation.markShortcutWorkerFallback') {
-    const data=task.result?.data ?? {};
-    const shortcut=data.shortcut && typeof data.shortcut==='object' ? data.shortcut as Record<string,unknown> : {};
-    task.result={summary:task.result?.summary??'Shortcut fallback selected',data:{...data,shortcut:{...shortcut,workerFallback:true}}};
-    task.failureReason='shortcut_fallback';
-  }
-  if (mutation === 'mutation.markShortcutRecoveryRequired') {
-    task.failureReason='shortcut_requires_recovery';
-  }
+
+
   if (mutation === 'mutation.prepareNoStartFallback') {
     const route = task.routing;
     if (task.adapter !== 'chatgpt' && task.adapter !== 'z')

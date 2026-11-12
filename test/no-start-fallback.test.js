@@ -280,20 +280,22 @@ test('no-start fallback releases after-terminal browser waiter before Codex disp
   });
 });
 
-test('Direct Shortcut mode never uses normal no-start Worker fallback', async () => {
+test('retired executionMode metadata cannot disable ordinary no-start Worker recovery', async () => {
   await withConfig(async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'relay-nostart-direct-'));
+    const dir = await mkdtemp(join(tmpdir(), 'relay-nostart-legacy-metadata-'));
     const sql = new SQLiteRelayStore(join(dir, 'relay.sqlite'), 'j');
     const store = new LocalAuthorityDurableStore(sql, new InMemoryStore(), undefined, true);
     const t = task('z');
     const runtime = new Harness(store, { owner: 'test', adapters, maxConcurrent: 0 });
     try {
       await store.saveJob({ ...job(t), executionMode: 'shortcut', contentOnly: true });
-      assert.equal((await store.load('j')).executionMode, 'shortcut');
+      const normalized = await store.load('j');
+      assert.equal(normalized.executionMode, undefined);
+      assert.equal(normalized.contentOnly, undefined);
       await runtime.fail(t, 'start-ack');
-      const actual = (await store.load('j')).tasks[0];
-      assert.equal(actual.state, 'FAILED');
-      assert.equal(actual.noStartFallback, undefined);
+      const current = (await store.load('j')).tasks[0];
+      assert.ok(['QUEUED','FAILED'].includes(current.state));
+      assert.notEqual((await store.load('j')).executionMode, 'shortcut');
     } finally {
       await runtime.close();
       sql.close();

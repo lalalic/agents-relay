@@ -24,9 +24,6 @@ depSat["guard: dependenciesSatisfied"]
 depUnsat["guard: dependenciesUnsatisfied"]
 runnable["guard: runnable"]
 dispatchable["guard: dispatchable"]
-shortcutExecution["guard: shortcutExecution"]
-shortcutHasGraph["guard: shortcutHasGraph"]
-shortcutDirectInvocation["guard: shortcutDirectInvocation"]
 recoverStart["guard: recoverableExecution"]
 recoverComplete["guard: recoverableExecution"]
 recoverBlocked["guard: recoverableExecution"]
@@ -37,7 +34,6 @@ recoveryReopenClearError["action: mutation.clearError"]
 recoveryReopenClearReason["action: mutation.clearFailureReason"]
 recoveryReopenClearLease["action: mutation.clearLease"]
 recoveryReopenClearExecution["action: mutation.clearExecution"]
-shortcutRecoveryRequired["action: mutation.markShortcutRecoveryRequired"]
 
 plannerRetryAvailable["guard: retryAvailable"]
 platformFallbackSafe["guard: platformFallbackSafe"]
@@ -67,9 +63,6 @@ reconcileDraftClearReason["action: mutation.clearFailureReason"]
 reconcileQueuedClearError["action: mutation.clearError"]
 reconcileQueuedClearReason["action: mutation.clearFailureReason"]
 dispatchLaunch["action: effect.launchTask"]
-shortcutLaunch["action: effect.launchShortcut"]
-shortcutResultCorrelated["guard: shortcutResultCorrelated"]
-shortcutResume["action: effect.resumeShortcut"]
 startClearError["action: mutation.clearError"]
 startClearReason["action: mutation.clearFailureReason"]
 reviewStartClearError["action: mutation.clearError"]
@@ -113,16 +106,9 @@ queued -->|on: reconcile| runnable
 runnable -->|true| reconcileQueuedClearError
 reconcileQueuedClearError --> reconcileQueuedClearReason
 reconcileQueuedClearReason --> queued
-queued -->|on: dispatch| shortcutExecution
-shortcutExecution -->|true| shortcutHasGraph
-shortcutExecution -->|false| dispatchable
-shortcutHasGraph -->|true| shortcutDirectInvocation
-shortcutDirectInvocation -->|true| shortcutLaunch
-shortcutDirectInvocation -->|false| queued
-shortcutHasGraph -->|false| queued
+queued -->|on: dispatch| dispatchable
 dispatchable -->|true| dispatchLaunch
 dispatchLaunch --> queued
-shortcutLaunch --> queued
 queued -->|on: task.started| startClearError
 startClearError --> startClearReason
 startClearReason --> running
@@ -143,7 +129,6 @@ queuedBlockAllowed -->|true| blocked
 queuedBlockAllowed -->|false| failed
 queued -->|on: fail| failed
 queued -->|on: effect.launchTask.failed| failed
-queued -->|on: effect.launchShortcut.failed| failed
 queued -->|on: watchdog.failed| failed
 queued -->|on: worker.delivery_failed| failed
 queued -->|on: worker.start_ack_failed| failed
@@ -181,14 +166,6 @@ running -->|on: task.blocked| runningBlockAllowed
 runningBlockAllowed -->|true| blocked
 runningBlockAllowed -->|false| failed
 running -->|on: task.progress| running
-running -->|on: shortcut.waiting| shortcutWaitReleaseLease
-shortcutWaitReleaseLease["action: mutation.clearLease"]
-shortcutWaitReleaseLease --> running
-running -->|on: shortcut.result| shortcutResultCorrelated
-shortcutResultCorrelated -->|true| shortcutResume
-shortcutResultCorrelated -->|false| running
-shortcutResume --> running
-running -->|on: effect.resumeShortcut.failed| failed
 running -->|on: review.approved| reviewApproveRunningClearError
 reviewApproveRunningClearError --> reviewApproveRunningClearReason
 reviewApproveRunningClearReason --> succeeded
@@ -200,8 +177,6 @@ running -->|on: task.completed| completeClearError
 completeClearError --> completeClearReason
 completeClearReason --> succeeded
 running -->|on: task.failed| failed
-running -->|on: shortcut.failed| shortcutRecoveryRequired
-shortcutRecoveryRequired --> failed
 running -->|on: worker.platform_failure| runningPlatformFailureQuarantine
 runningPlatformFailureQuarantine["action: mutation.quarantinePlatformFailure"]
 runningPlatformFailureQuarantine --> failed

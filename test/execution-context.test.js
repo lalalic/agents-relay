@@ -284,13 +284,13 @@ test('parent Agents and Skills inherit hierarchically and shortcuts follow the e
     assert.equal(context.agents.find(item => item.name === 'shared-agent')?.source, 'shared');
     assert.equal(context.skills.find(item => item.name === 'shared-skill')?.path, await realpath(parentSkill));
     assert.notEqual(context.skills.find(item => item.name === 'shared-skill')?.path, await realpath(originalSharedSkill));
-    const { missingShortcutNodes } = await import('../dist/agent-shortcut.js');
-    assert.deepEqual(await missingShortcutNodes('flowchart TD\nA[agent:parent-agent]', project, shared, workspace, globalRoot), []);
-    assert.deepEqual(await missingShortcutNodes('flowchart TD\nA[agent:global-agent]', project, shared, workspace, globalRoot), ['A']);
+    const { missingScriptAgents } = await import('../dist/agent-script-discovery.js');
+    assert.deepEqual(await missingScriptAgents('flowchart TD\nA[agent:parent-agent]', project, shared, workspace, globalRoot), []);
+    assert.deepEqual(await missingScriptAgents('flowchart TD\nA[agent:global-agent]', project, shared, workspace, globalRoot), ['A']);
     await agent(project, 'parent-agent', 'local');
     const local = await resolveExecutionContext(project, 'worker', { workspaceRoot: workspace, globalRoot, sharedRoot: shared });
     assert.equal(local.agents.find(item => item.name === 'parent-agent')?.source, 'project');
     // A standalone local Agent cannot inherit a Shortcut from an overridden parent.
-    assert.deepEqual(await missingShortcutNodes('flowchart TD\nA[agent:parent-agent]', project, shared, workspace, globalRoot), ['A']);
+    assert.deepEqual(await missingScriptAgents('flowchart TD\nA[agent:parent-agent]', project, shared, workspace, globalRoot), ['A']);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

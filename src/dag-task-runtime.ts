@@ -5,19 +5,15 @@ import type { DurableStore } from './store.js';
 import type { Job, Task } from './types.js';
 import { taskOverallTimeoutMs } from './types.js';
 import { parseAgentGraph } from './agent-graph.js';
-import { discoverShortcut } from './agent-shortcut.js';
+import { discoverScriptAgent } from './agent-script-discovery.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
 import { tryTransitionTaskEvent } from './task-transitions.js';
-import { dispatchJobLifecycleSync } from './workflow/lifecycle.js';
 
 export type DAGChild = { parentTaskId: string; nodeId: string; graphHash: string; executor: 'script'|'model' };
 export type DAGCheckpoint = { version:1; graphHash:string };
 export function dagChildId(parentTaskId:string,nodeId:string):string {return `dag-${parentTaskId}-${nodeId}`;}
-export function unifiedDAG(job:Job,task:Task):boolean {
-  if(!task.agentGraph)return false;
-  if(job.executionMode!=='shortcut')return true;
-  return (task.result?.data?.dag as DAGCheckpoint|undefined)?.version===1;
-}
+export function unifiedDAG(_job:Job,task:Task):boolean {return Boolean(task.agentGraph);}
+
 export function dagCoordinator(task:Task):boolean {return Boolean(task.agentGraph && (task.result?.data?.dag as DAGCheckpoint|undefined)?.version===1);}
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 const out=(task:Task):string =>{
@@ -81,7 +77,7 @@ export async function reconcileDAGTasks(options:{store:DurableStore;jobId:string
          predecessorOutputs[parents[i]]=value;
        }
        const node=graph.nodes.find(n=>n.id===nodeId)!;
-       const script=await discoverShortcut(node.agent,projectPath,options.roots?.sharedRoot??undefined,options.roots?.workspaceRoot??undefined,options.roots?.globalRoot??undefined);
+       const script=await discoverScriptAgent(node.agent,projectPath,options.roots?.sharedRoot??undefined,options.roots?.workspaceRoot??undefined,options.roots?.globalRoot??undefined);
        const childOut=join(root,'.dag-node-results',childId+'.json');
        let supplied:Record<string,unknown>={taskInput:parent.input};
        try {const parsed:unknown=JSON.parse(parent.input);if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)) supplied=parsed as Record<string,unknown>;}
@@ -124,7 +120,6 @@ export async function reconcileDAGTasks(options:{store:DurableStore;jobId:string
      });
    }
  }
- await completeContentJobIfEligible(store,jobId);
 
 }
 
@@ -164,26 +159,9 @@ export async function reconcileDAGSchedule(options:{store:DurableStore;jobId:str
   roots?:{sharedRoot?:string|null;workspaceRoot?:string|null;globalRoot?:string|null};
 }):Promise<Job>{
  if(!options.job.tasks.some(t=>unifiedDAG(options.job,t))){
-   await completeContentJobIfEligible(options.store,options.jobId);return options.store.load(options.jobId);
+   return options.job;
  }
  await reconcileDAGTasks(options);
  await selectDAGReviewExecutors(options.store,options.jobId);
  return options.store.load(options.jobId);
-}
-
-/** Content completion is independent of the Job activation source. Its legal
- * ACTIVE -> COMPLETED transition belongs to the canonical Job graph. */
-export async function completeContentJobIfEligible(store:DurableStore,jobId:string):Promise<void>{
- if(!store.mutateJob)return;
- const eligible=(job:Job):boolean=>job.state==='ACTIVE' && job.contentOnly===true && job.prNumber===0 &&
-   !job.localMerge && job.autoMerge===false && job.reviewEnabled===false && !job.review && !(job.plans?.length) &&
-   job.tasks.length>0 && job.tasks.every(t=>t.state==='SUCCEEDED');
- const snapshot=await store.load(jobId);
- if(!eligible(snapshot))return;
- await store.mutateJob(jobId,job=>{
-  if(!eligible(job))return job;
-  const decision=dispatchJobLifecycleSync(job,'content.completed',{contentCompletionAllowed:true});
-  if(!decision.accepted||decision.target!=='COMPLETED')throw Error('Content Job completion rejected by canonical Job lifecycle');
-  return job;
- });
 }

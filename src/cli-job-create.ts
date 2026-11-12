@@ -2,7 +2,10 @@ import { allocateEntityId, isGeneratedEntityId } from './job-task-id-sequence.js
 import type { Job, Priority } from './types.js';
 import { type GitHubClient, type PullRequest } from './store.js';
 import { openLocalManagedStore } from './local-managed-store.js';
-import { createJobEntity } from './workflow/entity-creation.js';
+import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js';
+import { parseAgentGraph } from './agent-graph.js';
+import { taskOverallTimeoutMs } from './types.js';
+import { isAbsolute } from 'node:path';
 import { normalizeThreadId } from './reviewer-thread.js';
 import { discoverLocalRelayStoreSnapshots, relayStoreDirectory } from './relay-store.js';
 
@@ -15,14 +18,22 @@ export async function ensureManagedGitHubJob(
     id?: string; idempotencyKey?: string; title?: string; objective?: string; projectPath?: string;
     priority?: Priority;
     tag?: Job['tag']; reviewEnabled?: boolean; autoMerge?: boolean; continuation?: Job['continuation'];
-    /** Archival Shortcut-only bootstrap; not accepted by ordinary Job creation. */
-    legacyShortcutBootstrap?: boolean;
+    coordinator?: { graph: string; input: string; outputPath: string; projectRoot: string; workspaceRoot: string; sharedRoot?: string; globalRoot?: string };
     prNumber?: number; head?: string; base?: string; body?: string;
     reviewerThreadId?: string; creatorThreadId?: string; implementationThreadId?: string;
     storeDirectory?: string; noGitHub?: boolean; persist?: boolean; localMergeSource?: string; localMergeTarget?: string;
   },
 ): Promise<{ job: Job; pr: PullRequest }> {
   if (options.id && !/^[1-9][0-9]*$/.test(options.id)) throw new Error('Job ID must be a positive decimal integer');
+  if(options.coordinator){
+    const c=options.coordinator;
+    if(!c.graph?.trim()||!c.input?.trim())throw Error('Coordinator requires nonempty graph and input');
+    parseAgentGraph(c.graph);
+    if(!isAbsolute(c.outputPath)||!isAbsolute(c.projectRoot)||!isAbsolute(c.workspaceRoot) ||
+      (c.sharedRoot!==undefined&&!isAbsolute(c.sharedRoot)) ||
+      (c.globalRoot!==undefined&&!isAbsolute(c.globalRoot)))
+      throw Error('Coordinator paths must be absolute');
+  }
   const directory = options.storeDirectory ?? relayStoreDirectory();
   const knownJobs = (await discoverLocalRelayStoreSnapshots(directory)).flatMap(snapshot => snapshot.jobs);
   const id = options.id || allocateEntityId(directory, repositoryName, 'job', options.idempotencyKey, new Set(knownJobs.map(job => job.id)));
@@ -37,6 +48,12 @@ export async function ensureManagedGitHubJob(
     if (existing.repository !== repositoryName || (options.prNumber !== undefined && existing.prNumber !== requestedNumber)) throw new Error('Immutable Job ID is already bound to a different repository or external PR');
     if (!options.id && !options.idempotencyKey) throw new Error('Automatically allocated Job ID unexpectedly belongs to an existing Job');
     if (options.idempotencyKey && ((options.objective && options.objective !== existing.objective) || (options.projectPath && options.projectPath !== existing.projectPath) || (options.title && options.title !== existing.title))) throw new Error('Job idempotency key reused for a different Job definition');
+    if(options.coordinator){const task=existing.tasks.find(task=>task.id==='coordinator');
+      if(!task||task.agentGraph!==options.coordinator.graph||task.input!==options.coordinator.input||
+         task.output?.kind!=='file'||task.output.path!==options.coordinator.outputPath||
+         existing.graphStartContext?.projectPath!==options.coordinator.projectRoot)
+        throw Error('Coordinator idempotency key reused for a different Graph or Run');
+    }
     return { job: existing, pr: { ...placeholder, number: existing.prNumber } };
   }
   if (options.id && isGeneratedEntityId(id, repositoryName, 'job')) throw new Error('Reserved auto-generated Job ID cannot be assigned manually');
@@ -60,10 +77,9 @@ export async function ensureManagedGitHubJob(
       description: pr.body || undefined,
       priority: options.priority ?? 'P2',
       tag: options.tag,
-      autoMerge: options.legacyShortcutBootstrap ? false : options.autoMerge ?? true,
+      autoMerge: options.autoMerge ?? true,
       ...(localMergeSource ? { localMerge: { sourceRef: localMergeSource, targetRef: 'refs/heads/main', status: 'pending' as const } } : {}),
-      reviewEnabled: options.legacyShortcutBootstrap ? false : options.reviewEnabled ?? true,
-      ...(options.legacyShortcutBootstrap ? {executionMode:'shortcut' as const,contentOnly:true} : {}),
+      reviewEnabled: options.reviewEnabled ?? true,
       ...(options.reviewerThreadId
         ? { reviewerThreadId: normalizeThreadId(options.reviewerThreadId, 'reviewer thread ID') }
         : {}),
@@ -79,7 +95,21 @@ export async function ensureManagedGitHubJob(
       createdAt: now,
       updatedAt: now,
       tasks: [],
+      ...(options.coordinator ? {graphStartContext:{projectPath:options.coordinator.projectRoot,
+        workspaceRoot:options.coordinator.workspaceRoot,
+        ...(options.coordinator.sharedRoot?{sharedRoot:options.coordinator.sharedRoot}:{}),
+        ...(options.coordinator.globalRoot?{globalRoot:options.coordinator.globalRoot}:{}),
+        noGitHub:options.noGitHub===true}} : {}),
     });
+    if(options.coordinator){
+      const c=options.coordinator;
+      job.tasks.push(createTaskEntity(job,{jobId:id,id:'coordinator',title:'Coordinator',
+        parentTaskId:null,kind:'work',agentGraph:c.graph,input:c.input,
+        output:{kind:'file',path:c.outputPath},adapter:'codex',capabilities:[],
+        dependencies:[],attempt:0,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,
+        executionId:null,threadId:null,result:null,error:null,
+        timeoutMs:taskOverallTimeoutMs('L'),createdAt:now,updatedAt:now}));
+    }
     if (options.persist !== false) {
       if (local.store.createJobIfAbsent) await local.store.createJobIfAbsent(job);
       else await local.store.saveJob(job);

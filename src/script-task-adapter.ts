@@ -7,7 +7,7 @@ import type { Task, EventRecord } from './types.js';
 import type { Execution, WorkerAdapter, LaunchContext } from './adapters.js';
 import { eventFor } from './events.js';
 import { executionEventSource } from './execution-event-identity.js';
-import { discoverShortcut } from './agent-shortcut.js';
+import { discoverScriptAgent } from './agent-script-discovery.js';
 import { spawnOwnedProcess } from './owned-process.js';
 
 const valid=(value:unknown):value is {status:'COMPLETED';output:Record<string,unknown>;artifacts:unknown}=>{
@@ -60,7 +60,7 @@ export class ScriptTaskAdapter implements WorkerAdapter {
        }
        const projectPath=context.executionContext?.project.path ?? input.projectPath;
        if(typeof projectPath!=='string'||!isAbsolute(projectPath))throw Error('No trusted Script Project context');
-       const script=await discoverShortcut(task.agentName!,projectPath,this.roots.sharedRoot??undefined,this.roots.workspaceRoot??undefined,this.roots.globalRoot??undefined);
+       const script=await discoverScriptAgent(task.agentName!,projectPath,this.roots.sharedRoot??undefined,this.roots.workspaceRoot??undefined,this.roots.globalRoot??undefined);
        if(!script)throw Error(`Declared Agent Shortcut is unavailable: ${task.agentName}`);
        await send('task.started','running','Script Worker started');
        const module=await import(pathToFileURL(script).href) as {run(ctx:{input:Record<string,unknown>;signal:AbortSignal;runCommand:(args:string[],cwd:string)=>Promise<{stdout:string;stderr:string;code:number}>}):Promise<unknown>};

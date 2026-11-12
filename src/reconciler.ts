@@ -4,7 +4,7 @@ import { executeForceRestate } from './force-restate.js'; import { recordThreadD
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js'; import { exhaustedTroubleshooterRecoveries, pendingTroubleshooterTasks, pendingTroubleshooterReopens, pendingTroubleshooterRetries, refreshTroubleshooterInput } from './troubleshooter.js';
 import { fallbackFailedTroubleshooters, escalateExhaustedTroubleshooters } from './troubleshooter-fallback.js';import { assertCleanWorktreeAtHead, prepareManagedExecutionWorktree } from './workspace.js';
 import { cleanupMergedJobWorktree } from './job-worktree-cleanup.js'; import { jobHasActiveExecution, jobHasConflictingExecution } from './job-execution-slot.js'; import { requiresWorkerInactivityWatchdog } from './task-inactivity-watchdog.js';
-import { managedWorkerInput } from './managed-worker-input.js'; import { attachResolutionOwnership } from './workflow/task-resolution.js'; import { launchShortcutEffect, resumeShortcutEffect, resumeShortcutEventWaits } from './reconciler-shortcut.js';
+import { managedWorkerInput } from './managed-worker-input.js'; import { attachResolutionOwnership } from './workflow/task-resolution.js';
 export { managedWorkerInput } from './managed-worker-input.js'; import { recoverExpiredExecutions, recoverStartupOrphans as recoverStartupExecutionOrphans, type ExecutionRecoveryPorts } from './execution-recovery.js';
 import { dispatchJobReconcile } from './workflow/job-reconcile-v2.js'; import { resolvePlannerContext, resolveTaskContext } from './reconciler-context.js';
 import { reconcileLocalGitCompletion } from './local-merge-delivery.js'; import { repairLegacyOrchestrators } from './legacy-orchestrator-repair.js'; import { launchPlanExecution } from './planner-runtime.js';
@@ -26,16 +26,6 @@ export class Reconciler extends ReconcilerReviewBase {
       context => `effect.launchTask:${context.jobId}:${context.taskId ?? 'task'}:${String(context.data?.attempt ?? 0)}:${String(context.data?.reviewInvocationId ?? 'initial')}`, // Review invocation fences re-launch after retry-count reset.
     ));
     this.workflowEffects.register(new CallbackWorkflowEffectHandler(
-      'effect.launchShortcut',
-      async context => launchShortcutEffect(this.store, this.options, context.jobId, context.taskId, event => this.emit(event)),
-      context => `effect.launchShortcut:${context.jobId}:${context.taskId ?? 'task'}:${String(context.data?.attempt ?? 0)}`,
-    ));
-    this.workflowEffects.register(new CallbackWorkflowEffectHandler(
-      'effect.resumeShortcut',
-      async context => resumeShortcutEffect(this.store, this.options, context.jobId, context.taskId, context.data, event => this.emit(event)),
-      context => `effect.resumeShortcut:${context.jobId}:${context.taskId ?? 'task'}:${String(context.data?.executionId ?? '')}:${String(context.data?.nodeId ?? '')}:${String(context.data?.waitId ?? '')}`,
-    ));
-    this.workflowEffects.register(new CallbackWorkflowEffectHandler(
       'effect.cancelActiveTasks',
       async context => this.cancelActiveTasks(context.jobId, String(context.data?.reason ?? 'Job terminated')),
     ));
@@ -47,7 +37,6 @@ export class Reconciler extends ReconcilerReviewBase {
   }
   private async dispatchExecutableTasks(jobId: string): Promise<Job> {
     const scheduled = refreshTaskDependencies(await this.store.load(jobId));
-    if (scheduled.executionMode === 'shortcut' && !scheduled.tasks.some(t=>unifiedDAG(scheduled,t)) && !this.options.shortcutRunnerOwner) return scheduled;
     if (scheduled.pause) return scheduled;
     for (const task of scheduled.tasks.filter(item => item.state === 'SUCCEEDED' && (item.continuation || scheduled.continuation) && !item.continuationDeliveredAt)) {
       this.detach(this.deliverContinuation(scheduled, task), scheduled.id, task.id, 'continuation');
@@ -60,10 +49,10 @@ export class Reconciler extends ReconcilerReviewBase {
     const firstDAG=ready[0]?.dagNode?.parentTaskId;
     const dispatchable=(firstDAG ? ready.filter(t=>t.dagNode?.parentTaskId===firstDAG) : ready.slice(0,1)).slice(0,capacity);
     for (const task of dispatchable) {
-      const shortcut=task.result?.data?.shortcut as {workerFallback?:boolean}|undefined;
-      await transitionTaskEvent(task, 'dispatch', { dispatchable: true, shortcutExecution: scheduled.executionMode === 'shortcut' && scheduled.contentOnly === true && shortcut?.workerFallback !== true && Boolean(task.agentGraph) && !unifiedDAG(scheduled,task), shortcutFallback: shortcut?.workerFallback===true, shortcutHasGraph: Boolean(task.agentGraph) }, async actionId => {
+
+      await transitionTaskEvent(task, 'dispatch', { dispatchable: true }, async actionId => {
         const outcomes = await this.workflowEffects.execute(
-          [actionId as 'effect.launchTask' | 'effect.launchShortcut'],
+          [actionId as 'effect.launchTask'],
           { jobId: scheduled.id, taskId: task.id, transitionKey: `dispatch:${task.attempt}`, data: {attempt:task.attempt, ...(task.interactiveInvocation?.decidedAt ? {reviewInvocationId:task.interactiveInvocation.invocationId} : {})} },
         );
         await this.applyTaskEffectOutcomes(scheduled, task, outcomes);
@@ -78,8 +67,7 @@ export class Reconciler extends ReconcilerReviewBase {
       let job = await this.store.load(jobId);
       // The same durable Job flag covers children, retries, and Troubleshooters.
       // Do not let a background Reconciler mutate or dispatch any of them.
-      if (job.executionMode === 'shortcut' && !job.tasks.some(t=>unifiedDAG(job,t)) && !this.options.shortcutRunnerOwner) return job;
-      await drainProductionWorkflowOutbox(this.store, this.options);
+        await drainProductionWorkflowOutbox(this.store, this.options);
       await deliverPendingEscalations(this.store,jobId,this.options.escalationNotifier);
       job = await this.store.load(jobId);
       for (const live of [...this.live.values()]) if (live.jobId === jobId && job.tasks.some(task => task.id === live.taskId && task.state === 'BLOCKED')) this.cancelExecutionGeneration(jobId, live.taskId, live.executionId);
@@ -103,7 +91,6 @@ export class Reconciler extends ReconcilerReviewBase {
       await recoverExpiredExecutions(job, now, this.executionRecoveryPorts(job));
       await repairLegacyOrchestrators(jobId, now, { store: this.store, owner: this.options.owner, emit: event => this.emit(event) });
       await recoverInteractiveDecisions(this.store, jobId);
-      await this.resumeShortcutEventWaits(jobId);
       await this.recoverPlannerChildren(job);
       await retryPendingPlannerUnblocks({
         store: this.store,
@@ -174,7 +161,7 @@ export class Reconciler extends ReconcilerReviewBase {
         scheduled = refreshTaskDependencies(await this.store.load(jobId));
       }
       scheduled = refreshTaskDependencies(await this.maybeCreatePlanner(scheduled));
-      scheduled = refreshTaskDependencies(await reconcileDAGSchedule({store:this.store,jobId,job:scheduled,projectPathForTask:async(j,t)=>j.graphStartContext?.projectPath ?? j.shortcutRunnerContext?.projectPath ?? (this.options.projectPathForJob ? this.options.projectPathForJob(j,t) : t.routing?.cwd ?? process.cwd()),roots:this.options.executionContextRoots}));
+      scheduled = refreshTaskDependencies(await reconcileDAGSchedule({store:this.store,jobId,job:scheduled,projectPathForTask:async(j,t)=>j.graphStartContext?.projectPath ?? (this.options.projectPathForJob ? this.options.projectPathForJob(j,t) : t.routing?.cwd ?? process.cwd()),roots:this.options.executionContextRoots}));
       if (scheduled.state !== previousState || scheduled.updatedAt !== job.updatedAt) await this.store.saveJob(scheduled);
       scheduled = await this.dispatchExecutableTasks(jobId);
       let finalState = refreshTaskDependencies(await this.store.load(jobId));
@@ -220,16 +207,6 @@ export class Reconciler extends ReconcilerReviewBase {
       throw error;
     } finally { this.reconciling = false; }
   }
-  private async resumeShortcutEventWaits(jobId: string): Promise<void> {
-    await resumeShortcutEventWaits(this.store, this.options, jobId, async (job, task, matched) => {
-      await transitionTaskEvent(task, 'shortcut.result', { shortcutResultCorrelated: true }, async actionId => {
-        if (actionId !== 'effect.resumeShortcut') throw new Error(`Unexpected action ${actionId} for a correlated shortcut result`);
-        const outcomes = await this.workflowEffects.execute([actionId], { jobId, taskId: task.id,
-          transitionKey: `shortcut-result:${matched.executionId}:${matched.nodeId}:${matched.waitId}`, data: { ...matched } });
-        await this.applyTaskEffectOutcomes(job, task, outcomes);
-      }, async () => this.store.saveTask(task));
-    }, event => this.emit(event));
-  }
   private async cancelActiveTasks(jobId: string, reason: string): Promise<void> {
     return cancelActiveTasks(this.store, jobId, reason,
       taskId => { const live = this.plannerLive.get(taskId); if (live) { clearTimeout(live.timer); live.controller.abort(); this.plannerLive.delete(taskId); } },
@@ -244,10 +221,10 @@ export class Reconciler extends ReconcilerReviewBase {
       emitFailed: async (task, reason) => { await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.failed', 'failed', task.error ?? reason, 'user', { reason })); },
     };
   }
-  async recoverLostExecutions(job: Job, now: number): Promise<void> { if (job.executionMode !== 'shortcut' || job.tasks.some(t=>unifiedDAG(job,t)) || this.options.shortcutRunnerOwner) await recoverExpiredExecutions(job, now, this.executionRecoveryPorts(job)); }
+  async recoverLostExecutions(job: Job, now: number): Promise<void> { await recoverExpiredExecutions(job, now, this.executionRecoveryPorts(job)); }
   async recoverStartupOrphans(jobId: string): Promise<Job> {
     const job = await this.store.load(jobId);
-    if (job.state === 'ACTIVE' && (job.executionMode !== 'shortcut' || job.tasks.some(t=>unifiedDAG(job,t)) || this.options.shortcutRunnerOwner === true)) {
+    if (job.state === 'ACTIVE') {
       await recoverStartupExecutionOrphans(job, this.executionRecoveryPorts(job));
     }
     return this.store.load(jobId);
@@ -261,7 +238,6 @@ export class Reconciler extends ReconcilerReviewBase {
   private async maybeCreatePlanner(job: Job): Promise<Job> {
     // Terminal Jobs can repair projections and re-review, but must not reopen planning.
     if (job.state !== 'ACTIVE') return job;
-    if (job.executionMode === 'shortcut') return job;
     const pending = pendingPlan(job);
     const recoverable = pending && !this.plannerLive.has(pending.id)
       && (!pending.executionId || pending.leaseOwner !== this.options.owner || !pending.leaseExpiresAt || Date.parse(pending.leaseExpiresAt) <= (this.options.now ?? new Date()).getTime())
@@ -399,7 +375,7 @@ export class Reconciler extends ReconcilerReviewBase {
     let executionContext: ExecutionContext;
     try {
       const role: ExecutionRole = isFinalReviewAgent(task.agentName) ? 'reviewer' : task.agentName === 'troubleshooter' ? 'troubleshooter' : task.parentTaskId ? 'nested-worker' : 'worker';
-      const projectPath = task.dagNode && (job.graphStartContext?.projectPath ?? job.shortcutRunnerContext?.projectPath) ? (job.graphStartContext?.projectPath ?? job.shortcutRunnerContext!.projectPath) : this.options.projectPathForJob ? await this.options.projectPathForJob(job, task) : task.routing?.cwd ?? process.cwd();
+      const projectPath = task.dagNode && job.graphStartContext?.projectPath ? job.graphStartContext.projectPath : this.options.projectPathForJob ? await this.options.projectPathForJob(job, task) : task.routing?.cwd ?? process.cwd();
       executionContext = await this.resolvedContext(job, task, role, projectPath);
     } catch (error) {
       await this.failLaunch(job.id, task.id, task.executionId, `Execution context unavailable: ${error instanceof Error ? error.message : String(error)}`);

@@ -55,12 +55,11 @@ waiting/terminal event on behalf of its host. An inbox acknowledgement is not
 approval. No Git commit, content snapshot or SHA is required for human Review.
 
 For new DAG executions, the Coordinator creates normal Agent Tasks; a review
-belongs to the corresponding Agent child, not the Coordinator. The ordinary
-Reconciler (not the external Shortcut start CLI) schedules their retries and
-revisions. A Script Task on `changes_requested` may use its own Agent Model
+belongs to the corresponding Agent child, not the Coordinator. The ordinary Reconciler schedules their retries and revisions and
+immediately dispatches dependency-ready successors after terminal events
+when capacity is available. A Script Task on `changes_requested` may use its own Agent Model
 executor in a **new execution of that same Task**; after a fresh approval,
-Script verifies the revised artifacts. Legacy running Shortcut checkpoints
-retain the earlier foreground-runner resume behavior until completion.
+Script verifies the revised artifacts. No direct Shortcut Runner or special execution-mode receipt path remains.
 
 The Job stays ACTIVE; the Task does not requeue until a matching
 `task.interactive_decision` is durably accepted and the Task Graph selects

@@ -41,7 +41,7 @@ code change and classify it afterward.
 ## Execution context ownership
 
 - The shared execution-context resolver owns discovery of project instructions, skills, visible agents, and runtime capabilities.
-- Precedence is project-local > parent directories within the configured workspace > explicitly configured shared roots > global `~/.agents` > Relay built-ins. Agent and Shortcut resolution use the same source layers; concrete paths are resolved at execution time, not persisted in task records. Relay never infers shared roots from a specific client or source checkout.
+- Precedence is project-local > parent directories within the configured workspace > explicitly configured shared roots > global `~/.agents` > Relay built-ins. Script and Model Agent resolution use the same source layers; concrete paths are resolved at execution time, not persisted in task records. Relay never infers shared roots from a specific client or source checkout.
 - Agents Relay owns durable orchestration, lineage, leases/retries, lifecycle events, and review gates.
 - Workers consume the resolved context. Nested workers delegate only by creating durable Relay child tasks; they must not directly spawn arbitrary child agents.
 
@@ -77,10 +77,10 @@ An `agentGraph` creates runtime Agent Tasks under one Coordinator Task. Each chi
 uses the ordinary Task lifecycle and either the Script or Model executor; the
 Coordinator is not a Worker/lease/retry layer. A create-only Job with a Graph is activated
 by `job run --id JOB --task-id TASK` without an execution mode or Planner.
-The regular Scheduler owns its lifecycle thereafter. Content-only completion
-is a separate explicit Job policy, not a consequence of the start command. Do not add independent DAG failure/recovery
-state, model-only revision Tasks, or Shortcut-only Task schedulers. Preserve
-legacy in-flight direct Shortcut checkpoints until they complete.
+The same Reconciler owns it thereafter, launching newly ready descendants
+directly after terminal events when capacity permits. There is no content-only
+completion mode; Final Review and Merge remain independent ordinary Job gates. Do not add independent DAG failure/recovery
+state, model-only revision Tasks, or Shortcut-only Task schedulers. Do not reintroduce legacy Shortcut runtime or execution-mode branching.
 
 ## Verification levels
 

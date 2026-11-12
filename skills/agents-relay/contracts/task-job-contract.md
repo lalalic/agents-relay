@@ -42,6 +42,30 @@ Each dependency edge may also declare `dependencyValidity`: `order-only` (the de
 
 A later Planner round must inspect the existing semantic tree and attach review, revision, re-review, validation rerun, release correction, or recovery work to the existing artifact subtree. Independent milestones remain roots. `plan-N` records are provenance/history and must never be semantic parents. Existing terminal Tasks remain immutable historical evidence and may continue to own later work.
 
+### Declarative Agent DAG and Coordinator ownership
+
+For an executable `agentGraph`, create the Job and its Coordinator Task
+atomically through `job create --coordinator-graph-file ...` (with input,
+output, project/workspace paths); activate it with
+`job run --id JOB --task-id coordinator`. This is an alternative to an
+initial Planner, **not** a separate Job mode or nested runner.
+
+The Coordinator stays durable and does not consume a Worker lease. Each graph
+node materializes as an independently durable Agent Task, with its own
+`parentTaskId`, dependency edges, execution identity, standard retry and
+human review. Its Script or Model executor follows the same Task lifecycle.
+On accepted terminal completion the local Job Reconciler immediately
+considers newly ready dependent nodes, launching independent branches in
+parallel when global capacity permits. `QUEUED` is a persisted recovery and
+capacity boundary, not a reason to wait for the next global scan.
+
+`Request Changes` on an Agent's human Preview requeues the **same Agent Task**
+with feedback, not a fresh revision Task. The Task's new execution can use a
+Model executor for edits and return to Script for validation. A Task cannot
+claim success from a preview-delivery acknowledgement or a process exit.
+The normal Job Final Review and Git Merge are unchanged by Coordinator
+creation and run independently of whether a Planner was needed initially.
+
 ### Task input vs result
 
 A Task input records **what is known and what has already been decided before execution**. A Task result records **what execution discovered and what was actually done**.
@@ -165,7 +189,17 @@ A newly created zero-task DRAFT Job waits for explicit initial planning (`plan` 
 
 ## Task evidence and head identity
 
-For Git-versioned Neo Project Interactive Previews, bind a verified full 40-character Git Commit SHA as the sole review revision (`data.interactive.commitSha`, and `data.interactive.revision` must equal it). Compiled media cache hashes, legacy Markcut `revisionId` and `contentHash` must not be used as the Event Review identity. The Producer creates the Stage Commit before requesting Preview; Relay continues to own the decision and Task lifecycle. Generic non-video interactions are not made into Git commits by this contract.
+For a **Job Final Review of committed source**, the existing immutable
+`head_sha` identifies the code target. Do **not** apply that requirement to
+**Agent Task interactive Preview**: `review.preview` uses the current
+`jobId`/`taskId`/`executionId` and the durable Relay decision associated
+with that Task. The task stops awaiting its human decision; a new revision
+may be requested by resuming the same Task with feedback. No Git SHA,
+content snapshot, additional revision Task or automatic Git commit is a
+prerequisite. Git source/version history and the Task's human review event
+history answer different questions. If an Agent chooses to commit a verified
+artifact separately, use a meaningful descriptive Git message; do not use
+review delivery itself to create commits or tags.
 
 ### Canonical Neo Project runs boundary
 
