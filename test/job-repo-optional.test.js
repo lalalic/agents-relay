@@ -92,7 +92,7 @@ test('local SQLite Job pause/resume and Shortcut CLI resolve --id without reposi
     assert.equal(resumed.repository, 'team/relay');
 
     const { job: shortcut } = await ensureManagedGitHubJob({}, 'team/shortcuts', new Set(), {
-      objective: 'External runner', storeDirectory: stores, executionMode: 'shortcut',
+      objective: 'External start', storeDirectory: stores,
     });
     const run = ['run','--mode','shortcut','--id',shortcut.id,'--task-id','unknown',...isolatedFlags];
     await assert.rejects(execute(run,env), /Task unknown not found/);

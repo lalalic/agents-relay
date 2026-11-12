@@ -317,16 +317,17 @@ test('job create help supports initial planner bootstrap and rejects task execut
   const help = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--help'], { encoding: 'utf8' });
   assert.equal(help.status, 0, help.stderr);
   assert.doesNotMatch(help.stdout, /--start/);
-  assert.doesNotMatch(help.stdout, /--no-auto-merge/);
-  assert.match(help.stdout, /Job creation enables auto-merge by default/);
-  assert.match(help.stdout, /--content-only[^.]*Final Review and Merge/);
+  assert.match(help.stdout, /--no-auto-merge/);
+  assert.match(help.stdout, /Job creation enables auto-merge and Final Review by default/);
+  assert.match(help.stdout, /--no-review/);
+  assert.doesNotMatch(help.stdout, /--content-only/);
   assert.match(help.stdout, /--initial-plan/);
   assert.match(help.stdout, /By default it is create-only/);
   assert.match(help.stdout, /first real Planner round/);
 
-  const noAutoMerge = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'owner/repo', '--id', 'job-cli', '--head', 'feat/demo', '--no-auto-merge'], { encoding: 'utf8' });
+  const noAutoMerge = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'owner/repo', '--objective', 'Test create validation', '--head', 'feat/demo', '--no-auto-merge'], { encoding: 'utf8' });
   assert.notEqual(noAutoMerge.status, 0);
-  assert.match(noAutoMerge.stderr, /Use --content-only for an explicit no-merge content Job/);
+  assert.match(noAutoMerge.stderr, /does not accept --head/);
 
   const invalid = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'owner/repo', '--id', 'job-cli', '--head', 'feat/demo', '--start'], { encoding: 'utf8' });
   assert.notEqual(invalid.status, 0);

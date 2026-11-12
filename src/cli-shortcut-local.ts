@@ -16,7 +16,7 @@ export async function runLocalShortcutBinding(kind: 'job'|'task', action: string
     const { job } = await ensureManagedGitHubJob(new DisabledGitHubClient(), repository(args), new Set(), {
       title: arg(args, '--title') || undefined, objective,
       projectPath: arg(args, '--project-path') || undefined,
-      executionMode: 'shortcut', storeDirectory: arg(args, '--store-dir') || relayStoreDirectory(),
+      legacyShortcutBootstrap: true, storeDirectory: arg(args, '--store-dir') || relayStoreDirectory(),
       noGitHub: true,
     });
     console.log(JSON.stringify({ repository: job.repository, job: job.id, state: job.state }));

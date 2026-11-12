@@ -14,9 +14,9 @@ export async function ensureManagedGitHubJob(
   options: {
     id?: string; idempotencyKey?: string; title?: string; objective?: string; projectPath?: string;
     priority?: Priority;
-    tag?: Job['tag']; reviewEnabled?: boolean; continuation?: Job['continuation'];
-    contentOnly?: boolean;
-    executionMode?: Job['executionMode']; // Deprecated input alias; never persisted.
+    tag?: Job['tag']; reviewEnabled?: boolean; autoMerge?: boolean; continuation?: Job['continuation'];
+    /** Archival Shortcut-only bootstrap; not accepted by ordinary Job creation. */
+    legacyShortcutBootstrap?: boolean;
     prNumber?: number; head?: string; base?: string; body?: string;
     reviewerThreadId?: string; creatorThreadId?: string; implementationThreadId?: string;
     storeDirectory?: string; noGitHub?: boolean; persist?: boolean; localMergeSource?: string; localMergeTarget?: string;
@@ -60,10 +60,10 @@ export async function ensureManagedGitHubJob(
       description: pr.body || undefined,
       priority: options.priority ?? 'P2',
       tag: options.tag,
-      autoMerge: options.contentOnly || options.executionMode === 'shortcut' ? false : true,
+      autoMerge: options.legacyShortcutBootstrap ? false : options.autoMerge ?? true,
       ...(localMergeSource ? { localMerge: { sourceRef: localMergeSource, targetRef: 'refs/heads/main', status: 'pending' as const } } : {}),
-      reviewEnabled: options.contentOnly || options.executionMode === 'shortcut' ? false : options.reviewEnabled ?? true,
-      ...(options.contentOnly || options.executionMode === 'shortcut' ? { contentOnly: true } : {}),
+      reviewEnabled: options.legacyShortcutBootstrap ? false : options.reviewEnabled ?? true,
+      ...(options.legacyShortcutBootstrap ? {executionMode:'shortcut' as const,contentOnly:true} : {}),
       ...(options.reviewerThreadId
         ? { reviewerThreadId: normalizeThreadId(options.reviewerThreadId, 'reviewer thread ID') }
         : {}),

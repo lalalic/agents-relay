@@ -59,7 +59,7 @@ Graph Job activation:
 
 The Job is created DRAFT without a Planner. This command activates its Graph
 Task, then the same Relay Reconciler schedules all durable Agent child Tasks.
-Use --content-only on job create only when no Final Review or Merge is wanted.
+Final Review uses --review/--no-review; Merge uses --auto-merge/--no-auto-merge. Both are normal Job policies, independent of the Coordinator start.
 The --mode shortcut flag is accepted only as a deprecated CLI input alias.
 Historical direct Shortcut checkpoints are read for compatibility.
 
@@ -116,8 +116,8 @@ Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job r
   'job create': `Create a SQLite-authoritative Job (objective-only).
 
 Required: --repo OWNER/REPO and a standalone Job objective. Job ID defaults to an auto-incrementing store-global number; --id may only reference an existing numeric Job.
-Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --initial-plan, --no-review, --content-only, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
-Job creation enables auto-merge by default. By default it is create-only; --initial-plan validates the first real Planner round before atomically creating the durable Job and Plan, then publishes the normal wake. --content-only disables Final Review and Merge independent of how the Job starts; do not combine it with --initial-plan. The deprecated --shortcut-execution input is an alias for --content-only and is never persisted as an execution mode. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
+Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --initial-plan, --review|--no-review, --auto-merge|--no-auto-merge, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
+Job creation enables auto-merge and Final Review by default. By default it is create-only; --initial-plan validates the first real Planner round before atomically creating the durable Job and Plan, then publishes the normal wake. A Coordinator Job does not require an initial Plan; neither review nor merge behavior changes based on its start point. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
 
 Example:
   npx agents-relay job create --repo OWNER/REPO --project-path vlog --title "Episode" --objective-file episode.md --initial-plan`,
@@ -128,12 +128,12 @@ Usage: agents-relay job run --id JOB --task-id TASK [--project-path DIR] [--no-g
 The command activates the normal Job lifecycle and emits a wake-up. The ordinary
 Relay Scheduler creates runtime Agent Tasks, runs Script or Model executors,
 waits for human review, retries failures and handles completion. A Job may use
---content-only independent of how it starts. --mode shortcut is a deprecated
-input alias; it does not choose an execution engine.`,
+ordinary Final Review and Merge policies. The --mode shortcut argument is a
+deprecated start alias only; it does not choose an execution engine.`,
   'job update': `Partially update mutable metadata on a healthy existing Job.
 
 Required: --id JOB_ID. Optional: --repo OWNER/REPO verifies the stored Job identity.
-Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --project-path RELATIVE_PATH, --priority, --tag JSON, --auto-merge|--no-auto-merge, --review|--no-review, --content-only|--no-content-only, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID, and continuation options. The objective updates local SQLite; PR body changes are independent external actions. Content-only completion requires no PR/merge/review requirements and explicit --no-auto-merge --no-review --content-only.
+Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --project-path RELATIVE_PATH, --priority, --tag JSON, --auto-merge|--no-auto-merge, --review|--no-review, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID, and continuation options. The objective updates local SQLite; PR body changes are independent external actions.
 Unspecified fields are preserved. Local Job/PR identity mismatch is rejected.
 
 Example:

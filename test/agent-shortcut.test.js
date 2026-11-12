@@ -275,7 +275,7 @@ test('shortcut Job creation refuses an initial Planner round before any Task can
   const f=await fixture(t);
   const result=spawnSync(process.execPath,[join(root,'dist','cli.js'),'job','create','--repo','local/shortcut-test','--objective','fixture','--shortcut-execution','--initial-plan','--no-github','--store-dir',f.storeDir],{encoding:'utf8',env:{...process.env,AGENTS_RELAY_STORE_DIR:f.storeDir}});
   assert.notEqual(result.status,0);
-  assert.match(result.stderr,/requires create-only Job creation/);
+  assert.match(result.stderr,/obsolete; configure normal/);
   assert.equal((await f.load()).tasks.length,1,'rejected invocation must not materialize or mutate a Task');
 });
 

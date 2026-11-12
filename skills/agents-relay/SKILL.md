@@ -47,8 +47,8 @@ Graph Tasks use Relay's ordinary Task Reconciler: `agentGraph` becomes a
 ready. Script and Model are Task execution choices; each has the same
 Task-level retry, failure and review semantics. `job run --id JOB --task-id TASK` activates any create-only Graph Job and
 hands it to that same Reconciler; it is not a separate DAG scheduler or Job
-execution mode. Set `--content-only` at creation only when Final Review and
-Merge are not required. A Graph needs no Planner unless one is requested.
+execution mode. Final Review is independently controlled by `--review`/`--no-review`;
+normal Git Merge is independently controlled by `--auto-merge`/`--no-auto-merge`. A Graph needs no Planner unless one is requested.
 
 ## 3. Verify, review, and recover
 
