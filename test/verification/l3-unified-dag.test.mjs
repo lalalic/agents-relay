@@ -198,3 +198,21 @@ test('L3-U15: DAG terminal validation uses bound Coordinator checkout',async t=>
  const done=await until(async()=>{const j=await f.load();return j.tasks[0]?.state==='SUCCEEDED'?j:null},'DAG without generic repository resolution',7500);
  assert.deepEqual(done.tasks.filter(t=>t.dagNode).map(t=>t.state),['SUCCEEDED','SUCCEEDED','SUCCEEDED']);
 });
+
+test('L3-U16: DAG Troubleshooter inherits bound Coordinator checkout',async t=>{
+ const f=await fixture(t);
+ await f.store.mutateJob(f.id,j=>{j.graphStartContext={projectPath:f.project,workspaceRoot:f.root,noGitHub:true};return j});
+ f.reconciler.options.projectPathForJob=async()=>{throw Error('Repository local/unified not found under workspace')};
+ await f.activate();
+ await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();return j.tasks.find(t=>t.id==='dag-initial-A')?.state==='SUCCEEDED'},'first Graph Task',7500);
+ await f.store.mutateJob(f.id,j=>{
+  const parent=j.tasks.find(t=>t.id==='dag-initial-A');
+  const trouble={...structuredClone(parent),id:'troubleshoot-dag-initial-A',title:'Recover first',
+   parentTaskId:parent.id,dagNode:undefined,agentName:'troubleshooter',adapter:'codex',
+   state:'QUEUED',attempt:0,executionId:null,leaseOwner:null,leaseExpiresAt:null,
+   error:null,result:null,output:{kind:'file',path:join(f.project,'troubleshooter-result.json')}};
+  j.tasks.push(trouble);return j;
+ });
+ const completed=await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();return j.tasks.find(t=>t.id==='troubleshoot-dag-initial-A')?.state==='SUCCEEDED'?j:null},'bound Graph Troubleshooter',7500);
+ assert.equal(completed.tasks.find(t=>t.id==='troubleshoot-dag-initial-A').state,'SUCCEEDED');
+});

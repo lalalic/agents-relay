@@ -381,7 +381,8 @@ export class Reconciler extends ReconcilerReviewBase {
     let executionContext: ExecutionContext;
     try {
       const role: ExecutionRole = isFinalReviewAgent(task.agentName) ? 'reviewer' : task.agentName === 'troubleshooter' ? 'troubleshooter' : task.parentTaskId ? 'nested-worker' : 'worker';
-      const projectPath = task.dagNode && job.graphStartContext?.projectPath ? job.graphStartContext.projectPath : this.options.projectPathForJob ? await this.options.projectPathForJob(job, task) : task.routing?.cwd ?? process.cwd();
+      const graphChild = Boolean(task.dagNode) || job.tasks.some(parent => parent.id === task.parentTaskId && Boolean(parent.dagNode));
+      const projectPath = graphChild && job.graphStartContext?.projectPath ? job.graphStartContext.projectPath : this.options.projectPathForJob ? await this.options.projectPathForJob(job, task) : task.routing?.cwd ?? process.cwd();
       executionContext = await this.resolvedContext(job, task, role, projectPath);
     } catch (error) {
       await this.failLaunch(job.id, task.id, task.executionId, `Execution context unavailable: ${error instanceof Error ? error.message : String(error)}`);
