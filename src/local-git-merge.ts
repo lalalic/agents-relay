@@ -3,7 +3,7 @@ import { withLocalMergeLock } from './local-merge-lock.js';
 import { resolve } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import type { Job } from './types.js';
-import { implementationComplete } from './runtime-status.js';
+import { implementationComplete, implementationTasks } from './runtime-status.js';
 import { completionGateSatisfied } from './task-transitions.js';
 
 export type LocalMergeReceipt = {
@@ -31,7 +31,7 @@ export function localSourceHead(repoPath: string, sourceRef: string): string {
   return git(repoPath, 'rev-parse', '--verify', ref(sourceRef));
 }
 export function requiresLocalGitMerge(job: Job): boolean {
-  return Boolean(job.localMerge) || job.tasks.some(task => task.output?.kind === 'task_pr');
+  return Boolean(job.localMerge) || implementationTasks(job).some(task => task.output?.kind === 'task_pr');
 }
 export function localMergeFacts(job: Job, headSha: string | null, now: () => number = Date.now): Readonly<Record<string, unknown>> {
   return {
