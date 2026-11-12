@@ -187,3 +187,14 @@ test('L3-U14: duplicate normal Job start is idempotent and rejects changed trust
  assert.equal(after.tasks.length,1);
  assert.equal(after.graphStartContext.sharedRoot,undefined);
 });
+
+// Live regression: local/vlog DAG completion must honor the Coordinator's
+// persisted project checkout, not a generic workspace repository lookup.
+test('L3-U15: DAG terminal validation uses bound Coordinator checkout',async t=>{
+ const f=await fixture(t);
+ await f.store.mutateJob(f.id,j=>{j.graphStartContext={projectPath:f.project,workspaceRoot:f.root,noGitHub:true};return j});
+ f.reconciler.options.projectPathForJob=async()=>{throw Error('Repository local/unified not found under workspace')};
+ await f.activate();await f.reconciler.reconcile(f.id);
+ const done=await until(async()=>{const j=await f.load();return j.tasks[0]?.state==='SUCCEEDED'?j:null},'DAG without generic repository resolution',7500);
+ assert.deepEqual(done.tasks.filter(t=>t.dagNode).map(t=>t.state),['SUCCEEDED','SUCCEEDED','SUCCEEDED']);
+});

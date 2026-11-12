@@ -88,7 +88,10 @@ export abstract class ReconcilerRuntimeBase {
       const latest = await this.store.load(event.job_id);
       const task = latest.tasks.find(item => item.id === event.task_id);
       if(task?.dagNode){
-        const projectPath=this.options.projectPathForJob?await this.options.projectPathForJob(latest,task):undefined;
+        // Use the Coordinator's durable checkout for DAG stage validation.
+        // An independent local repo need not resolve through generic workspace lookup.
+        const projectPath=latest.graphStartContext?.projectPath ??
+          (this.options.projectPathForJob?await this.options.projectPathForJob(latest,task):undefined);
         const invalid=await dagCompletionError(task,projectPath);
         if(invalid)return this.applyTerminalEvent({...event,type:'task.failed',
           message:invalid,data:{...event.data,reason:'invalid_dag_result'}});
