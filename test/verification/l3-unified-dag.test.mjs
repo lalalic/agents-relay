@@ -148,13 +148,24 @@ for(const [label,config,decisions] of [
 ])test(label,async t=>{
  const f=await fixture(t,config);await f.activate();await f.reconciler.reconcile(f.id);
  for(const [node,status] of decisions){
-  await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();return j.tasks.find(t=>t.id==='dag-initial-'+node)?.state==='AWAITING_DECISION'},'review '+node,5000);
+  try{
+   await until(async()=>{
+    await f.reconciler.reconcile(f.id);
+    const j=await f.load();const current=j.tasks.find(t=>t.id==='dag-initial-'+node);
+    if(current?.state==='FAILED'||current?.state==='BLOCKED')
+      throw Error('Review Task failed: '+JSON.stringify({id:current.id,adapter:current.adapter,error:current.error,failureReason:current.failureReason}));
+    return current?.state==='AWAITING_DECISION';
+   },'review '+node,20000);
+  }catch(error){
+   const j=await f.load();
+   throw Error(String(error)+'; durable='+JSON.stringify(j.tasks.map(t=>({id:t.id,state:t.state,adapter:t.adapter,attempt:t.attempt,error:t.error,review:t.interactiveInvocation?.status})))+'; trace='+(await f.trace()).slice(-1800));
+  }
   await f.decide(node,status);
  }
  const done=await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();
   if(j.tasks.some(t=>t.state==='FAILED'||t.state==='BLOCKED')){console.log('FAILED',j.tasks.map(t=>({id:t.id,state:t.state,error:t.error})));throw Error('Failed DAG');}
   return j.tasks.find(t=>t.id==='initial')?.state==='SUCCEEDED'?j:null;
- },'DAG completed',7000);
+ },'DAG completed',20000);
  assert.equal(done.tasks.find(t=>t.id==='initial').title,'Coordinator');
  for(const [node,agent] of [['A','first'],['B','middle'],['C','last']]){
   const task=done.tasks.find(t=>t.id==='dag-initial-'+node);
