@@ -109,7 +109,7 @@ export async function migrateTaskIds(databasePath: string, backupPath: string): 
           if (task.parentTaskId === 'orchestrator') task.parentTaskId = null;
           if (task.agentGraph) task.title = 'Coordinator';
           else if (task.agentName === 'troubleshooter') task.title = 'Troubleshooter';
-          else if (task.agentName === 'job-acceptance-reviewer' || task.agentName === 'reviewer') task.title = 'Final review';
+          else if (task.agentName === 'job-acceptance-reviewer' || task.agentName === 'reviewer') task.title = 'Final Review';
           else if ((task as {dagNode?:unknown}).dagNode && task.agentName) task.title = task.agentName;
         });
         updateJob.run(JSON.stringify(job),row.job_id);

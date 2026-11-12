@@ -130,7 +130,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       'Do not treat historical failed attempts as current artifact defects; distinguish preserved baseline files from implementation.',
     ].join('\n\n');
     const task = createTaskEntity(job, {
-      jobId: job.id, id, title: 'Final review', kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: FINAL_REVIEW_AGENT,
+      jobId: job.id, id, title: 'Final Review', kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: FINAL_REVIEW_AGENT,
       parentTaskId: null, dependencies: [], capabilities: ['review'],
       workerSelection: reviewerRouting.selection, adapter: reviewerRouting.candidate.adapter,
       input,
