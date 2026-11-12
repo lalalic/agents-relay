@@ -55,6 +55,23 @@ export async function aggregateManagedGitHubJobs(client: GitHubClient, repositor
   return groups.flat().sort((a, b) => b.job.updatedAt.localeCompare(a.job.updatedAt) || b.job.prNumber - a.job.prNumber);
 }
 
+
+/** Measure leased workers, not Coordinator Tasks or human-review waits.
+ * Legacy non-DAG Jobs retain the previous one-slot accounting. DAG branches
+ * may use several slots, but never exceed the global Worker Pool budget. */
+export function activeWorkerSlots(job:Job):number {
+  if(!job.tasks.some(t=>Boolean(t.dagNode)))return jobHasActiveExecution(job)?1:0;
+  const leased=job.tasks.filter(t=>t.executionId!==null && t.leaseOwner &&
+    (t.state==='RUNNING'||t.state==='QUEUED') && !unifiedDAG(job,t)).length;
+  const planning=(job.plans??[]).filter(p=>Boolean(p.executionId) && p.status==='PLANNING').length;
+  return leased+planning;
+}
+
+function remainingWorkerSlots(concurrency:number, jobs:readonly Job[]):number {
+  const unique=new Map(jobs.map(job=>[job.id,job]));
+  return Math.max(0,concurrency-[...unique.values()].reduce((used,job)=>
+    used+(job.state==='ACTIVE'||job.projectionRecovery?.status==='repairing'?activeWorkerSlots(job):0),0));
+}
 export class RepositoryWorkerPool {
   private running = false;
   private pending = false;
@@ -119,9 +136,19 @@ export class RepositoryWorkerPool {
     if (!target) throw new Error('Local job not found: ' + jobId);
     await this.withDispatchGate(async () => {
       await this.reconcileExclusive(jobId, async () => {
-        await withObservabilityCorrelation({ jobId, repository: target.job.repository },
-          () => this.makeReconciler(target.store, 0).reconcile(jobId));
+        const current = await target.store.load(jobId);
+        const dag = current.state==='ACTIVE' && current.tasks.some(t=>unifiedDAG(current,t));
+        // DAG continuation goes straight to the existing Reconciler on the
+        // terminal event. No zero-capacity pass followed by global Job queue
+        // selection. If the pool is full, the durable Task remains QUEUED and
+        // the ordinary recovery/scheduler path will pick it up later.
+        const slots = dag ? remainingWorkerSlots(this.concurrency,
+          [...(await this.localInventory()).map(item=>item.job).filter(j=>j.id!==jobId),current]) : 0;
+        await withObservabilityCorrelation({ jobId, repository: current.repository },
+          () => this.makeReconciler(target.store, slots).reconcile(jobId));
       });
+      // Still free slots for unrelated Jobs on completion; this scan is not
+      // on the critical path for DAG successor dispatch, which occurred above.
       await this.reconcileDiscovered(await this.localInventory());
     });
     void reason;
@@ -143,7 +170,7 @@ export class RepositoryWorkerPool {
 
   private async reconcileDiscovered(discovered: ManagedJobOverview[]): Promise<void> {
     const jobs = runnableManagedJobs(discovered);
-    let capacity = Math.max(0, this.concurrency - jobs.filter(job => jobHasActiveExecution(job)).length);
+    let capacity = remainingWorkerSlots(this.concurrency, jobs);
     for (const job of jobs) {
       if (capacity <= 0) break;
       const store = await this.requireLocalStore(job.id);
