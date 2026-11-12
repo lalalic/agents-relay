@@ -1,34 +1,35 @@
 # Objective-driven Jobs
 
-Every Agents Relay Job uses the same durable objective lifecycle. There is no `fixed` versus `autonomous` execution mode, no Job schedule or cron policy, and no Scheduler entity. The opt-in `executionMode: shortcut` selects direct Agent Graph code shortcuts for content-only Jobs.
+Every Agents Relay Job uses one durable Job/Task Scheduler, whether an
+explicit Planner is requested or an already-defined Agent Graph is started.
+There is no `executionMode` on newly-created Jobs. Starting a Job is distinct
+from choosing its independent Final Review/Merge policy.
 
 ## Lifecycle
 
-1. A Job starts with an explicit objective and either a direct seed Task batch or an initial Planner round (`job create --initial-plan` or `plan`). A zero-task create-only DRAFT Job waits for an explicit start. Create a shortcut Job with `job create --shortcut-execution` before materializing Tasks; it is content-only, has no auto-merge/review, and does not create Planner rounds. `job run --mode shortcut` only executes a Task of a durably opted-in Job.
-2. The Reconciler consumes durable Task outcomes and evaluates `workflow/planner-orchestration.mmd`. After successful work settles, it creates the next `plan-N` round without an owner pressing Continue.
-3. The Planner returns `objective_status`, `assessment`, and `next_tasks`. Each materialized child has an immutable `planningDecisionId` and `planningRound`; semantic parentage uses `parentTaskId`.
-4. `in_progress` requires executable work or a valid recovery/blocked resolution, so the Job stays ACTIVE. Planner rounds are idempotent across duplicate wakes and daemon restarts.
+1. `job create` records an objective as a DRAFT Job. Use `--initial-plan` when a
+   Planner is wanted. For a plan-free workflow, create a queued Task with an
+   `agentGraph`, then call `job run --id JOB --task-id TASK` to activate the Job.
+2. The ordinary Reconciler creates one Coordinator and durable Agent-named Tasks
+   as dependencies become ready. Script and Model Agents share the same Task
+   lifecycle, retries, failure recovery, and human `review.preview` boundary.
+   A Coordinator is not a Worker and holds no execution lease while children run.
+3. Completed Tasks release dependent Tasks and eventually complete the
+   Coordinator. The canonical Job Graph owns completion, Final Review, and local
+   Git merge according to the Job's policy. A plan-free Job can keep the
+   standard review/merge gates; `--content-only` explicitly disables both.
+   Initial execution needs no Planner. An explicit Final Review CHANGES_REQUIRED
+   can still invoke the established finding-driven repair Plan, not a startup Plan.
+4. An optional Planner-based Job follows the normal `plan-N` recovery and
+   objective-satisfaction rules. Planner retries and Final Reviews remain
+   independent of whether a Graph Job was activated through `job run`.
 
-Shortcut mode is opt-in. It resolves project `agents/.shortcut/<agent>.agent.mjs`
-before Neo shared shortcuts, executes independent graph nodes concurrently,
-persists node checkpoints and event waits in the existing SQLite Task result,
-and returns a missing shortcut or a pre-effect failure to the original Worker
-route. A failure after a shortcut may have produced effects stays FAILED for
-Troubleshooter recovery and does not replay the graph. Nonhuman waits resume
-only from a validated result receipt atomically stored in the SQLite Task
-checkpoint and matched to the active Job, Task, execution, wait ID, revision,
-and content hash. A `shortcut.result` EventBus event is only a wake signal; its
-payload never supplies trusted output. Record results with
-`job shortcut-receipt --id JOB --repo OWNER/REPO --task-id TASK --node-id NODE
---wait-id WAIT --revision REV --execution-id EXECUTION --output-file FILE
---content-sha256 SHA256`. The file contains the completed shortcut result
-object, and the hash is over its canonical JSON content. Human approval stays
-on the host-invocation path; manual `--event-json` input is rejected.
-A wait releases the Job execution slot. Completed checkpoints pin
-Task input, Agent Graph, shortcut source, artifact real paths and hashes.
-Shortcut-only Job completion requires the durable `contentOnly` policy plus no
-PR, merge, review, Planner plan, or outstanding wait.
-5. Only the latest successful Plan's `objective_status: satisfied`, together with successful implementation evidence, can open the final Review/completion gate. Reviewer approval, immutable head evidence and verified merge are still required when enabled.
+Historical completed or cancelled direct Shortcut records retain archived
+`executionMode` metadata for read compatibility, but new Jobs never set this
+field. The deprecated `--shortcut-execution` input aliases `--content-only`;
+it does **not** select an executor or a separate Scheduler. The old direct
+Shortcut runtime only serves historical checkpoints and is not used for new
+Job runs.
 
 ## Failure and recovery
 

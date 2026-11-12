@@ -306,7 +306,7 @@ test('selected job heading is title-only and single-line', () => {
   assert.match(dashboardHtml, /#selected-job-title \{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; \}/);
   assert.doesNotMatch(dashboardHtml, /summary\.append\(field\('Title'/);
   assert.doesNotMatch(dashboardHtml, /field\('Description'/);
-  assert.match(dashboardHtml, /field\('PR state',job\.executionMode==='shortcut'\?'Not applicable':job\.githubState/);
+  assert.match(dashboardHtml, /field\('PR state',Number\(job\.prNumber\|\|0\)===0\?'Not applicable':job\.githubState/);
   assert.match(dashboardHtml, /jobStateField\(job\)/);
   assert.match(dashboardHtml, /field\('Runtime status',job\.runtimeStatus\|\|'IDLE'\)/);
 });
@@ -355,7 +355,7 @@ test('job rows show lifecycle and runtime without PR state or quick actions', ()
   assert.match(dashboardHtml, /job\.state/);
   assert.match(dashboardHtml, /job\.runtimeStatus\|\|'IDLE'/);
   assert.match(dashboardHtml, /text\('PR Merged'\)/);
-  assert.match(dashboardHtml, /field\('PR state',job\.executionMode==='shortcut'\?'Not applicable':job\.githubState/);
+  assert.match(dashboardHtml, /field\('PR state',Number\(job\.prNumber\|\|0\)===0\?'Not applicable':job\.githubState/);
   assert.doesNotMatch(dashboardHtml, /actionButton\(job/);
   assert.doesNotMatch(dashboardHtml, /className='job-action'/);
   assert.match(dashboardHtml, /const primary=element\('div','job-primary'\);primary\.append\(states\)/);
@@ -1483,10 +1483,10 @@ test('Router Rules audit renders execution and legacy decisions without undefine
 });
 
 
-test('Shortcut jobs render a separate execution-mode label and refresh authoritative state on relay patches',()=>{
- assert.match(dashboardHtml,/job\.executionMode==='shortcut'.*?shortcut-mode/);
- assert.match(dashboardHtml,/Execution mode',job\.executionMode==='shortcut'\?'Shortcut Runner \(external trigger\)'/);
- assert.match(dashboardHtml,/field\('Shortcut nodes',shortcutProgress\(job\)\)/);
+test('Jobs display one lifecycle without an execution-mode badge and refresh authoritative state',()=>{
+ assert.doesNotMatch(dashboardHtml,/badge shortcut-mode/);
+ assert.doesNotMatch(dashboardHtml,/field\('Execution mode'/);
+ assert.doesNotMatch(dashboardHtml,/field\('Shortcut nodes'/);
  assert.match(dashboardHtml,/void refreshJobSnapshot\(payload\.statePatch\.jobId\)/);
 });
 

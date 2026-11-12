@@ -282,7 +282,7 @@ test('CLI and daemon help are successful and do not require job storage', () => 
     ['dist/cli.js', ['job', 'create', '--help'], 'Create a SQLite-authoritative Job'],
     ['dist/cli.js', ['job', 'update', '--help'], 'Partially update mutable metadata'],
     ['dist/cli.js', ['job', 'show', '--help'], 'Show one durable Job'],
-    ['dist/cli.js', ['job', 'run', '--help'], 'Opt in to direct Agent Graph shortcuts'],
+    ['dist/cli.js', ['job', 'run', '--help'], 'Activate a create-only Job with a durable Agent Graph Task'],
     ['dist/cli.js', ['job', '--help'], 'Atomically record a validated nonhuman result'],
     ['dist/cli.js', ['job', 'list', '--help'], 'List managed Jobs'],
     ['dist/cli.js', ['job', 'merge', '--help'], 'Legacy entry point; external GitHub PR merges are not initiated by this CLI.'],
@@ -319,14 +319,14 @@ test('job create help supports initial planner bootstrap and rejects task execut
   assert.doesNotMatch(help.stdout, /--start/);
   assert.doesNotMatch(help.stdout, /--no-auto-merge/);
   assert.match(help.stdout, /Job creation enables auto-merge by default/);
-  assert.match(help.stdout, /--shortcut-execution[^.]*no auto-merge/);
+  assert.match(help.stdout, /--content-only[^.]*Final Review and Merge/);
   assert.match(help.stdout, /--initial-plan/);
   assert.match(help.stdout, /By default it is create-only/);
   assert.match(help.stdout, /first real Planner round/);
 
   const noAutoMerge = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'owner/repo', '--id', 'job-cli', '--head', 'feat/demo', '--no-auto-merge'], { encoding: 'utf8' });
   assert.notEqual(noAutoMerge.status, 0);
-  assert.match(noAutoMerge.stderr, /does not accept --no-auto-merge; new Jobs always enable auto-merge/);
+  assert.match(noAutoMerge.stderr, /Use --content-only for an explicit no-merge content Job/);
 
   const invalid = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'owner/repo', '--id', 'job-cli', '--head', 'feat/demo', '--start'], { encoding: 'utf8' });
   assert.notEqual(invalid.status, 0);

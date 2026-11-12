@@ -174,7 +174,7 @@ export class Reconciler extends ReconcilerReviewBase {
         scheduled = refreshTaskDependencies(await this.store.load(jobId));
       }
       scheduled = refreshTaskDependencies(await this.maybeCreatePlanner(scheduled));
-      scheduled = refreshTaskDependencies(await reconcileDAGSchedule({store:this.store,jobId,job:scheduled,projectPathForTask:async(j,t)=>j.shortcutRunnerContext?.projectPath ?? (this.options.projectPathForJob ? this.options.projectPathForJob(j,t) : t.routing?.cwd ?? process.cwd()),roots:this.options.executionContextRoots}));
+      scheduled = refreshTaskDependencies(await reconcileDAGSchedule({store:this.store,jobId,job:scheduled,projectPathForTask:async(j,t)=>j.graphStartContext?.projectPath ?? j.shortcutRunnerContext?.projectPath ?? (this.options.projectPathForJob ? this.options.projectPathForJob(j,t) : t.routing?.cwd ?? process.cwd()),roots:this.options.executionContextRoots}));
       if (scheduled.state !== previousState || scheduled.updatedAt !== job.updatedAt) await this.store.saveJob(scheduled);
       scheduled = await this.dispatchExecutableTasks(jobId);
       let finalState = refreshTaskDependencies(await this.store.load(jobId));
@@ -399,7 +399,7 @@ export class Reconciler extends ReconcilerReviewBase {
     let executionContext: ExecutionContext;
     try {
       const role: ExecutionRole = isFinalReviewAgent(task.agentName) ? 'reviewer' : task.agentName === 'troubleshooter' ? 'troubleshooter' : task.parentTaskId ? 'nested-worker' : 'worker';
-      const projectPath = task.dagNode && job.shortcutRunnerContext?.projectPath ? job.shortcutRunnerContext.projectPath : this.options.projectPathForJob ? await this.options.projectPathForJob(job, task) : task.routing?.cwd ?? process.cwd();
+      const projectPath = task.dagNode && (job.graphStartContext?.projectPath ?? job.shortcutRunnerContext?.projectPath) ? (job.graphStartContext?.projectPath ?? job.shortcutRunnerContext!.projectPath) : this.options.projectPathForJob ? await this.options.projectPathForJob(job, task) : task.routing?.cwd ?? process.cwd();
       executionContext = await this.resolvedContext(job, task, role, projectPath);
     } catch (error) {
       await this.failLaunch(job.id, task.id, task.executionId, `Execution context unavailable: ${error instanceof Error ? error.message : String(error)}`);

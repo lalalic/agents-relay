@@ -380,3 +380,16 @@ The caller must report only a release it has actually verified. For local-first 
 ### Project-scoped agent Markdown inheritance
 
 Agent lookup has exactly two layers: Relay built-in `skills/agents-relay/agents/` and `<job-context-root>/agents/`. `job.projectPath` selects the context root within the repository (including monorepo content projects); no workspace/global agent fallback is searched. Project agent frontmatter can specify `extends: relay/planner`, `mode: extend`, and `sections: { replace: [Heading/Subheading], extend: [Other Heading] }` using heading paths, or `mode: replace` for a full behavioral replacement. Relay-owned lifecycle, Job/Task and events contracts are injected separately and cannot be replaced by a project agent. An unextended local agent is a standalone definition. The resolver emits a deterministic SHA-256 of composed Markdown; a missing section or unsupported parent fails instead of silently dropping instructions.
+
+### Plan-free Graph Jobs (unified start)
+
+Create a Job without `--initial-plan`, materialize one queued Agent Graph Task,
+then activate it with `agents-relay job run --id JOB --task-id TASK`. No
+`executionMode` is stored; `job run` only activates and publishes a wake-up.
+The ordinary Reconciler creates the Coordinator and durable Agent-named Tasks,
+with the same Script/Model execution, Task Review, Retry and recovery used by
+all other Jobs. `--content-only` is an **independent Job policy** that disables
+Final Job Review and merge; omit it to keep the ordinary Job completion gates.
+The old `--shortcut-execution` input aliases this policy for existing callers,
+but creates no special execution mode. Historical completed/cancelled Shortcut
+records retain their old fields for read-only compatibility.

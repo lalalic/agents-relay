@@ -286,7 +286,7 @@ test('legacy Job metadata is discarded while planner result markers round-trip',
   assert.equal(parsePlannerOutput('{"objective_status":"satisfied","assessment":"done","next_tasks":[]}').objective_status, 'satisfied');
   assert.throws(() => parsePlannerResult({ objective_status: 'satisfied', assessment: 'bad', next_tasks: [spec('duplicate'), spec('duplicate')] }), /duplicate/);
   assert.doesNotMatch(dashboardHtml, /Cadence|function cadence/);
-  assert.match(dashboardHtml, /field\('Execution mode',job\.executionMode==='shortcut'/);
+  assert.doesNotMatch(dashboardHtml, /field\('Execution mode'/);
 });
 
 test('planner parses authoritative reverse cross-job unblocks and rejects malformed declarations', () => {

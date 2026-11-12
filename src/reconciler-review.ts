@@ -123,7 +123,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       'This is a PRE-MERGE artifact approval gate: inspect exact PR head, requirements, tests and genuine blocking defects.',
       'Do not block approval because automatic merge, Job COMPLETED, or post-merge validation has not occurred yet.',
       'All non-review Tasks have terminal outcomes. Examine FAILED and CANCELLED Tasks and their recovery evidence; never approve an unresolved required outcome.',
-      'The Final Review is the Job completion check. Persist concrete, owner-attributed findings with a changes-required verdict; Relay starts a new Planner round for revisions.',
+      'The Final Review is the Job completion check. Persist concrete, owner-attributed findings with a changes-required verdict. A Job without an explicit Planner remains plan-free; request targeted revisions rather than assuming Relay creates a Planner round.',
       'Do not treat historical failed attempts as current artifact defects; distinguish preserved baseline files from implementation.',
     ].join('\n\n');
     const task = createTaskEntity(job, {

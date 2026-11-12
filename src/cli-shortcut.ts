@@ -38,16 +38,59 @@ export async function activateShortcutJobForDirectRun(store: DurableStore, jobId
 
 export async function runShortcutJobCommand(args: string[], id: string, makeRunner?: (store: DurableStore, bus: EventBus | undefined) => Reconciler): Promise<void> {
   assertSqliteShortcutArgs(args);
-  if (arg(args, '--mode') !== 'shortcut') throw new Error('job run requires --mode shortcut');
+  if (arg(args, '--mode') && arg(args, '--mode') !== 'shortcut') throw new Error('job run no longer selects an execution mode');
   const loaded = await storeFor(args, false, true);
   if (loaded.localFile !== null || !loaded.store.mutateJob || !loaded.store.reserveWorkflowLaunch)
     throw new Error('Shortcut execution requires the authoritative SQLite Relay store');
   const job = loaded.job;
-  if (job.executionMode !== 'shortcut' || job.contentOnly !== true) throw new Error('job run shortcut mode must be durably selected at Job creation with --shortcut-execution before Tasks are materialized');
+  // An explicit graph start is an ordinary Job activation. Historical in-flight
+  // direct Shortcut checkpoints alone continue through the archived runner below.
   const taskId = arg(args, '--task-id');
   if (!taskId) throw new Error('job run requires --task-id');
   let task = job.tasks.find(item => item.id === taskId);
   if (!task) throw new Error(`Task ${taskId} not found`);
+  const legacy = hasArg(args,'--legacy-shortcut-runtime') || Boolean(task.result?.data?.shortcut);
+  if (!legacy) {
+    if (hasArg(args,'--event-json')) throw new Error('Normal Job activation does not accept a Shortcut runner event');
+    const graphOverride = hasArg(args,'--agent-graph-file') ? await textOption(args,'--agent-graph','--agent-graph-file') : undefined;
+    if(graphOverride)parseAgentGraph(graphOverride);
+    const effectiveGraph=task.agentGraph??graphOverride;
+    if(!effectiveGraph)throw new Error('job run requires a Task with an Agent Graph');
+    const workspaceRoot=await resolveWorkspaceRoot(arg(args,'--workspace-root')||undefined);
+    const projectRoot=await resolveManagedProjectPath(noGitHubMode(args)?undefined:job.repository,arg(args,'--project-path')||job.projectPath||'',workspaceRoot);
+    const projectPath=resolveRepositoryProjectPath(projectRoot,job.projectPath);
+    const globalRoot=arg(args,'--global-root')||process.env.AGENTS_HOME||undefined;
+    const sharedRoot=arg(args,'--shared-root')||process.env.AGENTS_RELAY_SHARED_ROOT||undefined;
+    await loaded.store.mutateJob(id,current=>{
+      const root=current.tasks.find(t=>t.id===taskId);
+      if(!root)throw Error('Graph Task disappeared');
+      if(root.agentGraph && root.agentGraph!==effectiveGraph)throw Error('Graph Task changed since activation');
+      if(root.state!=='QUEUED'&&root.state!=='RUNNING'&&root.state!=='DRAFT')throw Error('Graph Task is not startable: '+root.state);
+      if(!root.agentGraph){if(root.state!=='QUEUED'&&root.state!=='DRAFT')throw Error('Graph cannot be replaced after Task started');root.agentGraph=effectiveGraph;}
+      if(root.state==='DRAFT'){
+        if(root.dependencies.length)throw Error('Graph root has unmet dependencies');
+        const queued=tryTransitionTaskEvent(root,'queue',{dependenciesSatisfied:true});
+        if(!queued.accepted||queued.target!=='QUEUED')throw Error('Task Lifecycle rejected Graph root queue');
+      }
+      const ctx={projectPath,workspaceRoot,...(sharedRoot?{sharedRoot}:{}),...(globalRoot?{globalRoot}:{}),noGitHub:noGitHubMode(args)};
+      const existing=current.graphStartContext;
+      if(existing&&(['projectPath','workspaceRoot','sharedRoot','globalRoot','noGitHub'] as const).some(k=>existing[k] !== ctx[k]))
+        throw Error('Graph start context changed from first authorized invocation');
+      if(!existing)current.graphStartContext=ctx;
+      if(current.state==='DRAFT'){
+        const decision=dispatchJobLifecycleSync(current,'activate');
+        if(!decision.accepted||decision.target!=='ACTIVE')throw Error('Job Lifecycle rejected activation');
+      }else if(current.state!=='ACTIVE')throw Error('Job is not runnable: '+current.state);
+      return current;
+    });
+    const scheduled=await loaded.store.load(id);
+    await withEventBus(args,bus=>publishWake(bus,scheduled,taskId,'Graph Job activated; ordinary Scheduler owns execution'));
+    console.log(JSON.stringify({jobId:id,taskId,scheduled:true,state:scheduled.state,graphRuntime:'tasks',
+      message:'Job activated; Relay Scheduler owns DAG Tasks, Reviews and recovery'},null,2));
+    return;
+  }
+  if (job.executionMode !== 'shortcut' || job.contentOnly !== true)
+    throw new Error('Legacy Shortcut runner requires its original archived Job policy');
   if (hasArg(args, '--event-json')) shortcutResumeEvent(arg(args, '--event-json'));
   if (!task.agentGraph && !hasArg(args, '--agent-graph-file')) throw new Error(`Task ${taskId} has no Agent Graph; set it on the Task or pass --agent-graph-file`);
   let resumeReceiptSelected=false;
