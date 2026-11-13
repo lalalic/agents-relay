@@ -93,7 +93,7 @@ test('JEL renders distinct read-only failed, retry, and troubleshooter diagnosti
   assert.match(chart,/failed_1_0\["Failed task-17 \/ attempt 4 \/ elapsed unknown"\]/);
   assert.match(chart,/troubleshooter_1_0\["Troubleshooter troubleshoot-17 \/ SUCCEEDED \/ elapsed 9m 0s"\]/);
   for(const kind of ['retry','failed','troubleshooter']){
-    assert.ok(chart.includes('execute_1 -.-> '+kind+'_1_0'));
+    assert.ok(chart.includes('task_0 -.-> '+kind+'_1_0'));
   }
   assert.match(chart,/class retry_1_0 jelRetry/);
   assert.match(chart,/class failed_1_0 jelFailed/);
@@ -155,4 +155,69 @@ test('JEL uses the same resizable graph viewer as Workflow, with fit, zoom and p
   assert.match(dashboardStyles,/\.graph-dialog\s*\{[^}]*width:98vw; height:96vh; height:96dvh/);
   assert.match(dashboardStyles,/\.graph-dialog\[open\]\s*\{[^}]*display:flex/);
   assert.match(dashboardStyles,/\.graph-dialog-viewport\s*\{[^}]*flex:1/);
+});
+
+test('JEL expands a Coordinator DAG with child dependency, retry, failure and final review Task detail', () => {
+  const at = hour => '2026-11-10T'+String(hour).padStart(2,'0')+':00:00Z';
+  const diagram = jobJelDiagram({
+    state:'COMPLETED',createdAt:at(8),updatedAt:at(16),
+    plans:[{id:'plan',round:1,status:'SUCCEEDED',createdAt:at(8),updatedAt:at(9),generatedTaskIds:['100']}],
+    tasks:[
+      {id:'100',title:'Coordinator',agentName:'dag-coordinator',state:'SUCCEEDED',planningDecisionId:'plan',createdAt:at(9),updatedAt:at(14)},
+      {id:'101',title:'Visioner',agentName:'vlog-visioner',dagNode:{nodeId:'vision'},state:'SUCCEEDED',parentTaskId:'100',
+        createdAt:at(9),updatedAt:at(12),attempt:2,executionHistory:[{attempt:1,startedAt:at(9)},{attempt:2,startedAt:at(11)}]},
+      {id:'102',title:'Editor',agentName:'vlog-editor',dagNode:{nodeId:'editor'},state:'FAILED',parentTaskId:'100',dependencies:['101'],
+        createdAt:at(12),updatedAt:at(13),attempt:1,error:'render failed'},
+      {id:'103',agentName:'troubleshooter',state:'SUCCEEDED',parentTaskId:'102',recoveryForAttempt:1,createdAt:at(13),updatedAt:at(14)},
+      {id:'104',agentName:'job-acceptance-reviewer',state:'SUCCEEDED',createdAt:at(14),updatedAt:at(15)},
+    ],review:{outcome:'approved'}
+  });
+  assert.match(diagram,/task_0\["Task 100 \/ dag-coordinator/);
+  assert.match(diagram,/task_1\["Task 101 \/ vlog-visioner \/ DAG vision/);
+  assert.match(diagram,/task_2\["Task 102 \/ vlog-editor \/ DAG editor/);
+  assert.match(diagram,/task_0 -->\|DAG child\| task_1/);
+  assert.match(diagram,/task_1 -->\|depends\| task_2/);
+  assert.match(diagram,/retry_1_0\["Retry 101/);
+  assert.match(diagram,/failed_1_0\["Failed 102/);
+  assert.match(diagram,/troubleshooter_1_0\["Troubleshooter 103/);
+  assert.match(diagram,/task_4\["Final Review Task 104/);
+  assert.match(diagram,/review_1 -.-> task_4/);
+  assert.match(diagram,/class task_2 jelFailed/);
+});
+
+test('JEL hotspot report differentiates queue, last-attempt window and wall; missing starts remain unknown', async () => {
+  const { jobJelHotspots } = await import('../dist/dashboard-jel.js');
+  const report=jobJelHotspots({state:'COMPLETED',tasks:[
+    {id:'42',agentName:'visioner',state:'SUCCEEDED',attempt:2,createdAt:'2026-11-10T10:00:00Z',
+      updatedAt:'2026-11-10T10:40:00Z',executionHistory:[{attempt:1,startedAt:'2026-11-10T10:05:00Z'},{attempt:2,startedAt:'2026-11-10T10:30:00Z'}]},
+    {id:'43',agentName:'editor',state:'FAILED',attempt:1,createdAt:'2026-11-10T10:00:00Z',updatedAt:'2026-11-10T10:10:00Z',failureReason:'no input'},
+  ]});
+  assert.equal(report[0].wallMs,40*60_000);
+  assert.equal(report[0].queueMs,5*60_000);
+  assert.equal(report[0].runMs,10*60_000);
+  assert.equal(report[1].runMs,null);
+  assert.equal(report[1].wallMs,10*60_000);
+  assert.equal(report[1].issue,'no input');
+});
+
+test('JEL UI offers task/agent lookup, failed filter, elapsed rankings and task-detail clickthrough',async()=>{
+  const { dashboardHtml } = await import('../dist/dashboard-html.js');
+  for(const pattern of [/id="jel-search"/,/id="jel-filter"/,/id="jel-find-results"/,/id="jel-overview"/,/function inspectJelTask\(id\)/,/buildJelHotspots=/,/node\.addEventListener\('click',\(\)=>inspectJelTask\(task\.id\)\)/]){
+    assert.match(dashboardHtml,pattern);
+  }
+});
+
+
+test('JEL excludes non-worker Coordinator from measured run bottlenecks without hiding its wall span', async () => {
+  const {jobJelHotspots} = await import('../dist/dashboard-jel.js');
+  const stats=jobJelHotspots({tasks:[
+    {id:'c',agentName:'dag-coordinator',state:'SUCCEEDED',createdAt:'2026-11-10T08:00:00Z',updatedAt:'2026-11-10T14:00:00Z',
+      attempt:1,executionHistory:[{attempt:1,startedAt:'2026-11-10T08:00:00Z'}]},
+    {id:'agent',agentName:'visioner',state:'SUCCEEDED',createdAt:'2026-11-10T08:00:00Z',updatedAt:'2026-11-10T10:00:00Z',
+      attempt:1,executionHistory:[{attempt:1,startedAt:'2026-11-10T09:00:00Z'}]},
+  ]});
+  assert.equal(stats[0].phase,'Coordinator');
+  assert.equal(stats[0].runMs,null);
+  assert.equal(stats[0].wallMs,6*60*60_000);
+  assert.equal(stats[1].runMs,60*60_000);
 });

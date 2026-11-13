@@ -6,7 +6,7 @@ The Entry path is Job Objective → Planner → Worker → Reviewer → Merge/De
 
 Click an Entry node to see a canonical subgraph. Select Event, Guard, Action, or State nodes and event buttons to inspect read-only references to the canonical graph, contracts, implementation, and tests. References are derived from the checked-in files; missing matches are shown as absent, not invented. Alternatively use the graph list and the exposed target links. `#/graphs/<graph-id>` is a shareable link. Back/Forward and Entry buttons navigate design views. The SVG renderer uses Mermaid strict mode and a restrictive markup filter. When the CDN renderer is unavailable, Mermaid source remains visible.
 
-Canonical reference contracts: `skills/agents-relay/contracts/event-contract.md` and `skills/agents-relay/contracts/task-recovery-flows.md`. Those references must be reconciled against executable workflow files during a separate policy audit; the UI does not correct policy conflicts. Execution view and exhaustive contract/graph policy-conflict reconciliation are not delivered. The retired Browser Workspace E2E runner recorded 32/32 isolated checks on 2026-10-19; the runner is no longer part of the repository. Evidence screenshots and JSON were saved on the Mac at `/tmp/agents-relay-workflow-browser/`. This was not a live Dashboard deployment. No production SQLite Job data is modified by this feature.
+Canonical reference contracts: `skills/agents-relay/contracts/event-contract.md` and `skills/agents-relay/contracts/task-recovery-flows.md`. Those references must be reconciled against executable workflow files during a separate policy audit; the UI does not correct policy conflicts. A separate per-Job JEL execution inspector exists; exhaustive contract/graph policy-conflict reconciliation is not delivered. The retired Browser Workspace E2E runner recorded 32/32 isolated checks on 2026-10-19; the runner is no longer part of the repository. Evidence screenshots and JSON were saved on the Mac at `/tmp/agents-relay-workflow-browser/`. This was not a live Dashboard deployment. No production SQLite Job data is modified by this feature.
 
 Validation: `npm run build` then `node --import ./test/test-store-env.mjs --test test/dashboard.test.js`.
 
@@ -33,3 +33,34 @@ The Workflow graph can be opened in a modal viewer using **Maximize graph**. The
 ## Canonical main graph and file links
 
 `workflow/main.mmd` is the presentation-only entry graph. It is served from the existing `/api/graphs` endpoint, not evaluated by the transition engine. Each line `click planner href "planner-orchestration.mmd"` binds a node to an existing workflow graph. Any `.mmd` can declare links using the same syntax; the Viewer validates graph IDs against loaded `.mmd` files and binds the clickable SVG nodes after sanitization. Mermaid strict mode stays enabled, and runtime lifecycle policy does not change. `#/graphs/main` is the entry deep link; legacy `#/graphs/entry` resolves to main.
+
+
+## Job JEL inspector (execution view)
+
+Open **Jobs → Job details → View JEL chart**. Unlike Workflow, this graph is a
+read-only projection of one Job's persisted SQLite snapshot. It expands
+Plan → Execute → Final Review → Merge, including individual Task nodes,
+Coordinator parent/child DAG lineage, and declared Task dependencies. Failed
+Tasks are red, retried Tasks purple, Troubleshooter amber, and Final Review blue.
+Recovery-for-attempt may prove an earlier failure without an exact failure
+timestamp; such a duration is shown as unknown rather than estimated.
+
+Use the Task/Agent search and Failed, Retried, Troubleshooter, Final Review, or
+Slowest filters above the graph. Task results and Task SVG nodes open the
+existing Task Detail; both paths retain the selected Task's event scope.
+The overview displays Job wall time, failure/retry counts, and up to three
+agents ranked by their **sum of known last-attempt windows**. The Slowest filter
+excludes Coordinator tasks because Coordinators do not run Worker executions.
+
+Time metrics are not CPU usage: **wall** spans Task creation through latest
+durable update (or the current instant for nonterminal Tasks), **queue** is
+creation to the first recorded execution start, and **run** is the last
+recorded attempt's start to the Task's latest durable update. Earlier attempt
+end timestamps are not persisted; missing measurements show an em dash. An
+agent's summed observed attempt windows indicate workload, **not** Job
+completion duration or a critical path, because parallel Tasks overlap.
+
+Validation:
+`npm run build && node --import ./test/test-store-env.mjs --test test/dashboard-jel.test.js test/dashboard.test.js test/verification/dashboard-drilldown.test.mjs`.
+A real Chrome session should verify SVG rendering, a Failed filter, and both
+Task-result and SVG-node navigation before each UI release.

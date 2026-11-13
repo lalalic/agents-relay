@@ -1,6 +1,6 @@
 import { dashboardStyles } from './dashboard-style.js';
 import { DEFAULT_DASHBOARD_JOB_STATUSES } from './dashboard-data.js';
-import { jobJelDiagram } from './dashboard-jel.js';
+import { jobJelDiagram, jobJelHotspots } from './dashboard-jel.js';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -80,7 +80,7 @@ ${dashboardStyles}
     </div>
   </section>
   <div id="jel-chart" class="graph-canvas jel-chart" aria-live="polite" hidden></div>
-  <dialog id="graph-dialog" class="graph-dialog" aria-label="Graph viewer"><div class="graph-dialog-header"><strong id="graph-dialog-title">Workflow graph</strong><div class="graph-navigation"><button type="button" id="graph-zoom-out" class="refresh-button" aria-label="Zoom out">−</button><span id="graph-zoom-level" aria-live="polite">100%</span><button type="button" id="graph-zoom-in" class="refresh-button" aria-label="Zoom in">+</button><button type="button" id="graph-zoom-reset" class="refresh-button">Fit</button><button type="button" id="graph-dialog-close" class="refresh-button">Close</button></div></div><div id="graph-jel-meta" class="graph-jel-meta" hidden><div class="jel-legend" aria-label="JEL diagnostics"><span class="jel-legend-failed">Failed</span><span class="jel-legend-retry">Retry</span><span class="jel-legend-troubleshooter">Troubleshooter</span></div><p id="jel-status" class="subtle">Graph derived from the selected job snapshot.</p></div><div id="graph-dialog-viewport" class="graph-dialog-viewport"></div></dialog>
+  <dialog id="graph-dialog" class="graph-dialog" aria-label="Graph viewer"><div class="graph-dialog-header"><strong id="graph-dialog-title">Workflow graph</strong><div class="graph-navigation"><button type="button" id="graph-zoom-out" class="refresh-button" aria-label="Zoom out">−</button><span id="graph-zoom-level" aria-live="polite">100%</span><button type="button" id="graph-zoom-in" class="refresh-button" aria-label="Zoom in">+</button><button type="button" id="graph-zoom-reset" class="refresh-button">Fit</button><button type="button" id="graph-dialog-close" class="refresh-button">Close</button></div></div><div id="graph-jel-meta" class="graph-jel-meta" hidden><div class="jel-legend" aria-label="JEL diagnostics"><span class="jel-legend-failed">Failed</span><span class="jel-legend-retry">Retry</span><span class="jel-legend-troubleshooter">Troubleshooter</span><span class="jel-legend-review">Final review</span></div><div id="jel-overview" class="jel-overview"></div><div class="jel-find"><label for="jel-search">Find Task / Agent</label><input id="jel-search" type="search" placeholder="Task ID or agent" aria-label="Find JEL task or agent"><select id="jel-filter" aria-label="Filter JEL tasks"><option value="slowest">Slowest first</option><option value="all">All tasks</option><option value="failed">Failed</option><option value="retry">Retried</option><option value="troubleshooter">Troubleshooter</option><option value="review">Final Review</option></select></div><div id="jel-find-results" class="jel-find-results" aria-live="polite"></div><p id="jel-status" class="subtle">Slowest excludes non-worker Coordinator and ranks measured last-attempt windows first. Agent Σ is observed workload, not Job duration or CPU time. Queue = created to first attempt. Wall includes waiting. Parallel durations overlap.</p></div><div id="graph-dialog-viewport" class="graph-dialog-viewport"></div></dialog>
   <section id="rules-view" role="tabpanel" aria-labelledby="rules-tab" hidden><div class="panel"><div class="panel-head"><h2>Router Rules</h2><span id="rules-meta" class="subtle"></span></div><div class="panel-body"><div class="router-rules-workspace"><div class="router-rules-pane rules-editor"><h3>Rules Editor</h3><p class="rules-help">Execution Router rules with an explicit <code>[choices]</code> section (provider: model [reasoning] entries, additive to profile defaults) and a <code>[routing-instruction]</code> section forwarded verbatim to Laya. Relay deduplicates, applies hard gates, and sends one merged choice list; impossible routes remain excluded by code and Codex stays the deterministic fallback.</p><textarea id="rules-text" class="rules-textarea" spellcheck="true" aria-label="Execution router rules" placeholder="[choices]\nopenai: sol medium, luna high\nzai: glm-5.3-flash high\n\n[routing-instruction]\nPrefer zai until its quota resets; otherwise use the openai default."></textarea><div class="rules-footer"><span id="rules-status" class="subtle" aria-live="polite"></span><div><button id="rules-test" class="rules-save" type="button">Test Router</button> <button id="rules-save" class="rules-save" type="button">Save rules</button></div></div></div><div class="router-rules-pane"><div class="panel-head"><h3>Audit Log</h3><button id="audit-refresh" type="button">Refresh</button></div><div id="audit-log" class="audit-log" aria-live="polite"><p class="empty">Loading latest routing decisions…</p></div></div></div><div class="router-test-panel"><h3>Test Router Result</h3><div id="router-test-results" class="router-test-results" aria-live="polite"><p class="empty">Select a Job and Task, then run Test Router.</p></div></div></div></div></section>
   <section id="qa-view" role="tabpanel" aria-labelledby="qa-tab" hidden>
     <div class="panel"><div class="panel-head"><h2>Troubleshooter Q&A</h2><span class="subtle">skills/agents-relay/troubleshooter-qa.md</span></div>
@@ -212,13 +212,79 @@ function syncFilters(){
 }
 function repoName(repository){if(typeof repository!=='string'||!repository)return 'unknown-repo';const parts=repository.split('/').filter(Boolean);return parts.at(-1)||repository;}
 const buildJelDiagram=${jobJelDiagram.toString()};
+const buildJelHotspots=${jobJelHotspots.toString()};
 const jelChart=document.querySelector('#jel-chart');
 const jelStatus=document.querySelector('#jel-status');
+let jelHotspots=[];
+const jelSearch=document.querySelector('#jel-search');
+const jelFilter=document.querySelector('#jel-filter');
+const jelResults=document.querySelector('#jel-find-results');
+const jelOverview=document.querySelector('#jel-overview');
+function jelDuration(milliseconds){if(milliseconds===null||!Number.isFinite(milliseconds))return '—';const seconds=Math.floor(milliseconds/1000);if(seconds<60)return seconds+'s';const minutes=Math.floor(seconds/60);if(minutes<60)return minutes+'m'+String(seconds%60).padStart(2,'0')+'s';const hours=Math.floor(minutes/60);return hours<24?hours+'h'+String(minutes%60).padStart(2,'0')+'m':Math.floor(hours/24)+'d'+String(hours%24).padStart(2,'0')+'h';}
+function inspectJelTask(id){
+  if(!selected()?.tasks?.some(task=>task.id===id))return;
+  selectedTaskId=id;eventTaskId=id;rememberSelection();clearEvents();
+  dismissGraphViewer();renderAll();void loadEventHistory();
+  document.querySelector('#task-detail').scrollIntoView({block:'start',behavior:'smooth'});
+}
+function renderJelResults(){
+  const query=jelSearch.value.trim().toLowerCase();
+  const filter=jelFilter.value;
+  const matches=jelHotspots.filter(item=>(!query||(item.id+' '+item.agent+' '+item.phase).toLowerCase().includes(query))&&(
+    filter==='all'||filter==='slowest'&&item.phase!=='Coordinator'||
+    filter==='failed'&&item.state==='FAILED'||
+    filter==='retry'&&item.attempt>1||
+    filter==='troubleshooter'&&item.phase==='Troubleshooter'||
+    filter==='review'&&item.phase==='Final Review'));
+  const order=matches.sort((a,b)=>{
+    if(filter==='slowest')return Number(b.runMs!==null)-Number(a.runMs!==null)||(b.runMs??b.wallMs??-1)-(a.runMs??a.wallMs??-1)||a.id.localeCompare(b.id);
+    return a.id.localeCompare(b.id);
+  });
+  jelResults.replaceChildren();
+  if(!order.length){jelResults.append(element('span','subtle',text('No matching tasks.')));return;}
+  for(const item of order){
+    const button=element('button','jel-result',text(item.id+' · '+item.agent+' · '+item.phase+' · '+item.state+' · '+(item.attempt>1?'try '+item.attempt+' · ':'')+'run '+jelDuration(item.runMs)+' · queue '+jelDuration(item.queueMs)+' · wall '+jelDuration(item.wallMs)+(item.issue?' · '+item.issue:'')));
+    button.type='button';button.setAttribute('aria-label','Inspect Task '+item.id);
+    if(item.state==='FAILED')button.classList.add('jel-result-failed');
+    else if(item.attempt>1)button.classList.add('jel-result-retry');
+    button.addEventListener('click',()=>inspectJelTask(item.id));jelResults.append(button);
+  }
+}
+jelSearch.addEventListener('input',renderJelResults);
+jelFilter.addEventListener('change',renderJelResults);
+function renderJelOverview(job){
+  jelHotspots=buildJelHotspots(job);
+  const wall=Date.parse(job.createdAt||'');
+  const end=['COMPLETED','CANCELLED'].includes(job.state)?Date.parse(job.updatedAt||''):Date.now();
+  const total=Number.isFinite(wall)&&Number.isFinite(end)&&end>=wall?end-wall:null;
+  const failures=jelHotspots.filter(item=>item.state==='FAILED').length;
+  const retries=jelHotspots.reduce((sum,item)=>sum+Math.max(0,item.attempt-1),0);
+  const recoveries=jelHotspots.filter(item=>item.phase==='Troubleshooter').length;
+  const reviews=jelHotspots.filter(item=>item.phase==='Final Review').length;
+  jelOverview.replaceChildren();
+  for(const [label,val] of [['Job wall',jelDuration(total)],['Tasks',String(jelHotspots.length)],['Failed',String(failures)],['Retries',String(retries)],['Troubleshoot',String(recoveries)],['Review',String(reviews)]]){
+    jelOverview.append(element('span','jel-metric',text(label+' · '+val)));
+  }
+  // Sum of observed last-attempt windows is workload, NEVER Job wall-clock
+  // duration; parallel Tasks can overlap and earlier attempts lack end times.
+  const agents=new Map();
+  for(const item of jelHotspots){
+    if(item.phase==='Coordinator'||item.runMs===null)continue;
+    const previous=agents.get(item.agent)||{sum:0,count:0};
+    previous.sum+=item.runMs;previous.count++;agents.set(item.agent,previous);
+  }
+  const leaders=[...agents].sort((a,b)=>b[1].sum-a[1].sum||a[0].localeCompare(b[0])).slice(0,3);
+  for(const [agent,data] of leaders){
+    jelOverview.append(element('span','jel-metric',text('Agent Σ last attempt · '+agent+' '+jelDuration(data.sum)+' / '+data.count+' tasks')));
+  }
+  jelSearch.value='';jelFilter.value='slowest';renderJelResults();
+}
 let jelRenderSequence=0;
 async function openJelChart(job){
   const renderId=++jelRenderSequence;
   jelChart.replaceChildren(element('p','subtle',text('Rendering job lifecycle…')));
-  jelStatus.textContent='Wall-clock elapsed from persisted timestamps (includes queued time); unknown means timing data is unavailable. Pending stages are not complete.';
+  renderJelOverview(job);
+  jelStatus.textContent='Run = last recorded attempt start → last state update (not CPU time). Queue = created → first recorded attempt. Wall includes retries/wait. Parallel tasks overlap; unknown means no timestamp.';
   showGraphViewer(jelChart,'JEL · '+value(job.repository)+'/'+value(job.id),true);
   const source=buildJelDiagram(job);
   try{
@@ -231,6 +297,15 @@ async function openJelChart(job){
     for(const node of svg.querySelectorAll('g.node')){const entry=Array.from(definitions.entries()).find(([key])=>node.id.includes('-flowchart-'+key+'-'));if(entry)addNodeLabel(node,entry[1]);}
     applyGraphPalette(svg);
     applyJelHighlights(svg);
+    for(const node of svg.querySelectorAll('g.node')){
+      const match=node.id.match(/-flowchart-task_([0-9]+)-/);
+      const task=match?job.tasks?.[Number(match[1])]:null;
+      if(!task?.id)continue;
+      node.classList.add('jel-inspectable');node.setAttribute('role','button');node.setAttribute('tabindex','0');
+      node.setAttribute('aria-label','Inspect Task '+task.id);
+      node.addEventListener('click',()=>inspectJelTask(task.id));
+      node.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();inspectJelTask(task.id);}});
+    }
     jelChart.replaceChildren(svg);
     fitGraphViewer();
   }catch(error){
@@ -240,9 +315,14 @@ async function openJelChart(job){
   }
 }
 function applyJelHighlights(svg){
-  const palette={failed:['#fee2e2','#b91c1c','#991b1b'],retry:['#ede9fe','#7c3aed','#5b21b6'],troubleshooter:['#fef3c7','#b45309','#92400e']};
+  const palette={failed:['#fee2e2','#b91c1c','#991b1b'],retry:['#ede9fe','#7c3aed','#5b21b6'],troubleshooter:['#fef3c7','#b45309','#92400e'],review:['#dbeafe','#2563eb','#1e40af']};
   for(const node of svg.querySelectorAll('g.node')){
-    const kind=node.id.includes('-flowchart-failed_')?'failed':node.id.includes('-flowchart-retry_')?'retry':node.id.includes('-flowchart-troubleshooter_')?'troubleshooter':null;
+    const taskIndex=node.id.match(/-flowchart-task_([0-9]+)-/);
+    const task=taskIndex?selected()?.tasks?.[Number(taskIndex[1])]:null;
+    const kind=node.id.includes('-flowchart-failed_')||task?.state==='FAILED'?'failed':
+      node.id.includes('-flowchart-retry_')||(task?.attempt||0)>1?'retry':
+      node.id.includes('-flowchart-troubleshooter_')||task?.agentName==='troubleshooter'?'troubleshooter':
+      task&&['job-acceptance-reviewer','reviewer'].includes(task.agentName)?'review':null;
     if(!kind)continue;
     node.classList.add('jel-'+kind);
     const [fill,stroke,color]=palette[kind];
