@@ -72,6 +72,15 @@ GitHub operations are explicitly requested and confirmed by adapters, never used
 discover or reconstruct Job/Task state. EventBus delivery wakes reconciliation;
 it cannot replace the durable SQLite record.
 
+### Rust backend feasibility implementation
+
+The experimental Rust implementation lives in [`rust/`](rust/README.md).
+It parses the **same** executable workflow graphs and reads the authoritative
+V2 SQLite schema in explicit read-only mode. Run `npm run test:rust` for
+Rust/TypeScript Graph and SQLite differential tests. It is a shadow execution
+engine, **not** a production scheduler; TypeScript remains the only writer and
+worker dispatcher until the L1/L2/L3 migration gates pass.
+
 ### Workflow graph navigation
 
 | Area | Canonical graph |
