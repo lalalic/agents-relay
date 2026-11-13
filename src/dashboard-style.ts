@@ -131,22 +131,6 @@ export const dashboardStyles = `  <style>
     .graph-navigation { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin-bottom:.7rem; }
     .graph-canvas .node.drillable { cursor:pointer; }
     .graph-canvas .node.drillable text, .graph-canvas .node.drillable tspan { fill:#2367b1; }
-    .jel-legend { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem; padding:.1rem .3rem .6rem; font-size:.76rem; font-weight:700; }
-    .jel-legend span { padding:.16rem .5rem; border-radius:.35rem; border:1px solid; }
-    .jel-legend-failed { background:#fee2e2; border-color:#b91c1c!important; color:#991b1b; }
-    .jel-legend-retry { background:#ede9fe; border-color:#7c3aed!important; color:#5b21b6; }
-    .jel-legend-troubleshooter { background:#fef3c7; border-color:#b45309!important; color:#92400e; }
-    .jel-legend-review { background:#dbeafe; border-color:#2563eb!important; color:#1e40af; }
-    .jel-overview { display:flex; gap:.35rem; align-items:center; flex-wrap:wrap; }
-    .jel-metric { border:1px solid var(--border); background:var(--surface2); border-radius:.35rem; padding:.17rem .42rem; font-size:.73rem; font-weight:700; font-variant-numeric:tabular-nums; }
-    .jel-find { display:flex; flex-wrap:wrap; align-items:center; gap:.45rem; font-size:.75rem; }
-    .jel-find input, .jel-find select { max-width:100%; min-width:0; padding:.27rem .4rem; border:1px solid var(--border); border-radius:.3rem; background:var(--surface); color:var(--text); }
-    .jel-find input { flex:1; min-width:8rem; }
-    .jel-find-results { display:flex; gap:.27rem; overflow-x:auto; padding:.2rem .1rem .35rem; max-width:100%; }
-    .jel-result { flex:none; border:1px solid var(--border); border-radius:.3rem; background:var(--surface2); color:var(--text); padding:.25rem .45rem; max-width:32rem; text-align:left; font:inherit; font-size:.72rem; cursor:pointer; white-space:normal; }
-    .jel-result:hover,.jel-result:focus-visible { outline:2px solid #2563eb; outline-offset:1px; }
-    .jel-result-failed { border-color:#b91c1c; }
-    .jel-result-retry { border-color:#7c3aed; }
     .jel-chart .node.jel-inspectable { cursor:pointer; }
     .jel-chart .node.jel-inspectable:focus-visible { outline:2px solid #2563eb; outline-offset:3px; }
     .jel-source { overflow:auto; white-space:pre; font:12px/1.5 ui-monospace,monospace; }
@@ -155,9 +139,6 @@ export const dashboardStyles = `  <style>
     .graph-dialog::backdrop { background:#17202b99; }
     .graph-dialog-header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.7rem; padding:.3rem .5rem; }
     .graph-dialog-viewport { flex:1; min-height:0; min-width:0; overflow:auto; cursor:grab; background:var(--surface2); border:1px solid var(--border); border-radius:.4rem; }
-    .graph-jel-meta { display:grid; gap:.2rem; padding:.1rem .3rem .25rem; }
-    .graph-jel-meta[hidden] { display:none; }
-    .graph-jel-meta #jel-status { margin:0; font-size:.74rem; }
     .graph-dialog-viewport:active { cursor:grabbing; }
     .graph-dialog-viewport .graph-canvas { display:grid; width:max-content; min-width:100%; min-height:100%; overflow:visible; }
     .graph-canvas .node text { pointer-events:none; }

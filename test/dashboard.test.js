@@ -205,7 +205,7 @@ test('dashboard removes the obsolete ChatGPT shortcuts and connection surfaces',
 test('job detail JEL link opens a snapshot-driven graph in the shared viewer', () => {
   assert.doesNotMatch(dashboardHtml, /id="jel-dialog"/);
   assert.match(dashboardHtml, /id="graph-dialog"/);
-  assert.match(dashboardHtml, /id="graph-jel-meta"/);
+  assert.doesNotMatch(dashboardHtml, /id="graph-jel-meta"/);
   assert.match(dashboardHtml, /id="jel-chart"/);
   assert.match(dashboardHtml, /function jelField\(job\)/);
   assert.match(dashboardHtml, /link\.href='#graph-dialog'/);
@@ -217,7 +217,7 @@ test('job detail JEL link opens a snapshot-driven graph in the shared viewer', (
   assert.match(dashboardHtml, /graphNodeDefinitions\(source\)/);
   assert.match(dashboardHtml, /addNodeLabel\(node,entry\[1\]\)/);
   assert.match(dashboardHtml, /jelField\(job\)/);
-  assert.match(dashboardHtml, /Graph preview unavailable/);
+  assert.match(dashboardHtml, /element\('pre','jel-source',text\(source\)\)/);
 });
 
 test('dashboard applies lifecycle state patches from relay SSE without refetching jobs', () => {

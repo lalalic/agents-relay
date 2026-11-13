@@ -16,7 +16,7 @@ export interface JelJob {
 /** Keep this function self-contained: dashboard-html embeds its JS source in the browser. */
 export function jobJelDiagram(job: JelJob): string {
   const lines = ['flowchart LR'];
-  const safe = (value: unknown) => String(value ?? 'Unknown').replace(/[^A-Za-z0-9 _./-]/g, '').slice(0, 240);
+  const safe = (value: unknown) => String(value ?? 'Unknown').replace(/https?:\/\/[^\s]*/gi, '').replace(/[^\p{L}\p{N} _./()—:-]/gu, '').slice(0, 100);
   const now = Date.now();
   const instant = (value: unknown): number | null => {
     if (typeof value !== 'string' || !value) return null;
@@ -26,34 +26,27 @@ export function jobJelDiagram(job: JelJob): string {
   const elapsed = (start: unknown, end: unknown): string => {
     const from = instant(start);
     const to = end === 'NOW' ? now : instant(end);
-    if (from === null || to === null || to < from) return 'unknown';
+    if (from === null || to === null || to < from) return '—';
     const seconds = Math.floor((to - from) / 1000);
     if (seconds < 60) return seconds + 's';
     const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return minutes + 'm ' + seconds % 60 + 's';
+    if (minutes < 60) return minutes + 'm' + String(seconds % 60).padStart(2, '0') + 's';
     const hours = Math.floor(minutes / 60);
-    if (hours < 24) return hours + 'h ' + minutes % 60 + 'm';
-    return Math.floor(hours / 24) + 'd ' + hours % 24 + 'h';
+    if (hours < 24) return hours + 'h' + String(minutes % 60).padStart(2, '0') + 'm';
+    return Math.floor(hours / 24) + 'd' + String(hours % 24).padStart(2, '0') + 'h';
   };
   const terminalTask = (task: NonNullable<typeof job.tasks>[number]) => ['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(task.state || '');
   const workElapsed = (work: NonNullable<typeof job.tasks>): string => {
     const starts = work.map(task => instant(task.createdAt)).filter((time): time is number => time !== null);
-    if (starts.length !== work.length || !starts.length) return 'unknown';
+    if (starts.length !== work.length || !starts.length) return '—';
     const ends = work.map(task => instant(task.updatedAt)).filter((time): time is number => time !== null);
     return elapsed(new Date(Math.min(...starts)).toISOString(), work.every(terminalTask) && ends.length === work.length ? new Date(Math.max(...ends)).toISOString() : 'NOW');
   };
-  const node = (id: string, label: string, time: string) => lines.push('  ' + id + '["' + safe(label + ' / elapsed ' + time) + '"]');
+  const node = (id: string, label: string, time: string) => lines.push('  ' + id + '["' + safe(label).slice(0, 80) + ' (' + safe(time) + ')"]');
   const edge = (from: string, to: string, reason = '') => lines.push('  ' + from + ' -->' + (reason ? '|' + safe(reason) + '|' : '') + ' ' + to);
   const tasks = Array.isArray(job.tasks) ? job.tasks : [];
   const isReviewer = (task: (typeof tasks)[number]) => ['job-acceptance-reviewer', 'reviewer'].includes(task.agentName || '');
   const isTroubleshooter = (task: (typeof tasks)[number]) => task.agentName === 'troubleshooter';
-  const state = (value: unknown, fallback: string) => typeof value === 'string' && value ? safe(value).toUpperCase() : fallback;
-  const workLabel = (work: typeof tasks) => {
-    const succeeded = work.filter(task => task.state === 'SUCCEEDED').length;
-    const failed = work.filter(task => task.state === 'FAILED').length;
-    const active = work.filter(task => !['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(task.state || '')).length;
-    return work.length + ' tasks / ' + succeeded + ' succeeded / ' + failed + ' failed / ' + active + ' active';
-  };
   // These dashed observation branches are not workflow transitions: persisted
   // Task facts are projected without inferring a new scheduling decision.
   const diagnostics = (executionId: string, suffix: string, work: typeof tasks, troubleshoot: typeof tasks) => {
@@ -68,12 +61,12 @@ export function jobJelDiagram(job: JelJob): string {
       if (task.state === 'FAILED') {
         const key = (task.id || 'unknown') + ':' + String(task.attempt ?? '?');
         failed.add(key);
-        add('failed', 'Failed ' + (task.id || 'unknown') + ' / attempt ' + (task.attempt || 'unknown'), elapsed(task.createdAt, task.updatedAt), task);
+        add('failed', 'Failed', elapsed(task.createdAt, task.updatedAt), task);
       }
       if (typeof task.attempt === 'number' && Number.isInteger(task.attempt) && task.attempt > 1) {
         const history = Array.isArray(task.executionHistory) ? task.executionHistory : [];
         const current = history.slice().reverse().find(record => record.attempt === task.attempt);
-        add('retry', 'Retry ' + (task.id || 'unknown') + ' / ' + (task.attempt - 1) + ' retries / attempt ' + task.attempt,
+        add('retry', 'Retry',
           elapsed(current?.startedAt, terminalTask(task) ? task.updatedAt : 'NOW'), task);
       }
     }
@@ -85,31 +78,29 @@ export function jobJelDiagram(job: JelJob): string {
           failed.add(key);
           // Recovery-for-attempt is durable evidence of a failed attempt, but
           // not of its terminal timestamp: display unknown, never fabricate.
-          add('failed', 'Failed ' + (parent.id || 'unknown') + ' / attempt ' + task.recoveryForAttempt, 'unknown', parent);
+          add('failed', 'Failed', '—', parent);
         }
       }
-      add('troubleshooter', 'Troubleshooter ' + (task.id || 'unknown') + ' / ' + state(task.state, 'UNKNOWN'), workElapsed([task]), parent);
+      add('troubleshooter', task.title || task.agentName || 'Troubleshooter', workElapsed([task]), parent);
     }
   };
   // Exact Task IDs, DAG lineage and dependencies are persisted facts, not inferred
   // workflow transitions. Task nodes are clickable in the dashboard after SVG sanitization.
   const taskNodeId = (task: (typeof tasks)[number]) => 'task_' + tasks.indexOf(task);
-  const taskElapsed = (task: (typeof tasks)[number]) =>
-    elapsed(task.createdAt, terminalTask(task) ? task.updatedAt : 'NOW');
+  const taskElapsed = (task: (typeof tasks)[number]) => {
+    const end = terminalTask(task) ? task.updatedAt : 'NOW';
+    const coordinator = (task.kind || '').toLowerCase() === 'coordinator' ||
+      (/coordinator/i.test(task.agentName || '') && !task.dagNode) || !!task.agentGraph;
+    const history = Array.isArray(task.executionHistory) ? task.executionHistory : [];
+    const last = history.slice().reverse().find(record => record.attempt === task.attempt);
+    const run = coordinator ? '—' : elapsed(last?.startedAt, end);
+    return run !== '—' ? run : elapsed(task.createdAt, end);
+  };
   const taskNodes = (stage: string, work: typeof tasks) => {
     const byId = new Map(work.filter(task => task.id).map(task => [task.id, task]));
     for (const task of work) {
-      const name = task.agentName || task.kind || 'agent';
-      const title = task.title ? ' / ' + task.title.slice(0, 60) : '';
-      const dag = task.dagNode?.nodeId ? ' / DAG ' + task.dagNode.nodeId : '';
-      const attempts = task.attempt && task.attempt > 1 ? ' / attempt ' + task.attempt : '';
-      const history = Array.isArray(task.executionHistory) ? task.executionHistory : [];
-      const last = history.slice().reverse().find(record => record.attempt === task.attempt);
-      const isCoordinator = (task.kind || '').toLowerCase() === 'coordinator' || (/coordinator/i.test(task.agentName || '') && !task.dagNode) || !!task.agentGraph;
-      const queue = history.length && !isCoordinator ? ' / queue ' + elapsed(task.createdAt, history[0].startedAt) : '';
-      const run = last && !isCoordinator ? ' / last run ' + elapsed(last.startedAt, terminalTask(task) ? task.updatedAt : 'NOW') : '';
       const id = taskNodeId(task);
-      node(id, 'Task ' + (task.id || '?') + ' / ' + name + dag + title + ' / ' + state(task.state, 'UNKNOWN') + attempts + queue + run, taskElapsed(task));
+      node(id, task.title?.trim() || task.agentName?.trim() || task.id || 'Task', taskElapsed(task));
       if (task.state === 'FAILED') lines.push('  class ' + id + ' jelFailed');
       else if ((task.attempt || 0) > 1) lines.push('  class ' + id + ' jelRetry');
       const parent = task.parentTaskId ? byId.get(task.parentTaskId) : undefined;
@@ -133,7 +124,7 @@ export function jobJelDiagram(job: JelJob): string {
   const plans = Array.isArray(job.plans) ? job.plans : [];
   const jobEnd = ['COMPLETED','CANCELLED'].includes(job.state || '') ? job.updatedAt : 'NOW';
   const firstStart = plans[0]?.createdAt || (job.tasks || []).map(task => task.createdAt).filter(Boolean).sort()[0];
-  node('created', 'Create / recorded', elapsed(job.createdAt, firstStart || jobEnd));
+  node('created', 'Create', elapsed(job.createdAt, firstStart || jobEnd));
   const rounds = plans.length ? plans : [{ id: '', round: 1, status: 'NOT STARTED', generatedTaskIds: [] as string[] }];
   let previous = 'created';
   const allocated = new Set<string>();
@@ -161,23 +152,22 @@ export function jobJelDiagram(job: JelJob): string {
       ? candidates.filter(task => !allocated.has(task.id || '') && (assigned.has(task.id || '') || (i === rounds.length - 1)))
       : candidates;
     for (const task of work) if (task.id) allocated.add(task.id);
-    if(plans.length)node(planId, 'Plan ' + number + ' / ' + state(plan.status, 'NOT STARTED'), elapsed(plan.createdAt, plan.status === 'PLANNING' ? 'NOW' : plan.updatedAt));
-    node(executeId, 'Execute ' + number + ' / ' + workLabel(work), workElapsed(work));
+    if(plans.length)node(planId, 'Plan ' + number, elapsed(plan.createdAt, plan.status === 'PLANNING' ? 'NOW' : plan.updatedAt));
+    node(executeId, 'Execute ' + number, workElapsed(work));
     const workIds = new Set(work.map(task => task.id));
     const troubleshoot = tasks.filter(task => isTroubleshooter(task) &&
       (workIds.has(task.parentTaskId || '') || task.planningDecisionId === plan.id || !plans.length));
     taskNodes(executeId, work);
     diagnostics(executeId, suffix, work, troubleshoot);
     const nextPlan = plans[i + 1];
-    const review = job.reviewEnabled === false ? 'NOT REQUIRED' : nextPlan?.trigger?.source === 'review' ? 'CHANGES REQUIRED' : i === rounds.length - 1 ? state(job.review?.outcome, 'NOT STARTED') : 'NOT RECORDED';
     // Review Tasks are not guaranteed to carry the Plan ID. Use their persisted
     // timestamps within the current round, never guess a Review duration.
     const reviewTasks = tasks.filter(task => isReviewer(task) &&
       (!plans.length || (instant(task.createdAt) !== null && instant(plan.createdAt) !== null &&
         instant(task.createdAt)! >= instant(plan.createdAt)! && (!nextPlan?.createdAt || (instant(nextPlan.createdAt) !== null && instant(task.createdAt)! < instant(nextPlan.createdAt)!)))));
-    node(reviewId, 'Final Review ' + number + ' / ' + review, workElapsed(reviewTasks));
+    node(reviewId, 'Final Review ' + number, workElapsed(reviewTasks));
     for (const task of reviewTasks) {
-      node(taskNodeId(task), 'Final Review Task ' + (task.id || '?') + ' / ' + (task.agentName || 'reviewer') + ' / ' + state(task.state, 'UNKNOWN'), taskElapsed(task));
+      node(taskNodeId(task), task.title?.trim() || task.agentName || task.id || 'Final Review', taskElapsed(task));
       lines.push('  ' + reviewId + ' -.-> ' + taskNodeId(task));
       lines.push('  class ' + taskNodeId(task) + (task.state === 'FAILED' ? ' jelFailed' : ' jelReviewer'));
     }
@@ -189,45 +179,9 @@ export function jobJelDiagram(job: JelJob): string {
   const merge = job.localMerge?.status === 'failed' ? 'FAILED' : job.localMerge?.status === 'succeeded' || job.githubState === 'MERGED' || job.publication?.version ? 'DONE' : job.state === 'COMPLETED' ? 'NOT RECORDED' : 'PENDING';
   const mergeStart = job.review?.outcome === 'approved' ? job.review.updatedAt : undefined;
   const mergeEnd = merge === 'DONE' ? job.localMerge?.updatedAt || job.mergedAt : merge === 'PENDING' && mergeStart ? 'NOW' : undefined;
-  node('merge', 'Merge / ' + merge, elapsed(mergeStart, mergeEnd));
-  node('finished', 'Job / ' + state(job.state, 'UNKNOWN'), elapsed(job.createdAt, jobEnd));
+  node('merge', 'Merge', elapsed(mergeStart, mergeEnd));
+  node('finished', 'Job', elapsed(job.createdAt, jobEnd));
   edge(previous, 'merge');
   edge('merge', 'finished');
   return finish();
-}
-
-/** Read-only timings for the JEL inspector. No synthetic attempt end timestamps. */
-export function jobJelHotspots(job: JelJob): Array<{
-  id: string; agent: string; phase: string; state: string; attempt: number;
-  queueMs: number | null; runMs: number | null; wallMs: number | null;
-  issue: string;
-}> {
-  const now = Date.now();
-  const date = (value: unknown): number | null => {
-    if (typeof value !== 'string' || !value) return null;
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) && parsed <= now ? parsed : null;
-  };
-  const duration = (start: number | null, end: number | null): number | null =>
-    start !== null && end !== null && end >= start ? end - start : null;
-  return (Array.isArray(job.tasks) ? job.tasks : []).map(task => {
-    const history = Array.isArray(task.executionHistory) ? task.executionHistory : [];
-    const first = history.map(entry => date(entry.startedAt)).filter((time): time is number => time !== null).sort((a, b) => a - b)[0] ?? null;
-    const last = history.slice().reverse().find(entry => entry.attempt === task.attempt);
-    const terminal = ['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(task.state || '');
-    const coordinator = (task.kind || '').toLowerCase() === 'coordinator' || (/coordinator/i.test(task.agentName || '') && !task.dagNode) || !!task.agentGraph;
-    const end = terminal ? date(task.updatedAt) : now;
-    const start = date(task.createdAt);
-    return {
-      id: task.id || '?',
-      agent: task.agentName || task.kind || 'agent',
-      phase: ['job-acceptance-reviewer', 'reviewer'].includes(task.agentName || '') ? 'Final Review' : task.agentName === 'troubleshooter' ? 'Troubleshooter' : coordinator ? 'Coordinator' : task.dagNode?.nodeId ? 'DAG' : 'Task',
-      state: task.state || 'UNKNOWN',
-      attempt: task.attempt || 0,
-      queueMs: coordinator ? null : first !== null ? duration(start, first) : task.state === 'QUEUED' ? duration(start, now) : null,
-      runMs: coordinator ? null : duration(date(last?.startedAt), end),
-      wallMs: duration(start, end),
-      issue: String(task.failureReason || task.error || '').slice(0, 240),
-    };
-  });
 }

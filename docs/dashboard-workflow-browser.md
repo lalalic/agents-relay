@@ -37,30 +37,20 @@ The Workflow graph can be opened in a modal viewer using **Maximize graph**. The
 
 ## Job JEL inspector (execution view)
 
-Open **Jobs → Job details → View JEL chart**. Unlike Workflow, this graph is a
-read-only projection of one Job's persisted SQLite snapshot. It expands
-Plan → Execute → Final Review → Merge, including individual Task nodes,
-Coordinator parent/child DAG lineage, and declared Task dependencies. Failed
-Tasks are red, retried Tasks purple, Troubleshooter amber, and Final Review blue.
-Recovery-for-attempt may prove an earlier failure without an exact failure
-timestamp; such a duration is shown as unknown rather than estimated.
+Open **Jobs → Job details → View JEL chart**. The modal contains only the graph
+and its title, Zoom, Fit, and Close controls. No summary, search, filter, task
+result strip, legend, or help text is displayed. Every node uses a compact
+`Title (duration)` label. Task titles take precedence over Agent names and IDs;
+Chinese characters are retained. Task duration uses the latest known attempt
+start through the terminal update (or current time), then falls back to total
+Task wall time. Coordinator uses wall time. Missing times show `—`.
 
-Use the Task/Agent search and Failed, Retried, Troubleshooter, Final Review, or
-Slowest filters above the graph. Task results and Task SVG nodes open the
-existing Task Detail; both paths retain the selected Task's event scope.
-The overview displays Job wall time, failure/retry counts, and up to three
-agents ranked by their **sum of known last-attempt windows**. The Slowest filter
-excludes Coordinator tasks because Coordinators do not run Worker executions.
+The diagram remains a read-only projection of SQLite: stages, DAG lineage,
+Task dependencies, failed/retry/recovery observations, and Final Review remain
+visible. Failed Tasks stay red, retries purple, Troubleshooter amber, and
+Final Review blue. Click a Task node to open existing Task Detail and its event
+scope. Timing is wall time, not CPU usage; parallel Tasks can overlap.
 
-Time metrics are not CPU usage: **wall** spans Task creation through latest
-durable update (or the current instant for nonterminal Tasks), **queue** is
-creation to the first recorded execution start, and **run** is the last
-recorded attempt's start to the Task's latest durable update. Earlier attempt
-end timestamps are not persisted; missing measurements show an em dash. An
-agent's summed observed attempt windows indicate workload, **not** Job
-completion duration or a critical path, because parallel Tasks overlap.
-
-Validation:
-`npm run build && node --import ./test/test-store-env.mjs --test test/dashboard-jel.test.js test/dashboard.test.js test/verification/dashboard-drilldown.test.mjs`.
-A real Chrome session should verify SVG rendering, a Failed filter, and both
-Task-result and SVG-node navigation before each UI release.
+Regression: `npm run build && node --import ./test/test-store-env.mjs --test
+test/dashboard-jel.test.js test/dashboard.test.js`. Real Chrome verification
+should check node rendering, title/elapsed and Task click-through.
