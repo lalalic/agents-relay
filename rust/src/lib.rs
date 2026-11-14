@@ -8,9 +8,12 @@ pub mod final_review;
 pub mod graph;
 pub mod lifecycle;
 pub mod native_daemon;
+pub mod native_model;
+mod native_receipt;
 pub mod native_script;
 pub mod reconcile;
 pub mod recovery;
+pub mod single_node;
 pub mod store;
 pub mod supervised_script;
 #[cfg(unix)]

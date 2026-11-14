@@ -82,12 +82,13 @@ test('isolated native daemon: multi-job and dependency wave, physical helper + S
   console.log('Native daemon: three real Workers, two Jobs, dependency wave, no repeat on restart');
  }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
 });
-test('two independent native daemon invocations compete but cannot duplicate a Script generation',async()=>{
- const f=fixture();let store;
+test('single-node daemon holds exclusive process lock while executing a Script generation',async()=>{
+ const f=fixture('sleep 0.5; '+script);let store;
  try{
   store=new SQLiteRelayStore(f.db);await save(store,f.dir,'91',[task('101','91')]);store.close();store=null;
   const [a,b]=await Promise.all([runAsync(f),runAsync(f)]);
-  assert.equal(a.code,0,a.err);assert.equal(b.code,0,b.err);
+  assert.equal([a,b].filter(r=>r.code===0).length,1,'exactly one daemon must own the store');
+  assert.match([a,b].find(r=>r.code!==0).err,/single-node daemon already active/);
   store=new SQLiteRelayStore(f.db);
   const j=await store.loadJob('91');assert.equal(j.tasks[0].state,'SUCCEEDED');
   const sql=new DatabaseSync(f.db);
@@ -241,15 +242,16 @@ test('native --loop polls unchanged SQLite without writes and exits cleanly on S
  }finally{daemon?.kill('SIGKILL');store?.close();rmSync(f.dir,{recursive:true,force:true});}
 });
 
-test('concurrent daemon dependency ticks converge without redundant SQLite snapshot changes',async()=>{
- const f=fixture();let store;
+test('single-node lock excludes concurrent dependency ticks',async()=>{
+ const f=fixture('sleep 0.5; '+script);let store;
  try{
   store=new SQLiteRelayStore(f.db);
   const completed=task('101','91');completed.state='SUCCEEDED';
   await save(store,f.dir,'91',[completed,task('102','91',['101'],'DRAFT')]);
   store.close();store=null;
   const attempts=await Promise.all([runAsync(f),runAsync(f)]);
-  for(const attempt of attempts)assert.equal(attempt.code,0,attempt.err);
+  assert.equal(attempts.filter(result=>result.code===0).length,1);
+  assert.match(attempts.find(result=>result.code!==0).err,/single-node daemon already active/);
   store=new SQLiteRelayStore(f.db);
   const tasks=(await store.loadJob('91')).tasks;
   assert.equal(tasks[1].state,'SUCCEEDED');
@@ -258,4 +260,25 @@ test('concurrent daemon dependency ticks converge without redundant SQLite snaps
   assert.equal(sql.prepare('SELECT count(*) AS n FROM workflow_action_trace').get().n,1);
   sql.close();
  }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
+});
+
+test('single-node daemon lock persists across idle ticks and recovers after physical SIGKILL',async()=>{
+ const f=fixture();let daemon,store;
+ try{
+  store=new SQLiteRelayStore(f.db);
+  await save(store,f.dir,'91',[]);store.close();store=null;
+  daemon=spawn(binary,['--loop',...f.args.filter(value=>value!=='--once'),'--interval-ms','150'],
+   {env:yes,stdio:['ignore','pipe','pipe']});
+  let output='';daemon.stdout.on('data',chunk=>output+=chunk);
+  await until(()=>output.split('\n').filter(line=>line.includes('"type":"tick"')).length>=2,5000);
+  const denied=spawnSync(binary,f.args,{encoding:'utf8',env:yes,timeout:2200});
+  assert.notEqual(denied.status,0,'idle lock is not released between ticks');
+  assert.match(denied.stderr,/single-node daemon already active/);
+  daemon.kill('SIGKILL');
+  await until(()=>daemon.exitCode!==null||daemon.signalCode!==null,4000);
+  const resumed=once(f);
+  assert.equal(resumed.tasksClaimed,0);
+  store=new SQLiteRelayStore(f.db);
+  assert.equal((await store.loadJob('91')).updatedAt,t0,'reacquire after SIGKILL is read-only');
+ }finally{daemon?.kill('SIGKILL');store?.close();rmSync(f.dir,{recursive:true,force:true});}
 });

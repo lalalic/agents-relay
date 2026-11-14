@@ -51,34 +51,45 @@ Review/JEL/DAG and recovery equivalence gates are met.
   attempts, append human feedback and reroute a scripted DAG Task to its
   Model revision worker. These are explicit library calls, not a host/mobile
   notification or production Review endpoint.
-- **Native Script Scheduler (`src/authority/scheduler.rs`,
-  `src/native_script.rs`)** now has an atomic Script Task claim: canonical
+- **Native Worker Scheduler (`src/authority/scheduler.rs`,
+  `src/native_script.rs`, `src/native_model.rs`)** has atomic Script and
+  explicitly routed Codex/Model Task claims: canonical
   `effect.launchTask`, Task Lease, Attempt, Execution History and Action Ledger
   are written in **one SQLite transaction**. A second CAS on the same Action
   Ledger prevents a copied claim from launching the same generation twice.
   The isolated native Worker adapter records real PID/PGID/start-token,
   requires correlated, bounded structured `COMPLETED` output rather than
-  exit code alone, and commits result + Task Graph state in one transaction.
-  It verifies current Lease, Owner, Attempt, Execution History and pause
+  exit code alone, and commits result, terminal event, and verified launch
+  Action Ledger receipt in **one** SQLite transaction. A Model Task must
+  preserve both durable Worker Router and Model Router decisions, and provide
+  an exact `task.completed` execution-bound receipt. Worker exit code zero
+  cannot stand in for an event. It verifies Lease, Owner, Attempt,
+  Execution History and pause
   fences; no Task success implies Job completion. The **production daemon
   and worker routing still belong to TypeScript**; the native adapter is not
   currently a supervised, crash-recovering production service.
-- **Isolated native daemon (`src/native_daemon.rs`,
-  `src/bin/relay-native-daemon.rs`, `src/supervised_script.rs`)** now executes
-  actual multi-Job Script Task loops, with canonical dependency reconciliation
+- **Single-node isolated daemon (`src/single_node.rs`,
+  `src/native_daemon.rs`, `src/native_daemon/adapter.rs`,
+  `src/bin/relay-native-daemon.rs`, `src/supervised_script.rs`)** executes
+  multi-Job Script and explicitly configured Model-port Task loops, with canonical dependency reconciliation
   inside the Job snapshot transaction, SQLite launch CAS, parent-death-safe
   `relay-worker-helper` startup ACK, exact PID/PGID/start-token registration,
   bounded correlated Worker output, and transactional terminal Task state.
-  It runs `--once` or `--loop`, handles SIGTERM/SIGINT by cancelling the helper,
-  and never creates a second scheduler database. Native recovery requires the
+  A nonblocking OS file lock permits **one daemon process per SQLite store**;
+  that lock is held across idle `--loop` ticks and released automatically on
+  exit/SIGKILL (CLOEXEC; not held by the Worker helper). There is deliberately
+  **no multi-node design**. It runs `--once` or `--loop`, handles SIGTERM/SIGINT
+  by cancelling the helper, and never creates a second scheduler database. Native recovery requires the
   original OS process identity to be demonstrably gone or reused; a missing
   or unknown PID **blocks** mutation, and proven expiration becomes FAILED,
   not a speculative successful completion or automatic retry. Its binary
   **refuses all production stores**: only a marked, explicitly supplied
   temporary SQLite path and `RELAY_RUST_EXPERIMENTAL_TEST_ONLY=isolated-test`
-  are accepted. Script executables come solely from a small, explicitly
-  supplied trusted role manifest; no embedded shell, environment inheritance,
-  or Neo integration is added to Relay.
+  are accepted. Script and Model-port executables come solely from a small,
+  explicitly supplied trusted role manifest; no embedded shell, environment
+  inheritance, implicit model provider or Neo integration is added to Relay.
+  The test Model E2E uses a real child process with a **fixture provider**, not
+  a verified live Codex service; real provider integration is still pending.
 - **Final Review readiness (`src/final_review.rs`)** derives conservative
   durable facts for the canonical `review-lifecycle.mmd` and emits a **read-only**
   `review.create` proposal against a caller-verified local Git head. It gates
@@ -154,11 +165,34 @@ RELAY_RUST_EXPERIMENTAL_TEST_ONLY=isolated-test \
 # Substitute --loop --interval-ms 1000 to poll until SIGTERM/SIGINT.
 ```
 
-`--once`/`--loop` use the **same** Graph/SQLite path. Only ordinary Script
-Tasks have an execution adapter; Model, Browser, Planner, Reviewer,
-Troubleshooter and full Coordinator/JEL execution are **not** implemented
-by this test daemon. Worker exit code 0 alone is never Task success. The
-completed native Script Task leaves the Job ACTIVE for Final Review.
+`--once`/`--loop` use the **same** Graph/SQLite path and an exclusive
+single-node OS lock. Ordinary Script Tasks and an explicitly configured,
+**already routed Codex/Model Worker port** are implemented in this fixture.
+The model command must be supplied by the caller's trusted manifest: a
+`kind: "model"` entry with absolute `executable` and `args`. It reads a private,
+0600-permission `RELAY_TASK_REQUEST_PATH` JSON file (Job/Task/Execution/Owner,
+Task input, Attempt, `workerSelection`, `routing`) and writes a JSON event to
+`RELAY_RESULT_PATH` with **exactly** these correlated fields plus:
+
+```json
+{
+  "type": "task.completed",
+  "status": "COMPLETED",
+  "adapter": "codex",
+  "summary": "Worker reported completion with correlated evidence",
+  "output": {"artifact": "example"}
+}
+```
+
+The listed fields augment the required identity/routing copies from the
+request. The Rust bridge rejects missing, stale, mismatched, symlinked or
+oversized receipts. It uses the **existing** Graph to commit terminal Task
+state, result, outbox event and launch receipt together. The manifest is a
+provider **port**, not a built-in Codex worker or execution router. A real
+Codex provider bridge and prompt/agent discovery have not yet passed E2E.
+Browser, Planner, Reviewer, Troubleshooter and full Coordinator/JEL execution
+remain unported. Worker exit code 0 alone is never Task success; Job stays
+ACTIVE for independent Final Review.
 
 The test suite executes real `SIGKILL`/`SIGTERM` on the daemon and verifies
 that the helper reaps the worker process group. Recovery tests advance only
@@ -260,30 +294,33 @@ is exposed from `agents-relay-rust` main CLI. `npm run test:rust` verifies:
 
 1. Port full Task/Plan/Job field normalization, event payload validators,
    condition/guard facts, and atomic job / action outcome bookkeeping.
-2. Extend the isolated Script-only daemon to a fully supervised, production-
-   authorized multi-Job Scheduler/Coordinator (cross-node owner leases,
-   production recovery and backpressure); port agent discovery, Model/browser
-   adapters, event wakeups, actual Reviewer
-   Task materialization, verdict/Review-driven JEL rounds and merge gates.
+2. Extend the **single-node** isolated daemon toward an authorized local
+   Scheduler/Coordinator, with safe production store ownership and backpressure.
+   Port the actual Codex/provider adapter (the current Model port is a fixture
+   interface), Browser Worker, agent discovery/prompt assembly, event wakeups,
+   Planner and Reviewer Task materialization, Review verdicts, JEL revision
+   rounds and merge gates.
    Do not introduce a parallel lifecycle policy.
 3. Port remaining projection conflicts/repairs, crash/restart reconciliation,
    verified orphan cleanup, retry action execution, and daemon/REST/CLI/
    Events Bus integration. Recovery *inspection* is read-only; a separate
    Graph-selected test-only executor can persist proven expired failures.
-4. Pass existing L1/L2/L3, review changes/approve, crash/restart, multi-node
-   concurrency, and **real** end-to-end notification/UI gates with the Rust
+4. Pass existing L1/L2/L3, review changes/approve, crash/restart, single-node
+   daemon exclusion, and **real** end-to-end notification/UI gates with the Rust
    backend as the **sole writer** on a disposable store. Fix any existing
    broken baseline tests before production cutover.
-5. Compare memory/CPU/throughput under identical workloads and switch nodes
-   deliberately with rollback, never dual-writing a production SQLite store.
+5. Compare memory/CPU/throughput under identical single-host workloads and
+   perform one deliberate daemon cutover with rollback; never dual-write the
+   production SQLite store.
 
-**Current status:** SQLite atomic primitives, Script claim and launch CAS,
-helper-supervised multi-Job Script daemon (test-only), Coordinator DAG child
-creation, interactive Review resume, read-only Final Review gating, and safe
-expired-process failure handling are implemented. **Production Relay remains
-TypeScript**. Full production ownership, Model/Browser/Planner routing,
-Final Reviewer execution, JEL convergence and notification/REST ingress are
-not implemented. No cutover is authorized.
+**Current status:** SQLite atomic primitives, Script and explicit Model-port
+claims, one-time launch CAS, OS-locked **single-node** daemon (test-only),
+helper-supervised workers, Coordinator DAG child creation, interactive Review
+resume, read-only Final Review gating and safe expired-process failure handling
+are implemented. **Production Relay remains TypeScript**. Real provider
+integration, Model/Browser Router ownership, Planner, Reviewer, JEL convergence,
+full production recovery and Events/REST ingress are missing. No cutover is
+authorized, and no multi-node support is planned.
 
 ## Full TypeScript L3 migration gate — not green
 

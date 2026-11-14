@@ -1,6 +1,7 @@
 //! Experimental native Relay daemon: explicitly marked temporary SQLite only.
 //! No production switch. --once and --loop run the same Graph/SQLite tick.
-use agents_relay_rust::native_daemon::{tick_with_stop, NativeDaemonOptions};
+use agents_relay_rust::native_daemon::NativeDaemonOptions;
+use agents_relay_rust::single_node::SingleNodeDaemon;
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -45,11 +46,12 @@ fn run() -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&stopped))
         .map_err(|e| e.to_string())?;
+    let daemon = SingleNodeDaemon::acquire(options)?;
     loop {
         if stopped.load(Ordering::SeqCst) {
             break;
         }
-        let report = tick_with_stop(&options, Arc::clone(&stopped))?;
+        let report = daemon.tick(Arc::clone(&stopped))?;
         println!("{}", json!({"type":"tick","report":report}));
         if !repeat {
             break;

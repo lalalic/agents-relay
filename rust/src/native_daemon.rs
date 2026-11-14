@@ -1,36 +1,21 @@
-//! Isolated, native Script-only Relay reconciler/daemon. Graphs own transition
+//! Isolated, single-host Script/Model-port Relay reconciler/daemon. Graphs own transition
 //! policy, the ordinary SQLite Job snapshot owns Tasks, and relay-worker-helper
 //! owns OS process groups. The explicit test-store fence prevents this staged
 //! backend from ever racing the production TypeScript daemon.
+mod adapter;
 use crate::authority::{probe_process, RelayAuthority, ScriptClaimRequest};
 use crate::recovery::inspect_expired_execution;
 use crate::store::RelayReader;
 use crate::supervised_script::{after_time, current_time, execute_supervised_script};
-use crate::worker::WorkerSpec;
+use adapter::{manifest, script_spec};
 use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::{BTreeMap, HashSet};
+use serde::Serialize;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct NativeScriptAdapter {
-    pub executable: PathBuf,
-    #[serde(default)]
-    pub args: Vec<String>,
-    #[serde(default)]
-    pub env: BTreeMap<String, String>,
-}
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ScriptManifest {
-    pub agents: BTreeMap<String, NativeScriptAdapter>,
-}
 #[derive(Debug, Clone)]
 pub struct NativeDaemonOptions {
     pub db: PathBuf,
@@ -50,13 +35,6 @@ pub struct NativeTick {
     pub blocked: Vec<String>,
 }
 
-fn stable_id(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 128
-        && value
-            .bytes()
-            .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
-}
 /// Explicit disposable location and marker are mandatory. No live-store
 /// option, home-store default, or environment override bypasses this gate.
 pub fn isolated_store_root(db: &Path) -> Result<PathBuf, String> {
@@ -84,132 +62,20 @@ pub fn isolated_store_root(db: &Path) -> Result<PathBuf, String> {
     }
     Ok(root.to_path_buf())
 }
-fn manifest(opt: &NativeDaemonOptions, root: &Path) -> Result<ScriptManifest, String> {
-    let file = opt
-        .manifest
-        .canonicalize()
-        .map_err(|e| format!("Script manifest missing: {e}"))?;
-    if file.parent() != Some(root) {
-        return Err("native Script manifest must be in isolated DB root".into());
+fn cleanup_unclaimed_request(root: &Path, evidence: &Path) {
+    let Some(dir) = evidence.parent() else {
+        return;
+    };
+    // This path was minted by script_spec from a validated stable ID and a
+    // fresh UUID. Never perform generalized recursive deletion.
+    if !dir.starts_with(root.join(".relay-rust-native-executions")) {
+        return;
     }
-    let info = fs::metadata(&file).map_err(|e| e.to_string())?;
-    if !info.is_file() || info.len() > 65_536 {
-        return Err("Script manifest must be a small file".into());
-    }
-    let contents = fs::read(&file).map_err(|e| e.to_string())?;
-    let parsed: ScriptManifest = serde_json::from_slice(&contents).map_err(|e| e.to_string())?;
-    for (name, agent) in &parsed.agents {
-        if !stable_id(name) || !agent.executable.is_absolute() || !agent.executable.is_file() {
-            return Err("native Script manifest contains invalid role/executable".into());
-        }
-        if agent
-            .env
-            .keys()
-            .any(|key| key.starts_with("RELAY_") || key.is_empty())
-        {
-            return Err("native Script adapter cannot override Relay execution variables".into());
-        }
-    }
-    Ok(parsed)
-}
-fn private_dir(root: &Path, path: &Path) -> Result<(), String> {
-    // Reject pre-planted symlinks *before* creating any descendant. The
-    // disposable root is mkdtemp-private, so no unrelated user can swap a
-    // component while this test-only daemon works on it.
-    let relative = path
-        .strip_prefix(root)
-        .map_err(|_| "Script output escaped isolated root")?;
-    let mut cursor = root.to_path_buf();
-    for component in relative.components() {
-        let std::path::Component::Normal(name) = component else {
-            return Err("invalid Script output path component".into());
-        };
-        cursor.push(name);
-        match fs::symlink_metadata(&cursor) {
-            Ok(meta) => {
-                if meta.file_type().is_symlink() || !meta.is_dir() {
-                    return Err("unsafe symlink or file in Script output directory".into());
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                use std::os::unix::fs::DirBuilderExt;
-                fs::DirBuilder::new()
-                    .mode(0o700)
-                    .create(&cursor)
-                    .map_err(|e| format!("private Script directory creation: {e}"))?;
-            }
-            Err(error) => return Err(format!("private Script output directory: {error}")),
-        }
-    }
-    Ok(())
-}
-fn project_root(job: &Value, root: &Path) -> Result<PathBuf, String> {
-    let project = job["projectRoot"]
-        .as_str()
-        .ok_or("Job projectRoot missing")?;
-    let path = Path::new(project)
-        .canonicalize()
-        .map_err(|e| e.to_string())?;
-    if !path.starts_with(root) {
-        return Err("native Script project outside isolated root".into());
-    }
-    Ok(path)
-}
-fn script_spec(
-    root: &Path,
-    job: &Value,
-    task: &Value,
-    execution_id: &str,
-    adapter: &NativeScriptAdapter,
-) -> Result<(WorkerSpec, PathBuf), String> {
-    let id = job["id"].as_str().ok_or("Job id missing")?;
-    let task_id = task["id"].as_str().ok_or("Task id missing")?;
-    if ![id, task_id, execution_id]
-        .iter()
-        .all(|value| stable_id(value))
-    {
-        return Err("unsafe native Script output path identity".into());
-    }
-    let dir = root
-        .join(".relay-rust-native-executions")
-        .join(id)
-        .join(task_id)
-        .join(execution_id);
-    private_dir(root, &dir)?;
-    let evidence = dir.join("result.json");
-    let project = project_root(job, root)?;
-    let timeout = task["timeoutMs"]
-        .as_u64()
-        .filter(|value| *value >= 10 && *value <= 3_600_000)
-        .ok_or("Task timeout missing or out of bounds for native Worker")?;
-    let mut env = adapter.env.clone();
-    env.insert("PATH".into(), "/usr/bin:/bin".into());
-    env.insert("RELAY_JOB_ID".into(), id.into());
-    env.insert("RELAY_TASK_ID".into(), task_id.into());
-    env.insert("RELAY_EXECUTION_ID".into(), execution_id.into());
-    env.insert(
-        "RELAY_RESULT_PATH".into(),
-        evidence.to_string_lossy().into_owned(),
-    );
-    Ok((
-        WorkerSpec {
-            executable: adapter.executable.clone(),
-            args: adapter.args.clone(),
-            cwd: project,
-            env,
-            stdout: dir.join("stdout.log"),
-            stderr: dir.join("stderr.log"),
-            timeout: Duration::from_millis(timeout),
-            terminate_grace: Duration::from_millis(250),
-        },
-        evidence,
-    ))
+    let _ = fs::remove_file(dir.join("request.json"));
+    let _ = fs::remove_dir(dir);
 }
 
-pub fn tick(opt: &NativeDaemonOptions) -> Result<NativeTick, String> {
-    tick_with_stop(opt, Arc::new(AtomicBool::new(false)))
-}
-pub fn tick_with_stop(
+pub(crate) fn tick_with_stop(
     opt: &NativeDaemonOptions,
     stopped: Arc<AtomicBool>,
 ) -> Result<NativeTick, String> {
@@ -322,7 +188,7 @@ pub fn tick_with_stop(
                 break;
             }
             if task["state"] != "QUEUED"
-                || task["adapter"] != "script"
+                || !matches!(task["adapter"].as_str(), Some("script" | "codex"))
                 || task.get("executionId").is_some_and(|v| !v.is_null())
             {
                 continue;
@@ -357,27 +223,28 @@ pub fn tick_with_stop(
                     + 30_000,
             );
             let expiry = (now_parsed + duration).to_rfc3339_opts(SecondsFormat::Millis, true);
-            let claim = match authority.claim_queued_script(&ScriptClaimRequest {
+            let request = ScriptClaimRequest {
                 job_id: &id,
                 task_id,
                 execution_id: &execution_id,
                 owner: "rust-native-isolated",
                 at: &now,
                 lease_expires_at: &expiry,
-            }) {
+            };
+            let claim = match if task["adapter"] == "codex" {
+                authority.claim_queued_codex(&request)
+            } else {
+                authority.claim_queued_script(&request)
+            } {
                 Ok(Some(claim)) => claim,
                 Ok(None) => {
-                    if let Some(path) = evidence.parent() {
-                        let _ = fs::remove_dir(path);
-                    }
+                    cleanup_unclaimed_request(&root, &evidence);
                     continue;
                 }
                 Err(error) => {
-                    // A lost SQLite claim must not leak an unbounded
-                    // per-attempt output directory on every daemon tick.
-                    if let Some(path) = evidence.parent() {
-                        let _ = fs::remove_dir(path);
-                    }
+                    // A denied SQLite claim must not leak private model
+                    // request files on every single-node daemon tick.
+                    cleanup_unclaimed_request(&root, &evidence);
 
                     report
                         .blocked

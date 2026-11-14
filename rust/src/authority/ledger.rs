@@ -270,7 +270,11 @@ impl RelayAuthority {
         if job["state"] != "ACTIVE"
             || job.get("pause").is_some_and(|v| !v.is_null())
             || task["state"] != "QUEUED"
-            || task["adapter"] != "script"
+            || !matches!(claim.adapter.as_str(), "script" | "codex")
+            || task["adapter"] != claim.adapter
+            || (claim.adapter == "codex"
+                && (task.get("routing") != claim.routing.as_ref()
+                    || task.get("workerSelection") != claim.worker_selection.as_ref()))
             || !task
                 .get("executionHistory")
                 .and_then(Value::as_array)

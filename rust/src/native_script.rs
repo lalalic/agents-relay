@@ -11,7 +11,6 @@ use chrono::DateTime;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
@@ -98,13 +97,7 @@ pub(crate) fn exact_process(
     })
 }
 pub(crate) fn read_evidence(path: &Path, claim: &ScriptClaim) -> Result<Value, String> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|e| format!("missing Worker completion evidence: {e}"))?;
-    if !metadata.file_type().is_file() || metadata.len() > 1_048_576 {
-        return Err("Worker completion evidence must be a bounded regular file".into());
-    }
-    let value: Value = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
-        .map_err(|e| format!("invalid Worker completion JSON: {e}"))?;
+    let value = crate::native_receipt::read_bounded_json(path, "Worker completion evidence")?;
     if value["jobId"] != claim.job_id
         || value["taskId"] != claim.task_id
         || value["executionId"] != claim.execution_id
@@ -156,7 +149,10 @@ pub fn execute_claimed_script(
     if job["state"] != "ACTIVE"
         || job.get("pause").is_some_and(|v| !v.is_null())
         || task["state"] != "QUEUED"
-        || task["adapter"] != "script"
+        || task["adapter"] != claim.adapter
+        || (claim.adapter == "codex"
+            && (task.get("routing") != claim.routing.as_ref()
+                || task.get("workerSelection") != claim.worker_selection.as_ref()))
         || task["executionId"] != claim.execution_id
         || task["leaseOwner"] != claim.owner
         || task["attempt"] != claim.attempt
@@ -228,15 +224,36 @@ pub(crate) fn finish_script_worker(
         &claim.execution_id,
         finished_at,
     )?;
-    // A correlated and structured receipt is necessary even when the OS exit
-    // status is zero. A spoofed/stale artifact never authorizes SUCCEEDED.
-    let valid_result = if worker.exit_code == Some(0) && !worker.cancelled && !worker.timed_out {
-        read_evidence(evidence, claim)
+    // Model completion comes from a correlated terminal task event, NOT from
+    // Codex/subprocess exit code. The authoritative route is fenced in the
+    // original claim; the current Task must still carry that same route.
+    let current = authority
+        .read_job(&claim.job_id)?
+        .ok_or("Worker Job missing at terminal receipt")?;
+    let task = current["tasks"]
+        .as_array()
+        .ok_or("Worker Task list missing")?
+        .iter()
+        .find(|task| task["id"] == claim.task_id)
+        .ok_or("Worker Task missing at receipt")?;
+    let route_valid = task["adapter"] == claim.adapter
+        && (claim.adapter != "codex"
+            || (task.get("routing") == claim.routing.as_ref()
+                && task.get("workerSelection") == claim.worker_selection.as_ref()));
+    let valid_result = if !route_valid {
+        Err("Model route or Worker adapter changed after durable claim".into())
+    } else if worker.exit_code == Some(0) && !worker.cancelled && !worker.timed_out {
+        if claim.adapter == "codex" {
+            crate::native_model::verified_model_receipt(evidence, claim)
+        } else {
+            read_evidence(evidence, claim)
+        }
     } else {
         Err("Worker exit, cancellation or timeout did not prove completion".into())
     };
     let verified = valid_result.is_ok();
     let reason = match &valid_result {
+        Ok(_) if claim.adapter == "codex" => "verified correlated Model terminal task event".into(),
         Ok(_) => "verified correlated Script output".into(),
         Err(reason) => reason.clone(),
     };
@@ -258,13 +275,18 @@ pub(crate) fn finish_script_worker(
         }),
     };
     let result = valid_result.ok().map(|data| {
-        json!({"summary":"Native Script verified",
+        let summary = if claim.adapter == "codex" {
+            data["summary"].as_str().unwrap_or("Model task completed")
+        } else {
+            "Native Script verified"
+        };
+        json!({"summary":summary,
             "data":{"status":"COMPLETED","output":data["output"].clone()},
         })
     });
     let graph = Graph::parse(include_str!("../../workflow/task-lifecycle.mmd"))?;
     let lifecycle = TaskLifecycle::new(&graph);
-    let (finished, _) = lifecycle.apply_with_result(
+    let (finished, _) = lifecycle.apply_with_launch_receipt(
         authority,
         TaskTransition {
             job_id: &claim.job_id,
@@ -281,8 +303,8 @@ pub(crate) fn finish_script_worker(
             events: vec![receipt],
         },
         result,
+        claim,
     )?;
-    authority.verify_action(&claim.attempt_key, Some(true), verified_at)?;
     let new_state = finished.job["tasks"]
         .as_array()
         .ok_or("Worker result tasks missing")?

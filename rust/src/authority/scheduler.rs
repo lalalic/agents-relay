@@ -25,6 +25,9 @@ pub struct ScriptClaim {
     pub task_id: String,
     pub execution_id: String,
     pub owner: String,
+    pub adapter: String,
+    pub routing: Option<Value>,
+    pub worker_selection: Option<Value>,
     pub attempt: i64,
     pub attempt_key: String,
     pub claimed_at: String,
@@ -48,6 +51,27 @@ impl RelayAuthority {
         &mut self,
         req: &ScriptClaimRequest<'_>,
     ) -> Result<Option<ScriptClaim>, String> {
+        self.claim_queued_worker(req, "script")
+    }
+
+    /// Codex/Model requires an already durable worker/model routing decision.
+    /// This does not implement a second Router or authorize Review/Planner
+    /// Tasks. Only ordinary work Tasks are admitted in this staged adapter.
+    pub fn claim_queued_codex(
+        &mut self,
+        req: &ScriptClaimRequest<'_>,
+    ) -> Result<Option<ScriptClaim>, String> {
+        self.claim_queued_worker(req, "codex")
+    }
+
+    fn claim_queued_worker(
+        &mut self,
+        req: &ScriptClaimRequest<'_>,
+        adapter: &str,
+    ) -> Result<Option<ScriptClaim>, String> {
+        if !matches!(adapter, "script" | "codex") {
+            return Err("native Worker adapter is unsupported".into());
+        }
         if [req.job_id, req.task_id, req.execution_id, req.owner]
             .iter()
             .any(|s| s.is_empty())
@@ -77,7 +101,7 @@ impl RelayAuthority {
                 .find(|task| task["id"] == req.task_id)
                 .ok_or("Script Task missing")?;
             if task["state"] != "QUEUED"
-                || task["adapter"] != "script"
+                || task["adapter"] != adapter
                 || task.get("kind").and_then(Value::as_str) == Some("planner")
                 || matches!(
                     task.get("agentName").and_then(Value::as_str),
@@ -92,7 +116,37 @@ impl RelayAuthority {
                     .get("interactiveInvocation")
                     .is_some_and(|inv| inv["status"] == "changes_requested")
             {
-                return Err("Task not eligible for native Script dispatch".into());
+                return Err("Task not eligible for native worker dispatch".into());
+            }
+            if adapter == "codex" {
+                let selection = &task["workerSelection"];
+                if selection["adapter"] != "codex"
+                    || selection["workerId"]
+                        .as_str()
+                        .is_none_or(|v| v.trim().is_empty())
+                {
+                    return Err("Codex Task requires durable Worker Router selection".into());
+                }
+                let route = &task["routing"];
+                let provider = route.get("provider").and_then(Value::as_str).unwrap_or("");
+                let model = route.get("model").and_then(Value::as_str).unwrap_or("");
+                if provider.trim().is_empty()
+                    || model.trim().is_empty()
+                    || route["decidedBy"]
+                        .as_str()
+                        .is_none_or(|v| v.trim().is_empty())
+                    || route["decidedAt"]
+                        .as_str()
+                        .is_none_or(|v| v.trim().is_empty())
+                    || route
+                        .get("adapter")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| value != "codex")
+                {
+                    return Err(
+                        "Codex Task requires a durable provider/model routing decision".into(),
+                    );
+                }
             }
             if task
                 .get("executionId")
@@ -198,6 +252,17 @@ impl RelayAuthority {
                 task_id: req.task_id.into(),
                 execution_id: req.execution_id.into(),
                 owner: req.owner.into(),
+                adapter: adapter.into(),
+                routing: if adapter == "codex" {
+                    task.get("routing").cloned()
+                } else {
+                    None
+                },
+                worker_selection: if adapter == "codex" {
+                    task.get("workerSelection").cloned()
+                } else {
+                    None
+                },
                 attempt,
                 attempt_key: key,
                 claimed_at: req.at.into(),
