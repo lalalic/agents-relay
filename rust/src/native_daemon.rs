@@ -3,12 +3,16 @@
 //! owns OS process groups. The explicit test-store fence prevents this staged
 //! backend from ever racing the production TypeScript daemon.
 mod adapter;
+mod dag;
+mod review;
 use crate::authority::{probe_process, RelayAuthority, ScriptClaimRequest};
 use crate::recovery::inspect_expired_execution;
 use crate::store::RelayReader;
 use crate::supervised_script::{after_time, current_time, execute_supervised_script};
 use adapter::{manifest, script_spec};
 use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat};
+use dag::{complete_native_dag, reconcile_native_dag};
+use review::resume_approved_native_reviews;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
@@ -32,6 +36,7 @@ pub struct NativeTick {
     pub tasks_succeeded: usize,
     pub tasks_failed: usize,
     pub tasks_recovered: usize,
+    pub reviews_resumed: usize,
     pub blocked: Vec<String>,
 }
 
@@ -119,6 +124,11 @@ pub(crate) fn tick_with_stop(
         if job["state"] != "ACTIVE" || job.get("pause").is_some_and(|v| !v.is_null()) {
             continue;
         }
+        resume_approved_native_reviews(&mut authority, &id, &mut report)?;
+        reconcile_native_dag(&mut authority, &id, &root, &agents, &mut report)?;
+        job = authority
+            .read_job(&id)?
+            .ok_or("Job lost after DAG reconciliation")?;
         let changed = authority.reconcile_native_dependencies(
             &id,
             &after_time(job["updatedAt"].as_str().ok_or("Job timestamp missing")?)?,
@@ -269,6 +279,7 @@ pub(crate) fn tick_with_stop(
             }
             job = authority.read_job(&id)?.ok_or("Job lost after Script")?;
         }
+        complete_native_dag(&mut authority, &id, &mut report)?;
     }
     Ok(report)
 }

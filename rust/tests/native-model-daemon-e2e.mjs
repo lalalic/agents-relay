@@ -130,3 +130,10 @@ test('denied Model claim cleans its private request file on repeated ticks',asyn
   assert.equal((await store.loadJob('91')).tasks[0].state,'QUEUED');
  }finally{store?.close();rmSync(f.root,{recursive:true,force:true});}
 });
+
+test('Native Model worker may not execute when an interactive decision is pending',async()=>{
+ const {report,job}=await run('ok',t=>{t.interactiveInvocation={invocationId:'preview-1',executionId:'preview-1',revision:'preview-1',status:'awaiting_decision',boundAt:fixed};});
+ assert.equal(report.tasksClaimed,0);
+ assert.match(report.blocked.join(' '),/not eligible/);
+ assert.equal(job.tasks[0].state,'QUEUED');
+});

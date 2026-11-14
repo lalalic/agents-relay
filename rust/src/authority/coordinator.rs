@@ -19,7 +19,7 @@ use support::{
     predecessor_output,
 };
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DAGExecutor {
     Script,
@@ -57,6 +57,9 @@ pub struct DAGMaterialize<'a> {
     pub executor: DAGExecutor,
     pub project_path: &'a Path,
     pub timeout_ms: i64,
+    // Selection is provided by a trusted caller, never fabricated by the Graph.
+    pub model_routing: Option<Value>,
+    pub model_worker_selection: Option<Value>,
     pub at: &'a str,
 }
 
@@ -284,6 +287,34 @@ impl RelayAuthority {
         });
         if !requirements.is_null() {
             child["workerRequirements"] = requirements;
+        }
+        // The generic DAG authority can create unrouted Model children; the
+        // trusted Worker Router may select after creation, as in TypeScript.
+        // The native daemon passes BOTH explicit decisions for its isolated
+        // single-host Graph execution. Never accept a partial route.
+        if req.model_routing.is_some() != req.model_worker_selection.is_some() {
+            return Err("DAG Model route and Worker selection must be bound together".into());
+        }
+        if req.executor == DAGExecutor::Model && req.model_routing.is_some() {
+            let route = req
+                .model_routing
+                .as_ref()
+                .ok_or("DAG Model route missing")?;
+            let selection = req
+                .model_worker_selection
+                .as_ref()
+                .ok_or("DAG Model selection missing")?;
+            if route["provider"].as_str().is_none_or(str::is_empty)
+                || route["model"].as_str().is_none_or(str::is_empty)
+                || selection["adapter"] != "codex"
+                || selection["workerId"].as_str().is_none_or(str::is_empty)
+            {
+                return Err(
+                    "DAG Model requires valid explicit routing and Worker selection".into(),
+                );
+            }
+            child["routing"] = route.clone();
+            child["workerSelection"] = selection.clone();
         }
         apply_pure_task_actions(&mut child, &actions)?;
         child["state"] = json!(target);

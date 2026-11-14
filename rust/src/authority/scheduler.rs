@@ -5,6 +5,7 @@ use super::ledger::reserve_authorized_action_tx;
 use super::{ActionIdentity, RelayAuthority};
 use crate::graph::{Decision, Graph, GraphInput};
 use chrono::DateTime;
+use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -112,11 +113,28 @@ impl RelayAuthority {
                 || task
                     .get("revisionRequest")
                     .is_some_and(|value| !value.is_null())
-                || task
-                    .get("interactiveInvocation")
-                    .is_some_and(|inv| inv["status"] == "changes_requested")
+                || task.get("interactiveInvocation").is_some_and(|inv| {
+                    !inv.is_null() && inv["status"] != "approved"
+                })
             {
                 return Err("Task not eligible for native worker dispatch".into());
+            }
+            // The UI is not the authority for human approval: even if a
+            // corrupted caller has written status=approved into the snapshot,
+            // the current execution/revision must have a committed host decision
+            // in the same SQLite authority. Check under this claim transaction.
+            if let Some(inv) = task.get("interactiveInvocation").filter(|inv| !inv.is_null()) {
+                let invocation_id = inv["invocationId"].as_str().ok_or("Review invocation ID missing")?;
+                let revision = inv["revision"].as_str().ok_or("Review revision missing")?;
+                let original_execution = inv["executionId"].as_str().ok_or("Review origin execution missing")?;
+                let accepted: Option<i64> = tx.query_row(
+                    "SELECT 1 FROM host_invocation_decision WHERE job_id=?1 AND task_id=?2 AND invocation_id=?3 AND execution_id=?4 AND revision=?5 AND decision='approved'",
+                    params![req.job_id, req.task_id, invocation_id, original_execution, revision],
+                    |row| row.get(0),
+                ).optional().map_err(|error|format!("Review approval ledger unavailable: {error}"))?;
+                if accepted != Some(1) {
+                    return Err("Review approved status not backed by durable host decision".into());
+                }
             }
             if adapter == "codex" {
                 let selection = &task["workerSelection"];
@@ -157,10 +175,17 @@ impl RelayAuthority {
                 // caller is forbidden from launching a duplicate worker.
                 return Err("Task already has a durable execution claim".into());
             }
-            // Serial execution slot until DAG-specific concurrency is ported:
-            // other Task executions must not be silently overwritten.
+            // Serial physical Worker slot until DAG parallel execution is
+            // ported. A RUNNING DAG Coordinator is a durable dependency owner,
+            // not a physical Worker; it has no execution generation or lease.
+            // It must not block its own child Worker from ever starting.
             if tasks.iter().any(|other| {
+                let logical_coordinator = other["agentGraph"].is_string()
+                    && other["state"] == "RUNNING"
+                    && other.get("executionId").is_none_or(Value::is_null)
+                    && other.get("leaseOwner").is_none_or(Value::is_null);
                 other["id"] != req.task_id
+                    && !logical_coordinator
                     && (other["state"] == "RUNNING"
                         || (other["state"] == "QUEUED"
                             && other.get("executionId").is_some_and(|id| !id.is_null())))

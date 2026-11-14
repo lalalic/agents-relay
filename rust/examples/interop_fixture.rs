@@ -140,6 +140,8 @@ fn run() -> Result<(), String> {
                 executor,
                 project_path: &root,
                 timeout_ms: input["timeoutMs"].as_i64().ok_or("missing timeout")?,
+                model_routing: input.get("routing").cloned(),
+                model_worker_selection: input.get("workerSelection").cloned(),
                 at: &args[3],
             })?;
             println!("{}", serde_json::to_string(&result).unwrap());

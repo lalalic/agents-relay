@@ -26,6 +26,8 @@ fn request<'a>(root: &'a Path, node: &'a str, at: &'a str) -> DAGMaterialize<'a>
         executor: DAGExecutor::Script,
         project_path: root,
         timeout_ms: 120000,
+        model_routing: None,
+        model_worker_selection: None,
         at,
     }
 }

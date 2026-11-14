@@ -30,6 +30,9 @@ pub struct NativeScriptAdapter {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    // Explicit native-pilot Model Router decision for DAG children only.
+    pub routing: Option<Value>,
+    pub worker_selection: Option<Value>,
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -67,6 +70,25 @@ pub(super) fn manifest(opt: &NativeDaemonOptions, root: &Path) -> Result<ScriptM
             .any(|key| key.starts_with("RELAY_") || key.is_empty())
         {
             return Err("native Script adapter cannot override Relay execution variables".into());
+        }
+        if agent.kind == NativeAdapterKind::Script
+            && (agent.routing.is_some() || agent.worker_selection.is_some())
+        {
+            return Err("Script adapter cannot supply Model routing".into());
+        }
+        if agent.routing.is_some() != agent.worker_selection.is_some() {
+            return Err("Model route and Worker selection must be supplied together".into());
+        }
+        if let (Some(route), Some(selection)) = (&agent.routing, &agent.worker_selection) {
+            if agent.kind != NativeAdapterKind::Model
+                || ["provider", "model", "decidedBy", "decidedAt"]
+                    .iter()
+                    .any(|key| route[*key].as_str().is_none_or(str::is_empty))
+                || selection["adapter"] != "codex"
+                || selection["workerId"].as_str().is_none_or(str::is_empty)
+            {
+                return Err("Model manifest requires validated durable Router fields".into());
+            }
         }
     }
     Ok(parsed)
@@ -156,10 +178,23 @@ pub(super) fn script_spec(
     env.insert("RELAY_TASK_ID".into(), task_id.into());
     env.insert("RELAY_EXECUTION_ID".into(), execution_id.into());
     env.insert("RELAY_WORKER_ADAPTER".into(), adapter_name.into());
+    // Script and Model both consume the immutable execution-bound input.
+    // Never require a Worker to reconstruct its Task from a mutable Job JSON
+    // snapshot, and never put unbounded inputs in argv or environment strings.
+    let input = task["input"]
+        .as_str()
+        .ok_or("native Worker Task input must be a string")?;
+    let attempt = task["attempt"]
+        .as_i64()
+        .ok_or("native Worker Task attempt missing")?
+        .checked_add(1)
+        .ok_or("native Worker Task attempt overflow")?;
+    let mut request = serde_json::json!({
+        "jobId":id,"taskId":task_id,"executionId":execution_id,
+        "leaseOwner":"rust-native-isolated","adapter":adapter_name,"attempt":attempt,
+        "agentName":task["agentName"],"input":input,
+    });
     if adapter.kind == NativeAdapterKind::Model {
-        let input = task["input"]
-            .as_str()
-            .ok_or("Model Task input must be a string")?;
         let routing = task.get("routing").ok_or("Model Task missing routing")?;
         if routing["provider"]
             .as_str()
@@ -170,36 +205,27 @@ pub(super) fn script_spec(
         {
             return Err("Model requires existing provider/model route".into());
         }
-        let attempt = task["attempt"]
-            .as_i64()
-            .ok_or("Model Task attempt missing")?
-            .checked_add(1)
-            .ok_or("Model Task attempt overflow")?;
-        let request = serde_json::json!({
-            "jobId":id,"taskId":task_id,"executionId":execution_id,
-            "leaseOwner":"rust-native-isolated","adapter":"codex","attempt":attempt,
-            "agentName":task["agentName"],"input":input,"routing":routing,
-            "workerSelection":task["workerSelection"],
-        });
-        let bytes = serde_json::to_vec(&request).map_err(|e| e.to_string())?;
-        if bytes.len() > 1_048_576 {
-            return Err("Model Task request exceeds 1MiB".into());
-        }
-        let request_path = dir.join("request.json");
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
-            .open(&request_path)
-            .map_err(|e| format!("private Model Task request: {e}"))?;
-        file.write_all(&bytes).map_err(|e| e.to_string())?;
-        file.sync_all().map_err(|e| e.to_string())?;
-        env.insert(
-            "RELAY_TASK_REQUEST_PATH".into(),
-            request_path.to_string_lossy().into_owned(),
-        );
+        request["routing"] = routing.clone();
+        request["workerSelection"] = task["workerSelection"].clone();
     }
+    let bytes = serde_json::to_vec(&request).map_err(|e| e.to_string())?;
+    if bytes.len() > 1_048_576 {
+        return Err("native Worker Task request exceeds 1MiB".into());
+    }
+    let request_path = dir.join("request.json");
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
+        .open(&request_path)
+        .map_err(|e| format!("private native Worker Task request: {e}"))?;
+    file.write_all(&bytes).map_err(|e| e.to_string())?;
+    file.sync_all().map_err(|e| e.to_string())?;
+    env.insert(
+        "RELAY_TASK_REQUEST_PATH".into(),
+        request_path.to_string_lossy().into_owned(),
+    );
     env.insert(
         "RELAY_RESULT_PATH".into(),
         evidence.to_string_lossy().into_owned(),

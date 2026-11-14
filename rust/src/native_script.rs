@@ -236,11 +236,20 @@ pub(crate) fn finish_script_worker(
         .iter()
         .find(|task| task["id"] == claim.task_id)
         .ok_or("Worker Task missing at receipt")?;
+    // Match the canonical TS reconciler: a well-formed Worker terminal
+    // receipt must never bypass an outstanding human Review gate.
+    let interactive_approved = task
+        .get("interactiveInvocation")
+        .and_then(|inv| inv.get("status"))
+        .and_then(Value::as_str)
+        .is_none_or(|status| status == "approved");
     let route_valid = task["adapter"] == claim.adapter
         && (claim.adapter != "codex"
             || (task.get("routing") == claim.routing.as_ref()
                 && task.get("workerSelection") == claim.worker_selection.as_ref()));
-    let valid_result = if !route_valid {
+    let valid_result = if !interactive_approved {
+        Err("Human Review still requires a durable approved decision".into())
+    } else if !route_valid {
         Err("Model route or Worker adapter changed after durable claim".into())
     } else if worker.exit_code == Some(0) && !worker.cancelled && !worker.timed_out {
         if claim.adapter == "codex" {
