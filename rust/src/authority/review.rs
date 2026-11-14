@@ -380,6 +380,158 @@ mod tests {
         );
     }
     #[test]
+    fn vlog_producer_review_changes_then_approves_same_task_without_fake_completion() {
+        // This is an isolated Rust authority fixture. A real Neo Mobile ACK
+        // is intentionally NOT represented as an approval; only an accepted
+        // decision event may requeue the original Producer Task.
+        let (_dir, path) = setup();
+        let mut store = RelayAuthority::open_existing(&path).unwrap();
+        store
+            .commit_job("91", "2026-11-13T20:00:01.000Z", |previous| {
+                let mut job = previous.clone();
+                job["updatedAt"] = json!("2026-11-13T20:00:01.000Z");
+                let task = &mut job["tasks"][0];
+                task["state"] = json!("AWAITING_DECISION");
+                task["executionId"] = Value::Null;
+                task["adapter"] = json!("script");
+                task["dagNode"] = json!({"executor":"script","nodeId":"producer"});
+                task["input"] = json!(json!({
+                    "stage":"vlog-producer",
+                    "run":"runs/2026-11-14-rust-review-e2e-clean",
+                    "video":"output/video.mp4"
+                })
+                .to_string());
+                task["maxAttempts"] = json!(2);
+                task["interactiveInvocation"] = json!({
+                    "invocationId":"producer-exec-1","executionId":"producer-exec-1",
+                    "revision":"producer-exec-1","status":"awaiting_decision",
+                    "boundAt":"2026-11-13T20:00:01.000Z"
+                });
+                Ok((job, vec![]))
+            })
+            .unwrap();
+        let change = ReviewDelivery {
+            job_id: "91".into(),
+            task_id: "101".into(),
+            execution_id: "producer-exec-1".into(),
+            invocation_id: "producer-exec-1".into(),
+            revision: "producer-exec-1".into(),
+            decision: "changes_requested".into(),
+            feedback: Some("前两秒太长；请提前出现马的镜头".into()),
+            comments: Some(vec![json!({"text":"提前出现马","sceneName":"Horse-Look"})]),
+            idempotency_key: Some("mobile-round-1".into()),
+            event_id: "mobile-request-changes".into(),
+            delivered_at: "2026-11-13T20:00:02.000Z".into(),
+        };
+        let accepted = store.accept_review_decision(&change).unwrap();
+        assert_eq!(accepted.outcome, "accepted");
+        assert_eq!(accepted.invocation.unwrap()["status"], "changes_requested");
+        let before_resume = store.read_job("91").unwrap().unwrap();
+        assert_eq!(before_resume["tasks"][0]["state"], "AWAITING_DECISION");
+        assert_eq!(before_resume["tasks"][0]["adapter"], "script");
+        assert_eq!(
+            store.accept_review_decision(&change).unwrap().outcome,
+            "duplicate"
+        );
+        let first = store
+            .resume_review_task("91", "101", "2026-11-13T20:00:03.000Z")
+            .unwrap();
+        assert_eq!(
+            (
+                first.status.as_str(),
+                first.state.as_str(),
+                first.adapter.as_str()
+            ),
+            ("changes_requested", "QUEUED", "codex")
+        );
+        let revised = store.read_job("91").unwrap().unwrap();
+        assert_eq!(revised["tasks"].as_array().unwrap().len(), 1);
+        assert_eq!(revised["tasks"][0]["id"], "101");
+        assert_eq!(revised["tasks"][0]["adapter"], "codex");
+        let task_input: Value =
+            serde_json::from_str(revised["tasks"][0]["input"].as_str().unwrap()).unwrap();
+        assert_eq!(task_input["reviewRevision"]["status"], "changes_requested");
+        assert_eq!(
+            task_input["reviewRevision"]["feedback"],
+            "前两秒太长；请提前出现马的镜头"
+        );
+        assert_eq!(
+            task_input["reviewRevision"]["comments"][0]["sceneName"],
+            "Horse-Look"
+        );
+        assert_eq!(revised["tasks"][0]["comments"].as_array().unwrap().len(), 1);
+        assert_eq!(revised["tasks"][0]["state"], "QUEUED");
+        assert_eq!(revised["state"], "ACTIVE");
+        let mut late_approve = change.clone();
+        late_approve.decision = "approved".into();
+        late_approve.event_id = "stale-approve-round-1".into();
+        assert_eq!(
+            store.accept_review_decision(&late_approve).unwrap().outcome,
+            "stale"
+        );
+
+        // An actual revision Worker must create a fresh execution-bound
+        // invocation before the second decision. The test owns only setup;
+        // it never infers approval from notification or media compilation.
+        store
+            .commit_job("91", "2026-11-13T20:00:04.000Z", |previous| {
+                let mut next = previous.clone();
+                next["updatedAt"] = json!("2026-11-13T20:00:04.000Z");
+                let task = &mut next["tasks"][0];
+                task["state"] = json!("AWAITING_DECISION");
+                task["executionId"] = Value::Null;
+                task["interactiveInvocation"] = json!({
+                    "invocationId":"producer-exec-2","executionId":"producer-exec-2",
+                    "revision":"producer-exec-2","status":"awaiting_decision",
+                    "boundAt":"2026-11-13T20:00:04.000Z"
+                });
+                Ok((next, vec![]))
+            })
+            .unwrap();
+        let approved = ReviewDelivery {
+            execution_id: "producer-exec-2".into(),
+            invocation_id: "producer-exec-2".into(),
+            revision: "producer-exec-2".into(),
+            decision: "approved".into(),
+            feedback: None,
+            comments: None,
+            idempotency_key: Some("mobile-round-2".into()),
+            event_id: "mobile-approved-round-2".into(),
+            delivered_at: "2026-11-13T20:00:05.000Z".into(),
+            ..change.clone()
+        };
+        assert_eq!(
+            store.accept_review_decision(&approved).unwrap().outcome,
+            "accepted"
+        );
+        let resumed = store
+            .resume_review_task("91", "101", "2026-11-13T20:00:06.000Z")
+            .unwrap();
+        assert_eq!(
+            (
+                resumed.status.as_str(),
+                resumed.state.as_str(),
+                resumed.adapter.as_str()
+            ),
+            ("approved", "QUEUED", "script")
+        );
+        assert!(store
+            .resume_review_task("91", "101", "2026-11-13T20:00:07.000Z")
+            .is_err());
+        let finished = store.read_job("91").unwrap().unwrap();
+        assert_eq!(finished["tasks"].as_array().unwrap().len(), 1);
+        assert_eq!(finished["tasks"][0]["state"], "QUEUED");
+        assert_eq!(
+            finished["tasks"][0]["interactiveInvocation"]["status"],
+            "approved"
+        );
+        assert_eq!(
+            finished["state"], "ACTIVE",
+            "Review is not Task/Job completion"
+        );
+    }
+
+    #[test]
     fn unbound_and_stale_decisions_are_not_approved() {
         let (_dir, path) = setup();
         let mut store = RelayAuthority::open_existing(&path).unwrap();
