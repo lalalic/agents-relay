@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
-import {spawnSync} from 'node:child_process';
+import {spawnSync,execFileSync} from 'node:child_process';
 import {SQLiteRelayStore} from '../../dist/relay-store.js';
 import {dispatchTaskLifecycleSync} from '../../dist/workflow/lifecycle.js';
 const exe=resolve(import.meta.dirname,'../target/debug/agents-relay-rust');
@@ -25,7 +25,7 @@ test('Rust recovery inspection agrees with canonical TS Task Graph, never marks 
   await store.saveJob({id:'91',title:'Recovery inspection',repository:'example',projectRoot:dir,prNumber:0,
    state:'ACTIVE',reviewEnabled:false,continuation:null,createdAt:stamp,updatedAt:stamp,tasks:[task]});
   await store.recordExecutionProcess({jobId:'91',taskId:'101',executionId:'ex1',leaseOwner:'relayd-test',
-   host:'local-test',pid:87654,pgid:87654,startToken:'unused',observedAt:stamp});
+   host:execFileSync('/bin/hostname',{encoding:'utf8'}).trim(),pid:2147483000,pgid:2147483000,startToken:'unused',observedAt:stamp});
   await store.finishExecutionProcess('91','101','ex1',stamp);
   store.close();store=null;
   const result=recovery(db);

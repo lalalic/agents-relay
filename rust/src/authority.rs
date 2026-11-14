@@ -2,12 +2,15 @@
 //! Caller owns Graph validation and provides primitive mutations/effect intents.
 //! No independent scheduler or workflow policy exists in this module.
 mod coordinator;
+mod dependencies;
 mod ids;
 pub use coordinator::{graph_hash, ChildMaterialization, DAGExecutor, DAGMaterialize};
 mod ledger;
 mod process;
 mod projection;
+mod recovery;
 mod review;
+pub use recovery::RecoveredLease;
 mod scheduler;
 pub use ids::EntityKind;
 pub use ledger::{ActionIdentity, ActionOutcome, ActionTrace};

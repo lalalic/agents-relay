@@ -15,6 +15,15 @@ pub(crate) fn apply_pure_task_actions(
     for action in actions {
         match action.id.as_str() {
             "mutation.clearError" => task["error"] = Value::Null,
+            "mutation.markUnknownOutcome" => {
+                task["error"]=Value::String("Worker execution outcome is unknown; Troubleshooter diagnosis is required before retry.".into());
+                task["failureReason"] = Value::String("worker_outcome_unknown".into());
+            }
+            "mutation.clearLease" => {
+                task["leaseOwner"] = Value::Null;
+                task["leaseExpiresAt"] = Value::Null;
+            }
+            "mutation.clearExecution" => task["executionId"] = Value::Null,
             "mutation.clearFailureReason" => {
                 if let Some(fields) = task.as_object_mut() {
                     fields.shift_remove("failureReason");

@@ -3,7 +3,7 @@
 //! process groups, output streams, cancellation, timeouts and exit facts.
 use nix::sys::signal::{killpg, Signal};
 use nix::unistd::Pid;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
@@ -26,7 +26,7 @@ pub struct WorkerSpec {
     pub terminate_grace: Duration,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkerResult {
     pub pid: u32,

@@ -94,7 +94,12 @@ pub fn inspect_expired_execution(
             assessment.reason = "OS process generation cannot be verified".into();
             return Ok(Some(assessment));
         }
-        ProcessProbe::Gone | ProcessProbe::Reused | ProcessProbe::Untracked => {}
+        ProcessProbe::Untracked => {
+            assessment.reason =
+                "no durable process identity: a launched worker cannot be excluded".into();
+            return Ok(Some(assessment));
+        }
+        ProcessProbe::Gone | ProcessProbe::Reused => {}
     }
     let graph = Graph::parse(include_str!("../../workflow/task-lifecycle.mmd"))?;
     let attempt = task
@@ -199,7 +204,8 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(result.target, Some("FAILED".into()));
+        assert_eq!(result.status, "blocked");
+        assert_eq!(result.target, None);
         value["tasks"][0]["state"] = json!("SUCCEEDED");
         assert!(inspect_expired_execution(
             &value,

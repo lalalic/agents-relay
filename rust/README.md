@@ -63,6 +63,22 @@ Review/JEL/DAG and recovery equivalence gates are met.
   fences; no Task success implies Job completion. The **production daemon
   and worker routing still belong to TypeScript**; the native adapter is not
   currently a supervised, crash-recovering production service.
+- **Isolated native daemon (`src/native_daemon.rs`,
+  `src/bin/relay-native-daemon.rs`, `src/supervised_script.rs`)** now executes
+  actual multi-Job Script Task loops, with canonical dependency reconciliation
+  inside the Job snapshot transaction, SQLite launch CAS, parent-death-safe
+  `relay-worker-helper` startup ACK, exact PID/PGID/start-token registration,
+  bounded correlated Worker output, and transactional terminal Task state.
+  It runs `--once` or `--loop`, handles SIGTERM/SIGINT by cancelling the helper,
+  and never creates a second scheduler database. Native recovery requires the
+  original OS process identity to be demonstrably gone or reused; a missing
+  or unknown PID **blocks** mutation, and proven expiration becomes FAILED,
+  not a speculative successful completion or automatic retry. Its binary
+  **refuses all production stores**: only a marked, explicitly supplied
+  temporary SQLite path and `RELAY_RUST_EXPERIMENTAL_TEST_ONLY=isolated-test`
+  are accepted. Script executables come solely from a small, explicitly
+  supplied trusted role manifest; no embedded shell, environment inheritance,
+  or Neo integration is added to Relay.
 - **Final Review readiness (`src/final_review.rs`)** derives conservative
   durable facts for the canonical `review-lifecycle.mmd` and emits a **read-only**
   `review.create` proposal against a caller-verified local Git head. It gates
@@ -74,8 +90,10 @@ Review/JEL/DAG and recovery equivalence gates are met.
 - **Recovery inspector (`src/recovery.rs`, `src/authority/process.rs`)**
   checks lease expiry and exact host/PID/PGID/start-token identity, then asks
   canonical Task Graph for failure actions. Unknown process identity or
-  another active owner blocks recovery. **Inspection never kills/restarts a
-  worker or changes job state.** Runtime recovery actions still need porting.
+  another active owner blocks recovery. The inspector is read-only; an
+  explicit, transactionally re-probed native recovery Action may mark a
+  demonstrably expired and terminated execution FAILED. Full production
+  restart ownership/cleanup remains unported.
 - **CLI (`src/main.rs`)** gives reproducible JSON interfaces for graph
   inventory/validation/batch decisions, simulated Action dispatch traces,
   and store list/get, plus read-only `scheduler inspect`,
@@ -98,9 +116,54 @@ npm run build:rust
 This runs Rust unit tests, Clippy, all-target test binary builds and
 TypeScript/Rust differential tests. Tests use marked temporary directories
 and isolated SQLite fixtures, never the default `~/.agents-relay/stores` path.
-The public CLI has only **read-only** `--db` commands. Its native writer is
-currently exported as a Rust library for integration testing; production
-Relay does not load it or switch any provider.
+The main `agents-relay-rust` CLI retains only **read-only** `--db` commands.
+The separate, marked-fixture-only `relay-native-daemon` binary exercises
+native SQLite writes and real Script Workers. Production Relay does not
+load this binary or switch providers.
+
+## Experimental native daemon (temporary test stores only)
+
+The **separate** `relay-native-daemon` executable refuses the production
+`~/.agents-relay/stores` directory. Use a new, privately owned directory under
+`$TMPDIR` with a name prefixed `relay-rust-authority-`, an existing V2 SQLite
+`job_snapshot` database, and a sibling
+`.relay-rust-authority-isolated-test` marker. Provide a trusted manifest in
+that same directory (example):
+
+```json
+{
+  "agents": {
+    "build-agent": {
+      "executable": "/bin/sh",
+      "args": [
+        "-c",
+        "printf '{\"jobId\":\"%s\",\"taskId\":\"%s\",\"executionId\":\"%s\",\"status\":\"COMPLETED\",\"output\":{}}' \"$RELAY_JOB_ID\" \"$RELAY_TASK_ID\" \"$RELAY_EXECUTION_ID\" > \"$RELAY_RESULT_PATH\""
+      ]
+    }
+  }
+}
+```
+
+Then run in an explicitly isolated environment:
+
+```sh
+RELAY_RUST_EXPERIMENTAL_TEST_ONLY=isolated-test \
+  rust/target/debug/relay-native-daemon --once \
+  --db "$TEST_ROOT/relay.sqlite" --manifest "$TEST_ROOT/manifest.json" \
+  --helper "$(pwd)/rust/target/debug/relay-worker-helper"
+# Substitute --loop --interval-ms 1000 to poll until SIGTERM/SIGINT.
+```
+
+`--once`/`--loop` use the **same** Graph/SQLite path. Only ordinary Script
+Tasks have an execution adapter; Model, Browser, Planner, Reviewer,
+Troubleshooter and full Coordinator/JEL execution are **not** implemented
+by this test daemon. Worker exit code 0 alone is never Task success. The
+completed native Script Task leaves the Job ACTIVE for Final Review.
+
+The test suite executes real `SIGKILL`/`SIGTERM` on the daemon and verifies
+that the helper reaps the worker process group. Recovery tests advance only
+the disposable SQLite clock to simulate a lease expiration and verify a
+single `task.failed` event, no repeat launch, and no false completion.
 
 ## CLI examples
 
@@ -197,14 +260,16 @@ is exposed from `agents-relay-rust` main CLI. `npm run test:rust` verifies:
 
 1. Port full Task/Plan/Job field normalization, event payload validators,
    condition/guard facts, and atomic job / action outcome bookkeeping.
-2. Connect native Script dispatch to the existing parent-death-safe Worker
-   helper and a restart-safe multi-Job Scheduler/Coordinator daemon; port
-   agent discovery, Model/browser adapters, event wakeups, actual Reviewer
+2. Extend the isolated Script-only daemon to a fully supervised, production-
+   authorized multi-Job Scheduler/Coordinator (cross-node owner leases,
+   production recovery and backpressure); port agent discovery, Model/browser
+   adapters, event wakeups, actual Reviewer
    Task materialization, verdict/Review-driven JEL rounds and merge gates.
    Do not introduce a parallel lifecycle policy.
 3. Port remaining projection conflicts/repairs, crash/restart reconciliation,
    verified orphan cleanup, retry action execution, and daemon/REST/CLI/
-   Events Bus integration. The current Recovery inspector never mutates Jobs.
+   Events Bus integration. Recovery *inspection* is read-only; a separate
+   Graph-selected test-only executor can persist proven expired failures.
 4. Pass existing L1/L2/L3, review changes/approve, crash/restart, multi-node
    concurrency, and **real** end-to-end notification/UI gates with the Rust
    backend as the **sole writer** on a disposable store. Fix any existing
@@ -212,12 +277,13 @@ is exposed from `agents-relay-rust` main CLI. `npm run test:rust` verifies:
 5. Compare memory/CPU/throughput under identical workloads and switch nodes
    deliberately with rollback, never dual-writing a production SQLite store.
 
-**Current status:** SQLite atomic primitives, Script claim and one-time
-launch CAS, physical Script Worker/result E2E, Coordinator DAG children,
-interactive Review resume, read-only Final Review gating and Recovery
-inspection are implemented. **Production Relay remains TypeScript.** There
-is no native replacement for the daemon, model/browser routing, final reviewer
-execution, JEL convergence or restart-safe supervision. No cutover is authorized.
+**Current status:** SQLite atomic primitives, Script claim and launch CAS,
+helper-supervised multi-Job Script daemon (test-only), Coordinator DAG child
+creation, interactive Review resume, read-only Final Review gating, and safe
+expired-process failure handling are implemented. **Production Relay remains
+TypeScript**. Full production ownership, Model/Browser/Planner routing,
+Final Reviewer execution, JEL convergence and notification/REST ingress are
+not implemented. No cutover is authorized.
 
 ## Full TypeScript L3 migration gate — not green
 

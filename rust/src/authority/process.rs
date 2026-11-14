@@ -87,7 +87,7 @@ impl RelayAuthority {
         Ok(n == 1)
     }
 }
-fn query_record(
+pub(super) fn query_record(
     conn: &rusqlite::Connection,
     job_id: &str,
     task_id: &str,
@@ -121,14 +121,12 @@ pub fn probe_process(record: Option<&ExecutionProcessRecord>) -> ProcessProbe {
         || record.start_token.is_empty()
         || record.pid < 2
         || record.pgid != record.pid
-        || record.ended_at.is_some()
     {
-        return if record.ended_at.is_some() {
-            ProcessProbe::Gone
-        } else {
-            ProcessProbe::Unknown
-        };
+        return ProcessProbe::Unknown;
     }
+    // endedAt is a historical receipt, not proof the exact process identity
+    // disappeared. Always re-probe host/PGID/start token before recovery.
+
     let host = std::process::Command::new("/bin/hostname").output();
     let Ok(host) = host else {
         return ProcessProbe::Unknown;
@@ -219,6 +217,16 @@ mod tests {
             ended_at: None,
         };
         assert_eq!(probe_process(Some(&record)), ProcessProbe::Alive);
+        let mut premature = record.clone();
+        premature.ended_at = Some("2026-11-13T20:00:02Z".into());
+        assert_eq!(
+            probe_process(Some(&premature)),
+            ProcessProbe::Alive,
+            "a premature endedAt cannot prove a still-live process disappeared"
+        );
+        premature.host = "foreign-host".into();
+        assert_eq!(probe_process(Some(&premature)), ProcessProbe::Unknown);
+
         let mut reused = record.clone();
         reused.start_token = "not original start token".into();
         assert_eq!(probe_process(Some(&reused)), ProcessProbe::Reused);

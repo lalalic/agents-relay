@@ -75,16 +75,18 @@ it cannot replace the durable SQLite record.
 ### Rust backend — staged native rewrite
 
 The Rust work in [`rust/`](rust/README.md) now includes Graph parity,
-transactional SQLite and global Task IDs, one-time Script dispatch claims,
-real Script Worker completion evidence, Coordinator DAG node creation,
+transactional SQLite and global Task IDs, an isolated native multi-Job Script
+daemon with parent-death-safe worker supervision and recovery, one-time Script
+dispatch claims, Coordinator DAG node creation,
 host Review decision/continuation, read-only Final Review eligibility and
 process/lease Recovery inspection. Cross-language E2E tests
 verify the same SQLite authority; parallel Coordinator ticks deduplicate
 child creation. Run `npm run test:rust` for the differential suite.
 
-**Production remains TypeScript.** Rust does not yet own the daemon,
-WorkerAdapter routing, full Scheduler/Recovery actions, JEL Final Review,
-EventBus or CLI/REST ingress. A release build or passing isolated tests is
+**Production remains TypeScript.** The separate Rust daemon only accepts
+marked temporary SQLite fixtures; Model/Browser/Planner WorkerAdapter routing,
+production Scheduler ownership, full JEL Final Review, EventBus and CLI/REST
+ingress are not yet native. A release build or passing isolated tests is
 not authorization to start a second writer on the canonical database.
 
 ### Workflow graph navigation

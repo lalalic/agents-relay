@@ -32,7 +32,7 @@ pub struct NativeScriptResult {
     pub reason: String,
     pub worker: WorkerResult,
 }
-fn task_input(
+pub(crate) fn task_input(
     task_id: &str,
     execution_id: &str,
     owner: &str,
@@ -46,7 +46,7 @@ fn task_input(
         "taskId":task_id,"executionId":execution_id,"leaseOwner":owner,"attempt":attempt}),
     }
 }
-fn exact_process(
+pub(crate) fn exact_process(
     pid: u32,
     claim: &ScriptClaim,
     at: &str,
@@ -97,7 +97,7 @@ fn exact_process(
         ended_at: None,
     })
 }
-fn read_evidence(path: &Path, claim: &ScriptClaim) -> Result<Value, String> {
+pub(crate) fn read_evidence(path: &Path, claim: &ScriptClaim) -> Result<Value, String> {
     let metadata = fs::symlink_metadata(path)
         .map_err(|e| format!("missing Worker completion evidence: {e}"))?;
     if !metadata.file_type().is_file() || metadata.len() > 1_048_576 {
@@ -201,11 +201,32 @@ pub fn execute_claimed_script(
         )?;
         Ok(())
     })?;
+    finish_script_worker(
+        authority,
+        claim,
+        &worker,
+        evidence,
+        at.finished_at,
+        at.verified_at,
+    )
+}
+
+/// Common terminal Task authority used by direct isolated-worker tests and
+/// the parent-death-safe, helper-supervised daemon. A successful OS exit is
+/// insufficient without a matching structured result for this generation.
+pub(crate) fn finish_script_worker(
+    authority: &mut RelayAuthority,
+    claim: &ScriptClaim,
+    worker: &WorkerResult,
+    evidence: &Path,
+    finished_at: &str,
+    verified_at: &str,
+) -> Result<NativeScriptResult, String> {
     authority.finish_process(
         &claim.job_id,
         &claim.task_id,
         &claim.execution_id,
-        at.finished_at,
+        finished_at,
     )?;
     // A correlated and structured receipt is necessary even when the OS exit
     // status is zero. A spoofed/stale artifact never authorizes SUCCEEDED.
@@ -241,6 +262,8 @@ pub fn execute_claimed_script(
             "data":{"status":"COMPLETED","output":data["output"].clone()},
         })
     });
+    let graph = Graph::parse(include_str!("../../workflow/task-lifecycle.mmd"))?;
+    let lifecycle = TaskLifecycle::new(&graph);
     let (finished, _) = lifecycle.apply_with_result(
         authority,
         TaskTransition {
@@ -254,12 +277,12 @@ pub fn execute_claimed_script(
                 event,
             ),
             guard_facts: &HashMap::new(),
-            at: at.verified_at,
+            at: verified_at,
             events: vec![receipt],
         },
         result,
     )?;
-    authority.verify_action(&claim.attempt_key, Some(true), at.verified_at)?;
+    authority.verify_action(&claim.attempt_key, Some(true), verified_at)?;
     let new_state = finished.job["tasks"]
         .as_array()
         .ok_or("Worker result tasks missing")?
@@ -275,6 +298,6 @@ pub fn execute_claimed_script(
         task_state: new_state,
         verified,
         reason,
-        worker,
+        worker: worker.clone(),
     })
 }
