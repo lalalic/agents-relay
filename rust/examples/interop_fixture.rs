@@ -2,7 +2,7 @@
 //! explicit isolated temporary dir, marker file and opt-in environment.
 use agents_relay_rust::authority::{
     review_fingerprint, DAGExecutor, DAGMaterialize, EntityKind, ProjectionItem, ProjectionRequest,
-    RelayAuthority, ReviewDelivery, WorkflowEvent,
+    RelayAuthority, ReviewDelivery, ScriptClaim, ScriptClaimRequest, WorkflowEvent,
 };
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -149,6 +149,33 @@ fn run() -> Result<(), String> {
                 "{}",
                 json!({"completed":authority.complete_dag_coordinator(&args[2],&args[4],&args[3])?})
             );
+        }
+        "script-launch" => {
+            let claim: ScriptClaim = serde_json::from_str(&args[4]).map_err(|e| e.to_string())?;
+            if claim.job_id != args[2] {
+                return Err("launch Job mismatch".into());
+            }
+            authority.begin_script_launch(&claim, &args[3])?;
+            println!(
+                "{}",
+                json!({"launched":true,"attemptKey":claim.attempt_key})
+            );
+        }
+        "script-claim" => {
+            let value: Value = serde_json::from_str(&args[4]).map_err(|e| e.to_string())?;
+            let execution = value["executionId"].as_str().ok_or("missing execution")?;
+            let owner = value["owner"].as_str().ok_or("missing owner")?;
+            let expiry = value["leaseExpiresAt"].as_str().ok_or("missing expiry")?;
+            let task = value["taskId"].as_str().ok_or("missing Task")?;
+            let claimed = authority.claim_queued_script(&ScriptClaimRequest {
+                job_id: &args[2],
+                task_id: task,
+                execution_id: execution,
+                owner,
+                at: &args[3],
+                lease_expires_at: expiry,
+            })?;
+            println!("{}", serde_json::to_string(&claimed).unwrap());
         }
         "review-resume" => {
             let result = authority.resume_review_task(&args[2], &args[4], &args[3])?;

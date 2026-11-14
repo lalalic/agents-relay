@@ -8,6 +8,7 @@ mod ledger;
 mod process;
 mod projection;
 mod review;
+mod scheduler;
 pub use ids::EntityKind;
 pub use ledger::{ActionIdentity, ActionOutcome, ActionTrace};
 pub use process::{probe_process, ExecutionProcessRecord, ProcessProbe};
@@ -16,6 +17,7 @@ pub use review::{review_fingerprint, ReviewDelivery, ReviewReceipt, ReviewResume
 use rusqlite::{
     params, Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior,
 };
+pub use scheduler::{ScriptClaim, ScriptClaimRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path;

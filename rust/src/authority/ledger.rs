@@ -98,6 +98,52 @@ fn trace(conn: &rusqlite::Connection, key: &str) -> Result<Option<ActionTrace>, 
     .transpose()
 }
 
+/// Primitive ledger insertion usable by a caller that already holds the
+/// authoritative `BEGIN IMMEDIATE` lock and has validated the current
+/// execution generation. This is deliberately the same attempt table as
+/// `reserve_action`, not an independent Scheduler claim ledger.
+pub(super) fn reserve_authorized_action_tx(
+    tx: &rusqlite::Transaction<'_>,
+    identity: &ActionIdentity,
+    decision: &Decision,
+    condition_id: &str,
+    at: &str,
+) -> Result<bool, String> {
+    if identity.job_id.is_empty()
+        || identity.task_id.is_empty()
+        || identity.execution_id.is_empty()
+        || identity.lease_owner.is_empty()
+        || identity.attempt_key.is_empty()
+        || identity.graph.is_empty()
+        || condition_id.is_empty()
+        || identity.attempt < 0
+        || identity.attempt != identity.generation
+    {
+        return Err("invalid action identity".into());
+    }
+    if !matches!(decision,Decision::Accepted{actions,..} if actions.iter().any(|a|a.id==identity.action_id))
+    {
+        return Err("action not authorized by graph decision".into());
+    }
+    tx.execute_batch(LEDGER_TABLE).map_err(|e| e.to_string())?;
+    let inserted=tx.execute("INSERT OR IGNORE INTO workflow_action_trace(attempt_key,execution_id,generation,graph,action_id,condition_id,outcome,observed_at) VALUES (?1,?2,?3,?4,?5,?6,'Unknown',?7)",
+        params![identity.attempt_key,identity.execution_id,identity.generation,identity.graph,identity.action_id,condition_id,at]
+    ).map_err(|e|e.to_string())? ==1;
+    if !inserted {
+        let existing =
+            trace(tx, &identity.attempt_key)?.ok_or("missing action attempt after conflict")?;
+        if existing.execution_id != identity.execution_id
+            || existing.generation != identity.generation
+            || existing.graph != identity.graph
+            || existing.action_id != identity.action_id
+            || existing.condition_id != condition_id
+        {
+            return Err("attempt key collision: inconsistent action identity".into());
+        }
+    }
+    Ok(inserted)
+}
+
 impl RelayAuthority {
     /// A QUEUED launch is graph-authorized while its exact generation and
     /// lease remain valid. Reserve a *single* attempt key, never overwrite it.
@@ -182,23 +228,74 @@ impl RelayAuthority {
         {
             return Err("stale execution, owner, attempt or lease: action fenced".into());
         }
-        let inserted=tx.execute("INSERT OR IGNORE INTO workflow_action_trace(attempt_key,execution_id,generation,graph,action_id,condition_id,outcome,observed_at) VALUES (?1,?2,?3,?4,?5,?6,'Unknown',?7)",
-            params![identity.attempt_key,identity.execution_id,identity.generation,identity.graph,identity.action_id,condition_id,at]
-        ).map_err(|e|e.to_string())? ==1;
-        if !inserted {
-            let existing = trace(&tx, &identity.attempt_key)?
-                .ok_or("missing action attempt after conflict")?;
-            if existing.execution_id != identity.execution_id
-                || existing.generation != identity.generation
-                || existing.graph != identity.graph
-                || existing.action_id != identity.action_id
-                || existing.condition_id != condition_id
-            {
-                return Err("attempt key collision: inconsistent action identity".into());
-            }
-        }
+        let inserted = reserve_authorized_action_tx(&tx, identity, decision, condition_id, at)?;
         tx.commit().map_err(|e| e.to_string())?;
         Ok(inserted)
+    }
+    /// Compare-and-swap the *existing* launch Action reservation to one
+    /// concrete launcher BEFORE spawning a process. Exactly one caller can
+    /// change the still-Unknown attempt's observedAt from claimedAt to
+    /// launchStartedAt. A crashed launcher leaves the attempt claimed for
+    /// expiry/recovery; it never gives another caller permission to retry.
+    pub fn begin_script_launch(
+        &mut self,
+        claim: &super::ScriptClaim,
+        started_at: &str,
+    ) -> Result<(), String> {
+        let claimed = timestamp(&claim.claimed_at)?;
+        let started = timestamp(started_at)?;
+        let expiry = timestamp(&claim.lease_expires_at)?;
+        if !(claimed < started && started < expiry) {
+            return Err("invalid or expired native Script launch generation".into());
+        }
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
+        let job: String = tx
+            .query_row(
+                "SELECT json FROM job_snapshot WHERE job_id=?1",
+                [&claim.job_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .ok_or("native Script Job missing during launch CAS")?;
+        let job: Value = serde_json::from_str(&job).map_err(|e| e.to_string())?;
+        let task = job
+            .get("tasks")
+            .and_then(Value::as_array)
+            .and_then(|tasks| tasks.iter().find(|t| t["id"] == claim.task_id))
+            .ok_or("native Script Task missing during launch CAS")?;
+        if job["state"] != "ACTIVE"
+            || job.get("pause").is_some_and(|v| !v.is_null())
+            || task["state"] != "QUEUED"
+            || task["adapter"] != "script"
+            || !task
+                .get("executionHistory")
+                .and_then(Value::as_array)
+                .is_some_and(|history| {
+                    history
+                        .iter()
+                        .any(|v| v["id"] == claim.execution_id && v["attempt"] == claim.attempt)
+                })
+            || task["executionId"] != claim.execution_id
+            || task["leaseOwner"] != claim.owner
+            || task["attempt"] != claim.attempt
+            || task["leaseExpiresAt"] != claim.lease_expires_at
+        {
+            return Err("native Script launch lost its authoritative generation".into());
+        }
+        // No event or Task state can be changed by CAS alone; the graph
+        // selected effect.launchTask in the earlier atomic claim transaction.
+        let changed=tx.execute("UPDATE workflow_action_trace SET observed_at=?1 WHERE attempt_key=?2 AND execution_id=?3 AND generation=?4 AND action_id='effect.launchTask' AND outcome='Unknown' AND observed_at=?5",
+            params![started_at,claim.attempt_key,claim.execution_id,claim.attempt,claim.claimed_at]
+        ).map_err(|e|e.to_string())?;
+        if changed != 1 {
+            return Err("Script launch already started or attempt identity not reserved".into());
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(())
     }
     pub fn action_trace(&self, key: &str) -> Result<Option<ActionTrace>, String> {
         let exists:bool=self.connection.query_row(

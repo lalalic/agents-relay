@@ -51,6 +51,23 @@ Review/JEL/DAG and recovery equivalence gates are met.
   attempts, append human feedback and reroute a scripted DAG Task to its
   Model revision worker. These are explicit library calls, not a host/mobile
   notification or production Review endpoint.
+- **Native Script Scheduler (`src/authority/scheduler.rs`,
+  `src/native_script.rs`)** now has an atomic Script Task claim: canonical
+  `effect.launchTask`, Task Lease, Attempt, Execution History and Action Ledger
+  are written in **one SQLite transaction**. A second CAS on the same Action
+  Ledger prevents a copied claim from launching the same generation twice.
+  The isolated native Worker adapter records real PID/PGID/start-token,
+  requires correlated, bounded structured `COMPLETED` output rather than
+  exit code alone, and commits result + Task Graph state in one transaction.
+  It verifies current Lease, Owner, Attempt, Execution History and pause
+  fences; no Task success implies Job completion. The **production daemon
+  and worker routing still belong to TypeScript**; the native adapter is not
+  currently a supervised, crash-recovering production service.
+- **Final Review readiness (`src/final_review.rs`)** derives conservative
+  durable facts for the canonical `review-lifecycle.mmd` and emits a **read-only**
+  `review.create` proposal against a caller-verified local Git head. It gates
+  active work, Plans, Troubleshooter recovery, current reviewer and stale
+  SHA. It neither creates the Reviewer Task nor generates approval/merge.
 - **Dependency scheduler (`src/reconcile.rs`)** computes read-only Graph
   proposals from SQLite. It detects cycles but never dispatches workers.
   Review-revision eligibility is explicitly unsupported and fails closed.
@@ -62,7 +79,7 @@ Review/JEL/DAG and recovery equivalence gates are met.
 - **CLI (`src/main.rs`)** gives reproducible JSON interfaces for graph
   inventory/validation/batch decisions, simulated Action dispatch traces,
   and store list/get, plus read-only `scheduler inspect`,
-  `scheduler recovery`, and `dag parse`. It is not the
+  `scheduler recovery`, `review inspect`, and `dag parse`. It is not the
   production Relay CLI and cannot launch an agent.
 - Neither Rust nor TypeScript may duplicate canonical Graph policy, and neither
   may create separate job/event stores. `workflow/*.mmd` remains authoritative.
@@ -100,6 +117,9 @@ rust/target/release/agents-relay-rust store get --db /path/to/explicit/test.sqli
 rust/target/release/agents-relay-rust scheduler inspect --graph workflow/task-lifecycle.mmd \
   --db /path/to/explicit/test.sqlite --job-id 123
 rust/target/release/agents-relay-rust dag parse --file /path/to/agentGraph.mmd
+rust/target/release/agents-relay-rust review inspect \
+  --db /path/to/explicit/test.sqlite --job-id 123 \
+  --verified-local-head <local-git-commit-sha>
 rust/target/release/agents-relay-rust scheduler recovery \
   --db /path/to/explicit/test.sqlite --job-id 123 --task-id 456 \
   --now 2026-11-13T21:00:00Z --owner-activity inactive
@@ -157,6 +177,17 @@ is exposed from `agents-relay-rust` main CLI. `npm run test:rust` verifies:
   `changes_requested` resume with Model routing and feedback comments.
 - Recovery inspection parity against TypeScript `lease.expired` Graph actions;
   real OS process probes distinguish live/terminated/reused/unknown PID.
+- Twelve concurrent native Scheduler contenders create exactly one durable
+  Script claim **and** Action Ledger entry; twelve copied launch claims have
+  exactly one successful CAS. Paused/unready tasks cannot claim.
+- Real native Worker completes only with `status=COMPLETED` and matching
+  Job/Task/Execution identity. Exit code 0 with absent or stale output is a
+  Graph-authorized FAILED Task, never a false SUCCEEDED Job.
+- Verified completion and output are one SQLite transaction; stale Lease,
+  pause and wrong generation cannot produce Task success.
+- Final Review read-only Graph decision parity across 12 TypeScript scenarios
+  including current/old head, active Reviewer, pending Planner and unresolved
+  Troubleshooter; no automatic Review approval or Merge.
 - Worker helper's real parent SIGKILL: Rust detects parent loss and reaps
   the child process group, plus standalone normal completion and logs.
 - Graph parsing, action receipts, invalid input, dependency proposals and
@@ -166,10 +197,11 @@ is exposed from `agents-relay-rust` main CLI. `npm run test:rust` verifies:
 
 1. Port full Task/Plan/Job field normalization, event payload validators,
    condition/guard facts, and atomic job / action outcome bookkeeping.
-2. Connect the tested native DAG/Review primitives to a real Scheduler and
-   Coordinator daemon with all Graph Actions, delivery wakeups, agent discovery,
-   model and browser adapters, and **JEL Final Review** gates. No parallel
-   workflow policy or independent reviewer scheduler is allowed.
+2. Connect native Script dispatch to the existing parent-death-safe Worker
+   helper and a restart-safe multi-Job Scheduler/Coordinator daemon; port
+   agent discovery, Model/browser adapters, event wakeups, actual Reviewer
+   Task materialization, verdict/Review-driven JEL rounds and merge gates.
+   Do not introduce a parallel lifecycle policy.
 3. Port remaining projection conflicts/repairs, crash/restart reconciliation,
    verified orphan cleanup, retry action execution, and daemon/REST/CLI/
    Events Bus integration. The current Recovery inspector never mutates Jobs.
@@ -180,11 +212,12 @@ is exposed from `agents-relay-rust` main CLI. `npm run test:rust` verifies:
 5. Compare memory/CPU/throughput under identical workloads and switch nodes
    deliberately with rollback, never dual-writing a production SQLite store.
 
-**Current status:** native SQLite atomic primitives, Script Worker, Task
-Graph transitions, Coordinator child creation, host Review decision/resume,
-DAG parser, read-only Scheduler proposals and Recovery inspection are real.
-**Production Relay still runs TypeScript.** They are not yet wired together
-as a complete production daemon; no cutover or retirement is authorized.
+**Current status:** SQLite atomic primitives, Script claim and one-time
+launch CAS, physical Script Worker/result E2E, Coordinator DAG children,
+interactive Review resume, read-only Final Review gating and Recovery
+inspection are implemented. **Production Relay remains TypeScript.** There
+is no native replacement for the daemon, model/browser routing, final reviewer
+execution, JEL convergence or restart-safe supervision. No cutover is authorized.
 
 ## Full TypeScript L3 migration gate — not green
 

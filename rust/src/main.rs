@@ -2,6 +2,7 @@
 use agents_relay_rust::agent_graph::AgentGraph;
 use agents_relay_rust::authority::probe_process;
 use agents_relay_rust::dispatch::ActionPorts;
+use agents_relay_rust::final_review::propose_final_review;
 use agents_relay_rust::graph::{Graph, GraphInput};
 use agents_relay_rust::reconcile::propose_dependency_transitions;
 use agents_relay_rust::recovery::inspect_expired_execution;
@@ -121,6 +122,14 @@ fn run(args: &[String]) -> Result<(), String> {
             let path=PathBuf::from(opt(args,"--file")?);
             let source=std::fs::read_to_string(&path).map_err(|e|e.to_string())?;
             print_json(AgentGraph::parse(&source)?)
+        }
+        ("review","inspect") => {
+            let db=PathBuf::from(opt(args,"--db")?);
+            let job_id=opt(args,"--job-id")?;
+            let head=opt(args,"--verified-local-head")?;
+            let store=RelayReader::open(&db)?;
+            let job=store.get_job(&job_id)?.ok_or("Final Review Job not found")?;
+            print_json(propose_final_review(&job.job,&head)?)
         }
         ("scheduler","recovery") => {
             let db=PathBuf::from(opt(args,"--db")?);

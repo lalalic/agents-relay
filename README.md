@@ -75,9 +75,10 @@ it cannot replace the durable SQLite record.
 ### Rust backend — staged native rewrite
 
 The Rust work in [`rust/`](rust/README.md) now includes Graph parity,
-transactional SQLite and global Task IDs, real Script Worker execution,
-Coordinator DAG node creation, host Review decision/continuation and a
-**read-only** process/lease Recovery inspector. Cross-language E2E tests
+transactional SQLite and global Task IDs, one-time Script dispatch claims,
+real Script Worker completion evidence, Coordinator DAG node creation,
+host Review decision/continuation, read-only Final Review eligibility and
+process/lease Recovery inspection. Cross-language E2E tests
 verify the same SQLite authority; parallel Coordinator ticks deduplicate
 child creation. Run `npm run test:rust` for the differential suite.
 
