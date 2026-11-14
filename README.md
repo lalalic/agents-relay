@@ -74,12 +74,13 @@ it cannot replace the durable SQLite record.
 
 ### Rust backend feasibility implementation
 
-The experimental Rust implementation lives in [`rust/`](rust/README.md).
+The staged Rust implementation lives in [`rust/`](rust/README.md).
 It parses the **same** executable workflow graphs and reads the authoritative
 V2 SQLite schema in explicit read-only mode. Run `npm run test:rust` for
-Rust/TypeScript Graph and SQLite differential tests. It is a shadow execution
-engine, **not** a production scheduler; TypeScript remains the only writer and
-worker dispatcher until the L1/L2/L3 migration gates pass.
+Rust/TypeScript Graph and SQLite differential tests. It now includes native transactional SQLite/Outbox/Inbox/Lease primitives and
+physical Script Worker test fixtures, but remains **non-production**:
+TypeScript is the only active Relay scheduler and production writer until
+L1/L2/L3, DAG, Review/JEL and recovery gates pass.
 
 ### Workflow graph navigation
 

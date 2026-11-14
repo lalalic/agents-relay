@@ -1,6 +1,8 @@
 //! Explicit shadow CLI. Never launches workers, writes SQLite or runs effects.
+use agents_relay_rust::agent_graph::AgentGraph;
 use agents_relay_rust::dispatch::ActionPorts;
 use agents_relay_rust::graph::{Graph, GraphInput};
+use agents_relay_rust::reconcile::propose_dependency_transitions;
 use agents_relay_rust::store::RelayReader;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -64,7 +66,7 @@ fn print_json(value: impl serde::Serialize) -> Result<(), String> {
 }
 fn run(args: &[String]) -> Result<(), String> {
     if args.len() < 2 {
-        return Err("usage: agents-relay-rust graph <validate|inventory|decide|batch|simulate> | store <list|get> --db PATH".into());
+        return Err("usage: agents-relay-rust graph <validate|inventory|decide|batch|simulate> | store <list|get> --db PATH | scheduler inspect --db PATH --job-id ID --graph PATH".into());
     }
     match (args[0].as_str(),args[1].as_str()) {
         ("graph","validate") => {
@@ -113,6 +115,20 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             Ok(())
         }
+        ("dag","parse") => {
+            let path=PathBuf::from(opt(args,"--file")?);
+            let source=std::fs::read_to_string(&path).map_err(|e|e.to_string())?;
+            print_json(AgentGraph::parse(&source)?)
+        }
+        ("scheduler","inspect") => {
+            let graph=load_graph(args)?;
+            let db=PathBuf::from(opt(args,"--db")?);
+            let job_id=opt(args,"--job-id")?;
+            let store=RelayReader::open(&db)?;
+            let job=store.get_job(&job_id)?.ok_or("Job not found")?;
+            let proposals=propose_dependency_transitions(&job.job,&graph)?;
+            print_json(json!({"jobId":job_id,"proposals":proposals}))
+        }
         ("store","list") | ("store","get") => {
             // No default store path. An explicit read-only file is mandatory.
             let path=Path::new(&opt(args,"--db")?).to_path_buf();
@@ -125,7 +141,7 @@ fn run(args: &[String]) -> Result<(), String> {
                 print_json(store.list_jobs(limit,offset)?)
             }
         }
-        _=>Err("unrecognized command; supported: graph validate/inventory/decide/batch/simulate, store list/get".into())
+        _=>Err("unrecognized command; supported: graph validate/inventory/decide/batch/simulate, store list/get, scheduler inspect".into())
     }
 }
 fn main() {
