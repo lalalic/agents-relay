@@ -6,6 +6,8 @@ mod dependencies;
 mod ids;
 pub use coordinator::{graph_hash, ChildMaterialization, DAGExecutor, DAGMaterialize};
 mod ledger;
+mod native_job;
+pub use native_job::{NativeCreatedJob, NativeJobSpec};
 mod process;
 mod projection;
 mod recovery;

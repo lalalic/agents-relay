@@ -46,13 +46,34 @@ fn run() -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&stopped))
         .map_err(|e| e.to_string())?;
+    let publish_port = if args.contains(&"--nats-port".to_string()) {
+        let parsed = opt(&args, "--nats-port")?
+            .parse::<u16>()
+            .map_err(|e| e.to_string())?;
+        if parsed == 0 {
+            return Err("NATS port must be nonzero".into());
+        }
+        Some(parsed)
+    } else {
+        None
+    };
+    let db = options.db.clone();
     let daemon = SingleNodeDaemon::acquire(options)?;
     loop {
         if stopped.load(Ordering::SeqCst) {
             break;
         }
         let report = daemon.tick(Arc::clone(&stopped))?;
-        println!("{}", json!({"type":"tick","report":report}));
+        let published = if let Some(port) = publish_port {
+            let mut authority = agents_relay_rust::authority::RelayAuthority::open_existing(&db)?;
+            agents_relay_rust::native_outbox::publish_pending(&mut authority, port)?
+        } else {
+            0
+        };
+        println!(
+            "{}",
+            json!({"type":"tick","report":report,"eventsPublished":published})
+        );
         if !repeat {
             break;
         }

@@ -6,6 +6,7 @@ mod adapter;
 mod dag;
 mod review;
 use crate::authority::{probe_process, RelayAuthority, ScriptClaimRequest};
+use crate::native_job::complete_no_review_job;
 use crate::recovery::inspect_expired_execution;
 use crate::store::RelayReader;
 use crate::supervised_script::{after_time, current_time, execute_supervised_script};
@@ -37,6 +38,7 @@ pub struct NativeTick {
     pub tasks_failed: usize,
     pub tasks_recovered: usize,
     pub reviews_resumed: usize,
+    pub jobs_completed: usize,
     pub blocked: Vec<String>,
 }
 
@@ -280,6 +282,9 @@ pub(crate) fn tick_with_stop(
             job = authority.read_job(&id)?.ok_or("Job lost after Script")?;
         }
         complete_native_dag(&mut authority, &id, &mut report)?;
+        if complete_no_review_job(&mut authority, &id)? {
+            report.jobs_completed += 1;
+        }
     }
     Ok(report)
 }

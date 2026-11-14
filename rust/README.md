@@ -6,6 +6,51 @@ is **not** a production Relay replacement yet: the installed TypeScript
 Reconciler remains the single production writer/scheduler until L1/L2/L3,
 Review/JEL/DAG and recovery equivalence gates are met.
 
+## 2026-11-14 native Job intake, completion and outbox increment
+
+The isolated native Rust pilot can now perform **Job creation, global Job/Task ID
+allocation, idempotent replay, Graph-owned Job activation and no-review local
+completion**, without invoking the Node.js CLI to seed a Job. Its
+relay-native-job CLI uses the same V2 SQLite job_snapshot authority,
+with init/create/activate/show/complete operations. The init command is
+restricted to marked temporary roots; production stores remain blocked.
+A Coordinator DAG may be created from a project-local Mermaid file and
+execution-bound input file. Graph decisions are made from the canonical
+workflow/job-lifecycle.mmd, not a second Rust-only state machine.
+
+The native daemon closes a Job only when all tasks succeeded, the
+Job explicitly disabled both Final Review and auto-merge, there are no active
+interactive Review/Plan/resolution states, and the canonical Job Graph permits
+local.completed. Review-enabled, merge-enabled, failed, paused and incomplete
+Jobs remain ACTIVE. Job completion never fabricates human approval or merge.
+
+An optional relay-native-daemon --nats-port PORT publishes its durable
+SQLite task-event outbox to the explicit local Core NATS port, with bounded
+transport envelope, stable deduplication event IDs and PING/PONG confirmation
+before marking the outbox published. A disconnect or missing PONG leaves the
+record pending; a PONG is not a delivery guarantee to an individual observer.
+The daemon does not publish any events by default. The actual Neo Events
+Bus/Chat Gateway production service has not been cut over.
+
+A real Codex calculator and a Vlog pilot using three original private MOV/VTT
+files were separately tested through native Rust Job creation and Daemon
+execution: calculator generated a standalone HTML/JS page with passing
+Node tests; Vlog created a private six-second MP4 with all five DAG agents
+plus Coordinator succeeding and publisher skipping unauthorized posting.
+Both isolated test Jobs reached COMPLETED and resisted duplicate execution
+across subsequent daemon ticks. This is not proof of Neo Mobile
+Request Changes/Approve Review, full Markcut editing/render, JEL
+review/merge/revision or production crash recovery parity. The production
+TypeScript daemon remains the sole live writer for ordinary user Jobs.
+
+Test commands:
+    cargo build --manifest-path rust/Cargo.toml --bins
+    node --test rust/tests/native-job-lifecycle-e2e.mjs
+
+relay-native-job requires RELAY_RUST_EXPERIMENTAL_TEST_ONLY=isolated-test
+and explicit, already marked private temporary directories. It deliberately
+does not support a production database override.
+
 ## 2026-11-14 isolated native DAG / Review increment
 
 The **isolated test daemon only** now drives Coordinator activation, atomic
