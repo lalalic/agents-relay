@@ -43,6 +43,24 @@ impl Graph {
         let mut receipts = Vec::new();
         for action in actions {
             let receipt = ports.execute_action(&action.id, &action.input)?;
+            // ActionReceipt is a typed object in GraphDispatcher's contract.
+            // Null/arrays/scalars must not silently become a successful
+            // action merely because this step emits no follow-up events.
+            if !receipt.is_object() {
+                return Err(format!(
+                    "action '{}' returned invalid ActionReceipt",
+                    action.id
+                ));
+            }
+            if receipt.get("ok").is_some_and(|value| !value.is_boolean()) {
+                return Err(format!("action '{}' returned invalid ok flag", action.id));
+            }
+            if receipt
+                .get("payloads")
+                .is_some_and(|value| !value.is_object())
+            {
+                return Err(format!("action '{}' returned invalid payloads", action.id));
+            }
             receipts.push(receipt.clone());
             if receipt.get("ok") == Some(&Value::Bool(false)) {
                 let failure = receipt
@@ -51,28 +69,42 @@ impl Graph {
                     .ok_or_else(|| {
                         format!("action '{}' returned invalid failureEvent", action.id)
                     })?;
-                // The event is defined by the shared Graph, never by a new
-                // set of hard-coded Rust workflow transitions.
-                let defined = self.edges.iter().any(|edge| {
-                    matches!(edge.kind.as_str(), "on" | "emit")
-                        && edge.semantic_id.as_deref() == Some(failure)
-                });
+                // The Event registry includes all declared emit nodes, even
+                // unused ones, as well as on:/emit: edges. Share the exact
+                // same registration logic with the decision evaluator.
+                let defined = self.recognizes_event(failure);
                 if !defined {
                     return Err(format!("unknown failure event '{failure}'"));
                 }
-                ports.publish_event(failure, &receipt["failureEvent"]["payload"])?;
+                let payload = receipt.pointer("/failureEvent/payload").ok_or_else(|| {
+                    format!(
+                        "action '{}' returned missing failureEvent payload",
+                        action.id
+                    )
+                })?;
+                ports.publish_event(failure, payload)?;
                 return Ok(DispatchResult { decision, receipts });
             }
-            for event_id in &action.emitted_events {
-                let payload = receipt
-                    .get("payloads")
-                    .and_then(|p| p.get(event_id))
-                    .ok_or_else(|| {
-                        format!(
-                            "action '{}' did not supply payload for emitted event '{event_id}'",
-                            action.id
-                        )
-                    })?;
+            // TypeScript validates *every* emitted payload before publishing
+            // any event from this action. Publishing incrementally here would
+            // make a later missing payload leave partially published events.
+            let payloads = action
+                .emitted_events
+                .iter()
+                .map(|event_id| {
+                    receipt
+                        .get("payloads")
+                        .and_then(|p| p.get(event_id))
+                        .map(|payload| (event_id, payload))
+                        .ok_or_else(|| {
+                            format!(
+                                "action '{}' did not supply payload for emitted event '{event_id}'",
+                                action.id
+                            )
+                        })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            for (event_id, payload) in payloads {
                 ports.publish_event(event_id, payload)?;
             }
         }
@@ -159,6 +191,120 @@ mod tests {
         assert_eq!(
             ports.trace,
             ["persist START->END", "action mutation.do", "emit failed"]
+        );
+    }
+    #[test]
+    fn missing_later_payload_does_not_publish_earlier_event() {
+        let source = r#"flowchart LR
+%% relay: initial start
+start["state: START"]
+end["state: END"]
+a["action: mutation.do"]
+one["emit: first"]
+two["emit: second"]
+start -->|on: go| a
+a -->|emit: first| one
+a -->|emit: second| two
+a --> end"#;
+        let graph = Graph::parse(source).unwrap();
+        let mut ports = Ports {
+            trace: vec![],
+            receipts: HashMap::from([(
+                "mutation.do".into(),
+                json!({"payloads": {"first": {"value": 1}}}),
+            )]),
+        };
+        assert!(graph
+            .dispatch("START", input(), &HashMap::new(), &mut ports)
+            .is_err());
+        assert_eq!(ports.trace, ["persist START->END", "action mutation.do"]);
+
+        ports.trace.clear();
+        ports.receipts.insert(
+            "mutation.do".into(),
+            json!({
+                "payloads": {"first":{"value":1}, "second":{"value":2}}
+            }),
+        );
+        graph
+            .dispatch("START", input(), &HashMap::new(), &mut ports)
+            .unwrap();
+        assert_eq!(
+            ports.trace,
+            [
+                "persist START->END",
+                "action mutation.do",
+                "emit first",
+                "emit second"
+            ]
+        );
+    }
+    #[test]
+    fn malformed_receipts_fail_closed_without_false_success() {
+        let mut ports = Ports {
+            trace: vec![],
+            receipts: HashMap::from([("mutation.do".into(), json!(null))]),
+        };
+        let error = graph()
+            .dispatch("START", input(), &HashMap::new(), &mut ports)
+            .unwrap_err();
+        assert!(error.contains("invalid ActionReceipt"));
+        assert_eq!(ports.trace, ["persist START->END", "action mutation.do"]);
+
+        ports.trace.clear();
+        ports
+            .receipts
+            .insert("mutation.do".into(), json!({"ok": "false"}));
+        assert!(graph()
+            .dispatch("START", input(), &HashMap::new(), &mut ports)
+            .unwrap_err()
+            .contains("invalid ok flag"));
+        assert_eq!(ports.trace, ["persist START->END", "action mutation.do"]);
+
+        ports.trace.clear();
+        ports
+            .receipts
+            .insert("mutation.do".into(), json!({"payloads": 123}));
+        assert!(graph()
+            .dispatch("START", input(), &HashMap::new(), &mut ports)
+            .unwrap_err()
+            .contains("invalid payloads"));
+        assert_eq!(ports.trace, ["persist START->END", "action mutation.do"]);
+    }
+
+    #[test]
+    fn failure_receipt_requires_explicit_payload() {
+        let source = r#"flowchart LR
+%% relay: initial start
+start["state: START"]
+end["state: END"]
+a["action: mutation.do"]
+start -->|on: go| a
+a --> end"#;
+        let graph = Graph::parse(source).unwrap();
+        let mut ports = Ports {
+            trace: vec![],
+            receipts: HashMap::from([(
+                "mutation.do".into(),
+                json!({"ok":false,"failureEvent":{"id":"go"}}),
+            )]),
+        };
+        assert!(graph
+            .dispatch("START", input(), &HashMap::new(), &mut ports)
+            .unwrap_err()
+            .contains("missing failureEvent payload"));
+        assert_eq!(ports.trace, ["persist START->END", "action mutation.do"]);
+        ports.trace.clear();
+        ports.receipts.insert(
+            "mutation.do".into(),
+            json!({"ok":false,"failureEvent":{"id":"go","payload":null}}),
+        );
+        graph
+            .dispatch("START", input(), &HashMap::new(), &mut ports)
+            .unwrap();
+        assert_eq!(
+            ports.trace,
+            ["persist START->END", "action mutation.do", "emit go"]
         );
     }
 }

@@ -2,6 +2,20 @@
 use super::{Edge, Graph, Node};
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
+
+// Keep these three patterns in sync with graph-v2.ts's executable DSL.
+static INITIAL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^%%\s*relay:\s*initial\s+(.+)$").expect("valid initial directive regex")
+});
+static NODE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"^([A-Za-z_][A-Za-z0-9_.-]*)\["(state|guard|action|emit):\s*([^|\]"]+?)(?:\s*\|[^\]"]*)?"\]$"#)
+        .expect("valid graph node regex")
+});
+static EDGE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^([A-Za-z_][A-Za-z0-9_.-]*)\s+-->\s*(?:\|\s*([^|]+?)\s*\|\s*)?([A-Za-z_][A-Za-z0-9_.-]*)$")
+        .expect("valid graph edge regex")
+});
 
 pub(super) fn is_id(s: &str) -> bool {
     let mut chars = s.chars();
@@ -34,8 +48,6 @@ fn err(line: usize, msg: impl AsRef<str>) -> String {
 
 impl Graph {
     pub fn parse(source: &str) -> Result<Self, String> {
-        let node_re = Regex::new(r#"^([A-Za-z_][A-Za-z0-9_.-]*)\["(state|guard|action|emit):\s*([^|\]"]+?)(?:\s*\|[^\]"]*)?"\]$"#).unwrap();
-        let edge_re = Regex::new(r"^([A-Za-z_][A-Za-z0-9_.-]*)\s+-->\s*(?:\|\s*([^|]+?)\s*\|\s*)?([A-Za-z_][A-Za-z0-9_.-]*)$").unwrap();
         let lines: Vec<_> = source.lines().collect();
         let mut begin = 0;
         if lines.first().is_some_and(|x| x.trim() == "---") {
@@ -62,14 +74,15 @@ impl Graph {
                 continue;
             }
             if line.starts_with("%%") {
-                if let Some(rest) = line.strip_prefix("%% relay: initial ") {
+                if let Some(captures) = INITIAL.captures(line) {
+                    let value = captures.get(1).expect("initial capture").as_str().trim();
                     if initial.is_some() {
                         return Err(err(line_no, "duplicate initial declaration"));
                     }
-                    if !is_id(rest.trim()) {
+                    if !is_id(value) {
                         return Err(err(line_no, "invalid initial state"));
                     }
-                    initial = Some(rest.trim().into());
+                    initial = Some(value.into());
                 }
                 continue;
             }
@@ -82,7 +95,7 @@ impl Graph {
                 }
                 return Err(err(line_no, "expected flowchart LR, RL, TD, or TB"));
             }
-            if let Some(c) = node_re.captures(line) {
+            if let Some(c) = NODE.captures(line) {
                 let (id, kind, semantic) =
                     (c[1].to_string(), c[2].to_string(), c[3].trim().to_string());
                 if nodes.iter().any(|x| x.id == id) {
@@ -112,7 +125,7 @@ impl Graph {
                 });
                 continue;
             }
-            if let Some(c) = edge_re.captures(line) {
+            if let Some(c) = EDGE.captures(line) {
                 let (kind, semantic_id) = parse_label(c.get(2).map(|m| m.as_str()), line_no)?;
                 edges.push(Edge {
                     from: c[1].into(),
@@ -257,6 +270,11 @@ impl Graph {
                                 if target.kind == "emit"
                                     && e.semantic_id.as_deref()
                                         == Some(target.semantic_id.as_str()) => {}
+                            // graph-v2.ts validates only action continuations
+                            // and emit edges; other labelled edges on an
+                            // action are ignored by the existing DSL parser.
+                            // Preserve this behavior for shadow parity.
+                            _ if !matches!(e.kind.as_str(), "to" | "unlabelled" | "emit") => {}
                             _ => return Err(err(e.line, "invalid action continuation/emission")),
                         }
                     }

@@ -58,6 +58,24 @@ and emits one JSON decision/error per line. A request supplies `currentState`,
 **Guard evaluation in production must remain bound to authoritative SQLite
 facts**; the CLI guard map exists solely for deterministic parity testing.
 
+## Review hardening and parity boundaries
+
+The Rust shadow engine preserves the TypeScript Graph parser's accepted
+Mermaid syntax (including whitespace in initial directives and ignored
+non-executable Action edges). Input Events/Actions absent from the derived
+registry are errors, not ordinary no-transition results. Action Receipt
+payloads are preflight-checked **before** any per-action event publication;
+a malformed/null receipt cannot be silently considered successful. These
+rules have targeted adversarial and topology differential tests.
+
+Rust deliberately enforces the *typed* `ActionReceipt` object contract
+more strictly than permissive JavaScript primitives. Actual production
+Graph input and emitted-event payload validators are still TypeScript-owned;
+the current mock ports do not implement them. The shadow CLI must not be
+wired into the production reconciler until validator parity and L3 recovery
+are implemented and verified. SQLite stays explicit-path/read-only, including
+when a TypeScript writer uses WAL mode.
+
 ## Migration gates before any production switch
 
 1. Expand Rust Store from snapshot reads to transaction-safe effects, leases,

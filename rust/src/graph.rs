@@ -118,6 +118,27 @@ impl Graph {
         }
     }
 
+    /// Shadow CLI registry derived from canonical executable Graph declarations.
+    /// Mirrors the TypeScript differential harness's auto-registered symbols.
+    pub(crate) fn recognizes_event(&self, id: &str) -> bool {
+        self.nodes
+            .iter()
+            .any(|n| n.kind == "emit" && n.semantic_id == id)
+            || self.edges.iter().any(|e| {
+                matches!(e.kind.as_str(), "on" | "emit") && e.semantic_id.as_deref() == Some(id)
+            })
+    }
+
+    pub(crate) fn recognizes_action(&self, id: &str) -> bool {
+        self.nodes
+            .iter()
+            .any(|n| n.kind == "action" && n.semantic_id == id)
+            || self
+                .edges
+                .iter()
+                .any(|e| e.kind == "request" && e.semantic_id.as_deref() == Some(id))
+    }
+
     pub fn decide(
         &self,
         state: &str,
@@ -126,6 +147,18 @@ impl Graph {
     ) -> Result<Decision, String> {
         if !matches!(input.transport.as_str(), "event" | "action") || !is_id(&input.id) {
             return Err("invalid input transport/id".into());
+        }
+        // The shadow CLI derives its registry from the canonical Graph,
+        // exactly as the TypeScript differential harness does. An event or
+        // action absent from that registry is a contract error, not an
+        // ordinary no-transition result.
+        let registered = if input.transport == "event" {
+            self.recognizes_event(&input.id)
+        } else {
+            self.recognizes_action(&input.id)
+        };
+        if !registered {
+            return Err(format!("unknown {} '{}'", input.transport, input.id));
         }
         let node = self
             .nodes
@@ -208,5 +241,22 @@ mod tests {
                 .is_err()
         );
         assert!(Graph::parse("flowchart LR\n%% relay: initial a\na[\"state: A\"]\nb[\"state: B\"]\na -->|on: x| b\na -->|on: x| b").is_err());
+    }
+    #[test]
+    fn unknown_input_fails_but_known_input_without_transition_is_rejected() {
+        let graph = Graph::parse(
+            "flowchart LR\n%% relay: initial s\ns[\"state: START\"]\ne[\"state: END\"]\ns -->|on: go| e"
+        ).unwrap();
+        let input = |id: &str| GraphInput {
+            transport: "event".into(),
+            id: id.into(),
+            payload: serde_json::json!({}),
+        };
+        assert!(graph
+            .decide("START", input("unregistered"), &HashMap::new())
+            .unwrap_err()
+            .contains("unknown event"));
+        let output = graph.decide("END", input("go"), &HashMap::new()).unwrap();
+        assert!(matches!(output,Decision::Rejected{reason,..} if reason=="no_transition"));
     }
 }

@@ -144,4 +144,45 @@ mod tests {
         assert!(store.list_jobs(1001, 0).is_err());
         assert_eq!(fs::read(&path).unwrap(), original);
     }
+    #[test]
+    fn wal_reader_observes_commits_and_refuses_write_queries() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("relay-wal.sqlite");
+        let writer = Connection::open(&path).unwrap();
+        writer.execute_batch("PRAGMA journal_mode = WAL; CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at TEXT NOT NULL);").unwrap();
+        writer
+            .execute(
+                "INSERT INTO job_snapshot VALUES (?1, ?2, ?3)",
+                rusqlite::params![
+                    "201",
+                    r#"{"id":"201","state":"ACTIVE"}"#,
+                    "2026-11-13T19:00:00Z"
+                ],
+            )
+            .unwrap();
+        let reader = RelayReader::open(&path).unwrap();
+        assert_eq!(reader.list_jobs(10, 0).unwrap().len(), 1);
+        assert!(reader
+            .connection
+            .execute(
+                "UPDATE job_snapshot SET json = ?1 WHERE job_id = ?2",
+                rusqlite::params![r#"{"id":"201","state":"FAILED"}"#, "201"]
+            )
+            .is_err());
+        writer
+            .execute(
+                "INSERT INTO job_snapshot VALUES (?1, ?2, ?3)",
+                rusqlite::params![
+                    "202",
+                    r#"{"id":"202","state":"ACTIVE"}"#,
+                    "2026-11-13T20:00:00Z"
+                ],
+            )
+            .unwrap();
+        assert_eq!(reader.list_jobs(10, 0).unwrap().len(), 2);
+        assert_eq!(
+            reader.get_job("201").unwrap().unwrap().job["state"],
+            "ACTIVE"
+        );
+    }
 }
