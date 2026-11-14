@@ -1,8 +1,10 @@
 //! Explicit shadow CLI. Never launches workers, writes SQLite or runs effects.
 use agents_relay_rust::agent_graph::AgentGraph;
+use agents_relay_rust::authority::probe_process;
 use agents_relay_rust::dispatch::ActionPorts;
 use agents_relay_rust::graph::{Graph, GraphInput};
 use agents_relay_rust::reconcile::propose_dependency_transitions;
+use agents_relay_rust::recovery::inspect_expired_execution;
 use agents_relay_rust::store::RelayReader;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -66,7 +68,7 @@ fn print_json(value: impl serde::Serialize) -> Result<(), String> {
 }
 fn run(args: &[String]) -> Result<(), String> {
     if args.len() < 2 {
-        return Err("usage: agents-relay-rust graph <validate|inventory|decide|batch|simulate> | store <list|get> --db PATH | scheduler inspect --db PATH --job-id ID --graph PATH".into());
+        return Err("usage: agents-relay-rust graph <validate|inventory|decide|batch|simulate> | store <list|get> --db PATH | scheduler inspect/recovery --db PATH --job-id ID | dag parse --file PATH".into());
     }
     match (args[0].as_str(),args[1].as_str()) {
         ("graph","validate") => {
@@ -120,6 +122,25 @@ fn run(args: &[String]) -> Result<(), String> {
             let source=std::fs::read_to_string(&path).map_err(|e|e.to_string())?;
             print_json(AgentGraph::parse(&source)?)
         }
+        ("scheduler","recovery") => {
+            let db=PathBuf::from(opt(args,"--db")?);
+            let job_id=opt(args,"--job-id")?;
+            let task_id=opt(args,"--task-id")?;
+            let now=opt(args,"--now")?;
+            let owner_active=match opt(args,"--owner-activity")?.as_str() {
+                "active"=>true,"inactive"=>false,
+                _=>return Err("--owner-activity must be active or inactive".into()),
+            };
+            let store=RelayReader::open(&db)?;
+            let job=store.get_job(&job_id)?.ok_or("Recovery Job not found")?;
+            let execution=job.job["tasks"].as_array().ok_or("Job tasks missing")?
+                .iter().find(|t|t["id"]==task_id).and_then(|t|t["executionId"].as_str())
+                .ok_or("Recovery Task has no active execution")?;
+            let process=store.get_process(&job_id,&task_id,execution)?;
+            let probe=probe_process(process.as_ref());
+            let assessment=inspect_expired_execution(&job.job,&task_id,&now,probe,owner_active)?;
+            print_json(json!({"processProbe":probe,"assessment":assessment}))
+        }
         ("scheduler","inspect") => {
             let graph=load_graph(args)?;
             let db=PathBuf::from(opt(args,"--db")?);
@@ -141,7 +162,7 @@ fn run(args: &[String]) -> Result<(), String> {
                 print_json(store.list_jobs(limit,offset)?)
             }
         }
-        _=>Err("unrecognized command; supported: graph validate/inventory/decide/batch/simulate, store list/get, scheduler inspect".into())
+        _=>Err("unrecognized command; supported: graph validate/inventory/decide/batch/simulate, store list/get, scheduler inspect/recovery".into())
     }
 }
 fn main() {

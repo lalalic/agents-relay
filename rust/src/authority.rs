@@ -1,14 +1,18 @@
 //! Transactional writer for Relay's *existing* authoritative SQLite schema.
 //! Caller owns Graph validation and provides primitive mutations/effect intents.
 //! No independent scheduler or workflow policy exists in this module.
+mod coordinator;
 mod ids;
+pub use coordinator::{graph_hash, ChildMaterialization, DAGExecutor, DAGMaterialize};
 mod ledger;
 mod process;
 mod projection;
+mod review;
 pub use ids::EntityKind;
 pub use ledger::{ActionIdentity, ActionOutcome, ActionTrace};
-pub use process::ExecutionProcessRecord;
+pub use process::{probe_process, ExecutionProcessRecord, ProcessProbe};
 pub use projection::{ProjectionItem, ProjectionRequest, ProjectionRetry};
+pub use review::{review_fingerprint, ReviewDelivery, ReviewReceipt, ReviewResume};
 use rusqlite::{
     params, Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior,
 };
@@ -124,6 +128,21 @@ impl RelayAuthority {
     where
         F: FnOnce(&Value) -> Result<(Value, Vec<WorkflowEvent>), String>,
     {
+        self.commit_job_with_tx(job_id, at, |_, original| mutate(original))
+    }
+
+    /// Shared transaction: e.g. Coordinator child ID allocation and Task
+    /// snapshot creation must commit or roll back together. Callers never
+    /// create a second SQLite connection while holding this writer lock.
+    pub(crate) fn commit_job_with_tx<F>(
+        &mut self,
+        job_id: &str,
+        at: &str,
+        mutate: F,
+    ) -> Result<CommittedJob, String>
+    where
+        F: FnOnce(&Transaction<'_>, &Value) -> Result<(Value, Vec<WorkflowEvent>), String>,
+    {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -138,7 +157,7 @@ impl RelayAuthority {
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("Unknown Job {job_id}"))?;
         let original: Value = serde_json::from_str(&stored_json).map_err(|e| e.to_string())?;
-        let (next, events) = mutate(&original)?;
+        let (next, events) = mutate(&tx, &original)?;
         check_snapshot(job_id, &original, &next, &stored_time, at)?;
         Self::prepare_publication(&tx)?;
         let serialized = serde_json::to_string(&next).map_err(|e| e.to_string())?;

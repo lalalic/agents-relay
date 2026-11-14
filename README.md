@@ -72,15 +72,19 @@ GitHub operations are explicitly requested and confirmed by adapters, never used
 discover or reconstruct Job/Task state. EventBus delivery wakes reconciliation;
 it cannot replace the durable SQLite record.
 
-### Rust backend feasibility implementation
+### Rust backend — staged native rewrite
 
-The staged Rust implementation lives in [`rust/`](rust/README.md).
-It parses the **same** executable workflow graphs and reads the authoritative
-V2 SQLite schema in explicit read-only mode. Run `npm run test:rust` for
-Rust/TypeScript Graph and SQLite differential tests. It now includes native transactional SQLite/Outbox/Inbox/Lease primitives and
-physical Script Worker test fixtures, but remains **non-production**:
-TypeScript is the only active Relay scheduler and production writer until
-L1/L2/L3, DAG, Review/JEL and recovery gates pass.
+The Rust work in [`rust/`](rust/README.md) now includes Graph parity,
+transactional SQLite and global Task IDs, real Script Worker execution,
+Coordinator DAG node creation, host Review decision/continuation and a
+**read-only** process/lease Recovery inspector. Cross-language E2E tests
+verify the same SQLite authority; parallel Coordinator ticks deduplicate
+child creation. Run `npm run test:rust` for the differential suite.
+
+**Production remains TypeScript.** Rust does not yet own the daemon,
+WorkerAdapter routing, full Scheduler/Recovery actions, JEL Final Review,
+EventBus or CLI/REST ingress. A release build or passing isolated tests is
+not authorization to start a second writer on the canonical database.
 
 ### Workflow graph navigation
 

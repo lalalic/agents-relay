@@ -80,6 +80,33 @@ impl RelayReader {
         .collect()
     }
 
+    /// Read process ledger without opening a writable Store or inventing
+    /// any fallback PID. The native probe checks exact host/PGID/startToken.
+    pub fn get_process(
+        &self,
+        job_id: &str,
+        task_id: &str,
+        execution_id: &str,
+    ) -> Result<Option<crate::authority::ExecutionProcessRecord>, String> {
+        let table:i64=self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_process')",
+            [],|r|r.get(0),
+        ).map_err(|e|e.to_string())?;
+        if table == 0 {
+            return Ok(None);
+        }
+        self.connection.query_row(
+            "SELECT job_id,task_id,execution_id,lease_owner,host,pid,pgid,start_token,observed_at,ended_at FROM execution_process WHERE job_id=?1 AND task_id=?2 AND execution_id=?3",
+            rusqlite::params![job_id,task_id,execution_id],|r| {
+                Ok(crate::authority::ExecutionProcessRecord{
+                    job_id:r.get(0)?,task_id:r.get(1)?,execution_id:r.get(2)?,
+                    lease_owner:r.get(3)?,host:r.get(4)?,pid:r.get(5)?,pgid:r.get(6)?,
+                    start_token:r.get(7)?,observed_at:r.get(8)?,ended_at:r.get(9)?,
+                })
+            },
+        ).optional().map_err(|e|e.to_string())
+    }
+
     pub fn get_job(&self, job_id: &str) -> Result<Option<JobSnapshot>, String> {
         if job_id.is_empty() || job_id.len() > 256 {
             return Err("invalid job id".into());

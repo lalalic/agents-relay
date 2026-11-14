@@ -3,16 +3,18 @@ name = "agents-relay-rust"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Shadow backend for Agents Relay's canonical graph and SQLite contracts"
+description = "Staged native Relay backend with canonical Graph, SQLite and Worker primitives"
 
 [dependencies]
 regex = "1.13"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["preserve_order"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 chrono = {version = "0.4", default-features = false, features = ["std"]}
 nix = {version = "0.30", features = ["signal", "process"]}
 signal-hook = "0.3"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "3.23"

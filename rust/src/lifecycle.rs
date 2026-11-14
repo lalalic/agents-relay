@@ -6,6 +6,25 @@ use crate::graph::{Decision, Graph, GraphInput};
 use serde_json::Value;
 use std::collections::HashMap;
 
+/// Concrete Graph-selected Task mutations shared by lifecycle and DAG
+/// checkpoint paths. Unknown effects are rejected, never acknowledged.
+pub(crate) fn apply_pure_task_actions(
+    task: &mut Value,
+    actions: &[crate::graph::ActionDecision],
+) -> Result<(), String> {
+    for action in actions {
+        match action.id.as_str() {
+            "mutation.clearError" => task["error"] = Value::Null,
+            "mutation.clearFailureReason" => {
+                if let Some(fields) = task.as_object_mut() {
+                    fields.shift_remove("failureReason");
+                }
+            }
+            other => return Err(format!("unimplemented Rust Task Action '{other}'")),
+        }
+    }
+    Ok(())
+}
 pub struct TaskTransition<'a> {
     pub job_id: &'a str,
     pub task_id: &'a str,
@@ -88,16 +107,7 @@ impl<'g> TaskLifecycle<'g> {
                     input.id
                 ));
             };
-            for action in actions {
-                match action.id.as_str() {
-                    "mutation.clearError" => task["error"] = Value::Null,
-                    "mutation.clearFailureReason" => task["failureReason"] = Value::Null,
-                    // Non-mutation actions, including effect.launchTask and
-                    // review/merge effects, must be handled by a verifiable
-                    // ActionPort. Never silently acknowledge them as success.
-                    other => return Err(format!("unimplemented Rust Task Action '{other}'")),
-                }
-            }
+            apply_pure_task_actions(task, actions)?;
             task["state"] = Value::String(target.clone());
             task["updatedAt"] = Value::String(at.into());
             next["updatedAt"] = Value::String(at.into());

@@ -36,17 +36,33 @@ Review/JEL/DAG and recovery equivalence gates are met.
   timeout, cancellation, and process-group cleanup. The helper uses private
   newline-delimited JSON, requires an `ack` after launch identity persistence,
   and stops a Worker on parent death, stdin disconnect or SIGTERM.
-- **Agent Graph DAG (`src/agent_graph.rs`)** implements the existing `agentGraph`
-  parser, preserves insertion-ordered node/agent IDs, rejects cycles and
-  computes parallel execution waves. It does **not** materialize Task rows.
-- **Dependency scheduler (`src/reconcile.rs`)** computes **read-only** Graph
-  proposals from SQLite Job snapshots. It detects dependency cycles but never
-  dispatches work. Review-revision eligibility is explicitly unsupported and
-  fails closed, rather than skipping those gates.
+- **Agent Graph DAG (`src/agent_graph.rs`, `src/authority/coordinator.rs`)**
+  parses canonical `agentGraph` nodes/edges/waves and now materializes ordinary
+  child Tasks. Graph checkpoint, ready predecessor facts, scoped idempotency,
+  **global Task ID allocation and Job snapshot update** share one IMMEDIATE
+  SQLite transaction. Multiple concurrent Coordinator ticks cannot create a
+  second child Task. Full production DAG scheduling and agent discovery are
+  not connected to Rust yet.
+- **Review (`src/authority/review.rs`, `src/authority/review/resume.rs`)**
+  validates current execution, invocation and revision against canonical
+  `interactive-invocation.mmd`, persists decision/event ledgers atomically and
+  calculates the TypeScript-compatible fingerprint. An accepted decision can
+  resume the **same** Task via `task-lifecycle.mmd`, clear old lease, reset
+  attempts, append human feedback and reroute a scripted DAG Task to its
+  Model revision worker. These are explicit library calls, not a host/mobile
+  notification or production Review endpoint.
+- **Dependency scheduler (`src/reconcile.rs`)** computes read-only Graph
+  proposals from SQLite. It detects cycles but never dispatches workers.
+  Review-revision eligibility is explicitly unsupported and fails closed.
+- **Recovery inspector (`src/recovery.rs`, `src/authority/process.rs`)**
+  checks lease expiry and exact host/PID/PGID/start-token identity, then asks
+  canonical Task Graph for failure actions. Unknown process identity or
+  another active owner blocks recovery. **Inspection never kills/restarts a
+  worker or changes job state.** Runtime recovery actions still need porting.
 - **CLI (`src/main.rs`)** gives reproducible JSON interfaces for graph
   inventory/validation/batch decisions, simulated Action dispatch traces,
-  and store list/get, plus read-only `scheduler inspect` and `dag parse`.
-  It is not the
+  and store list/get, plus read-only `scheduler inspect`,
+  `scheduler recovery`, and `dag parse`. It is not the
   production Relay CLI and cannot launch an agent.
 - Neither Rust nor TypeScript may duplicate canonical Graph policy, and neither
   may create separate job/event stores. `workflow/*.mmd` remains authoritative.
@@ -84,6 +100,9 @@ rust/target/release/agents-relay-rust store get --db /path/to/explicit/test.sqli
 rust/target/release/agents-relay-rust scheduler inspect --graph workflow/task-lifecycle.mmd \
   --db /path/to/explicit/test.sqlite --job-id 123
 rust/target/release/agents-relay-rust dag parse --file /path/to/agentGraph.mmd
+rust/target/release/agents-relay-rust scheduler recovery \
+  --db /path/to/explicit/test.sqlite --job-id 123 --task-id 456 \
+  --now 2026-11-13T21:00:00Z --owner-activity inactive
 ```
 
 `graph batch --graph <file>` reads one JSON decision request per line on stdin
@@ -129,8 +148,15 @@ is exposed from `agents-relay-rust` main CLI. `npm run test:rust` verifies:
 - Real native `/bin/sh` Script Worker through DRAFT → QUEUED → RUNNING →
   SUCCEEDED, with canonical Graph, persisted launch ledger/lease, real PID,
   process output, durable completion event and TypeScript readback.
-- AgentGraph Mermaid DAG topology and execution wave ordering against the
-  TypeScript parser (valid, invalid, branching and cycle cases).
+- AgentGraph Mermaid DAG topology and wave ordering against TypeScript,
+  then Rust Coordinator start → parallel root materialization → dependent
+  child materialization → completion → TypeScript Job readback, including
+  ID reuse across twelve concurrent Rust writers and failed-write rollback.
+- Current invocation/revision Review acceptance, fingerprint parity with
+  nested comments, TypeScript duplicate/stale recognition and same-Task
+  `changes_requested` resume with Model routing and feedback comments.
+- Recovery inspection parity against TypeScript `lease.expired` Graph actions;
+  real OS process probes distinguish live/terminated/reused/unknown PID.
 - Worker helper's real parent SIGKILL: Rust detects parent loss and reaps
   the child process group, plus standalone normal completion and logs.
 - Graph parsing, action receipts, invalid input, dependency proposals and
@@ -140,11 +166,13 @@ is exposed from `agents-relay-rust` main CLI. `npm run test:rust` verifies:
 
 1. Port full Task/Plan/Job field normalization, event payload validators,
    condition/guard facts, and atomic job / action outcome bookkeeping.
-2. Port durable Graph dispatch for **all** mutation/effect IDs, worker routing,
-   model and browser adapters, Scheduler/Coordinator, DAG Node creation,
-   review and JEL without making second procedural lifecycle decisions.
-3. Port full projection operations (conflict classification and repair),
-   persistent retry/recovery and independent daemon/REST/CLI/Events Bus.
+2. Connect the tested native DAG/Review primitives to a real Scheduler and
+   Coordinator daemon with all Graph Actions, delivery wakeups, agent discovery,
+   model and browser adapters, and **JEL Final Review** gates. No parallel
+   workflow policy or independent reviewer scheduler is allowed.
+3. Port remaining projection conflicts/repairs, crash/restart reconciliation,
+   verified orphan cleanup, retry action execution, and daemon/REST/CLI/
+   Events Bus integration. The current Recovery inspector never mutates Jobs.
 4. Pass existing L1/L2/L3, review changes/approve, crash/restart, multi-node
    concurrency, and **real** end-to-end notification/UI gates with the Rust
    backend as the **sole writer** on a disposable store. Fix any existing
@@ -152,17 +180,25 @@ is exposed from `agents-relay-rust` main CLI. `npm run test:rust` verifies:
 5. Compare memory/CPU/throughput under identical workloads and switch nodes
    deliberately with rollback, never dual-writing a production SQLite store.
 
-**Current status:** native SQLite authoritative primitives, Script Worker,
-conditional Task lifecycle, DAG topology parser, and read-only Graph dependency proposals are real,
-but **production Relay remains TypeScript**. A complete Rust Relay switch is
-not authorized by this experimental stage.
+**Current status:** native SQLite atomic primitives, Script Worker, Task
+Graph transitions, Coordinator child creation, host Review decision/resume,
+DAG parser, read-only Scheduler proposals and Recovery inspection are real.
+**Production Relay still runs TypeScript.** They are not yet wired together
+as a complete production daemon; no cutover or retirement is authorized.
 
-## Known existing TypeScript L3 failures
+## Full TypeScript L3 migration gate — not green
 
-During this migration experiment, `npm run test:fast` passed (148/148), but
-`npm run test:verification:l3` is not green on the **unchanged** TypeScript
-main branch. A separate detached baseline worktree reproduced the existing
-Planner recovery, Final Review and Review convergence failures without any
-Rust changes. Until these failures are repaired and all other L3 scenarios
-pass, the Rust backend must stay shadow/read-only. This experimental crate
-never changes the production dispatcher or a canonical Relay SQLite store.
+This stage ran `npm run test:verification:l3` on a disposable, isolated
+TypeScript store while Rust remained disconnected from the production daemon:
+**78 total, 65 passed, 12 failed, 1 skipped**. Failing scenarios cover Job
+481 replay proof, Planner/worker/Reviewer fault recovery, Troubleshooter,
+human escalation, Final Review and a review-to-merge convergence path.
+The untouched TypeScript baseline had independently shown failures in these
+areas before the Rust migration. Rust changes in this stage do not alter the
+TypeScript scheduler, tests, or graphs, and cannot establish a full L3 pass.
+
+The focused `npm run test:l3:dag` **does** pass all 22 Coordinator/Review
+scenarios, including changes-requested and re-approval. Do not confuse those
+gates. The Rust public CLI stays read-only and Rust writer library operations
+remain isolated from production SQLite until full convergence/recovery gates
+are independently green.

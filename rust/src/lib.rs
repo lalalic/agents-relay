@@ -7,6 +7,7 @@ pub mod dispatch;
 pub mod graph;
 pub mod lifecycle;
 pub mod reconcile;
+pub mod recovery;
 pub mod store;
 #[cfg(unix)]
 pub mod worker;

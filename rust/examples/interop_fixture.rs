@@ -1,7 +1,8 @@
 //! Integration-test executable, not a production CLI or worker. Hard fences:
 //! explicit isolated temporary dir, marker file and opt-in environment.
 use agents_relay_rust::authority::{
-    EntityKind, ProjectionItem, ProjectionRequest, RelayAuthority, WorkflowEvent,
+    review_fingerprint, DAGExecutor, DAGMaterialize, EntityKind, ProjectionItem, ProjectionRequest,
+    RelayAuthority, ReviewDelivery, WorkflowEvent,
 };
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -114,6 +115,64 @@ fn run() -> Result<(), String> {
                 &args[3],
             )?;
             println!("{}", json!({"completed":claimed.id}));
+        }
+        "dag-begin" => {
+            println!(
+                "{}",
+                json!({"started":authority.begin_dag_coordinator(&args[2],&args[4],&args[3])?})
+            );
+        }
+        "dag-create" => {
+            let input: Value = serde_json::from_str(&args[4]).map_err(|e| e.to_string())?;
+            let root = PathBuf::from(
+                input["projectPath"]
+                    .as_str()
+                    .ok_or("missing DAG projectPath")?,
+            );
+            let executor: DAGExecutor =
+                serde_json::from_value(input["executor"].clone()).map_err(|e| e.to_string())?;
+            let result = authority.materialize_dag_child(DAGMaterialize {
+                job_id: &args[2],
+                parent_task_id: input["parentTaskId"]
+                    .as_str()
+                    .ok_or("missing parent Task")?,
+                node_id: input["nodeId"].as_str().ok_or("missing nodeId")?,
+                executor,
+                project_path: &root,
+                timeout_ms: input["timeoutMs"].as_i64().ok_or("missing timeout")?,
+                at: &args[3],
+            })?;
+            println!("{}", serde_json::to_string(&result).unwrap());
+        }
+        "dag-complete" => {
+            println!(
+                "{}",
+                json!({"completed":authority.complete_dag_coordinator(&args[2],&args[4],&args[3])?})
+            );
+        }
+        "review-resume" => {
+            let result = authority.resume_review_task(&args[2], &args[4], &args[3])?;
+            println!("{}", serde_json::to_string(&result).unwrap());
+        }
+        "review-fingerprint" => {
+            let delivery: ReviewDelivery =
+                serde_json::from_str(&args[4]).map_err(|e| e.to_string())?;
+            println!(
+                "{}",
+                serde_json::to_string(&json!({"fingerprint":review_fingerprint(&delivery)?}))
+                    .unwrap()
+            );
+        }
+        "review" => {
+            let delivery: ReviewDelivery =
+                serde_json::from_str(&args[4]).map_err(|e| e.to_string())?;
+            if delivery.job_id != args[2] {
+                return Err("fixture Review job mismatch".into());
+            }
+            println!(
+                "{}",
+                serde_json::to_string(&authority.accept_review_decision(&delivery)?).unwrap()
+            );
         }
         "pending" => {
             let result: Vec<WorkflowEvent> = authority.pending_events()?;
