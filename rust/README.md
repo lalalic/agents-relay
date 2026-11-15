@@ -267,6 +267,11 @@ AGENTS_RELAY_STORE_DIR=$(mktemp -d) cargo test --locked --manifest-path rust/Car
   fences; no Task success implies Job completion. The **production daemon
   and worker routing still belong to TypeScript**; the native adapter is not
   currently a supervised, crash-recovering production service.
+- The isolated daemon claims each ready Task through that same Graph-selected
+  transaction, then runs distinct claims concurrently up to `max_tasks`, with
+  one SQLite connection per supervised Worker. Dependency and stale-revision
+  guards stay in the claim action; the logical DAG Coordinator has no lease or
+  physical slot. This bounded pilot behavior is not production scheduler parity.
 - **Single-node isolated daemon (`src/single_node.rs`,
   `src/native_daemon.rs`, `src/native_daemon/adapter.rs`,
   `src/bin/relay-native-daemon.rs`, `src/supervised_script.rs`)** executes

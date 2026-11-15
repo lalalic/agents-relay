@@ -46,8 +46,8 @@ fn input(task_id: &str, execution_id: &str) -> GraphInput {
 impl RelayAuthority {
     /// A native worker may only run after this has durably returned a new
     /// lease and launch Action claim. A contender with the same Task receives
-    /// `None`, not another execution generation. This is intentionally serial
-    /// per Job while the full execution slot/router is being ported.
+    /// `None`, not another execution generation. Distinct eligible Tasks may
+    /// hold independent leases at once; the daemon supplies worker capacity.
     pub fn claim_queued_script(
         &mut self,
         req: &ScriptClaimRequest<'_>,
@@ -177,23 +177,6 @@ impl RelayAuthority {
                 // Another scheduler already committed the generation. The
                 // caller is forbidden from launching a duplicate worker.
                 return Err("Task already has a durable execution claim".into());
-            }
-            // Serial physical Worker slot until DAG parallel execution is
-            // ported. A RUNNING DAG Coordinator is a durable dependency owner,
-            // not a physical Worker; it has no execution generation or lease.
-            // It must not block its own child Worker from ever starting.
-            if tasks.iter().any(|other| {
-                let logical_coordinator = other["agentGraph"].is_string()
-                    && other["state"] == "RUNNING"
-                    && other.get("executionId").is_none_or(Value::is_null)
-                    && other.get("leaseOwner").is_none_or(Value::is_null);
-                other["id"] != req.task_id
-                    && !logical_coordinator
-                    && (other["state"] == "RUNNING"
-                        || (other["state"] == "QUEUED"
-                            && other.get("executionId").is_some_and(|id| !id.is_null())))
-            }) {
-                return Err("Job has conflicting active Task execution".into());
             }
             let dependencies = task
                 .get("dependencies")
@@ -371,6 +354,56 @@ mod tests {
                 .observed_at,
             "2026-11-13T20:00:02.000Z"
         );
+    }
+
+    #[test]
+    fn independent_ready_siblings_claim_concurrently_but_duplicate_claims_are_rejected() {
+        let (_dir, path) = setup();
+        let mut auth = RelayAuthority::open_existing(&path).unwrap();
+        prepare(&mut auth, "2026-11-13T20:00:00.500Z");
+        auth.commit_job("91", "2026-11-13T20:00:00.600Z", |job| {
+            let mut next = job.clone();
+            next["updatedAt"] = json!("2026-11-13T20:00:00.600Z");
+            let sibling = next["tasks"][0].clone();
+            let mut sibling = sibling;
+            sibling["id"] = json!("102");
+            sibling["title"] = json!("independent sibling");
+            sibling["executionId"] = Value::Null;
+            sibling["leaseOwner"] = Value::Null;
+            next["tasks"].as_array_mut().unwrap().push(sibling);
+            Ok((next, vec![]))
+        })
+        .unwrap();
+        let claim = |task_id, execution_id, at| ScriptClaimRequest {
+            job_id: "91",
+            task_id,
+            execution_id,
+            owner: "local-test",
+            at,
+            lease_expires_at: "2099-01-01T00:00:00.000Z",
+        };
+        let first = auth
+            .claim_queued_script(&claim("101", "sibling-1", "2026-11-13T20:00:01.000Z"))
+            .unwrap()
+            .unwrap();
+        let second = auth
+            .claim_queued_script(&claim("102", "sibling-2", "2026-11-13T20:00:02.000Z"))
+            .unwrap()
+            .unwrap();
+        assert_ne!(first.execution_id, second.execution_id);
+        assert!(auth
+            .claim_queued_script(&claim("101", "stale-replay", "2026-11-13T20:00:03.000Z"))
+            .is_err());
+        let snapshot = auth.read_job("91").unwrap().unwrap();
+        assert_eq!(snapshot["tasks"][0]["state"], "QUEUED");
+        assert_eq!(snapshot["tasks"][1]["state"], "QUEUED");
+        assert_eq!(snapshot["tasks"][0]["executionId"], first.execution_id);
+        assert_eq!(snapshot["tasks"][1]["executionId"], second.execution_id);
+        assert_eq!(snapshot["state"], "ACTIVE");
+        assert!(auth
+            .action_trace("91/101/stale-replay/launch")
+            .unwrap()
+            .is_none());
     }
     #[test]
     fn refuses_paused_job_and_unready_dependencies_without_ledger_side_effect() {

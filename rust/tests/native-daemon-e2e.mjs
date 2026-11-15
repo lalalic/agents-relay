@@ -90,6 +90,41 @@ test('isolated native daemon: multi-job and dependency wave, physical helper + S
   console.log('Native daemon: three real Workers, two Jobs, dependency wave, no repeat on restart');
  }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
 });
+test('independent ready sibling Workers run concurrently and Job stays ACTIVE until all finish',async()=>{
+ const f=fixture('if [ "$RELAY_TASK_ID" = "101" ]; then sleep 0.3; else sleep 1.0; fi; '+script);let store;
+ try{
+  store=new SQLiteRelayStore(f.db);
+  await save(store,f.dir,'91',[task('101','91'),task('102','91')]);
+  await store.mutateJob('91',job=>({...job,reviewEnabled:false,autoMerge:false}));store.close();store=null;
+  const running=runAsync(f);
+  await until(async()=>{
+   store=new SQLiteRelayStore(f.db);const job=await store.loadJob('91');store.close();store=null;
+   assert.equal(job.state,'ACTIVE','worker completion must not complete the Job');
+   return job.tasks.every(t=>t.state==='RUNNING');
+  });
+  await until(async()=>{
+   store=new SQLiteRelayStore(f.db);const job=await store.loadJob('91');store.close();store=null;
+   assert.equal(job.state,'ACTIVE','a finished sibling must not complete the Job');
+   return job.tasks[0].state==='SUCCEEDED'&&job.tasks[1].state==='RUNNING';
+  });
+  const result=await running;assert.equal(result.code,0,result.err);
+  store=new SQLiteRelayStore(f.db);const job=await store.loadJob('91');
+  assert.deepEqual(job.tasks.map(t=>t.state),['SUCCEEDED','SUCCEEDED']);
+  assert.equal(job.state,'COMPLETED','no-review Job completes only after both siblings succeed');
+  assert.equal(once(f).tasksClaimed,0,'restart must not repeat either terminal execution');
+ }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
+});
+test('configured max_tasks bounds claims for each daemon tick',async()=>{
+ const f=fixture();let store;
+ try{
+  f.args[f.args.indexOf('20')]='1';
+  store=new SQLiteRelayStore(f.db);await save(store,f.dir,'91',[task('101','91'),task('102','91')]);store.close();store=null;
+  assert.equal(once(f).tasksClaimed,1);
+  store=new SQLiteRelayStore(f.db);assert.equal((await store.loadJob('91')).tasks.filter(t=>t.state==='SUCCEEDED').length,1);store.close();store=null;
+  assert.equal(once(f).tasksClaimed,1);
+  store=new SQLiteRelayStore(f.db);assert.deepEqual((await store.loadJob('91')).tasks.map(t=>t.state),['SUCCEEDED','SUCCEEDED']);
+ }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
+});
 test('single-node daemon holds exclusive process lock while executing a Script generation',async()=>{
  const f=fixture('sleep 0.5; '+script);let store;
  try{
