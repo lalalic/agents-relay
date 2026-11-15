@@ -55,6 +55,36 @@ fn opt(args: &[String], name: &str) -> Result<String, String> {
         .cloned()
         .ok_or_else(|| format!("missing value for {name}"))
 }
+fn inspection_options(
+    args: &[String],
+    allowed: &[&str],
+) -> Result<HashMap<String, String>, String> {
+    let mut options = HashMap::new();
+    let mut index = 2;
+    while index < args.len() {
+        let name = args[index].as_str();
+        if !allowed.contains(&name) {
+            return Err(format!(
+                "unrecognized argument for inspection command: {name}"
+            ));
+        }
+        if options.contains_key(name) {
+            return Err(format!("duplicate argument: {name}"));
+        }
+        let value = args
+            .get(index + 1)
+            .filter(|value| !value.starts_with("--") && !value.is_empty())
+            .ok_or_else(|| format!("missing value for {name}"))?;
+        options.insert(name.to_string(), value.clone());
+        index += 2;
+    }
+    for required in allowed {
+        if !options.contains_key(*required) {
+            return Err(format!("missing {required}"));
+        }
+    }
+    Ok(options)
+}
 fn load_graph(args: &[String]) -> Result<Graph, String> {
     let path = PathBuf::from(opt(args, "--graph")?);
     let source = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -69,7 +99,7 @@ fn print_json(value: impl serde::Serialize) -> Result<(), String> {
 }
 fn run(args: &[String]) -> Result<(), String> {
     if args.len() < 2 {
-        return Err("usage: agents-relay-rust graph <validate|inventory|decide|batch|simulate> | store <list|get> --db PATH | scheduler inspect/recovery --db PATH --job-id ID | dag parse --file PATH".into());
+        return Err("usage: agents-relay-rust graph <validate|inventory|decide|batch|simulate> | store <list|get> --db PATH | job show --db PATH --job-id ID | task <list|show> --db PATH --job-id ID [--task-id ID] | scheduler inspect/recovery --db PATH --job-id ID | dag parse --file PATH".into());
     }
     match (args[0].as_str(),args[1].as_str()) {
         ("graph","validate") => {
@@ -171,7 +201,49 @@ fn run(args: &[String]) -> Result<(), String> {
                 print_json(store.list_jobs(limit,offset)?)
             }
         }
-        _=>Err("unrecognized command; supported: graph validate/inventory/decide/batch/simulate, store list/get, scheduler inspect/recovery".into())
+        ("job", "show") => {
+            let options = inspection_options(args, &["--db", "--job-id"])?;
+            let store = RelayReader::open(Path::new(&options["--db"]))?;
+            let job_id = &options["--job-id"];
+            let job = store
+                .get_job(job_id)?
+                .ok_or_else(|| format!("Job {job_id} not found"))?;
+            print_json(job.job)
+        }
+        ("task", "list") => {
+            let options = inspection_options(args, &["--db", "--job-id"])?;
+            let store = RelayReader::open(Path::new(&options["--db"]))?;
+            let job_id = &options["--job-id"];
+            let job = store
+                .get_job(job_id)?
+                .ok_or_else(|| format!("Job {job_id} not found"))?;
+            let tasks = job
+                .job
+                .get("tasks")
+                .and_then(Value::as_array)
+                .ok_or_else(|| format!("Job {job_id} has no task list"))?;
+            print_json(tasks)
+        }
+        ("task", "show") => {
+            let options = inspection_options(args, &["--db", "--job-id", "--task-id"])?;
+            let store = RelayReader::open(Path::new(&options["--db"]))?;
+            let job_id = &options["--job-id"];
+            let task_id = &options["--task-id"];
+            let job = store
+                .get_job(job_id)?
+                .ok_or_else(|| format!("Job {job_id} not found"))?;
+            let tasks = job
+                .job
+                .get("tasks")
+                .and_then(Value::as_array)
+                .ok_or_else(|| format!("Job {job_id} has no task list"))?;
+            let task = tasks
+                .iter()
+                .find(|task| task.get("id").and_then(Value::as_str) == Some(task_id))
+                .ok_or_else(|| format!("Task {task_id} not found in Job {job_id}"))?;
+            print_json(task)
+        }
+        _=>Err("unrecognized command; supported: graph validate/inventory/decide/batch/simulate, store list/get, job show, task list/show, scheduler inspect/recovery".into())
     }
 }
 fn main() {

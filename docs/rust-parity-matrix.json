@@ -7,9 +7,9 @@
     {
       "capability": "CLI and public API",
       "node": {"behavior": "Production CLI and HTTP Dashboard/API expose the operational Job, Task, review, and control surfaces.", "sources": ["src/cli.ts", "src/dashboard.ts", "src/dashboard-actions.ts"]},
-      "rust": {"behavior": "The agents-relay-rust CLI is read-only for inventory and Graph inspection, while a separate pilot Job binary supports limited intake/activation; no production-compatible full CLI/API is exposed.", "sources": ["rust/src/main.rs", "rust/src/bin/relay-native-job.rs", "rust/README.md"]},
+      "rust": {"behavior": "The shadow CLI supports read-only Job show and Task list/show through RelayReader using explicit database and IDs, plus existing store inspection; a separate pilot Job binary supports limited intake/activation. Mutation commands, the full production API, and service integration remain absent.", "sources": ["rust/src/main.rs", "rust/src/store.rs", "rust/tests/inspection-cli-e2e.mjs", "rust/src/bin/relay-native-job.rs", "rust/README.md"]},
       "status": "FAIL",
-      "evidence": [{"kind": "source", "detail": "Command dispatch in main.rs only implements Graph/store/scheduler/review inspection commands; README documents the isolated pilot boundary."}],
+      "evidence": [{"kind": "deterministic-test", "detail": "rust/tests/inspection-cli-e2e.mjs covers Job show, Task list/show JSON, missing Job/Task, malformed and duplicate arguments, and byte-for-byte unchanged SQLite database/sidecar files; the explicit DB is isolated with AGENTS_RELAY_STORE_DIR."}, {"kind": "source", "detail": "rust/src/main.rs implements read-only job show and task list/show using RelayReader; rust/README.md documents the exact command forms and explicitly retains the isolated pilot boundary. Mutation commands, full production API, and service integration remain absent."}],
       "nextAction": "Implement a production-compatible native CLI/API behind a separately authorized cutover plan."
     },
     {

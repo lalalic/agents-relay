@@ -33,6 +33,23 @@ This live namespace is a verified Rust scheduler in a running native service,
 but is NOT a full Node.js Relay production cutover. In particular, existing
 Node.js Jobs still need their own Reconciler and Review/JEL guarantees.
 
+## Read-only Job and Task CLI inspection
+
+The shadow CLI has a small inspection surface matching the Node CLI record
+shapes. Every command requires an explicit database path and Job ID; Task show
+also requires a Task ID:
+
+```sh
+agents-relay-rust job show --db /path/to/relay.sqlite --job-id 101
+agents-relay-rust task list --db /path/to/relay.sqlite --job-id 101
+agents-relay-rust task show --db /path/to/relay.sqlite --job-id 101 --task-id 42
+```
+
+These commands use `RelayReader` and return the Job, its Task array, or one
+Task as JSON. They do not discover a default store, mutate SQLite, run lifecycle
+actions, launch workers, or provide production CLI/API parity. The existing
+`store list/get` commands remain available.
+
 ## 2026-11-14 native Job intake, completion and outbox increment
 
 The isolated native Rust pilot can now perform **Job creation, global Job/Task ID
