@@ -22,7 +22,7 @@ import { acceptedReportedTag, eventDataWithoutTag } from './task-tag.js';
 import { createWorkerStartAck } from './worker-start-ack.js';
 import type { EventsHistoryPage } from './events-bus-runtime.js';
 import { monitorExecutionProcess } from './execution-process-tracker.js'; import { HostInteractiveInvocationCoordinator, hostInvocationPorts } from './interactive-invocation.js'; import { resumeInteractiveTask } from './interactive-resume.js';
-import { acceptTaskProgress, armInactivityWatchdog, inactivityDeadline, isCorrelatedWorkerEvent, isRecoverableWatchdogFailure } from './task-inactivity-watchdog.js';
+import { acceptTaskProgress, armInactivityWatchdog, inactivityDeadline, isCorrelatedWorkerEvent, isRecoverableWatchdogFailure, renewExecutionLease } from './task-inactivity-watchdog.js';
 export type ReconcileOptions = { owner: string; noGitHub?: boolean; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; postExitTerminalGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; usageSnapshotProvider?: () => Promise<AccountUsageOverview>; runtimeSummaryProvider?: () => { chatgptRunning: number }; decisionEngine?: DecisionEngine; decisionMode?: DecisionMode; decisionAuditStore?: DecisionAuditStore; reviewer?: { adapter?: 'codex' | 'chatgpt'; workerId?: string; threadId?: string; requirements?: WorkerRequirements; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job, task?: Task) => string | Promise<string>; agentPreferenceContextPathForJob?: (job: Job, task?: Task) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots; localMergeEffect?: LocalMergeEffect; localMergeDelivery?: (projectPath: string, receipt: LocalMergeReceipt) => { sourceSha: string; mergedCommitSha: string }; headShaProvider?: (job: Job) => string | null | Promise<string | null>; escalationNotifier?: EscalationNotifier };
 export type EventHandlingResult = { applied: boolean; reconcile: boolean; reason: string; reconcileMode?: 'await' | 'detached' };
 type LiveExecution = { jobId: string; taskId: string; executionId: string; execution: Execution; controller: AbortController; launchBarrier: number; workerStarted: boolean; processSettled: boolean; processError?: string | null };
@@ -204,6 +204,7 @@ export abstract class ReconcilerRuntimeBase {
       }),
       mutate: (_job, task) => {
         task.updatedAt = task.lastProgressAt = new Date().toISOString(); task.lastProgressEventAt = event.timestamp;
+        renewExecutionLease(task, task.lastProgressAt);
       },
     });
     if (!transition?.decision.accepted) return { applied: false, reconcile: false, reason: 'task.started.ignored' }; 

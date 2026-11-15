@@ -10,6 +10,7 @@ const now=()=>new Date().toISOString();
 function fixture(){
   const t={id:taskId,jobId,executionId,state:'RUNNING',adapter:'z',timeoutMs:120000,
     updatedAt:new Date(Date.now()-150000).toISOString(),lastProgressAt:null,lastProgressEventAt:null,
+    leaseExpiresAt:new Date(Date.now()-30000).toISOString(),
     executionHistory:[{id:executionId,startedAt:new Date(Date.now()-150000).toISOString()}]};
   const transitions={apply:async(j,id,kind,options)=>{
     assert.equal(j,jobId);assert.equal(id,taskId);assert.equal(kind,'task.progress');
@@ -31,17 +32,22 @@ test('fresh correlated assistant output extends Relay watchdog; old execution ca
   const extended=inactivityDeadline(t,executionId,15000);
   assert.ok(extended>Date.now()+110000);
   assert.ok(extended-before>110000);
+  assert.ok(Date.parse(t.leaseExpiresAt)>Date.now()+110000);
+  const renewedLease=t.leaseExpiresAt;
   assert.equal(await acceptTaskProgress(transitions,progress(now(),executionEventSource(jobId,taskId,'outdated'))),null);
   assert.equal(inactivityDeadline(t,executionId,15000),extended);
+  assert.equal(t.leaseExpiresAt,renewedLease);
 });
 test('duplicate or stale task.progress event cannot renew timeout',async()=>{
   const {t,transitions}=fixture();
   const event=progress();
   await acceptTaskProgress(transitions,event);
   const first=inactivityDeadline(t,executionId,15000);
+  const firstLease=t.leaseExpiresAt;
   assert.equal(await acceptTaskProgress(transitions,event),null);
   assert.equal(await acceptTaskProgress(transitions,progress(new Date(Date.now()-60000).toISOString())),null);
   assert.equal(inactivityDeadline(t,executionId,15000),first);
+  assert.equal(t.leaseExpiresAt,firstLease);
 });
 test('heartbeat-only / spinner-only cannot publish progress or renew deadline',async()=>{
   const {t}=fixture();const deadline=inactivityDeadline(t,executionId,15000);
