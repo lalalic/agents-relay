@@ -17,12 +17,17 @@ export type InteractiveInvocation = {
   feedback?: string;
   comments?: readonly unknown[];
   idempotencyKey?: string;
+  contentHash?: string;
+  revisionId?: string;
+  previewId?: string;
+  requestId?: string;
 };
 export type InteractiveDecisionDelivery = {
   jobId: string;
   taskId: string;
   executionId: string;
   invocationId: string;
+  legacyInvocationIdFallback?: boolean;
   revision: string;
   decision: InteractiveDecision;
   feedback?: string;
@@ -54,6 +59,10 @@ export type AcceptedInteractiveDecision = {
   feedback?: string;
   comments?: readonly unknown[];
   idempotencyKey?: string;
+  contentHash?: string;
+  revisionId?: string;
+  previewId?: string;
+  requestId?: string;
   event: EventRecord;
 };
 export type HostInvocationCoordinatorOptions = {
@@ -122,17 +131,28 @@ export function normalizeInteractiveDecision(event: EventRecord): InteractiveDec
   const payload = event.data?.interactive;
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
   const value = payload as Record<string, unknown>;
-  const string = (key: string): string | null => typeof value[key] === 'string' && value[key].length > 0 ? value[key] as string : null;
+  const string = (key: string): string | null => typeof value[key] === 'string' && value[key].trim().length > 0 ? value[key] as string : null;
   const jobId = string('jobId');
   const taskId = string('taskId');
   const executionId = string('executionId');
   // The current Task execution is the sole review identity.
   if (!executionId) return null;
-  const invocationId = executionId;
-  const revision = executionId;
+  const eventOnlyKeys = ['contentHash', 'revisionId', 'previewId', 'requestId'];
+  const eventOnly = eventOnlyKeys.some(key => Object.hasOwn(value, key));
+  const hasInvocationId = Object.hasOwn(value, 'invocationId');
+  const explicitInvocationId = string('invocationId');
+  const invocationId = explicitInvocationId ?? (!hasInvocationId && !eventOnly ? executionId : null);
+  const revision = string('revision') ?? executionId;
   const decision = value.decision === 'approved' || value.decision === 'changes_requested' ? value.decision : null;
-  if (!jobId || !taskId || !executionId || !decision) return null;
-  if (['invocationId','revision','commitSha','revisionId','contentHash'].some(key => Object.hasOwn(value,key))) return null;
+  if (!jobId || !taskId || !executionId || !invocationId || !revision || !decision) return null;
+  if (Object.hasOwn(value, 'commitSha')) return null;
+  const contentHash = string('contentHash') ?? undefined;
+  const revisionId = string('revisionId') ?? undefined;
+  const requestId = string('requestId') ?? undefined;
+  const idempotencyKey = string('idempotencyKey') ?? undefined;
+  const previewId = string('previewId') ?? undefined;
+  if (eventOnly && (!contentHash || !/^[0-9a-f]{64}$/.test(contentHash) || contentHash !== revision ||
+      !revisionId || !requestId || !idempotencyKey || (Object.hasOwn(value, 'previewId') && !previewId))) return null;
   if (event.source?.id !== `job/${jobId}/task/${taskId}/execution/${executionId}`) return null;
   const feedback = typeof value.feedback === 'string' ? value.feedback : null;
   if (feedback === null) return null;
@@ -142,10 +162,10 @@ export function normalizeInteractiveDecision(event: EventRecord): InteractiveDec
       typeof comment.text !== 'string'))) return null;
   return {
     jobId, taskId, executionId, invocationId, revision, decision,
+    ...(!hasInvocationId ? { legacyInvocationIdFallback: true } : {}),
     feedback: feedback ?? undefined,
 
-    previewId: string('previewId') ?? undefined, requestId: string('requestId') ?? undefined,
-    idempotencyKey: string('idempotencyKey') ?? undefined,
+    contentHash, revisionId, previewId, requestId, idempotencyKey,
     comments: comments as readonly unknown[] | undefined,
     eventId: event.event_id,
     deliveredAt: event.timestamp,
@@ -153,7 +173,7 @@ export function normalizeInteractiveDecision(event: EventRecord): InteractiveDec
 }
 
 export function interactiveDecisionFingerprint(decision: InteractiveDecisionDelivery): string {
-  return createHash('sha256').update(JSON.stringify({
+  const legacyFields = {
     jobId: decision.jobId,
     taskId: decision.taskId,
     executionId: decision.executionId,
@@ -162,11 +182,25 @@ export function interactiveDecisionFingerprint(decision: InteractiveDecisionDeli
     decision: decision.decision,
     feedback: decision.feedback ?? null,
     comments: decision.comments ?? null,
-  })).digest('hex');
+  };
+  const fields = decision.contentHash ? {
+    ...legacyFields,
+    contentHash: decision.contentHash,
+    revisionId: decision.revisionId ?? null,
+    previewId: decision.previewId ?? null,
+    requestId: decision.requestId ?? null,
+    idempotencyKey: decision.idempotencyKey ?? null,
+  } : legacyFields;
+  return createHash('sha256').update(JSON.stringify(fields)).digest('hex');
 }
 
-/** Unbound event-only decisions cannot authorize a Task. */
-export function eventOnlyReviewEligible(_delivery: InteractiveDecisionDelivery): boolean {return false;}
+/** Event-only decisions require complete immutable content and request identity. */
+export function eventOnlyReviewEligible(delivery: InteractiveDecisionDelivery): boolean {
+  return Boolean(delivery.contentHash && /^[0-9a-f]{64}$/.test(delivery.contentHash) &&
+    delivery.contentHash === delivery.revision && delivery.revisionId && delivery.requestId &&
+    delivery.idempotencyKey && typeof delivery.feedback === 'string' &&
+    (delivery.previewId === undefined || Boolean(delivery.previewId)));
+}
 
 function invocationState(invocation: InteractiveInvocation | undefined): InteractiveInvocationStatus {
   return invocation?.status ?? 'awaiting_decision';
@@ -276,6 +310,15 @@ export class HostInteractiveInvocationCoordinator {
       await this.options.store.recordHostInvocationEvent?.(delivery, 'stale', interactiveDecisionFingerprint(delivery));
       return { outcome: 'stale', reason: 'execution_not_bound' };
     }
+    if (delivery.legacyInvocationIdFallback) {
+      const invocation = task.interactiveInvocation;
+      const boundLegacy = job.state === 'ACTIVE' && ['RUNNING', 'AWAITING_DECISION'].includes(task.state) &&
+        invocation !== undefined &&
+        ['awaiting_decision', 'changes_requested', 'approved'].includes(invocation.status) &&
+        invocation.invocationId === delivery.executionId &&
+        invocation.executionId === delivery.executionId && invocation.revision === delivery.revision;
+      if (!boundLegacy) return { outcome: 'ignored', reason: 'legacy_invocation_id_requires_binding' };
+    }
     const duplicate = await this.options.store.hasHostInvocationDecision?.(delivery.jobId, delivery.taskId, delivery.invocationId, interactiveDecisionFingerprint(delivery)) ?? false;
     const graphDecision = await decideInteractiveInvocation(task, delivery, duplicate, job.state === 'ACTIVE');
     const selected = graphDecision.actions.some(action => action === 'interactive.requestChanges' || action === 'interactive.approve');
@@ -290,7 +333,9 @@ export class HostInteractiveInvocationCoordinator {
     const accepted: AcceptedInteractiveDecision = {
       jobId: delivery.jobId, taskId: delivery.taskId, executionId: delivery.executionId,
       invocationId: delivery.invocationId, revision: delivery.revision, decision: delivery.decision,
-      feedback: delivery.feedback, comments: delivery.comments, idempotencyKey: delivery.idempotencyKey, event,
+      feedback: delivery.feedback, comments: delivery.comments, idempotencyKey: delivery.idempotencyKey,
+      contentHash: delivery.contentHash, revisionId: delivery.revisionId,
+      previewId: delivery.previewId, requestId: delivery.requestId, event,
     };
     const key = `${accepted.jobId}:${accepted.taskId}:${accepted.executionId}:${accepted.invocationId}`;
     const waiter = this.waiters.get(key);

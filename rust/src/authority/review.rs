@@ -34,8 +34,13 @@ pub struct ReviewDelivery {
     pub job_id: String,
     pub task_id: String,
     pub execution_id: String,
+    #[serde(default)]
     pub invocation_id: String,
     pub revision: String,
+    pub content_hash: Option<String>,
+    pub revision_id: Option<String>,
+    pub preview_id: Option<String>,
+    pub request_id: Option<String>,
     pub decision: String,
     pub feedback: Option<String>,
     pub comments: Option<Vec<Value>>,
@@ -67,19 +72,54 @@ struct FingerprintFields<'a> {
     feedback: Option<&'a str>,
     comments: Option<&'a [Value]>,
 }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EventOnlyFingerprintFields<'a> {
+    job_id: &'a str,
+    task_id: &'a str,
+    execution_id: &'a str,
+    invocation_id: &'a str,
+    revision: &'a str,
+    decision: &'a str,
+    feedback: Option<&'a str>,
+    comments: Option<&'a [Value]>,
+    content_hash: Option<&'a str>,
+    revision_id: Option<&'a str>,
+    preview_id: Option<&'a str>,
+    request_id: Option<&'a str>,
+    idempotency_key: Option<&'a str>,
+}
 
 pub fn review_fingerprint(delivery: &ReviewDelivery) -> Result<String, String> {
-    let fields = FingerprintFields {
-        job_id: &delivery.job_id,
-        task_id: &delivery.task_id,
-        execution_id: &delivery.execution_id,
-        invocation_id: &delivery.invocation_id,
-        revision: &delivery.revision,
-        decision: &delivery.decision,
-        feedback: delivery.feedback.as_deref(),
-        comments: delivery.comments.as_deref(),
-    };
-    let serialized = serde_json::to_vec(&fields).map_err(|e| e.to_string())?;
+    let serialized = if event_only_eligible(delivery) {
+        serde_json::to_vec(&EventOnlyFingerprintFields {
+            job_id: &delivery.job_id,
+            task_id: &delivery.task_id,
+            execution_id: &delivery.execution_id,
+            invocation_id: &delivery.invocation_id,
+            revision: &delivery.revision,
+            decision: &delivery.decision,
+            feedback: delivery.feedback.as_deref(),
+            comments: delivery.comments.as_deref(),
+            content_hash: delivery.content_hash.as_deref(),
+            revision_id: delivery.revision_id.as_deref(),
+            preview_id: delivery.preview_id.as_deref(),
+            request_id: delivery.request_id.as_deref(),
+            idempotency_key: delivery.idempotency_key.as_deref(),
+        })
+    } else {
+        serde_json::to_vec(&FingerprintFields {
+            job_id: &delivery.job_id,
+            task_id: &delivery.task_id,
+            execution_id: &delivery.execution_id,
+            invocation_id: &delivery.invocation_id,
+            revision: &delivery.revision,
+            decision: &delivery.decision,
+            feedback: delivery.feedback.as_deref(),
+            comments: delivery.comments.as_deref(),
+        })
+    }
+    .map_err(|e| e.to_string())?;
     Ok(format!("{:x}", Sha256::digest(serialized)))
 }
 
@@ -102,7 +142,7 @@ fn validate_delivery(delivery: &ReviewDelivery) -> Result<(), String> {
     if delivery.job_id.is_empty()
         || delivery.task_id.is_empty()
         || delivery.execution_id.is_empty()
-        || delivery.invocation_id.is_empty()
+        || delivery.invocation_id.trim().is_empty()
         || delivery.revision.is_empty()
         || delivery.event_id.is_empty()
     {
@@ -110,6 +150,35 @@ fn validate_delivery(delivery: &ReviewDelivery) -> Result<(), String> {
     }
     if !matches!(delivery.decision.as_str(), "approved" | "changes_requested") {
         return Err("invalid interactive Review decision".into());
+    }
+    let event_only_fields = delivery.content_hash.is_some()
+        || delivery.revision_id.is_some()
+        || delivery.preview_id.is_some()
+        || delivery.request_id.is_some();
+    if event_only_fields {
+        if delivery.invocation_id.trim().is_empty() {
+            return Err("event-only Review invocationId required".into());
+        }
+        let hash = delivery
+            .content_hash
+            .as_deref()
+            .ok_or("event-only Review contentHash required")?;
+        if hash.len() != 64
+            || !hash
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            || hash != delivery.revision
+            || delivery.revision_id.as_deref().is_none_or(str::is_empty)
+            || delivery.request_id.as_deref().is_none_or(str::is_empty)
+            || delivery
+                .idempotency_key
+                .as_deref()
+                .is_none_or(str::is_empty)
+            || delivery.feedback.is_none()
+            || delivery.preview_id.as_deref().is_some_and(str::is_empty)
+        {
+            return Err("incomplete or inconsistent event-only Review identity".into());
+        }
     }
     DateTime::parse_from_rfc3339(&delivery.delivered_at)
         .map_err(|_| "invalid Review delivery timestamp")?;
@@ -125,18 +194,121 @@ fn validate_delivery(delivery: &ReviewDelivery) -> Result<(), String> {
     Ok(())
 }
 
+fn event_only_eligible(delivery: &ReviewDelivery) -> bool {
+    delivery.content_hash.as_deref().is_some_and(|hash| {
+        hash.len() == 64
+            && hash
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            && hash == delivery.revision
+            && delivery
+                .revision_id
+                .as_deref()
+                .is_some_and(|value| !value.is_empty())
+            && delivery
+                .request_id
+                .as_deref()
+                .is_some_and(|value| !value.is_empty())
+            && delivery
+                .idempotency_key
+                .as_deref()
+                .is_some_and(|value| !value.is_empty())
+            && delivery
+                .preview_id
+                .as_deref()
+                .is_none_or(|value| !value.is_empty())
+    })
+}
+
 impl RelayAuthority {
     pub fn accept_review_decision(
         &mut self,
         delivery: &ReviewDelivery,
     ) -> Result<ReviewReceipt, String> {
-        validate_delivery(delivery)?;
-        let fingerprint = review_fingerprint(delivery)?;
-        let graph = Graph::parse(include_str!("../../../workflow/interactive-invocation.mmd"))?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| e.to_string())?;
+        // Historical bound event payloads may omit invocationId. Preserve the
+        // old executionId fallback only for that legacy shape; event-only
+        // decisions must carry their own explicit invocation identity.
+        let legacy_delivery;
+        let delivery = if delivery.invocation_id.is_empty()
+            && delivery.content_hash.is_none()
+            && delivery.revision_id.is_none()
+            && delivery.preview_id.is_none()
+            && delivery.request_id.is_none()
+        {
+            let snapshot: Option<String> = tx
+                .query_row(
+                    "SELECT json FROM job_snapshot WHERE job_id=?1",
+                    [&delivery.job_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            let job: Value = snapshot
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()
+                .map_err(|e| e.to_string())?
+                .unwrap_or(Value::Null);
+            let task = job
+                .get("tasks")
+                .and_then(Value::as_array)
+                .and_then(|tasks| {
+                    tasks.iter().find(|task| {
+                        task.get("id").and_then(Value::as_str) == Some(&delivery.task_id)
+                    })
+                });
+            let invocation = task.and_then(|task| task.get("interactiveInvocation"));
+            let state = task
+                .and_then(|task| task.get("state"))
+                .and_then(Value::as_str);
+            let bound = job.get("state").and_then(Value::as_str) == Some("ACTIVE")
+                && matches!(state, Some("RUNNING" | "AWAITING_DECISION"))
+                && (task
+                    .and_then(|task| task.get("executionId"))
+                    .and_then(Value::as_str)
+                    == Some(&delivery.execution_id)
+                    || state == Some("AWAITING_DECISION"))
+                && invocation
+                    .and_then(|value| value.get("invocationId"))
+                    .and_then(Value::as_str)
+                    == Some(&delivery.execution_id)
+                && invocation
+                    .and_then(|value| value.get("executionId"))
+                    .and_then(Value::as_str)
+                    == Some(&delivery.execution_id)
+                && invocation
+                    .and_then(|value| value.get("revision"))
+                    .and_then(Value::as_str)
+                    == Some(&delivery.revision)
+                && invocation
+                    .and_then(|value| value.get("status"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|status| {
+                        matches!(
+                            status,
+                            "awaiting_decision" | "changes_requested" | "approved"
+                        )
+                    });
+            if !bound {
+                return Err(
+                    "legacy Review invocationId fallback requires a bound invocation".into(),
+                );
+            }
+            legacy_delivery = ReviewDelivery {
+                invocation_id: delivery.execution_id.clone(),
+                ..delivery.clone()
+            };
+            &legacy_delivery
+        } else {
+            delivery
+        };
+        validate_delivery(delivery)?;
+        let fingerprint = review_fingerprint(delivery)?;
+        let graph = Graph::parse(include_str!("../../../workflow/interactive-invocation.mmd"))?;
         tx.execute_batch(HOST_TABLES).map_err(|e| e.to_string())?;
         let existing: Option<String> = tx.query_row(
             "SELECT fingerprint FROM host_invocation_decision WHERE job_id=?1 AND task_id=?2 AND invocation_id=?3",
@@ -170,38 +342,66 @@ impl RelayAuthority {
             Some((encoded, _)) => serde_json::from_str(encoded).map_err(|e| e.to_string())?,
             None => Value::Null,
         };
+        let current_task = job
+            .get("tasks")
+            .and_then(Value::as_array)
+            .and_then(|tasks| {
+                tasks
+                    .iter()
+                    .find(|task| task.get("id").and_then(Value::as_str) == Some(&delivery.task_id))
+            });
+        let invocation = current_task.and_then(|task| task.get("interactiveInvocation"));
+        let task_state = current_task
+            .and_then(|task| task.get("state"))
+            .and_then(Value::as_str);
+        let running_current = job.get("state").and_then(Value::as_str) == Some("ACTIVE")
+            && task_state == Some("RUNNING")
+            && current_task
+                .and_then(|task| task.get("executionId"))
+                .and_then(Value::as_str)
+                == Some(&delivery.execution_id);
         let bound = job.get("state").and_then(Value::as_str) == Some("ACTIVE")
-            && job
-                .get("tasks")
-                .and_then(Value::as_array)
-                .and_then(|tasks| {
-                    tasks.iter().find(|task| {
-                        task.get("id").and_then(Value::as_str) == Some(&delivery.task_id)
-                    })
-                })
-                .is_some_and(|task| {
-                    let state = task.get("state").and_then(Value::as_str);
-                    let inv = task.get("interactiveInvocation");
-                    matches!(state, Some("RUNNING" | "AWAITING_DECISION"))
-                        && (task.get("executionId").and_then(Value::as_str)
-                            == Some(&delivery.execution_id)
-                            || state == Some("AWAITING_DECISION"))
-                        && inv
-                            .and_then(|v| v.get("executionId"))
-                            .and_then(Value::as_str)
-                            == Some(&delivery.execution_id)
-                        && inv
-                            .and_then(|v| v.get("invocationId"))
-                            .and_then(Value::as_str)
-                            == Some(&delivery.invocation_id)
-                        && inv.and_then(|v| v.get("revision")).and_then(Value::as_str)
-                            == Some(&delivery.revision)
-                        && inv.and_then(|v| v.get("status")).and_then(Value::as_str)
-                            == Some("awaiting_decision")
-                });
-        if !bound {
-            // There is no event-only Review path: its eligibility is always
-            // false in the current TypeScript contract.
+            && current_task.is_some_and(|task| {
+                let state = task.get("state").and_then(Value::as_str);
+                let inv = task.get("interactiveInvocation");
+                matches!(state, Some("RUNNING" | "AWAITING_DECISION"))
+                    && (task.get("executionId").and_then(Value::as_str)
+                        == Some(&delivery.execution_id)
+                        || state == Some("AWAITING_DECISION"))
+                    && inv
+                        .and_then(|v| v.get("executionId"))
+                        .and_then(Value::as_str)
+                        == Some(&delivery.execution_id)
+                    && inv
+                        .and_then(|v| v.get("invocationId"))
+                        .and_then(Value::as_str)
+                        == Some(&delivery.invocation_id)
+                    && inv.and_then(|v| v.get("revision")).and_then(Value::as_str)
+                        == Some(&delivery.revision)
+                    && inv.and_then(|v| v.get("status")).and_then(Value::as_str)
+                        == Some("awaiting_decision")
+            });
+        let seen_revision: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM host_invocation_decision WHERE job_id=?1 AND task_id=?2 AND execution_id=?3 AND revision=?4)",
+                params![delivery.job_id, delivery.task_id, delivery.execution_id, delivery.revision],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        let event_only_current = running_current
+            && invocation.is_none()
+            && !seen_revision
+            && event_only_eligible(delivery);
+        let event_only_next = running_current
+            && !seen_revision
+            && event_only_eligible(delivery)
+            && invocation.is_some_and(|inv| {
+                inv.get("status").and_then(Value::as_str) == Some("changes_requested")
+                    && inv.get("executionId").and_then(Value::as_str)
+                        == Some(&delivery.execution_id)
+                    && inv.get("revision").and_then(Value::as_str) != Some(&delivery.revision)
+            });
+        if !bound && !event_only_current && !event_only_next {
             record_event(&tx, delivery, "stale", &fingerprint)?;
             tx.commit().map_err(|e| e.to_string())?;
             return Ok(ReviewReceipt {
@@ -210,20 +410,25 @@ impl RelayAuthority {
                 invocation: None,
             });
         }
+        let start_state = invocation
+            .and_then(|value| value.get("status"))
+            .and_then(Value::as_str)
+            .filter(|status| matches!(*status, "awaiting_decision" | "changes_requested"))
+            .unwrap_or("awaiting_decision");
         let facts = HashMap::from([
-            ("currentInvocation".to_string(), true),
-            ("awaitingDecision".to_string(), true),
-            ("currentRevision".to_string(), true),
+            ("currentInvocation".to_string(), bound),
+            ("awaitingDecision".to_string(), bound),
+            ("currentRevision".to_string(), bound),
             ("duplicateDelivery".to_string(), false),
-            ("eventOnlyCurrentExecution".to_string(), false),
-            ("eventOnlyNextRevision".to_string(), false),
+            ("eventOnlyCurrentExecution".to_string(), event_only_current),
+            ("eventOnlyNextRevision".to_string(), event_only_next),
             (
                 "changesRequested".to_string(),
                 delivery.decision == "changes_requested",
             ),
         ]);
         let decision = graph.decide(
-            "awaiting_decision",
+            start_state,
             GraphInput {
                 transport: "event".into(),
                 id: "task.interactive_decision".into(),
@@ -265,13 +470,11 @@ impl RelayAuthority {
             .iter_mut()
             .find(|task| task.get("id").and_then(Value::as_str) == Some(&delivery.task_id))
             .ok_or("bound Task disappeared")?;
-        let original_invocation = current
+        let bound_at = current
             .get("interactiveInvocation")
-            .ok_or("bound invocation disappeared")?;
-        let bound_at = original_invocation
-            .get("boundAt")
+            .and_then(|invocation| invocation.get("boundAt"))
             .and_then(Value::as_str)
-            .ok_or("invocation missing boundAt")?
+            .unwrap_or(&delivery.delivered_at)
             .to_owned();
         let mut decided = json!({
             "invocationId": delivery.invocation_id, "revision": delivery.revision,
@@ -286,6 +489,18 @@ impl RelayAuthority {
         }
         if let Some(key) = &delivery.idempotency_key {
             decided["idempotencyKey"] = json!(key);
+        }
+        if let Some(hash) = &delivery.content_hash {
+            decided["contentHash"] = json!(hash);
+        }
+        if let Some(revision_id) = &delivery.revision_id {
+            decided["revisionId"] = json!(revision_id);
+        }
+        if let Some(preview_id) = &delivery.preview_id {
+            decided["previewId"] = json!(preview_id);
+        }
+        if let Some(request_id) = &delivery.request_id {
+            decided["requestId"] = json!(request_id);
         }
         current["interactiveInvocation"] = decided.clone();
         let old = row.as_ref().ok_or("Job snapshot lost")?.1.as_str();
@@ -353,6 +568,10 @@ mod tests {
             execution_id: "exec1".into(),
             invocation_id: "exec1".into(),
             revision: "exec1".into(),
+            content_hash: None,
+            revision_id: None,
+            preview_id: None,
+            request_id: None,
             decision: "approved".into(),
             feedback: Some("fine".into()),
             comments: Some(vec![json!({"text":"ok"})]),
@@ -416,6 +635,10 @@ mod tests {
             execution_id: "producer-exec-1".into(),
             invocation_id: "producer-exec-1".into(),
             revision: "producer-exec-1".into(),
+            content_hash: None,
+            revision_id: None,
+            preview_id: None,
+            request_id: None,
             decision: "changes_requested".into(),
             feedback: Some("前两秒太长；请提前出现马的镜头".into()),
             comments: Some(vec![json!({"text":"提前出现马","sceneName":"Horse-Look"})]),
@@ -433,18 +656,22 @@ mod tests {
             store.accept_review_decision(&change).unwrap().outcome,
             "duplicate"
         );
-        let first = store
-            .resume_review_task("91", "101", "2026-11-13T20:00:03.000Z")
+        let mut daemon_report = crate::native_daemon::NativeTick::default();
+        crate::native_daemon::resume_accepted_native_reviews(&mut store, "91", &mut daemon_report)
             .unwrap();
+        assert_eq!(daemon_report.reviews_resumed, 1);
+        assert!(daemon_report.blocked.is_empty());
+        let revised = store.read_job("91").unwrap().unwrap();
         assert_eq!(
             (
-                first.status.as_str(),
-                first.state.as_str(),
-                first.adapter.as_str()
+                revised["tasks"][0]["interactiveInvocation"]["status"]
+                    .as_str()
+                    .unwrap(),
+                revised["tasks"][0]["state"].as_str().unwrap(),
+                revised["tasks"][0]["adapter"].as_str().unwrap()
             ),
             ("changes_requested", "QUEUED", "codex")
         );
-        let revised = store.read_job("91").unwrap().unwrap();
         assert_eq!(revised["tasks"].as_array().unwrap().len(), 1);
         assert_eq!(revised["tasks"][0]["id"], "101");
         assert_eq!(revised["tasks"][0]["adapter"], "codex");
@@ -462,6 +689,54 @@ mod tests {
         assert_eq!(revised["tasks"][0]["comments"].as_array().unwrap().len(), 1);
         assert_eq!(revised["tasks"][0]["state"], "QUEUED");
         assert_eq!(revised["state"], "ACTIVE");
+        // The durable Request Changes decision must permit the SAME Task to
+        // reach the Model Worker. A delivery receipt alone never authorizes
+        // this claim; Scheduler also checks the host decision ledger.
+        let route_at =
+            crate::supervised_script::after_time(revised["updatedAt"].as_str().unwrap()).unwrap();
+        store
+            .commit_job("91", &route_at, |previous| {
+                let mut job = previous.clone();
+                job["updatedAt"] = json!(route_at);
+                let task = &mut job["tasks"][0];
+                task["dependencies"] = json!([]);
+                task["routing"] = json!({
+                    "provider":"fixture","model":"review-revision",
+                    "decidedBy":"test-router","decidedAt":route_at
+                });
+                task["workerSelection"] = json!({
+                    "workerId":"fixture-model-worker","adapter":"codex"
+                });
+                Ok((job, vec![]))
+            })
+            .unwrap();
+        let claim_at = crate::supervised_script::after_time(&route_at).unwrap();
+        let expires_at = crate::supervised_script::after_time(&claim_at).unwrap();
+        let revision_claim = store
+            .claim_queued_codex(&crate::authority::ScriptClaimRequest {
+                job_id: "91",
+                task_id: "101",
+                execution_id: "producer-exec-2".into(),
+                owner: "revision-worker",
+                at: &claim_at,
+                lease_expires_at: &expires_at,
+            })
+            .unwrap();
+        assert!(
+            revision_claim.is_some(),
+            "accepted Request Changes must dispatch the same Task to its revision Worker"
+        );
+        let running_revision = store.read_job("91").unwrap().unwrap();
+        assert_eq!(running_revision["tasks"][0]["id"], "101");
+        assert_eq!(running_revision["tasks"][0]["state"], "QUEUED");
+        assert_eq!(
+            running_revision["tasks"][0]["executionId"],
+            "producer-exec-2"
+        );
+        assert_eq!(
+            running_revision["tasks"][0]["leaseOwner"],
+            "revision-worker"
+        );
         let mut late_approve = change.clone();
         late_approve.decision = "approved".into();
         late_approve.event_id = "stale-approve-round-1".into();
@@ -473,17 +748,20 @@ mod tests {
         // An actual revision Worker must create a fresh execution-bound
         // invocation before the second decision. The test owns only setup;
         // it never infers approval from notification or media compilation.
+        let invocation_at =
+            crate::supervised_script::after_time(running_revision["updatedAt"].as_str().unwrap())
+                .unwrap();
         store
-            .commit_job("91", "2026-11-13T20:00:04.000Z", |previous| {
+            .commit_job("91", &invocation_at, |previous| {
                 let mut next = previous.clone();
-                next["updatedAt"] = json!("2026-11-13T20:00:04.000Z");
+                next["updatedAt"] = json!(invocation_at);
                 let task = &mut next["tasks"][0];
                 task["state"] = json!("AWAITING_DECISION");
                 task["executionId"] = Value::Null;
                 task["interactiveInvocation"] = json!({
                     "invocationId":"producer-exec-2","executionId":"producer-exec-2",
                     "revision":"producer-exec-2","status":"awaiting_decision",
-                    "boundAt":"2026-11-13T20:00:04.000Z"
+                    "boundAt":invocation_at
                 });
                 Ok((next, vec![]))
             })
@@ -504,9 +782,13 @@ mod tests {
             store.accept_review_decision(&approved).unwrap().outcome,
             "accepted"
         );
-        let resumed = store
-            .resume_review_task("91", "101", "2026-11-13T20:00:06.000Z")
-            .unwrap();
+        let approved_at = crate::supervised_script::after_time(
+            store.read_job("91").unwrap().unwrap()["updatedAt"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        let resumed = store.resume_review_task("91", "101", &approved_at).unwrap();
         assert_eq!(
             (
                 resumed.status.as_str(),
@@ -516,11 +798,26 @@ mod tests {
             ("approved", "QUEUED", "script")
         );
         assert!(store
-            .resume_review_task("91", "101", "2026-11-13T20:00:07.000Z")
+            .resume_review_task(
+                "91",
+                "101",
+                &crate::supervised_script::after_time(&approved_at).unwrap()
+            )
             .is_err());
         let finished = store.read_job("91").unwrap().unwrap();
         assert_eq!(finished["tasks"].as_array().unwrap().len(), 1);
         assert_eq!(finished["tasks"][0]["state"], "QUEUED");
+        let restored_input: Value =
+            serde_json::from_str(finished["tasks"][0]["input"].as_str().unwrap()).unwrap();
+        assert_eq!(restored_input["video"], "output/video.mp4");
+        assert!(
+            restored_input.get("reviewRevision").is_none(),
+            "approved revision instructions must not leak into later ordinary attempts"
+        );
+        assert!(finished["tasks"][0].get("workerRequirements").is_none());
+        assert!(finished["tasks"][0]
+            .get("reviewRevisionOriginalExecutionConfig")
+            .is_none());
         assert_eq!(
             finished["tasks"][0]["interactiveInvocation"]["status"],
             "approved"
@@ -529,6 +826,149 @@ mod tests {
             finished["state"], "ACTIVE",
             "Review is not Task/Job completion"
         );
+    }
+
+    #[test]
+    fn model_review_revision_preserves_trusted_route_and_can_claim_same_task() {
+        let (_dir, path) = setup();
+        let mut store = RelayAuthority::open_existing(&path).unwrap();
+        let route = json!({"provider":"fixture","model":"review-model",
+            "decidedBy":"fixture-router","decidedAt":"2026-11-13T20:00:00.000Z"});
+        let selection = json!({"workerId":"fixture-codex","adapter":"codex",
+            "selectedBy":"fixture-router","selectedAt":"2026-11-13T20:00:00.000Z","capabilities":["model"]});
+        store
+            .commit_job("91", "2026-11-13T20:00:01.000Z", |previous| {
+                let mut job = previous.clone();
+                job["updatedAt"] = json!("2026-11-13T20:00:01.000Z");
+                let task = &mut job["tasks"][0];
+                task["state"] = json!("AWAITING_DECISION");
+                task["adapter"] = json!("codex");
+                task["capabilities"] = json!(["model"]);
+                task["workerRequirements"] = json!({"capabilities":["model"]});
+                task["routing"] = route.clone();
+                task["workerSelection"] = selection.clone();
+                task["input"] = json!("original model input");
+                task["dependencies"] = json!([]);
+                task["executionId"] = Value::Null;
+                task["leaseOwner"] = Value::Null;
+                task["leaseExpiresAt"] = Value::Null;
+                task["interactiveInvocation"] = json!({
+                    "invocationId":"model-exec-1","executionId":"model-exec-1",
+                    "revision":"model-revision-1","status":"awaiting_decision",
+                    "boundAt":"2026-11-13T20:00:01.000Z"
+                });
+                Ok((job, vec![]))
+            })
+            .unwrap();
+        let request_changes = ReviewDelivery {
+            job_id: "91".into(),
+            task_id: "101".into(),
+            execution_id: "model-exec-1".into(),
+            invocation_id: "model-exec-1".into(),
+            revision: "model-revision-1".into(),
+            content_hash: None,
+            revision_id: None,
+            preview_id: None,
+            request_id: None,
+            decision: "changes_requested".into(),
+            feedback: Some("Revise the artifact".into()),
+            comments: None,
+            idempotency_key: Some("model-review-1".into()),
+            event_id: "model-review-event-1".into(),
+            delivered_at: "2026-11-13T20:00:02.000Z".into(),
+        };
+        assert_eq!(
+            store
+                .accept_review_decision(&request_changes)
+                .unwrap()
+                .outcome,
+            "accepted"
+        );
+        store
+            .resume_review_task("91", "101", "2026-11-13T20:00:03.000Z")
+            .unwrap();
+        let revised = store.read_job("91").unwrap().unwrap();
+        assert_eq!(revised["tasks"][0]["id"], "101");
+        assert_eq!(revised["tasks"][0]["state"], "QUEUED");
+        assert_eq!(revised["tasks"][0]["routing"], route);
+        assert_eq!(revised["tasks"][0]["workerSelection"], selection);
+        let claim = store
+            .claim_queued_codex(&crate::authority::ScriptClaimRequest {
+                job_id: "91",
+                task_id: "101",
+                execution_id: "model-exec-2".into(),
+                owner: "revision-model",
+                at: "2026-11-13T20:00:04.000Z",
+                lease_expires_at: "2026-11-13T20:01:04.000Z",
+            })
+            .unwrap();
+        assert!(
+            claim.is_some(),
+            "accepted Review must admit the same routed Model Task"
+        );
+        // Bind the second Preview to the newly claimed revision execution.
+        let waiting_at = "2026-11-13T20:00:05.000Z";
+        store
+            .commit_job("91", waiting_at, |previous| {
+                let mut job = previous.clone();
+                job["updatedAt"] = json!(waiting_at);
+                let task = &mut job["tasks"][0];
+                task["state"] = json!("AWAITING_DECISION");
+                task["executionId"] = Value::Null;
+                task["leaseOwner"] = Value::Null;
+                task["leaseExpiresAt"] = Value::Null;
+                task["interactiveInvocation"] = json!({
+                    "invocationId":"model-exec-2","executionId":"model-exec-2",
+                    "revision":"model-revision-2","status":"awaiting_decision",
+                    "boundAt":waiting_at
+                });
+                Ok((job, vec![]))
+            })
+            .unwrap();
+        let approve = ReviewDelivery {
+            job_id: "91".into(),
+            task_id: "101".into(),
+            execution_id: "model-exec-2".into(),
+            invocation_id: "model-exec-2".into(),
+            revision: "model-revision-2".into(),
+            content_hash: None,
+            revision_id: None,
+            preview_id: None,
+            request_id: None,
+            decision: "approved".into(),
+            feedback: None,
+            comments: None,
+            idempotency_key: Some("model-review-2".into()),
+            event_id: "model-review-event-2".into(),
+            delivered_at: waiting_at.into(),
+        };
+        assert_eq!(
+            store.accept_review_decision(&approve).unwrap().outcome,
+            "accepted"
+        );
+        store
+            .resume_review_task("91", "101", "2026-11-13T20:00:06.000Z")
+            .unwrap();
+        let approved = store.read_job("91").unwrap().unwrap();
+        assert_eq!(approved["tasks"][0]["state"], "QUEUED");
+        assert_eq!(approved["tasks"][0]["adapter"], "codex");
+        assert_eq!(approved["tasks"][0]["routing"], route);
+        assert_eq!(approved["tasks"][0]["workerSelection"], selection);
+        assert_eq!(approved["tasks"][0]["input"], "original model input");
+        assert!(approved["tasks"][0]
+            .get("reviewRevisionOriginalExecutionConfig")
+            .is_none());
+        drop(store);
+        let mut reopened = RelayAuthority::open_existing(&path).unwrap();
+        assert_eq!(
+            reopened.accept_review_decision(&approve).unwrap().outcome,
+            "duplicate",
+            "the second approval remains idempotent after SQLite reopen"
+        );
+        let after_restart = reopened.read_job("91").unwrap().unwrap();
+        assert_eq!(after_restart["tasks"][0]["state"], "QUEUED");
+        assert_eq!(after_restart["tasks"][0]["routing"], route);
+        assert_eq!(after_restart["tasks"][0]["input"], "original model input");
     }
 
     #[test]
@@ -541,6 +981,10 @@ mod tests {
             execution_id: "exec1".into(),
             invocation_id: "exec1".into(),
             revision: "exec1".into(),
+            content_hash: None,
+            revision_id: None,
+            preview_id: None,
+            request_id: None,
             decision: "approved".into(),
             feedback: None,
             comments: None,
@@ -555,5 +999,202 @@ mod tests {
         assert!(store.read_job("91").unwrap().unwrap()["tasks"][0]
             .get("interactiveInvocation")
             .is_none());
+    }
+
+    #[test]
+    fn event_only_requires_explicit_invocation_before_any_persistence_and_legacy_bound_fallback_remains(
+    ) {
+        let (_dir, path) = setup();
+        let mut store = RelayAuthority::open_existing(&path).unwrap();
+        store
+            .commit_job("91", "2026-11-13T20:00:01.000Z", |previous| {
+                let mut job = previous.clone();
+                job["updatedAt"] = json!("2026-11-13T20:00:01.000Z");
+                job["tasks"][0]["state"] = json!("RUNNING");
+                job["tasks"][0]["executionId"] = json!("exec1");
+                Ok((job, vec![]))
+            })
+            .unwrap();
+        let event_only: ReviewDelivery = serde_json::from_value(json!({
+            "jobId":"91", "taskId":"101", "executionId":"exec1",
+            "revision":"a".repeat(64), "contentHash":"a".repeat(64),
+            "revisionId":"preview-1", "requestId":"request-1", "idempotencyKey":"delivery-1",
+            "decision":"approved", "feedback":"", "eventId":"missing-invocation",
+            "deliveredAt":"2026-11-13T20:00:02.000Z"
+        }))
+        .unwrap();
+        assert!(store.accept_review_decision(&event_only).is_err());
+        let mut empty_invocation = event_only.clone();
+        empty_invocation.invocation_id.clear();
+        empty_invocation.event_id = "empty-invocation".into();
+        assert!(store.accept_review_decision(&empty_invocation).is_err());
+        let mut blank_invocation = event_only.clone();
+        blank_invocation.invocation_id = "   ".into();
+        blank_invocation.event_id = "blank-invocation".into();
+        assert!(store.accept_review_decision(&blank_invocation).is_err());
+        let persisted: i64 = store.connection.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('host_invocation_event','host_invocation_decision')",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(
+            persisted, 0,
+            "invalid event-only identity must be rejected before ledger creation"
+        );
+
+        let legacy: ReviewDelivery = serde_json::from_value(json!({
+            "jobId":"91", "taskId":"101", "executionId":"exec1", "revision":"exec1",
+            "decision":"approved", "feedback":"legacy", "eventId":"legacy-bound",
+            "deliveredAt":"2026-11-13T20:00:03.000Z"
+        }))
+        .unwrap();
+        assert!(store.accept_review_decision(&legacy).is_err());
+        let tables_after_unbound_legacy: i64 = store.connection.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('host_invocation_event','host_invocation_decision')",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(
+            tables_after_unbound_legacy, 0,
+            "fallback is limited to currently bound legacy decisions"
+        );
+
+        store
+            .commit_job("91", "2026-11-13T20:00:02.000Z", |previous| {
+                let mut job = previous.clone();
+                job["updatedAt"] = json!("2026-11-13T20:00:02.000Z");
+                job["tasks"][0]["state"] = json!("AWAITING_DECISION");
+                job["tasks"][0]["executionId"] = Value::Null;
+                job["tasks"][0]["interactiveInvocation"] = json!({
+                    "invocationId":"exec1", "executionId":"exec1", "revision":"exec1",
+                    "status":"awaiting_decision", "boundAt":"2026-11-13T20:00:02.000Z"
+                });
+                Ok((job, vec![]))
+            })
+            .unwrap();
+
+        let mut blank_bound = legacy.clone();
+        blank_bound.invocation_id = "   ".into();
+        blank_bound.event_id = "blank-bound-invocation".into();
+        assert!(store.accept_review_decision(&blank_bound).is_err());
+
+        let accepted = store.accept_review_decision(&legacy).unwrap();
+        assert_eq!(accepted.outcome, "accepted");
+        assert_eq!(accepted.invocation.unwrap()["invocationId"], "exec1");
+    }
+
+    #[test]
+    fn event_only_review_requires_content_identity_deduplicates_after_restart_and_never_completes_task(
+    ) {
+        let (_dir, path) = setup();
+        let mut store = RelayAuthority::open_existing(&path).unwrap();
+        store
+            .commit_job("91", "2026-11-13T20:00:01.000Z", |previous| {
+                let mut job = previous.clone();
+                job["updatedAt"] = json!("2026-11-13T20:00:01.000Z");
+                job["tasks"][0]["state"] = json!("RUNNING");
+                job["tasks"][0]["executionId"] = json!("exec1");
+                Ok((job, vec![]))
+            })
+            .unwrap();
+        let delivery = ReviewDelivery {
+            job_id: "91".into(),
+            task_id: "101".into(),
+            execution_id: "exec1".into(),
+            invocation_id: "review-invocation-1".into(),
+            revision: "a".repeat(64),
+            content_hash: Some("a".repeat(64)),
+            revision_id: Some("preview-revision-1".into()),
+            preview_id: None,
+            request_id: Some("review-request-1".into()),
+            decision: "changes_requested".into(),
+            feedback: Some("revise".into()),
+            comments: None,
+            idempotency_key: Some("delivery-1".into()),
+            event_id: "event-only-1".into(),
+            delivered_at: "2026-11-13T20:00:02.000Z".into(),
+        };
+        assert_eq!(
+            review_fingerprint(&delivery).unwrap(),
+            "7be78ea266bcfd56c94acb0b9c389d11d01e0c8163221f20bc6ee4ef19af44e4",
+            "event-only fingerprint must match the Node JSON.stringify contract"
+        );
+        let accepted = store.accept_review_decision(&delivery).unwrap();
+        assert_eq!(accepted.outcome, "accepted");
+        let job = store.read_job("91").unwrap().unwrap();
+        assert_eq!(job["state"], "ACTIVE");
+        assert_eq!(job["tasks"][0]["state"], "RUNNING");
+        assert_eq!(job["tasks"][0]["executionId"], "exec1");
+        assert_eq!(
+            job["tasks"][0]["interactiveInvocation"]["status"],
+            "changes_requested"
+        );
+        assert_eq!(
+            job["tasks"][0]["interactiveInvocation"]["contentHash"],
+            "a".repeat(64)
+        );
+        assert!(
+            store
+                .resume_review_task("91", "101", "2026-11-13T20:00:03.000Z")
+                .is_err(),
+            "an event-only decision is consumed by the active execution, not requeued by receipt"
+        );
+        drop(store);
+
+        let mut restarted = RelayAuthority::open_existing(&path).unwrap();
+        assert_eq!(
+            restarted.accept_review_decision(&delivery).unwrap().outcome,
+            "duplicate"
+        );
+        let mut replay = delivery.clone();
+        replay.invocation_id = "different-invocation".into();
+        replay.event_id = "event-only-replayed-revision".into();
+        replay.idempotency_key = Some("delivery-2".into());
+        assert_eq!(
+            restarted.accept_review_decision(&replay).unwrap().outcome,
+            "stale",
+            "a new invocation cannot replay an already decided content revision"
+        );
+        let mut revised = delivery.clone();
+        revised.invocation_id = "review-invocation-2".into();
+        revised.revision = "b".repeat(64);
+        revised.content_hash = Some("b".repeat(64));
+        revised.revision_id = Some("preview-revision-2".into());
+        revised.request_id = Some("review-request-2".into());
+        revised.idempotency_key = Some("delivery-3".into());
+        revised.event_id = "event-only-2".into();
+        revised.decision = "approved".into();
+        revised.feedback = Some(String::new());
+        assert_eq!(
+            restarted.accept_review_decision(&revised).unwrap().outcome,
+            "accepted"
+        );
+        let revised_job = restarted.read_job("91").unwrap().unwrap();
+        assert_eq!(revised_job["tasks"][0]["state"], "RUNNING");
+        assert_eq!(revised_job["tasks"][0]["executionId"], "exec1");
+        assert_eq!(
+            revised_job["tasks"][0]["interactiveInvocation"]["status"],
+            "approved"
+        );
+        let mut stale_execution = revised.clone();
+        stale_execution.execution_id = "old-execution".into();
+        stale_execution.invocation_id = "old-review".into();
+        stale_execution.revision = "c".repeat(64);
+        stale_execution.content_hash = Some("c".repeat(64));
+        stale_execution.revision_id = Some("preview-revision-3".into());
+        stale_execution.request_id = Some("review-request-3".into());
+        stale_execution.idempotency_key = Some("delivery-4".into());
+        stale_execution.event_id = "stale-execution".into();
+        assert_eq!(
+            restarted
+                .accept_review_decision(&stale_execution)
+                .unwrap()
+                .outcome,
+            "stale"
+        );
+        let mut incomplete = delivery.clone();
+        incomplete.request_id = None;
+        assert!(restarted.accept_review_decision(&incomplete).is_err());
+        incomplete = delivery.clone();
+        incomplete.feedback = None;
+        assert!(restarted.accept_review_decision(&incomplete).is_err());
     }
 }

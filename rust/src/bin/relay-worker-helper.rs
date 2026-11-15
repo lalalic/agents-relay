@@ -1,7 +1,8 @@
 //! Small native worker owner. Parent death or stdin disconnect cancels the
 //! process group. The worker's stdout/stderr go directly to separate log files.
 //! Protocol is newline-delimited JSON over helper stdout and stdin.
-use agents_relay_rust::worker::{run_worker, WorkerSpec};
+use agents_relay_rust::store::RelayReader;
+use agents_relay_rust::worker::{run_worker_with_activity, WorkerSpec};
 use nix::unistd::getppid;
 use serde::Deserialize;
 use serde_json::json;
@@ -17,6 +18,10 @@ use std::time::Duration;
 #[serde(rename_all = "camelCase")]
 struct Config {
     parent_pid: u32,
+    db: PathBuf,
+    job_id: String,
+    task_id: String,
+    execution_id: String,
     executable: PathBuf,
     args: Vec<String>,
     cwd: PathBuf,
@@ -51,6 +56,7 @@ fn run() -> Result<(), String> {
         return Err("worker config too large".into());
     }
     let config: Config = serde_json::from_str(&first).map_err(|e| e.to_string())?;
+    let activity_reader = RelayReader::open(&config.db)?;
     let parent = getppid().as_raw();
     if config.parent_pid != u32::try_from(parent).map_err(|_| "invalid parent PID")? {
         return Err("parent process identity mismatch".into());
@@ -98,12 +104,23 @@ fn run() -> Result<(), String> {
         timeout: Duration::from_millis(config.timeout_ms),
         terminate_grace: Duration::from_millis(config.terminate_grace_ms),
     };
-    let result = run_worker(&spec, &cancelled, |pid| {
-        publish(json!({"type":"started","pid":pid}))?;
-        match ack_receiver.recv_timeout(Duration::from_secs(3)) {
-            Ok(message) if message == "ack" && !cancelled.load(Ordering::SeqCst) => Ok(()),
-            _ => Err("parent did not confirm durable launch identity".into()),
-        }
-    })?;
+    let result = run_worker_with_activity(
+        &spec,
+        &cancelled,
+        |pid| {
+            publish(json!({"type":"started","pid":pid}))?;
+            match ack_receiver.recv_timeout(Duration::from_secs(3)) {
+                Ok(message) if message == "ack" && !cancelled.load(Ordering::SeqCst) => Ok(()),
+                _ => Err("parent did not confirm durable launch identity".into()),
+            }
+        },
+        || {
+            activity_reader.worker_activity_at(
+                &config.job_id,
+                &config.task_id,
+                &config.execution_id,
+            )
+        },
+    )?;
     publish(json!({"type":"finished","result":result}))
 }

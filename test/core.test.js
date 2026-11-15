@@ -1307,19 +1307,33 @@ test('async ChatGPT runtime exit keeps the overall terminal timeout active', asy
 
 test('accepted current task progress extends inactivity timeout; duplicate, stale, and out-of-order progress do not', async () => {
   const t=task('progress-watchdog'); t.timeoutMs=120; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
-  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus}); const stop=await reconciler.watch('j');
+  const reconciler=managedReconciler(store,{owner:'test',leaseMs:30,adapters:[adapter],eventBus:bus}); const stop=await reconciler.watch('j');
   await reconciler.reconcile('j'); const source=await activeEventSource(store,t.id);
+  const claimedLease=(await store.load('j')).tasks[0].leaseExpiresAt;
+  await bus.publish(eventFor('j',t.id,null,'task.started','running','wrong generation','user',undefined,{id:'job/j/task/progress-watchdog/execution/old'}));
+  assert.equal((await store.load('j')).tasks[0].leaseExpiresAt,claimedLease);
   await bus.publish(eventFor('j',t.id,null,'task.started','running','started','user',undefined,source));
+  const startedTask=(await store.load('j')).tasks[0];
+  const startLease=startedTask.leaseExpiresAt;
+  assert.ok(Date.parse(startLease)>=Date.parse(startedTask.lastProgressAt)+t.timeoutMs);
+  assert.ok(Date.parse(startLease)>Date.parse(claimedLease));
   await new Promise(resolve=>setTimeout(resolve,70));
   const first=eventFor('j',t.id,null,'task.progress','running','milestone','user',undefined,source); await bus.publish(first);
-  assert.equal((await store.load('j')).tasks[0].lastProgressAt !== undefined,true);
+  const progressTask=(await store.load('j')).tasks[0];
+  assert.equal(progressTask.lastProgressAt !== undefined,true);
+  const progressLease=progressTask.leaseExpiresAt;
+  assert.ok(Date.parse(progressLease)>=Date.parse(progressTask.lastProgressAt)+t.timeoutMs);
   await new Promise(resolve=>setTimeout(resolve,70));
   assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
+  await bus.publish(eventFor('j',t.id,null,'task.started','running','duplicate start','user',undefined,source));
+  assert.equal((await store.load('j')).tasks[0].leaseExpiresAt,progressLease);
   const before=(await store.load('j')).tasks[0].lastProgressAt;
   await bus.publish(first);
   await bus.publish({...first,event_id:'older',timestamp:'2000-01-01T00:00:00.000Z'});
   await bus.publish({...eventFor('j',t.id,null,'task.progress','running','wrong generation','user',undefined,{id:'job/j/task/progress-watchdog/execution/old'}),timestamp:new Date().toISOString()});
-  assert.equal((await store.load('j')).tasks[0].lastProgressAt,before);
+  const afterRejected=(await store.load('j')).tasks[0];
+  assert.equal(afterRejected.lastProgressAt,before);
+  assert.equal(afterRejected.leaseExpiresAt,progressLease);
   await new Promise(resolve=>setTimeout(resolve,80));
   assert.equal((await store.load('j')).tasks[0].state,'FAILED');
   await stop();

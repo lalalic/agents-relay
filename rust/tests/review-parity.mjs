@@ -63,6 +63,27 @@ test('Rust Review ledger matches TypeScript fingerprint, decision, duplicate, co
   console.log('Review parity: TS fingerprint + Rust accepted + TS duplicate/stale + SQLite authority');
  }finally{store?.close();rmSync(dir,{recursive:true,force:true});}
 });
+test('event-only explicit invocation identity has matching Node and Rust fingerprint and is accepted',async()=>{
+ const {dir,db}=setup();let store;
+ try{
+  store=new SQLiteRelayStore(db);
+  const running=job('91',dir);running.tasks[0].state='RUNNING';running.tasks[0].executionId='ex1';
+  delete running.tasks[0].interactiveInvocation;
+  await store.saveJob(running);store.close();store=null;
+  const contentHash='c'.repeat(64);
+  const decision={...delivery('91','approved','','event-only-explicit'),invocationId:'review-invocation-1',
+   revision:contentHash,contentHash,revisionId:'preview-revision-1',previewId:'preview-1',
+   requestId:'review-request-1',idempotencyKey:'event-only-key'};
+  const fingerprint=interactiveDecisionFingerprint(decision);
+  assert.equal(rust('review-fingerprint',db,'91',decision).fingerprint,fingerprint,
+   'event-only fingerprints must preserve invocation identity in both implementations');
+  assert.equal(rust('review',db,'91',decision).outcome,'accepted');
+  store=new SQLiteRelayStore(db);
+  const snapshot=await store.loadJob('91');
+  assert.equal(snapshot.tasks[0].interactiveInvocation.invocationId,'review-invocation-1');
+  assert.equal(snapshot.tasks[0].state,'RUNNING','acceptance does not complete or requeue the Task');
+ }finally{store?.close();rmSync(dir,{recursive:true,force:true});}
+});
 test('Rust denies unbound Review, terminal Job Review, and leaves snapshots unmodified',async()=>{
  const {dir,db}=setup();let store;
  try{

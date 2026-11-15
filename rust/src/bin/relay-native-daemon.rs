@@ -57,8 +57,26 @@ fn run() -> Result<(), String> {
     } else {
         None
     };
+    let ingress_port = if args.contains(&"--nats-ingress-port".to_string()) {
+        let parsed = opt(&args, "--nats-ingress-port")?
+            .parse::<u16>()
+            .map_err(|e| e.to_string())?;
+        if parsed == 0 || !repeat {
+            return Err("--nats-ingress-port requires --loop and a nonzero port".into());
+        }
+        Some(parsed)
+    } else {
+        None
+    };
     let db = options.db.clone();
     let daemon = SingleNodeDaemon::acquire(options)?;
+    let ingress = ingress_port.map(|port| {
+        let path = db.clone();
+        let stopped = Arc::clone(&stopped);
+        thread::spawn(move || {
+            agents_relay_rust::native_ingress::run_nats_ingress(path, port, stopped)
+        })
+    });
     loop {
         if stopped.load(Ordering::SeqCst) {
             break;
@@ -84,6 +102,9 @@ fn run() -> Result<(), String> {
             }
             thread::sleep(Duration::from_millis(100.min(interval)));
         }
+    }
+    if let Some(ingress) = ingress {
+        let _ = ingress.join();
     }
     Ok(())
 }

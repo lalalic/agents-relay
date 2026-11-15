@@ -29,9 +29,65 @@ intentional while the Vlog production Job is pending human Review.
 - Rust dashboard GET /api/jobs lists at most 20 sanitized Job/task state
   summaries. It deliberately omits worker inputs, outputs and private media.
 
+The native read-only HTTP slice serves `GET /api/jobs` with case-insensitive
+title/ID search (`q`), repeated or comma-separated durable lifecycle filters
+(`status`/`statuses`), exact repository filters (`repo`/`repositories`), and
+`page`/`pageSize` pagination (page size is capped at 20). It returns the
+filtered Jobs, the unfiltered repository list, and normalized pagination
+metadata. `GET /api/jobs/{id}` returns one sanitized Job and Task summary.
+`GET /api/jobs/{id}/tasks` returns the ordered full Task array from that Job's
+authoritative snapshot, and `GET /api/jobs/{id}/tasks/{taskId}` returns one
+matching Task snapshot. These job-scoped reads match the Task records embedded
+in the Node Dashboard's `GET /api/job?id={id}` response. Missing Jobs or Tasks
+and malformed numeric path IDs return 404. All routes use the read-only SQLite
+reader; a successful HTTP response does not imply Task success or change
+lifecycle state.
+`GET /api/events?job=ID[&task=ID][&limit=N]` returns an array of matching events
+already stored in the isolated Rust authority's inbox/outbox. It returns the
+newest 60 by default, ordered by local recorded timestamp then event ID, and
+clamps a finite integer `limit` to 1–60. Valid
+unknown Job IDs and unknown Task filters return empty arrays, matching the Node
+history API. The route keeps newest-first ordering and ignores order/cursor
+query parameters just like the Node Dashboard wrapper; it does not expose
+cursor pagination. The production Node Dashboard reads the Events Bus history
+service (`src/dashboard-data.ts` -> `src/events-bus-runtime.ts`), whose global
+cursor is not present in the Rust SQLite inbox/outbox. It does not read the
+production Events Bus history, mutate
+lifecycle state, expose worker inputs/outputs, or provide write controls. This
+endpoint slice is not full Dashboard or production API parity.
+
+Build and start the native service with an explicitly selected, already
+initialized Rust live-namespace database:
+
+```sh
+cargo build --locked --manifest-path rust/Cargo.toml --bin relay-native-dashboard
+RELAY_RUST_LIVE_MODE=pilot-live rust/target/debug/relay-native-dashboard \
+  --db "$HOME/.local/state/agents-relay/rust-live/relay.sqlite" --port 8788
+```
+
+The entrypoint binds only to loopback and rejects paths outside the marked Rust
+namespace. Do not point it at the Node production database.
+
 This live namespace is a verified Rust scheduler in a running native service,
 but is NOT a full Node.js Relay production cutover. In particular, existing
 Node.js Jobs still need their own Reconciler and Review/JEL guarantees.
+
+## Read-only Job and Task CLI inspection
+
+The shadow CLI has a small inspection surface matching the Node CLI record
+shapes. Every command requires an explicit database path and Job ID; Task show
+also requires a Task ID:
+
+```sh
+agents-relay-rust job show --db /path/to/relay.sqlite --job-id 101
+agents-relay-rust task list --db /path/to/relay.sqlite --job-id 101
+agents-relay-rust task show --db /path/to/relay.sqlite --job-id 101 --task-id 42
+```
+
+These commands use `RelayReader` and return the Job, its Task array, or one
+Task as JSON. They do not discover a default store, mutate SQLite, run lifecycle
+actions, launch workers, or provide production CLI/API parity. The existing
+`store list/get` commands remain available.
 
 ## 2026-11-14 native Job intake, completion and outbox increment
 
@@ -44,6 +100,24 @@ restricted to marked temporary roots; production stores remain blocked.
 A Coordinator DAG may be created from a project-local Mermaid file and
 execution-bound input file. Graph decisions are made from the canonical
 workflow/job-lifecycle.mmd, not a second Rust-only state machine.
+
+The `relay-native-job task create` action adds a guarded ordinary Task to an
+existing Job in that same isolated SQLite authority. It accepts inline or
+root-local file input, task-pr/file output, priority, story size, parent and
+dependency metadata. The Task Lifecycle Graph selects its initial state from
+dependency facts; the Job Lifecycle Graph activates a DRAFT Job. IDs and the
+snapshot commit in one SQLite transaction. The command requires an explicit
+`--db` and `RELAY_RUST_EXPERIMENTAL_TEST_ONLY=isolated-test`; it rejects the
+Rust live namespace and does not schedule workers. This bounded mutation does
+not provide production CLI/API or service parity.
+
+Example:
+
+```sh
+relay-native-job task create --db /tmp/relay-rust-authority-demo/relay.sqlite \\
+  --job-id 101 --input-file /tmp/relay-rust-authority-demo/task.md \\
+  --output task-pr --story-size M --priority P1
+```
 
 The native daemon closes a Job only when all tasks succeeded, the
 Job explicitly disabled both Final Review and auto-merge, there are no active
@@ -58,6 +132,19 @@ before marking the outbox published. A disconnect or missing PONG leaves the
 record pending; a PONG is not a delivery guarantee to an individual observer.
 The daemon does not publish any events by default. The actual Neo Events
 Bus/Chat Gateway production service has not been cut over.
+
+For isolated native runtime work, `relay-native-daemon --loop ...
+--nats-ingress-port PORT` also subscribes to `relay.events.job.*.task.*` on
+loopback Core NATS. Both ingress and outbox can use deployment-provided
+`AGENTS_RELAY_NATS_TOKEN` or the paired `AGENTS_RELAY_NATS_USERNAME` and
+`AGENTS_RELAY_NATS_PASSWORD`; token and user/password modes cannot be mixed.
+Secrets are not accepted on argv or written to diagnostics. TLS-required
+servers fail closed because this pilot transport is plaintext-only. Ingress
+validates correlated worker lifecycle, interactive-wait, and Review-decision
+events against the current SQLite Job/Task/execution and the canonical Task
+Graph. Review decisions additionally require the durable invocation/content
+identity ledger. This bounded pilot ingress does not establish production
+Events Bus, trusted host Preview, or service parity.
 
 A real Codex calculator and a Vlog pilot using three original private MOV/VTT
 files were separately tested through native Rust Job creation and Daemon
@@ -87,14 +174,47 @@ passes immutable task input to Script as well as Model processes, distinguishes
 logical Coordinator state from physical Worker claims, and refuses DAG output
 paths outside its disposable root. An `approved` interactive Review can resume
 the **same Task** only with a matching durable host decision; a forged
-`approved` field also fails the Worker claim. `changes_requested` remains
-suspended: semantic revision, another real Preview, host notification and
-production event integration are **not** implemented by this native daemon.
+`approved` field also fails the Worker claim. An accepted `changes_requested`
+decision requeues that same Task as a Model revision. A pre-existing trusted
+Model route is preserved; a Script-origin Task has its Script route cleared
+and remains unclaimable until a trusted Model route is supplied. The revision
+retains the human feedback and instructions. A later accepted Approve restores
+the original execution configuration and Task input, then queues the same
+Task without treating the decision as completion. The isolated daemon does
+not create or deliver the host Preview itself; real host Preview, notification,
+mobile and production event integration remain unverified.
 
 The added `native-dag-daemon-e2e.mjs` and
 `native-review-resume-daemon-e2e.mjs` run real isolated Rust processes; their
 synthetic approval receipts are test fixtures, not Neo Mobile approvals. The
 production Node.js daemon remains the sole writer for actual Vlog Jobs.
+
+## Graph-selected downstream dependency revisions
+
+The isolated Rust dependency reconciler now reads `workflow/dependency-revision.mmd`
+through the shared Graph dispatcher. For a succeeded downstream Task with an
+explicit `revalidate` or `rerun` edge, it waits until every revised upstream
+Task settles, forms a stable evidence vector from the latest successful
+upstream Task ID and attempt, and creates one same-lineage child for that
+vector. The child keeps `parentTaskId` pointed at its original semantic owner;
+its `dependencies` separately include the owner and the selected upstream
+evidence Tasks. `rerun` is selected if any changed edge requests rerun;
+otherwise the Graph selects revalidation. Duplicate vectors are idempotent
+across daemon ticks and SQLite reopen.
+
+If upstream evidence changes while a revision child is still queued, the
+dependency Graph selects stale marking and the Task Lifecycle Graph cancels
+that child before creating any replacement. Native Script claims and terminal
+completion also reject a stale revision vector. This is isolated parity only:
+it does not prove full DAG, provider, scheduler, or production parity, which
+remains `FAIL` in `docs/rust-parity-matrix.json`.
+
+Focused checks (all stores isolated with `AGENTS_RELAY_STORE_DIR`):
+
+```sh
+AGENTS_RELAY_STORE_DIR=$(mktemp -d) cargo test --locked --manifest-path rust/Cargo.toml authority::dependencies::tests
+AGENTS_RELAY_STORE_DIR=$(mktemp -d) cargo test --locked --manifest-path rust/Cargo.toml stale_dependency_revision_cannot_commit_worker_completion
+```
 
 ## Architecture boundary
 
@@ -158,6 +278,15 @@ production Node.js daemon remains the sole writer for actual Vlog Jobs.
   fences; no Task success implies Job completion. The **production daemon
   and worker routing still belong to TypeScript**; the native adapter is not
   currently a supervised, crash-recovering production service.
+- The isolated daemon claims each ready Task through that same Graph-selected
+  transaction, then runs distinct claims concurrently up to `max_tasks`, with
+  one SQLite connection per supervised Worker. Dependency and stale-revision
+  guards stay in the claim action; the logical DAG Coordinator has no lease or
+  physical slot. This bounded pilot behavior is not production scheduler parity.
+  `rust/tests/native-daemon-e2e.mjs` exercises a mixed Script/Model batch,
+  configured capacity, a Model dependent released by a completed Script, and
+  restart dedupe; scheduler launch actions run through the shared Graph
+  dispatcher and reserve their ledger receipt in the same SQLite transaction.
 - **Single-node isolated daemon (`src/single_node.rs`,
   `src/native_daemon.rs`, `src/native_daemon/adapter.rs`,
   `src/bin/relay-native-daemon.rs`, `src/supervised_script.rs`)** executes

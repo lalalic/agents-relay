@@ -8,6 +8,16 @@ use std::collections::HashMap;
 pub trait ActionPorts {
     fn persist_transition(&mut self, source: &str, target: &str) -> Result<(), String>;
     fn execute_action(&mut self, action_id: &str, input: &GraphInput) -> Result<Value, String>;
+    /// Effects that need the exact Graph decision (for example an atomic
+    /// SQLite action-ledger claim) can consume it without re-evaluating policy.
+    fn execute_authorized_action(
+        &mut self,
+        action_id: &str,
+        input: &GraphInput,
+        _decision: &Decision,
+    ) -> Result<Value, String> {
+        self.execute_action(action_id, input)
+    }
     fn publish_event(&mut self, event_id: &str, payload: &Value) -> Result<(), String>;
 }
 
@@ -42,7 +52,7 @@ impl Graph {
         ports.persist_transition(source, target)?;
         let mut receipts = Vec::new();
         for action in actions {
-            let receipt = ports.execute_action(&action.id, &action.input)?;
+            let receipt = ports.execute_authorized_action(&action.id, &action.input, &decision)?;
             // ActionReceipt is a typed object in GraphDispatcher's contract.
             // Null/arrays/scalars must not silently become a successful
             // action merely because this step emits no follow-up events.

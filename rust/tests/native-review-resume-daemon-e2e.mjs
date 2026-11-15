@@ -52,15 +52,18 @@ test('Durably accepted approval resumes the SAME Task and executes one verified 
   assert.equal(tick(f).tasksClaimed,0,'same durable Task must not replay after restart');
  }finally{rmSync(f.root,{recursive:true,force:true});}
 });
-test('Changes requested never becomes an implicit approval or skips new Preview',async()=>{
+test('Changes requested queues the same Task for a Model revision and cannot complete without a new Preview',async()=>{
  const f=fixture();try{
   await seed(f);
   const d={jobId:'629',taskId:'1720',executionId:'exec-1',invocationId:'review-1',revision:'revision-1',decision:'changes_requested',feedback:'Need conflict',comments:null,idempotencyKey:'demo',eventId:'event-2',deliveredAt:'2026-11-13T20:00:01.000Z'};
   const accepted=spawnSync(fixtureTool,['review',f.db,'629',d.deliveredAt,JSON.stringify(d)],{encoding:'utf8',env});
   assert.equal(accepted.status,0,accepted.stderr);
-  const ticked=tick(f);assert.equal(ticked.tasksClaimed,0);assert.equal(ticked.reviewsResumed,0);
-  assert.match(ticked.blocked.join(' '),/semantic revision and a new Preview/);
-  assert.equal((await read(f)).tasks[0].state,'AWAITING_DECISION');
+  const ticked=tick(f);assert.equal(ticked.tasksClaimed,0);assert.equal(ticked.reviewsResumed,1);
+  assert.match(ticked.blocked.join(' '),/route|Worker Router|Model|executor kind/i);
+  const task=(await read(f)).tasks[0];
+  assert.equal(task.id,'1720');assert.equal(task.state,'QUEUED');assert.equal(task.adapter,'codex');
+  assert.equal(JSON.parse(task.input).reviewRevision.status,'changes_requested');
+  assert.equal(task.result,null,'Request Changes is not approval or task completion');
  }finally{rmSync(f.root,{recursive:true,force:true});}
 });
 

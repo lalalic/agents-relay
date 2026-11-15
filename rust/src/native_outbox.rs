@@ -69,6 +69,44 @@ fn line(reader: &mut BufReader<TcpStream>) -> Result<String, String> {
     }
     Ok(text)
 }
+
+/// Serialize deployment-owned Core NATS credentials for both native ingress
+/// and outbox clients. Credentials are not accepted on argv or logged.
+pub(crate) fn connect_payload(auth_required: bool) -> Result<String, String> {
+    let token = std::env::var("AGENTS_RELAY_NATS_TOKEN").ok();
+    let username = std::env::var("AGENTS_RELAY_NATS_USERNAME").ok();
+    let password = std::env::var("AGENTS_RELAY_NATS_PASSWORD").ok();
+    let mut connect = json!({
+        "verbose": false,
+        "pedantic": true,
+        "name": "relay-rust-native"
+    });
+    if token.is_some() && (username.is_some() || password.is_some()) {
+        return Err("configure either NATS token or username/password, not both".into());
+    }
+    if let Some(token) = token {
+        if token.is_empty() {
+            return Err("NATS token must be nonempty".into());
+        }
+        connect["auth_token"] = json!(token);
+    } else if username.is_some() || password.is_some() {
+        let username = username
+            .filter(|value| !value.is_empty())
+            .ok_or("NATS username must be nonempty")?;
+        let password = password
+            .filter(|value| !value.is_empty())
+            .ok_or("NATS password must be nonempty")?;
+        connect["user"] = json!(username);
+        connect["pass"] = json!(password);
+    } else if auth_required {
+        return Err(
+            "NATS server requires credentials; configure AGENTS_RELAY_NATS_TOKEN or username/password"
+                .into(),
+        );
+    }
+    serde_json::to_string(&connect)
+        .map_err(|error| format!("NATS CONNECT serialization failed: {error}"))
+}
 fn deliver(port: u16, subject: &str, bytes: &[u8]) -> Result<(), String> {
     if port == 0 {
         return Err("NATS port must be nonzero".into());
@@ -90,13 +128,12 @@ fn deliver(port: u16, subject: &str, bytes: &[u8]) -> Result<(), String> {
         .ok_or("NATS INFO handshake missing")?;
     let data: Value =
         serde_json::from_str(handshake).map_err(|e| format!("NATS INFO invalid: {e}"))?;
-    if data["auth_required"] == true || data["tls_required"] == true {
-        return Err("NATS requires a configured transport provider; no insecure fallback".into());
+    if data["tls_required"] == true {
+        return Err("NATS requires TLS; the native pilot transport is plaintext-only".into());
     }
-    tcp.write_all(
-        b"CONNECT {\"verbose\":false,\"pedantic\":true,\"name\":\"relay-rust-native\"}\r\n",
-    )
-    .map_err(|e| e.to_string())?;
+    let connect = connect_payload(data["auth_required"] == true)?;
+    tcp.write_all(format!("CONNECT {connect}\r\n").as_bytes())
+        .map_err(|e| e.to_string())?;
     tcp.write_all(format!("PUB {subject} {}\r\n", bytes.len()).as_bytes())
         .map_err(|e| e.to_string())?;
     tcp.write_all(bytes).map_err(|e| e.to_string())?;

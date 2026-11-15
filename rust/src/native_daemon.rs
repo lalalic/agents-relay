@@ -13,7 +13,7 @@ use crate::supervised_script::{after_time, current_time, execute_supervised_scri
 use adapter::{manifest, script_spec};
 use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat};
 use dag::{complete_native_dag, reconcile_native_dag};
-use review::resume_approved_native_reviews;
+pub(crate) use review::{apply_native_reviewer_result, resume_accepted_native_reviews};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
@@ -37,7 +37,9 @@ pub struct NativeTick {
     pub tasks_succeeded: usize,
     pub tasks_failed: usize,
     pub tasks_recovered: usize,
+    pub tasks_reopened: usize,
     pub reviews_resumed: usize,
+    pub review_results_applied: usize,
     pub jobs_completed: usize,
     pub blocked: Vec<String>,
 }
@@ -178,7 +180,11 @@ pub(crate) fn tick_with_stop(
         if job["state"] != "ACTIVE" || job.get("pause").is_some_and(|v| !v.is_null()) {
             continue;
         }
-        resume_approved_native_reviews(&mut authority, &id, &mut report)?;
+        resume_accepted_native_reviews(&mut authority, &id, &mut report)?;
+        let reopen_at = after_time(job["updatedAt"].as_str().ok_or("Job timestamp missing")?)?;
+        report.tasks_reopened += authority
+            .reconcile_troubleshooter_reopens(&id, &reopen_at)?
+            .len();
         reconcile_native_dag(&mut authority, &id, &root, &agents, &mut report)?;
         job = authority
             .read_job(&id)?
@@ -191,6 +197,7 @@ pub(crate) fn tick_with_stop(
         job = authority
             .read_job(&id)?
             .ok_or("Job lost after dependency reconciliation")?;
+        let mut launches = Vec::new();
         for task in job["tasks"].as_array().ok_or("Job Tasks invalid")? {
             let Some(task_id) = task["id"].as_str() else {
                 continue;
@@ -317,23 +324,57 @@ pub(crate) fn tick_with_stop(
                 }
             };
             report.tasks_claimed += 1;
-            match execute_supervised_script(
-                &mut authority,
-                &claim,
-                &spec,
-                &evidence,
-                &opt.helper,
-                Arc::clone(&stopped),
-            ) {
-                Ok(result) if result.verified => report.tasks_succeeded += 1,
-                Ok(_) => report.tasks_failed += 1,
-                Err(error) => report
-                    .blocked
-                    .push(format!("{id}/{task_id}: launch/receipt uncertain: {error}")),
-            }
-            job = authority.read_job(&id)?.ok_or("Job lost after Script")?;
+            launches.push((claim, spec, evidence));
         }
+        // Claims are committed one Task at a time through the Graph-authorized
+        // SQLite action ledger above. Run those independent leased executions
+        // concurrently, each with its own SQLite connection. max_tasks bounds
+        // this batch; the per-Task lease and generation remain the fence.
+        std::thread::scope(|scope| -> Result<(), String> {
+            let handles: Vec<_> = launches
+                .into_iter()
+                .map(|(claim, spec, evidence)| {
+                    let worker_stop = Arc::clone(&stopped);
+                    scope.spawn(move || {
+                        let task_id = claim.task_id.clone();
+                        let mut worker_authority = RelayAuthority::open_existing(&opt.db)
+                            .map_err(|error| (task_id.clone(), error))?;
+                        execute_supervised_script(
+                            &mut worker_authority,
+                            &claim,
+                            &spec,
+                            &evidence,
+                            &opt.helper,
+                            &opt.db,
+                            worker_stop,
+                        )
+                        .map(|result| (claim.task_id, result.verified))
+                        .map_err(|error| (task_id, error))
+                    })
+                })
+                .collect();
+            for handle in handles {
+                match handle.join() {
+                    Ok(Ok((_task_id, true))) => report.tasks_succeeded += 1,
+                    Ok(Ok((_task_id, false))) => report.tasks_failed += 1,
+                    Ok(Err((task_id, error))) => report
+                        .blocked
+                        .push(format!("{id}/{task_id}: launch/receipt uncertain: {error}")),
+                    Err(_) => report.blocked.push(format!(
+                        "{id}: worker thread panicked; claimed execution requires recovery"
+                    )),
+                }
+            }
+            Ok(())
+        })?;
         complete_native_dag(&mut authority, &id, &mut report)?;
+        match apply_native_reviewer_result(&mut authority, &id) {
+            Ok(true) => report.review_results_applied += 1,
+            Ok(false) => {}
+            Err(error) => report
+                .blocked
+                .push(format!("{id}: reviewer result not accepted: {error}")),
+        }
         if complete_no_review_job(&mut authority, &id)? {
             report.jobs_completed += 1;
         }

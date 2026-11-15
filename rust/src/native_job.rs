@@ -172,6 +172,185 @@ pub fn activate_job(db: &Path, job_id: &str) -> Result<Value, String> {
     })?;
     Ok(json!({"jobId":job_id,"activated":true,"state":transitioned.job["state"]}))
 }
+
+/// Cancel a dependency-gated Task before any Worker lease exists. This is a
+/// deliberately narrow native CLI slice: running execution cancellation still
+/// requires the production owned-process effect and remains unsupported here.
+pub fn cancel_queued_task(
+    authority: &mut RelayAuthority,
+    job_id: &str,
+    task_id: &str,
+    reason: &str,
+) -> Result<Value, String> {
+    if reason.trim().is_empty() || reason.len() > 2048 {
+        return Err("cancellation reason must be nonempty and at most 2048 bytes".into());
+    }
+    let snapshot = authority.read_job(job_id)?.ok_or("Unknown Job")?;
+    let at = after_time(
+        snapshot["updatedAt"]
+            .as_str()
+            .ok_or("Job timestamp missing")?,
+    )?;
+    let graph = Graph::parse(include_str!("../../workflow/task-lifecycle.mmd"))?;
+    let transitioned = authority.commit_job(job_id, &at, |current| {
+        if current["state"] != "ACTIVE"
+            || current.get("pause").is_some_and(|value| !value.is_null())
+        {
+            return Err("native Task cancellation requires an active, unpaused Job".into());
+        }
+        let mut next = current.clone();
+        let task = next["tasks"]
+            .as_array_mut()
+            .and_then(|tasks| tasks.iter_mut().find(|task| task["id"] == task_id))
+            .ok_or("Unknown Task")?;
+        if task["kind"] == "planner"
+            || task.get("agentGraph").is_some()
+            || task.get("dagNode").is_some()
+        {
+            return Err("native Task cancellation does not support Planner or DAG Tasks".into());
+        }
+        if !matches!(task["state"].as_str(), Some("DRAFT" | "QUEUED"))
+            || task
+                .get("executionId")
+                .is_some_and(|value| !value.is_null())
+            || task.get("leaseOwner").is_some_and(|value| !value.is_null())
+            || task
+                .get("leaseExpiresAt")
+                .is_some_and(|value| !value.is_null())
+        {
+            return Err(
+                "native Task cancellation requires an unleased DRAFT or QUEUED Task".into(),
+            );
+        }
+        let state = task["state"].as_str().ok_or("Task state missing")?;
+        let decision = graph.decide(
+            state,
+            GraphInput {
+                transport: "event".into(),
+                id: "cancel".into(),
+                payload: json!({}),
+            },
+            &HashMap::new(),
+        )?;
+        let Decision::Accepted { target, .. } = decision else {
+            return Err("canonical Task Graph denied cancellation".into());
+        };
+        if target != "CANCELLED" {
+            return Err("canonical Task Graph selected an unexpected cancellation state".into());
+        }
+        task["state"] = json!(target);
+        task["error"] = json!(reason);
+        task["leaseOwner"] = Value::Null;
+        task["leaseExpiresAt"] = Value::Null;
+        task["executionId"] = Value::Null;
+        task["updatedAt"] = json!(at);
+        next["updatedAt"] = json!(at);
+        Ok((next, vec![]))
+    })?;
+    let task = transitioned.job["tasks"]
+        .as_array()
+        .and_then(|tasks| tasks.iter().find(|task| task["id"] == task_id))
+        .ok_or("Cancelled Task missing from committed Job")?;
+    Ok(json!({"jobId":job_id,"taskId":task_id,"task":task}))
+}
+
+/// Requeue a failed, inactive ordinary Task through the canonical lifecycle
+/// Graph. Recovery-owned, Planner, DAG, and currently leased work is excluded.
+pub fn retry_failed_task(
+    authority: &mut RelayAuthority,
+    job_id: &str,
+    task_id: &str,
+) -> Result<Value, String> {
+    let snapshot = authority.read_job(job_id)?.ok_or("Unknown Job")?;
+    let at = after_time(
+        snapshot["updatedAt"]
+            .as_str()
+            .ok_or("Job timestamp missing")?,
+    )?;
+    let graph = Graph::parse(include_str!("../../workflow/task-lifecycle.mmd"))?;
+    let transitioned = authority.commit_job(job_id, &at, |current| {
+        if current["state"] != "ACTIVE"
+            || current.get("pause").is_some_and(|value| !value.is_null())
+        {
+            return Err("native Task retry requires an active, unpaused Job".into());
+        }
+        let mut next = current.clone();
+        let task = next["tasks"]
+            .as_array_mut()
+            .and_then(|tasks| tasks.iter_mut().find(|task| task["id"] == task_id))
+            .ok_or("Unknown Task")?;
+        if task["kind"] == "planner"
+            || task.get("agentGraph").is_some()
+            || task.get("dagNode").is_some()
+        {
+            return Err("native Task retry does not support Planner or DAG Tasks".into());
+        }
+        if task["state"] != "FAILED"
+            || task.get("resolution").is_some_and(|value| !value.is_null())
+            || task.get("escalation").is_some_and(|value| !value.is_null())
+            || task
+                .get("executionId")
+                .is_some_and(|value| !value.is_null())
+            || task.get("leaseOwner").is_some_and(|value| !value.is_null())
+            || task
+                .get("leaseExpiresAt")
+                .is_some_and(|value| !value.is_null())
+        {
+            return Err(
+                "native Task retry requires an inactive FAILED Task without recovery ownership"
+                    .into(),
+            );
+        }
+        let decision = graph.decide(
+            "FAILED",
+            GraphInput {
+                transport: "event".into(),
+                id: "retry".into(),
+                payload: json!({}),
+            },
+            &HashMap::new(),
+        )?;
+        let Decision::Accepted {
+            target, actions, ..
+        } = decision
+        else {
+            return Err("canonical Task Graph denied retry".into());
+        };
+        if target != "QUEUED" {
+            return Err("canonical Task Graph selected an unexpected retry state".into());
+        }
+        task["state"] = json!(target);
+        task["error"] = Value::Null;
+        task.as_object_mut()
+            .ok_or("Task snapshot must be an object")?
+            .shift_remove("failureReason");
+        let attempt = task["attempt"].as_i64().ok_or("Task attempt missing")?;
+        let max_attempts = task["maxAttempts"]
+            .as_i64()
+            .ok_or("Task maxAttempts missing")?;
+        let used_or_budgeted = max_attempts.max(attempt);
+        task["maxAttempts"] = json!(3.max((used_or_budgeted / 3 + 1) * 3));
+        task.as_object_mut()
+            .ok_or("Task snapshot must be an object")?
+            .remove("routing");
+        task.as_object_mut()
+            .ok_or("Task snapshot must be an object")?
+            .remove("workerSelection");
+        task["leaseOwner"] = Value::Null;
+        task["leaseExpiresAt"] = Value::Null;
+        task["executionId"] = Value::Null;
+        task["updatedAt"] = json!(at);
+        super::lifecycle::apply_pure_task_actions(task, &actions)?;
+        next["updatedAt"] = json!(at);
+        Ok((next, vec![]))
+    })?;
+    let task = transitioned.job["tasks"]
+        .as_array()
+        .and_then(|tasks| tasks.iter().find(|task| task["id"] == task_id))
+        .ok_or("Retried Task missing from committed Job")?;
+    Ok(json!({"jobId":job_id,"taskId":task_id,"task":task}))
+}
+
 fn no_review_completion_ready(job: &Value) -> bool {
     // These are deliberately conservative *facts*. JOB_GRAPH decides the
     // transition. Never infer approval from a worker's exit status.

@@ -26,6 +26,17 @@ export function inactivityDeadline(task: Task, executionId: string, postExitGrac
   return Number.isFinite(exitAt) ? Math.min(timeoutAt, exitAt + postExitGraceMs) : timeoutAt;
 }
 
+/** Keep the durable lease alive only from activity already accepted by the lifecycle path. */
+export function renewExecutionLease(task: Task, activityAt: string): void {
+  const activityMs = Date.parse(activityAt);
+  if (!Number.isFinite(activityMs)) return;
+  const currentLeaseMs = Date.parse(task.leaseExpiresAt ?? '');
+  const renewedLeaseMs = activityMs + Math.max(1, task.timeoutMs);
+  if (!Number.isFinite(currentLeaseMs) || currentLeaseMs < renewedLeaseMs) {
+    task.leaseExpiresAt = new Date(renewedLeaseMs).toISOString();
+  }
+}
+
 export function armInactivityWatchdog(
   task: Task, executionId: string, timers: Map<string, NodeJS.Timeout>, postExitGraceMs: number, expire: () => void,
 ): void {
@@ -52,6 +63,7 @@ export async function acceptTaskProgress(
       task.lastProgressAt = new Date(receivedAt).toISOString();
       task.lastProgressEventAt = event.timestamp;
       task.updatedAt = task.lastProgressAt;
+      renewExecutionLease(task, task.lastProgressAt);
     },
   });
   return transition?.decision.accepted ? transition.task : null;

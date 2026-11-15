@@ -10,7 +10,7 @@ use crate::worker::{WorkerResult, WorkerSpec};
 use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat, Utc};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,15 +31,24 @@ pub fn after_time(previous: &str) -> Result<String, String> {
     );
     Ok(next.to_rfc3339_opts(SecondsFormat::Millis, true))
 }
+const MAX_HELPER_MESSAGE_BYTES: u64 = 1_048_576;
+
 fn message<R: BufRead>(reader: &mut R) -> Result<Value, String> {
-    let mut line = String::new();
+    let mut line = Vec::new();
+    // Bound the read itself: checking read_line's byte count afterwards still
+    // allows an untrusted or broken helper to allocate an arbitrarily large
+    // String before we reject its message.
     let bytes = reader
-        .read_line(&mut line)
+        .take(MAX_HELPER_MESSAGE_BYTES + 1)
+        .read_until(b'\n', &mut line)
         .map_err(|e| format!("helper protocol read failed: {e}"))?;
-    if bytes == 0 || bytes > 1_048_576 {
-        return Err("helper protocol closed or oversized".into());
+    if bytes == 0 {
+        return Err("helper protocol closed".into());
     }
-    serde_json::from_str(&line).map_err(|e| format!("invalid worker-helper message: {e}"))
+    if bytes as u64 > MAX_HELPER_MESSAGE_BYTES {
+        return Err("helper protocol message exceeds 1 MiB".into());
+    }
+    serde_json::from_slice(&line).map_err(|e| format!("invalid worker-helper message: {e}"))
 }
 
 pub fn execute_supervised_script(
@@ -48,6 +57,7 @@ pub fn execute_supervised_script(
     spec: &WorkerSpec,
     evidence: &Path,
     helper: &Path,
+    db: &Path,
     stopped: Arc<AtomicBool>,
 ) -> Result<NativeScriptResult, String> {
     if !helper.is_absolute() || !helper.is_file() {
@@ -85,7 +95,9 @@ pub fn execute_supervised_script(
     let output = child.stdout.take().ok_or("missing helper stdout")?;
     let mut reader = BufReader::new(output);
     let spec_config = json!({
-        "parentPid":std::process::id(),"executable":spec.executable,"args":spec.args,
+        "parentPid":std::process::id(),"db":db,"jobId":claim.job_id,
+        "taskId":claim.task_id,"executionId":claim.execution_id,
+        "executable":spec.executable,"args":spec.args,
         "cwd":spec.cwd,"env":spec.env,"stdout":spec.stdout,"stderr":spec.stderr,
         "timeoutMs":u64::try_from(spec.timeout.as_millis()).map_err(|_|"Worker timeout overflow")?,
         "terminateGraceMs":u64::try_from(spec.terminate_grace.as_millis()).map_err(|_|"Worker grace overflow")?
@@ -104,28 +116,60 @@ pub fn execute_supervised_script(
             .as_u64()
             .and_then(|v| u32::try_from(v).ok())
             .ok_or("worker-helper started event lacks PID")?;
-        let started_at = after_time(&at)?;
+        let mut started_at = after_time(&at)?;
         let record = exact_process(pid, claim, &started_at)?;
         authority.record_process(&record)?;
         let graph = Graph::parse(include_str!("../../workflow/task-lifecycle.mmd"))?;
         let lifecycle = TaskLifecycle::new(&graph);
-        lifecycle.apply(
-            authority,
-            TaskTransition {
-                job_id: &claim.job_id,
-                task_id: &claim.task_id,
-                input: task_input(
-                    &claim.task_id,
-                    &claim.execution_id,
-                    &claim.owner,
-                    claim.attempt,
-                    "task.started",
-                ),
-                guard_facts: &HashMap::new(),
-                at: &started_at,
-                events: vec![],
-            },
-        )?;
+        let mut timestamp_retries = 0;
+        loop {
+            match lifecycle.apply(
+                authority,
+                TaskTransition {
+                    job_id: &claim.job_id,
+                    task_id: &claim.task_id,
+                    input: task_input(
+                        &claim.job_id,
+                        &claim.task_id,
+                        &claim.execution_id,
+                        &claim.owner,
+                        claim.attempt,
+                        "task.started",
+                    ),
+                    guard_facts: &HashMap::new(),
+                    at: &started_at,
+                    events: vec![],
+                },
+            ) {
+                Ok(_) => break,
+                Err(error) if error.contains("non-monotonic Job updatedAt") => {
+                    // A sibling may commit while this process is starting.
+                    // Keep this exact claim and Graph input; recompute only
+                    // the mechanics timestamp after the latest Job write.
+                    timestamp_retries += 1;
+                    if timestamp_retries > 64 {
+                        return Err(
+                            "Task start timestamp kept losing concurrent Job ordering".into()
+                        );
+                    }
+                    let latest = authority
+                        .read_job(&claim.job_id)?
+                        .ok_or("Worker Job missing while ordering Task start")?;
+                    let updated_at = latest["updatedAt"]
+                        .as_str()
+                        .ok_or("Worker Job timestamp missing while ordering Task start")?;
+                    started_at = after_time(updated_at)?;
+                    if DateTime::parse_from_rfc3339(&started_at)
+                        .map_err(|_| "invalid Task start timestamp")?
+                        >= DateTime::parse_from_rfc3339(&claim.lease_expires_at)
+                            .map_err(|_| "invalid Worker lease expiry")?
+                    {
+                        return Err("Task start timestamp exceeded the current Worker lease".into());
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        }
         {
             let mut writer = input.lock().map_err(|_| "helper input mutex poisoned")?;
             writeln!(writer, "ack").map_err(|e| e.to_string())?;
@@ -166,5 +210,40 @@ pub fn execute_supervised_script(
         (Ok(_), Ok(status)) => Err(format!("worker-helper exited after receipt with {status}")),
         (Err(error), _) => Err(error),
         (_, Err(error)) => Err(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{message, MAX_HELPER_MESSAGE_BYTES};
+    use std::io::Cursor;
+
+    #[test]
+    fn helper_message_parser_accepts_valid_ndjson_and_rejects_invalid_input() {
+        let mut valid = Cursor::new(b"{\"type\":\"started\"}\n".to_vec());
+        assert_eq!(message(&mut valid).unwrap()["type"], "started");
+
+        let mut malformed = Cursor::new(b"{not-json}\n".to_vec());
+        assert!(message(&mut malformed)
+            .unwrap_err()
+            .starts_with("invalid worker-helper message:"));
+
+        let mut closed = Cursor::new(Vec::<u8>::new());
+        assert_eq!(message(&mut closed).unwrap_err(), "helper protocol closed");
+    }
+
+    #[test]
+    fn oversized_helper_line_is_rejected_at_the_one_mib_boundary() {
+        let oversized = vec![b'x'; MAX_HELPER_MESSAGE_BYTES as usize + 4];
+        let mut reader = Cursor::new(oversized);
+        assert_eq!(
+            message(&mut reader).unwrap_err(),
+            "helper protocol message exceeds 1 MiB"
+        );
+        assert_eq!(
+            reader.position(),
+            MAX_HELPER_MESSAGE_BYTES + 1,
+            "parser must stop reading immediately after the bounded overflow byte"
+        );
     }
 }

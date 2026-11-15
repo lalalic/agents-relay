@@ -1,0 +1,236 @@
+{
+  "schemaVersion": 1,
+  "baseline": "b92c7ab82d5c60d2146b2afae5d05f913f42c1c1",
+  "scope": "Node production implementation compared with the Rust source in this repository; this is not a production cutover certification.",
+  "statuses": ["PASS","FAIL","NOT_RUN"],
+  "capabilities": [
+    {
+      "capability": "CLI and public API",
+      "node": {"behavior":"Production CLI and HTTP Dashboard/API expose the operational Job, Task, review, and control surfaces.","sources":["src/cli.ts","src/dashboard.ts","src/dashboard-actions.ts"]},
+      "rust": {"behavior":"The shadow CLI supports read-only Job list/show and Task list/show/events through RelayReader using an explicitly selected SQLite file. Job list mirrors the Node CLI's full inventory and optional repository filter, with newest-first stable ordering; Task events filters, orders, and limits existing workflow inbox/outbox payloads in SQLite, normalizes the response, and uses the local Task-scoped ordinal as ascending nextCursor. Separately guarded isolated-test CLI operations support Job/Coordinator and ordinary Task creation, partial Job metadata updates limited to title and priority, plus Graph-selected cancel of unleased work and retry of inactive failures with Node-compatible retry-budget extension and route reset. These operations use the explicitly selected Rust SQLite file; full production API and service integration remain absent.","sources":["rust/src/main.rs","rust/src/store.rs","rust/tests/inspection-cli-e2e.mjs","rust/src/bin/relay-native-job.rs","rust/src/authority/native_task.rs","rust/src/native_job.rs","rust/tests/native-task-create-e2e.mjs","rust/tests/native-job-update-e2e.mjs","src/cli-prompt.ts","src/cli-help.ts","src/cli-support.ts","src/dashboard-data.ts","src/events-bus-runtime.ts","rust/README.md"]},
+      "status": "FAIL",
+      "evidence": [
+        {"kind":"deterministic-test","detail":"rust/tests/inspection-cli-e2e.mjs covers read-only Job list empty/populated output, repository filtering, newest-first order with stable ties, process-reopen stability, invalid/missing/duplicate arguments, missing and malformed database behavior, and byte-for-byte unchanged SQLite databases/sidecars after accepted and rejected reads. It also covers Job show, Task list/show/events JSON, Task-scoped filtering, ascending/descending ordering, multi-page cursor continuation without loss/duplication, empty history, invalid limits/order/cursors, missing Job/Task, and process-reopen reads. Every subprocess uses an isolated AGENTS_RELAY_STORE_DIR and an explicit test DB."},
+        {"kind":"deterministic-test","detail":"rust/tests/native-task-create-e2e.mjs covers valid SQLite Task creation/read-back, Graph-selected initial state, invalid-request atomicity and ID allocation, process-restart durability, and selected Task-shape parity against the Node CLI. The command is isolated-test only; broader production CLI/API and service parity remain absent."},
+        {"kind":"deterministic-test","detail":"PASS: isolated `node --test rust/tests/native-task-create-e2e.mjs` after building the relay-native-job binary (8 passed). Includes unleased cancel and inactive retry Graph transitions, rejection of leased/recovery-owned or duplicate operations, retry budget extension and stale route/worker-selection clearing, SQLite readback, and no false Job completion. These commands remain pilot/test-only."},
+        {"kind":"deterministic-test","detail":"PASS: `AGENTS_RELAY_STORE_DIR=$(mktemp -d) cargo build --locked --manifest-path rust/Cargo.toml --bin relay-native-job` and isolated `node --test rust/tests/native-job-update-e2e.mjs` (1 passed). Covers title-only and priority-only updates, preservation of immutable identity and unspecified fields, invalid priority/title, incomplete and duplicate requests, byte-for-byte unchanged SQLite file on rejection, and values persisted after closing and reopening SQLite. The command accepts only an explicit isolated Rust DB and remains pilot/test-only."},
+        {"kind":"source","detail":"rust/src/main.rs remains a read-only adapter; rust/src/store.rs opens SQLite in read-only mode and reads existing snapshots/inbox/outbox only. rust/src/bin/relay-native-job.rs provides the separately guarded intake and title/priority update commands using the shared transactional authority. Native local history does not establish full Events Bus history or production API/service integration; overall CLI/API capability remains FAIL."}
+      ],
+      "nextAction": "Implement a production-compatible native CLI/API behind a separately authorized cutover plan."
+    },
+    {
+      "capability": "Daemon and service ownership",
+      "node": {"behavior":"Production daemon owns the configured canonical Relay store and serves the full operational runtime.","sources":["src/relayd.ts","src/relayd-main.ts"]},
+      "rust": {"behavior":"Native daemon requires the explicitly marked Rust pilot namespace or a disposable isolated test store and refuses the production store.","sources":["rust/src/native_daemon.rs","rust/README.md"]},
+      "status": "FAIL",
+      "evidence": [
+        {"kind":"source","detail":"isolated_store_root/live_store_root enforce a separate marked database namespace."}
+      ],
+      "nextAction": "Keep Node production active; design and verify single-writer handoff only after all owner gates."
+    },
+    {
+      "capability": "Scheduler and reconciliation",
+      "node": {"behavior":"Production reconciler schedules ordinary Tasks, plans, recovery, reviews, and Job gates from durable state.","sources":["src/reconciler.ts","src/reconciler-runtime.ts","src/reconcile-coordinator.ts"]},
+      "rust": {"behavior":"Native pilot reconciles selected Script/Model work, DAG nodes, dependencies, and a limited recovery path.","sources":["rust/src/native_daemon.rs","rust/src/authority/scheduler.rs","rust/src/authority/dependencies.rs"]},
+      "status": "FAIL",
+      "evidence": [
+        {"kind":"source","detail":"NativeTick and daemon loop implement only staged native paths; this does not cover all production reconciler branches."}
+      ],
+      "nextAction": "Port remaining Graph-selected reconciliation effects and deterministic recovery cases."
+    },
+    {
+      "capability": "Canonical Graph parsing and decisions",
+      "node": {"behavior":"Workflow decisions are made by canonical Mermaid workflow graphs through the shared dispatcher.","sources":["src/workflow/dispatcher.ts","src/workflow/runtime.ts","workflow/task-lifecycle.mmd","workflow/job-lifecycle.mmd"]},
+      "rust": {"behavior":"Rust parses and evaluates canonical Mermaid graphs; parity fixtures exercise shared branch decisions.","sources":["rust/src/graph.rs","rust/tests/parity.mjs","rust/tests/topology-parity.mjs"]},
+      "status": "PASS",
+      "evidence": [
+        {"kind":"deterministic-test","detail":"Rust graph parity and topology suites compare canonical graph decisions and bindings."}
+      ],
+      "nextAction": "Extend differential fixtures as additional production Graph effects are ported."
+    },
+    {
+      "capability": "DAG and dependency execution",
+      "node": {"behavior":"The shared reconciler materializes ready descendants and owns durable Task dependency semantics.","sources":["src/dag-task-runtime.ts","src/dependency-validity.ts","src/reconciler.ts"]},
+      "rust": {"behavior":"The isolated Rust daemon materializes Graph-selected revalidate/rerun Tasks from settled explicit dependency evidence vectors in SQLite; it preserves parentTaskId separately, fences stale evidence at claim/completion, and dispatches distinct ready Script/Codex Model Tasks concurrently up to max_tasks using per-Task leases and independent SQLite worker connections. The shared Graph dispatcher selects effect.launchTask and its transaction-bound effect reserves the Action Ledger idempotently. Concurrent terminal writes retry only a stale monotonic timestamp while replaying the same Graph transition and idempotent event. Coordinator Tasks remain lease-free. Full DAG/scheduler/executor parity remains incomplete.","sources":["rust/src/agent_graph.rs","rust/src/authority/coordinator.rs","rust/src/authority/dependencies.rs","rust/src/authority/scheduler.rs","rust/src/dispatch.rs","rust/src/lifecycle.rs","rust/src/native_script.rs","workflow/dependency-revision.mmd","workflow/task-lifecycle.mmd","rust/src/native_daemon.rs","rust/tests/native-daemon-e2e.mjs"]},
+      "status": "FAIL",
+      "evidence": [
+        {"kind":"deterministic-test","detail":"PASS: `AGENTS_RELAY_STORE_DIR=$(mktemp -d) cargo test --locked --manifest-path rust/Cargo.toml authority::dependencies::tests` (4 passed). Covers mixed revalidate/rerun policy selection, settled fan-in, parentTaskId vs dependency edges, current evidence vectors, no false Job completion, pending/failed upstream rejection, stale queued-vector Graph cancellation and replacement, and dedupe after SQLite reopen."},
+        {"kind":"deterministic-test","detail":"PASS: `AGENTS_RELAY_STORE_DIR=$(mktemp -d) cargo test --locked --manifest-path rust/Cargo.toml stale_dependency_revision_cannot_commit_worker_completion` (1 passed). A valid claimed worker becomes stale after a newer upstream generation is committed; the correlated completion is rejected atomically, leaving the revision Task RUNNING with no result."},
+        {"kind":"deterministic-test","detail":"PASS: `AGENTS_RELAY_STORE_DIR=$(mktemp -d) cargo test --locked --manifest-path rust/Cargo.toml --lib authority::scheduler::` covers independent sibling claims, unique execution identities, stale duplicate Script/Codex claim rejection, missing Model route rejection and Action Ledger idempotency."},
+        {"kind":"deterministic-test","detail":"PASS: isolated `node --test rust/tests/native-daemon-e2e.mjs` includes 'mixed Script and Model executors dispatch concurrently, fence dependencies, and dedupe after restart': Script and fixture Model execute concurrently under max_tasks=2, the dependent Model remains DRAFT until its Script prerequisite succeeds, one completed sibling does not complete the Job while another is RUNNING, the next tick claims the newly ready dependent, and restart does not duplicate terminal launches."},
+        {"kind":"deterministic-test","detail":"PASS: isolated `node --test rust/tests/native-daemon-e2e.mjs` also verifies ordinary independent Script siblings, one-slot configured capacity, dependency waves, terminal restart dedupe and no false Job completion. Same-millisecond sibling completions retry only the mechanics timestamp and both correlated Graph transitions commit. The stale dependency-revision completion unit remains a negative fence."}
+      ],
+      "nextAction": "Complete remaining retries, recovery, and production-ingress parity; retain FAIL until the complete declared capability is independently proven."
+    },
+    {
+      "capability": "Worker routing and providers",
+      "node": {"behavior":"Production Router and worker adapters select configured Codex, ChatGPT, Z.ai, and script providers with execution context.","sources":["src/execution-routing.ts","src/worker-routing.ts","src/reconciler.ts"]},
+      "rust": {"behavior":"Native Script and configured Codex Model execution consume the durable Task decision. The Codex Worker checks provider/model/profile/reasoning against maintained Node Codex capabilities, then launches the configured CLI with the selected model/profile/reasoning. Production Router policy and maintained ChatGPT/Z.ai adapters remain absent.","sources":["rust/src/native_daemon/adapter.rs","rust/src/native_daemon.rs","rust/src/native_context.rs","rust/scripts/codex-model-worker.mjs","rust/tests/native-daemon-e2e.mjs"]},
+      "status": "FAIL",
+      "evidence": [
+        {"kind":"source","detail":"Manifest parsing selects caller-supplied executables; production provider adapters and routing policy are absent."},
+        {"kind":"deterministic-test","detail":"Rust `native_daemon::adapter::script_spec` verifies any trusted manifest route and Worker selection against the immutable durable Task fields before Worker launch; the mixed Script/Model daemon fixture rejects a mismatched route without claiming or changing the queued Task."},
+        {"kind":"deterministic-test","detail":"The mixed Script/Codex Model daemon fixture verifies the pinned provider/model/Worker decision reaches the correlated execution request and completion evidence; this is a local fixture, not provider live E2E."},
+        {"kind":"deterministic-test","detail":"Configured Codex adapter uses `discoverModelCandidates` from the matching maintained Relay runtime, rejects unsupported durable routes, applies model/profile/reasoning arguments, and accepts only the exact correlated terminal receipt."},
+        {"kind":"deterministic-test","detail":"Model receipts with stale execution ID, lease owner, or attempt in otherwise successful evidence produce one correlated task.failed, persist no result, produce no task.completed, and are not automatically retried after restart."},
+        {"kind":"deterministic-test","detail":"Differential native/Node context assertions in `rust/tests/native-daemon-e2e.mjs` compare selected Agent Markdown, suggested Skill references, and instruction path/source order using one isolated layered project fixture."},
+        {"kind":"deterministic-test","detail":"Real local Codex CLI pilot succeeded with `codex exec --ephemeral --sandbox read-only --skip-git-repo-check`; it returned the expected marker using the configured OpenAI provider. This confirms local CLI availability only; it does not certify native production provider routing."}
+      ],
+      "nextAction": "Port provider adapters and route decisions through configured capability sources."
+    },
+    {
+      "capability": "Project root and execution context resolution",
+      "node": {"behavior":"Shared resolver discovers project instructions, skills, visible agents, and runtime capabilities using documented precedence.","sources":["src/execution-context.ts","src/agent-content-resolver.ts","src/agent-prompt-builder.ts"]},
+      "rust": {"behavior":"Native Worker requests carry bounded references resolved for the selected Agent. Configured Codex Model Workers build a minimal execution-bound Job snapshot and call the version-matched read-only CLI prompt command, which invokes the shared `buildRelayWorkPrompt` Action; the returned bytes go unchanged to Codex. Script context resolution still has partial parity with the shared resolver.","sources":["rust/src/native_daemon/adapter.rs","rust/src/native_daemon/dag.rs","rust/src/native_context.rs","rust/scripts/codex-model-worker.mjs","rust/tests/native-daemon-e2e.mjs"]},
+      "status": "FAIL",
+      "evidence": [
+        {"kind":"source","detail":"The native Script context resolver still does not discover every Node resolver source layer. Configured Codex Model Workers use the shared Action through the version-matched CLI, but production provider and Script context integration remains incomplete."},
+        {"kind":"deterministic-test","detail":"Rust `native_context::tests` covers project-over-shared/global precedence, selected Skill filtering, and refusing to walk parent context outside the configured workspace."},
+        {"kind":"deterministic-test","detail":"Isolated mixed Script/Model daemon E2E verifies the selected Agent, its Skill, and project instruction references are present in the Model execution request and persisted correlated result."},
+        {"kind":"deterministic-test","detail":"Differential native/Node context assertions cover canonical nested `projectPath`, `gitRoot`, selected Agent, only the Agent-suggested Skill, and matching instruction paths/sources."},
+        {"kind":"deterministic-test","detail":"Configured native Codex fixture invokes the matching CLI prompt command against its private per-execution snapshot and verifies byte-for-byte equality between shared Action output and Codex stdin, including exact execution identity and project instruction references."},
+        {"kind":"deterministic-test","detail":"Negative fixture rejects `projectPath` traversal before a lease is claimed; mismatched configured Model route likewise leaves the Task QUEUED and unleased."}
+      ],
+      "nextAction": "Integrate the shared execution-context contract and immutable prompt inputs."
+    },
+    {
+      "capability": "Leases and owned process lifecycle",
+      "node": {"behavior":"All disposable subprocesses use shared process-group ownership for cancellation, timeout, retries, and parent death.","sources":["src/owned-process.ts","src/execution-process-tracker.ts"]},
+      "rust": {"behavior":"Pilot records exact process identity and delegates supervised groups to relay-worker-helper; native Worker start and terminal Graph inputs carry the exact claim Job/Task/execution/lease owner/attempt identity. The helper reads lastWorkerActivityAt from read-only SQLite for the exact running execution and derives its inactivity deadline from that durable timestamp; accepted start/progress also extends leaseExpiresAt for restart recovery. Helper parsing rejects oversized lines before reading beyond 1 MiB.","sources":["rust/src/authority/process.rs","rust/src/supervised_script.rs","rust/src/native_script.rs","rust/src/lifecycle.rs","rust/src/store.rs","rust/src/bin/relay-worker-helper.rs","rust/src/worker.rs"]},
+      "status": "FAIL",
+      "evidence": [
+        {"kind":"deterministic-test","detail":"Rust unit tests cover bounded protocol input, exact process identity, and helper lifecycle; this does not prove shared production subprocess ownership parity."},
+        {"kind":"deterministic-test","detail":"PASS: `AGENTS_RELAY_STORE_DIR=$(mktemp -d) cargo test --locked --manifest-path rust/Cargo.toml` (67 passed). Tests include accepted start/progress activity persistence, strict ordering/correlation and duplicate replay rejection, no false Task result, exact-execution read-only activity lookup, lease deadline persistence across SQLite reopen and recovery eligibility only after that deadline, renewed worker timeout, and exact process-group cleanup after timeout and activity-reader failure."},
+        {"kind":"deterministic-test","detail":"PASS: isolated `node --test rust/tests/worker-helper-e2e.mjs rust/tests/native-daemon-e2e.mjs rust/tests/native-scheduler-e2e.mjs` (17 passed), including a helper E2E where a committed activity snapshot extends the running Worker beyond its original timeout, SIGKILL parent cleanup, daemon recovery, and no false completion."},
+        {"kind":"source","detail":"Rust still uses an external helper and is not wired as the production daemon."}
+      ],
+      "nextAction": "Port the owned-process lifecycle behavior through a shared native supervisor and recoverable durable identity."
+    },
+    {
+      "capability": "Terminal events and NATS",
+      "node": {"behavior":"Correlated task events wake the reconciler; SQLite remains the durable authority and terminal events are validated before state changes.","sources":["src/events.ts","src/reconciler-runtime.ts","src/events-bus-runtime.ts"]},
+      "rust": {"behavior":"The isolated daemon subscribes to configured loopback Core NATS worker subjects. Terminal ingress verifies structured completion/failure; start/progress ingress verifies exact active Job/Task/execution/lease owner/attempt, event timestamp/ID, unexpired lease, and durable launch Action, then routes through the canonical Task Lifecycle Graph and atomically records an inbox receipt with the Task snapshot. Accepted activity is persisted as lastWorkerActivityAt, renews the matching Worker inactivity deadline from its event timestamp, and extends the durable lease used during restart recovery. Activity creates no result. This bounded path does not establish production Events Bus configuration, complete lifecycle mapping, or service parity.","sources":["rust/src/native_ingress.rs","rust/src/bin/relay-native-daemon.rs","rust/src/lifecycle.rs","rust/src/authority.rs","rust/src/native_script.rs","rust/src/native_outbox.rs","rust/src/store.rs","rust/src/bin/relay-worker-helper.rs","rust/src/worker.rs","rust/src/lifecycle/tests.rs","workflow/task-lifecycle.mmd"]},
+      "status": "FAIL",
+      "evidence": [
+        {"kind":"deterministic-test","detail":"PASS: full isolated Cargo suite (81 passed). Includes configured Core NATS delivery plus envelope ingress: accepted queued-to-running task.started and running task.progress Graph transitions; wrong subject/source, stale execution/owner/attempt, expired lease, unsupported kind, out-of-order timestamp, duplicate replay after SQLite reopen, no Task result/outbound echo, durable inactivity deadline extension, and recovery eligibility only after the renewed lease expires. Shared NATS CONNECT serialization covers token/user-password selection, missing credentials on authenticated INFO, conflicting modes, and secret serialization. An authenticated wire test exercises Review decision ingress. Terminal completion/failure remains structured and Graph-selected."},
+        {"kind":"source","detail":"The optional --nats-ingress-port loopback Core NATS subscriber routes task.started/task.progress through TaskLifecycle::apply_inbound_worker_event and terminal events through TaskLifecycle::apply_with_inbound_launch_receipt. Start/progress Task snapshot and inbox receipt commit atomically in the isolated Rust SQLite authority. Deployment token or username/password credentials are supported on plaintext loopback; TLS-required servers fail closed. Production Events Bus configuration, complete lifecycle parity, and deployed service integration remain incomplete; capability remains FAIL. Authenticated host/mobile, live provider, Job 629 readiness, production service, and cutover/rollback evidence remain NOT_RUN."}
+      ],
+      "nextAction": "Complete full lifecycle event mapping and verify configured deployed Events Bus/service integration; retain FAIL until production-ingress and lifecycle parity are independently established."
+    },
+    {
+      "capability": "Durable retry and recovery",
+      "node": {"behavior":"Relay records uncertain outcomes and requires diagnosis before retry or escalation; leases and attempts are durable. Reconciliation reuses the latest terminal Troubleshooter only for a newer failed episode, then applies the Task Lifecycle recovery.reopen transition.","sources":["src/task-recovery.ts","src/worker-failure-recovery.ts","src/execution-recovery.ts","src/reconciler.ts","src/troubleshooter.ts","src/task-transitions.ts","src/workflow/dispatcher.ts"]},
+      "rust": {"behavior":"The isolated daemon reconciles pending Troubleshooter reopens from durable Task state through the shared Graph dispatcher; the transactional effect revalidates exact parentage and a newer failure episode, applies Graph-selected mutations, preserves terminal evidence, and is idempotent after restart. A selected Model Task can also be explicitly retried through the canonical Task Lifecycle Graph, retaining its durable route/Worker selection and incrementing the next claim attempt. The troubleshooting scheduler and full recovery workflow remain absent.","sources":["rust/src/native_daemon.rs","rust/src/authority/recovery.rs","rust/src/dispatch.rs","rust/src/recovery.rs","rust/src/authority/process.rs","rust/src/native_model.rs","workflow/task-lifecycle.mmd"]},
+      "status": "FAIL",
+      "evidence": [
+        {"kind":"deterministic-test","detail":"`native_model::tests::explicit_graph_retry_preserves_model_decision_and_claims_next_attempt` verifies the canonical failed->retry Graph transition clears error fields, preserves the selected route/Worker, and claims attempt 2. Rust authority tests cover exact-process expired-lease safety and graph_reopens_only_correlated_recovery_and_deduplicates_after_restart plus graph_reopens_cancelled_recovery_but_rejects_wrong_lineage_and_stale_episode. rust/tests/native-daemon-e2e.mjs test 'daemon reopens eligible Troubleshooter once and rejects stale or wrong lineage without false success' additionally proves a persisted eligible recovery is reopened through reconciliation, repeated ticks/restart emit no duplicate, stale episodes and wrong parentage remain terminal, original work remains FAILED, terminal evidence is preserved, and no task.completed receipt is fabricated. This is a bounded action slice; complete troubleshooting ownership and scheduler recovery remain absent."}
+      ],
+      "nextAction": "Port remaining diagnosis, recovery ownership, escalation, and scheduler transitions from their canonical workflows; keep FAIL until the complete declared capability is proven."
+    },
+    {
+      "capability": "Interactive human Review",
+      "node": {"behavior":"Host Preview decisions bind to current invocation, execution, revision, and durable Task state; event-only decisions require an explicit nonempty invocationId plus complete immutable content/request identity for the current active execution; only legacy bound decisions may fall back to executionId; approval is never inferred from delivery.","sources":["src/interactive-invocation.ts","src/host-invocation-store.ts","workflow/interactive-invocation.mmd"]},
+      "rust": {"behavior":"Rust has durable invocation-bound and complete event-only decision acceptance plus same-Task resume primitives; event-only decisions require an explicit invocationId while legacy bound payloads retain the executionId fallback. The isolated NATS ingress validates host-neutral interactive-wait and Review decision subject/source/payload correlation, releases only the current bound Worker through the Task Graph, and records decisions through the SQLite ledger. Accepted Request Changes requeues the same Task as a Model revision, preserves human feedback/instructions, preserves an existing Model route or clears the original Script route, and cannot fall through to the original Script executor; when no trusted Model route is available the revision remains queued/blocked. A later accepted Approve restores the original execution configuration and Task input, clearing execution-scoped revision instructions; it still does not directly complete the Task. Claims require the matching durable host decision ledger entry. NATS token or username/password authentication can be supplied through deployment environment variables; TLS-required servers fail closed. A live authenticated host Preview integration remains unverified.","sources":["rust/src/authority/review.rs","rust/src/authority/review/resume.rs","rust/src/authority/scheduler.rs","rust/src/native_ingress.rs","rust/src/native_daemon/review.rs","workflow/task-lifecycle.mmd","workflow/interactive-invocation.mmd"]},
+      "status": "NOT_RUN",
+      "evidence": [
+        {"kind":"deterministic-test","detail":"PASS: test/interactive-invocation.test.js rejects missing, empty, and whitespace-only event-only invocationId before decision/event ledger writes while preserving bound legacy fallback; rust/src/authority/review.rs event_only_requires_explicit_invocation_before_any_persistence_and_legacy_bound_fallback_remains verifies the same Rust boundary. rust/tests/review-parity.mjs compares Node/Rust fingerprints and accepted explicit identities. Existing cases cover content/request validation, current-execution fencing, same-revision replay rejection, duplicate handling after SQLite reopen, and no Task/Job completion. Isolated regressions drive accepted Request Changes through same-Task requeue and a durable-decision-checked Model claim; a routed Model Task preserves its existing route, while a Script Task cannot fall through to Script success. A second invocation-bound Preview/Approve on the same routed Model revision restores its original route and input and clears revision-only Task instructions. Stale approvals are rejected, and a human decision never marks work complete. `nats_review_ingress_binds_subject_source_payload_and_ledger_without_completing_task` covers decision correlation/dedupe/no false completion; `nats_interactive_wait_releases_only_the_bound_worker_and_deduplicates` covers Graph-selected wait, lease release, stale source rejection, and replay dedupe; `authenticated_nats_session_delivers_wait_and_bound_review_decision` verifies authenticated wait/decision ingress without false completion."},
+        {"kind":"live-only","detail":"NOT_RUN. Evidence gap: no authenticated host Preview or physical mobile Request Changes/Approve run, and no newly deployed Rust service integration. The fake wire server verifies CONNECT credential selection but no real authenticated broker or host has been exercised, and end-to-end host identity/content binding remains unproven. Risk: source checks do not prove the real host binds the decision to the current invocation/execution/content or that the active worker consumes it safely. Owner: Job owner/orchestrator. Prerequisites: deployed host integration, authenticated device/provider access, and a current Job/Task execution eligible for review; never use Job 629 before it is terminal with its owner decision preserved and new owner authorization."}
+      ],
+      "nextAction": "Run authenticated real-host/mobile Review and stale/forged receipt checks after a separately authorized production integration is available."
+    },
+    {
+      "capability": "Plans and planner orchestration",
+      "node": {"behavior":"Planner rounds and apply/recovery semantics are Graph-selected and durably persisted in the canonical Job store.","sources":["src/planner-runtime.ts","src/workflow/planner-orchestration-v2.ts","workflow/planner-orchestration.mmd"]},
+      "rust": {"behavior":"No production Planner executor or full Plan lifecycle is implemented in Rust.","sources":["rust/src/main.rs","rust/src/native_daemon.rs"]},
+      "status": "FAIL",
+      "evidence": [
+        {"kind":"source","detail":"Rust CLI and daemon contain no planner execution path."}
+      ],
+      "nextAction": "Implement Plan persistence and Planner execution only after complete graph/action parity is designed."
+    },
+    {
+      "capability": "Troubleshooting and escalation",
+      "node": {"behavior":"Canonical escalation/recovery workflows select the configured executor and keep technical failure distinct from human blockers.","sources":["src/troubleshooter.ts","src/cli-escalation.ts","workflow/escalation.mmd","workflow/troubleshooter.mmd"]},
+      "rust": {"behavior":"Rust exposes limited recovery assessment but no configured escalation executor lifecycle.","sources":["rust/src/recovery.rs","rust/src/main.rs"]},
+      "status": "FAIL",
+      "evidence": [
+        {"kind":"source","detail":"No Rust escalation command binding or troubleshooting execution route is present."}
+      ],
+      "nextAction": "Port the trusted deployment executor boundary and escalation graph effects."
+    },
+    {
+      "capability": "JEL Final Review, revisions, merge, completion",
+      "node": {"behavior":"Final Review is SHA-bound; changes-required starts a repair Plan; PASS and local merge are independent gates before completion.","sources":["src/reconciler-review.ts","src/review-replan.ts","src/local-git-merge.ts","workflow/review-lifecycle.mmd","workflow/job-lifecycle.mmd"]},
+      "rust": {"behavior":"Rust can propose a Final Review and the daemon applies a successful bound reviewer Task verdict through the canonical Review Graph only when the task result matches the Job head SHA. Changes-required records an owner-resolution disposition; approval records evidence but does not merge or complete the Job. When auto-merge is enabled, the Graph selects review.requestMerge and the unsupported merge effect is rejected rather than silently bypassed. Planner creation/execution, SHA discovery/scheduling, revision loop, local merge workflow and production gate integration are still absent.","sources":["rust/src/final_review.rs","rust/src/native_daemon/review.rs","rust/src/native_job.rs","rust/src/native_daemon.rs","workflow/review-lifecycle.mmd"]},
+      "status": "FAIL",
+      "evidence": [
+        {"kind":"deterministic-test","detail":"PASS: isolated Rust unit tests in `native_daemon::review::tests` verify exact-head approval through the canonical Review Graph, SQLite restart deduplication, changes-required ownership disposition, stale/malformed-head rejection, blank finding rejection, rejection of approvals carrying blocking findings, Graph-selected merge rejection when that effect is unavailable, and no Job completion from reviewer approval. `rust/tests/native-daemon-e2e.mjs` additionally proves the daemon applies the bound reviewer result on tick, deduplicates it after restart, and leaves the Job ACTIVE after approval."},
+        {"kind":"source","detail":"Native verdict application is only reachable for an already-bound reviewer Task; Rust still lacks native SHA discovery/scheduling, Planner creation/execution and repair/re-review loops, local merge workflow, and production completion gate integration. Human host/mobile and deployed production gates remain NOT_RUN."}
+      ],
+      "nextAction": "Integrate verified local-head discovery with Graph-selected reviewer creation, implement durable Planner repair/re-review and local merge effects, then verify host/mobile and production gates; keep FAIL until the complete lifecycle is proven."
+    },
+    {
+      "capability": "Dashboard API, controls, and history",
+      "node": {"behavior":"Production Dashboard exposes full Jobs, Tasks, events, and JEL controls over SQLite inventory.","sources":["src/dashboard.ts","src/dashboard-data.ts","src/dashboard-jel.ts"]},
+      "rust": {"behavior":"An isolated read-only native Rust HTTP service exposes sanitized GET /api/jobs search/filter/pagination, GET /api/jobs/{id} Job/Task summaries, full snapshot-backed GET /api/jobs/{id}/tasks and GET /api/jobs/{id}/tasks/{taskId}, and GET /api/events history filtered by Job and optional Task from the Rust authority inbox/outbox. History is an event array, newest-first by local recorded timestamp then event ID, limited to 60 by default and clamped to 1–60. The Dashboard wrapper does not expose cursor pagination; the Rust source lacks the Events Bus global cursor. It does not expose production Events Bus history or Dashboard controls.","sources":["rust/src/bin/relay-native-dashboard.rs","rust/src/store.rs","rust/tests/native-live-dashboard-e2e.mjs","rust/README.md"]},
+      "status": "FAIL",
+      "evidence": [
+        {"kind":"source","detail":"Node GET /api/events in src/dashboard.ts validates the Job ID, accepts optional task and limit, and calls eventHistory; src/dashboard-data.ts delegates to Events Bus history and returns its events array. Rust serves the isolated service only after explicit --db and --port arguments and an isolated namespace check. Rust GET /api/events reads only local workflow inbox/outbox rows, supports optional Task filtering, newest-first/default 60 and bounded limit. Rust sorts by local recorded timestamp and event ID; the Dashboard wrapper has no cursor parameter, while the separate Node Events Bus history API uses a global cursor that is absent from Rust local inbox/outbox. Exact cross-source event ordering and production Event Bus rows are therefore unavailable. Authentication, write controls, full UI and production store integration are not implemented."},
+        {"kind":"deterministic-test","detail":"PASS: `AGENTS_RELAY_STORE_DIR=$(mktemp -d) cargo build --locked --manifest-path rust/Cargo.toml --bin relay-native-dashboard` then isolated `AGENTS_RELAY_STORE_DIR=$(mktemp -d) node --test rust/tests/native-live-dashboard-e2e.mjs` (1 passed). On an explicitly marked temporary Rust store and ephemeral loopback port, tests seed three isolated outbox records and verify non-empty event array shape, optional Job/Task filtering, newest-first order, bounded/invalid limit handling, empty history, invalid and unknown Job/Task behavior, order/cursor parameters ignored as by the Dashboard wrapper, restart consistency, and unchanged durable lifecycle after a stored task.completed receipt. Task list/detail remain checked against the authoritative Job snapshot and malformed IDs. HTTP read success does not infer completion. This remains isolated pilot evidence only."},
+        {"kind":"live-only","detail":"NOT_RUN. Scenario: authenticated human Review, production dashboard Jobs/Tasks/events and controls, live provider execution, deployed Rust service, and production cutover/rollback. Target: production Node service at 127.0.0.1:8787 and an authorized Rust deployment/device. Evidence gap: this isolated read-only pilot cannot establish production store compatibility, host/mobile Review binding, full UI/API parity, or single-writer handoff. Risk: premature cutover could lose lifecycle history or interrupt active Jobs. Owner: Job owner/orchestrator. Prerequisites: Job 629 terminal with owner review decisions preserved, complete source parity, authenticated live UI/provider verification, backup and rollback proof, and explicit owner cutover authorization."}
+      ],
+      "nextAction": "Port the complete production Dashboard API, authenticated Event Bus history/cursor source and Graph-selected controls; then verify browser/mobile flows and retain FAIL until the full production contract is independently proven."
+    },
+    {
+      "capability": "Canonical SQLite authority and dual-writer exclusion",
+      "node": {"behavior":"Relay V2 SQLite owns lifecycle truth; production has one writer and projections cannot become a second authority.","sources":["src/local-authority-store.ts","src/relay-store.ts","src/unified-relay-schema.ts"]},
+      "rust": {"behavior":"Rust uses compatible Job snapshots for isolated pilot state and explicitly refuses the TypeScript production store.","sources":["rust/src/authority.rs","rust/src/native_daemon.rs"]},
+      "status": "FAIL",
+      "evidence": [
+        {"kind":"deterministic-test","detail":"Rust authority/store parity tests exercise V2 SQLite snapshots, while daemon namespace guards intentionally keep Rust state separate from the production Node authority."}
+      ],
+      "nextAction": "After owner gates, add a verified single-writer handoff to the canonical V2 store with backup and rollback evidence."
+    },
+    {
+      "capability": "Production-shaped runtime, browser/mobile, and cutover",
+      "node": {"behavior":"Existing Node daemon and Job 629 remain production-owned; full replacement requires live gates and rollback proof.","sources":["src/relayd.ts","workflow/job-lifecycle.mmd"]},
+      "rust": {"behavior":"No production cutover or real production-shaped Dashboard/Review/JEL run was performed for this task.","sources":["rust/README.md","rust/src/native_daemon.rs"]},
+      "status": "NOT_RUN",
+      "evidence": [
+        {"kind":"live-only","detail":"NOT_RUN. Evidence gap: no production-shaped service, real browser, physical iPhone, live provider, cutover, rollback, or Job 629 operation was performed. Risk: source and isolated pilot evidence cannot establish full JEL/UI parity, unified-store compatibility, single-writer safety, or rollback. Owner: Job owner/orchestrator. Prerequisites: Job 629 terminal with owner review preserved, complete source parity, live JEL/UI/provider verification, backup and rollback proof, and explicit owner cutover authorization."}
+      ],
+      "nextAction": "Keep Node production operational; complete the stated live prerequisites before any separately authorized single-writer cutover."
+    }
+  ],
+  "convergencePlan": [
+    {
+      "milestone": "Native execution foundation",
+      "capabilities": ["Scheduler and reconciliation", "DAG and dependency execution", "Worker routing and providers", "Project root and execution context resolution", "Leases and owned process lifecycle", "Terminal events and NATS", "Durable retry and recovery"],
+      "plannedVerification": "Differential Node/Rust lifecycle tests plus isolated SQLite ingress/reconciliation/restart tests, including false-completion, stale-event, retry-budget, process-group cleanup, and duplicate-replay negatives.",
+      "evidenceOwner": "Native runtime implementation owner; independent reviewer verifies the complete milestone.",
+      "cutoverBlocker": "All listed capabilities must be PASS; Job 629 remains terminal with owner review decisions preserved; no production writer handoff without backup and rollback proof."
+    },
+    {
+      "milestone": "Planner, Review, recovery decisions, and JEL",
+      "capabilities": ["Plans and planner orchestration", "Troubleshooting and escalation", "Interactive human Review", "JEL Final Review, revisions, merge, completion"],
+      "plannedVerification": "Node/Rust Graph branch comparisons and isolated end-to-end Plan -> execute -> immutable-head Review -> Request Changes -> same-Task revision -> second authenticated Preview -> Approve -> re-review -> merge/completion tests, with forged/stale/duplicate/restart and false-completion negatives.",
+      "evidenceOwner": "Native lifecycle implementation owner; authorized host owns live Review evidence; independent reviewer verifies durable state and SHA binding.",
+      "cutoverBlocker": "Every source capability must be PASS; authenticated host Preview and mobile gates remain NOT_RUN until real user-owned integration evidence exists."
+    },
+    {
+      "milestone": "Production API, Dashboard, and single-writer authority",
+      "capabilities": ["CLI and public API", "Daemon and service ownership", "Dashboard API, controls, and history", "Canonical SQLite authority and dual-writer exclusion"],
+      "plannedVerification": "Compatibility tests against isolated copies of the V2 schema, full API/UI contract tests, real browser controls/history checks, backup and restore rehearsal, and a fenced single-writer handoff/rollback rehearsal.",
+      "evidenceOwner": "Native service implementation owner and Job owner for deployment/rollback evidence; independent reviewer audits store fencing.",
+      "cutoverBlocker": "Node stays the production writer until complete API parity, a successful single-writer rehearsal, backup/rollback proof, terminal Job 629, and explicit owner authorization."
+    },
+    {
+      "milestone": "Live production acceptance",
+      "capabilities": ["Production-shaped runtime, browser/mobile, and cutover"],
+      "additionalGates": ["Real host/mobile verification of Interactive human Review"],
+      "plannedVerification": "Real authenticated host Preview and physical mobile Request Changes/Approve on the same revision, deployed service/browser flow, SIGKILL/restart, live event deduplication, and rollback rehearsal.",
+      "evidenceOwner": "Job owner/orchestrator for user-owned host/mobile and production access; implementation owner records reproducible evidence.",
+      "cutoverBlocker": "Currently NOT_RUN. Do not mark PASS, stop Node, or cut over while Job 629 is active or any required live gate lacks independently verified evidence."
+    }
+  ]
+}

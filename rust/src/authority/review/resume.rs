@@ -89,28 +89,65 @@ impl RelayAuthority {
                 task["comments"]=Value::Array(comments);
             }
 
-            if task.get("dagNode").and_then(|node|node.get("executor")).and_then(Value::as_str)==Some("script") {
+            if status == "changes_requested" {
                 let revision=task.get("interactiveInvocation").ok_or("Review invocation missing")?.clone();
-                let script=status!="changes_requested";
-                task["adapter"]=json!(if script{"script"}else{"codex"});
-                task["capabilities"]=json!([if script{"script"}else{"model"}]);
-                if let Some(fields)=task.as_object_mut(){
-                    fields.shift_remove("routing");
-                    fields.shift_remove("workerSelection");
-                    if script {fields.shift_remove("workerRequirements");}
-                }
-                if !script {
-                    task["workerRequirements"]=json!({"capabilities":["model"]});
-                    let input=task["input"].as_str().ok_or("DAG input not string")?;
-                    let mut parsed:Value=serde_json::from_str(input).map_err(|_|"DAG input not structured JSON")?;
-                    if !parsed.is_object(){return Err("DAG input must be JSON object".into());}
-                    parsed["reviewRevision"]=json!({
-                        "status":"changes_requested",
-                        "feedback":revision.get("feedback").and_then(Value::as_str).unwrap_or(""),
-                        "comments":revision.get("comments").cloned().unwrap_or(json!([])),
-                        "instruction":"Revise the current Stage Artifact from the human feedback. Verify it, then use agents-relay review interactive --path to submit a NEW review for this same Task Execution. Do not publish or emit task.completed until the new review is approved."
+                if task.get("reviewRevisionOriginalExecutionConfig").is_none() {
+                    let mut original = json!({
+                        "adapter":task.get("adapter").cloned().unwrap_or(Value::Null),
+                        "capabilities":task.get("capabilities").cloned().unwrap_or(json!([])),
+                        // Review instructions are execution-scoped input. Keep
+                        // them off the durable Task once that revision is
+                        // approved, so a later ordinary retry starts from the
+                        // original request rather than stale review feedback.
+                        "input":task.get("input").cloned().ok_or("Review Task input missing")?
                     });
-                    task["input"]=Value::String(serde_json::to_string(&parsed).map_err(|e|e.to_string())?);
+                    for key in ["workerRequirements", "routing", "workerSelection"] {
+                        if let Some(value) = task.get(key) {
+                            original[key] = value.clone();
+                        }
+                    }
+                    task["reviewRevisionOriginalExecutionConfig"] = original;
+                }
+                let original_adapter = task["reviewRevisionOriginalExecutionConfig"]["adapter"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
+                task["adapter"]=json!("codex");
+                task["capabilities"]=json!(["model"]);
+                task["workerRequirements"]=json!({"capabilities":["model"]});
+                if original_adapter != "codex" {
+                    if let Some(fields)=task.as_object_mut(){
+                        fields.shift_remove("routing");
+                        fields.shift_remove("workerSelection");
+                    }
+                }
+                let old_input=task.get("input").and_then(Value::as_str).ok_or("Review Task input not string")?;
+                let mut parsed:Value=serde_json::from_str(old_input).unwrap_or_else(|_|json!({"taskInput":old_input}));
+                if !parsed.is_object(){parsed=json!({"taskInput":parsed});}
+                parsed["reviewRevision"]=json!({
+                    "status":"changes_requested",
+                    "feedback":revision.get("feedback").and_then(Value::as_str).unwrap_or(""),
+                    "comments":revision.get("comments").cloned().unwrap_or(json!([])),
+                    "instruction":"Revise the current artifact using the human feedback. Verify it, then request a NEW review preview for this same Task Execution. Do not publish or emit task.completed until the new review is approved."
+                });
+                task["input"]=Value::String(serde_json::to_string(&parsed).map_err(|e|e.to_string())?);
+            } else if let Some(original) = task
+                .get("reviewRevisionOriginalExecutionConfig")
+                .and_then(Value::as_object)
+                .cloned()
+            {
+                for key in ["adapter", "capabilities", "workerRequirements", "routing", "workerSelection"] {
+                    if let Some(value) = original.get(key) {
+                        task[key] = value.clone();
+                    } else if let Some(fields) = task.as_object_mut() {
+                        fields.shift_remove(key);
+                    }
+                }
+                if let Some(input) = original.get("input") {
+                    task["input"] = input.clone();
+                }
+                if let Some(fields) = task.as_object_mut() {
+                    fields.shift_remove("reviewRevisionOriginalExecutionConfig");
                 }
             }
             task["state"]=json!(target);
