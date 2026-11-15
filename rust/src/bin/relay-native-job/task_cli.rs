@@ -1,5 +1,6 @@
 //! Native Task CLI mutations. Parsing and identity checks finish before the
 //! single RelayAuthority writer is opened.
+use agents_relay_rust::agent_graph::AgentGraph;
 use agents_relay_rust::authority::{NativeTaskSpec, RelayAuthority};
 use agents_relay_rust::graph::{Decision, Graph, GraphInput};
 use agents_relay_rust::native_daemon::isolated_store_root;
@@ -7,6 +8,7 @@ use agents_relay_rust::native_job::{cancel_queued_task, retry_failed_task};
 use agents_relay_rust::supervised_script::after_time;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::PathBuf;
 
 fn parse(
@@ -70,6 +72,152 @@ fn task<'a>(job: &'a Value, id: &str) -> Result<&'a Value, String> {
 }
 fn result(job: &Value, id: &str) -> Result<Value, String> {
     Ok(json!({"jobId":job["id"],"taskId":id,"task":task(job,id)?}))
+}
+fn comma_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .filter(|item| !item.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+fn set_optional(task: &mut Value, key: &str, value: &str) {
+    if value.is_empty() {
+        task.as_object_mut().map(|map| map.remove(key));
+    } else {
+        task[key] = json!(value);
+    }
+}
+fn story_timeout(size: &str, reasoning: Option<&str>) -> Result<i64, String> {
+    let base = match size {
+        "S" => 300_000,
+        "M" => 900_000,
+        "L" => 2_700_000,
+        _ => return Err("invalid Task story size".into()),
+    };
+    Ok(
+        if reasoning.is_some_and(|value| value.eq_ignore_ascii_case("high")) {
+            base * 2
+        } else {
+            base
+        },
+    )
+}
+fn read_task_text(path: &str, db: &std::path::Path, label: &str) -> Result<String, String> {
+    let mut bytes = Vec::new();
+    if path == "-" {
+        std::io::stdin()
+            .take(1_048_577)
+            .read_to_end(&mut bytes)
+            .map_err(|e| format!("{label} stdin: {e}"))?;
+    } else {
+        let root = isolated_store_root(db)?;
+        let file = PathBuf::from(path)
+            .canonicalize()
+            .map_err(|e| format!("{label} file: {e}"))?;
+        if !file.is_file() || !file.starts_with(root) {
+            return Err(format!("{label} file must be inside isolated store root"));
+        }
+        std::fs::File::open(file)
+            .map_err(|e| format!("{label} file: {e}"))?
+            .take(1_048_577)
+            .read_to_end(&mut bytes)
+            .map_err(|e| format!("{label} file: {e}"))?;
+    }
+    if bytes.len() > 1_048_576 {
+        return Err(format!("{label} must be at most 1 MB"));
+    }
+    String::from_utf8(bytes).map_err(|e| format!("{label} is not UTF-8: {e}"))
+}
+fn validate_task_links(
+    job: &Value,
+    task_id: &str,
+    parent: Option<&str>,
+    deps: &[String],
+    validity: Option<&Value>,
+) -> Result<(), String> {
+    if parent.is_some_and(|value| value == task_id) {
+        return Err("Task cannot be its own parent".into());
+    }
+    if let Some(parent_id) = parent.filter(|value| !value.is_empty()) {
+        if !job["tasks"]
+            .as_array()
+            .is_some_and(|tasks| tasks.iter().any(|item| item["id"] == parent_id))
+        {
+            return Err(format!("unknown parent Task {parent_id}"));
+        }
+    }
+    if deps.iter().any(String::is_empty) {
+        return Err("dependency Task IDs must be non-empty".into());
+    }
+    if deps.iter().any(|value| value == task_id) {
+        return Err("Task cannot depend on itself".into());
+    }
+    let mut seen = std::collections::HashSet::new();
+    if deps.iter().any(|value| !seen.insert(value)) {
+        return Err("duplicate dependency Task ID".into());
+    }
+    for dep in deps {
+        if !job["tasks"].as_array().is_some_and(|tasks| {
+            tasks
+                .iter()
+                .any(|item| item["id"].as_str() == Some(dep.as_str()))
+        }) {
+            return Err(format!("unknown dependency Task {dep}"));
+        }
+    }
+    if let Some(value) = validity {
+        let object = value
+            .as_object()
+            .ok_or("--dependency-validity must be a JSON object")?;
+        for (id, policy) in object {
+            if !deps.iter().any(|dependency| dependency == id) {
+                return Err(format!(
+                    "dependency-validity key {id} must identify a declared dependency"
+                ));
+            }
+            if !matches!(policy.as_str(), Some("order-only" | "revalidate" | "rerun")) {
+                return Err(format!(
+                    "dependency-validity[{id}] must be order-only, revalidate, or rerun"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+fn apply_task_graph_transition(
+    graph: &Graph,
+    task: &mut Value,
+    event: &str,
+    guards: &HashMap<String, bool>,
+) -> Result<(), String> {
+    let source = task["state"].as_str().ok_or("Task state missing")?;
+    let decision = graph.decide(
+        source,
+        GraphInput {
+            transport: "event".into(),
+            id: event.into(),
+            payload: json!({"taskId":task["id"]}),
+        },
+        guards,
+    )?;
+    let Decision::Accepted {
+        target, actions, ..
+    } = decision
+    else {
+        return Err(format!("canonical Task Graph denied {event}"));
+    };
+    for action in actions {
+        match action.id.as_str() {
+            "mutation.clearError" => task["error"] = Value::Null,
+            "mutation.clearFailureReason" => {
+                task.as_object_mut()
+                    .map(|object| object.remove("failureReason"));
+            }
+            _ => return Err(format!("unsupported Task Graph action {}", action.id)),
+        }
+    }
+    task["state"] = json!(target);
+    Ok(())
 }
 
 fn create(args: &[String]) -> Result<Value, String> {
@@ -178,25 +326,91 @@ fn update(args: &[String]) -> Result<Value, String> {
             "--input-file",
             "--priority",
             "--story-size",
+            "--adapter",
+            "--agent",
+            "--agent-graph",
+            "--agent-graph-file",
+            "--attachments",
+            "--capabilities",
+            "--chatgpt-project",
+            "--chatgpt-tab-close-policy",
+            "--cwd",
+            "--dependency-validity",
+            "--deps",
+            "--max-attempts",
+            "--model",
+            "--parent",
+            "--profile",
+            "--project",
+            "--provider",
+            "--reasoning",
+            "--store-dir",
+            "--timeout",
         ],
-        &[],
+        &["--draft", "--queue", "--clear-routing"],
     )?;
     let (db, jid) = identify(&o)?;
+    if let Some(store_dir) = o.get("--store-dir") {
+        let supplied = PathBuf::from(store_dir)
+            .canonicalize()
+            .map_err(|e| format!("--store-dir: {e}"))?;
+        let expected = isolated_store_root(&db)?;
+        if supplied != expected {
+            return Err("--store-dir must match the isolated store root for --db".into());
+        }
+    }
     let tid = o.get("--task-id").ok_or("task update requires --task-id")?;
-    if ![
+    let mutable = [
         "--title",
         "--input",
         "--input-file",
         "--priority",
         "--story-size",
-    ]
-    .iter()
-    .any(|k| o.contains_key(*k))
-    {
+        "--adapter",
+        "--agent",
+        "--agent-graph",
+        "--agent-graph-file",
+        "--attachments",
+        "--capabilities",
+        "--chatgpt-project",
+        "--chatgpt-tab-close-policy",
+        "--cwd",
+        "--dependency-validity",
+        "--deps",
+        "--draft",
+        "--max-attempts",
+        "--model",
+        "--parent",
+        "--profile",
+        "--project",
+        "--provider",
+        "--reasoning",
+        "--timeout",
+        "--queue",
+        "--clear-routing",
+    ];
+    if !mutable.iter().any(|k| o.contains_key(*k)) {
         return Err("task update requires a mutable field".into());
     }
     if o.contains_key("--input") && o.contains_key("--input-file") {
         return Err("task update accepts only one of --input or --input-file".into());
+    }
+    if o.contains_key("--agent-graph") && o.contains_key("--agent-graph-file") {
+        return Err("--agent-graph and --agent-graph-file are mutually exclusive".into());
+    }
+    if o.contains_key("--draft") && o.contains_key("--queue") {
+        return Err("--draft and --queue are mutually exclusive".into());
+    }
+    let routing_flags = [
+        "--provider",
+        "--model",
+        "--profile",
+        "--reasoning",
+        "--cwd",
+        "--chatgpt-project",
+    ];
+    if o.contains_key("--clear-routing") && routing_flags.iter().any(|flag| o.contains_key(*flag)) {
+        return Err("--clear-routing cannot be combined with routing fields".into());
     }
     if let Some(t) = o.get("--title") {
         if t.trim().is_empty() || t.len() > 200 {
@@ -208,6 +422,36 @@ fn update(args: &[String]) -> Result<Value, String> {
             return Err("--priority must be P0, P1, P2, or P3".into());
         }
     }
+    if let Some(adapter) = o.get("--adapter") {
+        if !matches!(adapter.as_str(), "codex" | "chatgpt" | "z") {
+            return Err("--adapter must be codex, chatgpt, or z".into());
+        }
+    }
+    if let Some(policy) = o.get("--chatgpt-tab-close-policy") {
+        if !matches!(policy.as_str(), "after-start" | "never" | "after-terminal") {
+            return Err(
+                "--chatgpt-tab-close-policy must be after-start, never, or after-terminal".into(),
+            );
+        }
+    }
+    let nonnegative = |flag: &str| -> Result<Option<i64>, String> {
+        o.get(flag)
+            .map(|raw| {
+                let n = raw
+                    .parse::<i64>()
+                    .map_err(|_| format!("{flag} must be a non-negative integer"))?;
+                if n < 0 {
+                    return Err(format!("{flag} must be a non-negative integer"));
+                }
+                Ok(n)
+            })
+            .transpose()
+    };
+    let timeout = nonnegative("--timeout")?;
+    let max_attempts = nonnegative("--max-attempts")?;
+    if max_attempts == Some(0) {
+        return Err("--max-attempts must be a positive integer".into());
+    }
     let size = o.get("--story-size").map(|s| s.to_ascii_uppercase());
     if size
         .as_deref()
@@ -218,17 +462,26 @@ fn update(args: &[String]) -> Result<Value, String> {
     let input = if let Some(s) = o.get("--input") {
         Some(s.clone())
     } else if let Some(f) = o.get("--input-file") {
-        let root = isolated_store_root(&db)?;
-        let p = PathBuf::from(f)
-            .canonicalize()
-            .map_err(|e| format!("input file: {e}"))?;
-        if !p.is_file() || !p.starts_with(root) {
-            return Err("Task input file must be inside isolated store root".into());
-        }
-        Some(std::fs::read_to_string(p).map_err(|e| format!("Task input file: {e}"))?)
+        Some(read_task_text(f, &db, "Task input")?)
     } else {
         None
     };
+    let agent_graph = if let Some(s) = o.get("--agent-graph") {
+        Some(s.clone())
+    } else if let Some(file) = o.get("--agent-graph-file") {
+        Some(read_task_text(file, &db, "agent graph")?)
+    } else {
+        None
+    };
+    if agent_graph
+        .as_ref()
+        .is_some_and(|s| s.trim().is_empty() || s.len() > 1_048_576)
+    {
+        return Err("Agent graph must be non-empty and at most 1 MB".into());
+    }
+    if let Some(graph) = agent_graph.as_ref() {
+        AgentGraph::parse(graph).map_err(|error| format!("--agent-graph: {error}"))?;
+    }
     if input
         .as_ref()
         .is_some_and(|s| s.trim().is_empty() || s.len() > 1_048_576)
@@ -238,6 +491,10 @@ fn update(args: &[String]) -> Result<Value, String> {
     let mut a = RelayAuthority::open_existing(&db)?;
     let job = verify_job(&a, &jid, o.get("--repo"))?;
     let current = task(&job, tid)?;
+    let expected_updated_at = current["updatedAt"]
+        .as_str()
+        .ok_or("Task timestamp missing")?
+        .to_owned();
     if !matches!(current["state"].as_str(), Some("DRAFT" | "QUEUED")) {
         return Err(format!(
             "Task {tid} is {}; durable execution fields are immutable in this state",
@@ -245,11 +502,25 @@ fn update(args: &[String]) -> Result<Value, String> {
         ));
     }
     if current.get("kind").and_then(Value::as_str) == Some("planner")
-        || current.get("agentGraph").is_some()
-        || current.get("dagNode").is_some()
+        || current
+            .get("agentGraph")
+            .is_some_and(|value| !value.is_null())
+        || current.get("dagNode").is_some_and(|value| !value.is_null())
     {
         return Err("native Task update does not support Planner or DAG Tasks".into());
     }
+    if current.get("revision").is_some_and(|v| !v.is_null()) {
+        return Err("native Task update does not support revision Tasks".into());
+    }
+    if o.get("--adapter")
+        .is_some_and(|adapter| current["adapter"].as_str() != Some(adapter.as_str()))
+        && current["attempt"].as_i64().unwrap_or(0) > 0
+    {
+        return Err("Cannot replace adapter after an execution attempt".into());
+    }
+    let adapter_changed = o
+        .get("--adapter")
+        .is_some_and(|adapter| current["adapter"].as_str() != Some(adapter.as_str()));
     if ["executionId", "leaseOwner", "leaseExpiresAt"]
         .iter()
         .any(|k| current.get(*k).is_some_and(|v| !v.is_null()))
@@ -257,12 +528,97 @@ fn update(args: &[String]) -> Result<Value, String> {
         return Err("Task update requires an unleased Task".into());
     }
     let at = after_time(job["updatedAt"].as_str().ok_or("Job timestamp missing")?)?;
+    let parsed_validity = o
+        .get("--dependency-validity")
+        .map(|raw| {
+            serde_json::from_str::<Value>(raw).map_err(|e| format!("--dependency-validity: {e}"))
+        })
+        .transpose()?;
+    let requested_dependencies = o.get("--deps").map(|raw| {
+        raw.split(',')
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    });
+    let dependencies_were_supplied = requested_dependencies.is_some();
+    let dependencies = requested_dependencies.clone().unwrap_or_else(|| {
+        current["dependencies"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect()
+    });
+    let dependency_validity = if let Some(v) = parsed_validity {
+        Some(v)
+    } else if dependencies_were_supplied {
+        current
+            .get("dependencyValidity")
+            .filter(|v| !v.is_null())
+            .cloned()
+    } else {
+        None
+    };
+    validate_task_links(
+        &job,
+        tid,
+        o.get("--parent").map(String::as_str),
+        &dependencies,
+        dependency_validity.as_ref(),
+    )?;
+    if max_attempts.is_some_and(|n| n < current["attempt"].as_i64().unwrap_or(0)) {
+        return Err("--max-attempts cannot be less than the current attempt count".into());
+    }
+    let computed_timeout = if let Some(timeout) = timeout {
+        Some(timeout)
+    } else if size.is_some() || o.contains_key("--reasoning") {
+        let effective_size = size
+            .as_deref()
+            .or_else(|| current["storySize"].as_str())
+            .unwrap_or("M");
+        let effective_reasoning = o
+            .get("--reasoning")
+            .map(String::as_str)
+            .or_else(|| current["routing"]["reasoning"].as_str());
+        Some(story_timeout(effective_size, effective_reasoning)?)
+    } else {
+        None
+    };
+    let routing_requested = routing_flags.iter().any(|flag| o.contains_key(*flag));
+    let routing = if o.contains_key("--clear-routing") {
+        Some(None)
+    } else if routing_requested {
+        let old = current.get("routing").filter(|v| !v.is_null());
+        let model = o
+            .get("--model")
+            .map(String::as_str)
+            .or_else(|| old.and_then(|r| r["model"].as_str()));
+        let model = model
+            .filter(|value| !value.is_empty())
+            .ok_or("task routing update requires --model when no existing routing is present")?;
+        Some(Some(json!({
+            "provider":o.get("--provider").map(String::as_str).or_else(||old.and_then(|r|r["provider"].as_str())).unwrap_or("openai"),
+            "model":model,
+            "profile":o.get("--profile").map(String::as_str).or_else(||old.and_then(|r|r["profile"].as_str())).filter(|s|!s.is_empty()),
+            "reasoning":o.get("--reasoning").map(String::as_str).or_else(||old.and_then(|r|r["reasoning"].as_str())).filter(|s|!s.is_empty()),
+            "cwd":o.get("--cwd").map(String::as_str).or_else(||old.and_then(|r|r["cwd"].as_str())).filter(|s|!s.is_empty()),
+            "projectId":o.get("--chatgpt-project").map(String::as_str).or_else(||old.and_then(|r|r["projectId"].as_str())).filter(|s|!s.is_empty()),
+            "decidedBy":"cli:update","decidedAt":at
+        })))
+    } else {
+        None
+    };
+    let graph = Graph::parse(include_str!("../../../../workflow/task-lifecycle.mmd"))?;
     let committed = a.commit_job(&jid, &at, |prior| {
         let mut next = prior.clone();
         let t = next["tasks"]
             .as_array_mut()
             .and_then(|ts| ts.iter_mut().find(|t| t["id"] == *tid))
             .ok_or("Task not found")?;
+        if t["updatedAt"].as_str() != Some(expected_updated_at.as_str()) {
+            return Err("Task changed since update preflight; refresh and retry".into());
+        }
         if !matches!(t["state"].as_str(), Some("DRAFT" | "QUEUED"))
             || ["executionId", "leaseOwner", "leaseExpiresAt"]
                 .iter()
@@ -281,8 +637,76 @@ fn update(args: &[String]) -> Result<Value, String> {
         if let Some(v) = o.get("--priority") {
             t["priority"] = json!(v)
         }
+        if let Some(v) = o.get("--adapter") {
+            t["adapter"] = json!(v);
+        }
         if let Some(v) = size.as_ref() {
             t["storySize"] = json!(v)
+        }
+        if let Some(v) = o.get("--agent") {
+            set_optional(t, "agentName", v);
+        }
+        if let Some(v) = agent_graph.as_ref() {
+            set_optional(t, "agentGraph", v);
+        }
+        if let Some(v) = o.get("--project") {
+            set_optional(t, "projectName", v);
+        }
+        if let Some(v) = o.get("--parent") {
+            t["parentTaskId"] = if v.is_empty() { Value::Null } else { json!(v) };
+        }
+        t["dependencies"] = json!(dependencies);
+        if let Some(v) = dependency_validity.as_ref() {
+            t["dependencyValidity"] = v.clone();
+        } else if dependencies_were_supplied {
+            t.as_object_mut().map(|m| m.remove("dependencyValidity"));
+        }
+        if let Some(v) = o.get("--capabilities") {
+            t["capabilities"] = json!(comma_list(v));
+        }
+        if let Some(v) = o.get("--attachments") {
+            t["attachments"] = json!(comma_list(v));
+        }
+        if let Some(v) = o.get("--chatgpt-tab-close-policy") {
+            t["chatgptTabClosePolicy"] = json!(v);
+        }
+        if let Some(Some(route)) = routing.as_ref() {
+            t["routing"] = route.clone();
+            t.as_object_mut().map(|m| m.remove("workerSelection"));
+        }
+        if matches!(&routing, Some(None)) {
+            t.as_object_mut().map(|m| m.remove("routing"));
+            t.as_object_mut().map(|m| m.remove("workerSelection"));
+        }
+        if adapter_changed {
+            t.as_object_mut().map(|m| m.remove("workerSelection"));
+        }
+        if let Some(n) = computed_timeout {
+            t["timeoutMs"] = json!(n);
+        }
+        if let Some(n) = max_attempts {
+            t["maxAttempts"] = json!(n);
+        }
+        if o.contains_key("--draft") && t["state"] == "QUEUED" {
+            apply_task_graph_transition(&graph, t, "hold", &HashMap::new())?;
+        }
+        if o.contains_key("--queue") {
+            let satisfied = dependencies.iter().all(|id| {
+                prior["tasks"].as_array().is_some_and(|tasks| {
+                    tasks
+                        .iter()
+                        .any(|dep| dep["id"] == *id && dep["state"] == "SUCCEEDED")
+                })
+            });
+            apply_task_graph_transition(
+                &graph,
+                t,
+                "queue",
+                &HashMap::from([("dependenciesSatisfied".to_owned(), satisfied)]),
+            )?;
+            t["executionId"] = Value::Null;
+            t["leaseOwner"] = Value::Null;
+            t["leaseExpiresAt"] = Value::Null;
         }
         t["updatedAt"] = json!(at);
         next["updatedAt"] = json!(at);
