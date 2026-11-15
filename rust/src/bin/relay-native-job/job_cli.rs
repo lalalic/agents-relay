@@ -247,6 +247,8 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
                     None
                 },
                 reason: o.get("--reason").cloned(),
+                task_id: None,
+                message: None,
             },
         );
     }
@@ -334,6 +336,8 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
                         auto_merge: !o.contains_key("--no-auto-merge"),
                         changes: None,
                         reason: None,
+                        task_id: None,
+                        message: None,
                     },
                 );
             }

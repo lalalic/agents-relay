@@ -783,7 +783,85 @@ fn unblock(args: &[String]) -> Result<Value, String> {
     })?;
     result(&c.job, tid)
 }
+fn comment(args: &[String]) -> Result<Value, String> {
+    let options = parse(
+        args,
+        &[
+            "--db",
+            "--id",
+            "--job-id",
+            "--repo",
+            "--task-id",
+            "--message",
+            "--message-file",
+        ],
+        &[],
+    )?;
+    if options.contains_key("--message") == options.contains_key("--message-file") {
+        return Err("task comment requires exactly one of --message or --message-file".into());
+    }
+    let (db, id) = identify(&options)?;
+    let repo = options
+        .get("--repo")
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("task comment requires --repo")?;
+    let task_id = options
+        .get("--task-id")
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("task comment requires --task-id")?;
+    let text = if let Some(message) = options.get("--message") {
+        message.clone()
+    } else {
+        let source = options
+            .get("--message-file")
+            .expect("validated message file");
+        let mut bytes = Vec::new();
+        if source == "-" {
+            std::io::stdin()
+                .take(60_001)
+                .read_to_end(&mut bytes)
+                .map_err(|e| format!("read --message-file -: {e}"))?;
+        } else {
+            let file = std::fs::File::open(source).map_err(|e| format!("message file: {e}"))?;
+            file.take(60_001)
+                .read_to_end(&mut bytes)
+                .map_err(|e| format!("message file: {e}"))?;
+        }
+        String::from_utf8(bytes).map_err(|_| "message file must be UTF-8")?
+    };
+    let trimmed = text.trim();
+    if trimmed.is_empty() || trimmed.len() > 60_000 {
+        return Err("task comment requires nonempty message of at most 60000 bytes".into());
+    }
+    let request = agents_relay_rust::native_control::ControlRequest {
+        version: 1,
+        operation: "task.comment".into(),
+        repository: repo.clone(),
+        id,
+        title: String::new(),
+        objective: String::new(),
+        project_root: String::new(),
+        project_path: None,
+        priority: String::new(),
+        review_enabled: false,
+        auto_merge: false,
+        changes: None,
+        reason: None,
+        task_id: Some(task_id.clone()),
+        message: Some(trimmed.into()),
+    };
+    let live = std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live");
+    if live {
+        agents_relay_rust::native_control::request(&db, &request)
+    } else {
+        agents_relay_rust::native_control::append_task_comment_isolated(&db, &request)
+    }
+}
+
 pub fn run(args: &[String]) -> Result<Value, String> {
+    if args.get(1).is_some_and(|action| action == "comment") {
+        return comment(args);
+    }
     // All direct Task mutations must be handled by the Rust Daemon's authenticated
     // single-writer ingress once it owns the live namespace. Never allow an
     // unrelated CLI process to race the durable worker/Review reconciler.
@@ -794,5 +872,5 @@ pub fn run(args: &[String]) -> Result<Value, String> {
         .get(1)
         .map(String::as_str)
         .ok_or("task action required")?;
-    match action{"create"=>create(args),"update"=>update(args),"cancel"=>{let o=parse(args,&["--db","--id","--job-id","--repo","--task-id","--reason"],&[])?;let (db,jid)=identify(&o)?;let tid=o.get("--task-id").ok_or("task cancel requires --task-id")?;let reason=o.get("--reason").ok_or("task cancel requires --reason")?;let mut a=RelayAuthority::open_existing(&db)?;verify_job(&a,&jid,o.get("--repo"))?;cancel_queued_task(&mut a,&jid,tid,reason)},"retry"=>{let o=parse(args,&["--db","--id","--job-id","--repo","--task-id"],&[])?;let(db,jid)=identify(&o)?;let tid=o.get("--task-id").ok_or("task retry requires --task-id")?;let mut a=RelayAuthority::open_existing(&db)?;verify_job(&a,&jid,o.get("--repo"))?;retry_failed_task(&mut a,&jid,tid)},"unblock"=>unblock(args),"recover"|"classify"|"complete"|"revise"|"supersede"|"comment"=>Err(format!("native task {action} is not safely supported: refusing mutation without matching Graph/action authority and execution/review binding")),_=>Err(format!("unsupported native Task action {action}"))}
+    match action{"create"=>create(args),"update"=>update(args),"cancel"=>{let o=parse(args,&["--db","--id","--job-id","--repo","--task-id","--reason"],&[])?;let (db,jid)=identify(&o)?;let tid=o.get("--task-id").ok_or("task cancel requires --task-id")?;let reason=o.get("--reason").ok_or("task cancel requires --reason")?;let mut a=RelayAuthority::open_existing(&db)?;verify_job(&a,&jid,o.get("--repo"))?;cancel_queued_task(&mut a,&jid,tid,reason)},"retry"=>{let o=parse(args,&["--db","--id","--job-id","--repo","--task-id"],&[])?;let(db,jid)=identify(&o)?;let tid=o.get("--task-id").ok_or("task retry requires --task-id")?;let mut a=RelayAuthority::open_existing(&db)?;verify_job(&a,&jid,o.get("--repo"))?;retry_failed_task(&mut a,&jid,tid)},"unblock"=>unblock(args),"recover"|"classify"|"complete"|"revise"|"supersede"=>Err(format!("native task {action} is not safely supported: refusing mutation without matching Graph/action authority and execution/review binding")),_=>Err(format!("unsupported native Task action {action}"))}
 }

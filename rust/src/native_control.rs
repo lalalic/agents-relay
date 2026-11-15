@@ -40,6 +40,12 @@ pub struct ControlRequest {
     /// Optional reason for safe Job cancellation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Exact Task identity for daemon-owned, append-only task.comment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    /// Supplementary text only; never a Task lifecycle or human Review decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -477,9 +483,112 @@ fn dispatch_job_mutation(db: &Path, request: &ControlRequest) -> Result<Value, S
     Ok(json!({"job":result.job,"operation":operation}))
 }
 
+/// Append a Task comment without touching its execution generation, lease,
+/// result, Task updatedAt or lifecycle state. The authoritative Job snapshot
+/// is the append-only source of truth. Never interpret comments as approvals.
+fn dispatch_task_comment(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if request.changes.is_some()
+        || request.reason.is_some()
+        || !request.title.is_empty()
+        || !request.objective.is_empty()
+        || !request.project_root.is_empty()
+        || request.project_path.is_some()
+        || !request.priority.is_empty()
+        || request.review_enabled
+        || request.auto_merge
+    {
+        return Err("task.comment does not accept Job mutation fields".into());
+    }
+    if request.id.trim().is_empty()
+        || request.id.len() > 128
+        || request.repository.trim().is_empty()
+        || request.repository.len() > 500
+    {
+        return Err("task.comment requires exact Job ID and repository".into());
+    }
+    let task_id = request
+        .task_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty() && id.len() <= 128)
+        .ok_or("task.comment requires --task-id (1..128 bytes)")?;
+    let message = request
+        .message
+        .as_deref()
+        .ok_or("task.comment requires --message or --message-file")?
+        .trim();
+    if message.is_empty() || message.len() > 60_000 {
+        return Err("task.comment requires nonempty message of at most 60000 bytes".into());
+    }
+    let mut authority = RelayAuthority::open_existing(db)?;
+    let prior = authority.read_job(&request.id)?.ok_or("unknown Job")?;
+    if prior["repository"].as_str() != Some(request.repository.as_str()) {
+        return Err("repository identity mismatch".into());
+    }
+    if !prior["tasks"]
+        .as_array()
+        .is_some_and(|tasks| tasks.iter().any(|t| t["id"].as_str() == Some(task_id)))
+    {
+        return Err(format!("Task {task_id} not found"));
+    }
+    let at = after_time(prior["updatedAt"].as_str().ok_or("Job timestamp missing")?)?;
+    let comment = json!({"id":uuid::Uuid::new_v4().to_string(),"text":message,
+        "author":"cli","createdAt":at,"jobId":request.id,"taskId":task_id});
+    let saved = authority.commit_job(&request.id, &at, |current| {
+        if current["repository"].as_str() != Some(request.repository.as_str()) {
+            return Err("repository identity changed before comment append".into());
+        }
+        let mut next = current.clone();
+        let task = next["tasks"]
+            .as_array_mut()
+            .and_then(|tasks| tasks.iter_mut().find(|t| t["id"].as_str() == Some(task_id)))
+            .ok_or("Task disappeared before comment append")?;
+        if task
+            .get("comments")
+            .is_some_and(|v| !v.is_null() && !v.is_array())
+        {
+            return Err("Task comment history is malformed; refusing overwrite".into());
+        }
+        if task.get("comments").is_none_or(Value::is_null) {
+            task["comments"] = json!([]);
+        }
+        task["comments"]
+            .as_array_mut()
+            .ok_or("Task comments must be an array")?
+            .push(comment.clone());
+        next["updatedAt"] = json!(at);
+        Ok((next, vec![]))
+    })?;
+    let persisted = saved.job["tasks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|t| t["id"].as_str() == Some(task_id))
+        .and_then(|t| t["comments"].as_array())
+        .and_then(|history| history.iter().find(|c| c["id"] == comment["id"]))
+        .cloned()
+        .ok_or("committed Task comment missing")?;
+    Ok(persisted)
+}
+
+/// The same authority action is callable directly only for disposable
+/// isolated tests. A live CLI must use the daemon socket's single writer.
+pub fn append_task_comment_isolated(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        return Err("production Task comments require daemon-owned control socket".into());
+    }
+    isolated_store_root(db)?;
+    dispatch_task_comment(db, request)
+}
+
 fn dispatch(db: &Path, request: ControlRequest) -> Result<Value, String> {
     if request.version != 1 {
         return Err("unsupported native control version".into());
+    }
+    if request.operation == "task.comment" {
+        return dispatch_task_comment(db, &request);
+    }
+    if request.task_id.is_some() || request.message.is_some() {
+        return Err("task fields are only valid for task.comment".into());
     }
     if request.operation != "job.create" {
         return dispatch_job_mutation(db, &request);

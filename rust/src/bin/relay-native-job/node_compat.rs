@@ -12,6 +12,7 @@ Usage: relay-native-job <command> [options]\n\
   job run --id JOB --task-id COORDINATOR [--foreground] [--db SQLITE]\n\
   task list --id JOB [--repo REPO] [--db SQLITE]\n\
   task show --id JOB --task-id TASK [--repo REPO] [--db SQLITE]\n\
+  task comment --db SQLITE --id JOB --repo REPO --task-id TASK (--message TEXT | --message-file FILE|-)\n\
   task comments --id JOB --task-id TASK [--repo REPO] [--db SQLITE]\n\
   task context --id JOB --task-id TASK --execution-id EXEC [--repo REPO] [--db SQLITE]\n\
   task events --id JOB --task-id TASK [--limit 1..60] [--order asc|desc] [--after CURSOR] [--db SQLITE]\n\
