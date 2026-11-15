@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::fs::{self, DirBuilder, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -120,6 +120,38 @@ fn write_private(path: &Path, contents: &str) -> Result<(), String> {
     file.write_all(contents.as_bytes())
         .map_err(|e| e.to_string())?;
     file.sync_all().map_err(|e| e.to_string())
+}
+
+fn output_size(path: &Path) -> Result<u64, String> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+    if !metadata.file_type().is_file() {
+        return Err("escalation executor output is not a regular file".into());
+    }
+    Ok(metadata.len())
+}
+
+fn read_bounded_output(path: &Path) -> Result<Vec<u8>, String> {
+    let size = output_size(path)?;
+    if size > MAX_OUTPUT_BYTES {
+        return Err("escalation executor output exceeded 256 KiB".into());
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .map_err(|error| format!("escalation executor output unavailable: {error}"))?;
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    if !metadata.is_file() || metadata.len() > MAX_OUTPUT_BYTES {
+        return Err("escalation executor output exceeded 256 KiB or was not regular".into());
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_OUTPUT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() as u64 > MAX_OUTPUT_BYTES {
+        return Err("escalation executor output exceeded 256 KiB".into());
+    }
+    Ok(bytes)
 }
 
 fn failed(summary: impl Into<String>) -> EscalationOutcome {
@@ -262,14 +294,12 @@ pub fn run_configured_escalation(
         Ok(_) => {
             // The worker may finish between activity polls, so enforce the
             // output cap again after exit before reading the result file.
-            let stdout_size = fs::metadata(&stdout).map(|value| value.len()).unwrap_or(0);
-            let stderr_size = fs::metadata(&stderr_check)
-                .map(|value| value.len())
-                .unwrap_or(0);
-            if stdout_size > MAX_OUTPUT_BYTES || stderr_size > MAX_OUTPUT_BYTES {
+            let stdout_bytes = read_bounded_output(&stdout);
+            let stderr_size = output_size(&stderr_check).unwrap_or(MAX_OUTPUT_BYTES + 1);
+            if stdout_bytes.is_err() || stderr_size > MAX_OUTPUT_BYTES {
                 failed("Escalation executor output exceeded 256 KiB")
             } else {
-                match fs::read(&stdout)
+                match stdout_bytes
                     .ok()
                     .and_then(|bytes| serde_json::from_slice::<EscalationResult>(&bytes).ok())
                 {
@@ -399,6 +429,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(oversized.state, "technical_failure");
+        let symlink_result = run_configured_escalation(
+            &request,
+            Some("[\"/bin/sh\",\"-c\",\"ln -sf /dev/zero \\\"$(dirname \\\"$1\\\")/result.json\\\"\"]"),
+        )
+        .unwrap();
+        assert_eq!(symlink_result.state, "technical_failure");
         let mut invalid_cwd = request;
         invalid_cwd.cwd = Some(
             std::env::temp_dir().join(format!("missing-escalation-cwd-{}", uuid::Uuid::new_v4())),
