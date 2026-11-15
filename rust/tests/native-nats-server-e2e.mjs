@@ -38,10 +38,14 @@ test('Native Rust event outbox reaches a real isolated NATS server and subscribe
     };
     const db=join(root,'relay.sqlite');
     invoke(cli,['init','--db',db]);
-    const created=invoke(cli,['create','--db',db,'--project-root',join(root,'work'),
-      '--graph-file',join(root,'work/graph.mmd'),'--input-file',join(root,'work/input.md'),
-      '--output-path',join(root,'work/output/result.json'),'--title','Real NATS',
-      '--repository','native-nats','--request-key','native-nats-e2e']);
+    // Native no-Review DAG: NATS delivery verifies an actual completed worker
+    // receipt, not an unauthorized bypass of the default human Review gate.
+    const created=invoke(cli,['job','create','--db',db,'--coordinator-project-root',join(root,'work'),
+      '--coordinator-workspace-root',join(root,'work'),
+      '--coordinator-graph-file',join(root,'work/graph.mmd'),'--coordinator-input-file',join(root,'work/input.md'),
+      '--coordinator-output-path',join(root,'work/output/result.json'),'--objective','Native NATS event test',
+      '--title','Real NATS','--repo','native-nats','--idempotency-key','native-nats-e2e',
+      '--no-review']);
     invoke(cli,['activate','--db',db,'--job-id',created.jobId]);
     const base=['--once','--db',db,'--manifest',join(root,'manifest.json'),'--helper',helper];
     assert.equal(invoke(daemon,base).report.jobsCompleted,1);

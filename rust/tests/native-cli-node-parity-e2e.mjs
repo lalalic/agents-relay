@@ -65,9 +65,14 @@ test('Node spelling: native Rust job run --foreground completes real Coordinator
  const f=fixture();
  try{
   invoke(['init','--db',f.db]);
-  const created=invoke(['create','--db',f.db,'--project-root',join(f.root,'project'),
-   '--graph-file',f.graph,'--input-file',f.input,'--output-path',f.output,
-   '--title','Rust CLI foreground parity','--repository','calc','--request-key','cli-parity-2']);
+  // Foreground must use an explicit no-Review Coordinator Job. Legacy create
+  // defaults to Review enabled, so completing it without a Review is forbidden.
+  const created=invoke(['job','create','--db',f.db,'--coordinator-project-root',join(f.root,'project'),
+   '--coordinator-workspace-root',join(f.root,'project'),
+   '--coordinator-graph-file',f.graph,'--coordinator-input-file',f.input,
+   '--coordinator-output-path',f.output,'--objective','Rust-native foreground Coordinator',
+   '--title','Rust CLI foreground parity','--repo','calc','--idempotency-key','cli-parity-2',
+   '--no-review']);
   assert.match(invoke(['job','run','--db',f.db,'--id',created.jobId,
    '--task-id',created.coordinatorTaskId,'--foreground','--concurrency','0'],2),/--concurrency/);
   assert.equal(invoke(['job','show','--db',f.db,'--id',created.jobId]).state,'DRAFT',

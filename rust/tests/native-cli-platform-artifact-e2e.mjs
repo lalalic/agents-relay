@@ -45,17 +45,9 @@ test('native artifact validate matches Node AJV output and leaves unrelated auth
     const malformedSchema = invoke(root,'--artifact',artifact,'--schema',schemaArray);
     assert.equal(malformedSchema.status,2); assert.match(malformedSchema.stderr,/Schema must be a JSON object/);
 
-    for (const args of [
-      ['context','resolve','--project-path',root], ['agent-discover','--id','x'],
-      ['agent-register','--id','x'], ['prompt','--task-id','x'], ['blocker','show','--id','x'],
-      ['projection','conflicts','--id','x'], ['migrate-local-repositories','inspect'],
-      ['migrate-local-repositories','validate'], ['plan','context','--plan-id','x','--execution-id','e'],
-      ['plan','apply','--id','x','--plan-id','p','--execution-id','e','--file','proposal.json'],
-    ]) {
-      const result = spawnSync(exe,args,{encoding:'utf8',env:{...process.env,AGENTS_RELAY_STORE_DIR:join(root,'isolated-store')}});
-      assert.equal(result.status,2,result.stderr);
-      assert.match(result.stderr,/has no native Rust parity yet|not ported|missing --db|--db is required|UNSUPPORTED/);
-    }
+    // Context, Agent, Review, Planner and Projection now have independent
+    // native CLI E2Es. They are not unsupported-command sentinels here.
+    // Artifact validation must still leave all other SQLite bytes untouched.
     assert.equal(readFileSync(authority,'utf8'),'sentinel authority');
   } finally { rmSync(root,{recursive:true,force:true}); }
 });

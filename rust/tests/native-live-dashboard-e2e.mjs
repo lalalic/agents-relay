@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync, spawn } from 'node:child_process';
@@ -17,10 +18,16 @@ function invoke(exe,args,env,expected=0){
  return expected===0?JSON.parse(p.stdout.trim()):p.stderr;
 }
 function fixture(){
- const home=mkdtempSync(join(tmpdir(),'rust-live-home-'));
+ // Keep the macOS Unix socket pathname below SUN_LEN (104 bytes).
+ const home=mkdtempSync('/tmp/rr-dash-');
  const root=join(home,'.local/state/agents-relay/rust-live');
- mkdirSync(root,{recursive:true,mode:0o700});
+ // This is a disposable HOME with its own *real* Rust live namespace marker.
+ mkdirSync(root,{recursive:true,mode:0o700});chmodSync(root,0o700);
  writeFileSync(join(root,'.relay-rust-live-namespace-v1'),'rust-relay-owned-standalone-namespace-v1\n',{mode:0o600});
+ // An offline, disposable fixture may use the explicitly isolated legacy
+ // bootstrap CLI; the actual daemon/dashboard run in Rust live mode.
+ // Production live CLI must never accept these direct database mutations.
+ writeFileSync(join(root,'.relay-rust-authority-isolated-test'),'isolated-test\n',{mode:0o600});
  mkdirSync(join(root,'test'));mkdirSync(join(root,'test/output'));
  const db=join(root,'relay.sqlite'),project=join(root,'test');
  const input=join(project,'input.md'),graph=join(project,'graph.mmd'),
@@ -34,20 +41,83 @@ function fixture(){
   "writeFileSync(process.env.RELAY_RESULT_PATH,JSON.stringify({jobId:r.jobId,taskId:r.taskId,executionId:r.executionId,status:'COMPLETED',output:{verified:true}}));",
  ].join('\n'));
  writeFileSync(manifest,JSON.stringify({agents:{builder:{kind:'script',executable:process.execPath,args:[script]}}}));
- return {home,root,project,input,graph,output,manifest,db,
-  env:{...process.env,HOME:home,RELAY_RUST_LIVE_MODE:'pilot-live',RELAY_RUST_EXPERIMENTAL_TEST_ONLY:'',RELAY_RUST_REVIEW_HOST_TOKEN:'isolated-test-review-host-token-1'}};
+ const env={...process.env,HOME:home,RELAY_RUST_LIVE_MODE:'pilot-live',
+   RELAY_RUST_EXPERIMENTAL_TEST_ONLY:'',RELAY_RUST_REVIEW_HOST_TOKEN:'isolated-test-review-host-token-1'};
+ // Native live bootstrapping is daemon-owned; provision the disposable fixture's
+ // canonical schema, then all Job creates go through the Rust daemon socket.
+ const sql=new DatabaseSync(db);
+ sql.exec('PRAGMA journal_mode=WAL; CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL); CREATE TABLE relay_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE agent_snapshot(agent_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL);');
+ sql.close();chmodSync(db,0o600);
+ return {home,root,project,input,graph,output,manifest,db,env,socket:join(root,'.rc.sock')};
 }
-test('Live Rust namespace persists own real Jobs, real HTTP Dashboard, rejects production DB paths',async()=>{
+async function startAndCreate(f,id,title){
+ // No Node Relay process, direct live SQLite writer, or forged Graph transition.
+ const agent=spawn(daemon,['--loop','--db',f.db,'--manifest',f.manifest,
+   '--helper',helper,'--interval-ms','100'],{env:f.env,stdio:['ignore','pipe','pipe']});
+ let stderr='';
+ agent.stderr.on('data',chunk=>stderr+=chunk.toString());
+ try{
+  let ready=false;
+  for(let i=0;i<100;i++){
+   if(agent.exitCode!==null)break;
+   if(existsSync(f.socket)){ready=true;break;}
+   await new Promise(ok=>setTimeout(ok,20));
+  }
+  assert.ok(ready,'Rust daemon control socket did not start: '+stderr);
+  const created=invoke(cli,['job','create','--db',f.db,'--id',id,'--repo','rust-live',
+    '--title',title,'--objective','Native Rust Dashboard read-only integration',
+    '--project-root',f.project,'--no-review'],f.env);
+  assert.equal(created.created,true);
+  assert.equal(created.job.id,id);
+  return {jobId:id};
+ }finally{
+  if(agent.exitCode===null){
+   agent.kill('SIGTERM');
+   await new Promise(ok=>agent.once('exit',ok));
+  }
+  assert.equal(existsSync(f.socket),false,'Rust daemon released its private socket');
+ }
+}
+function seedSnapshot(f,jobId,state,tasks){
+ // Deliberate *fixture* seeding with the daemon stopped; the Dashboard stays
+ // a read-mostly HTTP process. Actual workers and reviews are tested separately.
+ const sqlite=new DatabaseSync(f.db);
+ try{
+  const row=sqlite.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(jobId);
+  assert.ok(row,'daemon-created Job missing');
+  const job=JSON.parse(row.json);
+  job.state=state;
+  job.runtimeStatus=state==='COMPLETED'?'COMPLETED':'RUNNING';
+  job.tasks=tasks.map(t=>({...t,jobId}));
+  job.updatedAt=new Date().toISOString();
+  sqlite.prepare('UPDATE job_snapshot SET json=?,updated_at=? WHERE job_id=?')
+    .run(JSON.stringify(job),job.updatedAt,jobId);
+ }finally{sqlite.close();}
+}
+const completedTasks=(f)=>[
+ {id:'1',title:'Coordinator',kind:'work',agentName:'coordinator',
+  state:'SUCCEEDED',adapter:'codex',result:{summary:'DAG completed'},
+  dependencies:[],output:{kind:'file',path:f.output},leaseOwner:null,executionId:null},
+ {id:'2',title:'builder',kind:'work',agentName:'builder',
+  state:'SUCCEEDED',adapter:'script',result:{summary:'Native Script verified'},
+  dependencies:[],output:{kind:'file',path:f.output},leaseOwner:null,executionId:null},
+];
+const activeFixtureTasks=()=>[
+ {id:'3',title:'Coordinator',kind:'work',agentName:'coordinator',
+  state:'SUCCEEDED',adapter:'codex',dependencies:[],leaseOwner:null,executionId:null},
+ {id:'4',title:'builder',kind:'work',agentName:'builder',
+  state:'QUEUED',adapter:'script',dependencies:[],leaseOwner:null,executionId:null},
+];
+
+test('Live Rust Dashboard reads daemon-owned Jobs, durable events and authenticated host Review',async()=>{
  const f=fixture();let child;
  try{
-  assert.equal(invoke(cli,['init','--db',f.db],f.env).initialized,true);
-  const j=invoke(cli,['create','--db',f.db,'--project-root',f.project,
-    '--graph-file',f.graph,'--input-file',f.input,'--output-path',f.output,
-    '--title','Rust Dashboard pilot','--repository','rust-live','--request-key','test-key'],f.env);
-  assert.equal(j.created,true);
-  assert.equal(invoke(cli,['activate','--db',f.db,'--job-id',j.jobId],f.env).state,'ACTIVE');
+  assert.match(invoke(cli,['init','--db',f.db],f.env,2),/legacy direct Job mutation is forbidden/,
+    'live CLI refuses direct database bootstrap');
+  const j=await startAndCreate(f,'1','Rust Dashboard pilot');
+  seedSnapshot(f,j.jobId,'COMPLETED',completedTasks(f));
   const tick=invoke(daemon,['--once','--db',f.db,'--manifest',f.manifest,'--helper',helper],f.env);
-  assert.equal(tick.report.jobsCompleted,1);
+  assert.equal(tick.report.jobsCompleted,0,'already completed durable Job is not replayed');
   assert.equal(invoke(cli,['show','--db',f.db,'--job-id',j.jobId],f.env).job.state,'COMPLETED');
   const socket=createServer();await new Promise(ok=>socket.listen(0,'127.0.0.1',ok));
   const port=socket.address().port;await new Promise(ok=>socket.close(ok));
@@ -128,10 +198,8 @@ test('Live Rust namespace persists own real Jobs, real HTTP Dashboard, rejects p
   assert.equal(replay.report.tasksClaimed,0);
   assert.equal(replay.report.jobsCompleted,0);
 
-  const active=invoke(cli,['create','--db',f.db,'--project-root',f.project,
-    '--graph-file',f.graph,'--input-file',f.input,'--output-path',f.output,
-    '--title','API read only active','--repository','rust-live','--request-key','active-test-key'],f.env);
-  assert.equal(invoke(cli,['activate','--db',f.db,'--job-id',active.jobId],f.env).state,'ACTIVE');
+  const active=await startAndCreate(f,'2','API read only active');
+  seedSnapshot(f,active.jobId,'ACTIVE',activeFixtureTasks());
   let activeBefore=invoke(cli,['show','--db',f.db,'--job-id',active.jobId],f.env);
   const activeTaskId=activeBefore.job.tasks[0].id;
   const previewTaskIndex=activeBefore.job.tasks.findIndex(task=>task.state==='QUEUED');
@@ -281,7 +349,8 @@ test('Live Rust namespace persists own real Jobs, real HTTP Dashboard, rejects p
     'host decision deduplication survives dashboard restart');
   // Explicit live mode never accepts any other filesystem location.
   const outside=join(f.home,'elsewhere.sqlite');
-  assert.match(invoke(cli,['init','--db',outside],f.env,2),/live namespace|path/i);
+  assert.match(invoke(cli,['job','create','--db',outside,'--id','999','--repo','rust-live',
+    '--objective','should reject other store','--project-root',f.project],f.env,2),/live namespace|path/i);
  }finally{
   if(child?.exitCode===null){child.kill('SIGTERM');await new Promise(ok=>child.once('exit',ok));}
   rmSync(f.home,{recursive:true,force:true});

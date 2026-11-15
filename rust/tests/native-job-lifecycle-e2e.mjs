@@ -36,9 +36,14 @@ function f(){
  writeFileSync(script,worker);
  const manifest=join(root,'manifest.json');
  writeFileSync(manifest,JSON.stringify({agents:{builder:{kind:'script',executable:process.execPath,args:[script]}}}));
- const create=(extra=[])=>['create','--db',db,'--project-root',join(root,'project'),
-  '--graph-file',graph,'--input-file',input,'--output-path',output,
-  '--title','Rust-native real Job','--repository','calc','--request-key','same-req',...extra];
+ // Node-compatible native Coordinator creation makes no-Review/No-Merge an
+ // explicit caller choice; legacy creation enables Review+merge by default.
+ const create=(extra=[])=>['job','create','--db',db,'--coordinator-project-root',join(root,'project'),
+  '--coordinator-workspace-root',join(root,'project'),
+  '--coordinator-graph-file',graph,'--coordinator-input-file',input,
+  '--coordinator-output-path',output,'--objective','Build a non-synthetic file.',
+  '--title','Rust-native real Job','--repo','calc','--idempotency-key','same-req',
+  '--no-review',...extra];
  return {root,db,create,manifest,output};
 }
 function updateJob(db,id,mutate){
@@ -63,9 +68,17 @@ test('Native Rust alone creates, activates, executes, completes and deduplicates
   assert.equal(activated.state,'ACTIVE');
   assert.equal(call(cli,['activate','--db',v.db,'--job-id',first.jobId]).activated,false);
   const args=['--once','--db',v.db,'--manifest',v.manifest,'--helper',helper];
-  const tick=call(daemon,args);
-  assert.equal(tick.report.tasksSucceeded,1,JSON.stringify(tick));
-  assert.equal(tick.report.jobsCompleted,1,JSON.stringify(tick));
+  // Each --once tick advances one durable scheduling wave. The Coordinator's
+  // output can enqueue its Graph children, which are claimed on the next tick.
+  // Assert bounded convergence of the *real* daemon, not same-tick completion.
+  const ticks=[];
+  for(let iteration=0;iteration<8;iteration++){
+    const tick=call(daemon,args);
+    ticks.push(tick);
+    if(tick.report.jobsCompleted>0)break;
+  }
+  assert.equal(ticks.reduce((sum,t)=>sum+t.report.tasksSucceeded,0),1,JSON.stringify(ticks));
+  assert.equal(ticks.reduce((sum,t)=>sum+t.report.jobsCompleted,0),1,JSON.stringify(ticks));
   const job=call(cli,['show','--db',v.db,'--job-id',first.jobId]);
   assert.equal(job.job.state,'COMPLETED');
   assert.deepEqual(job.job.tasks.map(t=>t.state),['SUCCEEDED','SUCCEEDED']);

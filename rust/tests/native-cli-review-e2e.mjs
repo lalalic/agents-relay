@@ -93,9 +93,13 @@ test('Blocker and projection paths explicitly reject unsupported unsafe effects'
    ['blocker','ensure','--db',f.db,'--id',f.jobId],
    ['blocker','add','--db',f.db,'--id',f.jobId],
    ['blocker','resolve','--db',f.db,'--id',f.jobId],
-   ['projection','conflicts','--db',f.db,'--id',f.jobId],
    ['projection','resolve','--db',f.db,'--id',f.jobId,'--projection-id','1','--action','requeue'],
   ]) assert.match(call(args,2),/UNSUPPORTED:/);
+  // Projection conflicts is now a real read-only command, with mandatory
+  // repository binding. The legacy test must not claim it is unsupported.
+  assert.match(call(['projection','conflicts','--db',f.db,'--id',f.jobId],2),/missing --repo/);
+  assert.match(call(['projection','conflicts','--db',f.db,'--id',f.jobId,'--repo','forged'],2),
+    /repository identity mismatch/);
   assert.equal(call(['blocker','show','--db',f.db,'--id',f.jobId]).job.id,f.jobId);
  }finally{rmSync(f.root,{recursive:true,force:true});}
 });

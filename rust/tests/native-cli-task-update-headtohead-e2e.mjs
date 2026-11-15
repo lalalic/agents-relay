@@ -47,12 +47,21 @@ test('update works after Graph-authorized retry and retry state identity remains
  }finally{close(f)}
 });
 
-test('Node CLI reference matches native update field semantics',{skip:!nodeReferenceAvailable?'Node reference build or optional nats dependency unavailable':false},()=>{
+test('Node CLI shared update fields match Rust; native attachment update is an explicit extension',{skip:!nodeReferenceAvailable?'Node reference build or optional nats dependency unavailable':false},()=>{
  const f=fixture();try{const prerequisite=create(f),target=create(f,['--deps',prerequisite.taskId]);const graphPath=join(f.root,'node-store/agent-graph.mmd');writeFileSync(graphPath,'flowchart TD\nbuilder[agent:builder]\n');
   const flags=['--agent','builder','--agent-graph-file',graphPath,'--attachments','a.png,b.txt','--capabilities','rust,testing','--chatgpt-project','project-1','--chatgpt-tab-close-policy','never','--cwd','/workspace','--dependency-validity',JSON.stringify({[prerequisite.taskId]:'rerun'}),'--max-attempts','4','--model','gpt-test','--provider','openai','--profile','fast','--reasoning','high','--project','native','--parent',prerequisite.taskId,'--adapter','z','--input-file',join(f.root,'project/input.md'),'--timeout','12345'];
   const nodeFile=join(f.root,'node-job.json'),nodeJob=snapshot(f);writeFileSync(nodeFile,JSON.stringify(nodeJob));
   const node=spawnSync(process.execPath,[nodeCli,'task','update','--file',nodeFile,'--task-id',target.taskId,...flags],{env:f.env,encoding:'utf8',timeout:12000});assert.equal(node.status,0,node.stderr||node.stdout);const reference=JSON.parse(node.stdout.trim());const native=update(f,target.taskId,[...flags,'--store-dir',f.root]).task;
-  for(const field of ['agentName','agentGraph','attachments','capabilities','adapter','chatgptTabClosePolicy','dependencyValidity','maxAttempts','projectName','parentTaskId','input','timeoutMs'])assert.deepEqual(native[field],reference[field],`Task field ${field}`);
+  for(const field of ['agentName','agentGraph','capabilities','adapter','chatgptTabClosePolicy','maxAttempts','projectName','parentTaskId','input','timeoutMs'])assert.deepEqual(native[field],reference[field],`Task field ${field}`);
+  // Node local-file task update only populates attachments on creation.
+  // Rust supports updating them explicitly; do not misrepresent this native
+  // extension as exact Node parity for an unsupported legacy update flag.
+  assert.equal(reference.attachments,undefined);
+  assert.deepEqual(native.attachments,['a.png','b.txt']);
+  // The Node --file update pathway also ignores dependency-validity, whereas
+  // Rust updates the Graph dependency policy and validates its declared edges.
+  assert.equal(reference.dependencyValidity,undefined);
+  assert.deepEqual(native.dependencyValidity,{[prerequisite.taskId]:'rerun'});
   assert.deepEqual(native.dependencies,reference.dependencies);for(const key of ['provider','model','profile','reasoning','cwd','projectId','decidedBy'])assert.equal(native.routing[key],reference.routing[key],`routing.${key}`);
  }finally{close(f)}
 });
