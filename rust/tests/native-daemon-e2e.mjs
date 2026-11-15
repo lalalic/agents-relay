@@ -441,6 +441,59 @@ test('daemon reopens eligible Troubleshooter once and rejects stale or wrong lin
   console.log('Troubleshooter recovery: Graph-selected reopen persisted once; stale/wrong lineage and false completion rejected');
  }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
 });
+test('daemon creates one trusted graph-selected Troubleshooter for failed work and preserves the failed original',async()=>{
+ const f=fixture();let store;
+ const route={provider:'openai',model:'fixture-troubleshooter',decidedBy:'fixture-router',decidedAt:t0};
+ const selection={workerId:'codex-troubleshooter',adapter:'codex',capabilities:['model'],selectedBy:'fixture-router',selectedAt:t0};
+ const worker=join(f.dir,'troubleshooter-worker.mjs');
+ writeFileSync(worker,`import {readFileSync,writeFileSync} from 'node:fs';
+const request=JSON.parse(readFileSync(process.env.RELAY_TASK_REQUEST_PATH,'utf8'));
+writeFileSync(process.env.RELAY_RESULT_PATH,JSON.stringify({type:'task.completed',jobId:request.jobId,
+ taskId:request.taskId,executionId:request.executionId,leaseOwner:request.leaseOwner,attempt:request.attempt,
+ adapter:request.adapter,routing:request.routing,workerSelection:request.workerSelection,status:'COMPLETED',
+ summary:'diagnosis recorded for fixture',output:{diagnosed:true}}));`);
+ const cli=resolve(import.meta.dirname,'../../dist/cli.js');
+ writeFileSync(f.manifest,JSON.stringify({agents:{troubleshooter:{kind:'model',executable:process.execPath,
+  args:[worker],routing:route,workerSelection:selection,promptCli:cli,promptNode:process.execPath}}}));
+ try{
+  const failed={...task('101','91',[],'FAILED'),attempt:1,maxAttempts:1,error:'fixture worker failed',failureReason:'worker_exit_nonzero'};
+  const staleParent={...task('201','92',[],'FAILED'),attempt:2,maxAttempts:3,error:'newer failure episode'};
+  const staleRecovery={...task('202','92',[],'QUEUED'),agentName:'troubleshooter',adapter:'codex',
+   capabilities:['model'],parentTaskId:'201',recoveryForAttempt:1,routing:route,workerSelection:selection,
+   workerRequirements:{capabilities:['model','local_repo','iterative_tools'],runtime:'codex'}};
+  store=new SQLiteRelayStore(f.db);
+  await save(store,f.dir,'91',[failed]);
+  await save(store,f.dir,'92',[staleParent,staleRecovery]);
+  store.close();store=null;
+  const first=once(f);
+  assert.equal(first.troubleshootersCreated,1,JSON.stringify(first));
+  assert.equal(first.tasksClaimed,1,JSON.stringify(first));
+  assert.equal(first.tasksSucceeded,1,JSON.stringify(first));
+  store=new SQLiteRelayStore(f.db);
+  let job=await store.loadJob('91');
+  assert.equal(job.tasks.length,2);
+  assert.equal(job.tasks[0].state,'FAILED','recovery work cannot rewrite the original failure');
+  assert.equal(job.tasks[0].result,null);
+  assert.equal(job.tasks[1].agentName,'troubleshooter');
+  assert.equal(job.tasks[1].parentTaskId,'101');
+  assert.equal(job.tasks[1].recoveryForAttempt,1);
+  assert.equal(job.tasks[1].adapter,'codex');
+  assert.deepEqual(job.tasks[1].routing,route);
+  assert.deepEqual(job.tasks[1].workerSelection,selection);
+  assert.equal((await store.loadJob('92')).tasks[1].state,'QUEUED','a recovery for an older parent attempt cannot execute');
+  store.close();store=null;
+  const restart=once(f);
+  assert.equal(restart.troubleshootersCreated,0,'restart cannot duplicate the recovery Task');
+  assert.equal(restart.tasksClaimed,0,'terminal recovery work does not implicitly retry');
+  store=new SQLiteRelayStore(f.db);job=await store.loadJob('91');
+  assert.equal(job.tasks.length,2);
+  assert.equal(job.tasks[0].state,'FAILED');
+  assert.equal((await store.loadJob('92')).tasks[1].state,'QUEUED','restart cannot bypass the exact parent attempt fence');
+  const sql=new DatabaseSync(f.db);
+  assert.equal(sql.prepare("SELECT count(*) AS n FROM workflow_event_outbox WHERE event_id='troubleshooter-created:91:101'").get().n,1);
+  sql.close();
+ }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
+});
 test('SIGKILL daemon -> helper kills owned worker -> restart marks proven expired execution FAILED once',async()=>{
  const f=fixture('sleep 20; '+script);let store,daemon,pid;
  try{

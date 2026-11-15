@@ -82,11 +82,12 @@ the production control API or a physical host/mobile Review test.
 The isolated daemon also creates one Graph-selected Troubleshooter Task for
 each eligible failed ordinary Task. Creation atomically checks the existing
 recovery barrier, allocates a global Task ID, persists the trusted Model route
-and failure context, and records one outbox event. The original failed Task is
-left unchanged. The daemon requires a configured Model Troubleshooter; if
-none is available, it keeps the failed work unresolved and reports the
-missing route. Plan-failure recovery and the broader production Troubleshooter
-retry/escalation scheduler remain incomplete.
+and failure context, and records one outbox event. A correlated native Model
+claim is allowed only while the exact parent is still failed or blocked at the
+same attempt. The original failed Task is left unchanged. The daemon requires a
+configured Model Troubleshooter; if none is available, it keeps the failed
+work unresolved and reports the missing route. Plan-failure recovery and the
+broader production Troubleshooter retry/escalation scheduler remain incomplete.
 
 Build and start the native service with an explicitly selected, already
 initialized Rust live-namespace database:
