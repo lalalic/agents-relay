@@ -127,4 +127,76 @@ mod tests {
             good[key] = original;
         }
     }
+
+    #[test]
+    fn explicit_graph_retry_preserves_model_decision_and_claims_next_attempt() {
+        let (_dir, path) = setup();
+        let mut store = RelayAuthority::open_existing(&path).unwrap();
+        let route = json!({"provider":"openai","model":"fixture-model",
+            "decidedBy":"fixture-router","decidedAt":"2026-11-13T20:00:00Z"});
+        let selection = json!({"workerId":"codex-worker","adapter":"codex",
+            "selectedBy":"fixture-router","selectedAt":"2026-11-13T20:00:00Z","capabilities":["model"]});
+        store
+            .commit_job("91", "2026-11-13T20:00:01Z", |old| {
+                let mut new = old.clone();
+                new["updatedAt"] = json!("2026-11-13T20:00:01Z");
+                let task = &mut new["tasks"][0];
+                task["adapter"] = json!("codex");
+                task["dependencies"] = json!([]);
+                task["routing"] = route.clone();
+                task["workerSelection"] = selection.clone();
+                task["state"] = json!("FAILED");
+                task["attempt"] = json!(1);
+                task["maxAttempts"] = json!(3);
+                task["error"] = json!("provider temporarily unavailable");
+                task["failureReason"] = json!("worker_exit_nonzero");
+                task["executionId"] = Value::Null;
+                task["leaseOwner"] = Value::Null;
+                task["leaseExpiresAt"] = Value::Null;
+                Ok((new, vec![]))
+            })
+            .unwrap();
+
+        let graph =
+            crate::graph::Graph::parse(include_str!("../../workflow/task-lifecycle.mmd")).unwrap();
+        let lifecycle = crate::lifecycle::TaskLifecycle::new(&graph);
+        lifecycle
+            .apply(
+                &mut store,
+                crate::lifecycle::TaskTransition {
+                    job_id: "91",
+                    task_id: "101",
+                    input: crate::graph::GraphInput {
+                        transport: "event".into(),
+                        id: "retry".into(),
+                        payload: json!({"jobId":"91","taskId":"101"}),
+                    },
+                    guard_facts: &std::collections::HashMap::new(),
+                    at: "2026-11-13T20:00:02Z",
+                    events: vec![],
+                },
+            )
+            .unwrap();
+
+        let job = store.read_job("91").unwrap().unwrap();
+        assert_eq!(job["tasks"][0]["state"], "QUEUED");
+        assert_eq!(job["tasks"][0]["error"], Value::Null);
+        assert_eq!(job["tasks"][0]["failureReason"], Value::Null);
+        assert_eq!(job["tasks"][0]["routing"], route);
+        assert_eq!(job["tasks"][0]["workerSelection"], selection);
+        let claim = store
+            .claim_queued_codex(&ScriptClaimRequest {
+                job_id: "91",
+                task_id: "101",
+                execution_id: "retry-generation",
+                owner: "retry-worker",
+                at: "2026-11-13T20:00:03Z",
+                lease_expires_at: "2099-01-01T00:00:00Z",
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(claim.attempt, 2);
+        assert_eq!(claim.routing, Some(route));
+        assert_eq!(claim.worker_selection, Some(selection));
+    }
 }
