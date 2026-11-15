@@ -6,6 +6,33 @@ is **not** a production Relay replacement yet: the installed TypeScript
 Reconciler remains the single production writer/scheduler until L1/L2/L3,
 Review/JEL/DAG and recovery equivalence gates are met.
 
+## Rust live service, read-only Dashboard (2026-11-14)
+
+The Rust service may run persistently in a dedicated operator-marked Job
+namespace under the user's private state directory. It does NOT claim the
+TypeScript production store, Scheduler, Review or JEL ownership. This is
+intentional while the Vlog production Job is pending human Review.
+
+- Exact location: $HOME/.local/state/agents-relay/rust-live/relay.sqlite
+- Required marker file: .relay-rust-live-namespace-v1 with the single line
+  rust-relay-owned-standalone-namespace-v1 (newline terminated)
+- Directory must be user-owned and mode 0700.
+- Required environment: RELAY_RUST_LIVE_MODE=pilot-live.
+- Rust CLI can initialize its own store, create/activate/inspect Jobs.
+- Native loop Daemon schedules and completes only Graph-authorized no-review
+  Jobs. No approval, merge, publishing or revision is inferred.
+- Native Dashboard is read-only on 127.0.0.1:8788. The existing
+  TypeScript Dashboard presents it at /rust/ through a GET-only proxy.
+  The ordinary TypeScript Job list remains unchanged.
+- Only the Rust-owned DB receives native Worker claims. A production
+  TypeScript SQLite path cannot pass the Rust namespace fence.
+- Rust dashboard GET /api/jobs lists at most 20 sanitized Job/task state
+  summaries. It deliberately omits worker inputs, outputs and private media.
+
+This live namespace is a verified Rust scheduler in a running native service,
+but is NOT a full Node.js Relay production cutover. In particular, existing
+Node.js Jobs still need their own Reconciler and Review/JEL guarantees.
+
 ## 2026-11-14 native Job intake, completion and outbox increment
 
 The isolated native Rust pilot can now perform **Job creation, global Job/Task ID

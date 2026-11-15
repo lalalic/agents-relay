@@ -14,6 +14,13 @@ use std::path::{Path, PathBuf};
 const JOB_GRAPH: &str = include_str!("../../workflow/job-lifecycle.mmd");
 
 fn root_before_create(db: &Path) -> Result<PathBuf, String> {
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        let root = crate::native_daemon::live_store_root(db)?;
+        if db.exists() || db.symlink_metadata().is_ok() {
+            return Err("native Job init refuses existing database or symlink".into());
+        }
+        return Ok(root);
+    }
     if std::env::var("RELAY_RUST_EXPERIMENTAL_TEST_ONLY")
         .ok()
         .as_deref()

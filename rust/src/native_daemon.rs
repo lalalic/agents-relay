@@ -42,9 +42,61 @@ pub struct NativeTick {
     pub blocked: Vec<String>,
 }
 
-/// Explicit disposable location and marker are mandatory. No live-store
-/// option, home-store default, or environment override bypasses this gate.
+/// This LIVE namespace is permanently separate from TypeScript production Job
+/// stores. A deliberate mode and exact on-disk owner marker are mandatory.
+/// No existing production SQLite file or guessed path can pass this fence.
+pub fn live_store_root(db: &Path) -> Result<PathBuf, String> {
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() != Some("pilot-live") {
+        return Err("Rust live namespace is not enabled".into());
+    }
+    let home = PathBuf::from(std::env::var("HOME").map_err(|_| "HOME not set")?)
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let expected = home.join(".local/state/agents-relay/rust-live");
+    let root = expected.canonicalize().map_err(|e| e.to_string())?;
+    if root != expected || !root.is_dir() || db.file_name().is_none_or(|n| n != "relay.sqlite") {
+        return Err("invalid Rust live namespace path".into());
+    }
+    if db
+        .parent()
+        .ok_or("database parent missing")?
+        .canonicalize()
+        .map_err(|e| e.to_string())?
+        != root
+    {
+        return Err("Rust live namespace refuses production or alias paths".into());
+    }
+    let marker = root.join(".relay-rust-live-namespace-v1");
+    if !marker.is_file()
+        || std::fs::read_to_string(&marker).map_err(|e| e.to_string())?
+            != "rust-relay-owned-standalone-namespace-v1\n"
+    {
+        return Err("Rust live namespace requires an exact operator marker".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let meta = std::fs::metadata(&root).map_err(|e| e.to_string())?;
+        if meta.uid() != unsafe { nix::libc::geteuid() } || meta.permissions().mode() & 0o077 != 0 {
+            return Err("Rust live namespace must be private and user-owned".into());
+        }
+    }
+    Ok(root)
+}
+
+/// The production TypeScript store is NEVER eligible for native execution.
+/// A Rust-owned persistent namespace is supported separately, with no job
+/// state shared with or claimed by the running TypeScript reconciler.
 pub fn isolated_store_root(db: &Path) -> Result<PathBuf, String> {
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        let root = live_store_root(db)?;
+        if !db.is_file()
+            || db.canonicalize().map_err(|e| e.to_string())? != root.join("relay.sqlite")
+        {
+            return Err("live namespace database is not the canonical store file".into());
+        }
+        return Ok(root);
+    }
     if std::env::var("RELAY_RUST_EXPERIMENTAL_TEST_ONLY")
         .ok()
         .as_deref()

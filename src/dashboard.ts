@@ -137,6 +137,40 @@ export function serveDashboard(
   };
 
   const server = createServer(async (req, res) => {
+    // The Rust-owned live namespace never writes TypeScript production Jobs.
+    // Expose only a bounded, read-only, same-origin dashboard proxy.
+    const rustPath = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
+    if (rustPath === '/rust') {
+      res.writeHead(302, { location: '/rust/', 'cache-control': 'no-store' });
+      res.end();
+      return;
+    }
+    if (rustPath === '/rust/' || rustPath === '/rust/api/jobs' || rustPath === '/rust/api/health' ||
+        /^\/rust\/api\/jobs\/[0-9]{1,20}$/.test(rustPath)) {
+      if (req.method !== 'GET') {
+        res.writeHead(405, { 'content-type': 'text/plain', allow: 'GET' });
+        res.end('Read only');
+        return;
+      }
+      try {
+        const upstream = await fetch('http://127.0.0.1:8788' + rustPath.slice('/rust'.length), {
+          signal: AbortSignal.timeout(2500),
+        });
+        const text = await upstream.text();
+        if (text.length > 200_000) throw new Error('Native dashboard response too large');
+        res.writeHead(upstream.status, {
+          'content-type': rustPath === '/rust/' ? 'text/html; charset=utf-8' : 'application/json',
+          'cache-control': 'no-store',
+          'x-content-type-options': 'nosniff',
+          'content-security-policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'",
+        });
+        res.end(text);
+      } catch {
+        res.writeHead(503, { 'content-type': 'text/plain', 'cache-control': 'no-store' });
+        res.end('Rust live dashboard is unavailable');
+      }
+      return;
+    }
     if (req.url === '/') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(dashboardHtml);
