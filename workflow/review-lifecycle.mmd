@@ -86,6 +86,11 @@ noActiveReviewStale -->|false| stale
 noApprovedReviewStale -->|true| createStale
 noApprovedReviewStale -->|false| stale
 createStale --> pending
+%% A second local/PR head update can arrive while waiting for the replacement
+%% review. Preserve STALE while advancing the immutable Job head again.
+cancelStaleAgain["action: review.cancelStale"]
+stale -->|on: head.changed| cancelStaleAgain
+cancelStaleAgain --> stale
 
 pending -->|on: reconcile| pendingRetry
 pendingRetry -->|true| pendingCancelled

@@ -47,9 +47,25 @@ pub(crate) fn reconcile_native_final_review(
             return Ok(());
         }
     };
-    // A head change must first travel through the canonical Review Graph. This
-    // staged daemon deliberately refuses to overwrite Job head evidence.
     if snapshot["headSha"].as_str() != Some(&head) {
+        if snapshot.get("review").is_none_or(Value::is_null)
+            && snapshot
+                .get("prNumber")
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+                == 0
+        {
+            // With no prior review, the verified local Git HEAD is current
+            // artifact evidence for a local-only Job. Persist the fact so the
+            // Review Graph can evaluate creation on the next reconciliation.
+            record_native_local_head(authority, job_id, &head)?;
+            return Ok(());
+        }
+        if apply_native_review_head_changed(authority, job_id, &head)? {
+            report.blocked.push(format!(
+                "{job_id}: local Git head changed; previous Review is stale and must be re-created"
+            ));
+        }
         return Ok(());
     }
     let Some((name, reviewer)) = ["job-acceptance-reviewer", "reviewer"]
@@ -83,6 +99,165 @@ pub(crate) fn reconcile_native_final_review(
         report.reviews_queued += 1;
     }
     Ok(())
+}
+
+fn record_native_local_head(
+    authority: &mut RelayAuthority,
+    job_id: &str,
+    head: &str,
+) -> Result<bool, String> {
+    if !valid_git_sha(head) {
+        return Err("local Job head requires a full verified Git SHA".into());
+    }
+    let snapshot = authority.read_job(job_id)?.ok_or("Review Job missing")?;
+    if snapshot
+        .get("prNumber")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        != 0
+        || snapshot.get("review").is_some_and(|value| !value.is_null())
+        || snapshot["state"] != "ACTIVE"
+        || snapshot.get("pause").is_some_and(|value| !value.is_null())
+        || snapshot["headSha"].as_str() == Some(head)
+    {
+        return Ok(false);
+    }
+    let at = after_time(
+        snapshot["updatedAt"]
+            .as_str()
+            .ok_or("Job timestamp missing")?,
+    )?;
+    let head = head.to_owned();
+    authority.commit_job(job_id, &at, |current| {
+        if current.get("prNumber").and_then(Value::as_i64).unwrap_or(0) != 0
+            || current.get("review").is_some_and(|value| !value.is_null())
+            || current["state"] != "ACTIVE"
+            || current.get("pause").is_some_and(|value| !value.is_null())
+            || current["headSha"] != snapshot["headSha"]
+        {
+            return Err("local Job head facts changed during observation".into());
+        }
+        let mut next = current.clone();
+        next["headSha"] = json!(head);
+        next["updatedAt"] = json!(at);
+        Ok((next, vec![]))
+    })?;
+    Ok(true)
+}
+
+/// Apply a locally observed head change only through the canonical Review
+/// Graph. The running reviewer generation is left to reach its correlated
+/// terminal event; its old immutable SHA prevents its result from authorizing
+/// the new head. Unleased queued reviewer work is cancelled by the Task Graph.
+fn apply_native_review_head_changed(
+    authority: &mut RelayAuthority,
+    job_id: &str,
+    new_head: &str,
+) -> Result<bool, String> {
+    if !valid_git_sha(new_head) {
+        return Err("head.changed requires a full verified Git SHA".into());
+    }
+    let snapshot = authority.read_job(job_id)?.ok_or("Review Job missing")?;
+    let Some(review) = snapshot.get("review").filter(|value| !value.is_null()) else {
+        return Ok(false);
+    };
+    let Some(old_head) = review.get("headSha").and_then(Value::as_str) else {
+        return Ok(false);
+    };
+    if old_head == new_head || snapshot["headSha"].as_str() == Some(new_head) {
+        return Ok(false);
+    }
+    let outcome = review["outcome"].as_str().ok_or("Review outcome missing")?;
+    let state = outcome.to_ascii_uppercase();
+    let graph = Graph::parse(include_str!("../../../workflow/review-lifecycle.mmd"))?;
+    let decision = graph.decide(
+        &state,
+        GraphInput {
+            transport: "event".into(),
+            id: "head.changed".into(),
+            payload: json!({}),
+        },
+        &HashMap::new(),
+    )?;
+    let Decision::Accepted {
+        target, actions, ..
+    } = decision
+    else {
+        return Ok(false);
+    };
+    if target != "STALE" || actions.len() != 1 || actions[0].id != "review.cancelStale" {
+        return Err("Review Graph selected an unsupported head-change effect".into());
+    }
+    let task_id = review
+        .get("taskId")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let stale_outcome = target.to_ascii_lowercase();
+    let at = after_time(
+        snapshot["updatedAt"]
+            .as_str()
+            .ok_or("Job timestamp missing")?,
+    )?;
+    let review_head = old_head.to_owned();
+    let new_head = new_head.to_owned();
+    let graph_text = include_str!("../../../workflow/task-lifecycle.mmd");
+    let committed = authority.commit_job(job_id, &at, |current| {
+        let current_review = current
+            .get("review")
+            .ok_or("Review missing during head change")?;
+        if current["headSha"] != snapshot["headSha"]
+            || current_review["headSha"] != review_head
+            || current_review["taskId"] != review["taskId"]
+            || current_review["outcome"] != outcome
+        {
+            return Err("Review changed while applying local head observation".into());
+        }
+        let mut next = current.clone();
+        let review = next.get_mut("review").ok_or("Review missing")?;
+        review["outcome"] = json!(stale_outcome);
+        review["updatedAt"] = json!(at);
+        next["headSha"] = json!(new_head);
+        if let Some(task_id) = task_id.as_deref() {
+            let task = next["tasks"]
+                .as_array_mut()
+                .and_then(|tasks| tasks.iter_mut().find(|task| task["id"] == task_id));
+            if let Some(task) = task {
+                if matches!(
+                    task["agentName"].as_str(),
+                    Some("reviewer" | "job-acceptance-reviewer")
+                ) && task["reviewHeadSha"] == review_head
+                    && matches!(task["state"].as_str(), Some("DRAFT" | "QUEUED"))
+                    && task.get("executionId").is_none_or(Value::is_null)
+                    && task.get("leaseOwner").is_none_or(Value::is_null)
+                    && task.get("leaseExpiresAt").is_none_or(Value::is_null)
+                {
+                    let task_graph = Graph::parse(graph_text)?;
+                    let task_decision = task_graph.decide(
+                        task["state"].as_str().ok_or("Task state missing")?,
+                        GraphInput {
+                            transport: "event".into(),
+                            id: "cancel".into(),
+                            payload: json!({}),
+                        },
+                        &HashMap::new(),
+                    )?;
+                    let Decision::Accepted { target, .. } = task_decision else {
+                        return Err("Task Graph denied stale reviewer cancellation".into());
+                    };
+                    if target != "CANCELLED" {
+                        return Err("Task Graph selected an invalid stale-review state".into());
+                    }
+                    task["state"] = json!(target);
+                    task["error"] =
+                        json!("Review evidence became stale after the local Git head changed");
+                    task["updatedAt"] = json!(at);
+                }
+            }
+        }
+        next["updatedAt"] = json!(at);
+        Ok((next, vec![]))
+    })?;
+    Ok(committed.job["headSha"] == new_head)
 }
 
 /// Execute the already-selected Review Graph creation effect. The caller
@@ -526,6 +701,109 @@ mod tests {
     }
 
     #[test]
+    fn verified_local_head_change_uses_review_and_task_graphs_and_fences_old_review() {
+        let (dir, mut authority) = authority_with_bound_head("approved", HEAD, json!([]), HEAD);
+        let at = after_time(AT).unwrap();
+        authority
+            .commit_job("91", &at, |current| {
+                let mut next = current.clone();
+                next["review"]["outcome"] = json!("approved");
+                next["tasks"][0]["state"] = json!("QUEUED");
+                next["tasks"][0]["executionId"] = Value::Null;
+                next["tasks"][0]["leaseOwner"] = Value::Null;
+                next["tasks"][0]["leaseExpiresAt"] = Value::Null;
+                next["updatedAt"] = json!(at);
+                Ok((next, vec![]))
+            })
+            .unwrap();
+        let new_head = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        assert!(apply_native_review_head_changed(&mut authority, "91", new_head).unwrap());
+        let job = authority.read_job("91").unwrap().unwrap();
+        assert_eq!(job["headSha"], new_head);
+        assert_eq!(job["review"]["headSha"], HEAD);
+        assert_eq!(job["review"]["outcome"], "stale");
+        assert_eq!(job["tasks"][0]["state"], "CANCELLED");
+        let second_head = "cccccccccccccccccccccccccccccccccccccccc";
+        assert!(apply_native_review_head_changed(&mut authority, "91", second_head).unwrap());
+        assert!(!apply_native_review_head_changed(&mut authority, "91", second_head).unwrap());
+        drop(authority);
+        let reopened = RelayAuthority::open_existing(&dir.path().join("relay.sqlite")).unwrap();
+        let recovered = reopened.read_job("91").unwrap().unwrap();
+        assert_eq!(recovered["headSha"], second_head);
+        assert_eq!(recovered["review"]["outcome"], "stale");
+    }
+
+    #[test]
+    fn verified_head_is_recorded_for_local_job_before_first_review_only() {
+        let (dir, mut authority) = authority_with_bound_head("approved", HEAD, json!([]), HEAD);
+        let at = after_time(AT).unwrap();
+        authority
+            .commit_job("91", &at, |current| {
+                let mut next = current.clone();
+                next["review"] = Value::Null;
+                next["headSha"] = json!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+                next["updatedAt"] = json!(at);
+                Ok((next, vec![]))
+            })
+            .unwrap();
+        let observed = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        assert!(record_native_local_head(&mut authority, "91", observed).unwrap());
+        assert!(!record_native_local_head(&mut authority, "91", observed).unwrap());
+        let job = authority.read_job("91").unwrap().unwrap();
+        assert_eq!(job["headSha"], observed);
+        assert!(job["review"].is_null());
+
+        let pr_at = after_time(job["updatedAt"].as_str().unwrap()).unwrap();
+        authority
+            .commit_job("91", &pr_at, |current| {
+                let mut next = current.clone();
+                next["prNumber"] = json!(42);
+                next["headSha"] = json!("cccccccccccccccccccccccccccccccccccccccc");
+                next["updatedAt"] = json!(pr_at);
+                Ok((next, vec![]))
+            })
+            .unwrap();
+        assert!(!record_native_local_head(&mut authority, "91", observed).unwrap());
+        drop(authority);
+        let reopened = RelayAuthority::open_existing(&dir.path().join("relay.sqlite")).unwrap();
+        let recovered = reopened.read_job("91").unwrap().unwrap();
+        assert_eq!(
+            recovered["headSha"],
+            "cccccccccccccccccccccccccccccccccccccccc"
+        );
+    }
+
+    #[test]
+    fn running_old_head_reviewer_is_not_cancelled_but_cannot_authorize_new_head() {
+        let (dir, mut authority) = authority_with_bound_head("approved", HEAD, json!([]), HEAD);
+        let at = after_time(AT).unwrap();
+        authority
+            .commit_job("91", &at, |current| {
+                let mut next = current.clone();
+                next["review"]["outcome"] = json!("started");
+                next["tasks"][0]["state"] = json!("RUNNING");
+                next["tasks"][0]["executionId"] = json!("review-exec");
+                next["tasks"][0]["leaseOwner"] = json!("reviewer-worker");
+                next["tasks"][0]["leaseExpiresAt"] = json!("2026-11-15T13:00:00.000Z");
+                next["updatedAt"] = json!(at);
+                Ok((next, vec![]))
+            })
+            .unwrap();
+        let new_head = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        assert!(apply_native_review_head_changed(&mut authority, "91", new_head).unwrap());
+        let job = authority.read_job("91").unwrap().unwrap();
+        assert_eq!(job["review"]["outcome"], "stale");
+        assert_eq!(job["tasks"][0]["state"], "RUNNING");
+        assert_eq!(job["tasks"][0]["reviewHeadSha"], HEAD);
+        assert!(!apply_native_reviewer_result(&mut authority, "91").unwrap());
+        drop(authority);
+        let reopened = RelayAuthority::open_existing(&dir.path().join("relay.sqlite")).unwrap();
+        let recovered = reopened.read_job("91").unwrap().unwrap();
+        assert_eq!(recovered["headSha"], new_head);
+        assert_eq!(recovered["review"]["outcome"], "stale");
+    }
+
+    #[test]
     fn graph_selected_final_review_creation_is_sha_bound_atomic_and_deduplicated() {
         let (_dir, mut authority) = review_ready_authority();
         let routing = json!({"provider":"fixture","model":"fixture-model",
@@ -595,6 +873,15 @@ mod tests {
         let git = dir.path().join(".git");
         fs::create_dir_all(&git).unwrap();
         fs::write(git.join("HEAD"), format!("{HEAD}\n")).unwrap();
+        let changed_at = after_time(AT).unwrap();
+        authority
+            .commit_job("91", &changed_at, |current| {
+                let mut next = current.clone();
+                next["headSha"] = json!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+                next["updatedAt"] = json!(changed_at);
+                Ok((next, vec![]))
+            })
+            .unwrap();
         let cli = dir.path().join("relay-cli.js");
         fs::write(&cli, "").unwrap();
         fs::write(dir.path().join("model-routing.js"), "").unwrap();
@@ -619,6 +906,23 @@ mod tests {
         };
         let mut report = NativeTick::default();
         let canonical_root = dir.path().canonicalize().unwrap();
+        reconcile_native_final_review(
+            &mut authority,
+            "91",
+            &canonical_root,
+            &manifest,
+            &mut report,
+        )
+        .unwrap();
+        assert_eq!(
+            report.reviews_queued, 0,
+            "head observation precedes Graph scheduling"
+        );
+        assert_eq!(
+            authority.read_job("91").unwrap().unwrap()["headSha"],
+            HEAD,
+            "verified local HEAD is persisted before the next reconciliation"
+        );
         reconcile_native_final_review(
             &mut authority,
             "91",
