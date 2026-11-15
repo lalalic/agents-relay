@@ -200,5 +200,36 @@
       ],
       "nextAction": "Keep Node production operational; complete the stated live prerequisites before any separately authorized single-writer cutover."
     }
+  ],
+  "convergencePlan": [
+    {
+      "milestone": "Native execution foundation",
+      "capabilities": ["Scheduler and reconciliation", "DAG and dependency execution", "Worker routing and providers", "Project root and execution context resolution", "Leases and owned process lifecycle", "Terminal events and NATS", "Durable retry and recovery"],
+      "plannedVerification": "Differential Node/Rust lifecycle tests plus isolated SQLite ingress/reconciliation/restart tests, including false-completion, stale-event, retry-budget, process-group cleanup, and duplicate-replay negatives.",
+      "evidenceOwner": "Native runtime implementation owner; independent reviewer verifies the complete milestone.",
+      "cutoverBlocker": "All listed capabilities must be PASS; Job 629 remains terminal with owner review decisions preserved; no production writer handoff without backup and rollback proof."
+    },
+    {
+      "milestone": "Planner, Review, recovery decisions, and JEL",
+      "capabilities": ["Plans and planner orchestration", "Troubleshooting and escalation", "Interactive human Review", "JEL Final Review, revisions, merge, completion"],
+      "plannedVerification": "Node/Rust Graph branch comparisons and isolated end-to-end Plan -> execute -> immutable-head Review -> Request Changes -> same-Task revision -> second authenticated Preview -> Approve -> re-review -> merge/completion tests, with forged/stale/duplicate/restart and false-completion negatives.",
+      "evidenceOwner": "Native lifecycle implementation owner; authorized host owns live Review evidence; independent reviewer verifies durable state and SHA binding.",
+      "cutoverBlocker": "Every source capability must be PASS; authenticated host Preview and mobile gates remain NOT_RUN until real user-owned integration evidence exists."
+    },
+    {
+      "milestone": "Production API, Dashboard, and single-writer authority",
+      "capabilities": ["CLI and public API", "Daemon and service ownership", "Dashboard API, controls, and history", "Canonical SQLite authority and dual-writer exclusion"],
+      "plannedVerification": "Compatibility tests against isolated copies of the V2 schema, full API/UI contract tests, real browser controls/history checks, backup and restore rehearsal, and a fenced single-writer handoff/rollback rehearsal.",
+      "evidenceOwner": "Native service implementation owner and Job owner for deployment/rollback evidence; independent reviewer audits store fencing.",
+      "cutoverBlocker": "Node stays the production writer until complete API parity, a successful single-writer rehearsal, backup/rollback proof, terminal Job 629, and explicit owner authorization."
+    },
+    {
+      "milestone": "Live production acceptance",
+      "capabilities": ["Production-shaped runtime, browser/mobile, and cutover"],
+      "additionalGates": ["Real host/mobile verification of Interactive human Review"],
+      "plannedVerification": "Real authenticated host Preview and physical mobile Request Changes/Approve on the same revision, deployed service/browser flow, SIGKILL/restart, live event deduplication, and rollback rehearsal.",
+      "evidenceOwner": "Job owner/orchestrator for user-owned host/mobile and production access; implementation owner records reproducible evidence.",
+      "cutoverBlocker": "Currently NOT_RUN. Do not mark PASS, stop Node, or cut over while Job 629 is active or any required live gate lacks independently verified evidence."
+    }
   ]
 }
