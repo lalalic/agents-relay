@@ -31,7 +31,7 @@ pub(super) fn begin(
     authorization: Option<&str>,
     host_token: Option<&str>,
 ) -> Result<(), String> {
-    let Some(token) = host_token.filter(|value| value.as_bytes().len() >= 32) else {
+    let Some(token) = host_token.filter(|value| value.len() >= 32) else {
         return respond_json(
             tcp,
             "503 Service Unavailable",
@@ -154,7 +154,7 @@ pub(super) fn decision(
     authorization: Option<&str>,
     host_token: Option<&str>,
 ) -> Result<(), String> {
-    let Some(token) = host_token.filter(|value| value.as_bytes().len() >= 32) else {
+    let Some(token) = host_token.filter(|value| value.len() >= 32) else {
         return respond_json(
             tcp,
             "503 Service Unavailable",
