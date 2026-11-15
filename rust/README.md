@@ -178,6 +178,33 @@ The added `native-dag-daemon-e2e.mjs` and
 synthetic approval receipts are test fixtures, not Neo Mobile approvals. The
 production Node.js daemon remains the sole writer for actual Vlog Jobs.
 
+## Graph-selected downstream dependency revisions
+
+The isolated Rust dependency reconciler now reads `workflow/dependency-revision.mmd`
+through the shared Graph dispatcher. For a succeeded downstream Task with an
+explicit `revalidate` or `rerun` edge, it waits until every revised upstream
+Task settles, forms a stable evidence vector from the latest successful
+upstream Task ID and attempt, and creates one same-lineage child for that
+vector. The child keeps `parentTaskId` pointed at its original semantic owner;
+its `dependencies` separately include the owner and the selected upstream
+evidence Tasks. `rerun` is selected if any changed edge requests rerun;
+otherwise the Graph selects revalidation. Duplicate vectors are idempotent
+across daemon ticks and SQLite reopen.
+
+If upstream evidence changes while a revision child is still queued, the
+dependency Graph selects stale marking and the Task Lifecycle Graph cancels
+that child before creating any replacement. Native Script claims and terminal
+completion also reject a stale revision vector. This is isolated parity only:
+it does not prove full DAG, provider, scheduler, or production parity, which
+remains `FAIL` in `docs/rust-parity-matrix.json`.
+
+Focused checks (all stores isolated with `AGENTS_RELAY_STORE_DIR`):
+
+```sh
+AGENTS_RELAY_STORE_DIR=$(mktemp -d) cargo test --locked --manifest-path rust/Cargo.toml authority::dependencies::tests
+AGENTS_RELAY_STORE_DIR=$(mktemp -d) cargo test --locked --manifest-path rust/Cargo.toml stale_dependency_revision_cannot_commit_worker_completion
+```
+
 ## Architecture boundary
 
 - **Graph (`src/graph.rs`, `src/graph/parser.rs`)** parses the same strict Mermaid profile that

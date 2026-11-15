@@ -30,6 +30,10 @@ use serde_json::Value;
 use std::path::Path;
 use std::time::Duration;
 
+pub(crate) fn dependency_revision_still_current(job: &Value, task: &Value) -> bool {
+    dependencies::dependency_revision_still_current(job, task)
+}
+
 const PUBLICATION_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS workflow_event_outbox (
   event_key TEXT PRIMARY KEY, event_id TEXT NOT NULL, payload_json TEXT NOT NULL,

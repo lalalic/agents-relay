@@ -119,6 +119,9 @@ impl RelayAuthority {
             {
                 return Err("Task not eligible for native worker dispatch".into());
             }
+            if !crate::authority::dependency_revision_still_current(prior, task) {
+                return Err("dependency revision evidence is stale or has unsettled upstream work".into());
+            }
             // The UI is not the authority for human approval: even if a
             // corrupted caller has written status=approved into the snapshot,
             // the current execution/revision must have a committed host decision

@@ -402,6 +402,9 @@ impl<'g> TaskLifecycle<'g> {
             if result.is_some() && (input.id != "task.completed" || target != "SUCCEEDED") {
                 return Err("structured result requires Graph-authorized task.completed".into());
             }
+            if result.is_some() && !crate::authority::dependency_revision_still_current(job, task) {
+                return Err("dependency revision evidence is stale or has unsettled upstream work".into());
+            }
             apply_pure_task_actions(task, actions)?;
             // Graph owns the FAILED transition. Preserve its correlated
             // Worker error on the same atomic Task snapshot so recovery

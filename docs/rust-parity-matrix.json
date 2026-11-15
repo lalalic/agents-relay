@@ -39,10 +39,10 @@
     {
       "capability": "DAG and dependency execution",
       "node": {"behavior": "The shared reconciler materializes ready descendants and owns durable Task dependency semantics.", "sources": ["src/dag-task-runtime.ts", "src/dependency-validity.ts", "src/reconciler.ts"]},
-      "rust": {"behavior": "Rust supports a staged Agent DAG and dependency proposals in the isolated daemon.", "sources": ["rust/src/agent_graph.rs", "rust/src/authority/coordinator.rs", "rust/src/authority/dependencies.rs"]},
+      "rust": {"behavior": "The isolated Rust daemon materializes Graph-selected revalidate/rerun Tasks from settled explicit dependency evidence vectors in the existing SQLite snapshot. It preserves parentTaskId ownership separately from dependency edges, cancels stale queued evidence through the dependency and Task Lifecycle Graphs, and fences stale vectors at native claim and completion. Full DAG/scheduler/executor parity remains incomplete.", "sources": ["rust/src/agent_graph.rs", "rust/src/authority/coordinator.rs", "rust/src/authority/dependencies.rs", "rust/src/authority/scheduler.rs", "rust/src/lifecycle.rs", "workflow/dependency-revision.mmd", "workflow/task-lifecycle.mmd"]},
       "status": "FAIL",
-      "evidence": [{"kind": "deterministic-test", "detail": "DAG and dependency parity fixtures pass for implemented cases; production-wide recovery and every executor path are not covered."}],
-      "nextAction": "Complete parity for dependency revision, mixed executors, retries, and production ingress."
+      "evidence": [{"kind": "deterministic-test", "detail": "PASS: `AGENTS_RELAY_STORE_DIR=$(mktemp -d) cargo test --locked --manifest-path rust/Cargo.toml authority::dependencies::tests` (4 passed). Covers mixed revalidate/rerun policy selection, settled fan-in, parentTaskId vs dependency edges, current evidence vectors, no false Job completion, pending/failed upstream rejection, stale queued-vector Graph cancellation and replacement, and dedupe after SQLite reopen."}, {"kind": "deterministic-test", "detail": "PASS: `AGENTS_RELAY_STORE_DIR=$(mktemp -d) cargo test --locked --manifest-path rust/Cargo.toml stale_dependency_revision_cannot_commit_worker_completion` (1 passed). A valid claimed worker becomes stale after a newer upstream generation is committed; the correlated completion is rejected atomically, leaving the revision Task RUNNING with no result."}],
+      "nextAction": "Complete remaining broad DAG/scheduler parity for mixed executor scheduling, retries, recovery, and production ingress; retain FAIL until the declared capability is independently proven."
     },
     {
       "capability": "Worker routing and providers",

@@ -273,6 +273,105 @@ fn worker_terminal_receipt_is_correlated_atomic_and_deduplicated_after_reopen() 
     assert_eq!(inbox_count, 1);
 }
 
+#[test]
+fn stale_dependency_revision_cannot_commit_worker_completion() {
+    use crate::authority::ScriptClaimRequest;
+    let (_dir, path) = setup();
+    let mut store = RelayAuthority::open_existing(&path).unwrap();
+    store.commit_job("91", "2026-11-13T20:00:01Z", |old| {
+        let mut job = old.clone();
+        job["updatedAt"] = json!("2026-11-13T20:00:01Z");
+        job["tasks"] = json!([
+            {"id":"99","jobId":"91","kind":"work","state":"SUCCEEDED","attempt":1,"dependencies":[],
+                "result":{"summary":"upstream v1"},"createdAt":"2026-11-13T19:00:00Z"},
+            {"id":"100","jobId":"91","kind":"work","state":"SUCCEEDED","attempt":1,"dependencies":["99"],
+                "dependencyValidity":{"99":"revalidate"},"result":{"summary":"downstream original"},
+                "createdAt":"2026-11-13T19:01:00Z"},
+            {"id":"101","jobId":"91","kind":"work","state":"QUEUED","attempt":0,"maxAttempts":3,
+                "dependencies":["99","100"],"parentTaskId":"100","adapter":"script","capabilities":["script"],
+                "revision":{"kind":"revalidate","originalTaskId":"100","dependencyVector":{"99":"99:1"}},
+                "leaseOwner":null,"leaseExpiresAt":null,"executionId":null,"executionHistory":[],"result":null}
+        ]);
+        Ok((job, vec![]))
+    }).unwrap();
+    let claim = store
+        .claim_queued_script(&ScriptClaimRequest {
+            job_id: "91",
+            task_id: "101",
+            execution_id: "dep-revision-exec",
+            owner: "isolated",
+            at: "2026-11-13T20:00:02Z",
+            lease_expires_at: "2099-01-01T00:00:00Z",
+        })
+        .unwrap()
+        .unwrap();
+    let graph = graph();
+    let engine = TaskLifecycle::new(&graph);
+    let guards = HashMap::new();
+    let identity = json!({"jobId":"91","taskId":"101","executionId":"dep-revision-exec","leaseOwner":"isolated","attempt":1});
+    engine
+        .apply(
+            &mut store,
+            TaskTransition {
+                job_id: "91",
+                task_id: "101",
+                input: GraphInput {
+                    transport: "event".into(),
+                    id: "task.started".into(),
+                    payload: identity.clone(),
+                },
+                guard_facts: &guards,
+                at: "2026-11-13T20:00:02.500Z",
+                events: vec![],
+            },
+        )
+        .unwrap();
+    store
+        .commit_job("91", "2026-11-13T20:00:03Z", |old| {
+            let mut job = old.clone();
+            job["updatedAt"] = json!("2026-11-13T20:00:03Z");
+            job["tasks"].as_array_mut().unwrap().push(
+                json!({"id":"102","jobId":"91","kind":"work","state":"SUCCEEDED",
+            "attempt":1,"dependencies":[],"revision":{"kind":"targeted","originalTaskId":"99"},
+            "result":{"summary":"upstream v2"},"createdAt":"2026-11-13T19:02:00Z"}),
+            );
+            Ok((job, vec![]))
+        })
+        .unwrap();
+    let key = "91/101/dep-revision-exec/terminal";
+    let transition = TaskTransition {
+        job_id: "91",
+        task_id: "101",
+        input: GraphInput {
+            transport: "event".into(),
+            id: "task.completed".into(),
+            payload: identity,
+        },
+        guard_facts: &guards,
+        at: "2026-11-13T20:00:04Z",
+        events: vec![WorkflowEvent {
+            key: key.into(),
+            event_id: "task.completed".into(),
+            payload: json!({"event_id":key,"type":"task.completed","jobId":"91","taskId":"101",
+                "executionId":"dep-revision-exec","leaseOwner":"isolated","attempt":1}),
+        }],
+    };
+    let result = json!({"data":{"status":"COMPLETED","output":{"verified":true}}});
+    let error = engine
+        .apply_with_launch_receipt(&mut store, transition, Some(result), &claim)
+        .unwrap_err();
+    assert!(
+        error.contains("dependency revision evidence is stale"),
+        "{error}"
+    );
+    let job = store.read_job("91").unwrap().unwrap();
+    assert_eq!(
+        job["tasks"][2]["state"], "RUNNING",
+        "stale worker receipt cannot become SUCCEEDED"
+    );
+    assert_eq!(job["tasks"][2]["result"], Value::Null);
+}
+
 fn input(id: &str, execution_id: Option<&str>) -> GraphInput {
     let mut payload = json!({"taskId":"101"});
     if let Some(id) = execution_id {
