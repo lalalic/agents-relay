@@ -1373,4 +1373,129 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn authenticated_nats_session_delivers_wait_and_bound_review_decision() {
+        use std::net::TcpListener;
+        use std::thread;
+        use std::time::Instant;
+
+        let _guard = NATS_ENV_LOCK.lock().unwrap();
+        let old = [
+            std::env::var_os("AGENTS_RELAY_NATS_TOKEN"),
+            std::env::var_os("AGENTS_RELAY_NATS_USERNAME"),
+            std::env::var_os("AGENTS_RELAY_NATS_PASSWORD"),
+        ];
+        std::env::set_var("AGENTS_RELAY_NATS_TOKEN", "review-wire-test-secret");
+        std::env::remove_var("AGENTS_RELAY_NATS_USERNAME");
+        std::env::remove_var("AGENTS_RELAY_NATS_PASSWORD");
+        let (_dir, path, mut store) = running();
+        let bind_at = crate::supervised_script::after_time(
+            store.read_job("91").unwrap().unwrap()["updatedAt"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        store
+            .commit_job("91", &bind_at, |previous| {
+                let mut job = previous.clone();
+                job["updatedAt"] = json!(bind_at);
+                job["tasks"][0]["interactiveInvocation"] = json!({
+                    "invocationId":"ingress-exec","executionId":"ingress-exec",
+                    "revision":"review-wire-rev","status":"awaiting_decision","boundAt":bind_at
+                });
+                Ok((job, vec![]))
+            })
+            .unwrap();
+        let waiting_at = crate::supervised_script::after_time(&bind_at).unwrap();
+        let waiting = json!({
+            "event_id":"waiting-wire-1","type":"task.interactive_waiting",
+            "job_id":"91","task_id":"101","timestamp":waiting_at,
+            "source":{"id":"job/91/task/101/execution/ingress-exec","component":"interactive-review"},
+            "data":{}
+        });
+        let decision_at = crate::supervised_script::after_time(&waiting_at).unwrap();
+        let decision = json!({
+            "event_id":"decision-wire-1","type":"task.interactive_decision",
+            "job_id":"91","task_id":"101","timestamp":decision_at,
+            "source":{"id":"job/91/task/101/execution/ingress-exec"},
+            "data":{"interactive":{
+                "jobId":"91","taskId":"101","executionId":"ingress-exec",
+                "invocationId":"ingress-exec","revision":"review-wire-rev",
+                "decision":"approved","feedback":"verified preview",
+                "idempotencyKey":"wire-key-1"
+            }}
+        });
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .write_all(b"INFO {\"auth_required\":true,\"tls_required\":false}\r\n")
+                .unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut connect = String::new();
+            reader.read_line(&mut connect).unwrap();
+            let connect = connect.strip_prefix("CONNECT ").unwrap().trim();
+            assert_eq!(
+                serde_json::from_str::<Value>(connect).unwrap()["auth_token"],
+                "review-wire-test-secret"
+            );
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line.trim() == "PING" {
+                    stream.write_all(b"PONG\r\n").unwrap();
+                    break;
+                }
+            }
+            for (subject, event) in [
+                ("relay.events.job.91.task.interactive_waiting", waiting),
+                ("relay.events.job.91.task.interactive_decision", decision),
+            ] {
+                let bytes = event.to_string().into_bytes();
+                write!(stream, "MSG {subject} 1 {}\r\n", bytes.len()).unwrap();
+                stream.write_all(&bytes).unwrap();
+                stream.write_all(b"\r\n").unwrap();
+            }
+            thread::sleep(Duration::from_millis(600));
+        });
+        let stopped = Arc::new(AtomicBool::new(false));
+        let worker_stop = Arc::clone(&stopped);
+        let worker_db = path.clone();
+        let worker = thread::spawn(move || run_nats_ingress(worker_db, port, worker_stop));
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let task = store.read_job("91").unwrap().unwrap()["tasks"][0].clone();
+            if task["interactiveInvocation"]["status"] == "approved" {
+                assert_eq!(task["state"], "AWAITING_DECISION");
+                assert!(task["result"].is_null());
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "authenticated Review event was not accepted"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        stopped.store(true, Ordering::SeqCst);
+        worker.join().unwrap();
+        server.join().unwrap();
+        let count: i64 = rusqlite::Connection::open(&path).unwrap().query_row(
+            "SELECT COUNT(*) FROM host_invocation_decision WHERE job_id='91' AND task_id='101' AND invocation_id='ingress-exec'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+        for (name, value) in [
+            ("AGENTS_RELAY_NATS_TOKEN", &old[0]),
+            ("AGENTS_RELAY_NATS_USERNAME", &old[1]),
+            ("AGENTS_RELAY_NATS_PASSWORD", &old[2]),
+        ] {
+            if let Some(value) = value {
+                std::env::set_var(name, value);
+            } else {
+                std::env::remove_var(name);
+            }
+        }
+    }
 }
