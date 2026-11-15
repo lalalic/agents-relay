@@ -321,8 +321,16 @@ fn run(args: &[String]) -> Result<(), String> {
                 return Err("task events --after requires --order asc".into());
             }
             let store = RelayReader::open(Path::new(&options["--db"]))?;
+            let job_id = &options["--job-id"];
+            let task_id = &options["--task-id"];
+            if store.get_job(job_id)?.is_none() {
+                return Err(format!("Job {job_id} not found"));
+            }
+            if store.get_task(job_id, task_id)?.is_none() {
+                return Err(format!("Task {task_id} not found in Job {job_id}"));
+            }
             print_json(store.task_events(
-                &options["--job-id"], Some(&options["--task-id"]), limit, order, after,
+                job_id, Some(task_id), limit, order, after,
             )?)
         }
         _=>Err("unrecognized command; supported: graph validate/inventory/decide/batch/simulate, store list/get, job list/show, task list/show/events, scheduler inspect/recovery".into())

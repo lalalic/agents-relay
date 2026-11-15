@@ -274,7 +274,7 @@ pub(super) fn script_spec(
                 .is_some_and(|configured| configured != &request["routing"])
         {
             return Err(
-                "Model route or Worker selection does not match trusted executor configuration"
+                "Model route or Worker Router selection does not match trusted executor configuration"
                     .into(),
             );
         }

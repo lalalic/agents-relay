@@ -89,28 +89,37 @@ impl RelayAuthority {
                 task["comments"]=Value::Array(comments);
             }
 
-            if task.get("dagNode").and_then(|node|node.get("executor")).and_then(Value::as_str)==Some("script") {
+            if status == "changes_requested" {
                 let revision=task.get("interactiveInvocation").ok_or("Review invocation missing")?.clone();
-                let script=status!="changes_requested";
-                task["adapter"]=json!(if script{"script"}else{"codex"});
-                task["capabilities"]=json!([if script{"script"}else{"model"}]);
+                if task.get("reviewRevisionOriginalAdapter").is_none() {
+                    task["reviewRevisionOriginalAdapter"] = task.get("adapter").cloned().unwrap_or(Value::Null);
+                    task["reviewRevisionOriginalCapabilities"] = task.get("capabilities").cloned().unwrap_or(json!([]));
+                }
+                task["adapter"]=json!("codex");
+                task["capabilities"]=json!(["model"]);
+                task["workerRequirements"]=json!({"capabilities":["model"]});
                 if let Some(fields)=task.as_object_mut(){
                     fields.shift_remove("routing");
                     fields.shift_remove("workerSelection");
-                    if script {fields.shift_remove("workerRequirements");}
                 }
-                if !script {
-                    task["workerRequirements"]=json!({"capabilities":["model"]});
-                    let input=task["input"].as_str().ok_or("DAG input not string")?;
-                    let mut parsed:Value=serde_json::from_str(input).map_err(|_|"DAG input not structured JSON")?;
-                    if !parsed.is_object(){return Err("DAG input must be JSON object".into());}
-                    parsed["reviewRevision"]=json!({
-                        "status":"changes_requested",
-                        "feedback":revision.get("feedback").and_then(Value::as_str).unwrap_or(""),
-                        "comments":revision.get("comments").cloned().unwrap_or(json!([])),
-                        "instruction":"Revise the current Stage Artifact from the human feedback. Verify it, then use agents-relay review interactive --path to submit a NEW review for this same Task Execution. Do not publish or emit task.completed until the new review is approved."
-                    });
-                    task["input"]=Value::String(serde_json::to_string(&parsed).map_err(|e|e.to_string())?);
+                let old_input=task.get("input").and_then(Value::as_str).ok_or("Review Task input not string")?;
+                let mut parsed:Value=serde_json::from_str(old_input).unwrap_or_else(|_|json!({"taskInput":old_input}));
+                if !parsed.is_object(){parsed=json!({"taskInput":parsed});}
+                parsed["reviewRevision"]=json!({
+                    "status":"changes_requested",
+                    "feedback":revision.get("feedback").and_then(Value::as_str).unwrap_or(""),
+                    "comments":revision.get("comments").cloned().unwrap_or(json!([])),
+                    "instruction":"Revise the current artifact using the human feedback. Verify it, then request a NEW review preview for this same Task Execution. Do not publish or emit task.completed until the new review is approved."
+                });
+                task["input"]=Value::String(serde_json::to_string(&parsed).map_err(|e|e.to_string())?);
+            } else if let Some(original_adapter) = task.get("reviewRevisionOriginalAdapter").and_then(Value::as_str) {
+                task["adapter"] = json!(original_adapter);
+                if let Some(capabilities) = task.get("reviewRevisionOriginalCapabilities").cloned() {
+                    task["capabilities"] = capabilities;
+                }
+                if let Some(fields) = task.as_object_mut() {
+                    fields.shift_remove("reviewRevisionOriginalAdapter");
+                    fields.shift_remove("reviewRevisionOriginalCapabilities");
                 }
             }
             task["state"]=json!(target);
