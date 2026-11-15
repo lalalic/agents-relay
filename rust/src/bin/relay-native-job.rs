@@ -20,6 +20,8 @@ mod node_compat;
 mod planner_cli;
 #[path = "relay-native-job/platform_cli.rs"]
 mod platform_cli;
+#[path = "relay-native-job/review_cli.rs"]
+mod review_cli;
 #[path = "relay-native-job/status.rs"]
 mod status;
 #[path = "relay-native-job/task_cli.rs"]
@@ -165,6 +167,13 @@ fn run() -> Result<(), String> {
             .map(String::as_str);
         let start = if action.is_some() { 2 } else { 1 };
         let result = planner_cli::dispatch(command, action, &args[start..])?;
+        println!(
+            "{}",
+            serde_json::to_string(&result).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    if let Some(result) = review_cli::dispatch(&args)? {
         println!(
             "{}",
             serde_json::to_string(&result).map_err(|e| e.to_string())?
