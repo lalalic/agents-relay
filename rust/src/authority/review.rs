@@ -807,6 +807,10 @@ mod tests {
         let finished = store.read_job("91").unwrap().unwrap();
         assert_eq!(finished["tasks"].as_array().unwrap().len(), 1);
         assert_eq!(finished["tasks"][0]["state"], "QUEUED");
+        assert!(finished["tasks"][0].get("workerRequirements").is_none());
+        assert!(finished["tasks"][0]
+            .get("reviewRevisionOriginalExecutionConfig")
+            .is_none());
         assert_eq!(
             finished["tasks"][0]["interactiveInvocation"]["status"],
             "approved"

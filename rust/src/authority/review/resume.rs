@@ -91,9 +91,17 @@ impl RelayAuthority {
 
             if status == "changes_requested" {
                 let revision=task.get("interactiveInvocation").ok_or("Review invocation missing")?.clone();
-                if task.get("reviewRevisionOriginalAdapter").is_none() {
-                    task["reviewRevisionOriginalAdapter"] = task.get("adapter").cloned().unwrap_or(Value::Null);
-                    task["reviewRevisionOriginalCapabilities"] = task.get("capabilities").cloned().unwrap_or(json!([]));
+                if task.get("reviewRevisionOriginalExecutionConfig").is_none() {
+                    let mut original = json!({
+                        "adapter":task.get("adapter").cloned().unwrap_or(Value::Null),
+                        "capabilities":task.get("capabilities").cloned().unwrap_or(json!([]))
+                    });
+                    for key in ["workerRequirements", "routing", "workerSelection"] {
+                        if let Some(value) = task.get(key) {
+                            original[key] = value.clone();
+                        }
+                    }
+                    task["reviewRevisionOriginalExecutionConfig"] = original;
                 }
                 task["adapter"]=json!("codex");
                 task["capabilities"]=json!(["model"]);
@@ -112,14 +120,20 @@ impl RelayAuthority {
                     "instruction":"Revise the current artifact using the human feedback. Verify it, then request a NEW review preview for this same Task Execution. Do not publish or emit task.completed until the new review is approved."
                 });
                 task["input"]=Value::String(serde_json::to_string(&parsed).map_err(|e|e.to_string())?);
-            } else if let Some(original_adapter) = task.get("reviewRevisionOriginalAdapter").and_then(Value::as_str) {
-                task["adapter"] = json!(original_adapter);
-                if let Some(capabilities) = task.get("reviewRevisionOriginalCapabilities").cloned() {
-                    task["capabilities"] = capabilities;
+            } else if let Some(original) = task
+                .get("reviewRevisionOriginalExecutionConfig")
+                .and_then(Value::as_object)
+                .cloned()
+            {
+                for key in ["adapter", "capabilities", "workerRequirements", "routing", "workerSelection"] {
+                    if let Some(value) = original.get(key) {
+                        task[key] = value.clone();
+                    } else if let Some(fields) = task.as_object_mut() {
+                        fields.shift_remove(key);
+                    }
                 }
                 if let Some(fields) = task.as_object_mut() {
-                    fields.shift_remove("reviewRevisionOriginalAdapter");
-                    fields.shift_remove("reviewRevisionOriginalCapabilities");
+                    fields.shift_remove("reviewRevisionOriginalExecutionConfig");
                 }
             }
             task["state"]=json!(target);
