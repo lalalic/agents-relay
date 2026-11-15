@@ -6,7 +6,7 @@ mod adapter;
 mod dag;
 mod review;
 use crate::authority::{probe_process, RelayAuthority, ScriptClaimRequest};
-use crate::native_job::complete_no_review_job;
+use crate::native_job::{complete_approved_local_job, complete_no_review_job};
 use crate::recovery::inspect_expired_execution;
 use crate::store::RelayReader;
 use crate::supervised_script::{after_time, current_time, execute_supervised_script};
@@ -385,7 +385,9 @@ pub(crate) fn tick_with_stop(
                 .blocked
                 .push(format!("{id}: Final Review scheduling failed: {error}"));
         }
-        if complete_no_review_job(&mut authority, &id)? {
+        if complete_approved_local_job(&mut authority, &id)?
+            || complete_no_review_job(&mut authority, &id)?
+        {
             report.jobs_completed += 1;
         }
     }

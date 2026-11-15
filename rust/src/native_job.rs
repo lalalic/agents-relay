@@ -5,7 +5,7 @@ use crate::authority::{NativeJobSpec, RelayAuthority};
 use crate::graph::{Decision, Graph, GraphInput};
 use crate::native_daemon::isolated_store_root;
 use crate::supervised_script::after_time;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension, Transaction};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
@@ -377,6 +377,196 @@ fn no_review_completion_ready(job: &Value) -> bool {
                 && t.get("interactiveInvocation").is_none_or(|r| r.is_null())
         })
 }
+
+fn reviewed_local_completion_ready(job: &Value) -> bool {
+    if job["state"] != "ACTIVE"
+        || job["reviewEnabled"] == false
+        || job["autoMerge"] != false
+        || job.get("prNumber").and_then(Value::as_i64).unwrap_or(0) != 0
+        || job.get("localMerge").is_some_and(|value| !value.is_null())
+        || job.get("publication").is_some_and(|value| !value.is_null())
+        || job.get("pause").is_some_and(|value| !value.is_null())
+    {
+        return false;
+    }
+    let Some(head) = job["headSha"].as_str().filter(|head| valid_job_sha(head)) else {
+        return false;
+    };
+    let review = &job["review"];
+    if review["outcome"] != "approved"
+        || review["headSha"].as_str() != Some(head)
+        || review["taskId"].as_str().is_none()
+    {
+        return false;
+    }
+    let evidence = &review["evidence"]["data"];
+    let evidence_head = evidence["head_sha"]
+        .as_str()
+        .or_else(|| evidence["headSha"].as_str());
+    if !matches!(evidence["verdict"].as_str(), Some("approved" | "pass"))
+        || evidence_head != Some(head)
+        || evidence["findings"]
+            .as_array()
+            .is_none_or(|findings| !findings.is_empty())
+    {
+        return false;
+    }
+    if let Some(plans_value) = job.get("plans").filter(|value| !value.is_null()) {
+        let Some(plans) = plans_value.as_array() else {
+            return false;
+        };
+        if plans.iter().any(|plan| plan["status"] != "SUCCEEDED") {
+            return false;
+        }
+    }
+    let Some(tasks) = job.get("tasks").and_then(Value::as_array) else {
+        return false;
+    };
+    let current_review_id = review["taskId"].as_str().unwrap_or_default();
+    if !tasks.iter().any(|task| {
+        task["id"] == current_review_id
+            && matches!(
+                task["agentName"].as_str(),
+                Some("job-acceptance-reviewer" | "reviewer")
+            )
+            && task["state"] == "SUCCEEDED"
+            && task["reviewHeadSha"].as_str() == Some(head)
+    }) {
+        return false;
+    }
+    let mut implementation_seen = false;
+    for task in tasks {
+        let is_reviewer = matches!(
+            task["agentName"].as_str(),
+            Some("job-acceptance-reviewer" | "reviewer")
+        );
+        if is_reviewer {
+            if task["id"] == current_review_id {
+                if task["state"] != "SUCCEEDED" || task["reviewHeadSha"].as_str() != Some(head) {
+                    return false;
+                }
+            } else if !matches!(
+                task["state"].as_str(),
+                Some("SUCCEEDED" | "FAILED" | "CANCELLED")
+            ) {
+                return false;
+            }
+            continue;
+        }
+        if task["state"] != "SUCCEEDED"
+            || task.get("resolution").is_some_and(|value| !value.is_null())
+            || task.get("escalation").is_some_and(|value| !value.is_null())
+        {
+            return false;
+        }
+        if let Some(invocation) = task
+            .get("interactiveInvocation")
+            .filter(|invocation| !invocation.is_null())
+        {
+            if invocation["status"] != "approved" {
+                return false;
+            }
+        }
+        if task["kind"] != "planner" && task["agentName"] != "troubleshooter" {
+            implementation_seen = true;
+        }
+    }
+    implementation_seen
+}
+
+fn host_approvals_are_durable(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    job: &Value,
+) -> Result<bool, String> {
+    for task in job["tasks"].as_array().ok_or("Job Tasks missing")? {
+        let Some(invocation) = task
+            .get("interactiveInvocation")
+            .filter(|invocation| !invocation.is_null())
+        else {
+            continue;
+        };
+        let task_id = task["id"].as_str().ok_or("interactive Task ID missing")?;
+        let invocation_id = invocation["invocationId"]
+            .as_str()
+            .ok_or("interactive invocation ID missing")?;
+        let execution_id = invocation["executionId"]
+            .as_str()
+            .ok_or("interactive execution ID missing")?;
+        let revision = invocation["revision"]
+            .as_str()
+            .ok_or("interactive revision missing")?;
+        let decision: Option<i64> = tx
+            .query_row(
+                "SELECT 1 FROM host_invocation_decision WHERE job_id=?1 AND task_id=?2 AND invocation_id=?3 AND execution_id=?4 AND revision=?5 AND decision='approved'",
+                rusqlite::params![job_id, task_id, invocation_id, execution_id, revision],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| format!("host Review approval ledger unavailable: {error}"))?;
+        if decision != Some(1) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn valid_job_sha(value: &str) -> bool {
+    matches!(value.len(), 40 | 64)
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+/// Graph-gated local completion after current-head Review approval. This is
+/// available only to a local-only Job with successful settled implementation
+/// and Plan evidence; an approval event or reviewer Task alone cannot finish it.
+pub fn complete_approved_local_job(
+    authority: &mut RelayAuthority,
+    job_id: &str,
+) -> Result<bool, String> {
+    let Some(snapshot) = authority.read_job(job_id)? else {
+        return Err("Unknown Job".into());
+    };
+    if !reviewed_local_completion_ready(&snapshot) {
+        return Ok(false);
+    }
+    let at = after_time(
+        snapshot["updatedAt"]
+            .as_str()
+            .ok_or("Job timestamp missing")?,
+    )?;
+    let graph = Graph::parse(JOB_GRAPH)?;
+    authority.commit_job_with_tx(job_id, &at, |tx, current| {
+        if !reviewed_local_completion_ready(current) {
+            return Err("local Review completion facts changed before commit".into());
+        }
+        if !host_approvals_are_durable(tx, job_id, current)? {
+            return Err("interactive Review approval lacks a durable accepted decision".into());
+        }
+        let decision = graph.decide(
+            "ACTIVE",
+            GraphInput {
+                transport: "event".into(),
+                id: "local.completed".into(),
+                payload: json!({}),
+            },
+            &HashMap::from([("localCompletionAllowed".to_owned(), true)]),
+        )?;
+        if !matches!(decision, Decision::Accepted { ref target, ref actions, .. }
+            if target == "COMPLETED" && actions.is_empty())
+        {
+            return Err("canonical Job Graph denied reviewed local completion".into());
+        }
+        let mut next = current.clone();
+        next["state"] = json!("COMPLETED");
+        next["runtimeStatus"] = json!("COMPLETED");
+        next["closedAt"] = json!(at);
+        next["updatedAt"] = json!(at);
+        Ok((next, vec![]))
+    })?;
+    Ok(true)
+}
 /// Returns true only if canonical Job Graph reaches COMPLETED. Review-enabled
 /// and merge-enabled jobs must use their own legitimate production gates.
 pub fn complete_no_review_job(
@@ -414,4 +604,131 @@ pub fn complete_no_review_job(
         Ok((next,vec![]))
     })?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+    use tempfile::tempdir;
+
+    const AT: &str = "2026-11-15T11:00:00.000Z";
+    const HEAD: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    fn approved_local_job() -> Value {
+        json!({
+            "id":"91","repository":"example","state":"ACTIVE","updatedAt":AT,
+            "runtimeStatus":"RUNNING","prNumber":0,"reviewEnabled":true,"autoMerge":false,
+            "headSha":HEAD,"plans":[],"review":{"outcome":"approved","headSha":HEAD,
+                "taskId":"review-1","updatedAt":AT,
+                "evidence":{"data":{"verdict":"approved","head_sha":HEAD,"findings":[]}}},
+            "tasks":[
+                {"id":"work-1","kind":"work","agentName":"implementation","state":"SUCCEEDED",
+                    "resolution":null,"escalation":null},
+                {"id":"review-1","kind":"work","agentName":"job-acceptance-reviewer","state":"SUCCEEDED",
+                    "reviewHeadSha":HEAD}
+            ]
+        })
+    }
+
+    fn open_authority(job: Value) -> (tempfile::TempDir, RelayAuthority) {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("relay.sqlite");
+        let connection = Connection::open(&path).unwrap();
+        connection.execute_batch("CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL);
+            CREATE TABLE host_invocation_decision(job_id TEXT NOT NULL,task_id TEXT NOT NULL,invocation_id TEXT NOT NULL,
+                execution_id TEXT NOT NULL,revision TEXT NOT NULL,decision TEXT NOT NULL);").unwrap();
+        connection
+            .execute(
+                "INSERT INTO job_snapshot(job_id,json,updated_at) VALUES('91',?1,?2)",
+                rusqlite::params![job.to_string(), AT],
+            )
+            .unwrap();
+        drop(connection);
+        (dir, RelayAuthority::open_existing(&path).unwrap())
+    }
+
+    #[test]
+    fn approved_local_job_completes_only_through_job_graph_after_settled_work() {
+        let (dir, mut authority) = open_authority(approved_local_job());
+        assert!(complete_approved_local_job(&mut authority, "91").unwrap());
+        let job = authority.read_job("91").unwrap().unwrap();
+        assert_eq!(job["state"], "COMPLETED");
+        assert_eq!(job["runtimeStatus"], "COMPLETED");
+        drop(authority);
+        let reopened = RelayAuthority::open_existing(&dir.path().join("relay.sqlite")).unwrap();
+        assert_eq!(
+            reopened.read_job("91").unwrap().unwrap()["state"],
+            "COMPLETED"
+        );
+    }
+
+    #[test]
+    fn approved_local_job_with_no_plans_field_is_treated_as_plan_free() {
+        let mut job = approved_local_job();
+        job.as_object_mut().unwrap().remove("plans");
+        let (_dir, mut authority) = open_authority(job);
+        assert!(complete_approved_local_job(&mut authority, "91").unwrap());
+        assert_eq!(
+            authority.read_job("91").unwrap().unwrap()["state"],
+            "COMPLETED"
+        );
+    }
+
+    #[test]
+    fn approval_alone_cannot_complete_stale_pr_or_unsettled_local_job() {
+        let mut approval_only = approved_local_job();
+        approval_only["tasks"][0]["state"] = json!("FAILED");
+        let (_dir, mut authority) = open_authority(approval_only);
+        assert!(!complete_approved_local_job(&mut authority, "91").unwrap());
+        assert_eq!(
+            authority.read_job("91").unwrap().unwrap()["state"],
+            "ACTIVE"
+        );
+
+        let mut stale = approved_local_job();
+        stale["headSha"] = json!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let (_dir, mut authority) = open_authority(stale);
+        assert!(!complete_approved_local_job(&mut authority, "91").unwrap());
+
+        let mut pr = approved_local_job();
+        pr["prNumber"] = json!(42);
+        let (_dir, mut authority) = open_authority(pr);
+        assert!(!complete_approved_local_job(&mut authority, "91").unwrap());
+
+        let mut planning = approved_local_job();
+        planning["plans"] = json!([{"status":"PLANNING"}]);
+        let (_dir, mut authority) = open_authority(planning);
+        assert!(!complete_approved_local_job(&mut authority, "91").unwrap());
+
+        let mut forged_binding = approved_local_job();
+        forged_binding["review"]["taskId"] = json!("work-1");
+        let (_dir, mut authority) = open_authority(forged_binding);
+        assert!(!complete_approved_local_job(&mut authority, "91").unwrap());
+    }
+
+    #[test]
+    fn local_completion_requires_exact_durable_host_approval_when_interactive_task_exists() {
+        let mut job = approved_local_job();
+        job["tasks"][0]["interactiveInvocation"] = json!({
+            "status":"approved","invocationId":"inv-1","executionId":"exec-1","revision":"rev-2"
+        });
+        let (dir, mut authority) = open_authority(job);
+        assert!(complete_approved_local_job(&mut authority, "91")
+            .unwrap_err()
+            .contains("lacks a durable accepted decision"));
+        drop(authority);
+        let connection = Connection::open(dir.path().join("relay.sqlite")).unwrap();
+        connection.execute(
+            "INSERT INTO host_invocation_decision(job_id,task_id,invocation_id,execution_id,revision,decision) VALUES('91','work-1','inv-1','exec-1','rev-2','approved')",
+            [],
+        ).unwrap();
+        drop(connection);
+        let mut reopened = RelayAuthority::open_existing(&dir.path().join("relay.sqlite")).unwrap();
+        assert!(complete_approved_local_job(&mut reopened, "91").unwrap());
+        assert_eq!(
+            reopened.read_job("91").unwrap().unwrap()["state"],
+            "COMPLETED"
+        );
+    }
 }

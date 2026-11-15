@@ -104,7 +104,7 @@ test('daemon applies only the current SHA-bound reviewer verdict and never compl
   const reviewer={...task('901','91',[],'SUCCEEDED'),agentName:'job-acceptance-reviewer',
    reviewHeadSha:head,result:{summary:'review completed',data:{output:{verdict:'approved',head_sha:head,findings:[]}}}};
   await save(store,f.dir,'91',[reviewer]);
-  await store.mutateJob('91',job=>({...job,headSha:head,autoMerge:false,
+  await store.mutateJob('91',job=>({...job,headSha:head,autoMerge:false,plans:[],
    review:{outcome:'pending',headSha:head,taskId:'901',evidence:null,updatedAt:t0}}));
   store.close();store=null;
   const first=once(f);
@@ -117,6 +117,26 @@ test('daemon applies only the current SHA-bound reviewer verdict and never compl
   assert.equal(once(f).reviewResultsApplied,0,'restart does not apply the same verdict twice');
   store=new SQLiteRelayStore(f.db);job=await store.loadJob('91');
   assert.equal(job.state,'ACTIVE');
+ }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
+});
+test('local JEL completes only after current-head Review approval and all implementation succeeds',async()=>{
+ const f=fixture();let store;
+ const head='0123456789abcdef0123456789abcdef01234567';
+ try{
+  store=new SQLiteRelayStore(f.db);
+  const work={...task('101','91',[],'SUCCEEDED'),result:{summary:'implementation verified',data:{output:{verified:true}}}};
+  const reviewer={...task('901','91',[],'SUCCEEDED'),agentName:'job-acceptance-reviewer',reviewHeadSha:head,
+   result:{summary:'review completed',data:{output:{verdict:'approved',head_sha:head,findings:[]}}}};
+  await save(store,f.dir,'91',[work,reviewer]);
+  await store.mutateJob('91',job=>({...job,headSha:head,autoMerge:false,plans:[],
+   review:{outcome:'pending',headSha:head,taskId:'901',evidence:null,updatedAt:t0}}));
+  store.close();store=null;
+  const report=once(f);
+  assert.equal(report.reviewResultsApplied,1,JSON.stringify(report));
+  assert.equal(report.jobsCompleted,1,JSON.stringify(report));
+  store=new SQLiteRelayStore(f.db);const job=await store.loadJob('91');
+  assert.equal(job.state,'COMPLETED');assert.equal(job.review.outcome,'approved');
+  assert.equal(job.headSha,head);
  }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
 });
 test('independent ready sibling Workers have overlapping execution and complete once',async()=>{
