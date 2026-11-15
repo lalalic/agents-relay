@@ -34,7 +34,107 @@ impl RelayAuthority {
         execution_id: &str,
         at: &str,
     ) -> Result<InteractiveReviewBinding, String> {
+        self.begin_interactive_review_with_identity(
+            job_id,
+            task_id,
+            execution_id,
+            execution_id,
+            &Value::Null,
+            at,
+        )
+    }
+
+    /// Bind an exact host Preview revision. Event-only host decisions must
+    /// repeat the same content and request identity that was bound here.
+    pub fn begin_interactive_review_with_identity(
+        &mut self,
+        job_id: &str,
+        task_id: &str,
+        execution_id: &str,
+        revision: &str,
+        identity: &Value,
+        at: &str,
+    ) -> Result<InteractiveReviewBinding, String> {
         validate_identity(job_id, task_id, execution_id)?;
+        if revision.trim().is_empty() {
+            return Err("interactive Preview revision is required".into());
+        }
+        if !identity.is_null() && !identity.is_object() {
+            return Err("interactive Preview revision identity must be an object".into());
+        }
+        if identity.as_object().is_some_and(|fields| {
+            fields
+                .values()
+                .any(|value| value.as_str().is_none_or(|text| text.trim().is_empty()))
+        }) {
+            return Err(
+                "interactive Preview revision identity values must be nonempty strings".into(),
+            );
+        }
+        let content_hash = identity.get("contentHash").and_then(Value::as_str);
+        let revision_id = identity.get("revisionId").and_then(Value::as_str);
+        let request_id = identity.get("requestId").and_then(Value::as_str);
+        let idempotency_key = identity.get("idempotencyKey").and_then(Value::as_str);
+        let preview_id = identity.get("previewId").and_then(Value::as_str);
+        let has_event_identity = [
+            content_hash,
+            revision_id,
+            request_id,
+            idempotency_key,
+            preview_id,
+        ]
+        .iter()
+        .any(Option::is_some);
+        if has_event_identity
+            && (content_hash.is_none_or(|hash| {
+                hash.len() != 64
+                    || !hash
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                    || hash != revision
+            }) || revision_id.is_none_or(str::is_empty)
+                || request_id.is_none_or(str::is_empty)
+                || idempotency_key.is_none_or(str::is_empty)
+                || preview_id.is_some_and(str::is_empty))
+        {
+            return Err("incomplete or inconsistent interactive Preview revision identity".into());
+        }
+        // Replaying the same host Preview bind after a response loss or
+        // dashboard restart is a read-only idempotent result. Avoid advancing
+        // the Job timestamp or producing another apparent lifecycle write.
+        if let Some(snapshot) = self.read_job(job_id)? {
+            if snapshot["state"] == "ACTIVE" && snapshot.get("pause").is_none_or(Value::is_null) {
+                if let Some(task) = snapshot["tasks"]
+                    .as_array()
+                    .and_then(|tasks| tasks.iter().find(|task| task["id"] == task_id))
+                {
+                    let invocation = &task["interactiveInvocation"];
+                    if task["state"] == "RUNNING"
+                        && task["executionId"] == execution_id
+                        && invocation["status"] == "awaiting_decision"
+                        && invocation["executionId"] == execution_id
+                        && invocation["revision"] == revision
+                        && [
+                            "contentHash",
+                            "revisionId",
+                            "previewId",
+                            "requestId",
+                            "idempotencyKey",
+                        ]
+                        .iter()
+                        .all(|key| invocation.get(*key) == identity.get(*key))
+                    {
+                        return Ok(InteractiveReviewBinding {
+                            job_id: job_id.into(),
+                            task_id: task_id.into(),
+                            execution_id: execution_id.into(),
+                            reused: true,
+                            invocation: invocation.clone(),
+                        });
+                    }
+                }
+            }
+        }
         let mut binding = None;
         self.commit_job_with_tx(job_id, at, |_, prior| {
             if prior["state"] != "ACTIVE"
@@ -58,6 +158,16 @@ impl RelayAuthority {
             let reused = existing.is_some_and(|invocation| {
                 invocation["status"] == "awaiting_decision"
                     && invocation["executionId"] == execution_id
+                    && invocation["revision"] == revision
+                    && [
+                        "contentHash",
+                        "revisionId",
+                        "previewId",
+                        "requestId",
+                        "idempotencyKey",
+                    ]
+                    .iter()
+                    .all(|key| invocation.get(*key) == identity.get(*key))
             });
             if reused {
                 let invocation = existing.unwrap().clone();
@@ -80,13 +190,28 @@ impl RelayAuthority {
             }) {
                 return Err("conflicting interactive Preview invocation on Task".into());
             }
-            let invocation = json!({
+            let mut invocation = json!({
                 "invocationId":execution_id,
                 "executionId":execution_id,
-                "revision":execution_id,
+                "revision":revision,
                 "status":"awaiting_decision",
                 "boundAt":at
             });
+            if let (Some(target), Some(identity)) =
+                (invocation.as_object_mut(), identity.as_object())
+            {
+                for key in [
+                    "contentHash",
+                    "revisionId",
+                    "previewId",
+                    "requestId",
+                    "idempotencyKey",
+                ] {
+                    if let Some(value) = identity.get(key) {
+                        target.insert(key.into(), value.clone());
+                    }
+                }
+            }
             task["interactiveInvocation"] = invocation.clone();
             task["updatedAt"] = json!(at);
             next["updatedAt"] = json!(at);

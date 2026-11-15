@@ -35,7 +35,7 @@ function fixture(){
  ].join('\n'));
  writeFileSync(manifest,JSON.stringify({agents:{builder:{kind:'script',executable:process.execPath,args:[script]}}}));
  return {home,root,project,input,graph,output,manifest,db,
-  env:{...process.env,HOME:home,RELAY_RUST_LIVE_MODE:'pilot-live',RELAY_RUST_EXPERIMENTAL_TEST_ONLY:''}};
+  env:{...process.env,HOME:home,RELAY_RUST_LIVE_MODE:'pilot-live',RELAY_RUST_EXPERIMENTAL_TEST_ONLY:'',RELAY_RUST_REVIEW_HOST_TOKEN:'isolated-test-review-host-token-1'}};
 }
 test('Live Rust namespace persists own real Jobs, real HTTP Dashboard, rejects production DB paths',async()=>{
  const f=fixture();let child;
@@ -121,14 +121,53 @@ test('Live Rust namespace persists own real Jobs, real HTTP Dashboard, rejects p
     '--graph-file',f.graph,'--input-file',f.input,'--output-path',f.output,
     '--title','API read only active','--repository','rust-live','--request-key','active-test-key'],f.env);
   assert.equal(invoke(cli,['activate','--db',f.db,'--job-id',active.jobId],f.env).state,'ACTIVE');
-  const activeBefore=invoke(cli,['show','--db',f.db,'--job-id',active.jobId],f.env);
+  let activeBefore=invoke(cli,['show','--db',f.db,'--job-id',active.jobId],f.env);
   const activeTaskId=activeBefore.job.tasks[0].id;
+  const previewTaskIndex=activeBefore.job.tasks.findIndex(task=>task.state==='QUEUED');
+  assert.notEqual(previewTaskIndex,-1,'active fixture has a queued Task for the host Preview binding');
+  const previewTaskId=activeBefore.job.tasks[previewTaskIndex].id;
+  const previewExecutionId='review-preview-execution-1';
+  const sqlLiteral=value=>`'${String(value).replaceAll("'","''")}'`;
+  const seedPreviewSql=`UPDATE job_snapshot SET json=json_set(json,'$.tasks[${previewTaskIndex}].state','RUNNING','$.tasks[${previewTaskIndex}].executionId',${sqlLiteral(previewExecutionId)}) WHERE job_id=${sqlLiteral(active.jobId)};`;
+  const seededPreview=spawnSync('sqlite3',[f.db,seedPreviewSql],{env:f.env,encoding:'utf8'});
+  assert.equal(seededPreview.status,0,seededPreview.stderr||seededPreview.stdout);
+  const previewUrl=base+'/api/review/preview/begin';
+  const reviewHash='a'.repeat(64);
+  const previewRequest={jobId:active.jobId,taskId:previewTaskId,executionId:previewExecutionId,
+    revision:reviewHash,contentHash:reviewHash,revisionId:'revision-host-1',requestId:'request-host-1',
+    idempotencyKey:'review-idempotency-1',previewId:'preview-host-1'};
+  assert.equal((await fetch(previewUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(previewRequest)})).status,401,
+    'host Preview binding requires an authenticated caller');
+  assert.equal((await fetch(previewUrl,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer isolated-test-review-host-token-1'},body:JSON.stringify({...previewRequest,revision:17})})).status,400,
+    'a non-string revision cannot silently fall back to the execution identity');
+  assert.equal((await fetch(previewUrl,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer isolated-test-review-host-token-1'},body:JSON.stringify({jobId:active.jobId,taskId:previewTaskId,executionId:previewExecutionId,contentHash:reviewHash})})).status,409,
+    'partial revision identity is rejected before binding');
+  const previewResponse=await fetch(previewUrl,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer isolated-test-review-host-token-1'},body:JSON.stringify(previewRequest)});
+  assert.equal(previewResponse.status,200);
+  const previewBinding=await previewResponse.json();
+  assert.equal(previewBinding.status,'bound');
+  assert.equal(previewBinding.binding.jobId,active.jobId);
+  assert.equal(previewBinding.binding.taskId,previewTaskId);
+  assert.equal(previewBinding.binding.executionId,previewExecutionId);
+  assert.equal(previewBinding.binding.invocation.status,'awaiting_decision');
+  assert.equal(previewBinding.binding.invocation.revision,reviewHash);
+  const firstPreviewSnapshot=invoke(cli,['show','--db',f.db,'--job-id',active.jobId],f.env);
+  const replayedPreview=await(await fetch(previewUrl,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer isolated-test-review-host-token-1'},body:JSON.stringify(previewRequest)})).json();
+  assert.equal(replayedPreview.binding.reused,true,'replayed Preview requests reuse the exact durable invocation');
+  const replayedSnapshot=invoke(cli,['show','--db',f.db,'--job-id',active.jobId],f.env);
+  assert.equal(replayedSnapshot.updatedAt,firstPreviewSnapshot.updatedAt,'an idempotent Preview replay does not write a new Job timestamp');
+  assert.equal(replayedSnapshot.job.tasks[previewTaskIndex].state,'RUNNING','Preview binding does not claim a human decision or finish the Task');
+  const stalePreview=await fetch(previewUrl,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer isolated-test-review-host-token-1'},body:JSON.stringify({...previewRequest,executionId:'stale-execution'})});
+  assert.equal(stalePreview.status,409,'a stale execution cannot create a Preview binding');
+  const forgedPreview=await fetch(previewUrl,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer wrong-token'},body:JSON.stringify(previewRequest)});
+  assert.equal(forgedPreview.status,401);
+  assert.equal((await fetch(previewUrl,{method:'POST',headers:{'content-type':'text/plain',authorization:'Bearer isolated-test-review-host-token-1'},body:JSON.stringify(previewRequest)})).status,415);
+  activeBefore=invoke(cli,['show','--db',f.db,'--job-id',active.jobId],f.env);
   const historyEvents=[
     {id:'history-1',at:'2026-01-01T00:00:01.000Z',type:'task.started',message:'started'},
     {id:'history-2',at:'2026-01-01T00:00:02.000Z',type:'task.progress',message:'progress'},
     {id:'history-3',at:'2026-01-01T00:00:03.000Z',type:'task.completed',message:'receipt only'},
   ];
-  const sqlLiteral=value=>`'${String(value).replaceAll("'","''")}'`;
   for(const event of historyEvents){
     const payload=JSON.stringify({event_id:event.id,job_id:active.jobId,task_id:activeTaskId,
       type:event.type,message:event.message,timestamp:event.at});
@@ -184,6 +223,8 @@ test('Live Rust namespace persists own real Jobs, real HTTP Dashboard, rejects p
     await new Promise(ok=>setTimeout(ok,50));
   }
   assert.ok(restarted,'native HTTP dashboard did not restart');
+  const restartedPreview=await(await fetch(previewUrl,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer isolated-test-review-host-token-1'},body:JSON.stringify(previewRequest)})).json();
+  assert.equal(restartedPreview.binding.reused,true,'the authenticated host Preview binding remains durable across dashboard restart');
   assert.deepEqual(await(await fetch(eventUrl)).json(),eventsBefore);
   assert.deepEqual(invoke(cli,['show','--db',f.db,'--job-id',active.jobId],f.env),activeBefore);
   assert.deepEqual(await(await fetch(taskListUrl)).json(),taskList);
@@ -191,6 +232,42 @@ test('Live Rust namespace persists own real Jobs, real HTTP Dashboard, rejects p
   const restartedJobs=(await(await fetch(base+'/api/jobs')).json()).jobs;
   assert.equal(restartedJobs.find(job=>job.id===j.jobId).state,'COMPLETED');
   assert.equal(restartedJobs.find(job=>job.id===active.jobId).state,'ACTIVE');
+  const decisionUrl=base+'/api/review/preview/decision';
+  const humanDecision={jobId:active.jobId,taskId:previewTaskId,executionId:previewExecutionId,
+    invocationId:previewExecutionId,revision:reviewHash,contentHash:reviewHash,revisionId:'revision-host-1',
+    requestId:'request-host-1',idempotencyKey:'review-idempotency-1',previewId:'preview-host-1',
+    decision:'approved',feedback:'',comments:[],
+    eventId:'human-review-approval-1',deliveredAt:'2026-11-15T14:30:00.000Z'};
+  const decisionPost={method:'POST',headers:{'content-type':'application/json',authorization:'Bearer isolated-test-review-host-token-1'},body:JSON.stringify(humanDecision)};
+  assert.equal((await fetch(decisionUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(humanDecision)})).status,401,
+    'human decisions require an authenticated host');
+  const acceptedDecision=await fetch(decisionUrl,decisionPost);
+  assert.equal(acceptedDecision.status,200);
+  assert.equal((await acceptedDecision.json()).receipt.outcome,'accepted');
+  const afterDecision=invoke(cli,['show','--db',f.db,'--job-id',active.jobId],f.env);
+  const decidedTask=afterDecision.job.tasks.find(task=>task.id===previewTaskId);
+  assert.equal(decidedTask.state,'RUNNING','an approval receipt cannot complete or resume a Task by itself');
+  assert.equal(decidedTask.interactiveInvocation.status,'approved');
+  assert.notEqual(afterDecision.job.state,'COMPLETED');
+  assert.equal((await fetch(decisionUrl,decisionPost).then(response=>response.json())).receipt.outcome,'duplicate');
+  const forgedRevision='b'.repeat(64);
+  assert.equal((await fetch(decisionUrl,{...decisionPost,body:JSON.stringify({...humanDecision,
+    revision:forgedRevision,contentHash:forgedRevision,revisionId:'revision-forged',requestId:'request-forged',
+    idempotencyKey:'review-idempotency-forged'})})).status,409,
+    'a forged revision cannot decide the current invocation');
+  child.kill('SIGTERM');
+  await new Promise(ok=>child.once('exit',ok));
+  child=spawn(dashboard,['--db',f.db,'--port',String(port)],{env:f.env,stdio:['ignore','pipe','pipe']});
+  let decisionRestarted=false;
+  for(let i=0;i<50;i++){
+    if(child.exitCode!==null)break;
+    try{const response=await fetch(base+'/api/health');if(response.ok){decisionRestarted=true;break;}}
+    catch{}
+    await new Promise(ok=>setTimeout(ok,50));
+  }
+  assert.ok(decisionRestarted,'native HTTP dashboard did not restart after host decision');
+  assert.equal((await fetch(decisionUrl,decisionPost).then(response=>response.json())).receipt.outcome,'duplicate',
+    'host decision deduplication survives dashboard restart');
   // Explicit live mode never accepts any other filesystem location.
   const outside=join(f.home,'elsewhere.sqlite');
   assert.match(invoke(cli,['init','--db',outside],f.env,2),/live namespace|path/i);

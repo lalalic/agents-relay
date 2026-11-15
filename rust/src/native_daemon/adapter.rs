@@ -234,7 +234,12 @@ pub(super) fn script_spec(
     let git_root = Path::new(job["projectRoot"].as_str().ok_or("Job Git root missing")?)
         .canonicalize()
         .map_err(|e| e.to_string())?;
-    let context = crate::native_context::resolve(&project, &git_root, "worker", agent_name)?;
+    let context_role = match agent_name {
+        "troubleshooter" => "troubleshooter",
+        "reviewer" | "job-acceptance-reviewer" => "reviewer",
+        _ => "worker",
+    };
+    let context = crate::native_context::resolve(&project, &git_root, context_role, agent_name)?;
     let attempt = task["attempt"]
         .as_i64()
         .ok_or("native Worker Task attempt missing")?

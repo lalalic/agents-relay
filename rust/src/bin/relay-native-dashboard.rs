@@ -2,12 +2,14 @@ use agents_relay_rust::native_daemon::isolated_store_root;
 use agents_relay_rust::store::RelayReader;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::{thread, time::Duration};
+#[path = "relay-native-dashboard/review_preview.rs"]
+mod review_preview;
 
 const HTML: &str = include_str!("../../assets/rust-live-dashboard.html");
 const JOB_PAGE_SIZE: usize = 20;
@@ -241,7 +243,7 @@ fn respond_json(tcp: &mut TcpStream, status: &str, value: &Value) -> Result<(), 
     )
 }
 
-fn handle(mut tcp: TcpStream, db: &Path) -> Result<(), String> {
+fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(), String> {
     tcp.set_read_timeout(Some(Duration::from_secs(2)))
         .map_err(|e| e.to_string())?;
     tcp.set_write_timeout(Some(Duration::from_secs(2)))
@@ -256,16 +258,36 @@ fn handle(mut tcp: TcpStream, db: &Path) -> Result<(), String> {
     if fields.len() != 3 || !matches!(fields[2], "HTTP/1.1" | "HTTP/1.0") {
         return respond(&mut tcp, "400 Bad Request", "text/plain", b"Bad request");
     }
-    if fields[0] != "GET" {
-        return respond(
-            &mut tcp,
-            "405 Method Not Allowed",
-            "text/plain",
-            b"Read only",
-        );
-    }
     if fields[1].len() > 2048 {
         return respond(&mut tcp, "400 Bad Request", "text/plain", b"Bad request");
+    }
+    let mut headers = HashMap::new();
+    let mut header_bytes = head.len();
+    loop {
+        let mut line = String::new();
+        let count = reader.read_line(&mut line).map_err(|e| e.to_string())?;
+        if count == 0 {
+            return respond(&mut tcp, "400 Bad Request", "text/plain", b"Bad request");
+        }
+        header_bytes += count;
+        if header_bytes > 16_384 {
+            return respond(
+                &mut tcp,
+                "431 Request Header Fields Too Large",
+                "text/plain",
+                b"Headers too large",
+            );
+        }
+        if line == "\r\n" || line == "\n" {
+            break;
+        }
+        let Some((name, value)) = line.trim_end_matches(['\r', '\n']).split_once(':') else {
+            return respond(&mut tcp, "400 Bad Request", "text/plain", b"Bad request");
+        };
+        let key = name.trim().to_ascii_lowercase();
+        if key.is_empty() || headers.insert(key, value.trim().to_owned()).is_some() {
+            return respond(&mut tcp, "400 Bad Request", "text/plain", b"Bad request");
+        }
     }
     let path = fields[1].split('?').next().unwrap_or("/");
     if path.len() > 120 {
@@ -277,6 +299,75 @@ fn handle(mut tcp: TcpStream, db: &Path) -> Result<(), String> {
             return respond_json(&mut tcp, "400 Bad Request", &json!({"error": error}));
         }
     };
+    if fields[0] == "POST"
+        && matches!(
+            path,
+            "/api/review/preview/begin" | "/api/review/preview/decision"
+        )
+    {
+        let content_type = headers
+            .get("content-type")
+            .map(String::as_str)
+            .unwrap_or("");
+        if content_type
+            .split(';')
+            .next()
+            .map(str::trim)
+            .is_none_or(|media| !media.eq_ignore_ascii_case("application/json"))
+        {
+            return respond_json(
+                &mut tcp,
+                "415 Unsupported Media Type",
+                &json!({"error":"application/json required"}),
+            );
+        }
+        let length = match headers
+            .get("content-length")
+            .and_then(|value| value.parse::<usize>().ok())
+        {
+            Some(length) if length <= 4096 => length,
+            _ => {
+                return respond_json(
+                    &mut tcp,
+                    "413 Content Too Large",
+                    &json!({"error":"bounded Content-Length required"}),
+                )
+            }
+        };
+        let mut body = vec![0; length];
+        if let Err(error) = reader.read_exact(&mut body) {
+            return respond_json(
+                &mut tcp,
+                "400 Bad Request",
+                &json!({"error":error.to_string()}),
+            );
+        }
+        return if path == "/api/review/preview/begin" {
+            review_preview::begin(
+                &mut tcp,
+                db,
+                &body,
+                headers.get("authorization").map(String::as_str),
+                host_token,
+            )
+        } else {
+            review_preview::decision(
+                &mut tcp,
+                db,
+                &body,
+                headers.get("authorization").map(String::as_str),
+                host_token,
+            )
+        };
+    }
+    if fields[0] != "GET" {
+        return respond(
+            &mut tcp,
+            "405 Method Not Allowed",
+            "text/plain",
+            b"Read only",
+        );
+    }
     match path {
         "/" => respond(
             &mut tcp,
@@ -437,7 +528,13 @@ fn run() -> Result<(), String> {
     while !stopped.load(Ordering::SeqCst) {
         match listener.accept() {
             Ok((client, _)) => {
-                if let Err(e) = handle(client, &db) {
+                if let Err(e) = handle(
+                    client,
+                    &db,
+                    std::env::var("RELAY_RUST_REVIEW_HOST_TOKEN")
+                        .ok()
+                        .as_deref(),
+                ) {
                     eprintln!("native dashboard: {e}");
                 }
             }

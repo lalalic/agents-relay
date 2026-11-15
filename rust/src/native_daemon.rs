@@ -5,6 +5,7 @@
 mod adapter;
 mod dag;
 mod review;
+mod troubleshooter;
 use crate::authority::{probe_process, RelayAuthority, ScriptClaimRequest};
 use crate::native_job::{complete_approved_local_job, complete_no_review_job};
 use crate::recovery::inspect_expired_execution;
@@ -23,6 +24,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use troubleshooter::reconcile_native_troubleshooters;
 
 #[derive(Debug, Clone)]
 pub struct NativeDaemonOptions {
@@ -41,6 +43,7 @@ pub struct NativeTick {
     pub tasks_failed: usize,
     pub tasks_recovered: usize,
     pub tasks_reopened: usize,
+    pub troubleshooters_created: usize,
     pub reviews_resumed: usize,
     pub review_revision_routes: usize,
     pub review_results_applied: usize,
@@ -191,6 +194,7 @@ pub(crate) fn tick_with_stop(
         report.tasks_reopened += authority
             .reconcile_troubleshooter_reopens(&id, &reopen_at)?
             .len();
+        reconcile_native_troubleshooters(&mut authority, &id, &agents, &mut report)?;
         reconcile_native_dag(&mut authority, &id, &root, &agents, &mut report)?;
         job = authority
             .read_job(&id)?

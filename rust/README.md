@@ -21,8 +21,10 @@ intentional while the Vlog production Job is pending human Review.
 - Rust CLI can initialize its own store, create/activate/inspect Jobs.
 - Native loop Daemon schedules and completes only Graph-authorized no-review
   Jobs. No approval, merge, publishing or revision is inferred.
-- Native Dashboard is read-only on 127.0.0.1:8788. The existing
-  TypeScript Dashboard presents it at /rust/ through a GET-only proxy.
+- Native Dashboard reads are read-only on 127.0.0.1:8788, with authenticated
+  host Preview binding and decision endpoints described below. The existing
+  TypeScript Dashboard presents the read-only surface at /rust/ through a
+  GET-only proxy.
   The ordinary TypeScript Job list remains unchanged.
 - Only the Rust-owned DB receives native Worker claims. A production
   TypeScript SQLite path cannot pass the Rust namespace fence.
@@ -53,8 +55,38 @@ cursor pagination. The production Node Dashboard reads the Events Bus history
 service (`src/dashboard-data.ts` -> `src/events-bus-runtime.ts`), whose global
 cursor is not present in the Rust SQLite inbox/outbox. It does not read the
 production Events Bus history, mutate
-lifecycle state, expose worker inputs/outputs, or provide write controls. This
-endpoint slice is not full Dashboard or production API parity.
+lifecycle state, expose worker inputs/outputs, or provide the production
+Dashboard control surface. This endpoint slice is not full Dashboard or
+production API parity.
+
+### Authenticated host Preview binding
+
+The isolated native Dashboard can bind a host-owned Review Preview to the
+current Task execution through `POST /api/review/preview/begin`. It requires
+`RELAY_RUST_REVIEW_HOST_TOKEN` with at least 32 bytes and a matching
+`Authorization: Bearer …` header. The JSON body contains only `jobId`,
+`taskId`, and `executionId`, with optional exact revision fields (`revision`,
+`contentHash`, `revisionId`, `requestId`, `idempotencyKey`, and `previewId`).
+When those fields are supplied, the endpoint requires a complete consistent
+content identity and persists it with the execution binding. It rechecks that
+the Job is active and the Task is running in that exact execution. Replaying
+the same request returns the binding without a
+new snapshot write, including after a Dashboard restart. The authenticated
+`POST /api/review/preview/decision` route accepts the host decision envelope
+and delegates identity, revision, graph, and deduplication checks to the
+durable Review authority. Accepted decisions enter the host decision ledger;
+the daemon performs the Graph-selected resume. A delivery receipt alone does
+not resume or complete a Task. These routes are isolated-pilot evidence, not
+the production control API or a physical host/mobile Review test.
+
+The isolated daemon also creates one Graph-selected Troubleshooter Task for
+each eligible failed ordinary Task. Creation atomically checks the existing
+recovery barrier, allocates a global Task ID, persists the trusted Model route
+and failure context, and records one outbox event. The original failed Task is
+left unchanged. The daemon requires a configured Model Troubleshooter; if
+none is available, it keeps the failed work unresolved and reports the
+missing route. Plan-failure recovery and the broader production Troubleshooter
+retry/escalation scheduler remain incomplete.
 
 Build and start the native service with an explicitly selected, already
 initialized Rust live-namespace database:
@@ -171,7 +203,7 @@ validates correlated worker lifecycle, interactive-wait, and Review-decision
 events against the current SQLite Job/Task/execution and the canonical Task
 Graph. Review decisions additionally require the durable invocation/content
 identity ledger. This bounded pilot ingress does not establish production
-Events Bus, trusted host Preview, or service parity.
+Events Bus, production host Preview, or service parity.
 
 A real Codex calculator and a Vlog pilot using three original private MOV/VTT
 files were separately tested through native Rust Job creation and Daemon

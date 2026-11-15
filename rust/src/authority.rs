@@ -16,6 +16,7 @@ mod process;
 mod projection;
 mod recovery;
 mod review;
+mod troubleshooter;
 pub use recovery::RecoveredLease;
 mod scheduler;
 pub use ids::EntityKind;
@@ -34,6 +35,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path;
 use std::time::Duration;
+pub use troubleshooter::{CreatedTroubleshooter, TroubleshooterAgent};
 
 pub(crate) fn dependency_revision_still_current(job: &Value, task: &Value) -> bool {
     dependencies::dependency_revision_still_current(job, task)
