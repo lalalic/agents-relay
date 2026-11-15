@@ -307,49 +307,42 @@ fn handle(mut tcp: TcpStream, db: &Path) -> Result<(), String> {
                     &json!({"error":"job is required"}),
                 );
             };
-            let Some(task_id) = first_value(&parameters, "task") else {
+            if job_id.is_empty()
+                || !job_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_.-".contains(&byte))
+            {
                 return respond_json(
                     &mut tcp,
                     "400 Bad Request",
-                    &json!({"error":"task is required"}),
-                );
-            };
-            if job_id.is_empty() || task_id.is_empty() {
-                return respond_json(
-                    &mut tcp,
-                    "400 Bad Request",
-                    &json!({"error":"job and task must be non-empty"}),
+                    &json!({"error":"Invalid job id"}),
                 );
             }
+            let task_id = first_value(&parameters, "task");
             let limit = match first_value(&parameters, "limit") {
                 None => 60,
-                Some(value) => match value.parse::<usize>() {
-                    Ok(value) if (1..=60).contains(&value) => value,
-                    _ => {
-                        return respond_json(
-                            &mut tcp,
-                            "400 Bad Request",
-                            &json!({"error":"limit must be from 1 to 60"}),
-                        )
+                Some(value) => {
+                    let parsed = if value.trim().is_empty() {
+                        Some(0.0)
+                    } else {
+                        value.parse::<f64>().ok()
+                    };
+                    match parsed {
+                        None => 60,
+                        Some(number) if !number.is_finite() => 60,
+                        Some(number)
+                            if number.fract() != 0.0 || number.abs() > 9_007_199_254_740_991.0 =>
+                        {
+                            return respond_json(&mut tcp, "200 OK", &Value::Array(Vec::new()))
+                        }
+                        Some(number) => number.clamp(1.0, 60.0) as usize,
                     }
-                },
+                }
             };
-            let order = first_value(&parameters, "order").unwrap_or("desc");
-            let after = match first_value(&parameters, "after") {
-                None => 0,
-                Some(value) => match value.parse::<i64>() {
-                    Ok(value) if value >= 0 => value,
-                    _ => {
-                        return respond_json(
-                            &mut tcp,
-                            "400 Bad Request",
-                            &json!({"error":"after must be a non-negative integer"}),
-                        )
-                    }
-                },
-            };
+            let order = "desc";
+            let task_id = task_id.filter(|task_id| !task_id.is_empty());
             let result = RelayReader::open(db)
-                .and_then(|reader| reader.task_events(job_id, task_id, limit, order, after));
+                .and_then(|reader| reader.task_events(job_id, task_id, limit, order, 0));
             match result {
                 Ok(page) => respond_json(&mut tcp, "200 OK", &Value::Array(page.events)),
                 Err(error) if error.contains("not found") => {

@@ -42,11 +42,19 @@ in the Node Dashboard's `GET /api/job?id={id}` response. Missing Jobs or Tasks
 and malformed numeric path IDs return 404. All routes use the read-only SQLite
 reader; a successful HTTP response does not imply Task success or change
 lifecycle state.
-`GET /api/events?job=ID&task=ID&limit=1..60` returns Task-scoped events already
-stored in the isolated Rust authority's event inbox/outbox. It does not query
-the production Events Bus history service, mutate lifecycle state, expose
-worker inputs/outputs, or provide write controls. This endpoint slice is not
-full Dashboard or production API parity.
+`GET /api/events?job=ID[&task=ID][&limit=N]` returns an array of matching events
+already stored in the isolated Rust authority's inbox/outbox. It returns the
+newest 60 by default, ordered by local recorded timestamp then event ID, and
+clamps a finite integer `limit` to 1–60. Valid
+unknown Job IDs and unknown Task filters return empty arrays, matching the Node
+history API. The route keeps newest-first ordering and ignores order/cursor
+query parameters just like the Node Dashboard wrapper; it does not expose
+cursor pagination. The production Node Dashboard reads the Events Bus history
+service (`src/dashboard-data.ts` -> `src/events-bus-runtime.ts`), whose global
+cursor is not present in the Rust SQLite inbox/outbox. It does not read the
+production Events Bus history, mutate
+lifecycle state, expose worker inputs/outputs, or provide write controls. This
+endpoint slice is not full Dashboard or production API parity.
 
 Build and start the native service with an explicitly selected, already
 initialized Rust live-namespace database:

@@ -322,7 +322,7 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             let store = RelayReader::open(Path::new(&options["--db"]))?;
             print_json(store.task_events(
-                &options["--job-id"], &options["--task-id"], limit, order, after,
+                &options["--job-id"], Some(&options["--task-id"]), limit, order, after,
             )?)
         }
         _=>Err("unrecognized command; supported: graph validate/inventory/decide/batch/simulate, store list/get, job list/show, task list/show/events, scheduler inspect/recovery".into())

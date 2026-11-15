@@ -176,7 +176,7 @@ impl RelayReader {
     pub fn task_events(
         &self,
         job_id: &str,
-        task_id: &str,
+        task_id: Option<&str>,
         limit: usize,
         order: &str,
         after: i64,
@@ -195,19 +195,6 @@ impl RelayReader {
         }
         if order != "asc" && after != 0 {
             return Err("task events --after requires --order asc".into());
-        }
-
-        let job = self
-            .get_job(job_id)?
-            .ok_or_else(|| format!("Job {job_id} not found"))?;
-        let tasks = job.job["tasks"]
-            .as_array()
-            .ok_or_else(|| format!("Job {job_id} has no task list"))?;
-        if !tasks
-            .iter()
-            .any(|task| task["id"].as_str() == Some(task_id))
-        {
-            return Err(format!("Task {task_id} not found in Job {job_id}"));
         }
 
         let mut sources = Vec::new();
@@ -229,7 +216,7 @@ impl RelayReader {
             sources.push(format!(
                 "SELECT {time_column} AS recorded_at,event_id,payload_json FROM {table} \
                  WHERE COALESCE(json_extract(payload_json,'$.job_id'),json_extract(payload_json,'$.jobId'))=?1 \
-                 AND COALESCE(json_extract(payload_json,'$.task_id'),json_extract(payload_json,'$.taskId'))=?2"
+                 AND (?2 IS NULL OR COALESCE(json_extract(payload_json,'$.task_id'),json_extract(payload_json,'$.taskId'))=?2)"
             ));
         }
         let mut events = Vec::new();
@@ -262,23 +249,14 @@ impl RelayReader {
                     format!("invalid stored workflow event {event_id}: {error}")
                 })?;
                 let kind = payload["type"].as_str().unwrap_or("unknown");
-                let status = payload["status"].as_str().unwrap_or_else(|| {
-                    if kind.ends_with(".completed") || kind.ends_with(".approved") {
-                        "succeeded"
-                    } else if kind.ends_with(".failed") {
-                        "failed"
-                    } else {
-                        "running"
-                    }
-                });
                 let mut normalized = json!({
                     "version": payload["version"].as_u64().unwrap_or(1),
                     "event_id": payload["event_id"].as_str().unwrap_or(&event_id),
                     "job_id": job_id,
-                    "task_id": task_id,
+                    "task_id": payload["task_id"].as_str().or(payload["taskId"].as_str()),
                     "parent_task_id": payload["parent_task_id"].as_str().or(payload["parentTaskId"].as_str()),
                     "type": kind,
-                    "status": status,
+                    "status": payload["status"],
                     "timestamp": payload["timestamp"].as_str().unwrap_or(&recorded_at),
                     "visibility": payload["visibility"].as_str().unwrap_or("orchestrator"),
                     "level": payload["level"].as_str().unwrap_or("info"),
@@ -288,6 +266,12 @@ impl RelayReader {
                     if !payload[field].is_null() {
                         normalized[field] = payload[field].clone();
                     }
+                }
+                if normalized["status"].is_null() {
+                    normalized
+                        .as_object_mut()
+                        .expect("event is an object")
+                        .remove("status");
                 }
                 events.push(normalized);
             }
@@ -300,7 +284,7 @@ impl RelayReader {
         };
         Ok(TaskEventPage {
             job_id: job_id.to_string(),
-            task_id: task_id.to_string(),
+            task_id: task_id.unwrap_or_default().to_string(),
             order: if order == "asc" {
                 "oldest-first"
             } else {

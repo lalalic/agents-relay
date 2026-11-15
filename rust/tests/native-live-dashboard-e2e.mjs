@@ -86,12 +86,12 @@ test('Live Rust namespace persists own real Jobs, real HTTP Dashboard, rejects p
   assert.equal((await fetch(base+'/api/jobs/%2e%2e')).status,404);
   assert.equal((await fetch(base+'/api/jobs/does-not-exist')).status,404);
   assert.equal((await fetch(base+'/api/jobs/'+j.jobId)).status,200);
-  assert.equal((await fetch(base+'/api/events?job='+j.jobId)).status,400);
-  assert.equal((await fetch(base+'/api/events?job='+j.jobId+'&task=missing')).status,404);
-  assert.equal((await fetch(base+'/api/events?job='+j.jobId+'&task='+content.jobs[0].tasks[0].id+'&limit=61')).status,400);
-  const eventUrl=base+'/api/events?job='+j.jobId+'&task='+content.jobs[0].tasks[0].id;
-  const eventsBefore=await(await fetch(eventUrl)).json();
-  assert.ok(Array.isArray(eventsBefore),'Task event endpoint returns a JSON event array');
+  assert.equal((await fetch(base+'/api/events')).status,400);
+  assert.equal((await fetch(base+'/api/events?job=bad%2Fid')).status,400);
+  assert.deepEqual(await(await fetch(base+'/api/events?job=999999&task=missing')).json(),[],
+    'unknown valid Job IDs follow the Node history API and return no events');
+  assert.deepEqual(await(await fetch(base+'/api/events?job='+j.jobId+'&task='+content.jobs[0].tasks[0].id)).json(),[],
+    'a known Job/Task with no retained event records returns an empty event array');
   const durableBefore=invoke(cli,['show','--db',f.db,'--job-id',j.jobId],f.env);
   assert.equal(durableBefore.job.state,'COMPLETED');
   const taskListUrl=base+'/api/jobs/'+j.jobId+'/tasks';
@@ -110,7 +110,6 @@ test('Live Rust namespace persists own real Jobs, real HTTP Dashboard, rejects p
   assert.equal((await fetch(taskListUrl+'/')).status,404);
   assert.equal((await fetch(base+'/api/jobs/999999/tasks/1')).status,404);
   assert.equal((await fetch(base+'/api/jobs?status=completed')).status,200);
-  assert.deepEqual(await(await fetch(eventUrl)).json(),eventsBefore);
   const durableAfter=invoke(cli,['show','--db',f.db,'--job-id',j.jobId],f.env);
   assert.deepEqual(durableAfter,durableBefore);
   assert.deepEqual(await(await fetch(taskListUrl)).json(),taskList);
@@ -123,6 +122,42 @@ test('Live Rust namespace persists own real Jobs, real HTTP Dashboard, rejects p
     '--title','API read only active','--repository','rust-live','--request-key','active-test-key'],f.env);
   assert.equal(invoke(cli,['activate','--db',f.db,'--job-id',active.jobId],f.env).state,'ACTIVE');
   const activeBefore=invoke(cli,['show','--db',f.db,'--job-id',active.jobId],f.env);
+  const activeTaskId=activeBefore.job.tasks[0].id;
+  const historyEvents=[
+    {id:'history-1',at:'2026-01-01T00:00:01.000Z',type:'task.started',message:'started'},
+    {id:'history-2',at:'2026-01-01T00:00:02.000Z',type:'task.progress',message:'progress'},
+    {id:'history-3',at:'2026-01-01T00:00:03.000Z',type:'task.completed',message:'receipt only'},
+  ];
+  const sqlLiteral=value=>`'${String(value).replaceAll("'","''")}'`;
+  for(const event of historyEvents){
+    const payload=JSON.stringify({event_id:event.id,job_id:active.jobId,task_id:activeTaskId,
+      type:event.type,message:event.message,timestamp:event.at});
+    const sql=`INSERT INTO workflow_event_outbox(event_key,event_id,payload_json,state,created_at) VALUES (${sqlLiteral(event.id)},${sqlLiteral(event.id)},${sqlLiteral(payload)},'published',${sqlLiteral(event.at)});`;
+    const seeded=spawnSync('sqlite3',[f.db,sql],{env:f.env,encoding:'utf8'});
+    assert.equal(seeded.status,0,seeded.stderr||seeded.stdout);
+  }
+  const eventUrl=base+'/api/events?job='+active.jobId+'&task='+activeTaskId;
+  const eventsBefore=await(await fetch(eventUrl)).json();
+  assert.ok(Array.isArray(eventsBefore),'Task event endpoint returns a JSON event array');
+  assert.deepEqual(eventsBefore.map(event=>event.event_id),['history-3','history-2','history-1']);
+  assert.deepEqual(await(await fetch(base+'/api/events?job='+active.jobId)).json(),eventsBefore);
+  assert.deepEqual(await(await fetch(base+'/api/events?job='+active.jobId+'&task=')).json(),eventsBefore,
+    'an empty Task filter behaves like the Node Dashboard and selects all Job events');
+  assert.deepEqual(await(await fetch(base+'/api/events?job='+active.jobId+'&task=missing')).json(),[]);
+  assert.deepEqual((await(await fetch(eventUrl+'&limit=1')).json()).map(event=>event.event_id),['history-3']);
+  assert.deepEqual(await(await fetch(eventUrl+'&order=asc')).json(),eventsBefore,
+    'the Dashboard wrapper remains newest-first and ignores order');
+  assert.equal((await(await fetch(eventUrl+'&limit=0')).json()).length,1);
+  assert.equal((await(await fetch(eventUrl+'&limit=')).json()).length,1);
+  assert.equal((await(await fetch(eventUrl+'&limit=invalid')).json()).length,3);
+  assert.deepEqual(await(await fetch(eventUrl+'&after=1')).json(),eventsBefore,
+    'the Dashboard wrapper ignores after because cursor pagination is not part of this route');
+  assert.deepEqual(await(await fetch(eventUrl+'&limit=1.5')).json(),[],
+    'fractional limits follow the Node wrapper error fallback');
+  assert.equal(Object.hasOwn(eventsBefore[0],'status'),false,
+    'a task.completed history receipt does not synthesize Task status');
+  assert.deepEqual(invoke(cli,['show','--db',f.db,'--job-id',active.jobId],f.env),activeBefore,
+    'history reads do not promote a task.completed receipt into lifecycle state');
   const activeResult=await(await fetch(base+'/api/jobs?q=read+only&status=ACTIVE&repo=rust-live')).json();
   assert.equal(activeResult.total,1);
   assert.equal(activeResult.jobs[0].state,'ACTIVE');
@@ -150,6 +185,7 @@ test('Live Rust namespace persists own real Jobs, real HTTP Dashboard, rejects p
   }
   assert.ok(restarted,'native HTTP dashboard did not restart');
   assert.deepEqual(await(await fetch(eventUrl)).json(),eventsBefore);
+  assert.deepEqual(invoke(cli,['show','--db',f.db,'--job-id',active.jobId],f.env),activeBefore);
   assert.deepEqual(await(await fetch(taskListUrl)).json(),taskList);
   assert.deepEqual(await(await fetch(taskDetailUrl)).json(),durableBefore.job.tasks[0]);
   const restartedJobs=(await(await fetch(base+'/api/jobs')).json()).jobs;
