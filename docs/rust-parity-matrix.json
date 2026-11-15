@@ -161,12 +161,13 @@
     {
       "capability": "JEL Final Review, revisions, merge, completion",
       "node": {"behavior":"Final Review is SHA-bound; changes-required starts a repair Plan; PASS and local merge are independent gates before completion.","sources":["src/reconciler-review.ts","src/review-replan.ts","src/local-git-merge.ts","workflow/review-lifecycle.mmd","workflow/job-lifecycle.mmd"]},
-      "rust": {"behavior":"Rust can propose Final Review findings and complete a narrowly eligible no-review pilot Job; it does not implement the full JEL gate sequence.","sources":["rust/src/final_review.rs","rust/src/native_job.rs","rust/src/native_daemon.rs"]},
+      "rust": {"behavior":"Rust can propose a Final Review and the daemon applies a successful bound reviewer Task verdict through the canonical Review Graph only when the task result matches the Job head SHA. Changes-required records an owner-resolution disposition; approval records evidence but does not merge or complete the Job. When auto-merge is enabled, the Graph selects review.requestMerge and the unsupported merge effect is rejected rather than silently bypassed. Planner creation/execution, SHA discovery/scheduling, revision loop, local merge workflow and production gate integration are still absent.","sources":["rust/src/final_review.rs","rust/src/native_daemon/review.rs","rust/src/native_job.rs","rust/src/native_daemon.rs","workflow/review-lifecycle.mmd"]},
       "status": "FAIL",
       "evidence": [
-        {"kind":"source","detail":"No Rust SHA-bound independent reviewer, Planner revision loop, local merge workflow, or production completion gate exists."}
+        {"kind":"deterministic-test","detail":"PASS: isolated Rust unit tests in `native_daemon::review::tests` verify exact-head approval through the canonical Review Graph, SQLite restart deduplication, changes-required ownership disposition, stale/malformed-head rejection, blank finding rejection, rejection of approvals carrying blocking findings, Graph-selected merge rejection when that effect is unavailable, and no Job completion from reviewer approval. `rust/tests/native-daemon-e2e.mjs` additionally proves the daemon applies the bound reviewer result on tick, deduplicates it after restart, and leaves the Job ACTIVE after approval."},
+        {"kind":"source","detail":"Native verdict application is only reachable for an already-bound reviewer Task; Rust still lacks native SHA discovery/scheduling, Planner creation/execution and repair/re-review loops, local merge workflow, and production completion gate integration. Human host/mobile and deployed production gates remain NOT_RUN."}
       ],
-      "nextAction": "Implement the complete independent Review/Plan/Merge lifecycle before any production replacement."
+      "nextAction": "Integrate verified local-head discovery with Graph-selected reviewer creation, implement durable Planner repair/re-review and local merge effects, then verify host/mobile and production gates; keep FAIL until the complete lifecycle is proven."
     },
     {
       "capability": "Dashboard API, controls, and history",

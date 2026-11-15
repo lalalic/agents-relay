@@ -96,6 +96,29 @@ test('isolated native daemon: multi-job and dependency wave, physical helper + S
   console.log('Native daemon: three real Workers, two Jobs, dependency wave, no repeat on restart');
  }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
 });
+test('daemon applies only the current SHA-bound reviewer verdict and never completes from approval',async()=>{
+ const f=fixture();let store;
+ const head='0123456789abcdef0123456789abcdef01234567';
+ try{
+  store=new SQLiteRelayStore(f.db);
+  const reviewer={...task('901','91',[],'SUCCEEDED'),agentName:'job-acceptance-reviewer',
+   reviewHeadSha:head,result:{summary:'review completed',data:{output:{verdict:'approved',head_sha:head,findings:[]}}}};
+  await save(store,f.dir,'91',[reviewer]);
+  await store.mutateJob('91',job=>({...job,headSha:head,autoMerge:false,
+   review:{outcome:'pending',headSha:head,taskId:'901',evidence:null,updatedAt:t0}}));
+  store.close();store=null;
+  const first=once(f);
+  assert.equal(first.reviewResultsApplied,1,JSON.stringify(first));
+  store=new SQLiteRelayStore(f.db);let job=await store.loadJob('91');
+  assert.equal(job.review.outcome,'approved');
+  assert.equal(job.review.headSha,head);
+  assert.equal(job.state,'ACTIVE','review approval is not merge or Job completion');
+  store.close();store=null;
+  assert.equal(once(f).reviewResultsApplied,0,'restart does not apply the same verdict twice');
+  store=new SQLiteRelayStore(f.db);job=await store.loadJob('91');
+  assert.equal(job.state,'ACTIVE');
+ }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
+});
 test('independent ready sibling Workers have overlapping execution and complete once',async()=>{
  const f=fixture('if [ "$RELAY_TASK_ID" = "101" ]; then sleep 2; else sleep 4; fi; '+script);let store;
  try{
