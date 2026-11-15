@@ -97,10 +97,10 @@ test('isolated native daemon: multi-job and dependency wave, physical helper + S
  }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
 });
 test('independent ready sibling Workers have overlapping execution and complete once',async()=>{
- const f=fixture('if [ "$RELAY_TASK_ID" = "101" ]; then sleep 0.5; else sleep 1.2; fi; '+script);let store;
+ const f=fixture('if [ "$RELAY_TASK_ID" = "101" ]; then sleep 2; else sleep 4; fi; '+script);let store;
  try{
   store=new SQLiteRelayStore(f.db);
-  await save(store,f.dir,'91',[task('101','91'),task('102','91')].map(t=>({...t,timeoutMs:5000})));
+  await save(store,f.dir,'91',[task('101','91'),task('102','91')].map(t=>({...t,timeoutMs:10000})));
   await store.mutateJob('91',job=>({...job,reviewEnabled:false,autoMerge:false}));store.close();store=null;
   const result=await runAsync(f);assert.equal(result.code,0,result.err);
   store=new SQLiteRelayStore(f.db);const job=await store.loadJob('91');

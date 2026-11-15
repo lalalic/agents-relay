@@ -5,9 +5,9 @@ use crate::supervised_script::after_time;
 
 /// A host Review receipt is not an approval until it is durably accepted
 /// by the interactive Graph and the host-invocation ledger. This staged
-/// daemon resumes only approved work; changes_requested requires a separate
-/// semantic revision plus another Preview and is never auto-completed.
-pub(super) fn resume_approved_native_reviews(
+/// daemon resumes either accepted decision on the same Task; changes_requested
+/// routes into a semantic revision and is never auto-completed.
+pub(crate) fn resume_accepted_native_reviews(
     authority: &mut RelayAuthority,
     job_id: &str,
     report: &mut NativeTick,
@@ -29,11 +29,7 @@ pub(super) fn resume_approved_native_reviews(
         })
         .collect();
     for (task_id, status) in pending {
-        if status == "changes_requested" {
-            report.blocked.push(format!("{job_id}/{task_id}: human changes_requested must receive semantic revision and a new Preview"));
-            continue;
-        }
-        if status != "approved" {
+        if !matches!(status.as_str(), "approved" | "changes_requested") {
             continue;
         }
         let job = authority

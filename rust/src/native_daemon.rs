@@ -13,7 +13,7 @@ use crate::supervised_script::{after_time, current_time, execute_supervised_scri
 use adapter::{manifest, script_spec};
 use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat};
 use dag::{complete_native_dag, reconcile_native_dag};
-use review::resume_approved_native_reviews;
+pub(crate) use review::resume_accepted_native_reviews;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
@@ -179,7 +179,7 @@ pub(crate) fn tick_with_stop(
         if job["state"] != "ACTIVE" || job.get("pause").is_some_and(|v| !v.is_null()) {
             continue;
         }
-        resume_approved_native_reviews(&mut authority, &id, &mut report)?;
+        resume_accepted_native_reviews(&mut authority, &id, &mut report)?;
         let reopen_at = after_time(job["updatedAt"].as_str().ok_or("Job timestamp missing")?)?;
         report.tasks_reopened += authority
             .reconcile_troubleshooter_reopens(&id, &reopen_at)?

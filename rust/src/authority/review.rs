@@ -656,18 +656,22 @@ mod tests {
             store.accept_review_decision(&change).unwrap().outcome,
             "duplicate"
         );
-        let first = store
-            .resume_review_task("91", "101", "2026-11-13T20:00:03.000Z")
+        let mut daemon_report = crate::native_daemon::NativeTick::default();
+        crate::native_daemon::resume_accepted_native_reviews(&mut store, "91", &mut daemon_report)
             .unwrap();
+        assert_eq!(daemon_report.reviews_resumed, 1);
+        assert!(daemon_report.blocked.is_empty());
+        let revised = store.read_job("91").unwrap().unwrap();
         assert_eq!(
             (
-                first.status.as_str(),
-                first.state.as_str(),
-                first.adapter.as_str()
+                revised["tasks"][0]["interactiveInvocation"]["status"]
+                    .as_str()
+                    .unwrap(),
+                revised["tasks"][0]["state"].as_str().unwrap(),
+                revised["tasks"][0]["adapter"].as_str().unwrap()
             ),
             ("changes_requested", "QUEUED", "codex")
         );
-        let revised = store.read_job("91").unwrap().unwrap();
         assert_eq!(revised["tasks"].as_array().unwrap().len(), 1);
         assert_eq!(revised["tasks"][0]["id"], "101");
         assert_eq!(revised["tasks"][0]["adapter"], "codex");
@@ -685,6 +689,54 @@ mod tests {
         assert_eq!(revised["tasks"][0]["comments"].as_array().unwrap().len(), 1);
         assert_eq!(revised["tasks"][0]["state"], "QUEUED");
         assert_eq!(revised["state"], "ACTIVE");
+        // The durable Request Changes decision must permit the SAME Task to
+        // reach the Model Worker. A delivery receipt alone never authorizes
+        // this claim; Scheduler also checks the host decision ledger.
+        let route_at =
+            crate::supervised_script::after_time(revised["updatedAt"].as_str().unwrap()).unwrap();
+        store
+            .commit_job("91", &route_at, |previous| {
+                let mut job = previous.clone();
+                job["updatedAt"] = json!(route_at);
+                let task = &mut job["tasks"][0];
+                task["dependencies"] = json!([]);
+                task["routing"] = json!({
+                    "provider":"fixture","model":"review-revision",
+                    "decidedBy":"test-router","decidedAt":route_at
+                });
+                task["workerSelection"] = json!({
+                    "workerId":"fixture-model-worker","adapter":"codex"
+                });
+                Ok((job, vec![]))
+            })
+            .unwrap();
+        let claim_at = crate::supervised_script::after_time(&route_at).unwrap();
+        let expires_at = crate::supervised_script::after_time(&claim_at).unwrap();
+        let revision_claim = store
+            .claim_queued_codex(&crate::authority::ScriptClaimRequest {
+                job_id: "91",
+                task_id: "101",
+                execution_id: "producer-exec-2".into(),
+                owner: "revision-worker",
+                at: &claim_at,
+                lease_expires_at: &expires_at,
+            })
+            .unwrap();
+        assert!(
+            revision_claim.is_some(),
+            "accepted Request Changes must dispatch the same Task to its revision Worker"
+        );
+        let running_revision = store.read_job("91").unwrap().unwrap();
+        assert_eq!(running_revision["tasks"][0]["id"], "101");
+        assert_eq!(running_revision["tasks"][0]["state"], "QUEUED");
+        assert_eq!(
+            running_revision["tasks"][0]["executionId"],
+            "producer-exec-2"
+        );
+        assert_eq!(
+            running_revision["tasks"][0]["leaseOwner"],
+            "revision-worker"
+        );
         let mut late_approve = change.clone();
         late_approve.decision = "approved".into();
         late_approve.event_id = "stale-approve-round-1".into();
@@ -696,17 +748,20 @@ mod tests {
         // An actual revision Worker must create a fresh execution-bound
         // invocation before the second decision. The test owns only setup;
         // it never infers approval from notification or media compilation.
+        let invocation_at =
+            crate::supervised_script::after_time(running_revision["updatedAt"].as_str().unwrap())
+                .unwrap();
         store
-            .commit_job("91", "2026-11-13T20:00:04.000Z", |previous| {
+            .commit_job("91", &invocation_at, |previous| {
                 let mut next = previous.clone();
-                next["updatedAt"] = json!("2026-11-13T20:00:04.000Z");
+                next["updatedAt"] = json!(invocation_at);
                 let task = &mut next["tasks"][0];
                 task["state"] = json!("AWAITING_DECISION");
                 task["executionId"] = Value::Null;
                 task["interactiveInvocation"] = json!({
                     "invocationId":"producer-exec-2","executionId":"producer-exec-2",
                     "revision":"producer-exec-2","status":"awaiting_decision",
-                    "boundAt":"2026-11-13T20:00:04.000Z"
+                    "boundAt":invocation_at
                 });
                 Ok((next, vec![]))
             })
@@ -727,9 +782,13 @@ mod tests {
             store.accept_review_decision(&approved).unwrap().outcome,
             "accepted"
         );
-        let resumed = store
-            .resume_review_task("91", "101", "2026-11-13T20:00:06.000Z")
-            .unwrap();
+        let approved_at = crate::supervised_script::after_time(
+            store.read_job("91").unwrap().unwrap()["updatedAt"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        let resumed = store.resume_review_task("91", "101", &approved_at).unwrap();
         assert_eq!(
             (
                 resumed.status.as_str(),
@@ -739,7 +798,11 @@ mod tests {
             ("approved", "QUEUED", "script")
         );
         assert!(store
-            .resume_review_task("91", "101", "2026-11-13T20:00:07.000Z")
+            .resume_review_task(
+                "91",
+                "101",
+                &crate::supervised_script::after_time(&approved_at).unwrap()
+            )
             .is_err());
         let finished = store.read_job("91").unwrap().unwrap();
         assert_eq!(finished["tasks"].as_array().unwrap().len(), 1);

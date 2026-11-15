@@ -135,11 +135,16 @@ Bus/Chat Gateway production service has not been cut over.
 
 For isolated native runtime work, `relay-native-daemon --loop ...
 --nats-ingress-port PORT` also subscribes to `relay.events.job.*.task.*` on
-loopback Core NATS. It accepts only correlated `task.completed` and
-`task.failed` envelopes that match the current SQLite Job, Task, execution,
-lease, attempt, and Graph launch receipt. Completion requires structured
-verified output. This bounded pilot ingress does not establish production
-Events Bus or service parity.
+loopback Core NATS. Both ingress and outbox can use deployment-provided
+`AGENTS_RELAY_NATS_TOKEN` or the paired `AGENTS_RELAY_NATS_USERNAME` and
+`AGENTS_RELAY_NATS_PASSWORD`; token and user/password modes cannot be mixed.
+Secrets are not accepted on argv or written to diagnostics. TLS-required
+servers fail closed because this pilot transport is plaintext-only. Ingress
+validates correlated worker lifecycle, interactive-wait, and Review-decision
+events against the current SQLite Job/Task/execution and the canonical Task
+Graph. Review decisions additionally require the durable invocation/content
+identity ledger. This bounded pilot ingress does not establish production
+Events Bus, trusted host Preview, or service parity.
 
 A real Codex calculator and a Vlog pilot using three original private MOV/VTT
 files were separately tested through native Rust Job creation and Daemon

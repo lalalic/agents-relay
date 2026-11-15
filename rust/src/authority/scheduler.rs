@@ -163,7 +163,11 @@ impl RelayAuthority {
                     .get("revisionRequest")
                     .is_some_and(|value| !value.is_null())
                 || task.get("interactiveInvocation").is_some_and(|inv| {
-                    !inv.is_null() && inv["status"] != "approved"
+                    !inv.is_null()
+                        && !matches!(
+                            inv["status"].as_str(),
+                            Some("approved" | "changes_requested")
+                        )
                 })
             {
                 return Err("Task not eligible for native worker dispatch".into());
@@ -179,13 +183,16 @@ impl RelayAuthority {
                 let invocation_id = inv["invocationId"].as_str().ok_or("Review invocation ID missing")?;
                 let revision = inv["revision"].as_str().ok_or("Review revision missing")?;
                 let original_execution = inv["executionId"].as_str().ok_or("Review origin execution missing")?;
+                let decision = inv["status"]
+                    .as_str()
+                    .ok_or("Review decision status missing")?;
                 let accepted: Option<i64> = tx.query_row(
-                    "SELECT 1 FROM host_invocation_decision WHERE job_id=?1 AND task_id=?2 AND invocation_id=?3 AND execution_id=?4 AND revision=?5 AND decision='approved'",
-                    params![req.job_id, req.task_id, invocation_id, original_execution, revision],
+                    "SELECT 1 FROM host_invocation_decision WHERE job_id=?1 AND task_id=?2 AND invocation_id=?3 AND execution_id=?4 AND revision=?5 AND decision=?6",
+                    params![req.job_id, req.task_id, invocation_id, original_execution, revision, decision],
                     |row| row.get(0),
                 ).optional().map_err(|error|format!("Review approval ledger unavailable: {error}"))?;
                 if accepted != Some(1) {
-                    return Err("Review approved status not backed by durable host decision".into());
+                    return Err("Review decision status not backed by durable host decision".into());
                 }
             }
             if adapter == "codex" {

@@ -116,29 +116,60 @@ pub fn execute_supervised_script(
             .as_u64()
             .and_then(|v| u32::try_from(v).ok())
             .ok_or("worker-helper started event lacks PID")?;
-        let started_at = after_time(&at)?;
+        let mut started_at = after_time(&at)?;
         let record = exact_process(pid, claim, &started_at)?;
         authority.record_process(&record)?;
         let graph = Graph::parse(include_str!("../../workflow/task-lifecycle.mmd"))?;
         let lifecycle = TaskLifecycle::new(&graph);
-        lifecycle.apply(
-            authority,
-            TaskTransition {
-                job_id: &claim.job_id,
-                task_id: &claim.task_id,
-                input: task_input(
-                    &claim.job_id,
-                    &claim.task_id,
-                    &claim.execution_id,
-                    &claim.owner,
-                    claim.attempt,
-                    "task.started",
-                ),
-                guard_facts: &HashMap::new(),
-                at: &started_at,
-                events: vec![],
-            },
-        )?;
+        let mut timestamp_retries = 0;
+        loop {
+            match lifecycle.apply(
+                authority,
+                TaskTransition {
+                    job_id: &claim.job_id,
+                    task_id: &claim.task_id,
+                    input: task_input(
+                        &claim.job_id,
+                        &claim.task_id,
+                        &claim.execution_id,
+                        &claim.owner,
+                        claim.attempt,
+                        "task.started",
+                    ),
+                    guard_facts: &HashMap::new(),
+                    at: &started_at,
+                    events: vec![],
+                },
+            ) {
+                Ok(_) => break,
+                Err(error) if error.contains("non-monotonic Job updatedAt") => {
+                    // A sibling may commit while this process is starting.
+                    // Keep this exact claim and Graph input; recompute only
+                    // the mechanics timestamp after the latest Job write.
+                    timestamp_retries += 1;
+                    if timestamp_retries > 64 {
+                        return Err(
+                            "Task start timestamp kept losing concurrent Job ordering".into()
+                        );
+                    }
+                    let latest = authority
+                        .read_job(&claim.job_id)?
+                        .ok_or("Worker Job missing while ordering Task start")?;
+                    let updated_at = latest["updatedAt"]
+                        .as_str()
+                        .ok_or("Worker Job timestamp missing while ordering Task start")?;
+                    started_at = after_time(updated_at)?;
+                    if DateTime::parse_from_rfc3339(&started_at)
+                        .map_err(|_| "invalid Task start timestamp")?
+                        >= DateTime::parse_from_rfc3339(&claim.lease_expires_at)
+                            .map_err(|_| "invalid Worker lease expiry")?
+                    {
+                        return Err("Task start timestamp exceeded the current Worker lease".into());
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        }
         {
             let mut writer = input.lock().map_err(|_| "helper input mutex poisoned")?;
             writeln!(writer, "ack").map_err(|e| e.to_string())?;

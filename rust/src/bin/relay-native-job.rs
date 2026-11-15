@@ -3,7 +3,8 @@ use agents_relay_rust::authority::NativeTaskSpec;
 use agents_relay_rust::authority::RelayAuthority;
 use agents_relay_rust::native_daemon::isolated_store_root;
 use agents_relay_rust::native_job::{
-    activate_job, create_dag_job, init_isolated_store, DagJobRequest,
+    activate_job, cancel_queued_task, create_dag_job, init_isolated_store, retry_failed_task,
+    DagJobRequest,
 };
 use agents_relay_rust::store::RelayReader;
 use agents_relay_rust::supervised_script::after_time;
@@ -199,11 +200,70 @@ fn job_update(args: &[String]) -> Result<Value, String> {
     })?;
     Ok(json!({"jobId":job_id,"job":updated.job}))
 }
+fn task_cancel(args: &[String], db_path: &Path) -> Result<Value, String> {
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        return Err("native Task cancellation is isolated-test only".into());
+    }
+    let allowed = ["--db", "--job-id", "--task-id", "--reason"];
+    let mut seen = std::collections::HashSet::new();
+    let mut index = 2;
+    while index < args.len() {
+        let name = args[index].as_str();
+        if !allowed.contains(&name) {
+            return Err(format!("unrecognized task cancel option {name}"));
+        }
+        if !seen.insert(name) {
+            return Err(format!("duplicate option {name}"));
+        }
+        if args
+            .get(index + 1)
+            .is_none_or(|value| value.starts_with("--"))
+        {
+            return Err(format!("missing value for {name}"));
+        }
+        index += 2;
+    }
+    let job_id = value(args, "--job-id")?;
+    let task_id = value(args, "--task-id")?;
+    let reason = value(args, "--reason")?;
+    isolated_store_root(db_path)?;
+    let mut authority = RelayAuthority::open_existing(db_path)?;
+    cancel_queued_task(&mut authority, &job_id, &task_id, &reason)
+}
+fn task_retry(args: &[String], db_path: &Path) -> Result<Value, String> {
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        return Err("native Task retry is isolated-test only".into());
+    }
+    let allowed = ["--db", "--job-id", "--task-id"];
+    let mut seen = std::collections::HashSet::new();
+    let mut index = 2;
+    while index < args.len() {
+        let name = args[index].as_str();
+        if !allowed.contains(&name) {
+            return Err(format!("unrecognized task retry option {name}"));
+        }
+        if !seen.insert(name) {
+            return Err(format!("duplicate option {name}"));
+        }
+        if args
+            .get(index + 1)
+            .is_none_or(|value| value.starts_with("--"))
+        {
+            return Err(format!("missing value for {name}"));
+        }
+        index += 2;
+    }
+    let job_id = value(args, "--job-id")?;
+    let task_id = value(args, "--task-id")?;
+    isolated_store_root(db_path)?;
+    let mut authority = RelayAuthority::open_existing(db_path)?;
+    retry_failed_task(&mut authority, &job_id, &task_id)
+}
 fn run() -> Result<(), String> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     let Some(command) = args.first().map(String::as_str) else {
         return Err(
-            "usage: relay-native-job init|create|activate|show|update|task create --db PATH ..."
+            "usage: relay-native-job init|create|activate|show|update|task create|task cancel|task retry --db PATH ..."
                 .into(),
         );
     };
@@ -233,6 +293,10 @@ fn run() -> Result<(), String> {
             })?
         }
         "task" if args.get(1).is_some_and(|action| action == "create") => task_create(&args)?,
+        "task" if args.get(1).is_some_and(|action| action == "cancel") => {
+            task_cancel(&args, &path)?
+        }
+        "task" if args.get(1).is_some_and(|action| action == "retry") => task_retry(&args, &path)?,
         "update" => job_update(&args[1..])?,
         "activate" => activate_job(&path, &value(&args, "--job-id")?)?,
         "show" => {

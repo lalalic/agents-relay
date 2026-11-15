@@ -107,6 +107,86 @@ test('invalid task requests reject atomically without consuming IDs or changing 
  }finally{close(f);}
 });
 
+test('native Task cancel follows the lifecycle Graph for unleased work and cannot falsely complete the Job',()=>{
+ const f=fixture();try{
+  const created=f.call(taskArgs(f,['--title','Dependency-gated Task','--parent',f.coordinatorId,'--deps',f.coordinatorId]));
+  f.call(['activate','--db',f.db,'--job-id',f.jobId]);
+  const cancel=['task','cancel','--db',f.db,'--job-id',f.jobId,'--task-id',created.taskId,'--reason','No longer needed'];
+  const result=f.call(cancel);
+  assert.equal(result.task.state,'CANCELLED');
+  assert.equal(result.task.error,'No longer needed');
+  assert.equal(result.task.executionId,null);
+  assert.equal(result.task.leaseOwner,null);
+
+  const persisted=f.call(['show','--db',f.db,'--job-id',f.jobId]);
+  assert.equal(persisted.job.tasks.find(task=>task.id===created.taskId).state,'CANCELLED');
+  const before=jobSnapshot(f);
+  assert.notEqual(f.call(cancel,2).trim(),'','terminal Task cannot be cancelled twice');
+  assert.deepEqual(jobSnapshot(f),before,'rejected duplicate cancellation leaves SQLite unchanged');
+
+  const completion=f.call(['complete','--db',f.db,'--job-id',f.jobId]);
+  assert.equal(completion.completed,false,'cancelled work is not successful completion evidence');
+  assert.equal(f.call(['show','--db',f.db,'--job-id',f.jobId]).job.state,'ACTIVE');
+ }finally{close(f);}
+});
+
+test('native Task cancel rejects a leased Worker generation without changing durable state',()=>{
+ const f=fixture();try{
+  const created=f.call(taskArgs(f,['--title','Leased Task']));
+  const db=new DatabaseSync(f.db);
+  try{
+   db.prepare('UPDATE job_snapshot SET json=json_set(json,\'$.tasks[1].state\',\'RUNNING\',\'$.tasks[1].executionId\',\'exec-12345678\',\'$.tasks[1].leaseOwner\',\'worker\',\'$.tasks[1].leaseExpiresAt\',\'2099-01-01T00:00:00.000Z\') WHERE job_id=?').run(f.jobId);
+  }finally{db.close();}
+  const before=jobSnapshot(f);
+  const unknown=f.call(['task','cancel','--db',f.db,'--job-id',f.jobId,'--task-id',created.taskId,'--reason','reason','--surprise','ignored'],2);
+  assert.match(unknown,/unrecognized task cancel option/);
+  const duplicate=f.call(['task','cancel','--db',f.db,'--job-id',f.jobId,'--task-id',created.taskId,'--reason','one','--reason','two'],2);
+  assert.match(duplicate,/duplicate option --reason/);
+  const result=f.call(['task','cancel','--db',f.db,'--job-id',f.jobId,'--task-id',created.taskId,'--reason','Unsafe live cancel'],2);
+  assert.match(result,/unleased DRAFT or QUEUED/);
+  assert.deepEqual(jobSnapshot(f),before,'invalid requests and leased execution leave the isolated SQLite snapshot unchanged');
+ }finally{close(f);}
+});
+
+test('native Task retry follows the lifecycle Graph, survives restart, and cannot falsely complete the Job',()=>{
+ const f=fixture();try{
+  const created=f.call(taskArgs(f,['--title','Failed Task']));
+  const db=new DatabaseSync(f.db);
+  try{
+   db.prepare('UPDATE job_snapshot SET json=json_set(json,\'$.tasks[1].state\',\'FAILED\',\'$.tasks[1].error\',\'verified failure\',\'$.tasks[1].failureReason\',\'script_error\',\'$.tasks[1].attempt\',3,\'$.tasks[1].maxAttempts\',3,\'$.tasks[1].routing\',json(\'{"provider":"fixture","model":"old"}\'),\'$.tasks[1].workerSelection\',json(\'{"workerId":"old"}\')) WHERE job_id=?').run(f.jobId);
+  }finally{db.close();}
+  const retry=['task','retry','--db',f.db,'--job-id',f.jobId,'--task-id',created.taskId];
+  const result=f.call(retry);
+  assert.equal(result.task.state,'QUEUED');
+  assert.equal(result.task.error,null);
+  assert.equal(Object.hasOwn(result.task,'failureReason'),false);
+  assert.equal(result.task.maxAttempts,6,'manual retry extends the bounded retry window like the Node action');
+  assert.equal(Object.hasOwn(result.task,'routing'),false,'retry clears the stale provider route');
+  assert.equal(Object.hasOwn(result.task,'workerSelection'),false,'retry clears the stale Worker selection');
+  const persisted=f.call(['show','--db',f.db,'--job-id',f.jobId]);
+  assert.equal(persisted.job.tasks.find(task=>task.id===created.taskId).state,'QUEUED');
+  const before=jobSnapshot(f);
+  assert.match(f.call(retry,2),/inactive FAILED Task/);
+  assert.deepEqual(jobSnapshot(f),before,'duplicate retry cannot mutate the already requeued Task');
+  assert.equal(f.call(['complete','--db',f.db,'--job-id',f.jobId]).completed,false,
+   'a queued retry is not successful completion evidence');
+ }finally{close(f);}
+});
+
+test('native Task retry rejects recovery-owned failure without changing durable state',()=>{
+ const f=fixture();try{
+  const created=f.call(taskArgs(f,['--title','Recovery-owned Task']));
+  const db=new DatabaseSync(f.db);
+  try{
+   db.prepare('UPDATE job_snapshot SET json=json_set(json,\'$.tasks[1].state\',\'FAILED\',\'$.tasks[1].resolution\',json(\'{"status":"active"}\')) WHERE job_id=?').run(f.jobId);
+  }finally{db.close();}
+  const before=jobSnapshot(f);
+  const result=f.call(['task','retry','--db',f.db,'--job-id',f.jobId,'--task-id',created.taskId],2);
+  assert.match(result,/without recovery ownership/);
+  assert.deepEqual(jobSnapshot(f),before);
+ }finally{close(f);}
+});
+
 test('supported native Task shape matches Node CLI creation semantics',()=>{
  const f=fixture();try{
   const root={id:'node-job',title:'Node parity fixture',repository:'agents-relay',state:'DRAFT',runtimeStatus:'DRAFT',

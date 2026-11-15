@@ -1,9 +1,10 @@
 //! Configured Core NATS ingress for correlated native Worker lifecycle events.
 //! SQLite plus the canonical Task Graph remain the only lifecycle authority.
-use crate::authority::{ActionOutcome, RelayAuthority, ScriptClaim, WorkflowEvent};
-use crate::graph::{Graph, GraphInput};
+use crate::authority::{ActionOutcome, RelayAuthority, ReviewDelivery, ScriptClaim, WorkflowEvent};
+use crate::graph::{Decision, Graph, GraphInput};
 use crate::lifecycle::{TaskLifecycle, TaskTransition};
 use crate::supervised_script::current_time;
+use rusqlite::OptionalExtension;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -218,6 +219,177 @@ pub fn ingest_nats_worker_terminal_event(
     ingest_worker_terminal_event(authority, bytes, at)
 }
 
+/// Accept a host Review decision delivered on the configured Events Bus.
+/// Transport authentication remains the deployment's responsibility; this
+/// adapter additionally binds the event subject/source/payload to the current
+/// durable invocation before the canonical interactive Graph can accept it.
+pub fn ingest_nats_review_decision(
+    authority: &mut RelayAuthority,
+    subject: &str,
+    bytes: &[u8],
+) -> Result<Option<crate::authority::ReviewReceipt>, String> {
+    if bytes.is_empty() || bytes.len() > MAX_EVENT_BYTES {
+        return Err("native ingress event must be 1..65536 bytes".into());
+    }
+    let event: Value =
+        serde_json::from_slice(bytes).map_err(|error| format!("invalid event JSON: {error}"))?;
+    if event["type"] != "task.interactive_decision" {
+        return Ok(None);
+    }
+    let job_id = event["job_id"].as_str().ok_or("Review Job ID missing")?;
+    let task_id = event["task_id"].as_str().ok_or("Review Task ID missing")?;
+    let expected_subject = format!("relay.events.job.{job_id}.task.interactive_decision");
+    if subject != expected_subject {
+        return Err("NATS subject does not match Review Job and type".into());
+    }
+    let interactive = event
+        .pointer("/data/interactive")
+        .filter(|value| value.is_object())
+        .ok_or("interactive Review payload missing")?;
+    if interactive["jobId"] != job_id || interactive["taskId"] != task_id {
+        return Err("Review payload Job or Task identity mismatch".into());
+    }
+    let execution_id = interactive["executionId"]
+        .as_str()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or("Review execution ID missing")?;
+    let expected_source = format!("job/{job_id}/task/{task_id}/execution/{execution_id}");
+    if event.pointer("/source/id").and_then(Value::as_str) != Some(expected_source.as_str()) {
+        return Err("Review event source does not match its execution identity".into());
+    }
+    let event_id = event["event_id"]
+        .as_str()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or("Review event ID missing")?;
+    let delivered_at = event["timestamp"]
+        .as_str()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or("Review event timestamp missing")?;
+    let mut delivery = interactive.clone();
+    delivery["eventId"] = json!(event_id);
+    delivery["deliveredAt"] = json!(delivered_at);
+    let delivery: ReviewDelivery = serde_json::from_value(delivery)
+        .map_err(|error| format!("invalid Review payload: {error}"))?;
+    authority.accept_review_decision(&delivery).map(Some)
+}
+
+/// Persist the host-neutral interactive wait and release the exact current
+/// Worker generation. The invocation must already be durably bound by the
+/// host request action; this event cannot create or approve an invocation.
+pub fn ingest_nats_interactive_waiting(
+    authority: &mut RelayAuthority,
+    subject: &str,
+    bytes: &[u8],
+    received_at: &str,
+) -> Result<bool, String> {
+    if bytes.is_empty() || bytes.len() > MAX_EVENT_BYTES {
+        return Err("native ingress event must be 1..65536 bytes".into());
+    }
+    let event: Value =
+        serde_json::from_slice(bytes).map_err(|error| format!("invalid event JSON: {error}"))?;
+    if event["type"] != "task.interactive_waiting" {
+        return Ok(false);
+    }
+    let job_id = event["job_id"].as_str().ok_or("Review Job ID missing")?;
+    let task_id = event["task_id"].as_str().ok_or("Review Task ID missing")?;
+    if subject != format!("relay.events.job.{job_id}.task.interactive_waiting")
+        || event.pointer("/source/component").and_then(Value::as_str) != Some("interactive-review")
+    {
+        return Err("interactive wait subject or source component mismatch".into());
+    }
+    let source = event
+        .pointer("/source/id")
+        .and_then(Value::as_str)
+        .ok_or("interactive wait execution source missing")?;
+    let prefix = format!("job/{job_id}/task/{task_id}/execution/");
+    let execution_id = source
+        .strip_prefix(&prefix)
+        .filter(|value| !value.is_empty())
+        .ok_or("interactive wait source Job or Task mismatch")?;
+    let event_id = event["event_id"]
+        .as_str()
+        .filter(|value| !value.trim().is_empty() && value.len() <= 128)
+        .ok_or("interactive wait event ID missing or invalid")?;
+    let event_at = event["timestamp"]
+        .as_str()
+        .ok_or("interactive wait timestamp missing")?;
+    let event_time = chrono::DateTime::parse_from_rfc3339(event_at)
+        .map_err(|_| "invalid interactive wait timestamp")?;
+    let received = chrono::DateTime::parse_from_rfc3339(received_at)
+        .map_err(|_| "invalid ingress timestamp")?;
+    if event_time > received {
+        return Err("interactive wait timestamp is in the future".into());
+    }
+    let receipt = WorkflowEvent {
+        key: format!("{job_id}/{task_id}/{execution_id}/interactive-wait/{event_id}"),
+        event_id: "task.interactive_waiting".into(),
+        payload: json!({"eventId":event_id,"executionId":execution_id,"timestamp":event_at}),
+    };
+    let graph = Graph::parse(include_str!("../../workflow/task-lifecycle.mmd"))?;
+    let mut changed = false;
+    let result = authority.commit_job_with_tx(job_id, received_at, |tx, current| {
+        if current["state"] != "ACTIVE" || current.get("pause").is_some_and(|value| !value.is_null()) {
+            return Err("interactive wait requires an ACTIVE, unpaused Job".into());
+        }
+        let mut next = current.clone();
+        let task = next["tasks"].as_array_mut()
+            .and_then(|tasks| tasks.iter_mut().find(|task| task["id"] == task_id))
+            .ok_or("interactive wait Task missing")?;
+        let previous: Option<(String, String)> = tx.query_row(
+            "SELECT event_id,payload_json FROM workflow_event_inbox WHERE consumer_id='rust-interactive-review' AND event_key=?1",
+            [&receipt.key], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional().map_err(|error| error.to_string())?;
+        if let Some((previous_id, previous_payload)) = previous {
+            if previous_id != receipt.event_id || serde_json::from_str::<Value>(&previous_payload).map_err(|error| error.to_string())? != receipt.payload {
+                return Err("interactive wait receipt key collision".into());
+            }
+            return Err("duplicate interactive wait event".into());
+        }
+        let attempt = task["attempt"].as_i64().ok_or("interactive wait attempt missing")?;
+        let invocation = task.get("interactiveInvocation").ok_or("interactive invocation not bound")?;
+        let lease_expiry = task["leaseExpiresAt"].as_str().ok_or("interactive wait lease missing")?;
+        let lease_expiry = chrono::DateTime::parse_from_rfc3339(lease_expiry)
+            .map_err(|_| "invalid interactive wait lease")?;
+        if task["state"] != "RUNNING"
+            || task["executionId"] != execution_id
+            || task["leaseOwner"].as_str().is_none_or(str::is_empty)
+            || invocation["executionId"] != execution_id
+            || invocation["status"] != "awaiting_decision"
+            || lease_expiry <= received
+            || !task["executionHistory"].as_array().is_some_and(|history| {
+                history.iter().any(|row| row["id"] == execution_id && row["attempt"] == attempt)
+            })
+        {
+            return Err("interactive wait is stale or not bound to the current Worker generation".into());
+        }
+        let decision = graph.decide("RUNNING", GraphInput {
+            transport:"event".into(), id:"task.interactive_waiting".into(),
+            payload:json!({"jobId":job_id,"taskId":task_id,"executionId":execution_id}),
+        }, &HashMap::from([("awaitingInteractiveDecision".into(), true)]))?;
+        let Decision::Accepted { target, actions, .. } = decision else {
+            return Err("Task Graph rejected interactive wait".into());
+        };
+        if target != "AWAITING_DECISION" {
+            return Err("Task Graph selected unexpected interactive wait state".into());
+        }
+        crate::lifecycle::apply_pure_task_actions(task, &actions)?;
+        task["state"] = json!(target);
+        task["updatedAt"] = json!(received_at);
+        next["updatedAt"] = json!(received_at);
+        tx.execute(
+            "INSERT INTO workflow_event_inbox(consumer_id,event_key,event_id,payload_json,consumed_at) VALUES('rust-interactive-review',?1,?2,?3,?4)",
+            rusqlite::params![receipt.key, receipt.event_id, serde_json::to_string(&receipt.payload).map_err(|error| error.to_string())?, received_at],
+        ).map_err(|error| error.to_string())?;
+        changed = true;
+        Ok((next, vec![]))
+    });
+    match result {
+        Ok(_) => Ok(changed),
+        Err(error) if error == "duplicate interactive wait event" => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 /// Apply a correlated Worker start/progress event. These events only pass
 /// Graph-selected nonterminal transitions and durable idempotency receipts;
 /// accepted activity renews only the matching Worker inactivity deadline.
@@ -410,10 +582,16 @@ fn subscribe_once(db: &Path, port: u16, stopped: &AtomicBool) -> Result<(), Stri
         .ok_or("NATS ingress INFO missing")?;
     let info: Value =
         serde_json::from_str(info).map_err(|e| format!("NATS ingress INFO invalid: {e}"))?;
-    if info["auth_required"] == true || info["tls_required"] == true {
-        return Err("NATS ingress requires a configured authenticated transport provider".into());
+    if info["tls_required"] == true {
+        return Err(
+            "NATS ingress requires TLS; the native pilot transport is plaintext-only".into(),
+        );
     }
-    tcp.write_all(b"CONNECT {\"verbose\":false,\"pedantic\":true,\"name\":\"relay-rust-native-ingress\"}\r\nSUB relay.events.job.*.* 1\r\nPING\r\n").map_err(|e| e.to_string())?;
+    let connect = crate::native_outbox::connect_payload(info["auth_required"] == true)?;
+    tcp.write_all(
+        format!("CONNECT {connect}\r\nSUB relay.events.job.*.* 1\r\nPING\r\n").as_bytes(),
+    )
+    .map_err(|e| e.to_string())?;
     tcp.flush().map_err(|e| e.to_string())?;
     loop {
         if stopped.load(Ordering::SeqCst) {
@@ -469,6 +647,10 @@ fn subscribe_once(db: &Path, port: u16, stopped: &AtomicBool) -> Result<(), Stri
                 .is_some_and(|kind| matches!(kind, "task.started" | "task.progress"))
             {
                 ingest_worker_lifecycle_event(&mut authority, subject, &bytes, &at)
+            } else if kind.as_deref() == Some("task.interactive_decision") {
+                Ok(ingest_nats_review_decision(&mut authority, subject, &bytes)?.is_some())
+            } else if kind.as_deref() == Some("task.interactive_waiting") {
+                ingest_nats_interactive_waiting(&mut authority, subject, &bytes, &at)
             } else {
                 ingest_nats_worker_terminal_event(&mut authority, subject, &bytes, &at)
             }
@@ -523,6 +705,53 @@ fn read_exact(
 #[cfg(test)]
 mod tests {
     use super::*;
+    static NATS_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn nats_connect_uses_deployment_credentials_and_fails_closed() {
+        let _guard = NATS_ENV_LOCK.lock().unwrap();
+        let old = [
+            std::env::var_os("AGENTS_RELAY_NATS_TOKEN"),
+            std::env::var_os("AGENTS_RELAY_NATS_USERNAME"),
+            std::env::var_os("AGENTS_RELAY_NATS_PASSWORD"),
+        ];
+        std::env::remove_var("AGENTS_RELAY_NATS_TOKEN");
+        std::env::remove_var("AGENTS_RELAY_NATS_USERNAME");
+        std::env::remove_var("AGENTS_RELAY_NATS_PASSWORD");
+        assert!(crate::native_outbox::connect_payload(true).is_err());
+        assert!(crate::native_outbox::connect_payload(false)
+            .unwrap()
+            .contains("relay-rust-native"));
+        std::env::set_var("AGENTS_RELAY_NATS_TOKEN", "secret-token");
+        let token_connect = crate::native_outbox::connect_payload(true).unwrap();
+        assert!(
+            serde_json::from_str::<Value>(&token_connect).unwrap()["auth_token"] == "secret-token"
+        );
+        assert!(crate::native_outbox::connect_payload(false)
+            .unwrap()
+            .contains("secret-token"));
+        std::env::remove_var("AGENTS_RELAY_NATS_TOKEN");
+        std::env::set_var("AGENTS_RELAY_NATS_USERNAME", "relay-user");
+        std::env::set_var("AGENTS_RELAY_NATS_PASSWORD", "secret-password");
+        let user_connect =
+            serde_json::from_str::<Value>(&crate::native_outbox::connect_payload(true).unwrap())
+                .unwrap();
+        assert_eq!(user_connect["user"], "relay-user");
+        assert_eq!(user_connect["pass"], "secret-password");
+        std::env::set_var("AGENTS_RELAY_NATS_TOKEN", "conflicting-token");
+        assert!(crate::native_outbox::connect_payload(true).is_err());
+        for (name, value) in [
+            ("AGENTS_RELAY_NATS_TOKEN", &old[0]),
+            ("AGENTS_RELAY_NATS_USERNAME", &old[1]),
+            ("AGENTS_RELAY_NATS_PASSWORD", &old[2]),
+        ] {
+            if let Some(value) = value {
+                std::env::set_var(name, value);
+            } else {
+                std::env::remove_var(name);
+            }
+        }
+    }
     use crate::authority::{tests::setup, ScriptClaimRequest};
 
     fn unstarted() -> (tempfile::TempDir, PathBuf, RelayAuthority) {
@@ -926,20 +1155,161 @@ mod tests {
     }
 
     #[test]
+    fn nats_review_ingress_binds_subject_source_payload_and_ledger_without_completing_task() {
+        let (_dir, _path, mut store) = running();
+        let before = store.read_job("91").unwrap().unwrap();
+        let bound_at =
+            crate::supervised_script::after_time(before["updatedAt"].as_str().unwrap()).unwrap();
+        store
+            .commit_job("91", &bound_at, |previous| {
+                let mut job = previous.clone();
+                job["updatedAt"] = json!(bound_at);
+                let task = &mut job["tasks"][0];
+                task["state"] = json!("AWAITING_DECISION");
+                task["executionId"] = Value::Null;
+                task["leaseOwner"] = Value::Null;
+                task["leaseExpiresAt"] = Value::Null;
+                task["interactiveInvocation"] = json!({
+                    "invocationId":"ingress-exec","executionId":"ingress-exec",
+                    "revision":"review-rev-1","status":"awaiting_decision",
+                    "boundAt":bound_at
+                });
+                Ok((job, vec![]))
+            })
+            .unwrap();
+        let event_at = crate::supervised_script::after_time(&bound_at).unwrap();
+        let event = json!({
+            "event_id":"host-review-1","type":"task.interactive_decision",
+            "job_id":"91","task_id":"101","timestamp":event_at,
+            "source":{"id":"job/91/task/101/execution/ingress-exec"},
+            "data":{"interactive":{
+                "jobId":"91","taskId":"101","executionId":"ingress-exec",
+                "invocationId":"ingress-exec","revision":"review-rev-1",
+                "decision":"changes_requested","feedback":"Revise the opening",
+                "idempotencyKey":"review-delivery-1"
+            }}
+        });
+        let subject = "relay.events.job.91.task.interactive_decision";
+        let bytes = serde_json::to_vec(&event).unwrap();
+        assert!(ingest_nats_review_decision(&mut store, subject, &bytes)
+            .unwrap()
+            .is_some_and(|receipt| receipt.outcome == "accepted"));
+        assert_eq!(
+            ingest_nats_review_decision(&mut store, subject, &bytes)
+                .unwrap()
+                .unwrap()
+                .outcome,
+            "duplicate"
+        );
+        let mut forged = event.clone();
+        forged["source"]["id"] = json!("job/91/task/101/execution/forged");
+        assert!(ingest_nats_review_decision(
+            &mut store,
+            subject,
+            &serde_json::to_vec(&forged).unwrap()
+        )
+        .is_err());
+        assert!(ingest_nats_review_decision(
+            &mut store,
+            "relay.events.job.92.task.interactive_decision",
+            &bytes
+        )
+        .is_err());
+        let after = store.read_job("91").unwrap().unwrap();
+        assert_eq!(after["tasks"][0]["state"], "AWAITING_DECISION");
+        assert_eq!(
+            after["tasks"][0]["interactiveInvocation"]["status"],
+            "changes_requested"
+        );
+        assert!(after["tasks"][0].get("result").is_none());
+        assert_eq!(after["state"], "ACTIVE");
+    }
+
+    #[test]
+    fn nats_interactive_wait_releases_only_the_bound_worker_and_deduplicates() {
+        let (_dir, _path, mut store) = running();
+        let before = store.read_job("91").unwrap().unwrap();
+        let bound_at =
+            crate::supervised_script::after_time(before["updatedAt"].as_str().unwrap()).unwrap();
+        store
+            .commit_job("91", &bound_at, |previous| {
+                let mut job = previous.clone();
+                job["updatedAt"] = json!(bound_at);
+                job["tasks"][0]["interactiveInvocation"] = json!({
+                    "invocationId":"ingress-exec","executionId":"ingress-exec",
+                    "revision":"ingress-exec","status":"awaiting_decision",
+                    "boundAt":bound_at
+                });
+                Ok((job, vec![]))
+            })
+            .unwrap();
+        let event_at = crate::supervised_script::after_time(&bound_at).unwrap();
+        let received_at = crate::supervised_script::after_time(&event_at).unwrap();
+        let event = json!({
+            "event_id":"interactive-wait-1","type":"task.interactive_waiting",
+            "job_id":"91","task_id":"101","timestamp":event_at,"data":{},
+            "source":{"id":"job/91/task/101/execution/ingress-exec","component":"interactive-review"}
+        });
+        let subject = "relay.events.job.91.task.interactive_waiting";
+        let bytes = serde_json::to_vec(&event).unwrap();
+        assert!(
+            ingest_nats_interactive_waiting(&mut store, subject, &bytes, &received_at).unwrap()
+        );
+        assert!(
+            !ingest_nats_interactive_waiting(&mut store, subject, &bytes, &received_at).unwrap()
+        );
+        let after = store.read_job("91").unwrap().unwrap();
+        assert_eq!(after["tasks"][0]["state"], "AWAITING_DECISION");
+        assert_eq!(after["tasks"][0]["executionId"], Value::Null);
+        assert_eq!(after["tasks"][0]["leaseOwner"], Value::Null);
+        assert_eq!(
+            after["tasks"][0]["interactiveInvocation"]["status"],
+            "awaiting_decision"
+        );
+        assert!(after["tasks"][0].get("result").is_none());
+
+        let mut stale = event.clone();
+        stale["source"]["id"] = json!("job/91/task/101/execution/stale");
+        assert!(ingest_nats_interactive_waiting(
+            &mut store,
+            subject,
+            &serde_json::to_vec(&stale).unwrap(),
+            &received_at
+        )
+        .is_err());
+    }
+
+    #[test]
     fn configured_nats_subscriber_routes_wire_message_to_durable_ingress() {
         use std::net::TcpListener;
         use std::thread;
         use std::time::Instant;
 
+        let _guard = NATS_ENV_LOCK.lock().unwrap();
+        let old = [
+            std::env::var_os("AGENTS_RELAY_NATS_TOKEN"),
+            std::env::var_os("AGENTS_RELAY_NATS_USERNAME"),
+            std::env::var_os("AGENTS_RELAY_NATS_PASSWORD"),
+        ];
+        std::env::set_var("AGENTS_RELAY_NATS_TOKEN", "wire-test-secret");
+        std::env::remove_var("AGENTS_RELAY_NATS_USERNAME");
+        std::env::remove_var("AGENTS_RELAY_NATS_PASSWORD");
         let (_dir, path, store) = running();
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             stream
-                .write_all(b"INFO {\"auth_required\":false,\"tls_required\":false}\r\n")
+                .write_all(b"INFO {\"auth_required\":true,\"tls_required\":false}\r\n")
                 .unwrap();
             let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut connect = String::new();
+            reader.read_line(&mut connect).unwrap();
+            let connect = connect.strip_prefix("CONNECT ").unwrap().trim();
+            assert_eq!(
+                serde_json::from_str::<Value>(connect).unwrap()["auth_token"],
+                "wire-test-secret"
+            );
             loop {
                 let mut line = String::new();
                 reader.read_line(&mut line).unwrap();
@@ -991,5 +1361,16 @@ mod tests {
         let lifecycle_receipts: i64 = rusqlite::Connection::open(&path).unwrap().query_row("SELECT COUNT(*) FROM workflow_event_inbox WHERE consumer_id='rust-worker-lifecycle'", [], |row| row.get(0)).unwrap();
         assert_eq!(lifecycle_receipts, 1);
         assert!(store.pending_events().unwrap().is_empty());
+        for (name, value) in [
+            ("AGENTS_RELAY_NATS_TOKEN", &old[0]),
+            ("AGENTS_RELAY_NATS_USERNAME", &old[1]),
+            ("AGENTS_RELAY_NATS_PASSWORD", &old[2]),
+        ] {
+            if let Some(value) = value {
+                std::env::set_var(name, value);
+            } else {
+                std::env::remove_var(name);
+            }
+        }
     }
 }
