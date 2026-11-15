@@ -1,4 +1,4 @@
-//! Configured Core NATS ingress for correlated native Worker terminal events.
+//! Configured Core NATS ingress for correlated native Worker lifecycle events.
 //! SQLite plus the canonical Task Graph remain the only lifecycle authority.
 use crate::authority::{ActionOutcome, RelayAuthority, ScriptClaim, WorkflowEvent};
 use crate::graph::{Graph, GraphInput};
@@ -218,6 +218,155 @@ pub fn ingest_nats_worker_terminal_event(
     ingest_worker_terminal_event(authority, bytes, at)
 }
 
+/// Apply a correlated Worker start/progress event. These events only pass
+/// Graph-selected nonterminal transitions and durable idempotency receipts;
+/// they cannot write a result or renew a process timeout.
+pub fn ingest_worker_lifecycle_event(
+    authority: &mut RelayAuthority,
+    subject: &str,
+    bytes: &[u8],
+    at: &str,
+) -> Result<bool, String> {
+    if bytes.is_empty() || bytes.len() > MAX_EVENT_BYTES {
+        return Err("native ingress event must be 1..65536 bytes".into());
+    }
+    let event: Value =
+        serde_json::from_slice(bytes).map_err(|error| format!("invalid event JSON: {error}"))?;
+    let kind = event["type"].as_str().ok_or("event type missing")?;
+    if !matches!(kind, "task.started" | "task.progress") {
+        return Ok(false);
+    }
+    let job_id = event["job_id"].as_str().ok_or("event Job ID missing")?;
+    let task_id = event["task_id"].as_str().ok_or("event Task ID missing")?;
+    if !event_id(job_id) || !event_id(task_id) {
+        return Err("event Job or Task ID invalid".into());
+    }
+    let source = event
+        .pointer("/source/id")
+        .and_then(Value::as_str)
+        .ok_or("event execution source missing")?;
+    let data = event
+        .get("data")
+        .filter(|value| value.is_object())
+        .ok_or("Worker lifecycle event data missing")?;
+    let execution_id = data["executionId"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .ok_or("Worker execution ID missing")?;
+    let owner = data["leaseOwner"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .ok_or("Worker lease owner missing")?;
+    let attempt = data["attempt"]
+        .as_i64()
+        .filter(|value| *value > 0)
+        .ok_or("Worker attempt missing")?;
+    if source != format!("job/{job_id}/task/{task_id}/execution/{execution_id}") {
+        return Err("event source does not match its Job, Task and execution identity".into());
+    }
+    let event_id = event["event_id"]
+        .as_str()
+        .filter(|value| !value.is_empty() && value.len() <= 128)
+        .ok_or("event ID missing or invalid")?;
+    let event_at = event["timestamp"]
+        .as_str()
+        .ok_or("event timestamp missing")?;
+    let event_time = chrono::DateTime::parse_from_rfc3339(event_at)
+        .map_err(|_| "invalid Worker event timestamp")?;
+    let received =
+        chrono::DateTime::parse_from_rfc3339(at).map_err(|_| "invalid ingress timestamp")?;
+    if event_time > received {
+        return Err("Worker event timestamp is in the future".into());
+    }
+    if subject != format!("relay.events.job.{job_id}.{kind}") {
+        return Err("NATS subject does not match event Job and type".into());
+    }
+    let receipt_key = format!("{job_id}/{task_id}/{execution_id}/event/{event_id}");
+    let receipt = WorkflowEvent {
+        key: receipt_key.clone(),
+        event_id: kind.into(),
+        payload: json!({"eventId":event_id,"type":kind,"jobId":job_id,"taskId":task_id,"executionId":execution_id,"leaseOwner":owner,"attempt":attempt,"timestamp":event_at}),
+    };
+    if authority.has_consumed_event("rust-worker-lifecycle", &receipt)? {
+        return Ok(false);
+    }
+    let job = authority
+        .read_job(job_id)?
+        .ok_or("Worker event Job is unknown")?;
+    let task = job["tasks"]
+        .as_array()
+        .and_then(|tasks| tasks.iter().find(|task| task["id"] == task_id))
+        .ok_or("Worker event Task is unknown")?;
+    let expiry = task["leaseExpiresAt"]
+        .as_str()
+        .ok_or("current Task lease missing")?;
+    let expiry =
+        chrono::DateTime::parse_from_rfc3339(expiry).map_err(|_| "invalid current Task lease")?;
+    if task["executionId"] != execution_id
+        || task["leaseOwner"] != owner
+        || task["attempt"] != attempt
+        || expiry <= received
+        || !task["executionHistory"].as_array().is_some_and(|history| {
+            history
+                .iter()
+                .any(|row| row["id"] == execution_id && row["attempt"] == attempt)
+        })
+    {
+        return Err("Worker event is stale or does not match the current active lease".into());
+    }
+    let adapter = task["adapter"]
+        .as_str()
+        .filter(|value| matches!(*value, "script" | "codex"))
+        .ok_or("unsupported current Worker adapter")?;
+    if data
+        .get("adapter")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value != adapter)
+    {
+        return Err("Worker event adapter mismatch".into());
+    }
+    let attempt_key = format!("{job_id}/{task_id}/{execution_id}/launch");
+    let trace = authority
+        .action_trace(&attempt_key)?
+        .ok_or("current launch Action trace missing")?;
+    let trace_time = chrono::DateTime::parse_from_rfc3339(&trace.observed_at)
+        .map_err(|_| "invalid launch Action timestamp")?;
+    if trace.execution_id != execution_id
+        || trace.generation != attempt
+        || trace.graph != "task-lifecycle.mmd"
+        || trace.action_id != "effect.launchTask"
+        || trace.outcome != ActionOutcome::Unknown
+        || trace_time >= event_time
+    {
+        return Err("Worker event has no fresh matching Graph-selected launch Action".into());
+    }
+    let claim = ScriptClaim {
+        job_id: job_id.into(),
+        task_id: task_id.into(),
+        execution_id: execution_id.into(),
+        owner: owner.into(),
+        adapter: adapter.into(),
+        routing: task.get("routing").cloned(),
+        worker_selection: task.get("workerSelection").cloned(),
+        attempt,
+        attempt_key,
+        claimed_at: task["executionHistory"]
+            .as_array()
+            .and_then(|history| history.iter().find(|row| row["id"] == execution_id))
+            .and_then(|row| row["startedAt"].as_str())
+            .unwrap_or(&trace.observed_at)
+            .into(),
+        lease_expires_at: expiry.to_rfc3339(),
+    };
+    let graph = Graph::parse(include_str!("../../workflow/task-lifecycle.mmd"))?;
+    let applied = TaskLifecycle::new(&graph).apply_inbound_worker_event(authority, TaskTransition {
+        job_id, task_id,
+        input: GraphInput { transport:"event".into(), id:kind.into(), payload:json!({"jobId":job_id,"taskId":task_id,"executionId":execution_id,"leaseOwner":owner,"attempt":attempt}) },
+        guard_facts:&HashMap::new(), at, events:vec![],
+    }, &claim, &receipt)?;
+    Ok(applied)
+}
+
 fn event_id(s: &str) -> bool {
     !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| b.is_ascii_digit())
 }
@@ -264,7 +413,7 @@ fn subscribe_once(db: &Path, port: u16, stopped: &AtomicBool) -> Result<(), Stri
     if info["auth_required"] == true || info["tls_required"] == true {
         return Err("NATS ingress requires a configured authenticated transport provider".into());
     }
-    tcp.write_all(b"CONNECT {\"verbose\":false,\"pedantic\":true,\"name\":\"relay-rust-native-ingress\"}\r\nSUB relay.events.job.*.task.* 1\r\nPING\r\n").map_err(|e| e.to_string())?;
+    tcp.write_all(b"CONNECT {\"verbose\":false,\"pedantic\":true,\"name\":\"relay-rust-native-ingress\"}\r\nSUB relay.events.job.*.* 1\r\nPING\r\n").map_err(|e| e.to_string())?;
     tcp.flush().map_err(|e| e.to_string())?;
     loop {
         if stopped.load(Ordering::SeqCst) {
@@ -311,7 +460,18 @@ fn subscribe_once(db: &Path, port: u16, stopped: &AtomicBool) -> Result<(), Stri
             return Err("invalid NATS message terminator".into());
         }
         match RelayAuthority::open_existing(db).and_then(|mut authority| {
-            ingest_nats_worker_terminal_event(&mut authority, subject, &bytes, &current_time())
+            let at = current_time();
+            let kind = serde_json::from_slice::<Value>(&bytes)
+                .ok()
+                .and_then(|event| event["type"].as_str().map(str::to_owned));
+            if kind
+                .as_deref()
+                .is_some_and(|kind| matches!(kind, "task.started" | "task.progress"))
+            {
+                ingest_worker_lifecycle_event(&mut authority, subject, &bytes, &at)
+            } else {
+                ingest_nats_worker_terminal_event(&mut authority, subject, &bytes, &at)
+            }
         }) {
             Ok(true) => {}
             Ok(false) => {}
@@ -365,7 +525,7 @@ mod tests {
     use super::*;
     use crate::authority::{tests::setup, ScriptClaimRequest};
 
-    fn running() -> (tempfile::TempDir, PathBuf, RelayAuthority) {
+    fn unstarted() -> (tempfile::TempDir, PathBuf, RelayAuthority) {
         let (dir, path) = setup();
         let mut store = RelayAuthority::open_existing(&path).unwrap();
         store
@@ -396,6 +556,10 @@ mod tests {
         store
             .begin_script_launch(&claim, "2026-11-13T20:00:02.500Z")
             .unwrap();
+        (dir, path, store)
+    }
+    fn running() -> (tempfile::TempDir, PathBuf, RelayAuthority) {
+        let (dir, path, mut store) = unstarted();
         let graph = Graph::parse(include_str!("../../workflow/task-lifecycle.mmd")).unwrap();
         TaskLifecycle::new(&graph).apply(&mut store, TaskTransition {
             job_id:"91", task_id:"101", input:GraphInput { transport:"event".into(), id:"task.started".into(), payload:json!({"jobId":"91","taskId":"101","executionId":"ingress-exec","leaseOwner":"isolated","attempt":1}) },
@@ -412,6 +576,21 @@ mod tests {
     }
     fn inbox_count(path: &Path) -> i64 {
         rusqlite::Connection::open(path).unwrap().query_row("SELECT COUNT(*) FROM workflow_event_inbox WHERE consumer_id='rust-worker-terminal'", [], |r| r.get(0)).unwrap()
+    }
+    fn lifecycle_event(kind: &str, event_id: &str, timestamp: &str) -> Value {
+        json!({
+            "event_id":event_id,"type":kind,"job_id":"91","task_id":"101",
+            "source":{"id":"job/91/task/101/execution/ingress-exec"},"timestamp":timestamp,
+            "data":{"executionId":"ingress-exec","leaseOwner":"isolated","attempt":1,"adapter":"script"}
+        })
+    }
+    fn submit_lifecycle(
+        store: &mut RelayAuthority,
+        event: &Value,
+        subject: &str,
+        at: &str,
+    ) -> Result<bool, String> {
+        ingest_worker_lifecycle_event(store, subject, event.to_string().as_bytes(), at)
     }
     fn submit(store: &mut RelayAuthority, event: &Value, at: &str) -> Result<bool, String> {
         ingest_nats_worker_terminal_event(
@@ -522,6 +701,166 @@ mod tests {
     }
 
     #[test]
+    fn worker_start_and_progress_use_graph_and_are_idempotent_without_false_completion_or_timeout_renewal(
+    ) {
+        let (_dir, path, mut store) = unstarted();
+        let start = lifecycle_event("task.started", "start-1", "2026-11-13T20:00:03.000Z");
+        assert!(submit_lifecycle(
+            &mut store,
+            &start,
+            "relay.events.job.91.task.started",
+            "2026-11-13T20:00:03.100Z"
+        )
+        .unwrap());
+        assert_eq!(
+            store.read_job("91").unwrap().unwrap()["tasks"][0]["state"],
+            "RUNNING"
+        );
+        assert!(!submit_lifecycle(
+            &mut store,
+            &start,
+            "relay.events.job.91.task.started",
+            "2026-11-13T20:00:03.200Z"
+        )
+        .unwrap());
+        let mut progress =
+            lifecycle_event("task.progress", "progress-1", "2026-11-13T20:00:04.000Z");
+        progress["data"]["status"] = json!("COMPLETED");
+        progress["data"]["output"] = json!({"artifact":"unverified"});
+        assert!(submit_lifecycle(
+            &mut store,
+            &progress,
+            "relay.events.job.91.task.progress",
+            "2026-11-13T20:00:04.100Z"
+        )
+        .unwrap());
+        let snapshot = store.read_job("91").unwrap().unwrap();
+        assert_eq!(snapshot["tasks"][0]["state"], "RUNNING");
+        assert!(snapshot["tasks"][0]["result"].is_null());
+        assert!(
+            snapshot["tasks"][0].get("lastProgressAt").is_none(),
+            "progress ingress must not renew the native process timeout"
+        );
+        assert_eq!(
+            snapshot["tasks"][0]["lastProgressEventAt"],
+            "2026-11-13T20:00:04.000Z"
+        );
+        drop(store);
+        let mut reopened = RelayAuthority::open_existing(&path).unwrap();
+        assert!(!submit_lifecycle(
+            &mut reopened,
+            &start,
+            "relay.events.job.91.task.started",
+            "2100-01-01T00:00:00.000Z"
+        )
+        .unwrap());
+        assert!(!submit_lifecycle(
+            &mut reopened,
+            &progress,
+            "relay.events.job.91.task.progress",
+            "2100-01-01T00:00:00.000Z"
+        )
+        .unwrap());
+        assert_eq!(
+            inbox_count(&path),
+            0,
+            "start/progress receipts use their own lifecycle consumer"
+        );
+        let lifecycle_receipts: i64 = rusqlite::Connection::open(&path).unwrap().query_row("SELECT COUNT(*) FROM workflow_event_inbox WHERE consumer_id='rust-worker-lifecycle'", [], |row| row.get(0)).unwrap();
+        assert_eq!(lifecycle_receipts, 2);
+        assert!(
+            reopened.pending_events().unwrap().is_empty(),
+            "inbound lifecycle events are not echoed to the outbox"
+        );
+    }
+
+    #[test]
+    fn worker_start_progress_reject_wrong_subject_correlation_and_out_of_order_without_mutation() {
+        let (_dir, path, mut store) = running();
+        let original = store.read_job("91").unwrap().unwrap();
+        let mut wrong = lifecycle_event("task.progress", "wrong-1", "2026-11-13T20:00:04.000Z");
+        wrong["source"]["id"] = json!("job/92/task/101/execution/ingress-exec");
+        assert!(submit_lifecycle(
+            &mut store,
+            &wrong,
+            "relay.events.job.91.task.progress",
+            "2026-11-13T20:00:04.100Z"
+        )
+        .is_err());
+        let valid = lifecycle_event("task.progress", "progress-new", "2026-11-13T20:00:04.000Z");
+        for (field, value) in [
+            ("executionId", json!("stale-exec")),
+            ("leaseOwner", json!("wrong-owner")),
+            ("attempt", json!(2)),
+        ] {
+            let mut fenced = lifecycle_event(
+                "task.progress",
+                &format!("fenced-{field}"),
+                "2026-11-13T20:00:04.000Z",
+            );
+            fenced["data"][field] = value;
+            assert!(submit_lifecycle(
+                &mut store,
+                &fenced,
+                "relay.events.job.91.task.progress",
+                "2026-11-13T20:00:04.100Z"
+            )
+            .is_err());
+        }
+        let unsupported = lifecycle_event(
+            "task.interactive_waiting",
+            "unsupported-1",
+            "2026-11-13T20:00:04.000Z",
+        );
+        assert!(!submit_lifecycle(
+            &mut store,
+            &unsupported,
+            "relay.events.job.91.task.interactive_waiting",
+            "2026-11-13T20:00:04.100Z"
+        )
+        .unwrap());
+        assert!(
+            submit_lifecycle(
+                &mut store,
+                &valid,
+                "relay.events.job.91.task.progress",
+                "2100-01-01T00:00:00.000Z"
+            )
+            .is_err(),
+            "expired lease must reject without a receipt"
+        );
+        assert!(submit_lifecycle(
+            &mut store,
+            &valid,
+            "relay.events.job.92.task.progress",
+            "2026-11-13T20:00:04.100Z"
+        )
+        .is_err());
+        assert!(submit_lifecycle(
+            &mut store,
+            &valid,
+            "relay.events.job.91.task.progress",
+            "2026-11-13T20:00:04.100Z"
+        )
+        .unwrap());
+        let out_of_order =
+            lifecycle_event("task.progress", "progress-old", "2026-11-13T20:00:03.500Z");
+        assert!(submit_lifecycle(
+            &mut store,
+            &out_of_order,
+            "relay.events.job.91.task.progress",
+            "2026-11-13T20:00:04.200Z"
+        )
+        .is_err());
+        assert_eq!(
+            store.read_job("91").unwrap().unwrap()["tasks"][0]["state"],
+            original["tasks"][0]["state"]
+        );
+        let receipts: i64 = rusqlite::Connection::open(&path).unwrap().query_row("SELECT COUNT(*) FROM workflow_event_inbox WHERE consumer_id='rust-worker-lifecycle'", [], |row| row.get(0)).unwrap();
+        assert_eq!(receipts, 1);
+    }
+
+    #[test]
     fn configured_nats_subscriber_routes_wire_message_to_durable_ingress() {
         use std::net::TcpListener;
         use std::thread;
@@ -544,10 +883,13 @@ mod tests {
                     break;
                 }
             }
-            let bytes = completed_event().to_string().into_bytes();
+            let bytes =
+                lifecycle_event("task.progress", "wire-progress", "2026-11-13T20:00:04.000Z")
+                    .to_string()
+                    .into_bytes();
             write!(
                 stream,
-                "MSG relay.events.job.91.task.completed 1 {}\r\n",
+                "MSG relay.events.job.91.task.progress 1 {}\r\n",
                 bytes.len()
             )
             .unwrap();
@@ -565,7 +907,11 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .to_owned();
-            if state == "SUCCEEDED" {
+            if state == "RUNNING"
+                && store.read_job("91").unwrap().unwrap()["tasks"][0]
+                    .get("lastProgressEventAt")
+                    .is_some()
+            {
                 break;
             }
             assert!(
@@ -577,7 +923,8 @@ mod tests {
         stopped.store(true, Ordering::SeqCst);
         worker.join().unwrap();
         server.join().unwrap();
-        assert_eq!(inbox_count(&path), 1);
+        let lifecycle_receipts: i64 = rusqlite::Connection::open(&path).unwrap().query_row("SELECT COUNT(*) FROM workflow_event_inbox WHERE consumer_id='rust-worker-lifecycle'", [], |row| row.get(0)).unwrap();
+        assert_eq!(lifecycle_receipts, 1);
         assert!(store.pending_events().unwrap().is_empty());
     }
 }

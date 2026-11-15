@@ -229,6 +229,36 @@ impl RelayAuthority {
         tx.commit().map_err(|e| e.to_string())?;
         Ok(true)
     }
+
+    /// Check whether this exact inbound receipt was already committed. This
+    /// read-only fast path lets stale or expired redelivery remain an
+    /// idempotent no-op; the transactional consumer still repeats the check
+    /// under the SQLite writer lock to handle concurrent delivery.
+    pub fn has_consumed_event(
+        &self,
+        consumer_id: &str,
+        event: &WorkflowEvent,
+    ) -> Result<bool, String> {
+        if consumer_id.is_empty() || consumer_id.len() > 256 {
+            return Err("invalid consumer ID".into());
+        }
+        validate_event(event)?;
+        let previous: Option<(String, String)> = self.connection.query_row(
+            "SELECT event_id,payload_json FROM workflow_event_inbox WHERE consumer_id=?1 AND event_key=?2",
+            params![consumer_id,event.key],
+            |row| Ok((row.get(0)?,row.get(1)?)),
+        ).optional().map_err(|error| error.to_string())?;
+        let Some((event_id, payload)) = previous else {
+            return Ok(false);
+        };
+        if event_id != event.event_id
+            || serde_json::from_str::<Value>(&payload).map_err(|error| error.to_string())?
+                != event.payload
+        {
+            return Err("consumer event key collision".into());
+        }
+        Ok(true)
+    }
     pub fn pending_events(&self) -> Result<Vec<WorkflowEvent>, String> {
         let exists:bool=self.connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_event_outbox')",

@@ -50,6 +50,94 @@ impl<'g> TaskLifecycle<'g> {
     pub fn new(graph: &'g Graph) -> Self {
         Self { graph }
     }
+
+    /// Apply a correlated nonterminal Worker event through the canonical Task
+    /// Graph and persist its inbox receipt with the Task snapshot. Progress is
+    /// evidence only; it never writes a Task result or renews the Worker
+    /// process timeout.
+    pub(crate) fn apply_inbound_worker_event(
+        &self,
+        store: &mut RelayAuthority,
+        request: TaskTransition<'_>,
+        claim: &ScriptClaim,
+        receipt: &WorkflowEvent,
+    ) -> Result<bool, String> {
+        let TaskTransition {
+            job_id,
+            task_id,
+            input,
+            guard_facts,
+            at,
+            ..
+        } = request;
+        if !matches!(input.id.as_str(), "task.started" | "task.progress") {
+            return Err("inbound Worker lifecycle event must be start or progress".into());
+        }
+        if claim.job_id != job_id || claim.task_id != task_id {
+            return Err("Worker lifecycle claim identity mismatch".into());
+        }
+        let mut decision = None;
+        let applied = store.commit_job_with_tx(job_id, at, |tx, job| {
+            let mut next = job.clone();
+            let task = next["tasks"].as_array_mut()
+                .and_then(|tasks| tasks.iter_mut().find(|task| task["id"] == task_id))
+                .ok_or_else(|| format!("Unknown Task '{task_id}' in Job '{job_id}'"))?;
+            let state = task["state"].as_str().ok_or("Task state missing")?.to_owned();
+            let execution_id = input.payload["executionId"].as_str().ok_or("Worker execution ID missing")?;
+            let owner = input.payload["leaseOwner"].as_str().ok_or("Worker lease owner missing")?;
+            let attempt = input.payload["attempt"].as_i64().ok_or("Worker attempt missing")?;
+            let expiry = task["leaseExpiresAt"].as_str().ok_or("current Task lease missing")?;
+            let expiry = chrono::DateTime::parse_from_rfc3339(expiry).map_err(|_| "invalid current Task lease")?;
+            let observed = chrono::DateTime::parse_from_rfc3339(at).map_err(|_| "invalid ingress timestamp")?;
+            if task["executionId"] != execution_id || task["leaseOwner"] != owner
+                || task["attempt"] != attempt || claim.execution_id != execution_id
+                || claim.owner != owner || claim.attempt != attempt || expiry <= observed
+                || !task["executionHistory"].as_array().is_some_and(|history| history.iter().any(|row| row["id"] == execution_id && row["attempt"] == attempt)) {
+                return Err("Worker lifecycle event is stale or outside its current lease".into());
+            }
+            let previous: Option<(String, String)> = tx.query_row(
+                "SELECT event_id,payload_json FROM workflow_event_inbox WHERE consumer_id='rust-worker-lifecycle' AND event_key=?1",
+                [&receipt.key], |row| Ok((row.get(0)?, row.get(1)?)),
+            ).optional().map_err(|error| error.to_string())?;
+            if let Some((event_id, payload)) = previous {
+                if event_id != receipt.event_id || serde_json::from_str::<Value>(&payload).map_err(|error| error.to_string())? != receipt.payload {
+                    return Err("Worker lifecycle receipt key collision".into());
+                }
+                return Err("duplicate Worker lifecycle event".into());
+            }
+            if input.id == "task.progress" {
+                let event_at = receipt.payload["timestamp"].as_str().ok_or("Worker progress timestamp missing")?;
+                let event_at = chrono::DateTime::parse_from_rfc3339(event_at).map_err(|_| "invalid Worker progress timestamp")?;
+                if task.get("lastProgressEventAt").and_then(Value::as_str).is_some_and(|previous| {
+                    chrono::DateTime::parse_from_rfc3339(previous).is_ok_and(|previous| event_at <= previous)
+                }) {
+                    return Err("Worker progress event is stale or out of order".into());
+                }
+            }
+            let graph_decision = self.graph.decide(&state, input.clone(), guard_facts)?;
+            let crate::graph::Decision::Accepted { target, actions, .. } = &graph_decision else {
+                return Err(format!("Graph denied Task transition {state} on {}", input.id));
+            };
+            apply_pure_task_actions(task, actions)?;
+            task["state"] = Value::String(target.clone());
+            task["updatedAt"] = Value::String(at.into());
+            if input.id == "task.progress" {
+                task["lastProgressEventAt"] = receipt.payload["timestamp"].clone();
+            }
+            next["updatedAt"] = Value::String(at.into());
+            tx.execute(
+                "INSERT INTO workflow_event_inbox(consumer_id,event_key,event_id,payload_json,consumed_at) VALUES('rust-worker-lifecycle',?1,?2,?3,?4)",
+                params![receipt.key, receipt.event_id, serde_json::to_string(&receipt.payload).map_err(|error| error.to_string())?, at],
+            ).map_err(|error| error.to_string())?;
+            decision = Some(graph_decision);
+            Ok((next, vec![]))
+        });
+        match applied {
+            Ok(_) => Ok(decision.is_some()),
+            Err(error) if error == "duplicate Worker lifecycle event" => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
     pub fn apply(
         &self,
         store: &mut RelayAuthority,
