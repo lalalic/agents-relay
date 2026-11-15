@@ -135,11 +135,76 @@ fn task_create(args: &[String]) -> Result<Value, String> {
         serde_json::json!({"jobId":job_id,"taskId":created.task_id,"created":created.created,"task":created.task}),
     )
 }
+fn job_update(args: &[String]) -> Result<Value, String> {
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        return Err("native Job metadata updates are isolated-test only".into());
+    }
+    let allowed = ["--db", "--job-id", "--title", "--priority"];
+    let mut options = std::collections::HashMap::<String, String>::new();
+    let mut index = 0;
+    while index < args.len() {
+        let name = args[index].as_str();
+        if !allowed.contains(&name) {
+            return Err(format!("unrecognized job update option {name}"));
+        }
+        if options.contains_key(name) {
+            return Err(format!("duplicate option {name}"));
+        }
+        let option_value = args
+            .get(index + 1)
+            .filter(|value| !value.starts_with("--"))
+            .ok_or_else(|| format!("missing value for {name}"))?;
+        options.insert(name.to_owned(), option_value.clone());
+        index += 2;
+    }
+    let get = |name: &str| options.get(name).map(String::as_str);
+    let db = PathBuf::from(get("--db").ok_or("missing --db")?);
+    if !db.is_absolute() {
+        return Err("absolute DB path required".into());
+    }
+    let job_id = get("--job-id").ok_or("missing --job-id")?;
+    let title = get("--title");
+    let priority = get("--priority");
+    if title.is_none() && priority.is_none() {
+        return Err("job update requires --title and/or --priority".into());
+    }
+    if let Some(title) = title {
+        if title.trim().is_empty() || title.len() > 200 {
+            return Err("--title must be nonempty and at most 200 bytes".into());
+        }
+    }
+    if let Some(priority) = priority {
+        if !matches!(priority, "P0" | "P1" | "P2" | "P3") {
+            return Err("--priority must be P0, P1, P2, or P3".into());
+        }
+    }
+    isolated_store_root(&db)?;
+    let mut authority = RelayAuthority::open_existing(&db)?;
+    let current = authority.read_job(job_id)?.ok_or("unknown Job")?;
+    let at = after_time(
+        current["updatedAt"]
+            .as_str()
+            .ok_or("Job timestamp missing")?,
+    )?;
+    let updated = authority.commit_job(job_id, &at, |original| {
+        let mut next = original.clone();
+        if let Some(title) = title {
+            next["title"] = json!(title);
+        }
+        if let Some(priority) = priority {
+            next["priority"] = json!(priority);
+        }
+        next["updatedAt"] = json!(at);
+        Ok((next, vec![]))
+    })?;
+    Ok(json!({"jobId":job_id,"job":updated.job}))
+}
 fn run() -> Result<(), String> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     let Some(command) = args.first().map(String::as_str) else {
         return Err(
-            "usage: relay-native-job init|create|activate|show|task create --db PATH ...".into(),
+            "usage: relay-native-job init|create|activate|show|update|task create --db PATH ..."
+                .into(),
         );
     };
     let path = db(&args)?;
@@ -168,6 +233,7 @@ fn run() -> Result<(), String> {
             })?
         }
         "task" if args.get(1).is_some_and(|action| action == "create") => task_create(&args)?,
+        "update" => job_update(&args[1..])?,
         "activate" => activate_job(&path, &value(&args, "--job-id")?)?,
         "show" => {
             isolated_store_root(&path)?;

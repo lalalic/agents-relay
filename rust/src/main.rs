@@ -128,9 +128,16 @@ fn print_json(value: impl serde::Serialize) -> Result<(), String> {
     );
     Ok(())
 }
+fn job_timestamp(job: &Value) -> i64 {
+    [job["updatedAt"].as_str(), job["createdAt"].as_str()]
+        .into_iter()
+        .flatten()
+        .find_map(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .map_or(0, |timestamp| timestamp.timestamp_millis())
+}
 fn run(args: &[String]) -> Result<(), String> {
     if args.len() < 2 {
-        return Err("usage: agents-relay-rust graph <validate|inventory|decide|batch|simulate> | store <list|get> --db PATH | job show --db PATH --job-id ID | task <list|show|events> --db PATH --job-id ID [--task-id ID] | scheduler inspect/recovery --db PATH --job-id ID | dag parse --file PATH".into());
+        return Err("usage: agents-relay-rust graph <validate|inventory|decide|batch|simulate> | store <list|get> --db PATH | job <list --db PATH [--repo NAME]|show --db PATH --job-id ID> | task <list|show|events> --db PATH --job-id ID [--task-id ID] | scheduler inspect/recovery --db PATH --job-id ID | dag parse --file PATH".into());
     }
     match (args[0].as_str(),args[1].as_str()) {
         ("graph","validate") => {
@@ -232,6 +239,28 @@ fn run(args: &[String]) -> Result<(), String> {
                 print_json(store.list_jobs(limit,offset)?)
             }
         }
+        ("job", "list") => {
+            let options = optional_inspection_options(args, &["--db", "--repo"], &["--db"])?;
+            let store = RelayReader::open(Path::new(&options["--db"]))?;
+            let requested_repo = options.get("--repo");
+            let mut offset = 0_u32;
+            let mut jobs = Vec::new();
+            loop {
+                let page = store.list_jobs(1000, offset)?;
+                let count = page.len() as u32;
+                jobs.extend(page.into_iter()
+                    .filter(|snapshot| requested_repo.is_none_or(|repo| snapshot.job["repository"].as_str() == Some(repo)))
+                    .map(|snapshot| snapshot.job));
+                if count < 1000 { break; }
+                offset = offset.checked_add(count).ok_or("Job list offset overflow")?;
+            }
+            jobs.sort_by(|left, right| {
+                job_timestamp(right).cmp(&job_timestamp(left))
+                    .then_with(|| left["repository"].as_str().unwrap_or("").cmp(right["repository"].as_str().unwrap_or("")))
+                    .then_with(|| left["id"].as_str().unwrap_or("").cmp(right["id"].as_str().unwrap_or("")))
+            });
+            print_json(jobs)
+        }
         ("job", "show") => {
             let options = inspection_options(args, &["--db", "--job-id"])?;
             let store = RelayReader::open(Path::new(&options["--db"]))?;
@@ -296,7 +325,7 @@ fn run(args: &[String]) -> Result<(), String> {
                 &options["--job-id"], &options["--task-id"], limit, order, after,
             )?)
         }
-        _=>Err("unrecognized command; supported: graph validate/inventory/decide/batch/simulate, store list/get, job show, task list/show/events, scheduler inspect/recovery".into())
+        _=>Err("unrecognized command; supported: graph validate/inventory/decide/batch/simulate, store list/get, job list/show, task list/show/events, scheduler inspect/recovery".into())
     }
 }
 fn main() {

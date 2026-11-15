@@ -24,6 +24,10 @@ const job = id => ({
   prNumber: 0, state: 'ACTIVE', reviewEnabled: false, continuation: null,
   createdAt: timestamp, updatedAt: timestamp, tasks: [task(id, '41'), task(id, '42')],
 });
+const jobAt = (id, repository, updatedAt) => ({
+  ...job(id), repository, updatedAt,
+  tasks: job(id).tasks.map(item => ({...item, title: `inspect ${item.id}`})),
+});
 
 function invoke(storeDir, ...args) {
   return spawnSync(exe, args, {
@@ -35,10 +39,84 @@ function invoke(storeDir, ...args) {
 
 function snapshotDatabaseFiles(root) {
   return readdirSync(root)
-    .filter(name => name.startsWith('relay.sqlite'))
+    .filter(name => name.includes('.sqlite'))
     .sort()
     .map(name => [name, createHash('sha256').update(readFileSync(join(root, name))).digest('hex')]);
 }
+
+test('Rust Job listing is repository-filtered, stable, read-only, and isolated', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'agents-relay-rust-job-list-'));
+  const db = join(root, 'relay.sqlite');
+  const previousStoreDir = process.env.AGENTS_RELAY_STORE_DIR;
+  process.env.AGENTS_RELAY_STORE_DIR = root;
+  let store;
+  try {
+    const emptyDb = join(root, 'empty.sqlite');
+    store = new SQLiteRelayStore(emptyDb);
+    store.close();
+    store = null;
+    const empty = invoke(root, 'job', 'list', '--db', emptyDb);
+    assert.equal(empty.status, 0, empty.stderr);
+    assert.deepEqual(JSON.parse(empty.stdout), []);
+
+    store = new SQLiteRelayStore(db);
+    await store.saveJob(jobAt('100', 'repo-b', '2026-11-13T16:00:02.000Z'));
+    await store.saveJob(jobAt('102', 'repo-a', '2026-11-13T11:00:03.000-05:00'));
+    await store.saveJob(jobAt('101', 'repo-a', '2026-11-13T16:00:03.000Z'));
+    await store.saveJob({...jobAt('103', 'repo-a', '2026-11-13T16:00:01.000Z'), state: 'CANCELLED'});
+    store.close();
+    store = null;
+    const warmup = invoke(root, 'job', 'list', '--db', db);
+    assert.equal(warmup.status, 0, warmup.stderr);
+    const baseline = snapshotDatabaseFiles(root);
+
+    const listed = invoke(root, 'job', 'list', '--db', db);
+    assert.equal(listed.status, 0, listed.stderr);
+    const rows = JSON.parse(listed.stdout);
+    assert.deepEqual(rows.map(row => row.id), ['101', '102', '100', '103']);
+    assert.equal(rows.at(-1).state, 'CANCELLED', 'full inventory includes terminal cancelled Jobs');
+    const filtered = invoke(root, 'job', 'list', '--db', db, '--repo', 'repo-a');
+    assert.equal(filtered.status, 0, filtered.stderr);
+    assert.deepEqual(JSON.parse(filtered.stdout).map(row => row.id), ['101', '102', '103']);
+
+    // A fresh process after closing and reopening the SQLite store returns the same stable inventory.
+    store = new SQLiteRelayStore(db);
+    store.close();
+    store = null;
+    const reopened = invoke(root, 'job', 'list', '--db', db);
+    assert.equal(reopened.status, 0, reopened.stderr);
+    assert.deepEqual(JSON.parse(reopened.stdout), rows);
+
+    for (const [args, pattern] of [
+      [['job', 'list'], /missing --db/],
+      [['job', 'list', '--db', db, '--repo'], /missing value for --repo/],
+      [['job', 'list', '--db', db, '--repo', 'repo-a', '--repo', 'repo-b'], /duplicate argument: --repo/],
+      [['job', 'list', '--db', db, '--unknown', 'value'], /unrecognized argument/],
+    ]) {
+      const rejected = invoke(root, ...args);
+      assert.equal(rejected.status, 2);
+      assert.match(rejected.stderr, pattern);
+    }
+    const absent = join(root, 'absent.sqlite');
+    const missingDb = invoke(root, 'job', 'list', '--db', absent);
+    assert.equal(missingDb.status, 2);
+    assert.match(missingDb.stderr, /does not exist/);
+    assert.equal(readdirSync(root).includes('absent.sqlite'), false, 'missing database must not be created');
+    const unreadableDb = join(root, 'unreadable.sqlite');
+    writeFileSync(unreadableDb, 'not sqlite');
+    const unreadableBefore = createHash('sha256').update(readFileSync(unreadableDb)).digest('hex');
+    const invalidDb = invoke(root, 'job', 'list', '--db', unreadableDb);
+    assert.equal(invalidDb.status, 2);
+    assert.match(invalidDb.stderr, /SQLite|database/i);
+    assert.deepEqual(snapshotDatabaseFiles(root).filter(([name]) => name !== 'unreadable.sqlite'), baseline, 'accepted and rejected reads must not mutate valid database or sidecar files');
+    assert.equal(createHash('sha256').update(readFileSync(unreadableDb)).digest('hex'), unreadableBefore, 'rejected malformed database read must preserve its bytes');
+  } finally {
+    store?.close();
+    if (previousStoreDir === undefined) delete process.env.AGENTS_RELAY_STORE_DIR;
+    else process.env.AGENTS_RELAY_STORE_DIR = previousStoreDir;
+    rmSync(root, {recursive: true, force: true});
+  }
+});
 
 test('Rust Job and Task inspection matches Relay records, rejects errors, and never changes the isolated DB', async () => {
   const root = mkdtempSync(join(tmpdir(), 'agents-relay-rust-inspection-'));
