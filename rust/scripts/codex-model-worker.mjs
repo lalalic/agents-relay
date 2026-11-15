@@ -4,7 +4,7 @@
 // a second Worker prompt. The owning Rust Worker supervises this process group.
 import { spawn } from 'node:child_process';
 import { open, readFile, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { dirname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const MAX_BYTES = 1024 * 1024;
@@ -61,7 +61,7 @@ async function main() {
     throw new Error('Invalid execution-bound Codex request or shared prompt Action reference');
   }
   const executable = process.env.CODEX_EXECUTABLE;
-  if (!executable || !resolve(executable).startsWith('/')) throw new Error('Absolute CODEX_EXECUTABLE is required');
+  if (!executable || !isAbsolute(executable)) throw new Error('Absolute CODEX_EXECUTABLE is required');
   const { discoverModelCandidates } = await import(pathToFileURL(promptAction.modelRoutingModule).href);
   const candidates = await discoverModelCandidates({
     workerId: selection.workerId, adapter: 'codex', capabilities: selection.capabilities ?? [],
