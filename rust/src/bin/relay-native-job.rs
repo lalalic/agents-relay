@@ -10,10 +10,10 @@ use serde_json::json;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-#[path = "relay-native-job/foreground.rs"]
-mod foreground;
 #[path = "relay-native-job/agent_cli.rs"]
 mod agent_cli;
+#[path = "relay-native-job/foreground.rs"]
+mod foreground;
 #[path = "relay-native-job/job_cli.rs"]
 mod job_cli;
 #[path = "relay-native-job/node_compat.rs"]
@@ -163,20 +163,32 @@ fn run() -> Result<(), String> {
         return status::run(&args[1..]);
     }
     if matches!(command, "plan" | "record" | "reconcile" | "serve") {
-        let action = args.get(1).filter(|value| !value.starts_with("--")).map(String::as_str);
+        let action = args
+            .get(1)
+            .filter(|value| !value.starts_with("--"))
+            .map(String::as_str);
         let start = if action.is_some() { 2 } else { 1 };
-        let result = planner_cli::dispatch(command,action,&args[start..])?;
-        println!("{}",serde_json::to_string(&result).map_err(|e|e.to_string())?);
+        let result = planner_cli::dispatch(command, action, &args[start..])?;
+        println!(
+            "{}",
+            serde_json::to_string(&result).map_err(|e| e.to_string())?
+        );
         return Ok(());
     }
     if let Some(result) = review_cli::dispatch(&args)? {
-        println!("{}",serde_json::to_string(&result).map_err(|e|e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string(&result).map_err(|e| e.to_string())?
+        );
         return Ok(());
     }
-    if matches!(command,"agent-register"|"agent-discover") {
+    if matches!(command, "agent-register" | "agent-discover") {
         return agent_cli::dispatch(&args);
     }
-    if matches!(command,"artifact"|"context"|"prompt"|"migrate-local-repositories") {
+    if matches!(
+        command,
+        "artifact" | "context" | "prompt" | "migrate-local-repositories"
+    ) {
         return platform_cli::dispatch(&args);
     }
     if command == "workflow" {

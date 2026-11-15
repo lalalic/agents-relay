@@ -6,7 +6,7 @@ import {join,resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {DatabaseSync} from 'node:sqlite';
 
-const exe=resolve(import.meta.dirname,'../target/debug/relay-native-job');
+const exe=resolve(process.env.CARGO_TARGET_DIR ?? resolve(import.meta.dirname,'../target'), 'debug/relay-native-job');
 const env={...process.env,RELAY_RUST_EXPERIMENTAL_TEST_ONLY:'isolated-test'};
 const invoke=(root,db,...args)=>spawnSync(exe,['job',...args,'--db',db],{encoding:'utf8',env:{...env,AGENTS_RELAY_STORE_DIR:root}});
 const call=(root,db,...args)=>{const r=invoke(root,db,...args);assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout)};

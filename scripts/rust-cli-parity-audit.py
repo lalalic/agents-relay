@@ -81,7 +81,7 @@ proof={
 'job run':'--id --task-id --repo --foreground --concurrency',
 'job show':'--id --repo','job list':'--repo',
 'task list':'--id --repo','task show':'--id --repo --task-id',
-'task events':'--id --repo --task-id --limit --order',
+'task events':'--id --repo --task-id --limit --order --after',
 'status':'--port',
 'workflow discover':'(none)',
 'workflow actions':'(none)',
@@ -95,10 +95,24 @@ partial={
 'job run':'--project-path --no-github',
 'status':'--host',
 'workflow action':'--action',
-'job create':'--title --project-root',
-'job update':'--title --priority',
-'task create':'--title --priority --story-size --deps --parent --draft --dependency-validity --input-file --input --output --output-path',
-'task cancel':'--task-id','task retry':'--task-id'}
+'job create':'--title --project-root --repo --id --priority --objective --objective-file --project-path --review --no-review --auto-merge --no-auto-merge',
+'job pause':'--repo --id',
+'job resume':'--repo --id',
+'job cancel':'--repo --id',
+'job update':'--title --priority --id --repo --objective --objective-file --project-path --review --no-review --auto-merge --no-auto-merge',
+'task cancel':'--task-id --id --repo',
+'task retry':'--task-id --id --repo',
+'task create':'--title --priority --story-size --deps --parent --draft --dependency-validity --input-file --input --output --output-path --id --repo',
+'task update':'--title --priority --story-size --input --input-file --id --repo --task-id',
+'task unblock':'--id --repo --task-id --reason',
+'agent-register':'--id --repo --agent-id --name --responsibility --role --capabilities --boundaries --endpoint --endpoint-kind --runtime --adapter --provider --model --availability --labels --trust-domains --regions',
+'agent-discover':'--id --repo --capabilities --runtime --availability --trust-domain --task-kind --explore',
+'review job':'--id',
+'review interactive wait':'--id --task-id --execution-id',
+'review interactive fail':'--id --task-id --execution-id --reason',
+'review interactive abort':'--id --task-id --execution-id',
+'blocker show':'--id',
+'artifact validate':'--artifact --schema'}
 partial={k:set(v.split()) for k,v in partial.items()}
 partial_commands=set(proof)|set(partial)|{'reconcile','serve','status','escalation'}
 def source_ref(cmd,flag):
@@ -119,6 +133,12 @@ def rust_ref(cmd,status):
     if status not in {'PASS','PARTIAL'}:return ''
     if cmd=='job run':return 'rust/src/bin/relay-native-job/foreground.rs'
     if cmd=='status':return 'rust/src/bin/relay-native-job/status.rs'
+    if cmd.startswith('job ') and cmd not in {'job show','job list','job run'}:return 'rust/src/bin/relay-native-job/job_cli.rs'
+    if cmd.startswith('task ') and cmd not in {'task list','task show','task events'}:return 'rust/src/bin/relay-native-job/task_cli.rs'
+    if cmd.startswith('agent-'):return 'rust/src/bin/relay-native-job/agent_cli.rs'
+    if cmd=='artifact validate':return 'rust/src/bin/relay-native-job/platform_cli.rs'
+    if cmd.startswith('review ') or cmd.startswith('blocker ') or cmd.startswith('projection '):return 'rust/src/bin/relay-native-job/review_cli.rs'
+    if cmd=='reconcile':return 'rust/src/bin/relay-native-job/planner_cli.rs'
     if cmd=='workflow verify':return 'rust/src/bin/relay-native-job/workflow_verify.rs'
     if cmd.startswith('workflow '):return 'rust/src/bin/relay-native-job/workflow.rs'
     if cmd in {'job list','job show','task list','task show','task events','global help'}:

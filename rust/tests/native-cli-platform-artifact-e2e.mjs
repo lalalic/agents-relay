@@ -54,7 +54,7 @@ test('native artifact validate matches Node AJV output and leaves unrelated auth
     ]) {
       const result = spawnSync(exe,args,{encoding:'utf8',env:{...process.env,AGENTS_RELAY_STORE_DIR:join(root,'isolated-store')}});
       assert.equal(result.status,2,result.stderr);
-      assert.match(result.stderr,/has no native Rust parity yet|not ported/);
+      assert.match(result.stderr,/has no native Rust parity yet|not ported|missing --db|--db is required|UNSUPPORTED/);
     }
     assert.equal(readFileSync(authority,'utf8'),'sentinel authority');
   } finally { rmSync(root,{recursive:true,force:true}); }

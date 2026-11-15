@@ -121,7 +121,9 @@ fn interactive(args: &[String]) -> Result<Value, String> {
         }
         "fail" => {
             if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
-                return Err("interactive fail requires daemon-authorized ingress in Rust live mode".into());
+                return Err(
+                    "interactive fail requires daemon-authorized ingress in Rust live mode".into(),
+                );
             }
             check_options(
                 flags,
@@ -145,7 +147,9 @@ fn interactive(args: &[String]) -> Result<Value, String> {
         }
         "abort" => {
             if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
-                return Err("interactive abort requires daemon-authorized ingress in Rust live mode".into());
+                return Err(
+                    "interactive abort requires daemon-authorized ingress in Rust live mode".into(),
+                );
             }
             check_options(flags, &["--db", "--id", "--task-id", "--execution-id"])?;
             let path = db(flags)?;

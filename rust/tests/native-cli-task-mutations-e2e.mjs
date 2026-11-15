@@ -6,7 +6,7 @@ import {join,resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {DatabaseSync} from 'node:sqlite';
 
-const cli=resolve(import.meta.dirname,'../target/debug/relay-native-job');
+const cli=resolve(process.env.CARGO_TARGET_DIR ?? resolve(import.meta.dirname,'../target'), 'debug/relay-native-job');
 function fixture(){
  const root=mkdtempSync(join(tmpdir(),'relay-rust-authority-task-mutation-'));
  mkdirSync(join(root,'project/output'),{recursive:true});writeFileSync(join(root,'.relay-rust-authority-isolated-test'),'test-only');
