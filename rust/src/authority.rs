@@ -154,6 +154,7 @@ impl RelayAuthority {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| e.to_string())?;
+        Self::prepare_publication(&tx)?;
         let (stored_json, stored_time): (String, String) = tx
             .query_row(
                 "SELECT json,updated_at FROM job_snapshot WHERE job_id=?1",
@@ -166,7 +167,6 @@ impl RelayAuthority {
         let original: Value = serde_json::from_str(&stored_json).map_err(|e| e.to_string())?;
         let (next, events) = mutate(&tx, &original)?;
         check_snapshot(job_id, &original, &next, &stored_time, at)?;
-        Self::prepare_publication(&tx)?;
         let serialized = serde_json::to_string(&next).map_err(|e| e.to_string())?;
         let changes = tx
             .execute(

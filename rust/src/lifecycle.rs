@@ -3,7 +3,7 @@
 //! implements only side-effect-free mutation primitives; unknown effects fail.
 use crate::authority::{CommittedJob, RelayAuthority, ScriptClaim, WorkflowEvent};
 use crate::graph::{Decision, Graph, GraphInput};
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -142,6 +142,66 @@ impl<'g> TaskLifecycle<'g> {
                     return Err("Task attempt generation mismatch".into());
                 }
             }
+            let terminal_receipt = if let Some(claim) = launch.filter(|_| {
+                matches!(input.id.as_str(), "task.completed" | "task.failed")
+            }) {
+                if claim.job_id != job_id
+                    || claim.task_id != task_id
+                    || input.payload.get("jobId").and_then(Value::as_str) != Some(job_id)
+                    || input.payload.get("taskId").and_then(Value::as_str) != Some(task_id)
+                    || input.payload.get("executionId").and_then(Value::as_str)
+                        != Some(claim.execution_id.as_str())
+                    || input.payload.get("leaseOwner").and_then(Value::as_str)
+                        != Some(claim.owner.as_str())
+                    || input.payload.get("attempt").and_then(Value::as_i64)
+                        != Some(claim.attempt)
+                {
+                    return Err("worker terminal event identity does not match its claim".into());
+                }
+                if input.id == "task.completed" && result.is_none() {
+                    return Err("worker task.completed requires verified structured output".into());
+                }
+                let receipt = events
+                    .iter()
+                    .filter(|event| event.event_id == input.id)
+                    .collect::<Vec<_>>();
+                if receipt.len() != 1 {
+                    return Err("worker terminal event requires exactly one receipt".into());
+                }
+                let receipt = receipt[0];
+                let key = format!("{}/{}/{}/terminal", job_id, task_id, claim.execution_id);
+                if receipt.key != key
+                    || receipt.payload["event_id"] != key
+                    || receipt.payload["type"] != input.id
+                    || receipt.payload["jobId"] != job_id
+                    || receipt.payload["taskId"] != task_id
+                    || receipt.payload["executionId"] != claim.execution_id
+                    || receipt.payload["leaseOwner"] != claim.owner
+                    || receipt.payload["attempt"] != claim.attempt
+                {
+                    return Err("worker terminal event receipt identity mismatch".into());
+                }
+                let previous: Option<(String, String)> = tx
+                    .query_row(
+                        "SELECT event_id,payload_json FROM workflow_event_inbox WHERE consumer_id='rust-worker-terminal' AND event_key=?1",
+                        [&receipt.key],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()
+                    .map_err(|e| e.to_string())?;
+                if let Some((event_id, payload)) = previous {
+                    if event_id != receipt.event_id
+                        || serde_json::from_str::<Value>(&payload).map_err(|e| e.to_string())?
+                            != receipt.payload
+                    {
+                        return Err("worker terminal receipt key collision".into());
+                    }
+                    return Err("duplicate worker terminal event".into());
+                }
+                Some(receipt)
+            } else {
+                None
+            };
             let graph_decision = self.graph.decide(&state, input.clone(), guard_facts)?;
             let Decision::Accepted {
                 target, actions, ..
@@ -233,6 +293,14 @@ impl<'g> TaskLifecycle<'g> {
                     return Err("Worker result has no verified COMPLETED object".into());
                 }
                 task["result"] = result.clone();
+            }
+            if let Some(receipt) = terminal_receipt {
+                tx.execute(
+                    "INSERT INTO workflow_event_inbox(consumer_id,event_key,event_id,payload_json,consumed_at) VALUES('rust-worker-terminal',?1,?2,?3,?4)",
+                    params![receipt.key, receipt.event_id,
+                        serde_json::to_string(&receipt.payload).map_err(|e| e.to_string())?, at],
+                )
+                .map_err(|e| e.to_string())?;
             }
             if let Some(claim)=launch {
                 if !matches!(input.id.as_str(),"task.completed"|"task.failed")

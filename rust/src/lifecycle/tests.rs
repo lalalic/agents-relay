@@ -41,7 +41,7 @@ fn launch_receipt_and_terminal_task_state_commit_or_rollback_together() {
     let event = |name: &str| GraphInput {
         transport: "event".into(),
         id: name.into(),
-        payload: json!({"taskId":"101","executionId":claim.execution_id,
+        payload: json!({"jobId":"91","taskId":"101","executionId":claim.execution_id,
                 "leaseOwner":claim.owner,"attempt":1}),
     };
     engine
@@ -58,6 +58,7 @@ fn launch_receipt_and_terminal_task_state_commit_or_rollback_together() {
         )
         .unwrap();
     let proof = || json!({"data":{"status":"COMPLETED","output":{"receipt":"ok"}}});
+    let terminal_key = format!("91/101/{}/terminal", claim.execution_id);
     let mut stale = claim.clone();
     stale.attempt_key = "unreserved".into();
     let make = || TaskTransition {
@@ -66,7 +67,13 @@ fn launch_receipt_and_terminal_task_state_commit_or_rollback_together() {
         input: event("task.completed"),
         guard_facts: &guards,
         at: "2026-11-13T20:00:04Z",
-        events: vec![],
+        events: vec![WorkflowEvent {
+            key: terminal_key.clone(),
+            event_id: "task.completed".into(),
+            payload: json!({"event_id":terminal_key,"type":"task.completed",
+                "jobId":"91","taskId":"101","executionId":claim.execution_id,
+                "leaseOwner":claim.owner,"attempt":claim.attempt}),
+        }],
     };
     assert!(engine
         .apply_with_launch_receipt(&mut store, make(), Some(proof()), &stale)
@@ -98,6 +105,172 @@ fn launch_receipt_and_terminal_task_state_commit_or_rollback_together() {
             .outcome,
         crate::authority::ActionOutcome::Verified
     );
+}
+
+#[test]
+fn worker_terminal_receipt_is_correlated_atomic_and_deduplicated_after_reopen() {
+    use crate::authority::ScriptClaimRequest;
+    let (_dir, path) = setup();
+    let mut store = RelayAuthority::open_existing(&path).unwrap();
+    store
+        .commit_job("91", "2026-11-13T20:00:01Z", |old| {
+            let mut new = old.clone();
+            new["updatedAt"] = json!("2026-11-13T20:00:01Z");
+            let task = &mut new["tasks"][0];
+            task["adapter"] = json!("script");
+            task["dependencies"] = json!([]);
+            task["attempt"] = json!(0);
+            task["maxAttempts"] = json!(3);
+            task["executionId"] = Value::Null;
+            task["leaseOwner"] = Value::Null;
+            Ok((new, vec![]))
+        })
+        .unwrap();
+    let claim = store
+        .claim_queued_script(&ScriptClaimRequest {
+            job_id: "91",
+            task_id: "101",
+            execution_id: "terminal-exec",
+            owner: "isolated",
+            at: "2026-11-13T20:00:02Z",
+            lease_expires_at: "2099-01-01T00:00:00Z",
+        })
+        .unwrap()
+        .unwrap();
+    let graph = graph();
+    let engine = TaskLifecycle::new(&graph);
+    let guards = HashMap::new();
+    let identity = || {
+        json!({"jobId":"91","taskId":"101","executionId":"terminal-exec",
+        "leaseOwner":"isolated","attempt":1})
+    };
+    engine
+        .apply(
+            &mut store,
+            TaskTransition {
+                job_id: "91",
+                task_id: "101",
+                input: GraphInput {
+                    transport: "event".into(),
+                    id: "task.started".into(),
+                    payload: identity(),
+                },
+                guard_facts: &guards,
+                at: "2026-11-13T20:00:03Z",
+                events: vec![],
+            },
+        )
+        .unwrap();
+    let key = "91/101/terminal-exec/terminal";
+    let receipt = WorkflowEvent {
+        key: key.into(),
+        event_id: "task.completed".into(),
+        payload: json!({"event_id":key,"type":"task.completed","jobId":"91",
+            "taskId":"101","executionId":"terminal-exec","leaseOwner":"isolated",
+            "attempt":1,"reason":"verified"}),
+    };
+    let make = |payload: Value| TaskTransition {
+        job_id: "91",
+        task_id: "101",
+        input: GraphInput {
+            transport: "event".into(),
+            id: "task.completed".into(),
+            payload,
+        },
+        guard_facts: &guards,
+        at: "2026-11-13T20:00:04Z",
+        events: vec![receipt.clone()],
+    };
+    let proof = || json!({"data":{"status":"COMPLETED","output":{"artifact":"verified"}}});
+    assert!(engine
+        .apply_with_launch_receipt(&mut store, make(identity()), None, &claim)
+        .unwrap_err()
+        .contains("requires verified structured output"));
+    assert_eq!(
+        store.read_job("91").unwrap().unwrap()["tasks"][0]["state"],
+        "RUNNING"
+    );
+    let mut mismatched_job = identity();
+    mismatched_job["jobId"] = json!("other-job");
+    assert!(engine
+        .apply_with_launch_receipt(&mut store, make(mismatched_job), Some(proof()), &claim)
+        .is_err());
+    assert_eq!(
+        store.read_job("91").unwrap().unwrap()["tasks"][0]["state"],
+        "RUNNING",
+        "a terminal event for another Job must not apply the transition"
+    );
+    let mut mismatched = identity();
+    mismatched["taskId"] = json!("other-task");
+    assert!(engine
+        .apply_with_launch_receipt(&mut store, make(mismatched), Some(proof()), &claim)
+        .is_err());
+    assert_eq!(
+        store.read_job("91").unwrap().unwrap()["tasks"][0]["state"],
+        "RUNNING"
+    );
+    let inbox_count: i64 = rusqlite::Connection::open(&path)
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM workflow_event_inbox WHERE consumer_id='rust-worker-terminal'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(inbox_count, 0, "rejected receipts must not become durable");
+
+    let mut mismatched_receipt = receipt.clone();
+    mismatched_receipt.payload["leaseOwner"] = json!("stale-owner");
+    let mut bad_receipt_request = make(identity());
+    bad_receipt_request.events = vec![mismatched_receipt];
+    assert!(engine
+        .apply_with_launch_receipt(&mut store, bad_receipt_request, Some(proof()), &claim)
+        .unwrap_err()
+        .contains("receipt identity mismatch"));
+    assert_eq!(
+        store.read_job("91").unwrap().unwrap()["tasks"][0]["state"],
+        "RUNNING",
+        "a receipt from another lease owner must not apply the transition"
+    );
+    let inbox_count: i64 = rusqlite::Connection::open(&path)
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM workflow_event_inbox WHERE consumer_id='rust-worker-terminal'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(inbox_count, 0, "mismatched receipt must not become durable");
+
+    engine
+        .apply_with_launch_receipt(&mut store, make(identity()), Some(proof()), &claim)
+        .unwrap();
+    assert_eq!(
+        store.read_job("91").unwrap().unwrap()["tasks"][0]["state"],
+        "SUCCEEDED"
+    );
+    drop(store);
+
+    let mut reopened = RelayAuthority::open_existing(&path).unwrap();
+    assert!(engine
+        .apply_with_launch_receipt(&mut reopened, make(identity()), Some(proof()), &claim)
+        .unwrap_err()
+        .contains("duplicate worker terminal event"));
+    let job = reopened.read_job("91").unwrap().unwrap();
+    assert_eq!(job["tasks"][0]["state"], "SUCCEEDED");
+    assert_eq!(
+        job["tasks"][0]["result"]["data"]["output"]["artifact"],
+        "verified"
+    );
+    let inbox_count: i64 = rusqlite::Connection::open(&path)
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM workflow_event_inbox WHERE consumer_id='rust-worker-terminal'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(inbox_count, 1);
 }
 
 fn input(id: &str, execution_id: Option<&str>) -> GraphInput {

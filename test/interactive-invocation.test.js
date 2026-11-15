@@ -84,6 +84,42 @@ test('execution-bound decision normalization does not require invocation or Git 
  explicitBound.data.interactive.revision='bound-revision';
  assert.equal(normalizeInteractiveDecision(explicitBound).invocationId,'bound-invocation',
   'explicit bound identity remains available for durable matching');
+ const blankBound=structuredClone(event);blankBound.data.interactive.invocationId='  ';
+ assert.equal(normalizeInteractiveDecision(blankBound),null,'blank explicit identity is not a legacy omission');
+});
+
+test('event-only decision requires explicit invocationId before persistence while bound legacy fallback remains',async()=>{
+ const fixture=await temporaryStore();
+ try{
+  const job=makeJob();await fixture.store.saveJob(job);
+  const reconciler=managedReconciler(new ProjectedDurableStore(fixture.store,new InMemoryStore(job)),{owner:'test',adapters:[]});
+  const missing=decisionEvent(job.id,job.tasks[0].id,'exec-1','approved','');
+  Object.assign(missing.data.interactive,{revision:'a'.repeat(64),contentHash:'a'.repeat(64),revisionId:'preview-1',requestId:'request-1',idempotencyKey:'delivery-1'});
+  assert.equal(normalizeInteractiveDecision(missing),null,'event-only payload must not inherit executionId');
+  assert.equal((await reconciler.applyEvent(missing)).reason,'task.interactive_decision.ignored');
+  const empty=structuredClone(missing);empty.data.interactive.invocationId='';
+  assert.equal(normalizeInteractiveDecision(empty),null,'empty explicit identity is invalid');
+  assert.equal((await reconciler.applyEvent(empty)).reason,'task.interactive_decision.ignored');
+  const blank=structuredClone(missing);blank.data.interactive.invocationId='   ';
+  assert.equal(normalizeInteractiveDecision(blank),null,'blank explicit identity is invalid');
+  assert.equal((await reconciler.applyEvent(blank)).reason,'task.interactive_decision.ignored');
+  const db=new DatabaseSync(fixture.dbPath);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM host_invocation_decision').get().n,0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM host_invocation_event').get().n,0);
+  db.close();
+
+  const legacy=decisionEvent(job.id,job.tasks[0].id,'exec-1','approved','');
+  const delivery=normalizeInteractiveDecision(legacy);
+  assert.equal(delivery.invocationId,'exec-1','legacy bound payload keeps the documented executionId fallback');
+  assert.equal((await reconciler.applyEvent(legacy)).reason,'task.interactive_decision.ignored');
+  const beforeBinding=new DatabaseSync(fixture.dbPath);
+  assert.equal(beforeBinding.prepare('SELECT COUNT(*) AS n FROM host_invocation_decision').get().n,0);
+  assert.equal(beforeBinding.prepare('SELECT COUNT(*) AS n FROM host_invocation_event').get().n,0);
+  beforeBinding.close();
+  await reconciler.bindInteractiveInvocation(job.id,job.tasks[0],'exec-1');
+  assert.equal((await reconciler.applyEvent(legacy)).reason,'task.interactive_decision.accepted');
+  await reconciler.close();
+ }finally{await fixture.dispose()}
 });
 
 test('iPhone decision releases waiting Task and only resumes same Task',async()=>{

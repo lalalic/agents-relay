@@ -34,6 +34,7 @@ pub struct ReviewDelivery {
     pub job_id: String,
     pub task_id: String,
     pub execution_id: String,
+    #[serde(default)]
     pub invocation_id: String,
     pub revision: String,
     pub content_hash: Option<String>,
@@ -141,7 +142,7 @@ fn validate_delivery(delivery: &ReviewDelivery) -> Result<(), String> {
     if delivery.job_id.is_empty()
         || delivery.task_id.is_empty()
         || delivery.execution_id.is_empty()
-        || delivery.invocation_id.is_empty()
+        || delivery.invocation_id.trim().is_empty()
         || delivery.revision.is_empty()
         || delivery.event_id.is_empty()
     {
@@ -155,6 +156,9 @@ fn validate_delivery(delivery: &ReviewDelivery) -> Result<(), String> {
         || delivery.preview_id.is_some()
         || delivery.request_id.is_some();
     if event_only_fields {
+        if delivery.invocation_id.trim().is_empty() {
+            return Err("event-only Review invocationId required".into());
+        }
         let hash = delivery
             .content_hash
             .as_deref()
@@ -221,13 +225,90 @@ impl RelayAuthority {
         &mut self,
         delivery: &ReviewDelivery,
     ) -> Result<ReviewReceipt, String> {
-        validate_delivery(delivery)?;
-        let fingerprint = review_fingerprint(delivery)?;
-        let graph = Graph::parse(include_str!("../../../workflow/interactive-invocation.mmd"))?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| e.to_string())?;
+        // Historical bound event payloads may omit invocationId. Preserve the
+        // old executionId fallback only for that legacy shape; event-only
+        // decisions must carry their own explicit invocation identity.
+        let legacy_delivery;
+        let delivery = if delivery.invocation_id.is_empty()
+            && delivery.content_hash.is_none()
+            && delivery.revision_id.is_none()
+            && delivery.preview_id.is_none()
+            && delivery.request_id.is_none()
+        {
+            let snapshot: Option<String> = tx
+                .query_row(
+                    "SELECT json FROM job_snapshot WHERE job_id=?1",
+                    [&delivery.job_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            let job: Value = snapshot
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()
+                .map_err(|e| e.to_string())?
+                .unwrap_or(Value::Null);
+            let task = job
+                .get("tasks")
+                .and_then(Value::as_array)
+                .and_then(|tasks| {
+                    tasks.iter().find(|task| {
+                        task.get("id").and_then(Value::as_str) == Some(&delivery.task_id)
+                    })
+                });
+            let invocation = task.and_then(|task| task.get("interactiveInvocation"));
+            let state = task
+                .and_then(|task| task.get("state"))
+                .and_then(Value::as_str);
+            let bound = job.get("state").and_then(Value::as_str) == Some("ACTIVE")
+                && matches!(state, Some("RUNNING" | "AWAITING_DECISION"))
+                && (task
+                    .and_then(|task| task.get("executionId"))
+                    .and_then(Value::as_str)
+                    == Some(&delivery.execution_id)
+                    || state == Some("AWAITING_DECISION"))
+                && invocation
+                    .and_then(|value| value.get("invocationId"))
+                    .and_then(Value::as_str)
+                    == Some(&delivery.execution_id)
+                && invocation
+                    .and_then(|value| value.get("executionId"))
+                    .and_then(Value::as_str)
+                    == Some(&delivery.execution_id)
+                && invocation
+                    .and_then(|value| value.get("revision"))
+                    .and_then(Value::as_str)
+                    == Some(&delivery.revision)
+                && invocation
+                    .and_then(|value| value.get("status"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|status| {
+                        matches!(
+                            status,
+                            "awaiting_decision" | "changes_requested" | "approved"
+                        )
+                    });
+            if !bound {
+                return Err(
+                    "legacy Review invocationId fallback requires a bound invocation".into(),
+                );
+            }
+            legacy_delivery = ReviewDelivery {
+                invocation_id: delivery.execution_id.clone(),
+                ..delivery.clone()
+            };
+            &legacy_delivery
+        } else {
+            delivery
+        };
+        validate_delivery(delivery)?;
+        let fingerprint = review_fingerprint(delivery)?;
+        let graph = Graph::parse(include_str!("../../../workflow/interactive-invocation.mmd"))?;
         tx.execute_batch(HOST_TABLES).map_err(|e| e.to_string())?;
         let existing: Option<String> = tx.query_row(
             "SELECT fingerprint FROM host_invocation_decision WHERE job_id=?1 AND task_id=?2 AND invocation_id=?3",
@@ -701,6 +782,86 @@ mod tests {
         assert!(store.read_job("91").unwrap().unwrap()["tasks"][0]
             .get("interactiveInvocation")
             .is_none());
+    }
+
+    #[test]
+    fn event_only_requires_explicit_invocation_before_any_persistence_and_legacy_bound_fallback_remains(
+    ) {
+        let (_dir, path) = setup();
+        let mut store = RelayAuthority::open_existing(&path).unwrap();
+        store
+            .commit_job("91", "2026-11-13T20:00:01.000Z", |previous| {
+                let mut job = previous.clone();
+                job["updatedAt"] = json!("2026-11-13T20:00:01.000Z");
+                job["tasks"][0]["state"] = json!("RUNNING");
+                job["tasks"][0]["executionId"] = json!("exec1");
+                Ok((job, vec![]))
+            })
+            .unwrap();
+        let event_only: ReviewDelivery = serde_json::from_value(json!({
+            "jobId":"91", "taskId":"101", "executionId":"exec1",
+            "revision":"a".repeat(64), "contentHash":"a".repeat(64),
+            "revisionId":"preview-1", "requestId":"request-1", "idempotencyKey":"delivery-1",
+            "decision":"approved", "feedback":"", "eventId":"missing-invocation",
+            "deliveredAt":"2026-11-13T20:00:02.000Z"
+        }))
+        .unwrap();
+        assert!(store.accept_review_decision(&event_only).is_err());
+        let mut empty_invocation = event_only.clone();
+        empty_invocation.invocation_id.clear();
+        empty_invocation.event_id = "empty-invocation".into();
+        assert!(store.accept_review_decision(&empty_invocation).is_err());
+        let mut blank_invocation = event_only.clone();
+        blank_invocation.invocation_id = "   ".into();
+        blank_invocation.event_id = "blank-invocation".into();
+        assert!(store.accept_review_decision(&blank_invocation).is_err());
+        let persisted: i64 = store.connection.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('host_invocation_event','host_invocation_decision')",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(
+            persisted, 0,
+            "invalid event-only identity must be rejected before ledger creation"
+        );
+
+        let legacy: ReviewDelivery = serde_json::from_value(json!({
+            "jobId":"91", "taskId":"101", "executionId":"exec1", "revision":"exec1",
+            "decision":"approved", "feedback":"legacy", "eventId":"legacy-bound",
+            "deliveredAt":"2026-11-13T20:00:03.000Z"
+        }))
+        .unwrap();
+        assert!(store.accept_review_decision(&legacy).is_err());
+        let tables_after_unbound_legacy: i64 = store.connection.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('host_invocation_event','host_invocation_decision')",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(
+            tables_after_unbound_legacy, 0,
+            "fallback is limited to currently bound legacy decisions"
+        );
+
+        store
+            .commit_job("91", "2026-11-13T20:00:02.000Z", |previous| {
+                let mut job = previous.clone();
+                job["updatedAt"] = json!("2026-11-13T20:00:02.000Z");
+                job["tasks"][0]["state"] = json!("AWAITING_DECISION");
+                job["tasks"][0]["executionId"] = Value::Null;
+                job["tasks"][0]["interactiveInvocation"] = json!({
+                    "invocationId":"exec1", "executionId":"exec1", "revision":"exec1",
+                    "status":"awaiting_decision", "boundAt":"2026-11-13T20:00:02.000Z"
+                });
+                Ok((job, vec![]))
+            })
+            .unwrap();
+
+        let mut blank_bound = legacy.clone();
+        blank_bound.invocation_id = "   ".into();
+        blank_bound.event_id = "blank-bound-invocation".into();
+        assert!(store.accept_review_decision(&blank_bound).is_err());
+
+        let accepted = store.accept_review_decision(&legacy).unwrap();
+        assert_eq!(accepted.outcome, "accepted");
+        assert_eq!(accepted.invocation.unwrap()["invocationId"], "exec1");
     }
 
     #[test]

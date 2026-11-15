@@ -91,11 +91,14 @@
       "capability": "Terminal events and NATS",
       "nodeBehavior": "Correlated task events wake the reconciler; SQLite remains the durable authority and terminal events are validated before state changes.",
       "nodeSources": ["src/events.ts", "src/reconciler-runtime.ts", "src/events-bus-runtime.ts"],
-      "rustBehavior": "Pilot has limited NATS outbox and execution-bound event support but does not cover production event ingestion and all lifecycle event semantics.",
-      "rustSources": ["rust/src/authority.rs", "rust/src/native_outbox.rs", "rust/tests/native-nats-server-e2e.mjs"],
+      "rustBehavior": "The isolated worker terminal path validates Task, Job, execution, lease owner, and attempt correlation, then stores its terminal receipt atomically with the Graph-selected Task snapshot. The Rust pilot still lacks production event ingestion and complete lifecycle event semantics.",
+      "rustSources": ["rust/src/lifecycle.rs", "rust/src/authority.rs", "rust/src/native_script.rs", "rust/src/native_outbox.rs", "rust/src/lifecycle/tests.rs", "rust/tests/native-nats-server-e2e.mjs"],
       "status": "FAIL",
-      "evidence": [{"kind": "source", "detail": "NATS pilot implementation is limited to its native pilot event path; production ingress and complete lifecycle mapping are not integrated."}],
-      "nextAction": "Port production ingress validation, durable deduplication, and restart/replay behavior."
+      "evidence": [
+        {"kind": "deterministic-test", "detail": "PASS: cargo test --manifest-path rust/Cargo.toml worker_terminal_receipt_is_correlated_atomic_and_deduplicated_after_reopen rejects missing verified output, mismatched Job/Task identity, and a terminal receipt with a stale lease owner without Task/inbox mutation; it also verifies verified success, one durable inbox receipt, and duplicate rejection after reopening the isolated SQLite store. This narrow pilot check is not production-ingress parity."},
+        {"kind": "source", "detail": "Worker terminal input and receipt are bound to Job/Task/current execution/lease owner/attempt. The validated receipt and Graph-selected Task snapshot commit in one SQLite transaction. Production event ingestion and complete lifecycle mapping are not integrated; authenticated host/mobile, provider, production-service, and cutover evidence remains NOT_RUN."}
+      ],
+      "nextAction": "Integrate the validated durable receipt boundary with production event ingestion and finish complete lifecycle mapping; retain FAIL until that integration is implemented and verified."
     },
     {
       "capability": "Durable retry and recovery",
@@ -109,13 +112,13 @@
     },
     {
       "capability": "Interactive human Review",
-      "nodeBehavior": "Host Preview decisions bind to current invocation, execution, revision, and durable Task state; event-only decisions require complete immutable content/request identity for the current active execution; approval is never inferred from delivery.",
+      "nodeBehavior": "Host Preview decisions bind to current invocation, execution, revision, and durable Task state; event-only decisions require an explicit nonempty invocationId plus complete immutable content/request identity for the current active execution; only legacy bound decisions may fall back to executionId; approval is never inferred from delivery.",
       "nodeSources": ["src/interactive-invocation.ts", "src/host-invocation-store.ts", "workflow/interactive-invocation.mmd"],
-      "rustBehavior": "Rust has durable invocation-bound and complete event-only decision acceptance plus same-Task resume primitives; host Preview integration and live human decision flow are not part of the production service.",
+      "rustBehavior": "Rust has durable invocation-bound and complete event-only decision acceptance plus same-Task resume primitives; event-only decisions require an explicit invocationId while legacy bound payloads retain the executionId fallback. Host Preview integration and live human decision flow are not part of the production service.",
       "rustSources": ["rust/src/authority/review.rs", "rust/src/authority/review/resume.rs", "workflow/interactive-invocation.mmd"],
       "status": "NOT_RUN",
       "evidence": [
-        {"kind": "deterministic-test", "detail": "Node and Rust tests cover event-only content/request identity validation, current-execution fencing, same-revision replay rejection, durable duplicate handling after reopening SQLite, and no Task/Job completion from the accepted decision."},
+        {"kind": "deterministic-test", "detail": "PASS: test/interactive-invocation.test.js rejects missing, empty, and whitespace-only event-only invocationId before decision/event ledger writes while preserving bound legacy fallback; rust/src/authority/review.rs event_only_requires_explicit_invocation_before_any_persistence_and_legacy_bound_fallback_remains verifies the same Rust boundary. rust/tests/review-parity.mjs compares Node/Rust fingerprints and accepted explicit identities. Existing cases cover content/request validation, current-execution fencing, same-revision replay rejection, duplicate handling after SQLite reopen, and no Task/Job completion."},
         {"kind": "live-only", "detail": "NOT_RUN. Evidence gap: no authenticated host Preview or physical mobile Request Changes/Approve run, and no newly deployed Rust service integration. Risk: source checks do not prove the real host binds the decision to the current invocation/execution/content or that the active worker consumes it safely. Owner: Job owner/orchestrator. Prerequisites: deployed host integration, authenticated device/provider access, and a current Job/Task execution eligible for review; never use Job 629 before it is terminal with its owner decision preserved and new owner authorization."}
       ],
       "nextAction": "Run authenticated real-host/mobile Review and stale/forged receipt checks after a separately authorized production integration is available."

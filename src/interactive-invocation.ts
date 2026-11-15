@@ -27,6 +27,7 @@ export type InteractiveDecisionDelivery = {
   taskId: string;
   executionId: string;
   invocationId: string;
+  legacyInvocationIdFallback?: boolean;
   revision: string;
   decision: InteractiveDecision;
   feedback?: string;
@@ -130,7 +131,7 @@ export function normalizeInteractiveDecision(event: EventRecord): InteractiveDec
   const payload = event.data?.interactive;
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
   const value = payload as Record<string, unknown>;
-  const string = (key: string): string | null => typeof value[key] === 'string' && value[key].length > 0 ? value[key] as string : null;
+  const string = (key: string): string | null => typeof value[key] === 'string' && value[key].trim().length > 0 ? value[key] as string : null;
   const jobId = string('jobId');
   const taskId = string('taskId');
   const executionId = string('executionId');
@@ -138,7 +139,9 @@ export function normalizeInteractiveDecision(event: EventRecord): InteractiveDec
   if (!executionId) return null;
   const eventOnlyKeys = ['contentHash', 'revisionId', 'previewId', 'requestId'];
   const eventOnly = eventOnlyKeys.some(key => Object.hasOwn(value, key));
-  const invocationId = string('invocationId') ?? executionId;
+  const hasInvocationId = Object.hasOwn(value, 'invocationId');
+  const explicitInvocationId = string('invocationId');
+  const invocationId = explicitInvocationId ?? (!hasInvocationId && !eventOnly ? executionId : null);
   const revision = string('revision') ?? executionId;
   const decision = value.decision === 'approved' || value.decision === 'changes_requested' ? value.decision : null;
   if (!jobId || !taskId || !executionId || !invocationId || !revision || !decision) return null;
@@ -159,6 +162,7 @@ export function normalizeInteractiveDecision(event: EventRecord): InteractiveDec
       typeof comment.text !== 'string'))) return null;
   return {
     jobId, taskId, executionId, invocationId, revision, decision,
+    ...(!hasInvocationId ? { legacyInvocationIdFallback: true } : {}),
     feedback: feedback ?? undefined,
 
     contentHash, revisionId, previewId, requestId, idempotencyKey,
@@ -305,6 +309,15 @@ export class HostInteractiveInvocationCoordinator {
         (task.executionId !== delivery.executionId && task.state !== 'AWAITING_DECISION')) {
       await this.options.store.recordHostInvocationEvent?.(delivery, 'stale', interactiveDecisionFingerprint(delivery));
       return { outcome: 'stale', reason: 'execution_not_bound' };
+    }
+    if (delivery.legacyInvocationIdFallback) {
+      const invocation = task.interactiveInvocation;
+      const boundLegacy = job.state === 'ACTIVE' && ['RUNNING', 'AWAITING_DECISION'].includes(task.state) &&
+        invocation !== undefined &&
+        ['awaiting_decision', 'changes_requested', 'approved'].includes(invocation.status) &&
+        invocation.invocationId === delivery.executionId &&
+        invocation.executionId === delivery.executionId && invocation.revision === delivery.revision;
+      if (!boundLegacy) return { outcome: 'ignored', reason: 'legacy_invocation_id_requires_binding' };
     }
     const duplicate = await this.options.store.hasHostInvocationDecision?.(delivery.jobId, delivery.taskId, delivery.invocationId, interactiveDecisionFingerprint(delivery)) ?? false;
     const graphDecision = await decideInteractiveInvocation(task, delivery, duplicate, job.state === 'ACTIVE');

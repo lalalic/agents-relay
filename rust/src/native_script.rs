@@ -280,7 +280,8 @@ pub(crate) fn finish_script_worker(
         event_id: event.into(),
         payload: json!({
             "event_id":key,"type":event,"jobId":claim.job_id,
-            "taskId":claim.task_id,"executionId":claim.execution_id,"reason":reason,
+            "taskId":claim.task_id,"executionId":claim.execution_id,
+            "leaseOwner":claim.owner,"attempt":claim.attempt,"reason":reason,
         }),
     };
     let result = valid_result.ok().map(|data| {
