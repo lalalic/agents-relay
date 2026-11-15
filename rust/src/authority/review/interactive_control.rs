@@ -177,7 +177,7 @@ impl RelayAuthority {
                 let comment = json!({
                     "id":uuid::Uuid::new_v4().to_string(),
                     "text":format!("Interactive review delivery failed; rerun review request: {}", reason.chars().take(500).collect::<String>()),
-                    "author":"relay","createdAt":at,"jobId":job_id,"taskId":task_id
+                    "author":"cli","createdAt":at,"jobId":job_id,"taskId":task_id
                 });
                 if let Some(comments) = task["comments"].as_array_mut() {
                     comments.push(comment.clone());
@@ -342,6 +342,7 @@ mod tests {
         assert_eq!(job["tasks"][0]["state"], "QUEUED");
         assert!(job["tasks"][0].get("interactiveInvocation").is_none());
         assert_eq!(job["tasks"][0]["attempt"], 0);
+        assert_eq!(job["tasks"][0]["comments"][0]["author"], "cli");
     }
 
     #[test]
