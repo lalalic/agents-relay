@@ -822,6 +822,86 @@ mod tests {
     }
 
     #[test]
+    fn model_review_revision_preserves_trusted_route_and_can_claim_same_task() {
+        let (_dir, path) = setup();
+        let mut store = RelayAuthority::open_existing(&path).unwrap();
+        let route = json!({"provider":"fixture","model":"review-model",
+            "decidedBy":"fixture-router","decidedAt":"2026-11-13T20:00:00.000Z"});
+        let selection = json!({"workerId":"fixture-codex","adapter":"codex",
+            "selectedBy":"fixture-router","selectedAt":"2026-11-13T20:00:00.000Z","capabilities":["model"]});
+        store
+            .commit_job("91", "2026-11-13T20:00:01.000Z", |previous| {
+                let mut job = previous.clone();
+                job["updatedAt"] = json!("2026-11-13T20:00:01.000Z");
+                let task = &mut job["tasks"][0];
+                task["state"] = json!("AWAITING_DECISION");
+                task["adapter"] = json!("codex");
+                task["capabilities"] = json!(["model"]);
+                task["workerRequirements"] = json!({"capabilities":["model"]});
+                task["routing"] = route.clone();
+                task["workerSelection"] = selection.clone();
+                task["input"] = json!("original model input");
+                task["dependencies"] = json!([]);
+                task["executionId"] = Value::Null;
+                task["leaseOwner"] = Value::Null;
+                task["leaseExpiresAt"] = Value::Null;
+                task["interactiveInvocation"] = json!({
+                    "invocationId":"model-exec-1","executionId":"model-exec-1",
+                    "revision":"model-revision-1","status":"awaiting_decision",
+                    "boundAt":"2026-11-13T20:00:01.000Z"
+                });
+                Ok((job, vec![]))
+            })
+            .unwrap();
+        let request_changes = ReviewDelivery {
+            job_id: "91".into(),
+            task_id: "101".into(),
+            execution_id: "model-exec-1".into(),
+            invocation_id: "model-exec-1".into(),
+            revision: "model-revision-1".into(),
+            content_hash: None,
+            revision_id: None,
+            preview_id: None,
+            request_id: None,
+            decision: "changes_requested".into(),
+            feedback: Some("Revise the artifact".into()),
+            comments: None,
+            idempotency_key: Some("model-review-1".into()),
+            event_id: "model-review-event-1".into(),
+            delivered_at: "2026-11-13T20:00:02.000Z".into(),
+        };
+        assert_eq!(
+            store
+                .accept_review_decision(&request_changes)
+                .unwrap()
+                .outcome,
+            "accepted"
+        );
+        store
+            .resume_review_task("91", "101", "2026-11-13T20:00:03.000Z")
+            .unwrap();
+        let revised = store.read_job("91").unwrap().unwrap();
+        assert_eq!(revised["tasks"][0]["id"], "101");
+        assert_eq!(revised["tasks"][0]["state"], "QUEUED");
+        assert_eq!(revised["tasks"][0]["routing"], route);
+        assert_eq!(revised["tasks"][0]["workerSelection"], selection);
+        let claim = store
+            .claim_queued_codex(&crate::authority::ScriptClaimRequest {
+                job_id: "91",
+                task_id: "101",
+                execution_id: "model-exec-2".into(),
+                owner: "revision-model",
+                at: "2026-11-13T20:00:04.000Z",
+                lease_expires_at: "2026-11-13T20:01:04.000Z",
+            })
+            .unwrap();
+        assert!(
+            claim.is_some(),
+            "accepted Review must admit the same routed Model Task"
+        );
+    }
+
+    #[test]
     fn unbound_and_stale_decisions_are_not_approved() {
         let (_dir, path) = setup();
         let mut store = RelayAuthority::open_existing(&path).unwrap();
