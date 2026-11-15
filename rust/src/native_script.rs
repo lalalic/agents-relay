@@ -32,6 +32,7 @@ pub struct NativeScriptResult {
     pub worker: WorkerResult,
 }
 pub(crate) fn task_input(
+    job_id: &str,
     task_id: &str,
     execution_id: &str,
     owner: &str,
@@ -42,7 +43,7 @@ pub(crate) fn task_input(
         transport: "event".into(),
         id: event.into(),
         payload: json!({
-        "taskId":task_id,"executionId":execution_id,"leaseOwner":owner,"attempt":attempt}),
+        "jobId":job_id,"taskId":task_id,"executionId":execution_id,"leaseOwner":owner,"attempt":attempt}),
     }
 }
 pub(crate) fn exact_process(
@@ -184,6 +185,7 @@ pub fn execute_claimed_script(
                 job_id: &claim.job_id,
                 task_id: &claim.task_id,
                 input: task_input(
+                    &claim.job_id,
                     &claim.task_id,
                     &claim.execution_id,
                     &claim.owner,
@@ -302,6 +304,7 @@ pub(crate) fn finish_script_worker(
             job_id: &claim.job_id,
             task_id: &claim.task_id,
             input: task_input(
+                &claim.job_id,
                 &claim.task_id,
                 &claim.execution_id,
                 &claim.owner,
@@ -332,4 +335,20 @@ pub(crate) fn finish_script_worker(
         reason,
         worker: worker.clone(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::task_input;
+
+    #[test]
+    fn worker_graph_input_binds_exact_job_task_execution_and_claim() {
+        let input = task_input("91", "101", "exec-1", "worker-1", 2, "task.completed");
+        assert_eq!(input.payload["jobId"], "91");
+        assert_eq!(input.payload["taskId"], "101");
+        assert_eq!(input.payload["executionId"], "exec-1");
+        assert_eq!(input.payload["leaseOwner"], "worker-1");
+        assert_eq!(input.payload["attempt"], 2);
+        assert_eq!(input.id, "task.completed");
+    }
 }

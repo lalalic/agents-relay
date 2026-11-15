@@ -63,10 +63,11 @@
     {
       "capability": "Leases and owned process lifecycle",
       "node": {"behavior": "All disposable subprocesses use shared process-group ownership for cancellation, timeout, retries, and parent death.", "sources": ["src/owned-process.ts", "src/execution-process-tracker.ts"]},
-      "rust": {"behavior": "Pilot records exact process identity and delegates supervised groups to relay-worker-helper; helper message parsing now rejects oversized lines before reading beyond 1 MiB.", "sources": ["rust/src/authority/process.rs", "rust/src/supervised_script.rs"]},
+      "rust": {"behavior": "Pilot records exact process identity and delegates supervised groups to relay-worker-helper; native Worker start and terminal Graph inputs carry the exact claim Job/Task/execution/lease owner/attempt identity, while helper message parsing rejects oversized lines before reading beyond 1 MiB.", "sources": ["rust/src/authority/process.rs", "rust/src/supervised_script.rs", "rust/src/native_script.rs", "rust/src/lifecycle.rs"]},
       "status": "FAIL",
       "evidence": [
         {"kind": "deterministic-test", "detail": "Rust unit tests cover bounded protocol input, exact process identity, and helper lifecycle; this does not prove shared production subprocess ownership parity."},
+        {"kind": "deterministic-test", "detail": "PASS: `AGENTS_RELAY_STORE_DIR=$(mktemp -d) cargo test --locked --manifest-path rust/Cargo.toml` (62 passed), including `native_script::tests::worker_graph_input_binds_exact_job_task_execution_and_claim` and lifecycle mismatched-Job/duplicate-receipt rejection. PASS: after `cargo build --locked --manifest-path rust/Cargo.toml --bins`, `AGENTS_RELAY_STORE_DIR=$(mktemp -d) node --test rust/tests/native-daemon-e2e.mjs rust/tests/native-scheduler-e2e.mjs rust/tests/worker-helper-e2e.mjs` (16 passed). This exercises multi-Job dependency waves and restart dedupe, single-node and concurrent dependency-tick exclusion, SIGTERM cancellation without false success, and helper process recovery."},
         {"kind": "source", "detail": "Rust still uses an external helper and is not wired as the production daemon."}
       ],
       "nextAction": "Port the owned-process lifecycle behavior through a shared native supervisor and recoverable durable identity."

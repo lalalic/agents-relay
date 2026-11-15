@@ -124,6 +124,7 @@ pub fn execute_supervised_script(
                 job_id: &claim.job_id,
                 task_id: &claim.task_id,
                 input: task_input(
+                    &claim.job_id,
                     &claim.task_id,
                     &claim.execution_id,
                     &claim.owner,
