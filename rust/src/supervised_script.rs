@@ -10,7 +10,7 @@ use crate::worker::{WorkerResult, WorkerSpec};
 use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat, Utc};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,15 +31,24 @@ pub fn after_time(previous: &str) -> Result<String, String> {
     );
     Ok(next.to_rfc3339_opts(SecondsFormat::Millis, true))
 }
+const MAX_HELPER_MESSAGE_BYTES: u64 = 1_048_576;
+
 fn message<R: BufRead>(reader: &mut R) -> Result<Value, String> {
-    let mut line = String::new();
+    let mut line = Vec::new();
+    // Bound the read itself: checking read_line's byte count afterwards still
+    // allows an untrusted or broken helper to allocate an arbitrarily large
+    // String before we reject its message.
     let bytes = reader
-        .read_line(&mut line)
+        .take(MAX_HELPER_MESSAGE_BYTES + 1)
+        .read_until(b'\n', &mut line)
         .map_err(|e| format!("helper protocol read failed: {e}"))?;
-    if bytes == 0 || bytes > 1_048_576 {
-        return Err("helper protocol closed or oversized".into());
+    if bytes == 0 {
+        return Err("helper protocol closed".into());
     }
-    serde_json::from_str(&line).map_err(|e| format!("invalid worker-helper message: {e}"))
+    if bytes as u64 > MAX_HELPER_MESSAGE_BYTES {
+        return Err("helper protocol message exceeds 1 MiB".into());
+    }
+    serde_json::from_slice(&line).map_err(|e| format!("invalid worker-helper message: {e}"))
 }
 
 pub fn execute_supervised_script(
@@ -166,5 +175,40 @@ pub fn execute_supervised_script(
         (Ok(_), Ok(status)) => Err(format!("worker-helper exited after receipt with {status}")),
         (Err(error), _) => Err(error),
         (_, Err(error)) => Err(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{message, MAX_HELPER_MESSAGE_BYTES};
+    use std::io::Cursor;
+
+    #[test]
+    fn helper_message_parser_accepts_valid_ndjson_and_rejects_invalid_input() {
+        let mut valid = Cursor::new(b"{\"type\":\"started\"}\n".to_vec());
+        assert_eq!(message(&mut valid).unwrap()["type"], "started");
+
+        let mut malformed = Cursor::new(b"{not-json}\n".to_vec());
+        assert!(message(&mut malformed)
+            .unwrap_err()
+            .starts_with("invalid worker-helper message:"));
+
+        let mut closed = Cursor::new(Vec::<u8>::new());
+        assert_eq!(message(&mut closed).unwrap_err(), "helper protocol closed");
+    }
+
+    #[test]
+    fn oversized_helper_line_is_rejected_at_the_one_mib_boundary() {
+        let oversized = vec![b'x'; MAX_HELPER_MESSAGE_BYTES as usize + 4];
+        let mut reader = Cursor::new(oversized);
+        assert_eq!(
+            message(&mut reader).unwrap_err(),
+            "helper protocol message exceeds 1 MiB"
+        );
+        assert_eq!(
+            reader.position(),
+            MAX_HELPER_MESSAGE_BYTES + 1,
+            "parser must stop reading immediately after the bounded overflow byte"
+        );
     }
 }

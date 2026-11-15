@@ -1,0 +1,181 @@
+{
+  "schemaVersion": 1,
+  "baseline": "b92c7ab82d5c60d2146b2afae5d05f913f42c1c1",
+  "scope": "Node production implementation compared with the Rust source in this repository; this is not a production cutover certification.",
+  "statuses": ["PASS", "FAIL", "NOT_RUN"],
+  "capabilities": [
+    {
+      "capability": "CLI and public API",
+      "nodeBehavior": "Production CLI and HTTP Dashboard/API expose the operational Job, Task, review, and control surfaces.",
+      "nodeSources": ["src/cli.ts", "src/dashboard.ts", "src/dashboard-actions.ts"],
+      "rustBehavior": "The agents-relay-rust CLI is read-only for inventory and Graph inspection, while a separate pilot Job binary supports limited intake/activation; no production-compatible full CLI/API is exposed.",
+      "rustSources": ["rust/src/main.rs", "rust/src/bin/relay-native-job.rs", "rust/README.md"],
+      "status": "FAIL",
+      "evidence": [{"kind": "source", "detail": "Command dispatch in main.rs only implements Graph/store/scheduler/review inspection commands; README documents the isolated pilot boundary."}],
+      "nextAction": "Implement a production-compatible native CLI/API behind a separately authorized cutover plan."
+    },
+    {
+      "capability": "Daemon and service ownership",
+      "nodeBehavior": "Production daemon owns the configured canonical Relay store and serves the full operational runtime.",
+      "nodeSources": ["src/relayd.ts", "src/relayd-main.ts"],
+      "rustBehavior": "Native daemon requires the explicitly marked Rust pilot namespace or a disposable isolated test store and refuses the production store.",
+      "rustSources": ["rust/src/native_daemon.rs", "rust/README.md"],
+      "status": "FAIL",
+      "evidence": [{"kind": "source", "detail": "isolated_store_root/live_store_root enforce a separate marked database namespace."}],
+      "nextAction": "Keep Node production active; design and verify single-writer handoff only after all owner gates."
+    },
+    {
+      "capability": "Scheduler and reconciliation",
+      "nodeBehavior": "Production reconciler schedules ordinary Tasks, plans, recovery, reviews, and Job gates from durable state.",
+      "nodeSources": ["src/reconciler.ts", "src/reconciler-runtime.ts", "src/reconcile-coordinator.ts"],
+      "rustBehavior": "Native pilot reconciles selected Script/Model work, DAG nodes, dependencies, and a limited recovery path.",
+      "rustSources": ["rust/src/native_daemon.rs", "rust/src/authority/scheduler.rs", "rust/src/authority/dependencies.rs"],
+      "status": "FAIL",
+      "evidence": [{"kind": "source", "detail": "NativeTick and daemon loop implement only staged native paths; this does not cover all production reconciler branches."}],
+      "nextAction": "Port remaining Graph-selected reconciliation effects and deterministic recovery cases."
+    },
+    {
+      "capability": "Canonical Graph parsing and decisions",
+      "nodeBehavior": "Workflow decisions are made by canonical Mermaid workflow graphs through the shared dispatcher.",
+      "nodeSources": ["src/workflow/dispatcher.ts", "src/workflow/runtime.ts", "workflow/task-lifecycle.mmd", "workflow/job-lifecycle.mmd"],
+      "rustBehavior": "Rust parses and evaluates canonical Mermaid graphs; parity fixtures exercise shared branch decisions.",
+      "rustSources": ["rust/src/graph.rs", "rust/tests/parity.mjs", "rust/tests/topology-parity.mjs"],
+      "status": "PASS",
+      "evidence": [{"kind": "deterministic-test", "detail": "Rust graph parity and topology suites compare canonical graph decisions and bindings."}],
+      "nextAction": "Extend differential fixtures as additional production Graph effects are ported."
+    },
+    {
+      "capability": "DAG and dependency execution",
+      "nodeBehavior": "The shared reconciler materializes ready descendants and owns durable Task dependency semantics.",
+      "nodeSources": ["src/dag-task-runtime.ts", "src/dependency-validity.ts", "src/reconciler.ts"],
+      "rustBehavior": "Rust supports a staged Agent DAG and dependency proposals in the isolated daemon.",
+      "rustSources": ["rust/src/agent_graph.rs", "rust/src/authority/coordinator.rs", "rust/src/authority/dependencies.rs"],
+      "status": "FAIL",
+      "evidence": [{"kind": "deterministic-test", "detail": "DAG and dependency parity fixtures pass for implemented cases; production-wide recovery and every executor path are not covered."}],
+      "nextAction": "Complete parity for dependency revision, mixed executors, retries, and production ingress."
+    },
+    {
+      "capability": "Worker routing and providers",
+      "nodeBehavior": "Production Router and worker adapters select configured Codex, ChatGPT, Z.ai, and script providers with execution context.",
+      "nodeSources": ["src/execution-routing.ts", "src/worker-routing.ts", "src/reconciler.ts"],
+      "rustBehavior": "Pilot uses a trusted local manifest and explicit Model route data for limited native execution; it does not implement the production provider Router/adapters.",
+      "rustSources": ["rust/src/native_daemon/adapter.rs", "rust/src/native_daemon.rs"],
+      "status": "FAIL",
+      "evidence": [{"kind": "source", "detail": "Manifest parsing selects caller-supplied executables; production provider adapters and routing policy are absent."}],
+      "nextAction": "Port provider adapters and route decisions through configured capability sources."
+    },
+    {
+      "capability": "Project root and execution context resolution",
+      "nodeBehavior": "Shared resolver discovers project instructions, skills, visible agents, and runtime capabilities using documented precedence.",
+      "nodeSources": ["src/execution-context.ts", "src/agent-content-resolver.ts", "src/agent-prompt-builder.ts"],
+      "rustBehavior": "Pilot validates a bounded local project root and caller-supplied role manifest; it does not share the production context resolver.",
+      "rustSources": ["rust/src/native_daemon/adapter.rs", "rust/src/native_daemon/dag.rs"],
+      "status": "FAIL",
+      "evidence": [{"kind": "source", "detail": "Rust adapter validates supplied local paths but does not discover the Node resolver source layers."}],
+      "nextAction": "Integrate the shared execution-context contract and immutable prompt inputs."
+    },
+    {
+      "capability": "Leases and owned process lifecycle",
+      "nodeBehavior": "All disposable subprocesses use shared process-group ownership for cancellation, timeout, retries, and parent death.",
+      "nodeSources": ["src/owned-process.ts", "src/execution-process-tracker.ts"],
+      "rustBehavior": "Pilot records exact process identity and delegates supervised groups to relay-worker-helper; helper message parsing now rejects oversized lines before reading beyond 1 MiB.",
+      "rustSources": ["rust/src/authority/process.rs", "rust/src/supervised_script.rs"],
+      "status": "FAIL",
+      "evidence": [
+        {"kind": "deterministic-test", "detail": "Rust unit tests cover bounded protocol input, exact process identity, and helper lifecycle; this does not prove shared production subprocess ownership parity."},
+        {"kind": "source", "detail": "Rust still uses an external helper and is not wired as the production daemon."}
+      ],
+      "nextAction": "Port the owned-process lifecycle behavior through a shared native supervisor and recoverable durable identity."
+    },
+    {
+      "capability": "Terminal events and NATS",
+      "nodeBehavior": "Correlated task events wake the reconciler; SQLite remains the durable authority and terminal events are validated before state changes.",
+      "nodeSources": ["src/events.ts", "src/reconciler-runtime.ts", "src/events-bus-runtime.ts"],
+      "rustBehavior": "Pilot has limited NATS outbox and execution-bound event support but does not cover production event ingestion and all lifecycle event semantics.",
+      "rustSources": ["rust/src/authority.rs", "rust/src/native_outbox.rs", "rust/tests/native-nats-server-e2e.mjs"],
+      "status": "FAIL",
+      "evidence": [{"kind": "source", "detail": "NATS pilot implementation is limited to its native pilot event path; production ingress and complete lifecycle mapping are not integrated."}],
+      "nextAction": "Port production ingress validation, durable deduplication, and restart/replay behavior."
+    },
+    {
+      "capability": "Durable retry and recovery",
+      "nodeBehavior": "Relay records uncertain outcomes and requires diagnosis before retry or escalation; leases and attempts are durable.",
+      "nodeSources": ["src/task-recovery.ts", "src/worker-failure-recovery.ts", "src/execution-recovery.ts"],
+      "rustBehavior": "Pilot has exact-process recovery assessment and safe failure of proven expired leases, but not the full troubleshooting and recovery workflow.",
+      "rustSources": ["rust/src/authority/recovery.rs", "rust/src/recovery.rs", "rust/src/authority/process.rs"],
+      "status": "FAIL",
+      "evidence": [{"kind": "deterministic-test", "detail": "Recovery parity covers implemented process states; complete troubleshooting ownership and all restart paths remain absent."}],
+      "nextAction": "Port diagnosis, ownership, and recovery transitions from their canonical workflows."
+    },
+    {
+      "capability": "Interactive human Review",
+      "nodeBehavior": "Host Preview decisions bind to current invocation, execution, revision, and durable Task state; approval is never inferred from delivery.",
+      "nodeSources": ["src/interactive-invocation.ts", "src/host-invocation-store.ts", "workflow/interactive-invocation.mmd"],
+      "rustBehavior": "Rust has durable invocation-bound decision acceptance and resume primitives, but host Preview integration and live human decision flow are not part of production service.",
+      "rustSources": ["rust/src/authority/review.rs", "rust/src/authority/review/resume.rs"],
+      "status": "NOT_RUN",
+      "evidence": [{"kind": "live-only", "detail": "Authenticated host Preview, physical mobile Request Changes/Approve, and newly deployed Rust service behavior have not been run for this task."}],
+      "nextAction": "Run authenticated real-host/mobile Review and stale/forged receipt checks after a separately authorized integration is available."
+    },
+    {
+      "capability": "Plans and planner orchestration",
+      "nodeBehavior": "Planner rounds and apply/recovery semantics are Graph-selected and durably persisted in the canonical Job store.",
+      "nodeSources": ["src/planner-runtime.ts", "src/workflow/planner-orchestration-v2.ts", "workflow/planner-orchestration.mmd"],
+      "rustBehavior": "No production Planner executor or full Plan lifecycle is implemented in Rust.",
+      "rustSources": ["rust/src/main.rs", "rust/src/native_daemon.rs"],
+      "status": "FAIL",
+      "evidence": [{"kind": "source", "detail": "Rust CLI and daemon contain no planner execution path."}],
+      "nextAction": "Implement Plan persistence and Planner execution only after complete graph/action parity is designed."
+    },
+    {
+      "capability": "Troubleshooting and escalation",
+      "nodeBehavior": "Canonical escalation/recovery workflows select the configured executor and keep technical failure distinct from human blockers.",
+      "nodeSources": ["src/troubleshooter.ts", "src/cli-escalation.ts", "workflow/escalation.mmd", "workflow/troubleshooter.mmd"],
+      "rustBehavior": "Rust exposes limited recovery assessment but no configured escalation executor lifecycle.",
+      "rustSources": ["rust/src/recovery.rs", "rust/src/main.rs"],
+      "status": "FAIL",
+      "evidence": [{"kind": "source", "detail": "No Rust escalation command binding or troubleshooting execution route is present."}],
+      "nextAction": "Port the trusted deployment executor boundary and escalation graph effects."
+    },
+    {
+      "capability": "JEL Final Review, revisions, merge, completion",
+      "nodeBehavior": "Final Review is SHA-bound; changes-required starts a repair Plan; PASS and local merge are independent gates before completion.",
+      "nodeSources": ["src/reconciler-review.ts", "src/review-replan.ts", "src/local-git-merge.ts", "workflow/review-lifecycle.mmd", "workflow/job-lifecycle.mmd"],
+      "rustBehavior": "Rust can propose Final Review findings and complete a narrowly eligible no-review pilot Job; it does not implement the full JEL gate sequence.",
+      "rustSources": ["rust/src/final_review.rs", "rust/src/native_job.rs", "rust/src/native_daemon.rs"],
+      "status": "FAIL",
+      "evidence": [{"kind": "source", "detail": "No Rust SHA-bound independent reviewer, Planner revision loop, local merge workflow, or production completion gate exists."}],
+      "nextAction": "Implement the complete independent Review/Plan/Merge lifecycle before any production replacement."
+    },
+    {
+      "capability": "Dashboard API, controls, and history",
+      "nodeBehavior": "Production Dashboard exposes full Jobs, Tasks, events, and JEL controls over SQLite inventory.",
+      "nodeSources": ["src/dashboard.ts", "src/dashboard-data.ts", "src/dashboard-jel.ts"],
+      "rustBehavior": "Rust pilot data is exposed through a separate read-only /rust/ view; full Dashboard behavior stays Node-owned.",
+      "rustSources": ["rust/README.md", "src/dashboard.ts"],
+      "status": "FAIL",
+      "evidence": [{"kind": "source", "detail": "Rust does not implement the production Dashboard API or controls."}],
+      "nextAction": "Port the full production Dashboard contract and verify browser/mobile flows."
+    },
+    {
+      "capability": "Canonical SQLite authority and dual-writer exclusion",
+      "nodeBehavior": "Relay V2 SQLite owns lifecycle truth; production has one writer and projections cannot become a second authority.",
+      "nodeSources": ["src/local-authority-store.ts", "src/relay-store.ts", "src/unified-relay-schema.ts"],
+      "rustBehavior": "Rust uses compatible Job snapshots for isolated pilot state and explicitly refuses the TypeScript production store.",
+      "rustSources": ["rust/src/authority.rs", "rust/src/native_daemon.rs"],
+      "status": "FAIL",
+      "evidence": [{"kind": "deterministic-test", "detail": "Rust authority/store parity tests exercise V2 SQLite snapshots, while daemon namespace guards intentionally keep Rust state separate from the production Node authority."}],
+      "nextAction": "After owner gates, add a verified single-writer handoff to the canonical V2 store with backup and rollback evidence."
+    },
+    {
+      "capability": "Production-shaped runtime, browser/mobile, and cutover",
+      "nodeBehavior": "Existing Node daemon and Job 629 remain production-owned; full replacement requires live gates and rollback proof.",
+      "nodeSources": ["src/relayd.ts", "workflow/job-lifecycle.mmd"],
+      "rustBehavior": "No production cutover or real production-shaped Dashboard/Review/JEL run was performed for this task.",
+      "rustSources": ["rust/README.md", "rust/src/native_daemon.rs"],
+      "status": "NOT_RUN",
+      "evidence": [{"kind": "live-only", "detail": "No live service, browser, physical iPhone, provider, cutover, rollback, or Job 629 operation was performed."}],
+      "nextAction": "Keep Node production operational; require Job 629 terminal with review preserved, complete live JEL/UI parity, rollback proof, and explicit owner cutover authorization."
+    }
+  ]
+}
