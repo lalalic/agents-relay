@@ -142,7 +142,7 @@ export async function evaluateRecoveryMatrix(){
        && result.actual.plans[0]?.status==='FAILED'
        && result.actual.plans[1]?.status==='SUCCEEDED'
        && result.trace[0].planStatuses[0]?.status==='FAILED'
-       && result.trace[4].after.some(t=>t.id==='recover-plan-1'&&t.state==='SUCCEEDED')
+       && result.trace[4].after.some(t=>t.recoveryPlanId==='plan-1'&&t.state==='SUCCEEDED')
        && result.trace[5].planStatuses.some(p=>p.id==='plan-2'&&p.status==='SUCCEEDED')
        && result.observedEvents.some(e=>e.event==='planner.failed')
        && result.observedEvents.some(e=>e.event==='planner.completed')
@@ -158,9 +158,9 @@ export async function evaluateRecoveryMatrix(){
      : path.id==='stale-replay-after-restart'
      ? result.trace[5].event==='restart'&&result.trace[9].progress===false&&result.trace[10].progress===false&&result.trace[9].before.some(t=>t.id==='a'&&t.state==='SUCCEEDED')&&result.trace[10].after.some(t=>t.id==='a'&&t.state==='SUCCEEDED')
      : path.id==='review-changes-required'
-     ? result.trace[5].after.some(t=>t.id.startsWith('revision-') && t.id!=='revision-head-1'&&t.state==='QUEUED')&&result.trace[11].progress===false&&events.includes('review.approved')
+     ? result.trace[5].after.some(t=>t.revision?.kind==='targeted'&&t.state==='QUEUED')&&result.trace[11].progress===false&&events.includes('review.approved')
      : path.id==='reviewer-failure-recovery'
-     ? result.trace[14].after.some(t=>t.id==='final-review-head-2'&&t.state==='FAILED')&&result.trace[18].after.some(t=>t.id==='troubleshoot-final-review-head-2'&&t.state==='SUCCEEDED')&&events.includes('task.recover')
+     ? result.trace[14].after.some(t=>t.agentName==='job-acceptance-reviewer'&&t.reviewHeadSha==='head-2'&&t.state==='FAILED')&&result.trace[18].after.some(t=>t.agentName==='troubleshooter'&&t.state==='SUCCEEDED')&&events.includes('task.recover')
      : path.id==='merge-failure-recovery'
      ? result.externalGitAttempts===2&&result.observedEvents.filter(x=>x.event.startsWith('job.merge.')).map(x=>x.event).join(',')==='job.merge.failed,job.merge.succeeded'
      : impossible

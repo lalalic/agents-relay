@@ -105,7 +105,7 @@ test('real Planner round retries, then Worker and Reviewer faults recover, Revie
  assert.equal(result.externalGitAttempts,2);
  assert.ok(result.trace[0].planStatuses[0].generatedTaskIds.length>0);
  assert.equal(result.trace[0].jobState,'ACTIVE','successful Plan cannot mean fulfilled Objective');
- assert.ok(result.trace.some(x=>x.event==='task.failed'&&x.after.some(t=>t.id.startsWith('troubleshoot-'))));
+ assert.ok(result.trace.some(x=>x.event==='task.failed'&&x.after.some(t=>t.agentName==='troubleshooter')));
  assert.ok(result.trace.some(x=>x.event==='review.changes_required'));
  assert.ok(result.trace.some(x=>x.event==='review.approved'));
  assert.ok(result.observedEvents.some(x=>x.event==='planner.retry'));
@@ -127,8 +127,8 @@ test('terminal FAILED Plan is recovered through Graph-authorized Troubleshooter 
  assert.equal(result.externalGitAttempts,2);
  assert.equal(result.trace[0].jobState,'ACTIVE');
  assert.equal(result.trace[0].planStatuses[0].status,'FAILED');
- assert.ok(result.trace[1].after.some(t=>t.id==='recover-plan-1'&&t.state==='QUEUED'));
- assert.ok(result.trace[4].after.some(t=>t.id==='recover-plan-1'&&t.state==='SUCCEEDED'));
+ assert.ok(result.trace[1].after.some(t=>t.recoveryPlanId==='plan-1'&&t.state==='QUEUED'));
+ assert.ok(result.trace[4].after.some(t=>t.recoveryPlanId==='plan-1'&&t.state==='SUCCEEDED'));
  assert.ok(result.trace[5].planStatuses.some(p=>p.id==='plan-2'&&p.status==='SUCCEEDED'));
  assert.ok(result.observedEvents.some(e=>e.event==='planner.failed'));
  assert.ok(result.observedEvents.some(e=>e.event==='planner.completed'));
@@ -153,7 +153,8 @@ test('terminal FAILED Plan cannot be recovered by unverified Troubleshooter clai
  const result=await runReplay(scenario);
  assert.equal(result.outcome,'PASS',result.errors.join('; '));
  assert.equal(result.actual.plans.length,1,'fabricated completion cannot start replacement Plan');
- assert.equal(result.actual.tasks['recover-plan-1'],'SUCCEEDED');
+ const planRecovery=result.trace[1].after.find(t=>t.recoveryPlanId==='plan-1');
+ assert.equal(result.actual.tasks[planRecovery.id],'SUCCEEDED');
  assert.equal(result.plannerCalls,1);
 });
 
@@ -210,7 +211,7 @@ test('L3 objective-only Job restarts and reaches Final Review before any automat
  assert.equal(result.outcome,'PASS',result.errors.join('; '));
  assert.equal(result.plannerCalls,1,'no automatic next Planner before reviewer verdict');
  assert.equal(result.actual.plans.length,1,'only original Plan is durable');
- assert.ok(Object.keys(result.actual.tasks).some(id=>id.startsWith('final-review-')),'Final Review must be created');
+ assert.ok(result.trace.at(-1).after.some(task=>task.agentName==='job-acceptance-reviewer'),'Final Review must be created');
  assert.ok(result.trace.some(step=>step.event==='restart'));
  assert.equal(result.actual.jobState,'ACTIVE');
 });

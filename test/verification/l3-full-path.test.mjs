@@ -34,14 +34,18 @@ test('merge failure is durable and includes a reason receipt', async () => {
 });
 
 test('worker fault produces durable FAILED and troubleshooter without releasing dependent task', async () => {
-  const result = await runFullPath({ id: 'worker-failure-dispatch', reviewEnabled: false, workerOutcomes: { a: ['failed'] }, expected: { jobState: 'ACTIVE', tasks: { a: 'FAILED', b: 'DRAFT', 'troubleshoot-a': 'SUCCEEDED' } } });
+  const result = await runFullPath({ id: 'worker-failure-dispatch', reviewEnabled: false, workerOutcomes: { a: ['failed'] }, expected: { jobState: 'ACTIVE', tasks: { a: 'FAILED', b: 'DRAFT' } } });
   assert.equal(result.outcome, 'PASS', JSON.stringify({ errors: result.errors, actual: result.actual }));
-  assert.ok(result.events.some(event => event.type === 'troubleshooter.created' && event.taskId === 'troubleshoot-a'));
+  const recovery = result.actual.taskDetails.find(item => item.agentName === 'troubleshooter');
+  assert.equal(recovery?.state, 'SUCCEEDED');
 });
 
 test('reviewer fault remains failure despite troubleshooter execution completion', async () => {
-  const result = await runFullPath({ id: 'reviewer-failure-dispatch', reviewVerdicts: { '*': ['failed'] }, expected: { jobState: 'ACTIVE', tasks: { 'final-review-head-1': 'FAILED', 'troubleshoot-final-review-head-1': 'SUCCEEDED' } } });
+  const result = await runFullPath({ id: 'reviewer-failure-dispatch', reviewVerdicts: { '*': ['failed'] }, expected: { jobState: 'ACTIVE' } });
   assert.equal(result.outcome, 'PASS', JSON.stringify({ errors: result.errors, actual: result.actual }));
+  const tasks = result.actual.taskDetails;
+  assert.equal(tasks.find(item => item.agentName === 'job-acceptance-reviewer')?.state, 'FAILED');
+  assert.equal(tasks.find(item => item.agentName === 'troubleshooter')?.state, 'SUCCEEDED');
   assert.equal(result.actual.localMerge.status, 'pending');
 });
 

@@ -35,8 +35,10 @@ test('human escalation durable event -> notification receipt -> unblock Troubles
  assert.equal(result.outcome,'PASS',result.errors.join('; '));
  const escalationEvents=result.observedEvents.filter(e=>e.event==='escalation.requested');
  assert.equal(escalationEvents.length,1,'repeated escalation never duplicates notification request');
- const firstBlocked=result.trace.find(t=>t.after.find(x=>x.id==='troubleshoot-a')?.state==='BLOCKED');
- assert.deepEqual(firstBlocked.escalations,[{taskId:'troubleshoot-a',status:'pending',notificationStatus:'pending'}]);
+ const firstBlocked=result.trace.find(t=>t.after.find(x=>x.agentName==='troubleshooter'&&x.state==='BLOCKED'));
+ const recoveryTaskId=firstBlocked?.after.find(x=>x.agentName==='troubleshooter')?.id;
+ assert.ok(recoveryTaskId,'durable Troubleshooter Task should be present');
+ assert.deepEqual(firstBlocked.escalations,[{taskId:recoveryTaskId,status:'pending',notificationStatus:'pending'}]);
  assert.equal(firstBlocked.after.find(t=>t.id==='a').state,'FAILED','original stays failed');
  assert.ok(result.trace.every(t=>t.after.find(x=>x.id==='a')?.state!=='BLOCKED'),'ordinary original never enters BLOCKED');
  const retryResolutions=result.trace.filter(t=>t.event==='task.recover').map(t=>t.taskResolutions.find(r=>r.taskId==='a'));
