@@ -29,6 +29,30 @@ intentional while the Vlog production Job is pending human Review.
 - Rust dashboard GET /api/jobs lists at most 20 sanitized Job/task state
   summaries. It deliberately omits worker inputs, outputs and private media.
 
+The native read-only HTTP slice serves `GET /api/jobs` with case-insensitive
+title/ID search (`q`), repeated or comma-separated durable lifecycle filters
+(`status`/`statuses`), exact repository filters (`repo`/`repositories`), and
+`page`/`pageSize` pagination (page size is capped at 20). It returns the
+filtered Jobs, the unfiltered repository list, and normalized pagination
+metadata. `GET /api/jobs/{id}` returns one sanitized Job and Task summary.
+`GET /api/events?job=ID&task=ID&limit=1..60` returns Task-scoped events already
+stored in the isolated Rust authority's event inbox/outbox. It does not query
+the production Events Bus history service, mutate lifecycle state, expose
+worker inputs/outputs, or provide write controls. This endpoint slice is not
+full Dashboard or production API parity.
+
+Build and start the native service with an explicitly selected, already
+initialized Rust live-namespace database:
+
+```sh
+cargo build --locked --manifest-path rust/Cargo.toml --bin relay-native-dashboard
+RELAY_RUST_LIVE_MODE=pilot-live rust/target/debug/relay-native-dashboard \
+  --db "$HOME/.local/state/agents-relay/rust-live/relay.sqlite" --port 8788
+```
+
+The entrypoint binds only to loopback and rejects paths outside the marked Rust
+namespace. Do not point it at the Node production database.
+
 This live namespace is a verified Rust scheduler in a running native service,
 but is NOT a full Node.js Relay production cutover. In particular, existing
 Node.js Jobs still need their own Reconciler and Review/JEL guarantees.
