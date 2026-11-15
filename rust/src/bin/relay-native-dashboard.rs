@@ -358,6 +358,50 @@ fn handle(mut tcp: TcpStream, db: &Path) -> Result<(), String> {
                 Err(error) => respond_json(&mut tcp, "400 Bad Request", &json!({"error":error})),
             }
         }
+        _ if path.starts_with("/api/jobs/") && path.ends_with("/tasks") => {
+            let id = &path["/api/jobs/".len()..path.len() - "/tasks".len()];
+            if id.is_empty() || id.len() > 20 || !id.bytes().all(|b| b.is_ascii_digit()) {
+                return respond_json(&mut tcp, "404 Not Found", &json!({}));
+            }
+            match RelayReader::open(db).and_then(|reader| reader.list_tasks(id)) {
+                Ok(Some(tasks)) => respond_json(&mut tcp, "200 OK", &Value::Array(tasks)),
+                Ok(None) => respond_json(&mut tcp, "404 Not Found", &json!({})),
+                Err(error) if error.contains("not found") => {
+                    respond_json(&mut tcp, "404 Not Found", &json!({"error":error}))
+                }
+                Err(error) => respond_json(
+                    &mut tcp,
+                    "500 Internal Server Error",
+                    &json!({"error":error}),
+                ),
+            }
+        }
+        _ if path.starts_with("/api/jobs/") && path.contains("/tasks/") => {
+            let Some((id, task_id)) = path["/api/jobs/".len()..].split_once("/tasks/") else {
+                return respond_json(&mut tcp, "404 Not Found", &json!({}));
+            };
+            if id.is_empty()
+                || id.len() > 20
+                || !id.bytes().all(|b| b.is_ascii_digit())
+                || task_id.is_empty()
+                || task_id.len() > 20
+                || !task_id.bytes().all(|b| b.is_ascii_digit())
+            {
+                return respond_json(&mut tcp, "404 Not Found", &json!({}));
+            }
+            match RelayReader::open(db).and_then(|reader| reader.get_task(id, task_id)) {
+                Ok(Some(task)) => respond_json(&mut tcp, "200 OK", &task),
+                Ok(None) => respond_json(&mut tcp, "404 Not Found", &json!({})),
+                Err(error) if error.contains("not found") => {
+                    respond_json(&mut tcp, "404 Not Found", &json!({"error":error}))
+                }
+                Err(error) => respond_json(
+                    &mut tcp,
+                    "500 Internal Server Error",
+                    &json!({"error":error}),
+                ),
+            }
+        }
         _ if path.starts_with("/api/jobs/") => {
             let id = &path["/api/jobs/".len()..];
             if id.is_empty() || id.len() > 20 || !id.bytes().all(|b| b.is_ascii_digit()) {

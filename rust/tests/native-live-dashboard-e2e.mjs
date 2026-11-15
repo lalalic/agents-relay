@@ -94,10 +94,26 @@ test('Live Rust namespace persists own real Jobs, real HTTP Dashboard, rejects p
   assert.ok(Array.isArray(eventsBefore),'Task event endpoint returns a JSON event array');
   const durableBefore=invoke(cli,['show','--db',f.db,'--job-id',j.jobId],f.env);
   assert.equal(durableBefore.job.state,'COMPLETED');
+  const taskListUrl=base+'/api/jobs/'+j.jobId+'/tasks';
+  const taskListResponse=await fetch(taskListUrl);
+  assert.equal(taskListResponse.status,200);
+  const taskList=await taskListResponse.json();
+  assert.deepEqual(taskList,durableBefore.job.tasks,'Task list matches the Node Job snapshot Task array');
+  const taskId=durableBefore.job.tasks[0].id;
+  const taskDetailUrl=taskListUrl+'/'+taskId;
+  assert.deepEqual(await(await fetch(taskDetailUrl)).json(),durableBefore.job.tasks[0]);
+  assert.equal((await fetch(taskListUrl+'/',{method:'POST'})).status,405);
+  assert.equal((await fetch(base+'/api/jobs/not-numeric/tasks')).status,404);
+  assert.equal((await fetch(base+'/api/jobs/999999/tasks')).status,404);
+  assert.equal((await fetch(taskListUrl+'/999999')).status,404);
+  assert.equal((await fetch(taskListUrl+'/not-numeric')).status,404);
+  assert.equal((await fetch(taskListUrl+'/')).status,404);
+  assert.equal((await fetch(base+'/api/jobs/999999/tasks/1')).status,404);
   assert.equal((await fetch(base+'/api/jobs?status=completed')).status,200);
   assert.deepEqual(await(await fetch(eventUrl)).json(),eventsBefore);
   const durableAfter=invoke(cli,['show','--db',f.db,'--job-id',j.jobId],f.env);
   assert.deepEqual(durableAfter,durableBefore);
+  assert.deepEqual(await(await fetch(taskListUrl)).json(),taskList);
   const replay=invoke(daemon,['--once','--db',f.db,'--manifest',f.manifest,'--helper',helper],f.env);
   assert.equal(replay.report.tasksClaimed,0);
   assert.equal(replay.report.jobsCompleted,0);
@@ -110,6 +126,9 @@ test('Live Rust namespace persists own real Jobs, real HTTP Dashboard, rejects p
   const activeResult=await(await fetch(base+'/api/jobs?q=read+only&status=ACTIVE&repo=rust-live')).json();
   assert.equal(activeResult.total,1);
   assert.equal(activeResult.jobs[0].state,'ACTIVE');
+  const activeTasks=await(await fetch(base+'/api/jobs/'+active.jobId+'/tasks')).json();
+  assert.deepEqual(activeTasks,activeBefore.job.tasks);
+  assert.equal((await fetch(base+'/api/jobs/'+active.jobId+'/tasks/'+activeTasks[0].id)).status,200);
   assert.deepEqual(invoke(cli,['show','--db',f.db,'--job-id',active.jobId],f.env),activeBefore);
   const bothStates=await(await fetch(base+'/api/jobs?status=ACTIVE&status=COMPLETED&pageSize=1')).json();
   assert.equal(bothStates.total,2);
@@ -131,6 +150,8 @@ test('Live Rust namespace persists own real Jobs, real HTTP Dashboard, rejects p
   }
   assert.ok(restarted,'native HTTP dashboard did not restart');
   assert.deepEqual(await(await fetch(eventUrl)).json(),eventsBefore);
+  assert.deepEqual(await(await fetch(taskListUrl)).json(),taskList);
+  assert.deepEqual(await(await fetch(taskDetailUrl)).json(),durableBefore.job.tasks[0]);
   const restartedJobs=(await(await fetch(base+'/api/jobs')).json()).jobs;
   assert.equal(restartedJobs.find(job=>job.id===j.jobId).state,'COMPLETED');
   assert.equal(restartedJobs.find(job=>job.id===active.jobId).state,'ACTIVE');

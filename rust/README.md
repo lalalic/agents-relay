@@ -35,6 +35,13 @@ title/ID search (`q`), repeated or comma-separated durable lifecycle filters
 `page`/`pageSize` pagination (page size is capped at 20). It returns the
 filtered Jobs, the unfiltered repository list, and normalized pagination
 metadata. `GET /api/jobs/{id}` returns one sanitized Job and Task summary.
+`GET /api/jobs/{id}/tasks` returns the ordered full Task array from that Job's
+authoritative snapshot, and `GET /api/jobs/{id}/tasks/{taskId}` returns one
+matching Task snapshot. These job-scoped reads match the Task records embedded
+in the Node Dashboard's `GET /api/job?id={id}` response. Missing Jobs or Tasks
+and malformed numeric path IDs return 404. All routes use the read-only SQLite
+reader; a successful HTTP response does not imply Task success or change
+lifecycle state.
 `GET /api/events?job=ID&task=ID&limit=1..60` returns Task-scoped events already
 stored in the isolated Rust authority's event inbox/outbox. It does not query
 the production Events Bus history service, mutate lifecycle state, expose

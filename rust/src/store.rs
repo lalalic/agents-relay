@@ -146,6 +146,30 @@ impl RelayReader {
         .transpose()
     }
 
+    /// Read the ordered Task snapshots embedded in the authoritative Job.
+    pub fn list_tasks(&self, job_id: &str) -> Result<Option<Vec<Value>>, String> {
+        let Some(snapshot) = self.get_job(job_id)? else {
+            return Ok(None);
+        };
+        let tasks = snapshot.job["tasks"]
+            .as_array()
+            .ok_or_else(|| format!("Job {job_id} has no task list"))?;
+        Ok(Some(tasks.clone()))
+    }
+
+    /// Read one Task snapshot without deriving lifecycle state or mutating it.
+    pub fn get_task(&self, job_id: &str, task_id: &str) -> Result<Option<Value>, String> {
+        if task_id.is_empty() || task_id.len() > 256 {
+            return Err("invalid task id".into());
+        }
+        let Some(tasks) = self.list_tasks(job_id)? else {
+            return Ok(None);
+        };
+        Ok(tasks
+            .into_iter()
+            .find(|task| task["id"].as_str() == Some(task_id)))
+    }
+
     /// Read Task-scoped event payloads already retained by Relay's native
     /// workflow inbox/outbox. This does not query the Events Bus service or
     /// create a parallel event-history store.
