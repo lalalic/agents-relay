@@ -10,6 +10,8 @@ pub mod graph;
 pub mod lifecycle;
 pub mod local_git;
 pub mod native_context;
+#[cfg(unix)]
+pub mod native_control;
 pub mod native_daemon;
 pub mod native_ingress;
 pub mod native_job;

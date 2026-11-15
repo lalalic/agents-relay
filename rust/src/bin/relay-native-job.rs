@@ -125,6 +125,14 @@ fn run() -> Result<(), String> {
                 .into(),
         );
     };
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live")
+        && !(command == "job" && args.get(1).is_some_and(|action| action == "create"))
+    {
+        return Err(
+            "native live mode currently permits only job create through the daemon control socket"
+                .into(),
+        );
+    }
     if command == "job" && args.get(1).is_some_and(|action| action == "merge") {
         return Err("job merge is retired: local Git merge is a Graph-owned effect; do not request GitHub PR merge via CLI".into());
     }

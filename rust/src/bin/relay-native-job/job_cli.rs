@@ -101,7 +101,18 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
     let flags = ["--review", "--no-review", "--auto-merge", "--no-auto-merge"];
     let o = parse(args, &allowed, &flags)?;
     let path = db(&o)?;
-    ensure_isolated(&path)?;
+    let live_socket_mode =
+        std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live");
+    if live_socket_mode {
+        agents_relay_rust::native_daemon::live_store_root(&path)?;
+        if action != "create" {
+            return Err(format!(
+                "live Job {action} is not yet supported by the native daemon control socket"
+            ));
+        }
+    } else {
+        ensure_isolated(&path)?;
+    }
     let (repo, id) = identity(&o, action == "create")?;
     if action == "create" {
         if o.contains_key("--review") && o.contains_key("--no-review")
@@ -132,6 +143,43 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
             .ok_or("job create requires --project-root")?;
         if !Path::new(root).is_absolute() {
             return Err("--project-root must be absolute".into());
+        }
+        if live_socket_mode {
+            if id.is_empty() {
+                return Err(
+                    "live job create requires an explicit --id for restart-safe deduplication"
+                        .into(),
+                );
+            }
+            #[cfg(unix)]
+            {
+                return agents_relay_rust::native_control::request(
+                    &path,
+                    &agents_relay_rust::native_control::ControlRequest {
+                        version: 1,
+                        operation: "job.create".into(),
+                        repository: repo.into(),
+                        id: id.into(),
+                        title: o
+                            .get("--title")
+                            .map(String::as_str)
+                            .unwrap_or("Agents Relay job")
+                            .into(),
+                        objective,
+                        project_root: root.into(),
+                        project_path: o.get("--project-path").cloned(),
+                        priority: o
+                            .get("--priority")
+                            .map(String::as_str)
+                            .unwrap_or("P2")
+                            .into(),
+                        review_enabled: !o.contains_key("--no-review"),
+                        auto_merge: !o.contains_key("--no-auto-merge"),
+                    },
+                );
+            }
+            #[cfg(not(unix))]
+            return Err("native daemon control socket requires Unix".into());
         }
         let now = agents_relay_rust::supervised_script::current_time();
         let mut a = RelayAuthority::open_existing(&path)?;

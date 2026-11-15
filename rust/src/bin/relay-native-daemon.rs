@@ -70,6 +70,12 @@ fn run() -> Result<(), String> {
     };
     let db = options.db.clone();
     let daemon = SingleNodeDaemon::acquire(options)?;
+    #[cfg(unix)]
+    let control = if repeat {
+        Some(agents_relay_rust::native_control::NativeControlServer::bind(&db)?)
+    } else {
+        None
+    };
     let ingress = ingress_port.map(|port| {
         let path = db.clone();
         let stopped = Arc::clone(&stopped);
@@ -82,6 +88,14 @@ fn run() -> Result<(), String> {
             break;
         }
         let report = daemon.tick(Arc::clone(&stopped))?;
+        #[cfg(unix)]
+        if let Some(control) = &control {
+            for _ in 0..16 {
+                if !control.serve_one(&db)? {
+                    break;
+                }
+            }
+        }
         let published = if let Some(port) = publish_port {
             let mut authority = agents_relay_rust::authority::RelayAuthority::open_existing(&db)?;
             agents_relay_rust::native_outbox::publish_pending(&mut authority, port)?
@@ -99,6 +113,12 @@ fn run() -> Result<(), String> {
         for _ in 0..parts {
             if stopped.load(Ordering::SeqCst) {
                 break;
+            }
+            #[cfg(unix)]
+            if let Some(control) = &control {
+                if control.serve_one(&db)? {
+                    continue;
+                }
             }
             thread::sleep(Duration::from_millis(100.min(interval)));
         }
