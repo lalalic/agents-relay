@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmod, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { SQLiteRelayStore } from '../../dist/relay-store.js';
 import { AgentObjectivePlanner, buildPlannerCodexArgs } from '../../dist/planner.js';
 import { finishPlanner } from '../../dist/planner-runtime.js';
@@ -37,7 +37,7 @@ async function setup() {
   };
   const job = {
     id: jobId, title: 'Planner receipt contract', objective: 'Create one verified Task',
-    repository: 'isolated', prNumber: 0, state: 'ACTIVE', autoMerge: false, reviewEnabled: false, createdAt: timestamp, updatedAt: timestamp,
+    repository: basename(env.root), projectRoot: env.root, prNumber: 0, state: 'ACTIVE', autoMerge: false, reviewEnabled: false, createdAt: timestamp, updatedAt: timestamp,
     plans: [plan], tasks: [],
   };
   const store = new SQLiteRelayStore(join(env.root, 'relay.sqlite'), jobId);
