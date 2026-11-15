@@ -174,9 +174,15 @@ passes immutable task input to Script as well as Model processes, distinguishes
 logical Coordinator state from physical Worker claims, and refuses DAG output
 paths outside its disposable root. An `approved` interactive Review can resume
 the **same Task** only with a matching durable host decision; a forged
-`approved` field also fails the Worker claim. `changes_requested` remains
-suspended: semantic revision, another real Preview, host notification and
-production event integration are **not** implemented by this native daemon.
+`approved` field also fails the Worker claim. An accepted `changes_requested`
+decision requeues that same Task as a Model revision. A pre-existing trusted
+Model route is preserved; a Script-origin Task has its Script route cleared
+and remains unclaimable until a trusted Model route is supplied. The revision
+retains the human feedback and instructions. A later accepted Approve restores
+the original execution configuration and Task input, then queues the same
+Task without treating the decision as completion. The isolated daemon does
+not create or deliver the host Preview itself; real host Preview, notification,
+mobile and production event integration remain unverified.
 
 The added `native-dag-daemon-e2e.mjs` and
 `native-review-resume-daemon-e2e.mjs` run real isolated Rust processes; their
