@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 mod foreground;
 #[path = "relay-native-job/node_compat.rs"]
 mod node_compat;
+#[path = "relay-native-job/planner_cli.rs"]
+mod planner_cli;
 #[path = "relay-native-job/status.rs"]
 mod status;
 #[path = "relay-native-job/workflow.rs"]
@@ -300,6 +302,19 @@ fn run() -> Result<(), String> {
     }
     if command == "status" {
         return status::run(&args[1..]);
+    }
+    if matches!(command, "plan" | "record" | "reconcile" | "serve") {
+        let action = args
+            .get(1)
+            .filter(|value| !value.starts_with("--"))
+            .map(String::as_str);
+        let start = if action.is_some() { 2 } else { 1 };
+        let result = planner_cli::dispatch(command, action, &args[start..])?;
+        println!(
+            "{}",
+            serde_json::to_string(&result).map_err(|e| e.to_string())?
+        );
+        return Ok(());
     }
     if command == "workflow" {
         return workflow::run(&args[1..]);
