@@ -906,6 +906,58 @@ mod tests {
             claim.is_some(),
             "accepted Review must admit the same routed Model Task"
         );
+        // Bind the second Preview to the newly claimed revision execution.
+        let waiting_at = "2026-11-13T20:00:05.000Z";
+        store
+            .commit_job("91", waiting_at, |previous| {
+                let mut job = previous.clone();
+                job["updatedAt"] = json!(waiting_at);
+                let task = &mut job["tasks"][0];
+                task["state"] = json!("AWAITING_DECISION");
+                task["executionId"] = Value::Null;
+                task["leaseOwner"] = Value::Null;
+                task["leaseExpiresAt"] = Value::Null;
+                task["interactiveInvocation"] = json!({
+                    "invocationId":"model-exec-2","executionId":"model-exec-2",
+                    "revision":"model-revision-2","status":"awaiting_decision",
+                    "boundAt":waiting_at
+                });
+                Ok((job, vec![]))
+            })
+            .unwrap();
+        let approve = ReviewDelivery {
+            job_id: "91".into(),
+            task_id: "101".into(),
+            execution_id: "model-exec-2".into(),
+            invocation_id: "model-exec-2".into(),
+            revision: "model-revision-2".into(),
+            content_hash: None,
+            revision_id: None,
+            preview_id: None,
+            request_id: None,
+            decision: "approved".into(),
+            feedback: None,
+            comments: None,
+            idempotency_key: Some("model-review-2".into()),
+            event_id: "model-review-event-2".into(),
+            delivered_at: waiting_at.into(),
+        };
+        assert_eq!(
+            store.accept_review_decision(&approve).unwrap().outcome,
+            "accepted"
+        );
+        store
+            .resume_review_task("91", "101", "2026-11-13T20:00:06.000Z")
+            .unwrap();
+        let approved = store.read_job("91").unwrap().unwrap();
+        assert_eq!(approved["tasks"][0]["state"], "QUEUED");
+        assert_eq!(approved["tasks"][0]["adapter"], "codex");
+        assert_eq!(approved["tasks"][0]["routing"], route);
+        assert_eq!(approved["tasks"][0]["workerSelection"], selection);
+        assert_eq!(approved["tasks"][0]["input"], "original model input");
+        assert!(approved["tasks"][0]
+            .get("reviewRevisionOriginalExecutionConfig")
+            .is_none());
     }
 
     #[test]
