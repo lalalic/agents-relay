@@ -91,15 +91,16 @@ test('isolated native daemon: multi-job and dependency wave, physical helper + S
  }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
 });
 test('independent ready sibling Workers run concurrently and Job stays ACTIVE until all finish',async()=>{
- const f=fixture('if [ "$RELAY_TASK_ID" = "101" ]; then sleep 0.3; else sleep 1.0; fi; '+script);let store;
+ const f=fixture('if [ "$RELAY_TASK_ID" = "101" ]; then sleep 0.8; else sleep 2.0; fi; '+script);let store;
  try{
   store=new SQLiteRelayStore(f.db);
-  await save(store,f.dir,'91',[task('101','91'),task('102','91')]);
+  await save(store,f.dir,'91',[task('101','91'),task('102','91')].map(t=>({...t,timeoutMs:5000})));
   await store.mutateJob('91',job=>({...job,reviewEnabled:false,autoMerge:false}));store.close();store=null;
   const running=runAsync(f);
   await until(async()=>{
    store=new SQLiteRelayStore(f.db);const job=await store.loadJob('91');store.close();store=null;
    assert.equal(job.state,'ACTIVE','worker completion must not complete the Job');
+   if(job.tasks.some(t=>t.state==='FAILED'))assert.fail(JSON.stringify(job.tasks.map(t=>({id:t.id,state:t.state,error:t.error,attempt:t.attempt}))));
    return job.tasks.every(t=>t.state==='RUNNING');
   });
   await until(async()=>{
@@ -112,6 +113,73 @@ test('independent ready sibling Workers run concurrently and Job stays ACTIVE un
   assert.deepEqual(job.tasks.map(t=>t.state),['SUCCEEDED','SUCCEEDED']);
   assert.equal(job.state,'COMPLETED','no-review Job completes only after both siblings succeed');
   assert.equal(once(f).tasksClaimed,0,'restart must not repeat either terminal execution');
+ }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
+});
+test('mixed Script and Model executors dispatch concurrently, fence dependencies, and dedupe after restart',async()=>{
+ const f=fixture('sleep 0.3; '+script);let store;
+ const modelWorker=join(f.dir,'model-worker.mjs');
+ writeFileSync(modelWorker,`import {readFileSync,writeFileSync} from 'node:fs';
+import {setTimeout as delay} from 'node:timers/promises';
+const request=JSON.parse(readFileSync(process.env.RELAY_TASK_REQUEST_PATH,'utf8'));
+await delay(900);
+writeFileSync(process.env.RELAY_RESULT_PATH,JSON.stringify({type:'task.completed',jobId:request.jobId,
+ taskId:request.taskId,executionId:request.executionId,leaseOwner:request.leaseOwner,attempt:request.attempt,
+ adapter:request.adapter,routing:request.routing,workerSelection:request.workerSelection,status:'COMPLETED',
+ summary:'mixed executor fixture completed',output:{verified:true,model:request.routing.model}}));`);
+ const modelRoute={provider:'fixture',model:'fixture-model',decidedBy:'fixture-router',decidedAt:t0};
+ const modelSelection={workerId:'fixture-model-worker',adapter:'codex',capabilities:['model'],selectedBy:'fixture-router',selectedAt:t0};
+ const modelTask=(id,deps=[])=>({...task(id,'91',deps),timeoutMs:5000,agentName:'model-agent',adapter:'codex',
+  capabilities:['model'],routing:modelRoute,workerSelection:modelSelection});
+ writeFileSync(f.manifest,JSON.stringify({agents:{
+  alpha:{executable:'/bin/sh',args:['-c','if [ "$RELAY_TASK_ID" = "101" ]; then sleep 0.3; fi; '+script]},
+  'model-agent':{kind:'model',executable:process.execPath,args:[modelWorker],routing:modelRoute,workerSelection:modelSelection}
+ }}));
+ f.args[f.args.indexOf('20')]='2';
+ try{
+  store=new SQLiteRelayStore(f.db);
+  await save(store,f.dir,'91',[task('101','91'),modelTask('102'),modelTask('103',['101'])]);
+  await store.mutateJob('91',job=>({...job,reviewEnabled:false,autoMerge:false}));store.close();store=null;
+  const running=runAsync(f);
+  await until(async()=>{
+   store=new SQLiteRelayStore(f.db);const job=await store.loadJob('91');store.close();store=null;
+   assert.equal(job.state,'ACTIVE');
+   if(job.tasks.some(t=>t.state==='FAILED'))assert.fail(JSON.stringify(job.tasks.map(t=>({id:t.id,state:t.state,error:t.error,attempt:t.attempt}))));
+   if(job.tasks[0].state==='RUNNING'&&job.tasks[1].state==='RUNNING'){
+    assert.equal(job.tasks[0].attempt,1);assert.equal(job.tasks[1].attempt,1);
+    assert.ok(job.tasks[0].executionId&&job.tasks[1].executionId);
+    assert.notEqual(job.tasks[0].executionId,job.tasks[1].executionId);
+    assert.ok(job.tasks[0].leaseOwner&&job.tasks[1].leaseOwner);
+    assert.ok(job.tasks[0].leaseExpiresAt&&job.tasks[1].leaseExpiresAt);
+    return true;
+   }
+   return false;
+  });
+  await until(async()=>{
+   store=new SQLiteRelayStore(f.db);const job=await store.loadJob('91');store.close();store=null;
+   assert.equal(job.state,'ACTIVE','a terminal Script sibling must not finish the Job');
+   return job.tasks[0].state==='SUCCEEDED'&&job.tasks[1].state==='RUNNING';
+  });
+  store=new SQLiteRelayStore(f.db);let job=await store.loadJob('91');
+  assert.equal(job.tasks[2].state,'DRAFT','Model dependent remains ineligible while its Script prerequisite is running');
+  store.close();store=null;
+  const first=await running;assert.equal(first.code,0,first.err);
+  store=new SQLiteRelayStore(f.db);job=await store.loadJob('91');
+  assert.deepEqual(job.tasks.map(t=>t.state),['SUCCEEDED','SUCCEEDED','DRAFT']);
+  assert.equal(job.state,'ACTIVE','all current siblings do not authorize the not-yet-materialized dependent');
+  store.close();store=null;
+  const second=once(f);
+  assert.equal(second.tasksQueued,1,JSON.stringify(second));
+  assert.equal(second.tasksClaimed,1,JSON.stringify(second));
+  assert.equal(second.tasksSucceeded,1,JSON.stringify(second));
+  store=new SQLiteRelayStore(f.db);job=await store.loadJob('91');
+  assert.deepEqual(job.tasks.map(t=>t.state),['SUCCEEDED','SUCCEEDED','SUCCEEDED']);
+  assert.equal(job.tasks[1].result.data.output.model,'fixture-model');
+  assert.equal(job.state,'COMPLETED');
+  store.close();store=null;
+  assert.equal(once(f).tasksClaimed,0,'restart must not repeat either executor generation');
+  const sql=new DatabaseSync(f.db);
+  assert.equal(sql.prepare('SELECT count(*) AS n FROM workflow_action_trace').get().n,3);
+  sql.close();
  }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
 });
 test('configured max_tasks bounds claims for each daemon tick',async()=>{

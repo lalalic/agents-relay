@@ -3,9 +3,10 @@
 //! transaction. No second queue, independent DAG policy or worker launch.
 use super::ledger::reserve_authorized_action_tx;
 use super::{ActionIdentity, RelayAuthority};
+use crate::dispatch::ActionPorts;
 use crate::graph::{Decision, Graph, GraphInput};
 use chrono::DateTime;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -40,6 +41,54 @@ fn input(task_id: &str, execution_id: &str) -> GraphInput {
         transport: "event".into(),
         id: "dispatch".into(),
         payload: json!({"taskId":task_id,"executionId":execution_id}),
+    }
+}
+
+struct LaunchClaimEffect<'a, 'db> {
+    tx: &'a Transaction<'db>,
+    identity: ActionIdentity,
+    at: &'a str,
+    reserved: bool,
+}
+
+impl ActionPorts for LaunchClaimEffect<'_, '_> {
+    fn persist_transition(&mut self, source: &str, target: &str) -> Result<(), String> {
+        if source != "QUEUED" || target != "QUEUED" {
+            return Err("Task Graph selected an invalid launch transition".into());
+        }
+        Ok(())
+    }
+
+    fn execute_action(&mut self, action_id: &str, _input: &GraphInput) -> Result<Value, String> {
+        Err(format!(
+            "launch effect requires its Graph decision: {action_id}"
+        ))
+    }
+
+    fn execute_authorized_action(
+        &mut self,
+        action_id: &str,
+        _input: &GraphInput,
+        decision: &Decision,
+    ) -> Result<Value, String> {
+        if action_id != "effect.launchTask" || self.reserved {
+            return Err("Task Graph did not select one fresh launch effect".into());
+        }
+        self.reserved = reserve_authorized_action_tx(
+            self.tx,
+            &self.identity,
+            decision,
+            "worker.started",
+            self.at,
+        )?;
+        if !self.reserved {
+            return Err("duplicate native launch attempt identity".into());
+        }
+        Ok(json!({"ok":true,"payloads":{}}))
+    }
+
+    fn publish_event(&mut self, event_id: &str, _payload: &Value) -> Result<(), String> {
+        Err(format!("unexpected launch event {event_id}"))
     }
 }
 
@@ -211,17 +260,6 @@ impl RelayAuthority {
             {
                 return Err("duplicate native execution ID within Job".into());
             }
-            let decision = graph.decide(
-                "QUEUED",
-                input(req.task_id, req.execution_id),
-                &HashMap::from([("dispatchable".into(), true)]),
-            )?;
-            if !matches!(&decision,Decision::Accepted{source,target,actions,..}
-                if source=="QUEUED" && target=="QUEUED" && actions.len()==1
-                    && actions[0].id=="effect.launchTask")
-            {
-                return Err("Task Graph did not authorize exactly one launch effect".into());
-            }
             let key = format!("{}/{}/{}/launch", req.job_id, req.task_id, req.execution_id);
             let identity = ActionIdentity {
                 job_id: req.job_id.into(),
@@ -234,8 +272,24 @@ impl RelayAuthority {
                 action_id: "effect.launchTask".into(),
                 attempt_key: key.clone(),
             };
-            if !reserve_authorized_action_tx(tx, &identity, &decision, "worker.started", req.at)? {
-                return Err("duplicate native launch attempt identity".into());
+            let mut effect = LaunchClaimEffect {
+                tx,
+                identity,
+                at: req.at,
+                reserved: false,
+            };
+            let dispatched = graph.dispatch(
+                "QUEUED",
+                input(req.task_id, req.execution_id),
+                &HashMap::from([("dispatchable".into(), true)]),
+                &mut effect,
+            )?;
+            if !matches!(&dispatched.decision,Decision::Accepted{source,target,actions,..}
+                if source=="QUEUED" && target=="QUEUED" && actions.len()==1
+                    && actions[0].id=="effect.launchTask")
+                || !effect.reserved
+            {
+                return Err("Task Graph did not authorize exactly one launch effect".into());
             }
             let mut next = prior.clone();
             let entry = next
@@ -404,6 +458,65 @@ mod tests {
             .action_trace("91/101/stale-replay/launch")
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn codex_claim_requires_durable_route_and_rejects_duplicate_generation() {
+        let (_dir, path) = setup();
+        let mut auth = RelayAuthority::open_existing(&path).unwrap();
+        prepare(&mut auth, "2026-11-13T20:00:00.500Z");
+        auth.commit_job("91", "2026-11-13T20:00:00.600Z", |job| {
+            let mut next = job.clone();
+            next["updatedAt"] = json!("2026-11-13T20:00:00.600Z");
+            let task = &mut next["tasks"][0];
+            task["adapter"] = json!("codex");
+            task["workerSelection"] = json!({"adapter":"codex","workerId":"fixture-worker"});
+            task["routing"] = json!({});
+            Ok((next, vec![]))
+        })
+        .unwrap();
+        let request = ScriptClaimRequest {
+            job_id: "91",
+            task_id: "101",
+            execution_id: "model-generation-1",
+            owner: "local-test",
+            at: "2026-11-13T20:00:01.000Z",
+            lease_expires_at: "2099-01-01T00:00:00.000Z",
+        };
+        assert!(
+            auth.claim_queued_codex(&request).is_err(),
+            "missing route facts must not claim"
+        );
+        assert!(auth
+            .action_trace("91/101/model-generation-1/launch")
+            .unwrap()
+            .is_none());
+
+        auth.commit_job("91", "2026-11-13T20:00:00.700Z", |job| {
+            let mut next = job.clone();
+            next["updatedAt"] = json!("2026-11-13T20:00:00.700Z");
+            next["tasks"][0]["routing"] = json!({
+                "provider":"fixture","model":"fixture-model",
+                "decidedBy":"fixture-router","decidedAt":"2026-11-13T20:00:00.700Z"
+            });
+            Ok((next, vec![]))
+        })
+        .unwrap();
+        let first = auth.claim_queued_codex(&request).unwrap().unwrap();
+        assert_eq!(first.adapter, "codex");
+        assert_eq!(first.routing.as_ref().unwrap()["model"], "fixture-model");
+        assert!(
+            auth.claim_queued_codex(&request).is_err(),
+            "same model generation must be rejected"
+        );
+        assert_eq!(
+            auth.read_job("91").unwrap().unwrap()["tasks"][0]["executionId"],
+            "model-generation-1"
+        );
+        assert!(auth
+            .action_trace("91/101/model-generation-1/launch")
+            .unwrap()
+            .is_some());
     }
     #[test]
     fn refuses_paused_job_and_unready_dependencies_without_ledger_side_effect() {

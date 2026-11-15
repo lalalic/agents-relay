@@ -272,6 +272,10 @@ AGENTS_RELAY_STORE_DIR=$(mktemp -d) cargo test --locked --manifest-path rust/Car
   one SQLite connection per supervised Worker. Dependency and stale-revision
   guards stay in the claim action; the logical DAG Coordinator has no lease or
   physical slot. This bounded pilot behavior is not production scheduler parity.
+  `rust/tests/native-daemon-e2e.mjs` exercises a mixed Script/Model batch,
+  configured capacity, a Model dependent released by a completed Script, and
+  restart dedupe; scheduler launch actions run through the shared Graph
+  dispatcher and reserve their ledger receipt in the same SQLite transaction.
 - **Single-node isolated daemon (`src/single_node.rs`,
   `src/native_daemon.rs`, `src/native_daemon/adapter.rs`,
   `src/bin/relay-native-daemon.rs`, `src/supervised_script.rs`)** executes
