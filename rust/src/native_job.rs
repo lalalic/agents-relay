@@ -62,7 +62,8 @@ pub fn init_isolated_store(db: &Path) -> Result<(), String> {
     }
     conn.execute_batch("PRAGMA journal_mode=WAL;
         CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL);
-        CREATE TABLE relay_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);")
+        CREATE TABLE relay_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+        CREATE TABLE agent_snapshot(agent_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL);")
         .map_err(|e|e.to_string())?;
     Ok(())
 }
