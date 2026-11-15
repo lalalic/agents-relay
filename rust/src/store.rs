@@ -2,7 +2,7 @@
 //! No migrations, PR actions, mutations, or lifecycle decisions.
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
@@ -13,6 +13,19 @@ pub struct JobSnapshot {
     #[serde(rename = "updatedAt")]
     pub updated_at: String,
     pub job: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskEventPage {
+    pub job_id: String,
+    pub task_id: String,
+    pub order: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub more_possible: Option<bool>,
+    pub events: Vec<Value>,
 }
 
 pub struct RelayReader {
@@ -131,6 +144,153 @@ impl RelayReader {
             })
         })
         .transpose()
+    }
+
+    /// Read Task-scoped event payloads already retained by Relay's native
+    /// workflow inbox/outbox. This does not query the Events Bus service or
+    /// create a parallel event-history store.
+    pub fn task_events(
+        &self,
+        job_id: &str,
+        task_id: &str,
+        limit: usize,
+        order: &str,
+        after: i64,
+    ) -> Result<TaskEventPage, String> {
+        if !(1..=60).contains(&limit) {
+            return Err("task events --limit must be an integer from 1 to 60".into());
+        }
+        if order != "asc" && order != "desc" {
+            return Err("task events --order must be asc or desc".into());
+        }
+        if after < 0 {
+            return Err("task events --after must be a non-negative integer cursor".into());
+        }
+        if after > 9_007_199_254_740_991 {
+            return Err("task events --after must be a safe integer cursor".into());
+        }
+        if order != "asc" && after != 0 {
+            return Err("task events --after requires --order asc".into());
+        }
+
+        let job = self
+            .get_job(job_id)?
+            .ok_or_else(|| format!("Job {job_id} not found"))?;
+        let tasks = job.job["tasks"]
+            .as_array()
+            .ok_or_else(|| format!("Job {job_id} has no task list"))?;
+        if !tasks
+            .iter()
+            .any(|task| task["id"].as_str() == Some(task_id))
+        {
+            return Err(format!("Task {task_id} not found in Job {job_id}"));
+        }
+
+        let mut sources = Vec::new();
+        for (table, time_column) in [
+            ("workflow_event_inbox", "consumed_at"),
+            ("workflow_event_outbox", "created_at"),
+        ] {
+            let exists: i64 = self
+                .connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                    [table],
+                    |row| row.get(0),
+                )
+                .map_err(|error| error.to_string())?;
+            if exists == 0 {
+                continue;
+            }
+            sources.push(format!(
+                "SELECT {time_column} AS recorded_at,event_id,payload_json FROM {table} \
+                 WHERE COALESCE(json_extract(payload_json,'$.job_id'),json_extract(payload_json,'$.jobId'))=?1 \
+                 AND COALESCE(json_extract(payload_json,'$.task_id'),json_extract(payload_json,'$.taskId'))=?2"
+            ));
+        }
+        let mut events = Vec::new();
+        if !sources.is_empty() {
+            let direction = if order == "asc" { "ASC" } else { "DESC" };
+            let sql = format!(
+                "SELECT recorded_at,event_id,payload_json FROM ({}) \
+                 ORDER BY recorded_at {direction},event_id {direction} LIMIT ?3 OFFSET ?4",
+                sources.join(" UNION ALL ")
+            );
+            let mut query = self
+                .connection
+                .prepare(&sql)
+                .map_err(|error| error.to_string())?;
+            let rows = query
+                .query_map(
+                    rusqlite::params![job_id, task_id, limit as i64, after],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+            for row in rows {
+                let (recorded_at, event_id, encoded) = row.map_err(|error| error.to_string())?;
+                let payload: Value = serde_json::from_str(&encoded).map_err(|error| {
+                    format!("invalid stored workflow event {event_id}: {error}")
+                })?;
+                let kind = payload["type"].as_str().unwrap_or("unknown");
+                let status = payload["status"].as_str().unwrap_or_else(|| {
+                    if kind.ends_with(".completed") || kind.ends_with(".approved") {
+                        "succeeded"
+                    } else if kind.ends_with(".failed") {
+                        "failed"
+                    } else {
+                        "running"
+                    }
+                });
+                let mut normalized = json!({
+                    "version": payload["version"].as_u64().unwrap_or(1),
+                    "event_id": payload["event_id"].as_str().unwrap_or(&event_id),
+                    "job_id": job_id,
+                    "task_id": task_id,
+                    "parent_task_id": payload["parent_task_id"].as_str().or(payload["parentTaskId"].as_str()),
+                    "type": kind,
+                    "status": status,
+                    "timestamp": payload["timestamp"].as_str().unwrap_or(&recorded_at),
+                    "visibility": payload["visibility"].as_str().unwrap_or("orchestrator"),
+                    "level": payload["level"].as_str().unwrap_or("info"),
+                    "message": payload["message"].as_str().unwrap_or(kind),
+                });
+                for field in ["source", "data"] {
+                    if !payload[field].is_null() {
+                        normalized[field] = payload[field].clone();
+                    }
+                }
+                events.push(normalized);
+            }
+        }
+        let more_possible = events.len() == limit;
+        let next_cursor = if order == "asc" {
+            Some(after + events.len() as i64)
+        } else {
+            None
+        };
+        Ok(TaskEventPage {
+            job_id: job_id.to_string(),
+            task_id: task_id.to_string(),
+            order: if order == "asc" {
+                "oldest-first"
+            } else {
+                "newest-first"
+            }
+            .to_string(),
+            next_cursor,
+            more_possible: if order == "asc" {
+                Some(more_possible)
+            } else {
+                None
+            },
+            events,
+        })
     }
 
     /// Return only the timestamp committed for the exact active Worker
