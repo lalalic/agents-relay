@@ -120,6 +120,123 @@ impl Graph {
         }
         Ok(DispatchResult { decision, receipts })
     }
+
+    /// Dispatch Graphs whose documented transient state nodes must be
+    /// traversed before the selected terminal state/action. Workflow policy
+    /// remains in Mermaid; callers identify only which states are transient.
+    pub fn dispatch_through_transient<P, F>(
+        &self,
+        state: &str,
+        input: GraphInput,
+        guards: &HashMap<String, bool>,
+        is_transient: F,
+        ports: &mut P,
+    ) -> Result<DispatchResult, String>
+    where
+        P: ActionPorts,
+        F: Fn(&str) -> bool,
+    {
+        let initial = state.to_owned();
+        let mut current = initial.clone();
+        let mut visited = std::collections::HashSet::new();
+        let decision = loop {
+            if !visited.insert(current.clone()) || visited.len() > self.nodes.len() {
+                return Err(format!("cyclic transient Graph path at '{current}'"));
+            }
+            let decision = self.decide(&current, input.clone(), guards)?;
+            let Decision::Accepted {
+                target, actions, ..
+            } = &decision
+            else {
+                return Ok(DispatchResult {
+                    decision,
+                    receipts: vec![],
+                });
+            };
+            if is_transient(target) {
+                if !actions.is_empty() {
+                    return Err(
+                        "transient Graph state selected an action before terminal state".into(),
+                    );
+                }
+                current = target.clone();
+                continue;
+            }
+            break decision;
+        };
+        let Decision::Accepted {
+            source: _,
+            target,
+            actions,
+            ..
+        } = &decision
+        else {
+            return Ok(DispatchResult {
+                decision,
+                receipts: vec![],
+            });
+        };
+        ports.persist_transition(&initial, target)?;
+        let mut receipts = Vec::new();
+        for action in actions {
+            let receipt = ports.execute_authorized_action(&action.id, &action.input, &decision)?;
+            if !receipt.is_object() {
+                return Err(format!(
+                    "action '{}' returned invalid ActionReceipt",
+                    action.id
+                ));
+            }
+            if receipt.get("ok").is_some_and(|value| !value.is_boolean()) {
+                return Err(format!("action '{}' returned invalid ok flag", action.id));
+            }
+            if receipt
+                .get("payloads")
+                .is_some_and(|value| !value.is_object())
+            {
+                return Err(format!("action '{}' returned invalid payloads", action.id));
+            }
+            receipts.push(receipt.clone());
+            if receipt.get("ok") == Some(&Value::Bool(false)) {
+                let event = receipt
+                    .pointer("/failureEvent/id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        format!("action '{}' returned invalid failureEvent", action.id)
+                    })?;
+                if !self.recognizes_event(event) {
+                    return Err(format!("unknown failure event '{event}'"));
+                }
+                let payload = receipt.pointer("/failureEvent/payload").ok_or_else(|| {
+                    format!(
+                        "action '{}' returned missing failureEvent payload",
+                        action.id
+                    )
+                })?;
+                ports.publish_event(event, payload)?;
+                return Ok(DispatchResult { decision, receipts });
+            }
+            let payloads = action
+                .emitted_events
+                .iter()
+                .map(|event| {
+                    receipt
+                        .get("payloads")
+                        .and_then(|payloads| payloads.get(event))
+                        .map(|payload| (event, payload))
+                        .ok_or_else(|| {
+                            format!(
+                                "action '{}' did not supply payload for emitted event '{event}'",
+                                action.id
+                            )
+                        })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            for (event, payload) in payloads {
+                ports.publish_event(event, payload)?;
+            }
+        }
+        Ok(DispatchResult { decision, receipts })
+    }
 }
 
 #[cfg(test)]

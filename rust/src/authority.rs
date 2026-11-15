@@ -3,8 +3,10 @@
 //! No independent scheduler or workflow policy exists in this module.
 mod coordinator;
 mod dependencies;
+mod escalation;
 mod ids;
 pub use coordinator::{graph_hash, ChildMaterialization, DAGExecutor, DAGMaterialize};
+pub use escalation::{TroubleshooterEscalation, TroubleshooterEscalationRequest};
 mod ledger;
 mod native_job;
 mod native_task;

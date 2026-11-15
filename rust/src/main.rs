@@ -1,7 +1,8 @@
-//! Explicit shadow CLI. Never launches workers, writes SQLite or runs effects.
+//! Inspection CLI plus the explicitly configured Escalation Graph effect.
 use agents_relay_rust::agent_graph::AgentGraph;
 use agents_relay_rust::authority::probe_process;
 use agents_relay_rust::dispatch::ActionPorts;
+use agents_relay_rust::escalation::{run_configured_escalation, EscalationRequest};
 use agents_relay_rust::final_review::propose_final_review;
 use agents_relay_rust::graph::{Graph, GraphInput};
 use agents_relay_rust::local_git::verified_local_head;
@@ -86,6 +87,22 @@ fn inspection_options(
     }
     Ok(options)
 }
+fn escalation_text_option(
+    options: &HashMap<String, String>,
+    literal: &str,
+    file: &str,
+) -> Result<Option<String>, String> {
+    if options.contains_key(literal) && options.contains_key(file) {
+        return Err(format!("use only one of {literal} or {file}"));
+    }
+    if let Some(value) = options.get(literal) {
+        return Ok(Some(value.clone()));
+    }
+    options
+        .get(file)
+        .map(|path| std::fs::read_to_string(path).map_err(|error| format!("{path}: {error}")))
+        .transpose()
+}
 fn optional_inspection_options(
     args: &[String],
     allowed: &[&str],
@@ -138,9 +155,23 @@ fn job_timestamp(job: &Value) -> i64 {
 }
 fn run(args: &[String]) -> Result<(), String> {
     if args.len() < 2 {
-        return Err("usage: agents-relay-rust graph <validate|inventory|decide|batch|simulate> | store <list|get> --db PATH | job <list --db PATH [--repo NAME]|show --db PATH --job-id ID> | task <list|show|events> --db PATH --job-id ID [--task-id ID] | scheduler inspect/recovery --db PATH --job-id ID | review inspect --db PATH --job-id ID | dag parse --file PATH".into());
+        return Err("usage: agents-relay-rust escalation run --intent TEXT --blocked-on TEXT [--context TEXT] [--on-needs-user TEXT] [--cwd PATH] | graph <validate|inventory|decide|batch|simulate> | store <list|get> --db PATH | job <list|show> --db PATH | task <list|show|events> --db PATH --job-id ID | scheduler inspect/recovery --db PATH --job-id ID | review inspect --db PATH --job-id ID | dag parse --file PATH".into());
     }
     match (args[0].as_str(),args[1].as_str()) {
+        ("escalation", "run") => {
+            let options = optional_inspection_options(args,
+                &["--intent", "--intent-file", "--blocked-on", "--blocked-on-file", "--context", "--context-file", "--on-needs-user", "--on-needs-user-file", "--cwd"], &[])?;
+            let intent = escalation_text_option(&options, "--intent", "--intent-file")?.ok_or("escalation run requires --intent or --intent-file")?;
+            let blocked_on = escalation_text_option(&options, "--blocked-on", "--blocked-on-file")?.ok_or("escalation run requires --blocked-on or --blocked-on-file")?;
+            let context = escalation_text_option(&options, "--context", "--context-file")?;
+            let on_needs_user = escalation_text_option(&options, "--on-needs-user", "--on-needs-user-file")?;
+            let cwd = options.get("--cwd").map(PathBuf::from);
+            let request = EscalationRequest { intent, blocked_on, context, on_needs_user, cwd };
+            let outcome = run_configured_escalation(&request, std::env::var("AGENTS_RELAY_ESCALATION_COMMAND").ok().as_deref())?;
+            print_json(&outcome)?;
+            if outcome.state == "technical_failure" { return Err("Escalation executor failed; no recovery or human blocker was established".into()); }
+            Ok(())
+        }
         ("graph","validate") => {
             let graph=load_graph(args)?;
             print_json(json!({"valid":true,"direction":graph.direction,"initial":graph.initial,
@@ -336,7 +367,7 @@ fn run(args: &[String]) -> Result<(), String> {
                 job_id, Some(task_id), limit, order, after,
             )?)
         }
-        _=>Err("unrecognized command; supported: graph validate/inventory/decide/batch/simulate, store list/get, job list/show, task list/show/events, scheduler inspect/recovery".into())
+        _=>Err("unrecognized command; supported: escalation run, graph validate/inventory/decide/batch/simulate, store list/get, job list/show, task list/show/events, scheduler inspect/recovery".into())
     }
 }
 fn main() {

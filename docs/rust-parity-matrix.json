@@ -151,12 +151,14 @@
     {
       "capability": "Troubleshooting and escalation",
       "node": {"behavior":"Canonical escalation/recovery workflows select the configured executor and keep technical failure distinct from human blockers.","sources":["src/troubleshooter.ts","src/cli-escalation.ts","workflow/escalation.mmd","workflow/troubleshooter.mmd"]},
-      "rust": {"behavior":"Rust exposes limited recovery assessment but no configured escalation executor lifecycle.","sources":["rust/src/recovery.rs","rust/src/main.rs"]},
+      "rust": {"behavior":"The native CLI invokes only trusted AGENTS_RELAY_ESCALATION_COMMAND argv through the shared owned-process group, writes bounded private handoff files, validates one strict JSON result, and maps outcomes through the canonical Escalation Graph. The transactional authority also records Graph-selected escalation-gate ownership on the exact FAILED original, blocks the same Troubleshooter Task, deduplicates across restart, and requeues that same Task after a response. These actions are not yet connected to a production authenticated control API or daemon Troubleshooter scheduler.","sources":["rust/src/escalation.rs","rust/src/authority/escalation.rs","rust/src/dispatch.rs","rust/src/worker.rs","rust/src/main.rs","rust/tests/native-escalation-cli-e2e.mjs"]},
       "status": "FAIL",
       "evidence": [
-        {"kind":"source","detail":"No Rust escalation command binding or troubleshooting execution route is present."}
+        {"kind":"deterministic-test","detail":"rust/tests/native-escalation-cli-e2e.mjs compares Node and Rust Graph outcomes for needs_user and verifies trusted fixed argv, literal handoff content, and missing-executor technical failure; rust/src/escalation.rs tests resolved/failed/needs_user, malformed/extra JSON fields, nonzero exit, output limits, invalid cwd, and no request-content command interpretation."},
+        {"kind":"deterministic-test","detail":"authority::escalation tests verify canonical Task Resolution/Lifecycle effects, same-Task block/resume, duplicate replay after SQLite reopen, expected Node fingerprint, and durable escalation.requested/task.blocked/task.unblocked wakeups."},
+        {"kind":"source","detail":"Native Planner/daemon Troubleshooter creation, authenticated response control API, notification delivery receipt, and production host integration remain incomplete; no escalation result is proof of Job recovery."}
       ],
-      "nextAction": "Port the trusted deployment executor boundary and escalation graph effects."
+      "nextAction": "Connect durable escalation effects to the native Troubleshooter scheduler and authenticated control API; implement notification receipt and verify deployed host integration. Keep FAIL until full workflow parity is proven."
     },
     {
       "capability": "JEL Final Review, revisions, merge, completion",

@@ -4,6 +4,7 @@
 pub mod agent_graph;
 pub mod authority;
 pub mod dispatch;
+pub mod escalation;
 pub mod final_review;
 pub mod graph;
 pub mod lifecycle;

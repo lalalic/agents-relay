@@ -84,10 +84,37 @@ agents-relay-rust task list --db /path/to/relay.sqlite --job-id 101
 agents-relay-rust task show --db /path/to/relay.sqlite --job-id 101 --task-id 42
 ```
 
-These commands use `RelayReader` and return the Job, its Task array, or one
-Task as JSON. They do not discover a default store, mutate SQLite, run lifecycle
-actions, launch workers, or provide production CLI/API parity. The existing
+These inspection commands use `RelayReader` and return the Job, its Task array,
+or one Task as JSON. They do not discover a default store, mutate SQLite,
+launch workers, or provide production CLI/API parity. The separate
+`escalation run` effect below does not access a Relay store. The existing
 `store list/get` commands remain available.
+
+## Configured escalation executor
+
+`agents-relay-rust escalation run` follows the canonical
+`workflow/escalation.mmd` graph and invokes only the absolute executable named
+by trusted deployment configuration `AGENTS_RELAY_ESCALATION_COMMAND`. The
+value may be an absolute executable or a JSON argv array beginning with one;
+Task text is written to a private handoff file and never interpreted by a
+shell. The executor receives `--handoff-file`, optional
+`--on-needs-user-file`, and optional `--cwd`. It must return exactly one JSON
+object with `status` equal to `resolved`, `failed`, or `needs_user` and a
+non-empty `summary`. Missing executors, nonzero exit, timeouts, malformed or
+oversized output map to technical failure, never successful recovery or proof
+of a human blocker. This command does not mutate durable Task recovery state;
+daemon Troubleshooter reconciliation remains incomplete. The native
+`RelayAuthority` also exposes Graph-selected transactional effects to assign
+`escalation_gate` ownership to the original failed Task, block the same
+Troubleshooter Task, and queue that Task after a response. Those effects are
+covered against SQLite restart and replay; the production authenticated
+control API and daemon scheduler do not call them yet.
+
+```sh
+AGENTS_RELAY_ESCALATION_COMMAND='["/opt/relay/escalation-adapter","fixed-arg"]' \\
+  agents-relay-rust escalation run --intent-file ./intent.md \\
+    --blocked-on-file ./blocked-on.md --cwd /path/to/project
+```
 
 ## 2026-11-14 native Job intake, completion and outbox increment
 
@@ -351,7 +378,8 @@ npm run build:rust
 This runs Rust unit tests, Clippy, all-target test binary builds and
 TypeScript/Rust differential tests. Tests use marked temporary directories
 and isolated SQLite fixtures, never the default `~/.agents-relay/stores` path.
-The main `agents-relay-rust` CLI retains only **read-only** `--db` commands.
+The main `agents-relay-rust` CLI uses read-only `--db` commands and the
+configured, store-independent escalation executor above.
 The separate, marked-fixture-only `relay-native-daemon` binary exercises
 native SQLite writes and real Script Workers. Production Relay does not
 load this binary or switch providers.
