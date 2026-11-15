@@ -6,7 +6,7 @@ use crate::graph::{Decision, Graph, GraphInput};
 use crate::native_daemon::isolated_store_root;
 use crate::supervised_script::after_time;
 use rusqlite::{Connection, OptionalExtension, Transaction};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -77,35 +77,88 @@ fn bounded_file(root: &Path, path: &Path) -> Result<PathBuf, String> {
 pub struct DagJobRequest<'a> {
     pub db: &'a Path,
     pub project: &'a Path,
+    pub project_path: Option<&'a str>,
     pub graph_file: &'a Path,
     pub input_file: &'a Path,
     pub output_file: &'a Path,
     pub title: &'a str,
+    pub priority: &'a str,
     pub repository: &'a str,
     pub request_key: &'a str,
+    pub id: Option<&'a str>,
+    pub graph: Option<&'a str>,
+    pub input: Option<&'a str>,
+    pub workspace_root: Option<&'a Path>,
+    pub shared_root: Option<&'a Path>,
+    pub github_repo: Option<&'a str>,
+    pub tag: Option<&'a Value>,
+    pub creator_thread_id: Option<&'a str>,
+    pub reviewer_thread_id: Option<&'a str>,
+    pub implementation_thread_id: Option<&'a str>,
+    pub continuation: Option<&'a Value>,
+    pub no_github: bool,
+    pub review_enabled: bool,
+    pub auto_merge: bool,
 }
 pub fn create_dag_job(request: DagJobRequest<'_>) -> Result<Value, String> {
     let DagJobRequest {
         db,
         project,
+        project_path,
         graph_file,
         input_file,
         output_file,
         title,
+        priority,
         repository,
         request_key,
+        id,
+        graph: inline_graph,
+        input: inline_input,
+        workspace_root,
+        shared_root,
+        github_repo,
+        tag,
+        creator_thread_id,
+        reviewer_thread_id,
+        implementation_thread_id,
+        continuation,
+        no_github,
+        review_enabled,
+        auto_merge,
     } = request;
     let root = isolated_store_root(db)?;
     let project = project.canonicalize().map_err(|e| e.to_string())?;
     if !project.starts_with(&root) || !project.is_dir() {
         return Err("native project outside isolated root".into());
     }
-    let graph = fs::read_to_string(bounded_file(&root, graph_file)?).map_err(|e| e.to_string())?;
+    if let Some(relative) = project_path {
+        let candidate = project
+            .join(relative)
+            .canonicalize()
+            .map_err(|e| e.to_string())?;
+        if !candidate.starts_with(&project) {
+            return Err("--project-path must resolve inside --coordinator-project-root".into());
+        }
+    }
+    let graph = match inline_graph {
+        Some(value) => value.to_owned(),
+        None => fs::read_to_string(bounded_file(&root, graph_file)?).map_err(|e| e.to_string())?,
+    };
     let parsed = AgentGraph::parse(&graph)?;
     if parsed.nodes.is_empty() {
         return Err("empty Coordinator graph".into());
     }
-    let input = fs::read_to_string(bounded_file(&root, input_file)?).map_err(|e| e.to_string())?;
+    let input = match inline_input {
+        Some(value) => value.to_owned(),
+        None => fs::read_to_string(bounded_file(&root, input_file)?).map_err(|e| e.to_string())?,
+    };
+    let workspace = workspace_root
+        .map(|p| canonical_root(&root, p))
+        .transpose()?;
+    let shared = shared_root.map(|p| canonical_root(&root, p)).transpose()?;
+    let workspace_string = workspace.as_ref().map(|p| p.to_string_lossy().into_owned());
+    let shared_string = shared.as_ref().map(|p| p.to_string_lossy().into_owned());
     let parent = output_file
         .parent()
         .ok_or("output parent missing")?
@@ -123,18 +176,41 @@ pub fn create_dag_job(request: DagJobRequest<'_>) -> Result<Value, String> {
     let mut authority = RelayAuthority::open_existing(db)?;
     let created = authority.create_native_dag_job(NativeJobSpec {
         repository,
+        id,
         title,
+        priority,
         project_root: &project.to_string_lossy(),
+        project_path,
         input: &input,
         graph: &graph,
         output_path: &output.to_string_lossy(),
         request_key,
+        workspace_root: workspace_string.as_deref(),
+        shared_root: shared_string.as_deref(),
+        github_repo,
+        tag,
+        creator_thread_id,
+        reviewer_thread_id,
+        implementation_thread_id,
+        continuation,
+        no_github,
+        review_enabled,
+        auto_merge,
         at: &now,
     })?;
     Ok(
         json!({"jobId":created.job_id,"coordinatorTaskId":created.coordinator_task_id,
         "created":created.created,"state":"DRAFT"}),
     )
+}
+fn canonical_root(root: &Path, path: &Path) -> Result<PathBuf, String> {
+    let path = path.canonicalize().map_err(|e| e.to_string())?;
+    if !path.starts_with(root) || !path.is_dir() {
+        return Err(
+            "native Coordinator context root must be a directory inside isolated root".into(),
+        );
+    }
+    Ok(path)
 }
 pub fn activate_job(db: &Path, job_id: &str) -> Result<Value, String> {
     isolated_store_root(db)?;
@@ -763,9 +839,11 @@ mod tests {
             "status":"approved","invocationId":"inv-1","executionId":"exec-1","revision":"rev-2"
         });
         let (dir, mut authority) = open_authority(job);
-        assert!(complete_approved_local_job(&mut authority, "91")
-            .unwrap_err()
-            .contains("lacks a durable accepted decision"));
+        assert!(
+            complete_approved_local_job(&mut authority, "91")
+                .unwrap_err()
+                .contains("lacks a durable accepted decision")
+        );
         drop(authority);
         let connection = Connection::open(dir.path().join("relay.sqlite")).unwrap();
         connection.execute(

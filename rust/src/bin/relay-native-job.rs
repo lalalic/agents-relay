@@ -2,12 +2,12 @@
 use agents_relay_rust::authority::RelayAuthority;
 use agents_relay_rust::native_daemon::isolated_store_root;
 use agents_relay_rust::native_job::{
-    activate_job, create_dag_job, init_isolated_store, DagJobRequest,
+    DagJobRequest, activate_job, create_dag_job, init_isolated_store,
 };
 use agents_relay_rust::store::RelayReader;
 use agents_relay_rust::supervised_script::after_time;
-use serde_json::json;
 use serde_json::Value;
+use serde_json::json;
 use std::path::{Path, PathBuf};
 
 #[path = "relay-native-job/agent_cli.rs"]
@@ -224,12 +224,28 @@ fn run() -> Result<(), String> {
             create_dag_job(DagJobRequest {
                 db: &path,
                 project: Path::new(&project),
+                project_path: None,
                 graph_file: Path::new(&graph),
                 input_file: Path::new(&input),
                 output_file: Path::new(&output),
                 title: &title,
+                priority: "P2",
                 repository: &repository,
                 request_key: &request_key,
+                id: None,
+                graph: None,
+                input: None,
+                workspace_root: None,
+                shared_root: None,
+                github_repo: None,
+                tag: None,
+                creator_thread_id: None,
+                reviewer_thread_id: None,
+                implementation_thread_id: None,
+                continuation: None,
+                no_github: true,
+                review_enabled: true,
+                auto_merge: true,
             })?
         }
         "task" => task_cli::run(&args)?,

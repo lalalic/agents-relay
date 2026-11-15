@@ -1,9 +1,9 @@
 //! Atomic Job + Coordinator creation in the *existing* Relay V2 SQLite store.
 //! Graph decides activation/completion; this is only the persistence effect.
-use super::ids::{allocate_entity_id_in_tx, EntityKind};
 use super::RelayAuthority;
-use rusqlite::{params, OptionalExtension, TransactionBehavior};
-use serde_json::{json, Value};
+use super::ids::{EntityKind, allocate_entity_id_in_tx};
+use rusqlite::{OptionalExtension, TransactionBehavior, params};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
@@ -17,17 +17,39 @@ pub struct NativeObjectiveJobSpec<'a> {
     pub priority: &'a str,
     pub review_enabled: bool,
     pub auto_merge: bool,
+    pub idempotency_key: Option<&'a str>,
+    pub tag: Option<&'a Value>,
+    pub github_repo: Option<&'a str>,
+    pub creator_thread_id: Option<&'a str>,
+    pub reviewer_thread_id: Option<&'a str>,
+    pub implementation_thread_id: Option<&'a str>,
+    pub continuation: Option<&'a Value>,
+    pub no_github: bool,
     pub at: &'a str,
 }
 
 pub struct NativeJobSpec<'a> {
     pub repository: &'a str,
+    pub id: Option<&'a str>,
     pub title: &'a str,
+    pub priority: &'a str,
     pub project_root: &'a str,
+    pub project_path: Option<&'a str>,
     pub input: &'a str,
     pub graph: &'a str,
     pub output_path: &'a str,
     pub request_key: &'a str,
+    pub workspace_root: Option<&'a str>,
+    pub shared_root: Option<&'a str>,
+    pub github_repo: Option<&'a str>,
+    pub tag: Option<&'a Value>,
+    pub creator_thread_id: Option<&'a str>,
+    pub reviewer_thread_id: Option<&'a str>,
+    pub implementation_thread_id: Option<&'a str>,
+    pub continuation: Option<&'a Value>,
+    pub no_github: bool,
+    pub review_enabled: bool,
+    pub auto_merge: bool,
     pub at: &'a str,
 }
 pub struct NativeCreatedJob {
@@ -64,13 +86,42 @@ impl RelayAuthority {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| e.to_string())?;
+        let fingerprint = format!(
+            "{:x}",
+            Sha256::digest(
+                serde_json::to_vec(&json!([
+                    spec.repository,
+                    spec.title,
+                    spec.objective,
+                    spec.project_root,
+                    spec.project_path,
+                    spec.priority,
+                    spec.review_enabled,
+                    spec.auto_merge,
+                    spec.tag,
+                    spec.github_repo,
+                    spec.creator_thread_id,
+                    spec.reviewer_thread_id,
+                    spec.implementation_thread_id,
+                    spec.continuation,
+                    spec.no_github
+                ]))
+                .map_err(|e| e.to_string())?
+            )
+        );
         let job_id = if let Some(id) = spec.id {
             if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) || id == "0" {
                 return Err("--id must be a positive decimal Job ID".into());
             }
             id.to_owned()
         } else {
-            allocate_entity_id_in_tx(&tx, spec.repository, EntityKind::Job, None, &HashSet::new())?
+            allocate_entity_id_in_tx(
+                &tx,
+                spec.repository,
+                EntityKind::Job,
+                spec.idempotency_key,
+                &HashSet::new(),
+            )?
         };
         let exists: bool = tx
             .query_row(
@@ -80,12 +131,46 @@ impl RelayAuthority {
             )
             .map_err(|e| e.to_string())?;
         if exists {
+            if let Some(key) = spec.idempotency_key {
+                let saved: String = tx
+                    .query_row(
+                        "SELECT json FROM job_snapshot WHERE job_id=?1",
+                        [&job_id],
+                        |r| r.get(0),
+                    )
+                    .map_err(|e| e.to_string())?;
+                let existing: Value = serde_json::from_str(&saved).map_err(|e| e.to_string())?;
+                if existing["nativeIntakeHash"] == fingerprint {
+                    tx.commit().map_err(|e| e.to_string())?;
+                    return Ok(existing);
+                }
+                let _ = key;
+            }
             return Err("Job ID already exists".into());
         }
-        let job = json!({"id":job_id,"title":spec.title,"objective":spec.objective,"repository":spec.repository,
+        let mut job = json!({"id":job_id,"title":spec.title,"objective":spec.objective,"repository":spec.repository,
             "projectRoot":spec.project_root,"projectPath":spec.project_path,"priority":spec.priority,
             "state":"DRAFT","runtimeStatus":"DRAFT","prNumber":0,"reviewEnabled":spec.review_enabled,
-            "autoMerge":spec.auto_merge,"tasks":[],"plans":[],"createdAt":spec.at,"updatedAt":spec.at});
+            "autoMerge":spec.auto_merge,"tasks":[],"plans":[],"nativeIntakeHash":fingerprint,"createdAt":spec.at,"updatedAt":spec.at});
+        for (key, value) in [
+            ("tag", spec.tag.cloned()),
+            ("githubRepo", spec.github_repo.map(|v| json!(v))),
+            ("creatorThreadId", spec.creator_thread_id.map(|v| json!(v))),
+            (
+                "reviewerThreadId",
+                spec.reviewer_thread_id.map(|v| json!(v)),
+            ),
+            (
+                "implementationThreadId",
+                spec.implementation_thread_id.map(|v| json!(v)),
+            ),
+            ("continuation", spec.continuation.cloned()),
+        ] {
+            if let Some(value) = value {
+                job[key] = value;
+            }
+        }
+        job["graphStartContext"] = json!({"noGitHub":spec.no_github});
         tx.execute(
             "INSERT INTO job_snapshot(job_id,json,updated_at) VALUES(?1,?2,?3)",
             params![
@@ -112,6 +197,7 @@ impl RelayAuthority {
             return Err("invalid repository identity".into());
         }
         if spec.title.trim().is_empty()
+            || !matches!(spec.priority, "P0" | "P1" | "P2" | "P3")
             || spec.title.len() > 200
             || spec.input.is_empty()
             || spec.input.len() > 1_048_576
@@ -128,10 +214,23 @@ impl RelayAuthority {
                 serde_json::to_vec(&json!([
                     spec.repository,
                     spec.title,
+                    spec.priority,
                     spec.project_root,
+                    spec.project_path,
                     spec.input,
                     spec.graph,
-                    spec.output_path
+                    spec.output_path,
+                    spec.workspace_root,
+                    spec.shared_root,
+                    spec.github_repo,
+                    spec.tag,
+                    spec.creator_thread_id,
+                    spec.reviewer_thread_id,
+                    spec.implementation_thread_id,
+                    spec.continuation,
+                    spec.no_github,
+                    spec.review_enabled,
+                    spec.auto_merge
                 ]))
                 .map_err(|e| e.to_string())?
             )
@@ -140,13 +239,20 @@ impl RelayAuthority {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| e.to_string())?;
-        let job_id = allocate_entity_id_in_tx(
-            &tx,
-            spec.repository,
-            EntityKind::Job,
-            Some(spec.request_key),
-            &HashSet::new(),
-        )?;
+        let job_id = if let Some(id) = spec.id {
+            if id.is_empty() || id == "0" || !id.bytes().all(|b| b.is_ascii_digit()) {
+                return Err("--id must be a positive decimal Job ID".into());
+            }
+            id.to_owned()
+        } else {
+            allocate_entity_id_in_tx(
+                &tx,
+                spec.repository,
+                EntityKind::Job,
+                Some(spec.request_key),
+                &HashSet::new(),
+            )?
+        };
         if let Some(saved) = tx
             .query_row(
                 "SELECT json FROM job_snapshot WHERE job_id=?1",
@@ -195,12 +301,17 @@ impl RelayAuthority {
             "result":null,"createdAt":spec.at,"updatedAt":spec.at
         });
         let job = json!({
-            "id":job_id,"title":spec.title,"objective":spec.input,"repository":spec.repository,
+            "id":job_id,"title":spec.title,"objective":spec.input,"repository":spec.repository,"priority":spec.priority,
             "projectRoot":spec.project_root,"state":"DRAFT","runtimeStatus":"DRAFT",
             // Match Node Job creation: autoMerge defaults enabled unless the
             // caller explicitly opts out. The Job Graph still gates completion.
-            "reviewEnabled":false,"autoMerge":true,"prNumber":0,
+            "reviewEnabled":spec.review_enabled,"autoMerge":spec.auto_merge,"prNumber":0,
             "tasks":[task],"plans":[],"nativeIntakeHash":fingerprint,
+            "projectPath":spec.project_path,
+            "graphStartContext":{"projectPath":spec.project_root,"workspaceRoot":spec.workspace_root,"sharedRoot":spec.shared_root,"noGitHub":spec.no_github},
+            "githubRepo":spec.github_repo,
+            "tag":spec.tag,"creatorThreadId":spec.creator_thread_id,"reviewerThreadId":spec.reviewer_thread_id,
+            "implementationThreadId":spec.implementation_thread_id,"continuation":spec.continuation,
             "createdAt":spec.at,"updatedAt":spec.at
         });
         tx.execute(

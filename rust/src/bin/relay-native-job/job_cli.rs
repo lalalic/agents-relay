@@ -4,8 +4,9 @@
 use agents_relay_rust::authority::{NativeObjectiveJobSpec, RelayAuthority};
 use agents_relay_rust::graph::{Decision, Graph, GraphInput};
 use agents_relay_rust::native_daemon::isolated_store_root;
+use agents_relay_rust::native_job::{DagJobRequest, create_dag_job};
 use agents_relay_rust::supervised_script::after_time;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -85,6 +86,22 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
     if action == "unblock" {
         return Err("job unblock is incomplete: native Troubleshooter response authorization and recovery effects are not implemented".into());
     }
+    if action == "create" {
+        for flag in [
+            "--shortcut-local",
+            "--content-only",
+            "--no-content-only",
+            "--shortcut-execution",
+            "--mode",
+            "--execution-mode",
+        ] {
+            if args.iter().any(|a| a == flag) {
+                return Err(format!(
+                    "{flag} is deprecated or removed; use a Coordinator Graph or an ordinary Job lifecycle"
+                ));
+            }
+        }
+    }
     let allowed = [
         "--db",
         "--id",
@@ -97,8 +114,32 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
         "--project-path",
         "--priority",
         "--reason",
+        "--idempotency-key",
+        "--github-repo",
+        "--tag",
+        "--creator-thread-id",
+        "--reviewer-thread-id",
+        "--implementation-thread-id",
+        "--continue-kind",
+        "--continue-target",
+        "--continue-input",
+        "--coordinator-graph",
+        "--coordinator-graph-file",
+        "--coordinator-input",
+        "--coordinator-input-file",
+        "--coordinator-output-path",
+        "--coordinator-project-root",
+        "--coordinator-shared-root",
+        "--coordinator-workspace-root",
     ];
-    let flags = ["--review", "--no-review", "--auto-merge", "--no-auto-merge"];
+    let flags = [
+        "--review",
+        "--no-review",
+        "--auto-merge",
+        "--no-auto-merge",
+        "--no-github",
+        "--initial-plan",
+    ];
     let o = parse(args, &allowed, &flags)?;
     let path = db(&o)?;
     let live_socket_mode =
@@ -138,13 +179,19 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
             .unwrap_or("Agents Relay job");
         let priority = o.get("--priority").map(String::as_str).unwrap_or("P2");
         let root = o
-            .get("--project-root")
+            .get("--coordinator-project-root")
+            .or_else(|| o.get("--project-root"))
             .map(String::as_str)
             .ok_or("job create requires --project-root")?;
         if !Path::new(root).is_absolute() {
             return Err("--project-root must be absolute".into());
         }
         if live_socket_mode {
+            let supported = ["--db", "--id", "--job-id", "--repo", "--title", "--objective", "--objective-file", "--project-root", "--project-path", "--priority", "--review", "--no-review", "--auto-merge", "--no-auto-merge"];
+            if let Some(key) = o.keys().find(|key| !supported.contains(&key.as_str())) {
+                return Err(format!("live job create {key} requires a daemon control protocol extension; refusing to discard field"));
+            }
+
             if id.is_empty() {
                 return Err(
                     "live job create requires an explicit --id for restart-safe deduplication"
@@ -180,6 +227,147 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
             }
             #[cfg(not(unix))]
             return Err("native daemon control socket requires Unix".into());
+
+        if o.contains_key("--continue-kind") != o.contains_key("--continue-target") {
+            return Err("--continue-kind and --continue-target must be supplied together".into());
+        }
+        let continuation = if let (Some(kind), Some(target)) =
+            (o.get("--continue-kind"), o.get("--continue-target"))
+        {
+            if !matches!(kind.as_str(), "command" | "webhook" | "codex-thread")
+                || target.trim().is_empty()
+            {
+                return Err("invalid continuation kind or target".into());
+            }
+            Some(
+                serde_json::json!({"kind":kind,"target":target,"input":o.get("--continue-input").filter(|s|!s.is_empty())}),
+            )
+        } else {
+            if o.contains_key("--continue-input") {
+                return Err("--continue-input requires continuation kind and target".into());
+            }
+            None
+        };
+        let coordinator_requested = [
+            "--coordinator-graph",
+            "--coordinator-graph-file",
+            "--coordinator-input",
+            "--coordinator-input-file",
+            "--coordinator-output-path",
+            "--coordinator-project-root",
+            "--coordinator-shared-root",
+            "--coordinator-workspace-root",
+        ]
+        .iter()
+        .any(|key| o.contains_key(*key));
+        if coordinator_requested {
+            if o.contains_key("--initial-plan") {
+                return Err("Coordinator starts directly without a Planner".into());
+            }
+            let graph_inline = o.get("--coordinator-graph");
+            let graph_file = o.get("--coordinator-graph-file");
+            let input_inline = o.get("--coordinator-input");
+            let input_file = o.get("--coordinator-input-file");
+            if graph_inline.is_some() == graph_file.is_some()
+                || input_inline.is_some() == input_file.is_some()
+            {
+                return Err("Coordinator requires exactly one of --coordinator-graph/--coordinator-graph-file and exactly one of --coordinator-input/--coordinator-input-file".into());
+            }
+            for key in [
+                "--coordinator-output-path",
+                "--coordinator-project-root",
+                "--coordinator-workspace-root",
+            ] {
+                if !o.contains_key(key) {
+                    return Err(format!("Coordinator requires {key}"));
+                }
+            }
+            let db_path = db(&o)?;
+            if !id.is_empty() && o.contains_key("--idempotency-key") {
+                return Err(
+                    "--id and --idempotency-key cannot be combined for native Coordinator creation"
+                        .into(),
+                );
+            }
+            if let Some(file) = o.get("--coordinator-graph-file") {
+                let path = Path::new(file).canonicalize().map_err(|e| e.to_string())?;
+                if !path.starts_with(isolated_store_root(&db_path)?) {
+                    return Err("Coordinator graph file must be inside isolated store root".into());
+                }
+            }
+            if let Some(file) = o.get("--coordinator-input-file") {
+                let path = Path::new(file).canonicalize().map_err(|e| e.to_string())?;
+                if !path.starts_with(isolated_store_root(&db_path)?) {
+                    return Err("Coordinator input file must be inside isolated store root".into());
+                }
+            }
+            let output = PathBuf::from(o.get("--coordinator-output-path").unwrap());
+            let graph_file = o
+                .get("--coordinator-graph-file")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("."));
+            let input_file = o
+                .get("--coordinator-input-file")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("."));
+            let generated_key = uuid::Uuid::new_v4().to_string();
+            let coordinator_tag = o
+                .get("--tag")
+                .map(|v| serde_json::from_str::<Value>(v).map_err(|_| "--tag must be valid JSON"))
+                .transpose()?;
+            let coordinator_continuation = continuation.as_ref();
+            return create_dag_job(DagJobRequest {
+                db: &db_path,
+                project: Path::new(root),
+                project_path: o.get("--project-path").map(String::as_str),
+                graph_file: &graph_file,
+                input_file: &input_file,
+                output_file: &output,
+                title: o
+                    .get("--title")
+                    .map(String::as_str)
+                    .unwrap_or("Agents Relay job"),
+                repository: repo,
+                request_key: o
+                    .get("--idempotency-key")
+                    .map(String::as_str)
+                    .unwrap_or(&generated_key),
+                id: if id.is_empty() { None } else { Some(id) },
+                priority,
+                graph: graph_inline.map(String::as_str),
+                input: input_inline.map(String::as_str),
+                workspace_root: o.get("--coordinator-workspace-root").map(Path::new),
+                shared_root: o.get("--coordinator-shared-root").map(Path::new),
+                github_repo: o.get("--github-repo").map(String::as_str),
+                tag: coordinator_tag.as_ref(),
+                creator_thread_id: o.get("--creator-thread-id").map(String::as_str),
+                reviewer_thread_id: o.get("--reviewer-thread-id").map(String::as_str),
+                implementation_thread_id: o.get("--implementation-thread-id").map(String::as_str),
+                continuation: coordinator_continuation,
+                no_github: o.contains_key("--no-github"),
+                review_enabled: !o.contains_key("--no-review"),
+                auto_merge: !o.contains_key("--no-auto-merge"),
+            });
+        }
+        if o.contains_key("--initial-plan") {
+            return Err("--initial-plan requires a configured native Planner runtime; Rust job create does not fabricate Planner rounds".into());
+        }
+        let isolated_root = isolated_store_root(&path)?;
+        let canonical_project = Path::new(root).canonicalize().map_err(|e| e.to_string())?;
+        if !canonical_project.is_dir() || !canonical_project.starts_with(&isolated_root) {
+            return Err(
+                "--project-root must be an existing directory inside the isolated store".into(),
+            );
+        }
+        if let Some(relative) = o.get("--project-path") {
+            let candidate = canonical_project
+                .join(relative)
+                .canonicalize()
+                .map_err(|e| e.to_string())?;
+            if !candidate.starts_with(&canonical_project) {
+                return Err("--project-path must resolve inside --project-root".into());
+            }
+
         }
         let now = agents_relay_rust::supervised_script::current_time();
         let mut a = RelayAuthority::open_existing(&path)?;
@@ -188,11 +376,23 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
             id: if id.is_empty() { None } else { Some(id) },
             title,
             objective: &objective,
-            project_root: root,
+            project_root: &canonical_project.to_string_lossy(),
             project_path: o.get("--project-path").map(String::as_str),
             priority,
             review_enabled: !o.contains_key("--no-review"),
             auto_merge: !o.contains_key("--no-auto-merge"),
+            idempotency_key: o.get("--idempotency-key").map(String::as_str),
+            tag: o
+                .get("--tag")
+                .map(|v| serde_json::from_str::<Value>(v).map_err(|_| "--tag must be valid JSON"))
+                .transpose()?
+                .as_ref(),
+            github_repo: o.get("--github-repo").map(String::as_str),
+            creator_thread_id: o.get("--creator-thread-id").map(String::as_str),
+            reviewer_thread_id: o.get("--reviewer-thread-id").map(String::as_str),
+            implementation_thread_id: o.get("--implementation-thread-id").map(String::as_str),
+            continuation: continuation.as_ref(),
+            no_github: o.contains_key("--no-github"),
             at: &now,
         })?;
         return Ok(json!({"job":job,"created":true}));
@@ -253,4 +453,125 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
         next["updatedAt"]=json!(at);Ok((next,vec![]))
     })?;
     Ok(json!({"job":result.job}))
+}
+
+#[cfg(test)]
+mod create_tests {
+    use super::*;
+    use agents_relay_rust::{native_job::init_isolated_store, store::RelayReader};
+    use std::fs;
+
+    #[test]
+    fn native_create_coordinator_round_trip_and_fail_closed_cases() {
+        std::env::set_var("RELAY_RUST_EXPERIMENTAL_TEST_ONLY", "isolated-test");
+        let dir = tempfile::Builder::new()
+            .prefix("relay-rust-authority-")
+            .tempdir()
+            .unwrap();
+        fs::write(
+            dir.path().join(".relay-rust-authority-isolated-test"),
+            "test",
+        )
+        .unwrap();
+        let db = dir.path().join("relay.sqlite");
+        init_isolated_store(&db).unwrap();
+        let project = dir.path().join("project");
+        fs::create_dir(&project).unwrap();
+        let graph_file = dir.path().join("graph.mmd");
+        fs::write(&graph_file,"flowchart TD\n  S[agent:source] --> A[agent:left]\n  S --> B[agent:right]\n  A --> J[agent:join]\n  B --> J\n").unwrap();
+        let input_file = dir.path().join("input.md");
+        let original = "# Original request\n\nKeep every decision and constraint intact.";
+        fs::write(&input_file, original).unwrap();
+        let output = dir.path().join("output.json");
+        let argv = |extra: &[&str]| -> Vec<String> {
+            let mut values = vec![
+                "--db".into(),
+                db.to_string_lossy().into_owned(),
+                "--repo".into(),
+                "demo".into(),
+                "--objective".into(),
+                "standalone objective".into(),
+                "--coordinator-graph-file".into(),
+                graph_file.to_string_lossy().into_owned(),
+                "--coordinator-input-file".into(),
+                input_file.to_string_lossy().into_owned(),
+                "--coordinator-output-path".into(),
+                output.to_string_lossy().into_owned(),
+                "--coordinator-project-root".into(),
+                project.to_string_lossy().into_owned(),
+                "--coordinator-workspace-root".into(),
+                project.to_string_lossy().into_owned(),
+                "--idempotency-key".into(),
+                "coordinator-test-1".into(),
+                "--no-github".into(),
+            ];
+            values.extend(extra.iter().map(|v| v.to_string()));
+            values
+        };
+        let created = run("create", &argv(&[])).unwrap();
+        assert_eq!(created["created"], true);
+        assert_eq!(created["state"], "DRAFT");
+        let again = run("create", &argv(&[])).unwrap();
+        assert_eq!(again["created"], false);
+        assert_eq!(again["jobId"], created["jobId"]);
+        let reader = RelayReader::open(&db).unwrap();
+        let job = reader
+            .get_job(created["jobId"].as_str().unwrap())
+            .unwrap()
+            .unwrap()
+            .job;
+        assert_eq!(job["state"], "DRAFT");
+        assert_eq!(job["objective"], original);
+        assert_eq!(
+            job["projectRoot"],
+            project.canonicalize().unwrap().to_string_lossy().as_ref()
+        );
+        assert_eq!(job["tasks"][0]["state"], "QUEUED");
+        assert_eq!(job["tasks"][0]["input"], original);
+        assert!(
+            job["tasks"][0]["agentGraph"]
+                .as_str()
+                .unwrap()
+                .contains("agent:join")
+        );
+        assert_eq!(job["tasks"].as_array().unwrap().len(), 1);
+        let initial = argv(&["--initial-plan"]);
+        assert!(
+            run("create", &initial)
+                .unwrap_err()
+                .contains("Coordinator starts directly")
+        );
+        let incomplete = vec![
+            "--db".into(),
+            db.to_string_lossy().into_owned(),
+            "--repo".into(),
+            "demo".into(),
+            "--objective".into(),
+            "x".into(),
+            "--project-root".into(),
+            project.to_string_lossy().into_owned(),
+            "--coordinator-input".into(),
+            "input".into(),
+        ];
+        assert!(
+            run("create", &incomplete)
+                .unwrap_err()
+                .contains("Coordinator requires")
+        );
+        let unsupported = vec![
+            "--db".into(),
+            db.to_string_lossy().into_owned(),
+            "--repo".into(),
+            "demo".into(),
+            "--objective".into(),
+            "x".into(),
+            "--shortcut-local".into(),
+        ];
+        assert!(
+            run("create", &unsupported)
+                .unwrap_err()
+                .contains("deprecated or removed")
+        );
+        std::env::remove_var("RELAY_RUST_EXPERIMENTAL_TEST_ONLY");
+    }
 }
