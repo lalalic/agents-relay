@@ -807,6 +807,13 @@ mod tests {
         let finished = store.read_job("91").unwrap().unwrap();
         assert_eq!(finished["tasks"].as_array().unwrap().len(), 1);
         assert_eq!(finished["tasks"][0]["state"], "QUEUED");
+        let restored_input: Value =
+            serde_json::from_str(finished["tasks"][0]["input"].as_str().unwrap()).unwrap();
+        assert_eq!(restored_input["video"], "output/video.mp4");
+        assert!(
+            restored_input.get("reviewRevision").is_none(),
+            "approved revision instructions must not leak into later ordinary attempts"
+        );
         assert!(finished["tasks"][0].get("workerRequirements").is_none());
         assert!(finished["tasks"][0]
             .get("reviewRevisionOriginalExecutionConfig")

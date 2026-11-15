@@ -94,7 +94,12 @@ impl RelayAuthority {
                 if task.get("reviewRevisionOriginalExecutionConfig").is_none() {
                     let mut original = json!({
                         "adapter":task.get("adapter").cloned().unwrap_or(Value::Null),
-                        "capabilities":task.get("capabilities").cloned().unwrap_or(json!([]))
+                        "capabilities":task.get("capabilities").cloned().unwrap_or(json!([])),
+                        // Review instructions are execution-scoped input. Keep
+                        // them off the durable Task once that revision is
+                        // approved, so a later ordinary retry starts from the
+                        // original request rather than stale review feedback.
+                        "input":task.get("input").cloned().ok_or("Review Task input missing")?
                     });
                     for key in ["workerRequirements", "routing", "workerSelection"] {
                         if let Some(value) = task.get(key) {
@@ -137,6 +142,9 @@ impl RelayAuthority {
                     } else if let Some(fields) = task.as_object_mut() {
                         fields.shift_remove(key);
                     }
+                }
+                if let Some(input) = original.get("input") {
+                    task["input"] = input.clone();
                 }
                 if let Some(fields) = task.as_object_mut() {
                     fields.shift_remove("reviewRevisionOriginalExecutionConfig");
