@@ -67,7 +67,7 @@ impl<'g> TaskLifecycle<'g> {
         request: TaskTransition<'_>,
         result: Option<Value>,
     ) -> Result<(CommittedJob, Decision), String> {
-        self.apply_internal(store, request, result, None)
+        self.apply_internal(store, request, result, None, false)
     }
 
     /// Complete a real worker generation and its launch Action receipt in ONE
@@ -80,7 +80,20 @@ impl<'g> TaskLifecycle<'g> {
         result: Option<Value>,
         claim: &ScriptClaim,
     ) -> Result<(CommittedJob, Decision), String> {
-        self.apply_internal(store, request, result, Some(claim))
+        self.apply_internal(store, request, result, Some(claim), false)
+    }
+
+    /// Consume a terminal event that already arrived through an external
+    /// transport. The inbox receipt and Task snapshot commit atomically, while
+    /// the consumed event is not echoed into the outbound event queue.
+    pub(crate) fn apply_with_inbound_launch_receipt(
+        &self,
+        store: &mut RelayAuthority,
+        request: TaskTransition<'_>,
+        result: Option<Value>,
+        claim: &ScriptClaim,
+    ) -> Result<(CommittedJob, Decision), String> {
+        self.apply_internal(store, request, result, Some(claim), true)
     }
 
     fn apply_internal(
@@ -89,6 +102,7 @@ impl<'g> TaskLifecycle<'g> {
         request: TaskTransition<'_>,
         result: Option<Value>,
         launch: Option<&ScriptClaim>,
+        suppress_outbox: bool,
     ) -> Result<(CommittedJob, Decision), String> {
         let TaskTransition {
             job_id,
@@ -321,7 +335,7 @@ impl<'g> TaskLifecycle<'g> {
             task["updatedAt"] = Value::String(at.into());
             next["updatedAt"] = Value::String(at.into());
             decision = Some(graph_decision);
-            Ok((next, events))
+            Ok((next, if suppress_outbox { vec![] } else { events }))
         })?;
         Ok((
             committed,

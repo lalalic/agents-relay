@@ -8,6 +8,7 @@ pub mod final_review;
 pub mod graph;
 pub mod lifecycle;
 pub mod native_daemon;
+pub mod native_ingress;
 pub mod native_job;
 pub mod native_model;
 pub mod native_outbox;

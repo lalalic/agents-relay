@@ -59,6 +59,14 @@ record pending; a PONG is not a delivery guarantee to an individual observer.
 The daemon does not publish any events by default. The actual Neo Events
 Bus/Chat Gateway production service has not been cut over.
 
+For isolated native runtime work, `relay-native-daemon --loop ...
+--nats-ingress-port PORT` also subscribes to `relay.events.job.*.task.*` on
+loopback Core NATS. It accepts only correlated `task.completed` and
+`task.failed` envelopes that match the current SQLite Job, Task, execution,
+lease, attempt, and Graph launch receipt. Completion requires structured
+verified output. This bounded pilot ingress does not establish production
+Events Bus or service parity.
+
 A real Codex calculator and a Vlog pilot using three original private MOV/VTT
 files were separately tested through native Rust Job creation and Daemon
 execution: calculator generated a standalone HTML/JS page with passing
