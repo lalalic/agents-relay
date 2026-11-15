@@ -34,6 +34,7 @@ impl RelayAuthority {
         execution_id: &str,
         at: &str,
     ) -> Result<InteractiveReviewBinding, String> {
+        validate_identity(job_id, task_id, execution_id)?;
         let mut binding = None;
         self.commit_job_with_tx(job_id, at, |_, prior| {
             if prior["state"] != "ACTIVE"
@@ -111,6 +112,7 @@ impl RelayAuthority {
         reason: &str,
         at: &str,
     ) -> Result<InteractiveReviewFailure, String> {
+        validate_identity(job_id, task_id, execution_id)?;
         if reason.trim().is_empty() {
             return Err("interactive Preview failure reason is required".into());
         }
@@ -215,6 +217,7 @@ impl RelayAuthority {
         execution_id: &str,
         at: &str,
     ) -> Result<bool, String> {
+        validate_identity(job_id, task_id, execution_id)?;
         let snapshot = self
             .read_job(job_id)?
             .ok_or("interactive Preview Job missing")?;
@@ -263,6 +266,13 @@ impl RelayAuthority {
     }
 }
 
+fn validate_identity(job_id: &str, task_id: &str, execution_id: &str) -> Result<(), String> {
+    if job_id.trim().is_empty() || task_id.trim().is_empty() || execution_id.trim().is_empty() {
+        return Err("interactive Preview requires Job, Task and execution identities".into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,6 +294,9 @@ mod tests {
         let (_dir, path) = setup();
         let mut store = RelayAuthority::open_existing(&path).unwrap();
         let at = running(&mut store);
+        assert!(store
+            .begin_interactive_review("91", "101", " ", &at)
+            .is_err());
         let bind_at = crate::supervised_script::after_time(&at).unwrap();
         let bound = store
             .begin_interactive_review("91", "101", "exec-1", &bind_at)
