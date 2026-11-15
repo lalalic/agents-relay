@@ -46,15 +46,49 @@ pub struct TaskTransition<'a> {
 pub struct TaskLifecycle<'g> {
     graph: &'g Graph,
 }
+
+/// Record accepted Worker activity and extend the durable fencing lease from
+/// that activity's timestamp. Called only after the canonical Graph accepts
+/// the lifecycle event, inside the same SQLite snapshot transaction.
+fn renew_worker_activity(task: &mut Value, activity_at: &str) -> Result<(), String> {
+    let activity = chrono::DateTime::parse_from_rfc3339(activity_at)
+        .map_err(|_| "invalid Worker activity timestamp")?;
+    let timeout_ms = task["timeoutMs"]
+        .as_i64()
+        .filter(|timeout| *timeout > 0)
+        .ok_or("Worker Task inactivity timeout missing")?;
+    let renewed = activity + chrono::Duration::milliseconds(timeout_ms + 30_000);
+    let current = task["leaseExpiresAt"]
+        .as_str()
+        .ok_or("Worker Task lease expiry missing")?;
+    let current = chrono::DateTime::parse_from_rfc3339(current)
+        .map_err(|_| "invalid Worker Task lease expiry")?;
+    if renewed > current {
+        task["leaseExpiresAt"] =
+            Value::String(renewed.to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
+    }
+    task["lastWorkerActivityAt"] = Value::String(activity_at.into());
+    Ok(())
+}
+
+fn maybe_renew_worker_activity(task: &mut Value, activity_at: &str) -> Result<(), String> {
+    if task.get("timeoutMs").and_then(Value::as_i64).is_some()
+        && task.get("leaseExpiresAt").and_then(Value::as_str).is_some()
+    {
+        renew_worker_activity(task, activity_at)?;
+    }
+    Ok(())
+}
+
 impl<'g> TaskLifecycle<'g> {
     pub fn new(graph: &'g Graph) -> Self {
         Self { graph }
     }
 
     /// Apply a correlated nonterminal Worker event through the canonical Task
-    /// Graph and persist its inbox receipt with the Task snapshot. Progress is
-    /// evidence only; it never writes a Task result or renews the Worker
-    /// process timeout.
+    /// Graph and persist its inbox receipt with the Task snapshot. Accepted
+    /// activity renews the durable inactivity deadline; it never writes a
+    /// Task result.
     pub(crate) fn apply_inbound_worker_event(
         &self,
         store: &mut RelayAuthority,
@@ -108,7 +142,7 @@ impl<'g> TaskLifecycle<'g> {
             if input.id == "task.progress" {
                 let event_at = receipt.payload["timestamp"].as_str().ok_or("Worker progress timestamp missing")?;
                 let event_at = chrono::DateTime::parse_from_rfc3339(event_at).map_err(|_| "invalid Worker progress timestamp")?;
-                if task.get("lastProgressEventAt").and_then(Value::as_str).is_some_and(|previous| {
+                if task.get("lastWorkerActivityAt").or_else(|| task.get("lastProgressEventAt")).and_then(Value::as_str).is_some_and(|previous| {
                     chrono::DateTime::parse_from_rfc3339(previous).is_ok_and(|previous| event_at <= previous)
                 }) {
                     return Err("Worker progress event is stale or out of order".into());
@@ -123,6 +157,12 @@ impl<'g> TaskLifecycle<'g> {
             task["updatedAt"] = Value::String(at.into());
             if input.id == "task.progress" {
                 task["lastProgressEventAt"] = receipt.payload["timestamp"].clone();
+            }
+            if matches!(input.id.as_str(), "task.started" | "task.progress") {
+                let activity_at = receipt.payload["timestamp"]
+                    .as_str()
+                    .ok_or("Worker activity timestamp missing")?;
+                maybe_renew_worker_activity(task, activity_at)?;
             }
             next["updatedAt"] = Value::String(at.into());
             tx.execute(
@@ -421,6 +461,10 @@ impl<'g> TaskLifecycle<'g> {
             }
             task["state"] = Value::String(target.clone());
             task["updatedAt"] = Value::String(at.into());
+            if matches!(input.id.as_str(), "task.started" | "task.progress") {
+                let activity_at = input.payload.get("timestamp").and_then(Value::as_str).unwrap_or(at);
+                maybe_renew_worker_activity(task, activity_at)?;
+            }
             next["updatedAt"] = Value::String(at.into());
             decision = Some(graph_decision);
             Ok((next, if suppress_outbox { vec![] } else { events }))

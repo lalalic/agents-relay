@@ -57,6 +57,7 @@ pub fn execute_supervised_script(
     spec: &WorkerSpec,
     evidence: &Path,
     helper: &Path,
+    db: &Path,
     stopped: Arc<AtomicBool>,
 ) -> Result<NativeScriptResult, String> {
     if !helper.is_absolute() || !helper.is_file() {
@@ -94,7 +95,9 @@ pub fn execute_supervised_script(
     let output = child.stdout.take().ok_or("missing helper stdout")?;
     let mut reader = BufReader::new(output);
     let spec_config = json!({
-        "parentPid":std::process::id(),"executable":spec.executable,"args":spec.args,
+        "parentPid":std::process::id(),"db":db,"jobId":claim.job_id,
+        "taskId":claim.task_id,"executionId":claim.execution_id,
+        "executable":spec.executable,"args":spec.args,
         "cwd":spec.cwd,"env":spec.env,"stdout":spec.stdout,"stderr":spec.stderr,
         "timeoutMs":u64::try_from(spec.timeout.as_millis()).map_err(|_|"Worker timeout overflow")?,
         "terminateGraceMs":u64::try_from(spec.terminate_grace.as_millis()).map_err(|_|"Worker grace overflow")?

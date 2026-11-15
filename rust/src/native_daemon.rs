@@ -328,6 +328,7 @@ pub(crate) fn tick_with_stop(
                 &spec,
                 &evidence,
                 &opt.helper,
+                &opt.db,
                 Arc::clone(&stopped),
             ) {
                 Ok(result) if result.verified => report.tasks_succeeded += 1,

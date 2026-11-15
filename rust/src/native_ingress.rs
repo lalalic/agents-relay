@@ -220,7 +220,7 @@ pub fn ingest_nats_worker_terminal_event(
 
 /// Apply a correlated Worker start/progress event. These events only pass
 /// Graph-selected nonterminal transitions and durable idempotency receipts;
-/// they cannot write a result or renew a process timeout.
+/// accepted activity renews only the matching Worker inactivity deadline.
 pub fn ingest_worker_lifecycle_event(
     authority: &mut RelayAuthority,
     subject: &str,
@@ -535,6 +535,7 @@ mod tests {
                 let task = &mut job["tasks"][0];
                 task["adapter"] = json!("script");
                 task["dependencies"] = json!([]);
+                task["timeoutMs"] = json!(120000);
                 task["attempt"] = json!(0);
                 task["maxAttempts"] = json!(3);
                 task["executionId"] = Value::Null;
@@ -701,9 +702,19 @@ mod tests {
     }
 
     #[test]
-    fn worker_start_and_progress_use_graph_and_are_idempotent_without_false_completion_or_timeout_renewal(
+    fn worker_start_and_progress_use_graph_and_renew_only_durable_activity_without_false_completion(
     ) {
         let (_dir, path, mut store) = unstarted();
+        store
+            .commit_job("91", "2026-11-13T20:00:02.900Z", |old| {
+                let mut job = old.clone();
+                job["updatedAt"] = json!("2026-11-13T20:00:02.900Z");
+                let task = &mut job["tasks"][0];
+                task["timeoutMs"] = json!(1000);
+                task["leaseExpiresAt"] = json!("2026-11-13T20:00:10.000Z");
+                Ok((job, vec![]))
+            })
+            .unwrap();
         let start = lifecycle_event("task.started", "start-1", "2026-11-13T20:00:03.000Z");
         assert!(submit_lifecycle(
             &mut store,
@@ -737,13 +748,18 @@ mod tests {
         let snapshot = store.read_job("91").unwrap().unwrap();
         assert_eq!(snapshot["tasks"][0]["state"], "RUNNING");
         assert!(snapshot["tasks"][0]["result"].is_null());
-        assert!(
-            snapshot["tasks"][0].get("lastProgressAt").is_none(),
-            "progress ingress must not renew the native process timeout"
-        );
+        assert!(snapshot["tasks"][0].get("lastProgressAt").is_none());
         assert_eq!(
             snapshot["tasks"][0]["lastProgressEventAt"],
             "2026-11-13T20:00:04.000Z"
+        );
+        assert_eq!(
+            snapshot["tasks"][0]["lastWorkerActivityAt"],
+            "2026-11-13T20:00:04.000Z"
+        );
+        assert_eq!(
+            snapshot["tasks"][0]["leaseExpiresAt"], "2026-11-13T20:00:35.000Z",
+            "restart recovery must use the accepted activity deadline"
         );
         drop(store);
         let mut reopened = RelayAuthority::open_existing(&path).unwrap();
@@ -768,6 +784,37 @@ mod tests {
         );
         let lifecycle_receipts: i64 = rusqlite::Connection::open(&path).unwrap().query_row("SELECT COUNT(*) FROM workflow_event_inbox WHERE consumer_id='rust-worker-lifecycle'", [], |row| row.get(0)).unwrap();
         assert_eq!(lifecycle_receipts, 2);
+        let reopened_job = reopened.read_job("91").unwrap().unwrap();
+        assert_eq!(
+            reopened_job["tasks"][0]["lastWorkerActivityAt"],
+            "2026-11-13T20:00:04.000Z"
+        );
+        assert_eq!(
+            reopened_job["tasks"][0]["leaseExpiresAt"],
+            "2026-11-13T20:00:35.000Z"
+        );
+        assert!(crate::recovery::inspect_expired_execution(
+            &reopened_job,
+            "101",
+            "2026-11-13T20:00:34.999Z",
+            crate::authority::ProcessProbe::Gone,
+            false,
+        )
+        .unwrap()
+        .is_none());
+        assert_eq!(
+            crate::recovery::inspect_expired_execution(
+                &reopened_job,
+                "101",
+                "2026-11-13T20:00:36.000Z",
+                crate::authority::ProcessProbe::Gone,
+                false,
+            )
+            .unwrap()
+            .unwrap()
+            .status,
+            "eligible"
+        );
         assert!(
             reopened.pending_events().unwrap().is_empty(),
             "inbound lifecycle events are not echoed to the outbox"
@@ -836,6 +883,15 @@ mod tests {
             "2026-11-13T20:00:04.100Z"
         )
         .is_err());
+        let unchanged = store.read_job("91").unwrap().unwrap();
+        assert_eq!(
+            unchanged["tasks"][0]["lastWorkerActivityAt"],
+            original["tasks"][0]["lastWorkerActivityAt"]
+        );
+        assert_eq!(
+            unchanged["tasks"][0]["leaseExpiresAt"],
+            original["tasks"][0]["leaseExpiresAt"]
+        );
         assert!(submit_lifecycle(
             &mut store,
             &valid,
@@ -855,6 +911,15 @@ mod tests {
         assert_eq!(
             store.read_job("91").unwrap().unwrap()["tasks"][0]["state"],
             original["tasks"][0]["state"]
+        );
+        let after_out_of_order = store.read_job("91").unwrap().unwrap();
+        assert_eq!(
+            after_out_of_order["tasks"][0]["lastWorkerActivityAt"],
+            "2026-11-13T20:00:04.000Z"
+        );
+        assert_eq!(
+            after_out_of_order["tasks"][0]["leaseExpiresAt"],
+            original["tasks"][0]["leaseExpiresAt"]
         );
         let receipts: i64 = rusqlite::Connection::open(&path).unwrap().query_row("SELECT COUNT(*) FROM workflow_event_inbox WHERE consumer_id='rust-worker-lifecycle'", [], |row| row.get(0)).unwrap();
         assert_eq!(receipts, 1);

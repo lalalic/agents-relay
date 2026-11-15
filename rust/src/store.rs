@@ -4,6 +4,7 @@ use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path;
+use std::time::{Duration, SystemTime};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JobSnapshot {
@@ -131,6 +132,41 @@ impl RelayReader {
         })
         .transpose()
     }
+
+    /// Return only the timestamp committed for the exact active Worker
+    /// execution. An event receipt or transport acknowledgement is not enough.
+    pub fn worker_activity_at(
+        &self,
+        job_id: &str,
+        task_id: &str,
+        execution_id: &str,
+    ) -> Result<Option<SystemTime>, String> {
+        let Some(snapshot) = self.get_job(job_id)? else {
+            return Ok(None);
+        };
+        let Some(task) = snapshot.job["tasks"]
+            .as_array()
+            .and_then(|tasks| tasks.iter().find(|task| task["id"] == task_id))
+        else {
+            return Ok(None);
+        };
+        if task["state"] != "RUNNING" || task["executionId"] != execution_id {
+            return Ok(None);
+        }
+        let Some(activity) = task["lastWorkerActivityAt"].as_str() else {
+            return Ok(None);
+        };
+        let activity = chrono::DateTime::parse_from_rfc3339(activity)
+            .map_err(|_| "invalid durable Worker activity timestamp")?;
+        let seconds = activity.timestamp();
+        if seconds < 0 {
+            return Err("Worker activity timestamp predates Unix epoch".into());
+        }
+        Ok(Some(
+            SystemTime::UNIX_EPOCH
+                + Duration::new(seconds as u64, activity.timestamp_subsec_nanos()),
+        ))
+    }
 }
 use rusqlite::OptionalExtension;
 
@@ -211,5 +247,50 @@ mod tests {
             reader.get_job("201").unwrap().unwrap().job["state"],
             "ACTIVE"
         );
+    }
+
+    #[test]
+    fn worker_activity_reader_is_execution_fenced_and_restart_durable() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("activity.sqlite");
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch("CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at TEXT NOT NULL);").unwrap();
+        let job = serde_json::json!({"id":"91","tasks":[{"id":"101","state":"RUNNING","executionId":"exec-1","lastWorkerActivityAt":"2026-11-13T20:00:04.123456789Z"}]});
+        db.execute(
+            "INSERT INTO job_snapshot VALUES ('91',?1,'2026-11-13T20:00:04.123456789Z')",
+            [job.to_string()],
+        )
+        .unwrap();
+        drop(db);
+
+        let reader = RelayReader::open(&path).unwrap();
+        let activity = reader
+            .worker_activity_at("91", "101", "exec-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            activity.duration_since(SystemTime::UNIX_EPOCH).unwrap(),
+            Duration::new(1_794_600_004, 123_456_789)
+        );
+        assert!(reader
+            .worker_activity_at("91", "101", "stale-exec")
+            .unwrap()
+            .is_none());
+        assert!(reader
+            .worker_activity_at("91", "missing", "exec-1")
+            .unwrap()
+            .is_none());
+        let db = Connection::open(&path).unwrap();
+        let finished = serde_json::json!({"id":"91","tasks":[{"id":"101","state":"SUCCEEDED","executionId":"exec-1","lastWorkerActivityAt":"2026-11-13T20:00:04.123456789Z"}]});
+        db.execute(
+            "UPDATE job_snapshot SET json=?1 WHERE job_id='91'",
+            [finished.to_string()],
+        )
+        .unwrap();
+        drop(db);
+        assert!(reader
+            .worker_activity_at("91", "101", "exec-1")
+            .unwrap()
+            .is_none());
     }
 }
