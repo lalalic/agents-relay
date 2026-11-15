@@ -1,0 +1,449 @@
+cli,parameter,mark,node_source,rust_source,rust_evidence_or_gap
+agent-discover,--availability,MISSING,src/cli-help.ts:347,,Unimplemented or no verified Rust-native parameter parity
+agent-discover,--capabilities,MISSING,src/cli-help.ts:347,,Unimplemented or no verified Rust-native parameter parity
+agent-discover,--explore,MISSING,src/cli-help.ts:347,,Unimplemented or no verified Rust-native parameter parity
+agent-discover,--file,MISSING,src/cli-help.ts:346,,Unimplemented or no verified Rust-native parameter parity
+agent-discover,--id,MISSING,src/cli-help.ts:346,,Unimplemented or no verified Rust-native parameter parity
+agent-discover,--repo,MISSING,src/cli-help.ts:346,,Unimplemented or no verified Rust-native parameter parity
+agent-discover,--runtime,MISSING,src/cli-help.ts:347,,Unimplemented or no verified Rust-native parameter parity
+agent-discover,--task-kind,MISSING,src/cli-help.ts:347,,Unimplemented or no verified Rust-native parameter parity
+agent-discover,--trust-domain,MISSING,src/cli.ts:460 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+agent-register,--adapter,MISSING,src/cli.ts:58 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+agent-register,--agent-id,MISSING,src/cli.ts:460 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+agent-register,--availability,MISSING,src/cli.ts:460 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+agent-register,--boundaries,MISSING,src/cli.ts:460 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+agent-register,--capabilities,MISSING,src/cli-help.ts:329,,Unimplemented or no verified Rust-native parameter parity
+agent-register,--endpoint,MISSING,src/cli-help.ts:328,,Unimplemented or no verified Rust-native parameter parity
+agent-register,--endpoint-kind,MISSING,src/cli.ts:460 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+agent-register,--file,MISSING,src/cli-help.ts:328,,Unimplemented or no verified Rust-native parameter parity
+agent-register,--id,MISSING,src/cli-help.ts:328,,Unimplemented or no verified Rust-native parameter parity
+agent-register,--labels,MISSING,src/cli.ts:460 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+agent-register,--model,MISSING,src/cli-help.ts:329,,Unimplemented or no verified Rust-native parameter parity
+agent-register,--name,MISSING,src/cli-help.ts:328,,Unimplemented or no verified Rust-native parameter parity
+agent-register,--provider,MISSING,src/cli-help.ts:329,,Unimplemented or no verified Rust-native parameter parity
+agent-register,--regions,MISSING,src/cli.ts:460 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+agent-register,--repo,MISSING,src/cli-help.ts:328,,Unimplemented or no verified Rust-native parameter parity
+agent-register,--responsibility,MISSING,src/cli-help.ts:328,,Unimplemented or no verified Rust-native parameter parity
+agent-register,--role,MISSING,src/cli-help.ts:328,,Unimplemented or no verified Rust-native parameter parity
+agent-register,--runtime,MISSING,src/cli-help.ts:329,,Unimplemented or no verified Rust-native parameter parity
+agent-register,--trust-domains,MISSING,src/cli.ts:460 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+artifact validate,--artifact,MISSING,manual command-contract enumeration (source branch confirmation required),,Unimplemented or no verified Rust-native parameter parity
+artifact validate,--schema,MISSING,manual command-contract enumeration (source branch confirmation required),,Unimplemented or no verified Rust-native parameter parity
+blocker add,--dependent-job,MISSING,src/cli-help.ts:271,,Unimplemented or no verified Rust-native parameter parity
+blocker add,--dependent-pr,MISSING,src/cli-help.ts:271,,Unimplemented or no verified Rust-native parameter parity
+blocker add,--dependent-repo,MISSING,src/cli-help.ts:271,,Unimplemented or no verified Rust-native parameter parity
+blocker add,--dependent-task,MISSING,src/cli-help.ts:271,,Unimplemented or no verified Rust-native parameter parity
+blocker add,--id,MISSING,src/cli-help.ts:270,,Unimplemented or no verified Rust-native parameter parity
+blocker add,--repo,MISSING,src/cli-help.ts:270,,Unimplemented or no verified Rust-native parameter parity
+blocker add,--resolution,MISSING,src/cli-help.ts:272,,Unimplemented or no verified Rust-native parameter parity
+blocker ensure,--authorized,MISSING,src/cli-help.ts:277,,Unimplemented or no verified Rust-native parameter parity
+blocker ensure,--dependent-task,MISSING,src/cli-help.ts:275,,Unimplemented or no verified Rust-native parameter parity
+blocker ensure,--id,MISSING,src/cli-help.ts:275,,Unimplemented or no verified Rust-native parameter parity
+blocker ensure,--objective-file,MISSING,src/cli-help.ts:276,,Unimplemented or no verified Rust-native parameter parity
+blocker ensure,--origin,MISSING,src/cli-help.ts:277,,Unimplemented or no verified Rust-native parameter parity
+blocker ensure,--reason,MISSING,src/cli-help.ts:276,,Unimplemented or no verified Rust-native parameter parity
+blocker ensure,--repo,MISSING,src/cli-help.ts:275,,Unimplemented or no verified Rust-native parameter parity
+blocker ensure,--request-id,MISSING,src/cli-help.ts:277,,Unimplemented or no verified Rust-native parameter parity
+blocker ensure,--resolution,MISSING,src/cli-help.ts:277,,Unimplemented or no verified Rust-native parameter parity
+blocker ensure,--target-repo,MISSING,src/cli-help.ts:276,,Unimplemented or no verified Rust-native parameter parity
+blocker ensure,--title,MISSING,src/cli-help.ts:276,,Unimplemented or no verified Rust-native parameter parity
+blocker resolve,--id,MISSING,src/cli-help.ts:281,,Unimplemented or no verified Rust-native parameter parity
+blocker resolve,--repo,MISSING,src/cli-help.ts:281,,Unimplemented or no verified Rust-native parameter parity
+blocker resolve,--resolution,MISSING,src/cli-help.ts:281,,Unimplemented or no verified Rust-native parameter parity
+blocker show,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+blocker show,--repo,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+context resolve,--agents,MISSING,src/cli-help.ts:293,,Unimplemented or no verified Rust-native parameter parity
+context resolve,--global-root,MISSING,src/cli-help.ts:294,,Unimplemented or no verified Rust-native parameter parity
+context resolve,--project-path,MISSING,src/cli-help.ts:292,,Unimplemented or no verified Rust-native parameter parity
+context resolve,--role,MISSING,src/cli-help.ts:293,,Unimplemented or no verified Rust-native parameter parity
+context resolve,--shared-root,MISSING,src/cli-help.ts:294,,Unimplemented or no verified Rust-native parameter parity
+context resolve,--skills,MISSING,src/cli-help.ts:293,,Unimplemented or no verified Rust-native parameter parity
+context resolve,--workspace-root,MISSING,src/cli-help.ts:294,,Unimplemented or no verified Rust-native parameter parity
+escalation,--blocked-on,MISSING,src/cli-help.ts:177,,Unimplemented or no verified Rust-native parameter parity
+escalation,--blocked-on-file,MISSING,src/cli-help.ts:177,,Unimplemented or no verified Rust-native parameter parity
+escalation,--context,MISSING,src/cli-help.ts:177,,Unimplemented or no verified Rust-native parameter parity
+escalation,--context-file,MISSING,src/cli-help.ts:177,,Unimplemented or no verified Rust-native parameter parity
+escalation,--cwd,MISSING,src/cli-help.ts:177,,Unimplemented or no verified Rust-native parameter parity
+escalation,--intent,MISSING,src/cli-help.ts:177,,Unimplemented or no verified Rust-native parameter parity
+escalation,--intent-file,MISSING,src/cli-help.ts:177,,Unimplemented or no verified Rust-native parameter parity
+escalation,--on-needs-user,MISSING,src/cli-help.ts:177,,Unimplemented or no verified Rust-native parameter parity
+escalation,--on-needs-user-file,MISSING,src/cli-help.ts:177,,Unimplemented or no verified Rust-native parameter parity
+global help,--help,PARTIAL,src/cli.ts:389 (source token; confirm branch),rust/src/bin/relay-native-job/node_compat.rs,"Rust help routes work, but exact Node per-command help content is not equivalent"
+global help,-h,PARTIAL,src/cli.ts:8 (source token; confirm branch),rust/src/bin/relay-native-job/node_compat.rs,"Rust help routes work, but exact Node per-command help content is not equivalent"
+init,--continue-kind,MISSING,src/cli.ts:271 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+init,--continue-target,MISSING,src/cli.ts:271 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+init,--cron,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+init,--execution-mode,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+init,--file,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+init,--id,MISSING,src/cli-help.ts:315,,Unimplemented or no verified Rust-native parameter parity
+init,--missed-run-policy,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+init,--mode,RETIRED,src/cli.ts:155 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+init,--no-auto-merge,MISSING,src/cli.ts:185 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+init,--no-review,MISSING,src/cli.ts:185 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+init,--objective,MISSING,src/cli-help.ts:315,,Unimplemented or no verified Rust-native parameter parity
+init,--pr,MISSING,src/cli-help.ts:313,,Unimplemented or no verified Rust-native parameter parity
+init,--priority,MISSING,src/cli-help.ts:315,,Unimplemented or no verified Rust-native parameter parity
+init,--project-root,MISSING,src/cli-help.ts:313,,Unimplemented or no verified Rust-native parameter parity
+init,--repo,MISSING,src/cli-help.ts:313,,Unimplemented or no verified Rust-native parameter parity
+init,--schedule,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+init,--schedule-concurrency,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+init,--schedule-cron,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+init,--schedule-next-run,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+init,--schedule-timezone,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+init,--title,MISSING,src/cli-help.ts:315,,Unimplemented or no verified Rust-native parameter parity
+job cancel,--id,MISSING,src/cli-help.ts:170,,Unimplemented or no verified Rust-native parameter parity
+job cancel,--repo,MISSING,src/cli-help.ts:170,,Unimplemented or no verified Rust-native parameter parity
+job create,--auto-merge,MISSING,src/cli-help.ts:119,,Unimplemented or no verified Rust-native parameter parity
+job create,--base,RETIRED,src/cli.ts:197 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job create,--body,RETIRED,src/cli.ts:197 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job create,--coordinator-graph,MISSING,src/cli-help.ts:121,,Unimplemented or no verified Rust-native parameter parity
+job create,--coordinator-graph-file,MISSING,src/cli-help.ts:121,,Unimplemented or no verified Rust-native parameter parity
+job create,--coordinator-input,MISSING,src/cli-help.ts:121,,Unimplemented or no verified Rust-native parameter parity
+job create,--coordinator-input-file,MISSING,src/cli-help.ts:121,,Unimplemented or no verified Rust-native parameter parity
+job create,--coordinator-output-path,MISSING,src/cli-help.ts:122,,Unimplemented or no verified Rust-native parameter parity
+job create,--coordinator-project-root,MISSING,src/cli-help.ts:122,,Unimplemented or no verified Rust-native parameter parity
+job create,--coordinator-shared-root,MISSING,src/cli-help.ts:123,,Unimplemented or no verified Rust-native parameter parity
+job create,--coordinator-workspace-root,MISSING,src/cli-help.ts:123,,Unimplemented or no verified Rust-native parameter parity
+job create,--creator-thread-id,MISSING,src/cli-help.ts:119,,Unimplemented or no verified Rust-native parameter parity
+job create,--cron,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job create,--execution-mode,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job create,--github-repo,MISSING,src/cli.ts:228 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+job create,--head,RETIRED,src/cli.ts:197 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job create,--id,MISSING,src/cli-help.ts:118,,Unimplemented or no verified Rust-native parameter parity
+job create,--idempotency-key,MISSING,src/cli.ts:28 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+job create,--implementation-thread-id,MISSING,src/cli-help.ts:119,,Unimplemented or no verified Rust-native parameter parity
+job create,--initial-plan,MISSING,src/cli-help.ts:119,,Unimplemented or no verified Rust-native parameter parity
+job create,--missed-run-policy,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job create,--mode,RETIRED,src/cli.ts:155 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job create,--no-auto-merge,MISSING,src/cli-help.ts:119,,Unimplemented or no verified Rust-native parameter parity
+job create,--no-github,MISSING,src/cli.ts:388 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+job create,--no-review,MISSING,src/cli-help.ts:119,,Unimplemented or no verified Rust-native parameter parity
+job create,--objective,MISSING,src/cli-help.ts:119,,Unimplemented or no verified Rust-native parameter parity
+job create,--objective-file,MISSING,src/cli-help.ts:119,,Unimplemented or no verified Rust-native parameter parity
+job create,--priority,MISSING,src/cli-help.ts:119,,Unimplemented or no verified Rust-native parameter parity
+job create,--project-path,MISSING,src/cli-help.ts:119,,Unimplemented or no verified Rust-native parameter parity
+job create,--project-root,PARTIAL,src/cli.ts:228 (source token; confirm branch),rust/src/bin/relay-native-job.rs (partial pilot path),"Native option exists, but Node-compatible semantics not fully verified"
+job create,--repo,MISSING,src/cli-help.ts:118,,Unimplemented or no verified Rust-native parameter parity
+job create,--review,MISSING,src/cli-help.ts:119,,Unimplemented or no verified Rust-native parameter parity
+job create,--reviewer-thread-id,MISSING,src/cli-help.ts:119,,Unimplemented or no verified Rust-native parameter parity
+job create,--schedule,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job create,--schedule-concurrency,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job create,--schedule-cron,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job create,--schedule-next-run,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job create,--schedule-timezone,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job create,--start,RETIRED,src/cli.ts:192 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job create,--tag,MISSING,src/cli-help.ts:119,,Unimplemented or no verified Rust-native parameter parity
+job create,--title,PARTIAL,src/cli-help.ts:119,rust/src/bin/relay-native-job.rs (partial pilot path),"Native option exists, but Node-compatible semantics not fully verified"
+job list,--repo,PASS,src/cli-help.ts:160,rust/src/bin/relay-native-job/node_compat.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
+job merge,--id,RETIRED,src/cli-help.ts:166,,Node CLI throws legacy merge error; Graph owns local merge
+job merge,--repo,RETIRED,src/cli-help.ts:166,,Node CLI throws legacy merge error; Graph owns local merge
+job pause,--id,MISSING,src/cli-help.ts:173,,Unimplemented or no verified Rust-native parameter parity
+job pause,--repo,MISSING,src/cli-help.ts:173,,Unimplemented or no verified Rust-native parameter parity
+job resume,--id,MISSING,src/cli-help.ts:176,,Unimplemented or no verified Rust-native parameter parity
+job resume,--repo,MISSING,src/cli-help.ts:176,,Unimplemented or no verified Rust-native parameter parity
+job run,--codex,MISSING,src/cli.ts:280 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+job run,--concurrency,PASS,src/cli.ts:281 (source token; confirm branch),rust/src/bin/relay-native-job/foreground.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
+job run,--event-json,RETIRED,src/cli-coordinator.ts:13 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job run,--foreground,PASS,src/cli-coordinator.ts:15 (source token; confirm branch),rust/src/bin/relay-native-job/foreground.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
+job run,--global-root,MISSING,src/cli.ts:281 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+job run,--id,PASS,src/cli-help.ts:134,rust/src/bin/relay-native-job/foreground.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
+job run,--lease-ms,MISSING,src/cli.ts:281 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+job run,--legacy-shortcut-runtime,RETIRED,src/cli-coordinator.ts:13 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job run,--mode,RETIRED,src/cli.ts:155 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job run,--no-github,PARTIAL,src/cli-help.ts:134,rust/src/bin/relay-native-job/foreground.rs,"Native option exists, but Node-compatible semantics not fully verified"
+job run,--owner,MISSING,src/cli.ts:281 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+job run,--project-path,PARTIAL,src/cli-help.ts:134,rust/src/bin/relay-native-job/foreground.rs,"Native option exists, but Node-compatible semantics not fully verified"
+job run,--repo,PASS,src/cli.ts:41 (source token; confirm branch),rust/src/bin/relay-native-job/foreground.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
+job run,--shared-root,MISSING,src/cli.ts:281 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+job run,--shortcut-local,RETIRED,src/cli.ts:36 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job run,--task-id,PASS,src/cli-help.ts:134,rust/src/bin/relay-native-job/foreground.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
+job run,--workspace-root,MISSING,src/cli.ts:281 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+job show,--id,PASS,src/cli-help.ts:154,rust/src/bin/relay-native-job/node_compat.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
+job show,--repo,PASS,src/cli-help.ts:154,rust/src/bin/relay-native-job/node_compat.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
+job unblock,--id,MISSING,src/cli-help.ts:167,,Unimplemented or no verified Rust-native parameter parity
+job unblock,--reason,MISSING,src/cli-help.ts:167,,Unimplemented or no verified Rust-native parameter parity
+job unblock,--repo,MISSING,src/cli-help.ts:167,,Unimplemented or no verified Rust-native parameter parity
+job update,--auto-merge,MISSING,src/cli-help.ts:147,,Unimplemented or no verified Rust-native parameter parity
+job update,--continue-input,MISSING,src/cli-support.ts:258 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+job update,--continue-kind,MISSING,src/cli.ts:271 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+job update,--continue-target,MISSING,src/cli.ts:271 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+job update,--creator-thread-id,MISSING,src/cli-help.ts:147,,Unimplemented or no verified Rust-native parameter parity
+job update,--cron,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job update,--execution-mode,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job update,--id,MISSING,src/cli-help.ts:146,,Unimplemented or no verified Rust-native parameter parity
+job update,--implementation-thread-id,MISSING,src/cli-help.ts:147,,Unimplemented or no verified Rust-native parameter parity
+job update,--local-merge-source,MISSING,src/cli.ts:197 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+job update,--local-merge-target,MISSING,src/cli.ts:197 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+job update,--missed-run-policy,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job update,--mode,RETIRED,src/cli.ts:155 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job update,--no-auto-merge,MISSING,src/cli-help.ts:147,,Unimplemented or no verified Rust-native parameter parity
+job update,--no-review,MISSING,src/cli-help.ts:147,,Unimplemented or no verified Rust-native parameter parity
+job update,--objective,MISSING,src/cli-help.ts:147,,Unimplemented or no verified Rust-native parameter parity
+job update,--objective-file,MISSING,src/cli-help.ts:147,,Unimplemented or no verified Rust-native parameter parity
+job update,--priority,PARTIAL,src/cli-help.ts:147,rust/src/bin/relay-native-job.rs (partial pilot path),"Native option exists, but Node-compatible semantics not fully verified"
+job update,--project-path,MISSING,src/cli-help.ts:147,,Unimplemented or no verified Rust-native parameter parity
+job update,--repo,MISSING,src/cli-help.ts:146,,Unimplemented or no verified Rust-native parameter parity
+job update,--review,MISSING,src/cli-help.ts:147,,Unimplemented or no verified Rust-native parameter parity
+job update,--reviewer-thread-id,MISSING,src/cli-help.ts:147,,Unimplemented or no verified Rust-native parameter parity
+job update,--schedule,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job update,--schedule-concurrency,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job update,--schedule-cron,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job update,--schedule-next-run,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job update,--schedule-timezone,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+job update,--tag,MISSING,src/cli-help.ts:147,,Unimplemented or no verified Rust-native parameter parity
+job update,--title,PARTIAL,src/cli-help.ts:147,rust/src/bin/relay-native-job.rs (partial pilot path),"Native option exists, but Node-compatible semantics not fully verified"
+migrate-local-repositories,--database,MISSING,src/cli.ts:449 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+migrate-local-repositories,--mapping,MISSING,src/cli.ts:450 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+plan,--codex,MISSING,src/cli.ts:280 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+plan,--execution-id,MISSING,src/cli-help.ts:253,,Unimplemented or no verified Rust-native parameter parity
+plan,--file,MISSING,src/cli-help.ts:253,,Unimplemented or no verified Rust-native parameter parity
+plan,--force-restate,MISSING,src/cli-help.ts:256,,Unimplemented or no verified Rust-native parameter parity
+plan,--id,MISSING,src/cli-help.ts:253,,Unimplemented or no verified Rust-native parameter parity
+plan,--no-github,MISSING,src/cli.ts:388 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+plan,--plan-id,MISSING,src/cli-help.ts:253,,Unimplemented or no verified Rust-native parameter parity
+plan,--planner-command,MISSING,src/cli.ts:280 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+plan,--prompt,MISSING,src/cli-help.ts:256,,Unimplemented or no verified Rust-native parameter parity
+plan,--prompt-file,MISSING,src/cli-help.ts:256,,Unimplemented or no verified Rust-native parameter parity
+plan,--repo,MISSING,src/cli-help.ts:253,,Unimplemented or no verified Rust-native parameter parity
+plan apply,--execution-id,MISSING,src/cli.ts:394 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+plan apply,--file,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+plan apply,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+plan apply,--plan-id,MISSING,src/cli.ts:394 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+plan apply,--repo,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+plan context,--execution-id,MISSING,src/cli.ts:394 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+plan context,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+plan context,--plan-id,MISSING,src/cli.ts:394 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+plan context,--repo,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+projection conflicts,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+projection conflicts,--repo,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+projection resolve,--action,MISSING,src/cli-projection.ts:9 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+projection resolve,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+projection resolve,--note,MISSING,src/cli-projection.ts:11 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+projection resolve,--projection-id,MISSING,src/cli-projection.ts:8 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+projection resolve,--repo,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+prompt,--adapter,MISSING,src/cli-help.ts:78,,Unimplemented or no verified Rust-native parameter parity
+prompt,--eval-file,MISSING,src/cli-help.ts:80,,Unimplemented or no verified Rust-native parameter parity
+prompt,--id,MISSING,src/cli-help.ts:78,,Unimplemented or no verified Rust-native parameter parity
+prompt,--output,MISSING,src/cli-help.ts:78,,Unimplemented or no verified Rust-native parameter parity
+prompt,--plan-id,MISSING,src/cli-help.ts:78,,Unimplemented or no verified Rust-native parameter parity
+prompt,--repo,MISSING,src/cli-help.ts:83,,Unimplemented or no verified Rust-native parameter parity
+prompt,--task-id,MISSING,src/cli-help.ts:79,,Unimplemented or no verified Rust-native parameter parity
+reconcile,--events,MISSING,src/cli-help.ts:309,,Unimplemented or no verified Rust-native parameter parity
+reconcile,--file,MISSING,src/cli-help.ts:307,,Unimplemented or no verified Rust-native parameter parity
+reconcile,--host,MISSING,src/cli.ts:438 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+reconcile,--id,MISSING,src/cli-help.ts:307,,Unimplemented or no verified Rust-native parameter parity
+reconcile,--lease-ms,MISSING,src/cli.ts:281 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+reconcile,--nats-url,MISSING,src/cli-support.ts:198 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+reconcile,--owner,MISSING,src/cli.ts:281 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+reconcile,--port,MISSING,src/cli.ts:339 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+reconcile,--repo,MISSING,src/cli-help.ts:307,,Unimplemented or no verified Rust-native parameter parity
+reconcile,--subject-prefix,MISSING,src/cli-support.ts:201 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+reconcile,--thread-id,MISSING,src/cli-help.ts:309,,Unimplemented or no verified Rust-native parameter parity
+record,--commit,MISSING,src/cli-help.ts:301,,Unimplemented or no verified Rust-native parameter parity
+record,--file,MISSING,src/cli-help.ts:300,,Unimplemented or no verified Rust-native parameter parity
+record,--id,MISSING,src/cli-help.ts:300,,Unimplemented or no verified Rust-native parameter parity
+record,--project,MISSING,src/cli-help.ts:301,,Unimplemented or no verified Rust-native parameter parity
+record,--repo,MISSING,src/cli-help.ts:300,,Unimplemented or no verified Rust-native parameter parity
+record,--summary,MISSING,src/cli-help.ts:300,,Unimplemented or no verified Rust-native parameter parity
+record,--task-id,MISSING,src/cli-help.ts:301,,Unimplemented or no verified Rust-native parameter parity
+review interactive,--execution-id,MISSING,src/cli.ts:394 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review interactive,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review interactive,--path,MISSING,src/cli-review.ts:22 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review interactive,--task-id,MISSING,src/cli.ts:20 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review interactive abort,--execution-id,MISSING,src/cli.ts:394 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review interactive abort,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review interactive abort,--reason,MISSING,src/cli.ts:47 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review interactive abort,--task-id,MISSING,src/cli.ts:20 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review interactive begin,--execution-id,MISSING,src/cli.ts:394 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review interactive begin,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review interactive begin,--task-id,MISSING,src/cli.ts:20 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review interactive fail,--execution-id,MISSING,src/cli.ts:394 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review interactive fail,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review interactive fail,--reason,MISSING,src/cli.ts:47 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review interactive fail,--task-id,MISSING,src/cli.ts:20 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review interactive ready,--execution-id,MISSING,src/cli.ts:394 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review interactive ready,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review interactive ready,--task-id,MISSING,src/cli.ts:20 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review interactive wait,--execution-id,MISSING,src/cli.ts:394 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review interactive wait,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review interactive wait,--task-id,MISSING,src/cli.ts:20 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+review job,--id,MISSING,src/cli-help.ts:114,,Unimplemented or no verified Rust-native parameter parity
+review job,--repo,MISSING,src/cli-help.ts:114,,Unimplemented or no verified Rust-native parameter parity
+review job,--thread-id,MISSING,src/cli-help.ts:115,,Unimplemented or no verified Rust-native parameter parity
+review run,--agents,MISSING,src/cli-help.ts:107,,Unimplemented or no verified Rust-native parameter parity
+review run,--output,MISSING,src/cli-help.ts:109,,Unimplemented or no verified Rust-native parameter parity
+review run,--project-path,MISSING,src/cli-help.ts:109,,Unimplemented or no verified Rust-native parameter parity
+review run,--prompt,MISSING,src/cli-help.ts:109,,Unimplemented or no verified Rust-native parameter parity
+review run,--prompt-file,MISSING,src/cli-help.ts:109,,Unimplemented or no verified Rust-native parameter parity
+serve,--codex,MISSING,src/cli.ts:280 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+serve,--events,MISSING,src/cli-help.ts:322,,Unimplemented or no verified Rust-native parameter parity
+serve,--file,MISSING,src/cli-help.ts:321,,Unimplemented or no verified Rust-native parameter parity
+serve,--github-webhook-secret,MISSING,src/cli.ts:324 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+serve,--id,MISSING,src/cli-help.ts:321,,Unimplemented or no verified Rust-native parameter parity
+serve,--interval,MISSING,src/cli-help.ts:322,,Unimplemented or no verified Rust-native parameter parity
+serve,--lease-ms,MISSING,src/cli.ts:281 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+serve,--nats-url,MISSING,src/cli-support.ts:198 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+serve,--owner,MISSING,src/cli.ts:281 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+serve,--planner-command,MISSING,src/cli.ts:280 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+serve,--port,MISSING,src/cli-help.ts:322,,Unimplemented or no verified Rust-native parameter parity
+serve,--projection-ms,MISSING,src/cli.ts:351 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+serve,--refresh-ms,MISSING,src/cli.ts:339 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+serve,--repo,MISSING,src/cli-help.ts:321,,Unimplemented or no verified Rust-native parameter parity
+serve,--subject-prefix,MISSING,src/cli-support.ts:201 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+serve,--thread-id,MISSING,src/cli-help.ts:322,,Unimplemented or no verified Rust-native parameter parity
+serve,--usage-window-days,MISSING,src/cli.ts:308 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+status,--host,MISSING,src/cli-help.ts:181,,Unimplemented or no verified Rust-native parameter parity
+status,--port,MISSING,src/cli-help.ts:181,,Unimplemented or no verified Rust-native parameter parity
+task cancel,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task cancel,--repo,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task cancel,--task-id,PARTIAL,src/cli-help.ts:248,rust/src/bin/relay-native-job.rs (partial pilot path),"Native option exists, but Node-compatible semantics not fully verified"
+task classify,--classification,MISSING,src/cli-help.ts:250,,Unimplemented or no verified Rust-native parameter parity
+task classify,--evidence,MISSING,src/cli-help.ts:250,,Unimplemented or no verified Rust-native parameter parity
+task classify,--evidence-file,MISSING,src/cli.ts:47 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task classify,--reason,MISSING,src/cli-help.ts:250,,Unimplemented or no verified Rust-native parameter parity
+task classify,--reason-file,MISSING,src/cli.ts:47 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task classify,--target-task-id,MISSING,src/cli-help.ts:250,,Unimplemented or no verified Rust-native parameter parity
+task classify,--task-id,MISSING,src/cli-help.ts:250,,Unimplemented or no verified Rust-native parameter parity
+task comment,--id,MISSING,src/cli-help.ts:223,,Unimplemented or no verified Rust-native parameter parity
+task comment,--message,MISSING,src/cli-help.ts:223,,Unimplemented or no verified Rust-native parameter parity
+task comment,--message-file,MISSING,src/cli-help.ts:223,,Unimplemented or no verified Rust-native parameter parity
+task comment,--repo,MISSING,src/cli-help.ts:223,,Unimplemented or no verified Rust-native parameter parity
+task comment,--task-id,MISSING,src/cli-help.ts:223,,Unimplemented or no verified Rust-native parameter parity
+task comments,--id,MISSING,src/cli-help.ts:226,,Unimplemented or no verified Rust-native parameter parity
+task comments,--repo,MISSING,src/cli-help.ts:226,,Unimplemented or no verified Rust-native parameter parity
+task comments,--task-id,MISSING,src/cli-help.ts:226,,Unimplemented or no verified Rust-native parameter parity
+task complete,--execution-id,NODE_MISMATCH,src/cli.ts:394 (source token; confirm branch),,"Node help advertises Task complete, but runtime action validator omits it"
+task complete,--id,NODE_MISMATCH,src/cli.ts:18 (source token; confirm branch),,"Node help advertises Task complete, but runtime action validator omits it"
+task complete,--repo,NODE_MISMATCH,src/cli.ts:41 (source token; confirm branch),,"Node help advertises Task complete, but runtime action validator omits it"
+task complete,--task-id,NODE_MISMATCH,src/cli.ts:20 (source token; confirm branch),,"Node help advertises Task complete, but runtime action validator omits it"
+task context,--execution-id,MISSING,src/cli-help.ts:229,,Unimplemented or no verified Rust-native parameter parity
+task context,--id,MISSING,src/cli-help.ts:229,,Unimplemented or no verified Rust-native parameter parity
+task context,--repo,MISSING,src/cli-help.ts:229,,Unimplemented or no verified Rust-native parameter parity
+task context,--task-id,MISSING,src/cli-help.ts:229,,Unimplemented or no verified Rust-native parameter parity
+task create,--agent,MISSING,src/cli-help.ts:202,,Unimplemented or no verified Rust-native parameter parity
+task create,--agent-graph,MISSING,src/cli-help.ts:202,,Unimplemented or no verified Rust-native parameter parity
+task create,--agent-graph-file,MISSING,src/cli-help.ts:202,,Unimplemented or no verified Rust-native parameter parity
+task create,--attachments,MISSING,src/cli.ts:192 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task create,--content-only,RETIRED,src/cli.ts:184 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+task create,--dependency-validity,PARTIAL,src/cli-help.ts:202,rust/src/bin/relay-native-job.rs (partial pilot path),"Native option exists, but Node-compatible semantics not fully verified"
+task create,--deps,PARTIAL,src/cli-help.ts:202,rust/src/bin/relay-native-job.rs (partial pilot path),"Native option exists, but Node-compatible semantics not fully verified"
+task create,--draft,PARTIAL,src/cli-help.ts:202,rust/src/bin/relay-native-job.rs (partial pilot path),"Native option exists, but Node-compatible semantics not fully verified"
+task create,--id,MISSING,src/cli-help.ts:202,,Unimplemented or no verified Rust-native parameter parity
+task create,--idempotency-key,MISSING,src/cli-help.ts:202,,Unimplemented or no verified Rust-native parameter parity
+task create,--input,PARTIAL,src/cli-help.ts:201,rust/src/bin/relay-native-job.rs (partial pilot path),"Native option exists, but Node-compatible semantics not fully verified"
+task create,--input-file,PARTIAL,src/cli-help.ts:201,rust/src/bin/relay-native-job.rs (partial pilot path),"Native option exists, but Node-compatible semantics not fully verified"
+task create,--no-content-only,RETIRED,src/cli.ts:184 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+task create,--output,PARTIAL,src/cli-help.ts:201,rust/src/bin/relay-native-job.rs (partial pilot path),"Native option exists, but Node-compatible semantics not fully verified"
+task create,--output-path,PARTIAL,src/cli-help.ts:206,rust/src/bin/relay-native-job.rs (partial pilot path),"Native option exists, but Node-compatible semantics not fully verified"
+task create,--parent,PARTIAL,src/cli-help.ts:202,rust/src/bin/relay-native-job.rs (partial pilot path),"Native option exists, but Node-compatible semantics not fully verified"
+task create,--priority,PARTIAL,src/cli-help.ts:202,rust/src/bin/relay-native-job.rs (partial pilot path),"Native option exists, but Node-compatible semantics not fully verified"
+task create,--repo,MISSING,src/cli-help.ts:206,,Unimplemented or no verified Rust-native parameter parity
+task create,--shortcut-execution,RETIRED,src/cli.ts:184 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+task create,--shortcut-local,RETIRED,src/cli.ts:36 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+task create,--store-dir,MISSING,src/cli-support.ts:55 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task create,--story-size,PARTIAL,src/cli-help.ts:202,rust/src/bin/relay-native-job.rs (partial pilot path),"Native option exists, but Node-compatible semantics not fully verified"
+task create,--title,PARTIAL,src/cli-help.ts:202,rust/src/bin/relay-native-job.rs (partial pilot path),"Native option exists, but Node-compatible semantics not fully verified"
+task escalate,--context,MISSING,src/cli.ts:52 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task escalate,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task escalate,--repo,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task escalate,--required-action,MISSING,src/cli.ts:52 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task escalate,--resolution-condition,MISSING,src/cli.ts:52 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task escalate,--task-id,MISSING,src/cli.ts:20 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task events,--after,PARTIAL,src/cli-help.ts:232,rust/src/bin/relay-native-job/node_compat.rs,"Rust accepted --after 0, but multi-page cursor equivalence with Node is not verified"
+task events,--id,PASS,src/cli-help.ts:232,rust/src/bin/relay-native-job/node_compat.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
+task events,--limit,PASS,src/cli-help.ts:232,rust/src/bin/relay-native-job/node_compat.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
+task events,--order,PASS,src/cli-help.ts:232,rust/src/bin/relay-native-job/node_compat.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
+task events,--repo,PASS,src/cli-help.ts:232,rust/src/bin/relay-native-job/node_compat.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
+task events,--task-id,PASS,src/cli-help.ts:232,rust/src/bin/relay-native-job/node_compat.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
+task list,--id,PASS,src/cli.ts:18 (source token; confirm branch),rust/src/bin/relay-native-job/node_compat.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
+task list,--repo,PASS,src/cli.ts:41 (source token; confirm branch),rust/src/bin/relay-native-job/node_compat.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
+task recover,--evidence,MISSING,src/cli-help.ts:245,,Unimplemented or no verified Rust-native parameter parity
+task recover,--exclude-current-route,MISSING,src/cli-help.ts:245,,Unimplemented or no verified Rust-native parameter parity
+task recover,--failure-kind,MISSING,src/cli-help.ts:245,,Unimplemented or no verified Rust-native parameter parity
+task recover,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task recover,--reason,MISSING,src/cli-help.ts:245,,Unimplemented or no verified Rust-native parameter parity
+task recover,--recovery-task-id,MISSING,src/cli-help.ts:244,,Unimplemented or no verified Rust-native parameter parity
+task recover,--repo,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task recover,--reroute,MISSING,src/cli-help.ts:245,,Unimplemented or no verified Rust-native parameter parity
+task recover,--task-id,MISSING,src/cli-help.ts:244,,Unimplemented or no verified Rust-native parameter parity
+task resume-troubleshooter,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task resume-troubleshooter,--repo,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task resume-troubleshooter,--response,MISSING,src/cli.ts:51 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task resume-troubleshooter,--task-id,MISSING,src/cli.ts:20 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task retry,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task retry,--repo,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task retry,--task-id,PARTIAL,src/cli-help.ts:241,rust/src/bin/relay-native-job.rs (partial pilot path),"Native option exists, but Node-compatible semantics not fully verified"
+task revise,--execution-id,MISSING,src/cli-help.ts:218,,Unimplemented or no verified Rust-native parameter parity
+task revise,--findings-file,MISSING,src/cli-help.ts:218,,Unimplemented or no verified Rust-native parameter parity
+task revise,--head-sha,MISSING,src/cli-help.ts:218,,Unimplemented or no verified Rust-native parameter parity
+task revise,--id,MISSING,src/cli-help.ts:218,,Unimplemented or no verified Rust-native parameter parity
+task revise,--repo,MISSING,src/cli-help.ts:218,,Unimplemented or no verified Rust-native parameter parity
+task revise,--request-id,MISSING,src/cli-help.ts:218,,Unimplemented or no verified Rust-native parameter parity
+task revise,--review-task-id,MISSING,src/cli-help.ts:218,,Unimplemented or no verified Rust-native parameter parity
+task revise,--task-id,MISSING,src/cli-help.ts:218,,Unimplemented or no verified Rust-native parameter parity
+task show,--id,PASS,src/cli.ts:18 (source token; confirm branch),rust/src/bin/relay-native-job/node_compat.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
+task show,--repo,PASS,src/cli.ts:41 (source token; confirm branch),rust/src/bin/relay-native-job/node_compat.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
+task show,--task-id,PASS,src/cli-help.ts:235,rust/src/bin/relay-native-job/node_compat.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
+task supersede,--reason,MISSING,src/cli-help.ts:249,,Unimplemented or no verified Rust-native parameter parity
+task supersede,--task-id,MISSING,src/cli-help.ts:249,,Unimplemented or no verified Rust-native parameter parity
+task unblock,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task unblock,--reason,MISSING,src/cli.ts:47 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task unblock,--repo,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task unblock,--response,MISSING,src/cli.ts:51 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task unblock,--task-id,MISSING,src/cli.ts:20 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task update,--adapter,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--agent,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--agent-graph,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--agent-graph-file,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--attachments,MISSING,src/cli.ts:192 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task update,--capabilities,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--chatgpt-project,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--chatgpt-tab-close-policy,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--clear-routing,MISSING,src/cli-help.ts:212,,Unimplemented or no verified Rust-native parameter parity
+task update,--content-only,RETIRED,src/cli.ts:184 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+task update,--cwd,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--dependency-validity,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--deps,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--draft,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--id,MISSING,src/cli-help.ts:209,,Unimplemented or no verified Rust-native parameter parity
+task update,--input,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--input-file,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--max-attempts,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--model,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--no-content-only,RETIRED,src/cli.ts:184 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+task update,--parent,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--priority,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--profile,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--project,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--provider,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--queue,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--reasoning,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--repo,MISSING,src/cli-help.ts:209,,Unimplemented or no verified Rust-native parameter parity
+task update,--shortcut-execution,RETIRED,src/cli.ts:184 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+task update,--shortcut-local,RETIRED,src/cli.ts:36 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
+task update,--store-dir,MISSING,src/cli-support.ts:55 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task update,--story-size,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--task-id,MISSING,src/cli-help.ts:209,,Unimplemented or no verified Rust-native parameter parity
+task update,--timeout,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--title,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+workflow action,--event,MISSING,src/cli-coordinator.ts:13 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow action,--graph,MISSING,src/cli-workflow.ts:32 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow action,--job,MISSING,src/cli-workflow.ts:60 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow action,--task,MISSING,src/cli.ts:20 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow actions,(none),MISSING,src/cli.ts,,Unimplemented or no verified Rust-native parameter parity
+workflow discover,(none),MISSING,src/cli.ts,,Unimplemented or no verified Rust-native parameter parity
+workflow evaluate,--event,MISSING,src/cli-coordinator.ts:13 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow evaluate,--facts,MISSING,src/cli-workflow.ts:44 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow evaluate,--graph,MISSING,src/cli-workflow.ts:32 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow evaluate,--state,MISSING,src/cli-workflow.ts:42 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow inspect,--graph,MISSING,src/cli-workflow.ts:32 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow trace,--attempt-key,MISSING,src/cli-workflow.ts:70 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow trace,--sqlite,MISSING,src/cli-workflow.ts:59 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow verify,--condition,MISSING,src/cli-workflow.ts:61 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow verify,--execution,MISSING,src/cli.ts:394 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow verify,--job,MISSING,src/cli-workflow.ts:60 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow verify,--sqlite,MISSING,src/cli-workflow.ts:59 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow verify,--task,MISSING,src/cli.ts:20 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow where,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+internal subprocess,--args-file,INTERNAL_NOT_USER,src/cli-review.ts,,"Flag passed to external child provider, not a public Relay CLI switch"
+internal subprocess,--handoff-file,INTERNAL_NOT_USER,src/cli-escalation.ts,,"Flag passed to external child provider, not a public Relay CLI switch"

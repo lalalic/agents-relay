@@ -12,6 +12,11 @@ use serde_json::json;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
+#[path = "relay-native-job/foreground.rs"]
+mod foreground;
+#[path = "relay-native-job/node_compat.rs"]
+mod node_compat;
+
 fn value(args: &[String], name: &str) -> Result<String, String> {
     if args.iter().filter(|a| a.as_str() == name).count() > 1 {
         return Err(format!("duplicate option {name}"));
@@ -271,6 +276,24 @@ fn run() -> Result<(), String> {
                 .into(),
         );
     };
+    if command == "job" && args.get(1).is_some_and(|action| action == "merge") {
+        return Err("job merge is retired: local Git merge is a Graph-owned effect; do not request GitHub PR merge via CLI".into());
+    }
+    if command == "job" && args.get(1).is_some_and(|action| action == "run") {
+        if args[2..].iter().any(|a| a == "--help" || a == "-h") {
+            return node_compat::dispatch(&[]);
+        }
+        return foreground::run(&args[2..]);
+    }
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        return node_compat::dispatch(&[]);
+    }
+    if matches!(
+        (command, args.get(1).map(String::as_str)),
+        ("job", Some("list" | "show")) | ("task", Some("list" | "show" | "events"))
+    ) {
+        return node_compat::dispatch(&args);
+    }
     let path = db(&args)?;
     let result = match command {
         "init" => {
