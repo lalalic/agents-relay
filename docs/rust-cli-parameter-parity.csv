@@ -426,20 +426,20 @@ task update,--story-size,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-j
 task update,--task-id,PARTIAL,src/cli-help.ts:209,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 task update,--timeout,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
 task update,--title,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
-workflow action,--action,PARTIAL,src/cli-projection.ts:9 (source token; confirm branch),rust/src/bin/relay-native-job/workflow.rs,Rust verifies the Task action allowlist but does not yet dispatch authorized Task mutations
+workflow action,--action,PARTIAL,src/cli-projection.ts:9 (source token; confirm branch),rust/src/bin/relay-native-job/workflow.rs,Native Rust workflow action delegates Task retry/cancel/unblock to canonical Graph Task CLI (isolated E2E); other Actions and live ingress remain unported
 workflow action,--context,MISSING,src/cli.ts:52 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
 workflow action,--evidence,MISSING,src/cli.ts:47 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
 workflow action,--exclude-current-route,MISSING,src/cli-worker-task.ts:15 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
 workflow action,--failure-kind,MISSING,src/cli-worker-task.ts:10 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow action,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow action,--reason,MISSING,src/cli.ts:47 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow action,--id,PARTIAL,src/cli.ts:18 (source token; confirm branch),rust/src/bin/relay-native-job/workflow.rs,Native Rust workflow action delegates Task retry/cancel/unblock to canonical Graph Task CLI (isolated E2E); other Actions and live ingress remain unported
+workflow action,--reason,PARTIAL,src/cli.ts:47 (source token; confirm branch),rust/src/bin/relay-native-job/workflow.rs,Native Rust workflow action delegates Task retry/cancel/unblock to canonical Graph Task CLI (isolated E2E); other Actions and live ingress remain unported
 workflow action,--recovery-task-id,MISSING,src/cli.ts:50 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow action,--repo,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow action,--repo,PARTIAL,src/cli.ts:41 (source token; confirm branch),rust/src/bin/relay-native-job/workflow.rs,Native Rust workflow action delegates Task retry/cancel/unblock to canonical Graph Task CLI (isolated E2E); other Actions and live ingress remain unported
 workflow action,--required-action,MISSING,src/cli.ts:52 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
 workflow action,--reroute,MISSING,src/cli-worker-task.ts:15 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
 workflow action,--resolution-condition,MISSING,src/cli.ts:52 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow action,--response,MISSING,src/cli.ts:51 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow action,--task-id,MISSING,src/cli.ts:20 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow action,--response,PARTIAL,src/cli.ts:51 (source token; confirm branch),rust/src/bin/relay-native-job/workflow.rs,Native Rust workflow action delegates Task retry/cancel/unblock to canonical Graph Task CLI (isolated E2E); other Actions and live ingress remain unported
+workflow action,--task-id,PARTIAL,src/cli.ts:20 (source token; confirm branch),rust/src/bin/relay-native-job/workflow.rs,Native Rust workflow action delegates Task retry/cancel/unblock to canonical Graph Task CLI (isolated E2E); other Actions and live ingress remain unported
 workflow actions,(none),PASS,src/cli.ts,rust/src/bin/relay-native-job/workflow.rs,"Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates)"
 workflow discover,(none),PASS,src/cli.ts,rust/src/bin/relay-native-job/workflow.rs,"Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates)"
 workflow evaluate,--event,PASS,src/cli-coordinator.ts:13 (source token; confirm branch),rust/src/bin/relay-native-job/workflow.rs,"Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates)"

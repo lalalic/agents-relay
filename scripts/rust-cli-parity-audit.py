@@ -94,7 +94,7 @@ proof={k:set(v.split()) for k,v in proof.items()}
 partial={
 'job run':'--project-path --no-github',
 'status':'--host',
-'workflow action':'--action',
+'workflow action':'--action --repo --id --task-id --reason --response',
 'job create':'--title --project-root --repo --id --priority --objective --objective-file --project-path --review --no-review --auto-merge --no-auto-merge',
 'job pause':'--repo --id',
 'job resume':'--repo --id',
@@ -157,8 +157,8 @@ for cmd in sorted(entries):
         elif flag in proof.get(cmd,set()):status='PASS';reason='Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15'
         elif cmd=='task events' and flag=='--after':
             status='PARTIAL';reason='Rust accepted --after 0, but multi-page cursor equivalence with Node is not verified'
-        elif cmd=='workflow action' and flag=='--action':
-            status='PARTIAL';reason='Rust verifies the Task action allowlist but does not yet dispatch authorized Task mutations'
+        elif cmd=='workflow action' and flag in {'--action','--repo','--id','--task-id','--reason','--response'}:
+            status='PARTIAL';reason='Native Rust workflow action delegates Task retry/cancel/unblock to canonical Graph Task CLI (isolated E2E); other Actions and live ingress remain unported'
         elif flag in partial.get(cmd,set()):status='PARTIAL';reason='Native option exists, but Node-compatible semantics not fully verified'
         elif cmd=='task complete':status='NODE_MISMATCH';reason='Node help advertises Task complete, but runtime action validator omits it'
         elif cmd=='global help':status='PARTIAL';reason='Rust help routes work, but exact Node per-command help content is not equivalent'

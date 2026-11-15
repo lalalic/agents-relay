@@ -99,12 +99,49 @@ pub fn run(args: &[String]) -> Result<(), String> {
         .map(String::as_str)
         .ok_or("workflow action required")?;
     if action == "action" {
-        let selected = args
+        // Preserve Node's public action-ID validation precedence.
+        let declared = args
             .iter()
-            .position(|v| v == "--action")
+            .position(|value| value == "--action")
             .and_then(|index| args.get(index + 1))
             .map(String::as_str)
             .unwrap_or("");
+        if !matches!(
+            declared,
+            "task.retry"
+                | "task.recover"
+                | "task.cancel"
+                | "task.unblock"
+                | "task.escalate"
+                | "task.resume-troubleshooter"
+        ) {
+            return Err(
+                "workflow action requires a supported Graph-authorized task Action ID".into(),
+            );
+        }
+        // Public workflow Actions delegate to the SAME native Task CLI/Graph
+        // transition authority, rather than reproducing workflow policy.
+        let options = parse(
+            &args[1..],
+            &[
+                "--action",
+                "--db",
+                "--repo",
+                "--id",
+                "--task-id",
+                "--reason",
+                "--response",
+                "--recovery-task-id",
+                "--failure-kind",
+                "--evidence",
+                "--reroute",
+                "--exclude-current-route",
+                "--required-action",
+                "--resolution-condition",
+                "--context",
+            ],
+        )?;
+        let selected = options.get("--action").map(String::as_str).unwrap_or("");
         if !matches!(
             selected,
             "task.retry"
@@ -119,14 +156,65 @@ pub fn run(args: &[String]) -> Result<(), String> {
             );
         }
         for key in ["--repo", "--id", "--task-id"] {
-            if !args
-                .windows(2)
-                .any(|pair| pair[0] == key && !pair[1].is_empty() && !pair[1].starts_with("--"))
-            {
+            if options.get(key).is_none_or(|value| value.trim().is_empty()) {
                 return Err("workflow action requires --repo, --id and --task-id".into());
             }
         }
-        return Err("workflow action requires native Graph-authorized Task control, not yet ported; refusing unsafe dispatch".into());
+        let operation = match selected {
+            "task.retry" => "retry",
+            "task.cancel" => "cancel",
+            "task.unblock" => "unblock",
+            _ => return Err(format!("workflow action {selected} requires Graph-owned recovery/host authorization not yet implemented; refusing unsafe mutation")),
+        };
+        let permitted: &[&str] = match operation {
+            "retry" => &["--action", "--db", "--repo", "--id", "--task-id"],
+            "cancel" => &[
+                "--action",
+                "--db",
+                "--repo",
+                "--id",
+                "--task-id",
+                "--reason",
+            ],
+            "unblock" => &[
+                "--action",
+                "--db",
+                "--repo",
+                "--id",
+                "--task-id",
+                "--reason",
+                "--response",
+            ],
+            _ => unreachable!(),
+        };
+        if let Some(extra) = options
+            .keys()
+            .find(|key| !permitted.contains(&key.as_str()))
+        {
+            return Err(format!("unsupported workflow action {selected} option {extra}: refusing to silently ignore"));
+        }
+        let db = options
+            .get("--db")
+            .map(String::as_str)
+            .map(std::path::PathBuf::from)
+            .map_or_else(super::node_compat::default_db, Ok)?;
+        let mut task_args = vec![
+            "task".to_owned(),
+            operation.to_owned(),
+            "--db".into(),
+            db.to_string_lossy().to_string(),
+        ];
+        for key in ["--repo", "--id", "--task-id", "--reason", "--response"] {
+            if let Some(value) = options.get(key) {
+                task_args.extend([key.to_owned(), value.clone()]);
+            }
+        }
+        let result = super::task_cli::run(&task_args)?;
+        println!(
+            "{}",
+            serde_json::to_string(&result).map_err(|e| e.to_string())?
+        );
+        return Ok(());
     }
     fn action_trace(options: &HashMap<String, String>) -> Result<Value, String> {
         let path = options.get("--sqlite").ok_or("trace requires --sqlite")?;

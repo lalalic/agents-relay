@@ -360,6 +360,12 @@ fn unblock(args: &[String]) -> Result<Value, String> {
     result(&c.job, tid)
 }
 pub fn run(args: &[String]) -> Result<Value, String> {
+    // All direct Task mutations must be handled by the Rust Daemon's authenticated
+    // single-writer ingress once it owns the live namespace. Never allow an
+    // unrelated CLI process to race the durable worker/Review reconciler.
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        return Err("native Task mutations require daemon-owned control in Rust live mode; refusing competing SQLite writer".into());
+    }
     let action = args
         .get(1)
         .map(String::as_str)

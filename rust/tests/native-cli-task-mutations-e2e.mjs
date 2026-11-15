@@ -57,9 +57,48 @@ test('retry extends the bounded attempt window, clears stale route and remains d
  }finally{close(f)}
 });
 
+test('Rust live namespace refuses direct Task CLI mutation while daemon owns SQLite',()=>{
+ const f=fixture();try{
+  const before=snapshot(f);
+  const r=spawnSync(cli,['task','create','--db',f.db,'--id',f.jobId,'--repo','agents-relay',
+   '--input','x','--output','file','--output-path',join(f.root,'project/output/task.txt')],{
+   env:{...f.env,RELAY_RUST_LIVE_MODE:'pilot-live'},encoding:'utf8',timeout:12000});
+  assert.equal(r.status,2);assert.match(r.stderr,/daemon-owned control/);
+  assert.deepEqual(snapshot(f),before);
+ }finally{close(f)}
+});
 test('native CLI rejects human escalation response impersonation and unsupported review mutations',()=>{
  const f=fixture();try{const made=create(f);patchTask(f,made.taskId,{state:'BLOCKED',agentName:'troubleshooter',kind:'work',escalation:{status:'pending'}});const before=snapshot(f);
   assert.match(f.call(['task','unblock','--db',f.db,'--id',f.jobId,'--task-id',made.taskId,'--response','approved'],2),/cannot impersonate an authorized human/);assert.deepEqual(snapshot(f),before);
   assert.match(f.call(['task','classify','--db',f.db,'--id',f.jobId,'--task-id',made.taskId,'--classification','superseded','--target-task-id','999'],2),/not safely supported/);assert.deepEqual(snapshot(f),before);
+ }finally{close(f)}
+});
+
+test('workflow action routes retry/cancel/unblock through the same Graph-authorized native Task effects',()=>{
+ const f=fixture();try{
+  const made=create(f);
+  const base=['workflow','action','--db',f.db,'--id',f.jobId,'--repo','agents-relay','--task-id',made.taskId];
+  patchTask(f,made.taskId,{state:'FAILED',error:'failure',attempt:3,maxAttempts:3,routing:{provider:'old'}});
+  const result=f.call([...base,'--action','task.retry']);
+  assert.equal(result.task.state,'QUEUED');assert.equal(result.task.maxAttempts,6);
+  const cancelled=f.call([...base,'--action','task.cancel','--reason','operator cancel']);
+  assert.equal(cancelled.task.state,'CANCELLED');
+  const persisted=snapshot(f).tasks.find(t=>t.id===made.taskId);
+  assert.equal(persisted.state,'CANCELLED');
+  const before=snapshot(f);
+  assert.match(f.call([...base,'--action','task.recover','--recovery-task-id','999'],2),/requires Graph-owned recovery/);
+  assert.deepEqual(snapshot(f),before,'unsupported recovery must not mutate SQLite');
+  assert.match(f.call([...base,'--action','task.retry','--reason','ignored'],2),/refusing to silently ignore/);
+  assert.deepEqual(snapshot(f),before);
+ }finally{close(f)}
+});
+test('workflow action live Task writes refuse an unowned second SQLite writer',()=>{
+ const f=fixture();try{
+  const made=create(f),before=snapshot(f);
+  const r=spawnSync(cli,['workflow','action','--db',f.db,'--id',f.jobId,
+   '--repo','agents-relay','--task-id',made.taskId,'--action','task.cancel','--reason','stop'],{
+    env:{...f.env,RELAY_RUST_LIVE_MODE:'pilot-live'},encoding:'utf8',timeout:12000});
+  assert.equal(r.status,2);assert.match(r.stderr,/daemon-owned control/);
+  assert.deepEqual(snapshot(f),before);
  }finally{close(f)}
 });

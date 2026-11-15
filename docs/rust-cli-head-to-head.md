@@ -64,7 +64,7 @@ PASS means real Rust-native executable evidence; PARTIAL / MISSING / NODE_MISMAT
 | `task supersede` | 0 | 0 | 2 | 0 | 0 | NOT COMPLETE |
 | `task unblock` | 0 | 4 | 1 | 0 | 0 | NOT COMPLETE |
 | `task update` | 0 | 8 | 23 | 4 | 0 | NOT COMPLETE |
-| `workflow action` | 0 | 1 | 13 | 0 | 0 | NOT COMPLETE |
+| `workflow action` | 0 | 6 | 8 | 0 | 0 | NOT COMPLETE |
 | `workflow actions` | 1 | 0 | 0 | 0 | 0 | PASS |
 | `workflow discover` | 1 | 0 | 0 | 0 | 0 | PASS |
 | `workflow evaluate` | 4 | 0 | 0 | 0 | 0 | PASS |

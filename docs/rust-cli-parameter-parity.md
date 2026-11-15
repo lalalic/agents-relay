@@ -3,7 +3,7 @@
 Source: Node cli-help.ts and all src/cli*.ts flag literals. Every listed parameter has a current mark. PASS requires actual executable E2E evidence. Rust-only CLI options are documented separately.
 
 Actions/groups: 66; individual parameter cells: 458.
-Counts: INTERNAL_NOT_USER=2, MISSING=266, NODE_MISMATCH=4, PARTIAL=106, PASS=35, RETIRED=45.
+Counts: INTERNAL_NOT_USER=2, MISSING=261, NODE_MISMATCH=4, PARTIAL=111, PASS=35, RETIRED=45.
 
 Full machine-readable checklist: docs/rust-cli-parameter-parity.csv
 
@@ -844,24 +844,24 @@ Overall: PARTIAL. MISSING=23, PARTIAL=8, RETIRED=4.
 
 ### workflow action
 
-Overall: PARTIAL. MISSING=13, PARTIAL=1.
+Overall: PARTIAL. MISSING=8, PARTIAL=6.
 
 | Parameter | Mark | Evidence or gap |
 |---|---|---|
-| `--action` | PARTIAL | Rust verifies the Task action allowlist but does not yet dispatch authorized Task mutations |
+| `--action` | PARTIAL | Native Rust workflow action delegates Task retry/cancel/unblock to canonical Graph Task CLI (isolated E2E); other Actions and live ingress remain unported |
 | `--context` | MISSING | Unimplemented or no verified Rust-native parameter parity |
 | `--evidence` | MISSING | Unimplemented or no verified Rust-native parameter parity |
 | `--exclude-current-route` | MISSING | Unimplemented or no verified Rust-native parameter parity |
 | `--failure-kind` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--reason` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--id` | PARTIAL | Native Rust workflow action delegates Task retry/cancel/unblock to canonical Graph Task CLI (isolated E2E); other Actions and live ingress remain unported |
+| `--reason` | PARTIAL | Native Rust workflow action delegates Task retry/cancel/unblock to canonical Graph Task CLI (isolated E2E); other Actions and live ingress remain unported |
 | `--recovery-task-id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--repo` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--repo` | PARTIAL | Native Rust workflow action delegates Task retry/cancel/unblock to canonical Graph Task CLI (isolated E2E); other Actions and live ingress remain unported |
 | `--required-action` | MISSING | Unimplemented or no verified Rust-native parameter parity |
 | `--reroute` | MISSING | Unimplemented or no verified Rust-native parameter parity |
 | `--resolution-condition` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--response` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--task-id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--response` | PARTIAL | Native Rust workflow action delegates Task retry/cancel/unblock to canonical Graph Task CLI (isolated E2E); other Actions and live ingress remain unported |
+| `--task-id` | PARTIAL | Native Rust workflow action delegates Task retry/cancel/unblock to canonical Graph Task CLI (isolated E2E); other Actions and live ingress remain unported |
 
 ### workflow actions
 
