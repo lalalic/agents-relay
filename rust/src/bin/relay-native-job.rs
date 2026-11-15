@@ -18,6 +18,8 @@ mod foreground;
 mod node_compat;
 #[path = "relay-native-job/planner_cli.rs"]
 mod planner_cli;
+#[path = "relay-native-job/platform_cli.rs"]
+mod platform_cli;
 #[path = "relay-native-job/status.rs"]
 mod status;
 #[path = "relay-native-job/workflow.rs"]
@@ -315,6 +317,19 @@ fn run() -> Result<(), String> {
             serde_json::to_string(&result).map_err(|e| e.to_string())?
         );
         return Ok(());
+    }
+    if matches!(
+        command,
+        "artifact"
+            | "agent-discover"
+            | "agent-register"
+            | "context"
+            | "prompt"
+            | "blocker"
+            | "projection"
+            | "migrate-local-repositories"
+    ) {
+        return platform_cli::dispatch(&args);
     }
     if command == "workflow" {
         return workflow::run(&args[1..]);

@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 const dir=process.env.CARGO_TARGET_DIR??resolve(import.meta.dirname,'../target');
 const cli=join(dir,'debug/relay-native-job');
 const helper=join(dir,'debug/relay-worker-helper');
@@ -85,6 +86,42 @@ test('Node spelling: native Rust job run --foreground completes real Coordinator
   assert.deepEqual(job.tasks.map(t=>t.state),['SUCCEEDED','SUCCEEDED','SUCCEEDED']);
   assert.equal(job.tasks[2].result.data.output.source,'builder');
   assert.match(invoke(['job','run','--db',f.db,'--id',created.jobId,'--task-id','not-coordinator','--foreground'],2),/Coordinator Task not found/);
+ }finally{rmSync(f.root,{recursive:true,force:true});}
+});
+test('Node task events --after cursor: exhaustive multi-page durable SQLite progression and invalid cursors',()=>{
+ const f=fixture();
+ try{
+  invoke(['init','--db',f.db]);
+  const created=invoke(['create','--db',f.db,'--project-root',join(f.root,'project'),
+   '--graph-file',f.graph,'--input-file',f.input,'--output-path',f.output,
+   '--title','Task event pagination','--repository','calc','--request-key','cli-pagination-1']);
+  const sqlite=new DatabaseSync(f.db);
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS workflow_event_outbox(
+   event_key TEXT PRIMARY KEY,event_id TEXT NOT NULL,payload_json TEXT NOT NULL,
+   state TEXT NOT NULL DEFAULT 'pending',created_at TEXT NOT NULL,published_at TEXT)`);
+  const insert=sqlite.prepare('INSERT INTO workflow_event_outbox(event_key,event_id,payload_json,created_at) VALUES(?,?,?,?)');
+  for(let i=1;i<=5;i++){
+    const event=`e${String(i).padStart(2,'0')}`;
+    insert.run('key-'+event,event,JSON.stringify({
+      job_id:created.jobId,task_id:created.coordinatorTaskId,
+      event_id:event,type:'task.progress',timestamp:`2026-11-15T12:00:0${i}.000Z`,
+      message:`event ${i}`}),`2026-11-15T12:00:0${i}.000Z`);
+  }
+  sqlite.close();
+  const base=['task','events','--db',f.db,'--id',created.jobId,'--task-id',created.coordinatorTaskId,
+    '--limit','2','--order','asc'];
+  const pages=[0,2,4].map(after=>invoke([...base,'--after',String(after)]));
+  assert.deepEqual(pages.map(p=>p.events.length),[2,2,1]);
+  assert.deepEqual(pages.map(p=>p.nextCursor),[2,4,5]);
+  assert.deepEqual(pages.map(p=>p.morePossible),[true,true,false]);
+  const all=pages.flatMap(p=>p.events.map(e=>e.event_id));
+  assert.deepEqual(all,['e01','e02','e03','e04','e05']);
+  assert.equal(new Set(all).size,5,'no duplicated event across pages');
+  assert.match(invoke([...base,'--after','-1'],2),/--after/);
+  assert.match(invoke([...base,'--after','not-cursor'],2),/--after/);
+  assert.match(invoke([...base,'--after','9007199254740992'],2),/safe integer/);
+  assert.match(invoke(['task','events','--db',f.db,'--id',created.jobId,
+    '--task-id',created.coordinatorTaskId,'--limit','2','--order','desc','--after','2'],2),/--after requires/);
  }finally{rmSync(f.root,{recursive:true,force:true});}
 });
 test('retired legacy merge and explicit help fail safely without Node fallback',()=>{
