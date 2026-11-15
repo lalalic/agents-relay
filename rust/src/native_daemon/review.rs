@@ -363,6 +363,116 @@ pub(crate) fn resume_accepted_native_reviews(
     Ok(())
 }
 
+/// Bind a trusted Model route to a same-Task interactive revision after the
+/// Task Graph has accepted `interactive.resume`. Script routes are deliberately
+/// not reused for semantic edits. This is idempotent so a daemon restart after
+/// the resume transition but before route persistence can recover the Task.
+pub(crate) fn reconcile_native_review_revision_routes(
+    authority: &mut RelayAuthority,
+    job_id: &str,
+    agents: &ScriptManifest,
+    report: &mut NativeTick,
+) -> Result<usize, String> {
+    let snapshot = authority.read_job(job_id)?.ok_or("Review Job missing")?;
+    let candidates: Vec<(String, String)> = snapshot["tasks"]
+        .as_array()
+        .ok_or("Review Tasks missing")?
+        .iter()
+        .filter(|task| {
+            task["state"] == "QUEUED"
+                && task["adapter"] == "codex"
+                && task["interactiveInvocation"]["status"] == "changes_requested"
+                && task["routing"].is_null()
+                && task["workerSelection"].is_null()
+                && task["reviewRevisionOriginalExecutionConfig"].is_object()
+                && task["reviewRevisionOriginalExecutionConfig"]["adapter"] != "codex"
+        })
+        .filter_map(|task| {
+            Some((
+                task["id"].as_str()?.to_owned(),
+                task["agentName"].as_str()?.to_owned(),
+            ))
+        })
+        .collect();
+    let mut routed = 0;
+    for (task_id, agent_name) in candidates {
+        let Some(agent) = agents.agents.get(&agent_name) else {
+            report.blocked.push(format!(
+                "{job_id}/{task_id}: no trusted revision Model route for {agent_name}"
+            ));
+            continue;
+        };
+        let (Some(routing), Some(selection)) = (&agent.routing, &agent.worker_selection) else {
+            report.blocked.push(format!(
+                "{job_id}/{task_id}: trusted revision Model route or Worker selection missing for {agent_name}"
+            ));
+            continue;
+        };
+        if agent.kind != NativeAdapterKind::Model
+            || agent.prompt_cli.is_none()
+            || agent.prompt_node.is_none()
+        {
+            report.blocked.push(format!(
+                "{job_id}/{task_id}: revision requires a trusted Model executor and shared prompt Action for {agent_name}"
+            ));
+            continue;
+        }
+        // A Job can have multiple same-Task revisions queued after one
+        // decision. Each durable snapshot write needs a timestamp newer than
+        // the prior write, so read the current snapshot for every candidate.
+        let current_snapshot = authority
+            .read_job(job_id)?
+            .ok_or("Review Job missing during revision route binding")?;
+        let at = after_time(
+            current_snapshot["updatedAt"]
+                .as_str()
+                .ok_or("Review Job timestamp missing")?,
+        )?;
+        let route = routing.clone();
+        let worker = selection.clone();
+        let committed = authority.commit_job(job_id, &at, |current| {
+            let task = current["tasks"]
+                .as_array()
+                .and_then(|tasks| tasks.iter().find(|task| task["id"] == task_id))
+                .ok_or("Review revision Task missing")?;
+            if current["state"] != "ACTIVE"
+                || task["state"] != "QUEUED"
+                || task["adapter"] != "codex"
+                || task["interactiveInvocation"]["status"] != "changes_requested"
+                || task.get("routing").is_some_and(|value| !value.is_null())
+                || task
+                    .get("workerSelection")
+                    .is_some_and(|value| !value.is_null())
+                || task["agentName"] != agent_name
+                || task["reviewRevisionOriginalExecutionConfig"]["adapter"] == "codex"
+            {
+                return Ok((current.clone(), vec![]));
+            }
+            let mut next = current.clone();
+            let task = next["tasks"]
+                .as_array_mut()
+                .and_then(|tasks| tasks.iter_mut().find(|task| task["id"] == task_id))
+                .ok_or("Review revision Task missing")?;
+            task["routing"] = route.clone();
+            task["workerSelection"] = worker.clone();
+            task["updatedAt"] = json!(at);
+            next["updatedAt"] = json!(at);
+            Ok((next, vec![]))
+        })?;
+        if committed.job["tasks"].as_array().is_some_and(|tasks| {
+            tasks.iter().any(|task| {
+                task["id"] == task_id
+                    && task["routing"] == route
+                    && task["workerSelection"] == worker
+            })
+        }) {
+            routed += 1;
+        }
+    }
+    report.review_revision_routes += routed;
+    Ok(routed)
+}
+
 /// Consume a durable reviewer Task result through the canonical Review Graph.
 /// A worker receipt is evidence only: it must carry the exact immutable head
 /// bound to the current reviewer Task, and the Graph must accept its verdict.
@@ -625,6 +735,93 @@ mod tests {
         assert_eq!(job["review"]["outcome"], "changes_required");
         assert_eq!(job["review"]["revisionDisposition"], "needs-ownership");
         assert_eq!(job["state"], "ACTIVE");
+    }
+
+    #[test]
+    fn requeued_script_revision_recovers_trusted_model_route_after_restart() {
+        use super::super::adapter::NativeScriptAdapter;
+        use std::collections::BTreeMap;
+        use std::path::PathBuf;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("relay.sqlite");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch("CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL);").unwrap();
+        let job = json!({
+            "id":"91","repository":"example","state":"ACTIVE","updatedAt":AT,
+            "review":{"outcome":"changes_required","taskId":"review-1","revisionDisposition":"needs-ownership"},
+            "tasks":[{"id":"work-1","kind":"work","agentName":"implementation",
+                "state":"QUEUED","adapter":"codex","routing":null,"workerSelection":null,
+                "interactiveInvocation":{"status":"changes_requested"},
+                "reviewRevisionOriginalExecutionConfig":{"adapter":"script"}},
+                {"id":"work-2","kind":"work","agentName":"implementation",
+                "state":"QUEUED","adapter":"codex","routing":null,"workerSelection":null,
+                "interactiveInvocation":{"status":"changes_requested"},
+                "reviewRevisionOriginalExecutionConfig":{"adapter":"script"}}]
+        });
+        conn.execute(
+            "INSERT INTO job_snapshot(job_id,json,updated_at) VALUES('91',?1,?2)",
+            rusqlite::params![job.to_string(), AT],
+        )
+        .unwrap();
+        drop(conn);
+        let prompt_cli = dir.path().join("cli.js");
+        std::fs::write(&prompt_cli, "").unwrap();
+        std::fs::write(dir.path().join("model-routing.js"), "").unwrap();
+        let routing = json!({"provider":"fixture","model":"fixture-model",
+            "decidedBy":"fixture-router","decidedAt":AT});
+        let selection = json!({"workerId":"fixture-worker","adapter":"codex",
+            "selectedBy":"fixture-router","selectedAt":AT,"capabilities":["model"]});
+        let agents = ScriptManifest {
+            agents: BTreeMap::from([(
+                "implementation".into(),
+                NativeScriptAdapter {
+                    kind: NativeAdapterKind::Model,
+                    executable: PathBuf::from("/bin/true"),
+                    args: vec![],
+                    env: BTreeMap::new(),
+                    routing: Some(routing.clone()),
+                    worker_selection: Some(selection.clone()),
+                    prompt_cli: Some(prompt_cli),
+                    prompt_node: Some(PathBuf::from("/usr/bin/node")),
+                },
+            )]),
+        };
+        let mut restarted = RelayAuthority::open_existing(&path).unwrap();
+        let mut report = NativeTick::default();
+        assert_eq!(
+            reconcile_native_review_revision_routes(&mut restarted, "91", &agents, &mut report)
+                .unwrap(),
+            2
+        );
+        let job = restarted.read_job("91").unwrap().unwrap();
+        assert_eq!(job["tasks"][0]["id"], "work-1");
+        assert_eq!(job["tasks"][0]["routing"], routing);
+        assert_eq!(job["tasks"][0]["workerSelection"], selection);
+        assert_eq!(job["tasks"][1]["routing"], routing);
+        assert_eq!(job["tasks"][1]["workerSelection"], selection);
+        drop(restarted);
+        let mut after_route_commit = RelayAuthority::open_existing(&path).unwrap();
+        let mut retry_report = NativeTick::default();
+        assert_eq!(
+            reconcile_native_review_revision_routes(
+                &mut after_route_commit,
+                "91",
+                &agents,
+                &mut retry_report
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            after_route_commit.read_job("91").unwrap().unwrap()["tasks"][0]["routing"],
+            routing
+        );
+        assert_eq!(
+            after_route_commit.read_job("91").unwrap().unwrap()["tasks"][1]["routing"],
+            routing
+        );
+        assert!(retry_report.blocked.is_empty());
     }
 
     #[test]

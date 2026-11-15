@@ -14,7 +14,8 @@ use adapter::{manifest, script_spec};
 use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat};
 use dag::{complete_native_dag, reconcile_native_dag};
 pub(crate) use review::{
-    apply_native_reviewer_result, reconcile_native_final_review, resume_accepted_native_reviews,
+    apply_native_reviewer_result, reconcile_native_final_review,
+    reconcile_native_review_revision_routes, resume_accepted_native_reviews,
 };
 use serde::Serialize;
 use std::collections::HashSet;
@@ -41,6 +42,7 @@ pub struct NativeTick {
     pub tasks_recovered: usize,
     pub tasks_reopened: usize,
     pub reviews_resumed: usize,
+    pub review_revision_routes: usize,
     pub review_results_applied: usize,
     pub reviews_queued: usize,
     pub jobs_completed: usize,
@@ -184,6 +186,7 @@ pub(crate) fn tick_with_stop(
             continue;
         }
         resume_accepted_native_reviews(&mut authority, &id, &mut report)?;
+        reconcile_native_review_revision_routes(&mut authority, &id, &agents, &mut report)?;
         let reopen_at = after_time(job["updatedAt"].as_str().ok_or("Job timestamp missing")?)?;
         report.tasks_reopened += authority
             .reconcile_troubleshooter_reopens(&id, &reopen_at)?
