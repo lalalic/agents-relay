@@ -260,23 +260,35 @@ pub fn run_configured_escalation(
                 .map_or_else(|| "signal".into(), |code| code.to_string())
         )),
         Ok(_) => {
-            match fs::read(&stdout)
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<EscalationResult>(&bytes).ok())
-            {
-                Some(result)
-                    if matches!(result.status.as_str(), "resolved" | "failed" | "needs_user")
-                        && !result.summary.trim().is_empty() =>
+            // The worker may finish between activity polls, so enforce the
+            // output cap again after exit before reading the result file.
+            let stdout_size = fs::metadata(&stdout).map(|value| value.len()).unwrap_or(0);
+            let stderr_size = fs::metadata(&stderr_check)
+                .map(|value| value.len())
+                .unwrap_or(0);
+            if stdout_size > MAX_OUTPUT_BYTES || stderr_size > MAX_OUTPUT_BYTES {
+                failed("Escalation executor output exceeded 256 KiB")
+            } else {
+                match fs::read(&stdout)
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice::<EscalationResult>(&bytes).ok())
                 {
-                    finish_graph(
-                        &graph,
-                        EscalationOutcome {
-                            state: String::new(),
-                            result,
-                        },
-                    )?
+                    Some(result)
+                        if matches!(
+                            result.status.as_str(),
+                            "resolved" | "failed" | "needs_user"
+                        ) && !result.summary.trim().is_empty() =>
+                    {
+                        finish_graph(
+                            &graph,
+                            EscalationOutcome {
+                                state: String::new(),
+                                result,
+                            },
+                        )?
+                    }
+                    _ => failed("Escalation executor returned invalid result contract"),
                 }
-                _ => failed("Escalation executor returned invalid result contract"),
             }
         }
         Err(error) => failed(format!("Escalation executor failed: {error}")),
