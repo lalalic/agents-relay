@@ -68,6 +68,9 @@ pub(crate) fn apply_native_reviewer_result(
     job_id: &str,
 ) -> Result<bool, String> {
     let snapshot = authority.read_job(job_id)?.ok_or("Review Job missing")?;
+    if snapshot["reviewEnabled"] == false {
+        return Ok(false);
+    }
     let review = &snapshot["review"];
     let Some(task_id) = review["taskId"].as_str() else {
         return Ok(false);
@@ -180,8 +183,13 @@ pub(crate) fn apply_native_reviewer_result(
             || current["headSha"].as_str() != Some(head)
             || current_review["taskId"] != task_id
             || current_review["headSha"] != head
-            || current_task.is_none_or(|task| task["state"] != "SUCCEEDED" || task["reviewHeadSha"] != head)
-            || current_review["outcome"].as_str().unwrap_or("none").to_ascii_uppercase() != current_outcome
+            || current_task
+                .is_none_or(|task| task["state"] != "SUCCEEDED" || task["reviewHeadSha"] != head)
+            || current_review["outcome"]
+                .as_str()
+                .unwrap_or("none")
+                .to_ascii_uppercase()
+                != current_outcome
         {
             return Ok((current.clone(), vec![]));
         }
@@ -191,9 +199,11 @@ pub(crate) fn apply_native_reviewer_result(
             "headSha":head,
             "taskId":task_id,
             "evidence":{"summary":format!("Review {expected_outcome}"),"data":data},
-            "updatedAt":at,
-            "revisionDisposition":if expected_outcome == "changes_required" {"needs-ownership"} else {"none"}
+            "updatedAt":at
         });
+        if expected_outcome == "changes_required" {
+            next["review"]["revisionDisposition"] = json!("needs-ownership");
+        }
         next["updatedAt"] = json!(at);
         committed = true;
         Ok((next, vec![]))
@@ -256,6 +266,9 @@ mod tests {
             authority.read_job("91").unwrap().unwrap()["review"]["outcome"],
             "approved"
         );
+        assert!(authority.read_job("91").unwrap().unwrap()["review"]
+            .get("revisionDisposition")
+            .is_none());
         assert_eq!(
             authority.read_job("91").unwrap().unwrap()["state"],
             "ACTIVE"
@@ -339,6 +352,24 @@ mod tests {
             })
             .unwrap();
         assert!(apply_native_reviewer_result(&mut authority, "91").is_err());
+        assert_eq!(
+            authority.read_job("91").unwrap().unwrap()["review"]["outcome"],
+            "pending"
+        );
+    }
+
+    #[test]
+    fn disabled_review_gate_does_not_accept_a_reviewer_result() {
+        let (_dir, mut authority) = authority("approved", HEAD, json!([]));
+        authority
+            .commit_job("91", "2026-11-15T11:00:00.001Z", |current| {
+                let mut next = current.clone();
+                next["reviewEnabled"] = json!(false);
+                next["updatedAt"] = json!("2026-11-15T11:00:00.001Z");
+                Ok((next, vec![]))
+            })
+            .unwrap();
+        assert!(!apply_native_reviewer_result(&mut authority, "91").unwrap());
         assert_eq!(
             authority.read_job("91").unwrap().unwrap()["review"]["outcome"],
             "pending"
