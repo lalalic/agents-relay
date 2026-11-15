@@ -22,7 +22,10 @@ pub use ids::EntityKind;
 pub use ledger::{ActionIdentity, ActionOutcome, ActionTrace};
 pub use process::{probe_process, ExecutionProcessRecord, ProcessProbe};
 pub use projection::{ProjectionItem, ProjectionRequest, ProjectionRetry};
-pub use review::{review_fingerprint, ReviewDelivery, ReviewReceipt, ReviewResume};
+pub use review::{
+    review_fingerprint, InteractiveReviewBinding, InteractiveReviewFailure, ReviewDelivery,
+    ReviewReceipt, ReviewResume,
+};
 use rusqlite::{
     params, Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior,
 };

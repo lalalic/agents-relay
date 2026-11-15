@@ -538,7 +538,9 @@ impl RelayAuthority {
     }
 }
 
+mod interactive_control;
 mod resume;
+pub use interactive_control::{InteractiveReviewBinding, InteractiveReviewFailure};
 pub use resume::ReviewResume;
 
 #[cfg(test)]
