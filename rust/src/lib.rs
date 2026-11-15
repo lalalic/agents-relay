@@ -7,6 +7,7 @@ pub mod dispatch;
 pub mod final_review;
 pub mod graph;
 pub mod lifecycle;
+pub mod native_context;
 pub mod native_daemon;
 pub mod native_ingress;
 pub mod native_job;

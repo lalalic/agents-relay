@@ -1,11 +1,12 @@
-import test from 'node:test';
+import test, {describe} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync,writeFileSync,readFileSync,symlinkSync,existsSync} from 'node:fs';
+import {mkdtempSync,rmSync,writeFileSync,readFileSync,symlinkSync,existsSync,realpathSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {spawn,spawnSync,execFileSync} from 'node:child_process';
 import {setTimeout as delay} from 'node:timers/promises';
 import {SQLiteRelayStore} from '../../dist/relay-store.js';
+import {resolveExecutionContext} from '../../dist/execution-context.js';
 import {DatabaseSync} from 'node:sqlite';
 const binary=resolve(import.meta.dirname,'../target/debug/relay-native-daemon');
 const helper=resolve(import.meta.dirname,'../target/debug/relay-worker-helper');
@@ -52,13 +53,14 @@ function alive(pid){
  try{const stat=execFileSync('/bin/ps',['-p',String(pid),'-o','stat='],{encoding:'utf8',timeout:1500}).trim();return stat!==''&&!stat.startsWith('Z');}
  catch{return false;}
 }
-function runAsync(f){
+function runAsync(f,env=yes){
  return new Promise(resolvePromise=>{
-  const child=spawn(binary,f.args,{env:yes,stdio:['ignore','pipe','pipe']});
+  const child=spawn(binary,f.args,{env,stdio:['ignore','pipe','pipe']});
   let out='',err='';child.stdout.on('data',b=>out+=b);child.stderr.on('data',b=>err+=b);
   child.once('close',code=>resolvePromise({code,out,err}));
  });
 }
+describe('isolated native daemon e2e', {concurrency:1},()=>{
 test('isolated native daemon: multi-job and dependency wave, physical helper + SQLite readback',async()=>{
  const f=fixture();let store;
  try{
@@ -90,42 +92,52 @@ test('isolated native daemon: multi-job and dependency wave, physical helper + S
   console.log('Native daemon: three real Workers, two Jobs, dependency wave, no repeat on restart');
  }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
 });
-test('independent ready sibling Workers run concurrently and Job stays ACTIVE until all finish',async()=>{
- const f=fixture('if [ "$RELAY_TASK_ID" = "101" ]; then sleep 0.8; else sleep 2.0; fi; '+script);let store;
+test('independent ready sibling Workers have overlapping execution and complete once',async()=>{
+ const f=fixture('if [ "$RELAY_TASK_ID" = "101" ]; then sleep 0.5; else sleep 1.2; fi; '+script);let store;
  try{
   store=new SQLiteRelayStore(f.db);
   await save(store,f.dir,'91',[task('101','91'),task('102','91')].map(t=>({...t,timeoutMs:5000})));
   await store.mutateJob('91',job=>({...job,reviewEnabled:false,autoMerge:false}));store.close();store=null;
-  const running=runAsync(f);
-  await until(async()=>{
-   store=new SQLiteRelayStore(f.db);const job=await store.loadJob('91');store.close();store=null;
-   assert.equal(job.state,'ACTIVE','worker completion must not complete the Job');
-   if(job.tasks.some(t=>t.state==='FAILED'))assert.fail(JSON.stringify(job.tasks.map(t=>({id:t.id,state:t.state,error:t.error,attempt:t.attempt}))));
-   return job.tasks.every(t=>t.state==='RUNNING');
-  });
-  await until(async()=>{
-   store=new SQLiteRelayStore(f.db);const job=await store.loadJob('91');store.close();store=null;
-   assert.equal(job.state,'ACTIVE','a finished sibling must not complete the Job');
-   return job.tasks[0].state==='SUCCEEDED'&&job.tasks[1].state==='RUNNING';
-  });
-  const result=await running;assert.equal(result.code,0,result.err);
+  const result=await runAsync(f);assert.equal(result.code,0,result.err);
   store=new SQLiteRelayStore(f.db);const job=await store.loadJob('91');
   assert.deepEqual(job.tasks.map(t=>t.state),['SUCCEEDED','SUCCEEDED']);
   assert.equal(job.state,'COMPLETED','no-review Job completes only after both siblings succeed');
+  const sql=new DatabaseSync(f.db);
+  const processes=sql.prepare('SELECT task_id, observed_at, ended_at FROM execution_process WHERE job_id=?').all('91');
+  const first=processes.find(item=>item.task_id==='101');
+  const second=processes.find(item=>item.task_id==='102');
+  assert.ok(first&&second&&first.ended_at&&second.ended_at);
+  assert.ok(Date.parse(first.observed_at)<Date.parse(second.ended_at)
+    &&Date.parse(second.observed_at)<Date.parse(first.ended_at),'independent Worker process lifetimes must overlap');
+  sql.close();
   assert.equal(once(f).tasksClaimed,0,'restart must not repeat either terminal execution');
  }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
 });
 test('mixed Script and Model executors dispatch concurrently, fence dependencies, and dedupe after restart',async()=>{
  const f=fixture('sleep 0.3; '+script);let store;
  const modelWorker=join(f.dir,'model-worker.mjs');
+ const projectDir=join(f.dir,'src');
+ (await import('node:fs')).mkdirSync(projectDir,{recursive:true});
+ writeFileSync(join(projectDir,'AGENTS.md'),'project worker rules');
+ const globalRoot=join(f.dir,'global');
+ const sharedRoot=join(f.dir,'shared');
+ (await import('node:fs')).mkdirSync(globalRoot,{recursive:true});
+ (await import('node:fs')).mkdirSync(sharedRoot,{recursive:true});
+ writeFileSync(join(globalRoot,'AGENTS.md'),'global worker defaults');
+ const modelAgentDir=join(projectDir,'agents');
+ const skillDir=join(projectDir,'skills','worker-skill');
+ (await import('node:fs')).mkdirSync(modelAgentDir,{recursive:true});
+ (await import('node:fs')).mkdirSync(skillDir,{recursive:true});
+ writeFileSync(join(modelAgentDir,'model-agent.agent.md'),'---\nname: model-agent\nskills: [worker-skill]\n---\nModel agent');
+ writeFileSync(join(skillDir,'SKILL.md'),'---\nname: worker-skill\n---\nWorker skill');
  writeFileSync(modelWorker,`import {readFileSync,writeFileSync} from 'node:fs';
 import {setTimeout as delay} from 'node:timers/promises';
 const request=JSON.parse(readFileSync(process.env.RELAY_TASK_REQUEST_PATH,'utf8'));
-await delay(900);
+ await delay(900);
 writeFileSync(process.env.RELAY_RESULT_PATH,JSON.stringify({type:'task.completed',jobId:request.jobId,
  taskId:request.taskId,executionId:request.executionId,leaseOwner:request.leaseOwner,attempt:request.attempt,
- adapter:request.adapter,routing:request.routing,workerSelection:request.workerSelection,status:'COMPLETED',
- summary:'mixed executor fixture completed',output:{verified:true,model:request.routing.model}}));`);
+ adapter:request.adapter,routing:request.routing,workerSelection:request.workerSelection,context:request.executionContext,status:'COMPLETED',
+ summary:'mixed executor fixture completed',output:{verified:true,model:request.routing.model,context:request.executionContext}}));`);
  const modelRoute={provider:'fixture',model:'fixture-model',decidedBy:'fixture-router',decidedAt:t0};
  const modelSelection={workerId:'fixture-model-worker',adapter:'codex',capabilities:['model'],selectedBy:'fixture-router',selectedAt:t0};
  const modelTask=(id,deps=[])=>({...task(id,'91',deps),timeoutMs:5000,agentName:'model-agent',adapter:'codex',
@@ -138,34 +150,21 @@ writeFileSync(process.env.RELAY_RESULT_PATH,JSON.stringify({type:'task.completed
  try{
   store=new SQLiteRelayStore(f.db);
   await save(store,f.dir,'91',[task('101','91'),modelTask('102'),modelTask('103',['101'])]);
+  await store.mutateJob('91',job=>({...job,projectPath:'src'}));
   await store.mutateJob('91',job=>({...job,reviewEnabled:false,autoMerge:false}));store.close();store=null;
-  const running=runAsync(f);
-  await until(async()=>{
-   store=new SQLiteRelayStore(f.db);const job=await store.loadJob('91');store.close();store=null;
-   assert.equal(job.state,'ACTIVE');
-   if(job.tasks.some(t=>t.state==='FAILED'))assert.fail(JSON.stringify(job.tasks.map(t=>({id:t.id,state:t.state,error:t.error,attempt:t.attempt}))));
-   if(job.tasks[0].state==='RUNNING'&&job.tasks[1].state==='RUNNING'){
-    assert.equal(job.tasks[0].attempt,1);assert.equal(job.tasks[1].attempt,1);
-    assert.ok(job.tasks[0].executionId&&job.tasks[1].executionId);
-    assert.notEqual(job.tasks[0].executionId,job.tasks[1].executionId);
-    assert.ok(job.tasks[0].leaseOwner&&job.tasks[1].leaseOwner);
-    assert.ok(job.tasks[0].leaseExpiresAt&&job.tasks[1].leaseExpiresAt);
-    return true;
-   }
-   return false;
-  });
-  await until(async()=>{
-   store=new SQLiteRelayStore(f.db);const job=await store.loadJob('91');store.close();store=null;
-   assert.equal(job.state,'ACTIVE','a terminal Script sibling must not finish the Job');
-   return job.tasks[0].state==='SUCCEEDED'&&job.tasks[1].state==='RUNNING';
-  });
+  const workerEnv={...yes,AGENTS_HOME:globalRoot,AGENTS_RELAY_SHARED_ROOT:sharedRoot,AGENTS_RELAY_WORKSPACE_ROOT:f.dir};
+  const first=await runAsync(f,workerEnv);assert.equal(first.code,0,first.err+first.out);
   store=new SQLiteRelayStore(f.db);let job=await store.loadJob('91');
-  assert.equal(job.tasks[2].state,'DRAFT','Model dependent remains ineligible while its Script prerequisite is running');
-  store.close();store=null;
-  const first=await running;assert.equal(first.code,0,first.err);
-  store=new SQLiteRelayStore(f.db);job=await store.loadJob('91');
-  assert.deepEqual(job.tasks.map(t=>t.state),['SUCCEEDED','SUCCEEDED','DRAFT']);
+  assert.deepEqual(job.tasks.map(t=>t.state),['SUCCEEDED','SUCCEEDED','DRAFT'],first.out);
   assert.equal(job.state,'ACTIVE','all current siblings do not authorize the not-yet-materialized dependent');
+  const processSql=new DatabaseSync(f.db);
+  const workerProcesses=processSql.prepare('SELECT task_id, observed_at, ended_at FROM execution_process WHERE job_id=?').all('91');
+  const scriptProcess=workerProcesses.find(item=>item.task_id==='101');
+  const modelProcess=workerProcesses.find(item=>item.task_id==='102');
+  assert.ok(scriptProcess&&modelProcess&&scriptProcess.ended_at&&modelProcess.ended_at);
+  assert.ok(Date.parse(scriptProcess.observed_at)<Date.parse(modelProcess.ended_at)
+    &&Date.parse(modelProcess.observed_at)<Date.parse(scriptProcess.ended_at),'Script and Model process lifetimes must overlap');
+  processSql.close();
   store.close();store=null;
   const second=once(f);
   assert.equal(second.tasksQueued,1,JSON.stringify(second));
@@ -174,11 +173,50 @@ writeFileSync(process.env.RELAY_RESULT_PATH,JSON.stringify({type:'task.completed
   store=new SQLiteRelayStore(f.db);job=await store.loadJob('91');
   assert.deepEqual(job.tasks.map(t=>t.state),['SUCCEEDED','SUCCEEDED','SUCCEEDED']);
   assert.equal(job.tasks[1].result.data.output.model,'fixture-model');
+  assert.equal(job.tasks[1].result.data.output.context.role,'worker');
+  assert.equal(job.tasks[1].result.data.output.context.agent.source,'project');
+  assert.match(job.tasks[1].result.data.output.context.agent.path,/model-agent\.agent\.md$/);
+  assert.equal(job.tasks[1].result.data.output.context.skills[0].source,'project');
+  assert.match(job.tasks[1].result.data.output.context.skills[0].path,/worker-skill\/SKILL\.md$/);
+  assert.equal(job.tasks[1].result.data.output.context.projectPath,realpathSync(projectDir));
+  assert.equal(job.tasks[1].result.data.output.context.gitRoot,realpathSync(f.dir));
+  assert.equal(job.tasks[1].result.data.output.context.instructions.some(item=>item.path.endsWith('/src/AGENTS.md')&&item.source==='project'),true);
+  const nodeContext=await resolveExecutionContext(projectDir,'worker',{workspaceRoot:f.dir,sharedRoot,globalRoot});
+  assert.equal(job.tasks[1].result.data.output.context.agent.path,nodeContext.agents.find(item=>item.name==='model-agent').path);
+  assert.deepEqual(job.tasks[1].result.data.output.context.skills.map(item=>item.path),nodeContext.skills.filter(item=>item.name==='worker-skill').map(item=>item.path));
+  assert.deepEqual(job.tasks[1].result.data.output.context.instructions.map(item=>({path:item.path,source:item.source})),nodeContext.instructions.map(item=>({path:item.path,source:item.source})));
   assert.equal(job.state,'COMPLETED');
+  store.close();store=null;
+  store=new SQLiteRelayStore(f.db);
+  await save(store,f.dir,'93',[{...modelTask('301'),routing:{...modelRoute,model:'forged-model'}}]);
+  store.close();store=null;
+  const rejected=once(f);
+  assert.equal(rejected.tasksClaimed,0,'a durable route conflicting with trusted executor configuration must not launch');
+  store=new SQLiteRelayStore(f.db);job=await store.loadJob('93');
+  assert.equal(job.tasks[0].state,'QUEUED');
+  assert.equal(job.tasks[0].leaseOwner,null);
+  store.close();store=null;
+  store=new SQLiteRelayStore(f.db);
+  await save(store,f.dir,'94',[task('401','94')]);
+  await store.mutateJob('94',job=>({...job,projectPath:'../outside'}));
+  store.close();store=null;
+  assert.equal(once(f).tasksClaimed,0,'repository-relative context must not escape the canonical project root');
+  store=new SQLiteRelayStore(f.db);job=await store.loadJob('94');
+  assert.equal(job.tasks[0].state,'QUEUED');
+  assert.equal(job.tasks[0].leaseOwner,null);
+  store.close();store=null;
+  store=new SQLiteRelayStore(f.db);
+  await save(store,f.dir,'95',[task('501','95')]);
+  await store.mutateJob('95',job=>({...job,projectPath:'.'}));
+  store.close();store=null;
+  const dotProject=once(f);
+  assert.equal(dotProject.tasksClaimed,1,'dot projectPath resolves to the canonical project root');
+  store=new SQLiteRelayStore(f.db);job=await store.loadJob('95');
+  assert.equal(job.tasks[0].state,'SUCCEEDED');
   store.close();store=null;
   assert.equal(once(f).tasksClaimed,0,'restart must not repeat either executor generation');
   const sql=new DatabaseSync(f.db);
-  assert.equal(sql.prepare('SELECT count(*) AS n FROM workflow_action_trace').get().n,3);
+  assert.equal(sql.prepare('SELECT count(*) AS n FROM workflow_action_trace').get().n,4);
   sql.close();
  }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
 });
@@ -437,4 +475,5 @@ test('single-node daemon lock persists across idle ticks and recovers after phys
   store=new SQLiteRelayStore(f.db);
   assert.equal((await store.loadJob('91')).updatedAt,t0,'reacquire after SIGKILL is read-only');
  }finally{daemon?.kill('SIGKILL');store?.close();rmSync(f.dir,{recursive:true,force:true});}
+});
 });

@@ -1,6 +1,6 @@
 //! Trusted local executor manifest, private execution request and WorkerSpec.
-//! Selection is an explicit caller-supplied port; Graph/Router policy stays
-//! outside this adapter. No production provider or implicit shell fallback.
+//! Graph owns eligibility. This adapter binds the durable provider decision to
+//! trusted executor configuration and resolves project context references.
 use super::NativeDaemonOptions;
 use crate::worker::WorkerSpec;
 use serde::Deserialize;
@@ -125,16 +125,39 @@ fn private_dir(root: &Path, path: &Path) -> Result<(), String> {
     Ok(())
 }
 fn project_root(job: &Value, root: &Path) -> Result<PathBuf, String> {
-    let project = job["projectRoot"]
+    let git_root = job["projectRoot"]
         .as_str()
         .ok_or("Job projectRoot missing")?;
-    let path = Path::new(project)
+    let git_root = Path::new(git_root)
         .canonicalize()
         .map_err(|e| e.to_string())?;
-    if !path.starts_with(root) {
+    if !git_root.starts_with(root) {
         return Err("native Script project outside isolated root".into());
     }
-    Ok(path)
+    let Some(relative) = job["projectPath"].as_str() else {
+        return Ok(git_root);
+    };
+    let relative = Path::new(relative);
+    if relative.is_absolute()
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        return Err("Job projectPath must be a safe repository-relative directory".into());
+    }
+    let project = git_root
+        .join(relative)
+        .canonicalize()
+        .map_err(|e| format!("Job projectPath missing: {e}"))?;
+    if !project.starts_with(&git_root) || !project.is_dir() {
+        return Err("Job projectPath escapes canonical Git root".into());
+    }
+    Ok(project)
 }
 pub(super) fn script_spec(
     root: &Path,
@@ -184,6 +207,13 @@ pub(super) fn script_spec(
     let input = task["input"]
         .as_str()
         .ok_or("native Worker Task input must be a string")?;
+    let agent_name = task["agentName"]
+        .as_str()
+        .ok_or("native Worker Agent missing")?;
+    let git_root = Path::new(job["projectRoot"].as_str().ok_or("Job Git root missing")?)
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let context = crate::native_context::resolve(&project, &git_root, "worker", agent_name)?;
     let attempt = task["attempt"]
         .as_i64()
         .ok_or("native Worker Task attempt missing")?
@@ -192,7 +222,7 @@ pub(super) fn script_spec(
     let mut request = serde_json::json!({
         "jobId":id,"taskId":task_id,"executionId":execution_id,
         "leaseOwner":"rust-native-isolated","adapter":adapter_name,"attempt":attempt,
-        "agentName":task["agentName"],"input":input,
+        "agentName":agent_name,"input":input,"executionContext":context,
     });
     if adapter.kind == NativeAdapterKind::Model {
         let routing = task.get("routing").ok_or("Model Task missing routing")?;
@@ -206,7 +236,28 @@ pub(super) fn script_spec(
             return Err("Model requires existing provider/model route".into());
         }
         request["routing"] = routing.clone();
-        request["workerSelection"] = task["workerSelection"].clone();
+        let selection = task
+            .get("workerSelection")
+            .ok_or("Model Task missing durable Worker selection")?;
+        if selection["adapter"] != "codex"
+            || selection["workerId"]
+                .as_str()
+                .is_none_or(|value| value.trim().is_empty())
+            || adapter
+                .worker_selection
+                .as_ref()
+                .is_some_and(|configured| configured != selection)
+            || adapter
+                .routing
+                .as_ref()
+                .is_some_and(|configured| configured != &request["routing"])
+        {
+            return Err(
+                "Model route or Worker selection does not match trusted executor configuration"
+                    .into(),
+            );
+        }
+        request["workerSelection"] = selection.clone();
     }
     let bytes = serde_json::to_vec(&request).map_err(|e| e.to_string())?;
     if bytes.len() > 1_048_576 {
