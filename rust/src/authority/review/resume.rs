@@ -103,12 +103,18 @@ impl RelayAuthority {
                     }
                     task["reviewRevisionOriginalExecutionConfig"] = original;
                 }
+                let original_adapter = task["reviewRevisionOriginalExecutionConfig"]["adapter"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
                 task["adapter"]=json!("codex");
                 task["capabilities"]=json!(["model"]);
                 task["workerRequirements"]=json!({"capabilities":["model"]});
-                if let Some(fields)=task.as_object_mut(){
-                    fields.shift_remove("routing");
-                    fields.shift_remove("workerSelection");
+                if original_adapter != "codex" {
+                    if let Some(fields)=task.as_object_mut(){
+                        fields.shift_remove("routing");
+                        fields.shift_remove("workerSelection");
+                    }
                 }
                 let old_input=task.get("input").and_then(Value::as_str).ok_or("Review Task input not string")?;
                 let mut parsed:Value=serde_json::from_str(old_input).unwrap_or_else(|_|json!({"taskInput":old_input}));
