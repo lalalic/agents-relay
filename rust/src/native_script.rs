@@ -298,26 +298,52 @@ pub(crate) fn finish_script_worker(
     });
     let graph = Graph::parse(include_str!("../../workflow/task-lifecycle.mmd"))?;
     let lifecycle = TaskLifecycle::new(&graph);
-    let (finished, _) = lifecycle.apply_with_launch_receipt(
-        authority,
-        TaskTransition {
-            job_id: &claim.job_id,
-            task_id: &claim.task_id,
-            input: task_input(
-                &claim.job_id,
-                &claim.task_id,
-                &claim.execution_id,
-                &claim.owner,
-                claim.attempt,
-                event,
-            ),
-            guard_facts: &HashMap::new(),
-            at: verified_at,
-            events: vec![receipt],
-        },
-        result,
-        claim,
-    )?;
+    let mut transition_at = verified_at.to_owned();
+    let mut timestamp_retries = 0;
+    let (finished, _) = loop {
+        match lifecycle.apply_with_launch_receipt(
+            authority,
+            TaskTransition {
+                job_id: &claim.job_id,
+                task_id: &claim.task_id,
+                input: task_input(
+                    &claim.job_id,
+                    &claim.task_id,
+                    &claim.execution_id,
+                    &claim.owner,
+                    claim.attempt,
+                    event,
+                ),
+                guard_facts: &HashMap::new(),
+                at: &transition_at,
+                events: vec![receipt.clone()],
+            },
+            result.clone(),
+            claim,
+        ) {
+            Ok(committed) => break committed,
+            Err(error) if error.contains("non-monotonic Job updatedAt") => {
+                // Independent Workers can finish within the same clock
+                // millisecond. Recompute only the mechanics timestamp after
+                // the latest durable Job write, then retry the same Graph
+                // transition and idempotent terminal event.
+                timestamp_retries += 1;
+                if timestamp_retries > 64 {
+                    return Err(
+                        "terminal transition timestamp kept losing concurrent Job ordering".into(),
+                    );
+                }
+                let latest = authority
+                    .read_job(&claim.job_id)?
+                    .ok_or("Worker Job missing while ordering terminal transition")?;
+                let updated_at = latest["updatedAt"]
+                    .as_str()
+                    .ok_or("Worker Job timestamp missing while ordering terminal transition")?;
+                transition_at = crate::supervised_script::after_time(updated_at)?;
+            }
+            Err(error) => return Err(error),
+        }
+    };
     let new_state = finished.job["tasks"]
         .as_array()
         .ok_or("Worker result tasks missing")?

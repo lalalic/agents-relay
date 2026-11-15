@@ -33,6 +33,10 @@ pub struct NativeScriptAdapter {
     // Explicit native-pilot Model Router decision for DAG children only.
     pub routing: Option<Value>,
     pub worker_selection: Option<Value>,
+    /// Optional version-matched CLI inputs for the shared prompt Action. Model
+    /// Workers that opt in receive a minimal, immutable per-execution Job file.
+    pub prompt_cli: Option<PathBuf>,
+    pub prompt_node: Option<PathBuf>,
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -78,6 +82,23 @@ pub(super) fn manifest(opt: &NativeDaemonOptions, root: &Path) -> Result<ScriptM
         }
         if agent.routing.is_some() != agent.worker_selection.is_some() {
             return Err("Model route and Worker selection must be supplied together".into());
+        }
+        if agent.prompt_cli.is_some() != agent.prompt_node.is_some()
+            || agent.prompt_cli.as_ref().is_some_and(|path| {
+                !path.is_absolute()
+                    || !path.is_file()
+                    || !path
+                        .parent()
+                        .is_some_and(|parent| parent.join("model-routing.js").is_file())
+            })
+            || agent
+                .prompt_node
+                .as_ref()
+                .is_some_and(|path| !path.is_absolute() || !path.is_file())
+        {
+            return Err(
+                "Model prompt Action requires absolute existing CLI and Node executables".into(),
+            );
         }
         if let (Some(route), Some(selection)) = (&agent.routing, &agent.worker_selection) {
             if agent.kind != NativeAdapterKind::Model
@@ -258,6 +279,37 @@ pub(super) fn script_spec(
             );
         }
         request["workerSelection"] = selection.clone();
+        if let (Some(cli), Some(node)) = (&adapter.prompt_cli, &adapter.prompt_node) {
+            let mut prompt_job = job.clone();
+            let mut prompt_task = task.clone();
+            prompt_task["executionId"] = serde_json::json!(execution_id);
+            prompt_task["attempt"] = serde_json::json!(attempt);
+            prompt_task["state"] = serde_json::json!("RUNNING");
+            prompt_task["leaseOwner"] = serde_json::json!("rust-native-isolated");
+            prompt_job["tasks"] = serde_json::json!([prompt_task]);
+            let prompt_path = dir.join("prompt-job.json");
+            let prompt_bytes = serde_json::to_vec(&prompt_job).map_err(|e| e.to_string())?;
+            if prompt_bytes.len() > 1_048_576 {
+                return Err("native Worker prompt snapshot exceeds 1MiB".into());
+            }
+            let mut prompt_file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
+                .open(&prompt_path)
+                .map_err(|e| format!("private native Worker prompt snapshot: {e}"))?;
+            prompt_file
+                .write_all(&prompt_bytes)
+                .map_err(|e| e.to_string())?;
+            prompt_file.sync_all().map_err(|e| e.to_string())?;
+            request["promptAction"] = serde_json::json!({
+                "nodeExecutable":node,
+                "cli":cli,
+                "modelRoutingModule":cli.parent().ok_or("prompt CLI directory missing")?.join("model-routing.js"),
+                "jobFile":prompt_path,
+            });
+        }
     }
     let bytes = serde_json::to_vec(&request).map_err(|e| e.to_string())?;
     if bytes.len() > 1_048_576 {

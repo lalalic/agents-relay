@@ -1,8 +1,8 @@
 import test, {describe} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync,writeFileSync,readFileSync,symlinkSync,existsSync,realpathSync} from 'node:fs';
+import {mkdtempSync,rmSync,writeFileSync,readFileSync,symlinkSync,existsSync,realpathSync,chmodSync,readdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join,resolve} from 'node:path';
+import {basename,join,resolve} from 'node:path';
 import {spawn,spawnSync,execFileSync} from 'node:child_process';
 import {setTimeout as delay} from 'node:timers/promises';
 import {SQLiteRelayStore} from '../../dist/relay-store.js';
@@ -35,8 +35,8 @@ function terminalRecovery(id,jobId,parentTaskId,recoveryForAttempt,state='SUCCEE
   executionHistory:[{id:'old-recovery-execution',attempt:1,startedAt:t0}],
   result:{data:{summary:'preserved terminal recovery evidence'}}};
 }
-async function save(store,root,id,tasks){
- await store.saveJob({id,title:'native daemon '+id,repository:'example',projectRoot:root,prNumber:0,
+async function save(store,root,id,tasks,repository='example'){
+ await store.saveJob({id,title:'native daemon '+id,repository,projectRoot:root,prNumber:0,
   state:'ACTIVE',reviewEnabled:true,createdAt:t0,updatedAt:t0,tasks});
 }
 function once(f,env=yes){
@@ -52,6 +52,10 @@ async function until(callback,timeout=6000){
 function alive(pid){
  try{const stat=execFileSync('/bin/ps',['-p',String(pid),'-o','stat='],{encoding:'utf8',timeout:1500}).trim();return stat!==''&&!stat.startsWith('Z');}
  catch{return false;}
+}
+function absent(pid){
+ try{return execFileSync('/bin/ps',['-p',String(pid),'-o','stat='],{encoding:'utf8',timeout:1500}).trim()==='';}
+ catch{return true;}
 }
 function runAsync(f,env=yes){
  return new Promise(resolvePromise=>{
@@ -220,6 +224,98 @@ writeFileSync(process.env.RELAY_RESULT_PATH,JSON.stringify({type:'task.completed
   sql.close();
  }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
 });
+test('configured Codex Model Worker transports the exact shared Relay prompt Action',async()=>{
+ const f=fixture();let store;
+ execFileSync('git',['init','--quiet'],{cwd:f.dir});
+ const projectDir=join(f.dir,'src');
+ (await import('node:fs')).mkdirSync(projectDir,{recursive:true});
+ writeFileSync(join(projectDir,'AGENTS.md'),'local execution rules');
+ const agentDir=join(projectDir,'agents');(await import('node:fs')).mkdirSync(agentDir,{recursive:true});
+ writeFileSync(join(agentDir,'implementation.agent.md'),'---\nname: implementation\n---\nFollow the fixture Agent contract.');
+ const fakeCodex=join(f.dir,'fake-codex');
+ const capture=join(f.dir,'codex-prompt.txt');
+ const codexHome=join(f.dir,'codex-home');(await import('node:fs')).mkdirSync(codexHome,{recursive:true});
+ writeFileSync(join(codexHome,'config.toml'),'model = "fixture-model"\nmodel_provider = "openai"\nmodel_reasoning_effort = "medium"\n');
+ writeFileSync(join(codexHome,'worker.config.toml'),'model = "fixture-model"\nmodel_provider = "openai"\nmodel_reasoning_effort = "medium"\n');
+ writeFileSync(fakeCodex,`#!${process.execPath}
+import {writeFileSync} from 'node:fs';
+let input='';for await(const chunk of process.stdin)input+=chunk;
+writeFileSync(process.env.CAPTURE_PROMPT_PATH,input);
+const args=process.argv.slice(2);
+if(args[args.indexOf('--profile')+1]!=='worker'||args[args.indexOf('--model')+1]!=='fixture-model'
+  ||!args.includes('model_reasoning_effort=medium'))process.exitCode=23;
+const output=process.argv[process.argv.indexOf('--output-last-message')+1];
+writeFileSync(output,'codex fixture completed');`);
+ chmodSync(fakeCodex,0o700);
+ const route={provider:'openai',model:'fixture-model',profile:'worker',reasoning:'medium',decidedBy:'fixture-router',decidedAt:t0};
+ const selection={workerId:'codex-fixture',adapter:'codex',capabilities:['model'],selectedBy:'fixture-router',selectedAt:t0};
+ const worker=resolve(import.meta.dirname,'../scripts/codex-model-worker.mjs');
+ const cli=resolve(import.meta.dirname,'../../dist/cli.js');
+ writeFileSync(f.manifest,JSON.stringify({agents:{implementation:{kind:'model',executable:process.execPath,args:[worker],
+  env:{CODEX_EXECUTABLE:fakeCodex,CAPTURE_PROMPT_PATH:capture,CODEX_HOME:codexHome},routing:route,workerSelection:selection,
+  promptCli:cli,promptNode:process.execPath}}}));
+ try{
+  store=new SQLiteRelayStore(f.db);
+  const work={...task('301','91'),agentName:'implementation',adapter:'codex',capabilities:['model'],routing:route,
+   workerSelection:selection,output:{kind:'task_pr'}};
+  await save(store,f.dir,'91',[work],basename(f.dir));
+  await store.mutateJob('91',job=>({...job,projectPath:'src'}));
+  store.close();store=null;
+  const raw=spawnSync(binary,f.args,{encoding:'utf8',env:yes,timeout:10000});
+  assert.equal(raw.status,0,raw.stderr);
+  const result=JSON.parse(raw.stdout.trim()).report;
+  const executionRoot=join(f.dir,'.relay-rust-native-executions','91','301');
+  const executionDir=join(executionRoot,readdirSync(executionRoot)[0]);
+  const workerError=readFileSync(join(executionDir,'stderr.log'),'utf8');
+  assert.equal(result.tasksSucceeded,1,`${JSON.stringify(result)}\n${workerError}`);
+  store=new SQLiteRelayStore(f.db);assert.equal((await store.loadJob('91')).tasks[0].state,'SUCCEEDED');store.close();store=null;
+  const captured=readFileSync(capture,'utf8');
+  const snapshot=join(executionDir,'prompt-job.json');
+  const generated=spawnSync(process.execPath,[cli,'prompt','--id','91','--task-id','301','--adapter','codex','--file',snapshot],
+   {cwd:projectDir,encoding:'utf8',timeout:10000,env:{PATH:process.env.PATH||'/usr/bin:/bin'}});
+  assert.equal(generated.status,0,generated.stderr);
+  assert.equal(captured,generated.stdout,'Codex must receive byte-identical shared prompt Action output');
+  assert.match(captured,/EVENT SOURCE \(exact\): job\/91\/task\/301\/execution\//);
+  assert.ok(captured.includes(join(projectDir,'AGENTS.md')),'shared prompt must include the selected project instruction reference');
+  assert.match(captured,/You are implementation with responsibility/);
+ }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
+});
+test('Model receipt identity and owner mismatches fail closed and are not retried on restart',async()=>{
+ const route={provider:'fixture',model:'fixture-model',decidedBy:'fixture-router',decidedAt:t0};
+ const selection={workerId:'fixture-model-worker',adapter:'codex',capabilities:['model'],selectedBy:'fixture-router',selectedAt:t0};
+ for(const [field,value] of [['executionId','stale-execution'],['leaseOwner','stale-owner'],['attempt','99']]){
+ const f=fixture();let store;
+ const modelWorker=join(f.dir,'stale-model-worker.mjs');
+ writeFileSync(modelWorker,`import {readFileSync,writeFileSync} from 'node:fs';
+const request=JSON.parse(readFileSync(process.env.RELAY_TASK_REQUEST_PATH,'utf8'));
+const receipt={type:'task.completed',jobId:request.jobId,taskId:request.taskId,executionId:request.executionId,
+ leaseOwner:request.leaseOwner,attempt:request.attempt,adapter:request.adapter,routing:request.routing,
+ workerSelection:request.workerSelection,status:'COMPLETED',summary:'must be rejected',output:{verified:true}};
+receipt[${JSON.stringify(field)}]=${JSON.stringify(value)};
+writeFileSync(process.env.RELAY_RESULT_PATH,JSON.stringify(receipt));`);
+ writeFileSync(f.manifest,JSON.stringify({agents:{'model-agent':{kind:'model',executable:process.execPath,
+  args:[modelWorker],env:{},routing:route,workerSelection:selection}}}));
+ try{
+  store=new SQLiteRelayStore(f.db);
+  await save(store,f.dir,'91',[{...task('301','91'),agentName:'model-agent',adapter:'codex',capabilities:['model'],routing:route,workerSelection:selection}]);
+  store.close();store=null;
+  const first=once(f);
+  assert.equal(first.tasksClaimed,1,JSON.stringify(first));
+  assert.equal(first.tasksFailed,1,JSON.stringify(first));
+  store=new SQLiteRelayStore(f.db);
+  const job=await store.loadJob('91');
+  assert.equal(job.tasks[0].state,'FAILED');
+  assert.equal(job.tasks[0].result,null,'stale Model receipt must not persist success output');
+  store.close();store=null;
+  const restart=once(f);
+  assert.equal(restart.tasksClaimed,0,'a failed attempt is not an implicit retry authorization');
+  const sql=new DatabaseSync(f.db);
+  assert.equal(sql.prepare("SELECT count(*) AS n FROM workflow_event_outbox WHERE event_id='task.failed'").get().n,1);
+  assert.equal(sql.prepare("SELECT count(*) AS n FROM workflow_event_outbox WHERE event_id='task.completed'").get().n,0);
+  sql.close();
+ }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
+ }
+});
 test('configured max_tasks bounds claims for each daemon tick',async()=>{
  const f=fixture();let store;
  try{
@@ -318,6 +414,7 @@ test('SIGKILL daemon -> helper kills owned worker -> restart marks proven expire
   assert.ok(alive(pid),'worker must be active before daemon death');
   daemon.kill('SIGKILL');
   await until(()=>!alive(pid),6000);
+  await until(()=>absent(pid),6000);
   store=new SQLiteRelayStore(f.db);
   assert.equal((await store.loadJob('91')).tasks[0].state,'RUNNING');
   // Advance only the disposable Task lease clock; the real Worker has
