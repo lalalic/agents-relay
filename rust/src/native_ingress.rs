@@ -597,10 +597,7 @@ fn subscribe_once(db: &Path, port: u16, stopped: &AtomicBool) -> Result<(), Stri
         if stopped.load(Ordering::SeqCst) {
             return Ok(());
         }
-        let command = match read_line(&mut reader, stopped) {
-            Ok(line) => line,
-            Err(e) => return Err(e),
-        };
+        let command = read_line(&mut reader, stopped)?;
         let command = command.trim_end();
         if command == "PING" {
             tcp.write_all(b"PONG\r\n").map_err(|e| e.to_string())?;

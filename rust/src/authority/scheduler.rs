@@ -105,8 +105,9 @@ impl RelayAuthority {
     }
 
     /// Codex/Model requires an already durable worker/model routing decision.
-    /// This does not implement a second Router or authorize Review/Planner
-    /// Tasks. Only ordinary work Tasks are admitted in this staged adapter.
+    /// This does not implement a second Router. It admits ordinary work and
+    /// only the Final Reviewer Task durably bound to the current pending
+    /// Review and exact Job head; Planner Tasks remain unsupported.
     pub fn claim_queued_codex(
         &mut self,
         req: &ScriptClaimRequest<'_>,
@@ -150,14 +151,25 @@ impl RelayAuthority {
                 .iter()
                 .find(|task| task["id"] == req.task_id)
                 .ok_or("Script Task missing")?;
+            let reviewer_role = matches!(
+                task.get("agentName").and_then(Value::as_str),
+                Some("job-acceptance-reviewer" | "reviewer")
+            );
+            let reviewer_binding_valid = reviewer_role
+                && prior["reviewEnabled"] != false
+                && task["reviewHeadSha"].as_str().is_some_and(|head| {
+                    prior["headSha"] == head
+                        && prior["review"]["headSha"] == head
+                        && prior["review"]["taskId"] == req.task_id
+                        && prior["review"]["outcome"] == "pending"
+                });
             if task["state"] != "QUEUED"
                 || task["adapter"] != adapter
                 || task.get("kind").and_then(Value::as_str) == Some("planner")
-                || matches!(
-                    task.get("agentName").and_then(Value::as_str),
-                    Some("job-acceptance-reviewer" | "reviewer" | "troubleshooter")
-                )
-                || task.get("reviewHeadSha").is_some_and(|v| !v.is_null())
+                || (task["agentName"] == "troubleshooter")
+                || (reviewer_role && !reviewer_binding_valid)
+                || (task.get("reviewHeadSha").is_some_and(|v| !v.is_null())
+                    && !reviewer_binding_valid)
                 || task.get("agentGraph").is_some_and(|value| !value.is_null())
                 || task
                     .get("revisionRequest")

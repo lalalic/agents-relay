@@ -4,6 +4,7 @@
 use super::ids::{allocate_entity_id_in_tx, EntityKind};
 use super::RelayAuthority;
 use crate::dispatch::ActionPorts;
+use crate::final_review::propose_final_review;
 use crate::graph::{Decision, Graph, GraphInput};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -45,6 +46,10 @@ pub struct NativeTaskSpec<'a> {
     pub dependency_validity: Option<&'a Value>,
     pub draft: bool,
     pub at: &'a str,
+    pub agent_name: Option<&'a str>,
+    pub review_head_sha: Option<&'a str>,
+    pub routing: Option<&'a Value>,
+    pub worker_selection: Option<&'a Value>,
 }
 
 pub struct NativeCreatedTask {
@@ -77,6 +82,43 @@ fn validate_spec(spec: &NativeTaskSpec<'_>) -> Result<(), String> {
     }
     if spec.dependencies.iter().any(String::is_empty) {
         return Err("dependency Task IDs must be non-empty".into());
+    }
+    let reviewer = matches!(
+        spec.agent_name,
+        Some("job-acceptance-reviewer" | "reviewer")
+    );
+    if reviewer != spec.review_head_sha.is_some()
+        || reviewer != spec.routing.is_some()
+        || reviewer != spec.worker_selection.is_some()
+    {
+        return Err(
+            "native Reviewer creation requires role, immutable SHA, and trusted route together"
+                .into(),
+        );
+    }
+    if reviewer {
+        let head = spec.review_head_sha.expect("validated Reviewer head");
+        if !matches!(head.len(), 40 | 64)
+            || !head
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err("native Reviewer requires a full lowercase Git SHA".into());
+        }
+        let routing = spec.routing.expect("validated Reviewer route");
+        let selection = spec
+            .worker_selection
+            .expect("validated Reviewer Worker selection");
+        if ["provider", "model", "decidedBy", "decidedAt"]
+            .iter()
+            .any(|key| routing[*key].as_str().is_none_or(str::is_empty))
+            || selection["adapter"] != "codex"
+            || selection["workerId"].as_str().is_none_or(str::is_empty)
+        {
+            return Err("native Reviewer needs a complete trusted Model route".into());
+        }
+    } else if spec.routing.is_some() != spec.worker_selection.is_some() {
+        return Err("Model route and Worker selection must be supplied together".into());
     }
     let unique: HashSet<&str> = spec.dependencies.iter().map(String::as_str).collect();
     if unique.len() != spec.dependencies.len() {
@@ -252,6 +294,20 @@ fn task_value(spec: &NativeTaskSpec<'_>, job_id: &str, task_id: &str) -> Value {
         "executionId":null,"threadId":null,"result":null,"error":null,
         "timeoutMs":0,"createdAt":spec.at,"updatedAt":spec.at,"state":"DRAFT"
     });
+    if let Some(agent_name) = spec.agent_name {
+        task["agentName"] = json!(agent_name);
+    }
+    if let Some(head) = spec.review_head_sha {
+        task["reviewHeadSha"] = json!(head);
+        task["capabilities"] = json!(["model"]);
+        task["workerRequirements"] = json!({"capabilities":["model"]});
+    }
+    if let Some(routing) = spec.routing {
+        task["routing"] = routing.clone();
+    }
+    if let Some(selection) = spec.worker_selection {
+        task["workerSelection"] = selection.clone();
+    }
     if let Some(validity) = spec.dependency_validity {
         if !validity.as_object().is_some_and(|map| map.is_empty()) {
             task["dependencyValidity"] = validity.clone();
@@ -273,6 +329,15 @@ impl RelayAuthority {
                     "Cannot create Task on terminal Job {} ({})",
                     spec.job_id, original["state"]
                 ));
+            }
+            if let Some(head) = spec.review_head_sha {
+                let proposal = propose_final_review(original, head)?;
+                if !proposal.allowed
+                    || proposal.actions.len() != 1
+                    || proposal.actions[0].id != "review.create"
+                {
+                    return Err("Review Graph no longer selects native Reviewer creation".into());
+                }
             }
             let repository = original["repository"]
                 .as_str()
@@ -298,6 +363,10 @@ impl RelayAuthority {
                 .as_array_mut()
                 .ok_or("Job tasks must be an array")?
                 .push(created);
+            if let Some(head) = spec.review_head_sha {
+                next["review"] = json!({"outcome":"pending","headSha":head,"taskId":id,
+                    "evidence":null,"updatedAt":spec.at});
+            }
             activate_draft_job(&mut next)?;
             next["updatedAt"] = json!(spec.at);
             Ok((next, vec![]))

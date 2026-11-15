@@ -131,6 +131,10 @@ fn task_create(args: &[String]) -> Result<Value, String> {
         dependency_validity: dependency_validity.as_ref(),
         draft,
         at: &at,
+        agent_name: None,
+        review_head_sha: None,
+        routing: None,
+        worker_selection: None,
     })?;
     Ok(
         serde_json::json!({"jobId":job_id,"taskId":created.task_id,"created":created.created,"task":created.task}),

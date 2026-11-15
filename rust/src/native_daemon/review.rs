@@ -1,16 +1,144 @@
 //! Only verified, durable host decisions may resume native Agent Tasks.
+use super::adapter::{NativeAdapterKind, ScriptManifest};
 use super::NativeTick;
+use crate::authority::NativeTaskSpec;
 use crate::authority::RelayAuthority;
+use crate::final_review::propose_final_review;
 use crate::graph::{Decision, Graph, GraphInput};
+use crate::local_git::verified_local_head;
 use crate::supervised_script::after_time;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::path::Path;
 
 fn valid_git_sha(value: &str) -> bool {
     matches!(value.len(), 40 | 64)
         && value
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+pub(crate) fn reconcile_native_final_review(
+    authority: &mut RelayAuthority,
+    job_id: &str,
+    isolated_root: &Path,
+    agents: &ScriptManifest,
+    report: &mut NativeTick,
+) -> Result<(), String> {
+    let snapshot = authority.read_job(job_id)?.ok_or("Review Job missing")?;
+    if snapshot["reviewEnabled"] == false {
+        return Ok(());
+    }
+    let Some(project_root) = snapshot["projectRoot"].as_str() else {
+        return Ok(());
+    };
+    let Ok(project_root) = Path::new(project_root).canonicalize() else {
+        return Ok(());
+    };
+    if !project_root.starts_with(isolated_root) || !project_root.join(".git").exists() {
+        return Ok(());
+    }
+    let head = match verified_local_head(&project_root) {
+        Ok(head) => head,
+        Err(error) => {
+            report
+                .blocked
+                .push(format!("{job_id}: local Review head unavailable: {error}"));
+            return Ok(());
+        }
+    };
+    // A head change must first travel through the canonical Review Graph. This
+    // staged daemon deliberately refuses to overwrite Job head evidence.
+    if snapshot["headSha"].as_str() != Some(&head) {
+        return Ok(());
+    }
+    let Some((name, reviewer)) = ["job-acceptance-reviewer", "reviewer"]
+        .into_iter()
+        .find_map(|name| agents.agents.get(name).map(|agent| (name, agent)))
+    else {
+        return Ok(());
+    };
+    if reviewer.kind != NativeAdapterKind::Model
+        || reviewer.prompt_cli.is_none()
+        || reviewer.prompt_node.is_none()
+    {
+        report.blocked.push(format!(
+            "{job_id}: Final Review needs a trusted Model Reviewer and shared prompt Action"
+        ));
+        return Ok(());
+    }
+    let Some(routing) = reviewer.routing.as_ref() else {
+        report
+            .blocked
+            .push(format!("{job_id}: Final Review Model route missing"));
+        return Ok(());
+    };
+    let Some(selection) = reviewer.worker_selection.as_ref() else {
+        report
+            .blocked
+            .push(format!("{job_id}: Final Review Worker selection missing"));
+        return Ok(());
+    };
+    if schedule_native_final_review(authority, job_id, &head, name, routing, selection)? {
+        report.reviews_queued += 1;
+    }
+    Ok(())
+}
+
+/// Execute the already-selected Review Graph creation effect. The caller
+/// supplies the SHA from the read-only local Git adapter and the trusted
+/// Model route from the isolated executor manifest.
+pub(crate) fn schedule_native_final_review(
+    authority: &mut RelayAuthority,
+    job_id: &str,
+    head_sha: &str,
+    reviewer_name: &str,
+    routing: &Value,
+    worker_selection: &Value,
+) -> Result<bool, String> {
+    if !matches!(reviewer_name, "reviewer" | "job-acceptance-reviewer") {
+        return Err("native Final Review role is not an accepted Reviewer".into());
+    }
+    if !valid_git_sha(head_sha) {
+        return Err("native Final Review requires a full verified local SHA".into());
+    }
+    let snapshot = authority.read_job(job_id)?.ok_or("Review Job missing")?;
+    if snapshot["headSha"].as_str() != Some(head_sha) {
+        return Ok(false);
+    }
+    let proposal = propose_final_review(&snapshot, head_sha)?;
+    if !proposal.allowed || proposal.actions.len() != 1 || proposal.actions[0].id != "review.create"
+    {
+        return Ok(false);
+    }
+    let priority = snapshot["priority"].as_str().unwrap_or("P1");
+    let at = after_time(
+        snapshot["updatedAt"]
+            .as_str()
+            .ok_or("Job timestamp missing")?,
+    )?;
+    let input = format!(
+        "# Final Review\nReview Job {job_id} at immutable Git head {head_sha}. Inspect the durable Job objective and terminal Task evidence. Return a structured verdict with `verdict` equal to `approved` or `changes_required`, `head_sha` exactly `{head_sha}`, and `findings` as an array. For changes_required, include actionable findings with stable `id` and non-empty `summary`. Do not claim approval for an unverified result."
+    );
+    authority.create_native_task(NativeTaskSpec {
+        job_id,
+        title: Some("Final Review"),
+        input: &input,
+        output_kind: "task-pr",
+        output_path: None,
+        priority,
+        story_size: "L",
+        parent_task_id: None,
+        dependencies: &[],
+        dependency_validity: None,
+        draft: false,
+        at: &at,
+        agent_name: Some(reviewer_name),
+        review_head_sha: Some(head_sha),
+        routing: Some(routing),
+        worker_selection: Some(worker_selection),
+    })?;
+    Ok(true)
 }
 
 /// A host Review receipt is not an approval until it is durably accepted
@@ -258,6 +386,27 @@ mod tests {
         authority_with_bound_head(verdict, submitted_head, findings, HEAD)
     }
 
+    fn review_ready_authority() -> (tempfile::TempDir, RelayAuthority) {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("relay.sqlite");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch("CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL);").unwrap();
+        let job = json!({
+            "id":"91","repository":"example","title":"Review fixture","priority":"P1",
+            "projectRoot":dir.path(),"state":"ACTIVE","updatedAt":AT,"headSha":HEAD,
+            "reviewEnabled":true,"autoMerge":false,"plans":[],"review":null,
+            "tasks":[{"id":"work-1","kind":"work","agentName":"implementation",
+                "state":"SUCCEEDED","dependencies":[],"attempt":1,"maxAttempts":3}]
+        });
+        conn.execute(
+            "INSERT INTO job_snapshot(job_id,json,updated_at) VALUES('91',?1,?2)",
+            rusqlite::params![job.to_string(), AT],
+        )
+        .unwrap();
+        drop(conn);
+        (dir, RelayAuthority::open_existing(&path).unwrap())
+    }
+
     #[test]
     fn reviewer_approval_is_graph_selected_head_bound_and_restart_deduped() {
         let (dir, mut authority) = authority("approved", HEAD, json!([]));
@@ -373,6 +522,134 @@ mod tests {
         assert_eq!(
             authority.read_job("91").unwrap().unwrap()["review"]["outcome"],
             "pending"
+        );
+    }
+
+    #[test]
+    fn graph_selected_final_review_creation_is_sha_bound_atomic_and_deduplicated() {
+        let (_dir, mut authority) = review_ready_authority();
+        let routing = json!({"provider":"fixture","model":"fixture-model",
+            "decidedBy":"fixture-router","decidedAt":AT});
+        let selection = json!({"workerId":"fixture-reviewer","adapter":"codex",
+            "selectedBy":"fixture-router","selectedAt":AT,"capabilities":["model"]});
+        assert!(schedule_native_final_review(
+            &mut authority,
+            "91",
+            HEAD,
+            "job-acceptance-reviewer",
+            &routing,
+            &selection,
+        )
+        .unwrap());
+        let job = authority.read_job("91").unwrap().unwrap();
+        let review_id = job["review"]["taskId"].as_str().unwrap();
+        assert_eq!(job["review"]["outcome"], "pending");
+        assert_eq!(job["review"]["headSha"], HEAD);
+        let task = job["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|task| task["id"] == review_id)
+            .unwrap();
+        assert_eq!(task["state"], "QUEUED");
+        assert_eq!(task["agentName"], "job-acceptance-reviewer");
+        assert_eq!(task["reviewHeadSha"], HEAD);
+        assert_eq!(task["routing"], routing);
+        assert_eq!(task["workerSelection"], selection);
+        assert!(!schedule_native_final_review(
+            &mut authority,
+            "91",
+            HEAD,
+            "job-acceptance-reviewer",
+            &routing,
+            &selection,
+        )
+        .unwrap());
+        let claim_at = after_time(
+            authority.read_job("91").unwrap().unwrap()["updatedAt"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        let claim = authority
+            .claim_queued_codex(&crate::authority::ScriptClaimRequest {
+                job_id: "91",
+                task_id: review_id,
+                execution_id: "review-execution-1",
+                owner: "native-reviewer",
+                at: &claim_at,
+                lease_expires_at: "2099-11-15T11:30:00.000Z",
+            })
+            .unwrap();
+        assert!(claim.is_some(), "exact SHA-bound Review Task is claimable");
+    }
+
+    #[test]
+    fn daemon_final_review_reconcile_resolves_local_head_and_requires_trusted_prompt_route() {
+        use super::super::adapter::{NativeScriptAdapter, ScriptManifest};
+        use std::collections::BTreeMap;
+        use std::fs;
+        use std::path::PathBuf;
+
+        let (dir, mut authority) = review_ready_authority();
+        let git = dir.path().join(".git");
+        fs::create_dir_all(&git).unwrap();
+        fs::write(git.join("HEAD"), format!("{HEAD}\n")).unwrap();
+        let cli = dir.path().join("relay-cli.js");
+        fs::write(&cli, "").unwrap();
+        fs::write(dir.path().join("model-routing.js"), "").unwrap();
+        let routing = json!({"provider":"fixture","model":"fixture-model",
+            "decidedBy":"fixture-router","decidedAt":AT});
+        let selection = json!({"workerId":"fixture-reviewer","adapter":"codex",
+            "selectedBy":"fixture-router","selectedAt":AT,"capabilities":["model"]});
+        let manifest = ScriptManifest {
+            agents: BTreeMap::from([(
+                "job-acceptance-reviewer".into(),
+                NativeScriptAdapter {
+                    kind: NativeAdapterKind::Model,
+                    executable: PathBuf::from("/bin/echo"),
+                    args: vec![],
+                    env: BTreeMap::new(),
+                    routing: Some(routing),
+                    worker_selection: Some(selection),
+                    prompt_cli: Some(cli),
+                    prompt_node: Some(PathBuf::from("/usr/bin/node")),
+                },
+            )]),
+        };
+        let mut report = NativeTick::default();
+        let canonical_root = dir.path().canonicalize().unwrap();
+        reconcile_native_final_review(
+            &mut authority,
+            "91",
+            &canonical_root,
+            &manifest,
+            &mut report,
+        )
+        .unwrap();
+        assert_eq!(report.reviews_queued, 1, "blocked={:?}", report.blocked);
+        let job = authority.read_job("91").unwrap().unwrap();
+        assert_eq!(job["review"]["headSha"], HEAD);
+        assert_eq!(job["review"]["outcome"], "pending");
+        assert_eq!(job["tasks"].as_array().unwrap().len(), 2);
+        reconcile_native_final_review(
+            &mut authority,
+            "91",
+            &canonical_root,
+            &manifest,
+            &mut report,
+        )
+        .unwrap();
+        assert_eq!(
+            report.reviews_queued, 1,
+            "active Reviewer is not duplicated"
+        );
+        assert_eq!(
+            authority.read_job("91").unwrap().unwrap()["tasks"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
         );
     }
 }

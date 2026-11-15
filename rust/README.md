@@ -329,6 +329,11 @@ AGENTS_RELAY_STORE_DIR=$(mktemp -d) cargo test --locked --manifest-path rust/Car
   and store list/get, plus read-only `scheduler inspect`,
   `scheduler recovery`, `review inspect`, and `dag parse`. It is not the
   production Relay CLI and cannot launch an agent.
+- **Local Git (`src/local_git.rs`)** lets `review inspect` resolve the durable
+  Job's actual worktree HEAD without spawning a process or accepting a caller-
+  supplied SHA. It handles detached, loose, packed, linked-worktree, SHA-1 and
+  SHA-256 metadata and rejects malformed or symlinked metadata. The daemon does
+  not yet use this resolver to schedule reviewers.
 - Neither Rust nor TypeScript may duplicate canonical Graph policy, and neither
   may create separate job/event stores. `workflow/*.mmd` remains authoritative.
 - No Neo-specific binaries, MCP tools, permissions, worker providers, or
@@ -434,8 +439,7 @@ rust/target/release/agents-relay-rust scheduler inspect --graph workflow/task-li
   --db /path/to/explicit/test.sqlite --job-id 123
 rust/target/release/agents-relay-rust dag parse --file /path/to/agentGraph.mmd
 rust/target/release/agents-relay-rust review inspect \
-  --db /path/to/explicit/test.sqlite --job-id 123 \
-  --verified-local-head <local-git-commit-sha>
+  --db /path/to/explicit/test.sqlite --job-id 123
 rust/target/release/agents-relay-rust scheduler recovery \
   --db /path/to/explicit/test.sqlite --job-id 123 --task-id 456 \
   --now 2026-11-13T21:00:00Z --owner-activity inactive

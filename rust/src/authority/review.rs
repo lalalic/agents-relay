@@ -716,7 +716,7 @@ mod tests {
             .claim_queued_codex(&crate::authority::ScriptClaimRequest {
                 job_id: "91",
                 task_id: "101",
-                execution_id: "producer-exec-2".into(),
+                execution_id: "producer-exec-2",
                 owner: "revision-worker",
                 at: &claim_at,
                 lease_expires_at: &expires_at,
@@ -896,7 +896,7 @@ mod tests {
             .claim_queued_codex(&crate::authority::ScriptClaimRequest {
                 job_id: "91",
                 task_id: "101",
-                execution_id: "model-exec-2".into(),
+                execution_id: "model-exec-2",
                 owner: "revision-model",
                 at: "2026-11-13T20:00:04.000Z",
                 lease_expires_at: "2026-11-13T20:01:04.000Z",

@@ -4,6 +4,7 @@ use agents_relay_rust::authority::probe_process;
 use agents_relay_rust::dispatch::ActionPorts;
 use agents_relay_rust::final_review::propose_final_review;
 use agents_relay_rust::graph::{Graph, GraphInput};
+use agents_relay_rust::local_git::verified_local_head;
 use agents_relay_rust::reconcile::propose_dependency_transitions;
 use agents_relay_rust::recovery::inspect_expired_execution;
 use agents_relay_rust::store::RelayReader;
@@ -137,7 +138,7 @@ fn job_timestamp(job: &Value) -> i64 {
 }
 fn run(args: &[String]) -> Result<(), String> {
     if args.len() < 2 {
-        return Err("usage: agents-relay-rust graph <validate|inventory|decide|batch|simulate> | store <list|get> --db PATH | job <list --db PATH [--repo NAME]|show --db PATH --job-id ID> | task <list|show|events> --db PATH --job-id ID [--task-id ID] | scheduler inspect/recovery --db PATH --job-id ID | dag parse --file PATH".into());
+        return Err("usage: agents-relay-rust graph <validate|inventory|decide|batch|simulate> | store <list|get> --db PATH | job <list --db PATH [--repo NAME]|show --db PATH --job-id ID> | task <list|show|events> --db PATH --job-id ID [--task-id ID] | scheduler inspect/recovery --db PATH --job-id ID | review inspect --db PATH --job-id ID | dag parse --file PATH".into());
     }
     match (args[0].as_str(),args[1].as_str()) {
         ("graph","validate") => {
@@ -194,9 +195,11 @@ fn run(args: &[String]) -> Result<(), String> {
         ("review","inspect") => {
             let db=PathBuf::from(opt(args,"--db")?);
             let job_id=opt(args,"--job-id")?;
-            let head=opt(args,"--verified-local-head")?;
             let store=RelayReader::open(&db)?;
             let job=store.get_job(&job_id)?.ok_or("Final Review Job not found")?;
+            let project_root=job.job.get("projectRoot").and_then(Value::as_str)
+                .ok_or("Final Review Job projectRoot missing")?;
+            let head=verified_local_head(Path::new(project_root))?;
             print_json(propose_final_review(&job.job,&head)?)
         }
         ("scheduler","recovery") => {

@@ -13,7 +13,9 @@ use crate::supervised_script::{after_time, current_time, execute_supervised_scri
 use adapter::{manifest, script_spec};
 use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat};
 use dag::{complete_native_dag, reconcile_native_dag};
-pub(crate) use review::{apply_native_reviewer_result, resume_accepted_native_reviews};
+pub(crate) use review::{
+    apply_native_reviewer_result, reconcile_native_final_review, resume_accepted_native_reviews,
+};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
@@ -40,6 +42,7 @@ pub struct NativeTick {
     pub tasks_reopened: usize,
     pub reviews_resumed: usize,
     pub review_results_applied: usize,
+    pub reviews_queued: usize,
     pub jobs_completed: usize,
     pub blocked: Vec<String>,
 }
@@ -374,6 +377,13 @@ pub(crate) fn tick_with_stop(
             Err(error) => report
                 .blocked
                 .push(format!("{id}: reviewer result not accepted: {error}")),
+        }
+        if let Err(error) =
+            reconcile_native_final_review(&mut authority, &id, &root, &agents, &mut report)
+        {
+            report
+                .blocked
+                .push(format!("{id}: Final Review scheduling failed: {error}"));
         }
         if complete_no_review_job(&mut authority, &id)? {
             report.jobs_completed += 1;
