@@ -958,6 +958,17 @@ mod tests {
         assert!(approved["tasks"][0]
             .get("reviewRevisionOriginalExecutionConfig")
             .is_none());
+        drop(store);
+        let mut reopened = RelayAuthority::open_existing(&path).unwrap();
+        assert_eq!(
+            reopened.accept_review_decision(&approve).unwrap().outcome,
+            "duplicate",
+            "the second approval remains idempotent after SQLite reopen"
+        );
+        let after_restart = reopened.read_job("91").unwrap().unwrap();
+        assert_eq!(after_restart["tasks"][0]["state"], "QUEUED");
+        assert_eq!(after_restart["tasks"][0]["routing"], route);
+        assert_eq!(after_restart["tasks"][0]["input"], "original model input");
     }
 
     #[test]
