@@ -122,7 +122,9 @@ impl RelayAuthority {
         let job = json!({
             "id":job_id,"title":spec.title,"objective":spec.input,"repository":spec.repository,
             "projectRoot":spec.project_root,"state":"DRAFT","runtimeStatus":"DRAFT",
-            "reviewEnabled":false,"autoMerge":false,"prNumber":0,
+            // Match Node Job creation: autoMerge defaults enabled unless the
+            // caller explicitly opts out. The Job Graph still gates completion.
+            "reviewEnabled":false,"autoMerge":true,"prNumber":0,
             "tasks":[task],"plans":[],"nativeIntakeHash":fingerprint,
             "createdAt":spec.at,"updatedAt":spec.at
         });

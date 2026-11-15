@@ -462,7 +462,13 @@ pub(crate) fn apply_native_reviewer_result(
         return Ok(false);
     };
     let selected_effect_matches = match expected_outcome {
-        "approved" => actions.is_empty(),
+        // The Node action records the merge request as review state; actual
+        // local delivery/completion is a separate Job Graph reconciliation.
+        // PR-backed merge delivery remains unsupported here and therefore
+        // cannot complete through this Review action.
+        "approved" => {
+            actions.is_empty() || (actions.len() == 1 && actions[0].id == "review.requestMerge")
+        }
         "changes_required" => {
             actions.len() == 1 && actions[0].id == "review.requireOwnerResolution"
         }
@@ -665,20 +671,25 @@ mod tests {
     }
 
     #[test]
-    fn graph_selected_merge_is_not_silently_treated_as_plain_approval() {
+    fn graph_selected_merge_request_records_approval_without_completing_pr_job() {
         let (_dir, mut authority) = authority("approved", HEAD, json!([]));
         authority
             .commit_job("91", "2026-11-15T11:00:00.001Z", |current| {
                 let mut next = current.clone();
                 next["autoMerge"] = json!(true);
+                next["prNumber"] = json!(42);
                 next["updatedAt"] = json!("2026-11-15T11:00:00.001Z");
                 Ok((next, vec![]))
             })
             .unwrap();
-        assert!(apply_native_reviewer_result(&mut authority, "91").is_err());
+        assert!(apply_native_reviewer_result(&mut authority, "91").unwrap());
+        let approved = authority.read_job("91").unwrap().unwrap();
+        assert_eq!(approved["review"]["outcome"], "approved");
+        assert_eq!(approved["state"], "ACTIVE");
+        assert!(!crate::native_job::complete_approved_local_job(&mut authority, "91").unwrap());
         assert_eq!(
-            authority.read_job("91").unwrap().unwrap()["review"]["outcome"],
-            "pending"
+            authority.read_job("91").unwrap().unwrap()["state"],
+            "ACTIVE"
         );
     }
 

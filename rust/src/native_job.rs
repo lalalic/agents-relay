@@ -356,7 +356,9 @@ fn no_review_completion_ready(job: &Value) -> bool {
     // transition. Never infer approval from a worker's exit status.
     if job["state"] != "ACTIVE"
         || job["reviewEnabled"] != false
-        || job["autoMerge"] != false
+        // The canonical Job Graph's `localCompletionAllowed` guard is fed by
+        // `autoMergeEnabled` (default true), for review and no-review Jobs.
+        || job["autoMerge"] == false
         || job.get("review").is_some_and(|r| !r.is_null())
         || job.get("publication").is_some_and(|p| !p.is_null())
         || job.get("pause").is_some_and(|p| !p.is_null())
@@ -381,9 +383,21 @@ fn no_review_completion_ready(job: &Value) -> bool {
 fn reviewed_local_completion_ready(job: &Value) -> bool {
     if job["state"] != "ACTIVE"
         || job["reviewEnabled"] == false
-        || job["autoMerge"] != false
+        // Match the canonical Node `autoMergeEnabled` fact: omitted/null means
+        // enabled, and only an explicit false disables local completion.
+        || job["autoMerge"] == false
         || job.get("prNumber").and_then(Value::as_i64).unwrap_or(0) != 0
         || job.get("localMerge").is_some_and(|value| !value.is_null())
+        || job["tasks"].as_array().is_some_and(|tasks| {
+            tasks.iter().any(|task| {
+                task["kind"] != "planner"
+                    && !matches!(
+                        task["agentName"].as_str(),
+                        Some("job-acceptance-reviewer" | "reviewer" | "troubleshooter")
+                    )
+                    && task["output"]["kind"] == "task_pr"
+            })
+        })
         || job.get("publication").is_some_and(|value| !value.is_null())
         || job.get("pause").is_some_and(|value| !value.is_null())
     {
@@ -618,7 +632,7 @@ mod tests {
     fn approved_local_job() -> Value {
         json!({
             "id":"91","repository":"example","state":"ACTIVE","updatedAt":AT,
-            "runtimeStatus":"RUNNING","prNumber":0,"reviewEnabled":true,"autoMerge":false,
+            "runtimeStatus":"RUNNING","prNumber":0,"reviewEnabled":true,"autoMerge":true,
             "headSha":HEAD,"plans":[],"review":{"outcome":"approved","headSha":HEAD,
                 "taskId":"review-1","updatedAt":AT,
                 "evidence":{"data":{"verdict":"approved","head_sha":HEAD,"findings":[]}}},
@@ -676,6 +690,35 @@ mod tests {
     }
 
     #[test]
+    fn reviewed_local_completion_matches_auto_merge_graph_guard() {
+        let mut disabled = approved_local_job();
+        disabled["autoMerge"] = json!(false);
+        let (_dir, mut authority) = open_authority(disabled);
+        assert!(!complete_approved_local_job(&mut authority, "91").unwrap());
+
+        let mut default_enabled = approved_local_job();
+        default_enabled.as_object_mut().unwrap().remove("autoMerge");
+        let (_dir, mut authority) = open_authority(default_enabled);
+        assert!(complete_approved_local_job(&mut authority, "91").unwrap());
+    }
+
+    #[test]
+    fn no_review_local_completion_matches_auto_merge_graph_guard() {
+        let mut job = json!({
+            "id":"91","repository":"example","state":"ACTIVE","updatedAt":AT,
+            "runtimeStatus":"RUNNING","prNumber":0,"reviewEnabled":false,"autoMerge":true,
+            "tasks":[{"id":"work-1","kind":"work","agentName":"implementation","state":"SUCCEEDED",
+                "resolution":null,"interactiveInvocation":null}]
+        });
+        let (_dir, mut authority) = open_authority(job.clone());
+        assert!(complete_no_review_job(&mut authority, "91").unwrap());
+
+        job["autoMerge"] = json!(false);
+        let (_dir, mut authority) = open_authority(job);
+        assert!(!complete_no_review_job(&mut authority, "91").unwrap());
+    }
+
+    #[test]
     fn approval_alone_cannot_complete_stale_pr_or_unsettled_local_job() {
         let mut approval_only = approved_local_job();
         approval_only["tasks"][0]["state"] = json!("FAILED");
@@ -694,6 +737,11 @@ mod tests {
         let mut pr = approved_local_job();
         pr["prNumber"] = json!(42);
         let (_dir, mut authority) = open_authority(pr);
+        assert!(!complete_approved_local_job(&mut authority, "91").unwrap());
+
+        let mut needs_local_merge = approved_local_job();
+        needs_local_merge["tasks"][0]["output"] = json!({"kind":"task_pr"});
+        let (_dir, mut authority) = open_authority(needs_local_merge);
         assert!(!complete_approved_local_job(&mut authority, "91").unwrap());
 
         let mut planning = approved_local_job();

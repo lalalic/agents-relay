@@ -104,7 +104,7 @@ test('daemon applies only the current SHA-bound reviewer verdict and never compl
   const reviewer={...task('901','91',[],'SUCCEEDED'),agentName:'job-acceptance-reviewer',
    reviewHeadSha:head,result:{summary:'review completed',data:{output:{verdict:'approved',head_sha:head,findings:[]}}}};
   await save(store,f.dir,'91',[reviewer]);
-  await store.mutateJob('91',job=>({...job,headSha:head,autoMerge:false,plans:[],
+  await store.mutateJob('91',job=>({...job,headSha:head,autoMerge:true,plans:[],
    review:{outcome:'pending',headSha:head,taskId:'901',evidence:null,updatedAt:t0}}));
   store.close();store=null;
   const first=once(f);
@@ -128,7 +128,7 @@ test('local JEL completes only after current-head Review approval and all implem
   const reviewer={...task('901','91',[],'SUCCEEDED'),agentName:'job-acceptance-reviewer',reviewHeadSha:head,
    result:{summary:'review completed',data:{output:{verdict:'approved',head_sha:head,findings:[]}}}};
   await save(store,f.dir,'91',[work,reviewer]);
-  await store.mutateJob('91',job=>({...job,headSha:head,autoMerge:false,plans:[],
+  await store.mutateJob('91',job=>({...job,headSha:head,autoMerge:true,plans:[],
    review:{outcome:'pending',headSha:head,taskId:'901',evidence:null,updatedAt:t0}}));
   store.close();store=null;
   const report=once(f);
@@ -144,7 +144,7 @@ test('independent ready sibling Workers have overlapping execution and complete 
  try{
   store=new SQLiteRelayStore(f.db);
   await save(store,f.dir,'91',[task('101','91'),task('102','91')].map(t=>({...t,timeoutMs:10000})));
-  await store.mutateJob('91',job=>({...job,reviewEnabled:false,autoMerge:false}));store.close();store=null;
+  await store.mutateJob('91',job=>({...job,reviewEnabled:false,autoMerge:true}));store.close();store=null;
   const result=await runAsync(f);assert.equal(result.code,0,result.err);
   store=new SQLiteRelayStore(f.db);const job=await store.loadJob('91');
   assert.deepEqual(job.tasks.map(t=>t.state),['SUCCEEDED','SUCCEEDED']);
@@ -198,7 +198,7 @@ writeFileSync(process.env.RELAY_RESULT_PATH,JSON.stringify({type:'task.completed
   store=new SQLiteRelayStore(f.db);
   await save(store,f.dir,'91',[task('101','91'),modelTask('102'),modelTask('103',['101'])]);
   await store.mutateJob('91',job=>({...job,projectPath:'src'}));
-  await store.mutateJob('91',job=>({...job,reviewEnabled:false,autoMerge:false}));store.close();store=null;
+  await store.mutateJob('91',job=>({...job,reviewEnabled:false,autoMerge:true}));store.close();store=null;
   const workerEnv={...yes,AGENTS_HOME:globalRoot,AGENTS_RELAY_SHARED_ROOT:sharedRoot,AGENTS_RELAY_WORKSPACE_ROOT:f.dir};
   const first=await runAsync(f,workerEnv);assert.equal(first.code,0,first.err+first.out);
   store=new SQLiteRelayStore(f.db);let job=await store.loadJob('91');
