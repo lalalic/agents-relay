@@ -426,24 +426,34 @@ task update,--story-size,MISSING,src/cli-help.ts:210,,Unimplemented or no verifi
 task update,--task-id,MISSING,src/cli-help.ts:209,,Unimplemented or no verified Rust-native parameter parity
 task update,--timeout,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
 task update,--title,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
-workflow action,--event,MISSING,src/cli-coordinator.ts:13 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow action,--graph,MISSING,src/cli-workflow.ts:32 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow action,--job,MISSING,src/cli-workflow.ts:60 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow action,--task,MISSING,src/cli.ts:20 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow actions,(none),MISSING,src/cli.ts,,Unimplemented or no verified Rust-native parameter parity
-workflow discover,(none),MISSING,src/cli.ts,,Unimplemented or no verified Rust-native parameter parity
-workflow evaluate,--event,MISSING,src/cli-coordinator.ts:13 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow evaluate,--facts,MISSING,src/cli-workflow.ts:44 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow evaluate,--graph,MISSING,src/cli-workflow.ts:32 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow evaluate,--state,MISSING,src/cli-workflow.ts:42 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow inspect,--graph,MISSING,src/cli-workflow.ts:32 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow trace,--attempt-key,MISSING,src/cli-workflow.ts:70 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow trace,--sqlite,MISSING,src/cli-workflow.ts:59 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow verify,--condition,MISSING,src/cli-workflow.ts:61 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow verify,--execution,MISSING,src/cli.ts:394 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow verify,--job,MISSING,src/cli-workflow.ts:60 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow verify,--sqlite,MISSING,src/cli-workflow.ts:59 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow verify,--task,MISSING,src/cli.ts:20 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-workflow where,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow action,--action,PARTIAL,src/cli-projection.ts:9 (source token; confirm branch),rust/src/bin/relay-native-job/workflow.rs,Rust verifies the Task action allowlist but does not yet dispatch authorized Task mutations
+workflow action,--context,MISSING,src/cli.ts:52 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow action,--evidence,MISSING,src/cli.ts:47 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow action,--exclude-current-route,MISSING,src/cli-worker-task.ts:15 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow action,--failure-kind,MISSING,src/cli-worker-task.ts:10 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow action,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow action,--reason,MISSING,src/cli.ts:47 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow action,--recovery-task-id,MISSING,src/cli.ts:50 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow action,--repo,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow action,--required-action,MISSING,src/cli.ts:52 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow action,--reroute,MISSING,src/cli-worker-task.ts:15 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow action,--resolution-condition,MISSING,src/cli.ts:52 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow action,--response,MISSING,src/cli.ts:51 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow action,--task-id,MISSING,src/cli.ts:20 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+workflow actions,(none),PASS,src/cli.ts,rust/src/bin/relay-native-job/workflow.rs,"Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates)"
+workflow discover,(none),PASS,src/cli.ts,rust/src/bin/relay-native-job/workflow.rs,"Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates)"
+workflow evaluate,--event,PASS,src/cli-coordinator.ts:13 (source token; confirm branch),rust/src/bin/relay-native-job/workflow.rs,"Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates)"
+workflow evaluate,--facts,PASS,src/cli-workflow.ts:44 (source token; confirm branch),rust/src/bin/relay-native-job/workflow.rs,"Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates)"
+workflow evaluate,--graph,PASS,src/cli-workflow.ts:32 (source token; confirm branch),rust/src/bin/relay-native-job/workflow.rs,"Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates)"
+workflow evaluate,--state,PASS,src/cli-workflow.ts:42 (source token; confirm branch),rust/src/bin/relay-native-job/workflow.rs,"Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates)"
+workflow inspect,--graph,PASS,src/cli-workflow.ts:32 (source token; confirm branch),rust/src/bin/relay-native-job/workflow.rs,"Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates)"
+workflow trace,--attempt-key,PASS,src/cli-workflow.ts:70 (source token; confirm branch),rust/src/bin/relay-native-job/workflow.rs,"Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates)"
+workflow trace,--sqlite,PASS,src/cli-workflow.ts:59 (source token; confirm branch),rust/src/bin/relay-native-job/workflow.rs,"Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates)"
+workflow verify,--condition,PASS,src/cli-workflow.ts:61 (source token; confirm branch),rust/src/bin/relay-native-job/workflow_verify.rs,"Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates)"
+workflow verify,--execution,PASS,src/cli.ts:394 (source token; confirm branch),rust/src/bin/relay-native-job/workflow_verify.rs,"Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates)"
+workflow verify,--job,PASS,src/cli-workflow.ts:60 (source token; confirm branch),rust/src/bin/relay-native-job/workflow_verify.rs,"Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates)"
+workflow verify,--sqlite,PASS,src/cli-workflow.ts:59 (source token; confirm branch),rust/src/bin/relay-native-job/workflow_verify.rs,"Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates)"
+workflow verify,--task,PASS,src/cli.ts:20 (source token; confirm branch),rust/src/bin/relay-native-job/workflow_verify.rs,"Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates)"
+workflow where,--id,PASS,src/cli.ts:18 (source token; confirm branch),rust/src/bin/relay-native-job/workflow.rs,"Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates)"
 internal subprocess,--args-file,INTERNAL_NOT_USER,src/cli-review.ts,,"Flag passed to external child provider, not a public Relay CLI switch"
 internal subprocess,--handoff-file,INTERNAL_NOT_USER,src/cli-escalation.ts,,"Flag passed to external child provider, not a public Relay CLI switch"

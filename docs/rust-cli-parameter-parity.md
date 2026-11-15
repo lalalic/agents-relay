@@ -2,8 +2,8 @@
 
 Source: Node cli-help.ts and all src/cli*.ts flag literals. Every listed parameter has a current mark. PASS requires actual executable E2E evidence. Rust-only CLI options are documented separately.
 
-Actions/groups: 66; individual parameter cells: 448.
-Counts: INTERNAL_NOT_USER=2, MISSING=355, NODE_MISMATCH=4, PARTIAL=23, PASS=19, RETIRED=45.
+Actions/groups: 66; individual parameter cells: 458.
+Counts: INTERNAL_NOT_USER=2, MISSING=349, NODE_MISMATCH=4, PARTIAL=24, PASS=34, RETIRED=45.
 
 Full machine-readable checklist: docs/rust-cli-parameter-parity.csv
 
@@ -844,78 +844,88 @@ Overall: MISSING. MISSING=31, RETIRED=4.
 
 ### workflow action
 
-Overall: MISSING. MISSING=4.
+Overall: PARTIAL. MISSING=13, PARTIAL=1.
 
 | Parameter | Mark | Evidence or gap |
 |---|---|---|
-| `--event` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--graph` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--job` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--task` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--action` | PARTIAL | Rust verifies the Task action allowlist but does not yet dispatch authorized Task mutations |
+| `--context` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--evidence` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--exclude-current-route` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--failure-kind` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--reason` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--recovery-task-id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--repo` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--required-action` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--reroute` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--resolution-condition` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--response` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--task-id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
 
 ### workflow actions
 
-Overall: MISSING. MISSING=1.
+Overall: PARTIAL. PASS=1.
 
 | Parameter | Mark | Evidence or gap |
 |---|---|---|
-| `(none)` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `(none)` | PASS | Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates) |
 
 ### workflow discover
 
-Overall: MISSING. MISSING=1.
+Overall: PARTIAL. PASS=1.
 
 | Parameter | Mark | Evidence or gap |
 |---|---|---|
-| `(none)` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `(none)` | PASS | Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates) |
 
 ### workflow evaluate
 
-Overall: MISSING. MISSING=4.
+Overall: PARTIAL. PASS=4.
 
 | Parameter | Mark | Evidence or gap |
 |---|---|---|
-| `--event` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--facts` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--graph` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--state` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--event` | PASS | Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates) |
+| `--facts` | PASS | Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates) |
+| `--graph` | PASS | Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates) |
+| `--state` | PASS | Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates) |
 
 ### workflow inspect
 
-Overall: MISSING. MISSING=1.
+Overall: PARTIAL. PASS=1.
 
 | Parameter | Mark | Evidence or gap |
 |---|---|---|
-| `--graph` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--graph` | PASS | Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates) |
 
 ### workflow trace
 
-Overall: MISSING. MISSING=2.
+Overall: PARTIAL. PASS=2.
 
 | Parameter | Mark | Evidence or gap |
 |---|---|---|
-| `--attempt-key` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--sqlite` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--attempt-key` | PASS | Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates) |
+| `--sqlite` | PASS | Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates) |
 
 ### workflow verify
 
-Overall: MISSING. MISSING=5.
+Overall: PARTIAL. PASS=5.
 
 | Parameter | Mark | Evidence or gap |
 |---|---|---|
-| `--condition` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--execution` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--job` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--sqlite` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--task` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--condition` | PASS | Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates) |
+| `--execution` | PASS | Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates) |
+| `--job` | PASS | Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates) |
+| `--sqlite` | PASS | Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates) |
+| `--task` | PASS | Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates) |
 
 ### workflow where
 
-Overall: MISSING. MISSING=1.
+Overall: PARTIAL. PASS=1.
 
 | Parameter | Mark | Evidence or gap |
 |---|---|---|
-| `--id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--id` | PASS | Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates) |
 
 ## Exit gate
 

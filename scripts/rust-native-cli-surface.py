@@ -10,6 +10,8 @@ sources={
  'relay-native-job/foreground':'rust/src/bin/relay-native-job/foreground.rs',
  'relay-native-job/read-only':'rust/src/bin/relay-native-job/node_compat.rs',
  'relay-native-job/status':'rust/src/bin/relay-native-job/status.rs',
+ 'relay-native-job/workflow':'rust/src/bin/relay-native-job/workflow.rs',
+ 'relay-native-job/workflow-verify':'rust/src/bin/relay-native-job/workflow_verify.rs',
  'relay-native-daemon':'rust/src/bin/relay-native-daemon.rs',
  'relay-native-dashboard':'rust/src/bin/relay-native-dashboard.rs',
  'agents-relay-rust/inspection':'rust/src/main.rs',

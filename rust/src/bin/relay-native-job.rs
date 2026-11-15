@@ -18,6 +18,8 @@ mod foreground;
 mod node_compat;
 #[path = "relay-native-job/status.rs"]
 mod status;
+#[path = "relay-native-job/workflow.rs"]
+mod workflow;
 
 fn value(args: &[String], name: &str) -> Result<String, String> {
     if args.iter().filter(|a| a.as_str() == name).count() > 1 {
@@ -298,6 +300,9 @@ fn run() -> Result<(), String> {
     }
     if command == "status" {
         return status::run(&args[1..]);
+    }
+    if command == "workflow" {
+        return workflow::run(&args[1..]);
     }
     let path = db(&args)?;
     let result = match command {

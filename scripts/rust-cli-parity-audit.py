@@ -39,7 +39,7 @@ extra={
 'workflow evaluate':'--graph --event --state --facts',
 'workflow verify':'--sqlite --job --condition --task --execution',
 'workflow trace':'--sqlite --attempt-key',
-'workflow action':'--graph --job --task --event',
+'workflow action':'--action --repo --id --task-id --reason --response --recovery-task-id --failure-kind --evidence --reroute --exclude-current-route --required-action --resolution-condition --context',
 'task list':'--id --repo','task show':'--id --repo --task-id',
 'task retry':'--id --repo --task-id','task cancel':'--id --repo --task-id',
 'job run':'--id --task-id --repo --project-path --workspace-root --shared-root --global-root --foreground --concurrency --codex --owner --lease-ms --no-github',
@@ -82,11 +82,19 @@ proof={
 'job show':'--id --repo','job list':'--repo',
 'task list':'--id --repo','task show':'--id --repo --task-id',
 'task events':'--id --repo --task-id --limit --order',
-'status':'--port'}
+'status':'--port',
+'workflow discover':'(none)',
+'workflow actions':'(none)',
+'workflow where':'--id',
+'workflow inspect':'--graph',
+'workflow evaluate':'--graph --event --state --facts',
+'workflow trace':'--sqlite --attempt-key',
+'workflow verify':'--sqlite --job --condition --task --execution'}
 proof={k:set(v.split()) for k,v in proof.items()}
 partial={
 'job run':'--project-path --no-github',
 'status':'--host',
+'workflow action':'--action',
 'job create':'--title --project-root',
 'job update':'--title --priority',
 'task create':'--title --priority --story-size --deps --parent --draft --dependency-validity --input-file --input --output --output-path',
@@ -102,7 +110,7 @@ def source_ref(cmd,flag):
     for rel in ['src/cli.ts','src/cli-coordinator.ts','src/cli-review.ts',
                 'src/cli-workflow.ts','src/cli-support.ts','src/cli-prompt.ts',
                 'src/cli-worker-task.ts','src/cli-escalation.ts','src/cli-context.ts',
-                'src/cli-blocker.ts','src/cli-projection.ts']:
+                'src/cli-blocker.ts','src/cli-projection.ts','src/cli-workflow-action.ts']:
         text=(ROOT/rel).read_text()
         i=text.find(flag)
         if i>=0:return rel+':'+str(text.count(chr(10),0,i)+1)+' (source token; confirm branch)'
@@ -111,6 +119,8 @@ def rust_ref(cmd,status):
     if status not in {'PASS','PARTIAL'}:return ''
     if cmd=='job run':return 'rust/src/bin/relay-native-job/foreground.rs'
     if cmd=='status':return 'rust/src/bin/relay-native-job/status.rs'
+    if cmd=='workflow verify':return 'rust/src/bin/relay-native-job/workflow_verify.rs'
+    if cmd.startswith('workflow '):return 'rust/src/bin/relay-native-job/workflow.rs'
     if cmd in {'job list','job show','task list','task show','task events','global help'}:
         return 'rust/src/bin/relay-native-job/node_compat.rs'
     return 'rust/src/bin/relay-native-job.rs (partial pilot path)'
@@ -123,9 +133,12 @@ for cmd in sorted(entries):
             status='RETIRED';reason='Node handler explicitly rejects deprecated or task-only option'
         elif cmd=='status' and flag=='--port':status='PASS';reason='Rust Dashboard native HTTP status on random port E2E'
         elif cmd=='status' and flag=='--host':status='PARTIAL';reason='Localhost E2E PASS; remote host not supported yet'
+        elif cmd.startswith('workflow ') and flag in proof.get(cmd,set()):status='PASS';reason='Node vs native Rust differential E2E (19 Graphs, Graph events, action trace and authoritative predicates)'
         elif flag in proof.get(cmd,set()):status='PASS';reason='Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15'
         elif cmd=='task events' and flag=='--after':
             status='PARTIAL';reason='Rust accepted --after 0, but multi-page cursor equivalence with Node is not verified'
+        elif cmd=='workflow action' and flag=='--action':
+            status='PARTIAL';reason='Rust verifies the Task action allowlist but does not yet dispatch authorized Task mutations'
         elif flag in partial.get(cmd,set()):status='PARTIAL';reason='Native option exists, but Node-compatible semantics not fully verified'
         elif cmd=='task complete':status='NODE_MISMATCH';reason='Node help advertises Task complete, but runtime action validator omits it'
         elif cmd=='global help':status='PARTIAL';reason='Rust help routes work, but exact Node per-command help content is not equivalent'
