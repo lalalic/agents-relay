@@ -1,9 +1,11 @@
-//! Explicit shadow CLI. Never launches workers, writes SQLite or runs effects.
+//! Inspection CLI plus the explicitly configured Escalation Graph effect.
 use agents_relay_rust::agent_graph::AgentGraph;
 use agents_relay_rust::authority::probe_process;
 use agents_relay_rust::dispatch::ActionPorts;
+use agents_relay_rust::escalation::{run_configured_escalation, EscalationRequest};
 use agents_relay_rust::final_review::propose_final_review;
 use agents_relay_rust::graph::{Graph, GraphInput};
+use agents_relay_rust::local_git::verified_local_head;
 use agents_relay_rust::reconcile::propose_dependency_transitions;
 use agents_relay_rust::recovery::inspect_expired_execution;
 use agents_relay_rust::store::RelayReader;
@@ -55,6 +57,83 @@ fn opt(args: &[String], name: &str) -> Result<String, String> {
         .cloned()
         .ok_or_else(|| format!("missing value for {name}"))
 }
+fn inspection_options(
+    args: &[String],
+    allowed: &[&str],
+) -> Result<HashMap<String, String>, String> {
+    let mut options = HashMap::new();
+    let mut index = 2;
+    while index < args.len() {
+        let name = args[index].as_str();
+        if !allowed.contains(&name) {
+            return Err(format!(
+                "unrecognized argument for inspection command: {name}"
+            ));
+        }
+        if options.contains_key(name) {
+            return Err(format!("duplicate argument: {name}"));
+        }
+        let value = args
+            .get(index + 1)
+            .filter(|value| !value.starts_with("--") && !value.is_empty())
+            .ok_or_else(|| format!("missing value for {name}"))?;
+        options.insert(name.to_string(), value.clone());
+        index += 2;
+    }
+    for required in allowed {
+        if !options.contains_key(*required) {
+            return Err(format!("missing {required}"));
+        }
+    }
+    Ok(options)
+}
+fn escalation_text_option(
+    options: &HashMap<String, String>,
+    literal: &str,
+    file: &str,
+) -> Result<Option<String>, String> {
+    if options.contains_key(literal) && options.contains_key(file) {
+        return Err(format!("use only one of {literal} or {file}"));
+    }
+    if let Some(value) = options.get(literal) {
+        return Ok(Some(value.clone()));
+    }
+    options
+        .get(file)
+        .map(|path| std::fs::read_to_string(path).map_err(|error| format!("{path}: {error}")))
+        .transpose()
+}
+fn optional_inspection_options(
+    args: &[String],
+    allowed: &[&str],
+    required: &[&str],
+) -> Result<HashMap<String, String>, String> {
+    let mut options = HashMap::new();
+    let mut index = 2;
+    while index < args.len() {
+        let name = args[index].as_str();
+        if !allowed.contains(&name) {
+            return Err(format!(
+                "unrecognized argument for inspection command: {name}"
+            ));
+        }
+        if options.contains_key(name) {
+            return Err(format!("duplicate argument: {name}"));
+        }
+        let value = args
+            .get(index + 1)
+            .filter(|value| !value.starts_with("--") && !value.is_empty())
+            .ok_or_else(|| format!("missing value for {name}"))?;
+        options.insert(name.to_string(), value.clone());
+        index += 2;
+    }
+    for name in required {
+        if !options.contains_key(*name) {
+            return Err(format!("missing {name}"));
+        }
+    }
+    Ok(options)
+}
 fn load_graph(args: &[String]) -> Result<Graph, String> {
     let path = PathBuf::from(opt(args, "--graph")?);
     let source = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -67,11 +146,32 @@ fn print_json(value: impl serde::Serialize) -> Result<(), String> {
     );
     Ok(())
 }
+fn job_timestamp(job: &Value) -> i64 {
+    [job["updatedAt"].as_str(), job["createdAt"].as_str()]
+        .into_iter()
+        .flatten()
+        .find_map(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .map_or(0, |timestamp| timestamp.timestamp_millis())
+}
 fn run(args: &[String]) -> Result<(), String> {
     if args.len() < 2 {
-        return Err("usage: agents-relay-rust graph <validate|inventory|decide|batch|simulate> | store <list|get> --db PATH | scheduler inspect/recovery --db PATH --job-id ID | dag parse --file PATH".into());
+        return Err("usage: agents-relay-rust escalation run --intent TEXT --blocked-on TEXT [--context TEXT] [--on-needs-user TEXT] [--cwd PATH] | graph <validate|inventory|decide|batch|simulate> | store <list|get> --db PATH | job <list|show> --db PATH | task <list|show|events> --db PATH --job-id ID | scheduler inspect/recovery --db PATH --job-id ID | review inspect --db PATH --job-id ID | dag parse --file PATH".into());
     }
     match (args[0].as_str(),args[1].as_str()) {
+        ("escalation", "run") => {
+            let options = optional_inspection_options(args,
+                &["--intent", "--intent-file", "--blocked-on", "--blocked-on-file", "--context", "--context-file", "--on-needs-user", "--on-needs-user-file", "--cwd"], &[])?;
+            let intent = escalation_text_option(&options, "--intent", "--intent-file")?.ok_or("escalation run requires --intent or --intent-file")?;
+            let blocked_on = escalation_text_option(&options, "--blocked-on", "--blocked-on-file")?.ok_or("escalation run requires --blocked-on or --blocked-on-file")?;
+            let context = escalation_text_option(&options, "--context", "--context-file")?;
+            let on_needs_user = escalation_text_option(&options, "--on-needs-user", "--on-needs-user-file")?;
+            let cwd = options.get("--cwd").map(PathBuf::from);
+            let request = EscalationRequest { intent, blocked_on, context, on_needs_user, cwd };
+            let outcome = run_configured_escalation(&request, std::env::var("AGENTS_RELAY_ESCALATION_COMMAND").ok().as_deref())?;
+            print_json(&outcome)?;
+            if outcome.state == "technical_failure" { return Err("Escalation executor failed; no recovery or human blocker was established".into()); }
+            Ok(())
+        }
         ("graph","validate") => {
             let graph=load_graph(args)?;
             print_json(json!({"valid":true,"direction":graph.direction,"initial":graph.initial,
@@ -126,9 +226,11 @@ fn run(args: &[String]) -> Result<(), String> {
         ("review","inspect") => {
             let db=PathBuf::from(opt(args,"--db")?);
             let job_id=opt(args,"--job-id")?;
-            let head=opt(args,"--verified-local-head")?;
             let store=RelayReader::open(&db)?;
             let job=store.get_job(&job_id)?.ok_or("Final Review Job not found")?;
+            let project_root=job.job.get("projectRoot").and_then(Value::as_str)
+                .ok_or("Final Review Job projectRoot missing")?;
+            let head=verified_local_head(Path::new(project_root))?;
             print_json(propose_final_review(&job.job,&head)?)
         }
         ("scheduler","recovery") => {
@@ -171,7 +273,101 @@ fn run(args: &[String]) -> Result<(), String> {
                 print_json(store.list_jobs(limit,offset)?)
             }
         }
-        _=>Err("unrecognized command; supported: graph validate/inventory/decide/batch/simulate, store list/get, scheduler inspect/recovery".into())
+        ("job", "list") => {
+            let options = optional_inspection_options(args, &["--db", "--repo"], &["--db"])?;
+            let store = RelayReader::open(Path::new(&options["--db"]))?;
+            let requested_repo = options.get("--repo");
+            let mut offset = 0_u32;
+            let mut jobs = Vec::new();
+            loop {
+                let page = store.list_jobs(1000, offset)?;
+                let count = page.len() as u32;
+                jobs.extend(page.into_iter()
+                    .filter(|snapshot| requested_repo.is_none_or(|repo| snapshot.job["repository"].as_str() == Some(repo)))
+                    .map(|snapshot| snapshot.job));
+                if count < 1000 { break; }
+                offset = offset.checked_add(count).ok_or("Job list offset overflow")?;
+            }
+            jobs.sort_by(|left, right| {
+                job_timestamp(right).cmp(&job_timestamp(left))
+                    .then_with(|| left["repository"].as_str().unwrap_or("").cmp(right["repository"].as_str().unwrap_or("")))
+                    .then_with(|| left["id"].as_str().unwrap_or("").cmp(right["id"].as_str().unwrap_or("")))
+            });
+            print_json(jobs)
+        }
+        ("job", "show") => {
+            let options = inspection_options(args, &["--db", "--job-id"])?;
+            let store = RelayReader::open(Path::new(&options["--db"]))?;
+            let job_id = &options["--job-id"];
+            let job = store
+                .get_job(job_id)?
+                .ok_or_else(|| format!("Job {job_id} not found"))?;
+            print_json(job.job)
+        }
+        ("task", "list") => {
+            let options = inspection_options(args, &["--db", "--job-id"])?;
+            let store = RelayReader::open(Path::new(&options["--db"]))?;
+            let job_id = &options["--job-id"];
+            let job = store
+                .get_job(job_id)?
+                .ok_or_else(|| format!("Job {job_id} not found"))?;
+            let tasks = job
+                .job
+                .get("tasks")
+                .and_then(Value::as_array)
+                .ok_or_else(|| format!("Job {job_id} has no task list"))?;
+            print_json(tasks)
+        }
+        ("task", "show") => {
+            let options = inspection_options(args, &["--db", "--job-id", "--task-id"])?;
+            let store = RelayReader::open(Path::new(&options["--db"]))?;
+            let job_id = &options["--job-id"];
+            let task_id = &options["--task-id"];
+            let job = store
+                .get_job(job_id)?
+                .ok_or_else(|| format!("Job {job_id} not found"))?;
+            let tasks = job
+                .job
+                .get("tasks")
+                .and_then(Value::as_array)
+                .ok_or_else(|| format!("Job {job_id} has no task list"))?;
+            let task = tasks
+                .iter()
+                .find(|task| task.get("id").and_then(Value::as_str) == Some(task_id))
+                .ok_or_else(|| format!("Task {task_id} not found in Job {job_id}"))?;
+            print_json(task)
+        }
+        ("task", "events") => {
+            let options = optional_inspection_options(
+                args,
+                &["--db", "--job-id", "--task-id", "--limit", "--order", "--after"],
+                &["--db", "--job-id", "--task-id"],
+            )?;
+            let limit = options.get("--limit").map_or(Ok(60), |value| value.parse::<usize>()
+                .map_err(|_| "task events --limit must be an integer from 1 to 60".to_string()))?;
+            let order = options.get("--order").map(String::as_str).unwrap_or("desc");
+            let after = options.get("--after").map_or(Ok(0), |value| value.parse::<i64>()
+                .map_err(|_| "task events --after must be a non-negative integer cursor".to_string()))?;
+            if after > 9_007_199_254_740_991 {
+                return Err("task events --after must be a safe integer cursor".into());
+            }
+            if options.contains_key("--after") && order != "asc" {
+                return Err("task events --after requires --order asc".into());
+            }
+            let store = RelayReader::open(Path::new(&options["--db"]))?;
+            let job_id = &options["--job-id"];
+            let task_id = &options["--task-id"];
+            if store.get_job(job_id)?.is_none() {
+                return Err(format!("Job {job_id} not found"));
+            }
+            if store.get_task(job_id, task_id)?.is_none() {
+                return Err(format!("Task {task_id} not found in Job {job_id}"));
+            }
+            print_json(store.task_events(
+                job_id, Some(task_id), limit, order, after,
+            )?)
+        }
+        _=>Err("unrecognized command; supported: escalation run, graph validate/inventory/decide/batch/simulate, store list/get, job list/show, task list/show/events, scheduler inspect/recovery".into())
     }
 }
 fn main() {

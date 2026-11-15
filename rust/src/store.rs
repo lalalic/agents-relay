@@ -2,8 +2,9 @@
 //! No migrations, PR actions, mutations, or lifecycle decisions.
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::path::Path;
+use std::time::{Duration, SystemTime};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JobSnapshot {
@@ -12,6 +13,19 @@ pub struct JobSnapshot {
     #[serde(rename = "updatedAt")]
     pub updated_at: String,
     pub job: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskEventPage {
+    pub job_id: String,
+    pub task_id: String,
+    pub order: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub more_possible: Option<bool>,
+    pub events: Vec<Value>,
 }
 
 pub struct RelayReader {
@@ -131,6 +145,196 @@ impl RelayReader {
         })
         .transpose()
     }
+
+    /// Read the ordered Task snapshots embedded in the authoritative Job.
+    pub fn list_tasks(&self, job_id: &str) -> Result<Option<Vec<Value>>, String> {
+        let Some(snapshot) = self.get_job(job_id)? else {
+            return Ok(None);
+        };
+        let tasks = snapshot.job["tasks"]
+            .as_array()
+            .ok_or_else(|| format!("Job {job_id} has no task list"))?;
+        Ok(Some(tasks.clone()))
+    }
+
+    /// Read one Task snapshot without deriving lifecycle state or mutating it.
+    pub fn get_task(&self, job_id: &str, task_id: &str) -> Result<Option<Value>, String> {
+        if task_id.is_empty() || task_id.len() > 256 {
+            return Err("invalid task id".into());
+        }
+        let Some(tasks) = self.list_tasks(job_id)? else {
+            return Ok(None);
+        };
+        Ok(tasks
+            .into_iter()
+            .find(|task| task["id"].as_str() == Some(task_id)))
+    }
+
+    /// Read Task-scoped event payloads already retained by Relay's native
+    /// workflow inbox/outbox. This does not query the Events Bus service or
+    /// create a parallel event-history store.
+    pub fn task_events(
+        &self,
+        job_id: &str,
+        task_id: Option<&str>,
+        limit: usize,
+        order: &str,
+        after: i64,
+    ) -> Result<TaskEventPage, String> {
+        if !(1..=60).contains(&limit) {
+            return Err("task events --limit must be an integer from 1 to 60".into());
+        }
+        if order != "asc" && order != "desc" {
+            return Err("task events --order must be asc or desc".into());
+        }
+        if after < 0 {
+            return Err("task events --after must be a non-negative integer cursor".into());
+        }
+        if after > 9_007_199_254_740_991 {
+            return Err("task events --after must be a safe integer cursor".into());
+        }
+        if order != "asc" && after != 0 {
+            return Err("task events --after requires --order asc".into());
+        }
+
+        let mut sources = Vec::new();
+        for (table, time_column) in [
+            ("workflow_event_inbox", "consumed_at"),
+            ("workflow_event_outbox", "created_at"),
+        ] {
+            let exists: i64 = self
+                .connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                    [table],
+                    |row| row.get(0),
+                )
+                .map_err(|error| error.to_string())?;
+            if exists == 0 {
+                continue;
+            }
+            sources.push(format!(
+                "SELECT {time_column} AS recorded_at,event_id,payload_json FROM {table} \
+                 WHERE COALESCE(json_extract(payload_json,'$.job_id'),json_extract(payload_json,'$.jobId'))=?1 \
+                 AND (?2 IS NULL OR COALESCE(json_extract(payload_json,'$.task_id'),json_extract(payload_json,'$.taskId'))=?2)"
+            ));
+        }
+        let mut events = Vec::new();
+        if !sources.is_empty() {
+            let direction = if order == "asc" { "ASC" } else { "DESC" };
+            let sql = format!(
+                "SELECT recorded_at,event_id,payload_json FROM ({}) \
+                 ORDER BY recorded_at {direction},event_id {direction} LIMIT ?3 OFFSET ?4",
+                sources.join(" UNION ALL ")
+            );
+            let mut query = self
+                .connection
+                .prepare(&sql)
+                .map_err(|error| error.to_string())?;
+            let rows = query
+                .query_map(
+                    rusqlite::params![job_id, task_id, limit as i64, after],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+            for row in rows {
+                let (recorded_at, event_id, encoded) = row.map_err(|error| error.to_string())?;
+                let payload: Value = serde_json::from_str(&encoded).map_err(|error| {
+                    format!("invalid stored workflow event {event_id}: {error}")
+                })?;
+                let kind = payload["type"].as_str().unwrap_or("unknown");
+                let mut normalized = json!({
+                    "version": payload["version"].as_u64().unwrap_or(1),
+                    "event_id": payload["event_id"].as_str().unwrap_or(&event_id),
+                    "job_id": job_id,
+                    "task_id": payload["task_id"].as_str().or(payload["taskId"].as_str()),
+                    "parent_task_id": payload["parent_task_id"].as_str().or(payload["parentTaskId"].as_str()),
+                    "type": kind,
+                    "status": payload["status"],
+                    "timestamp": payload["timestamp"].as_str().unwrap_or(&recorded_at),
+                    "visibility": payload["visibility"].as_str().unwrap_or("orchestrator"),
+                    "level": payload["level"].as_str().unwrap_or("info"),
+                    "message": payload["message"].as_str().unwrap_or(kind),
+                });
+                for field in ["source", "data"] {
+                    if !payload[field].is_null() {
+                        normalized[field] = payload[field].clone();
+                    }
+                }
+                if normalized["status"].is_null() {
+                    normalized
+                        .as_object_mut()
+                        .expect("event is an object")
+                        .remove("status");
+                }
+                events.push(normalized);
+            }
+        }
+        let more_possible = events.len() == limit;
+        let next_cursor = if order == "asc" {
+            Some(after + events.len() as i64)
+        } else {
+            None
+        };
+        Ok(TaskEventPage {
+            job_id: job_id.to_string(),
+            task_id: task_id.unwrap_or_default().to_string(),
+            order: if order == "asc" {
+                "oldest-first"
+            } else {
+                "newest-first"
+            }
+            .to_string(),
+            next_cursor,
+            more_possible: if order == "asc" {
+                Some(more_possible)
+            } else {
+                None
+            },
+            events,
+        })
+    }
+
+    /// Return only the timestamp committed for the exact active Worker
+    /// execution. An event receipt or transport acknowledgement is not enough.
+    pub fn worker_activity_at(
+        &self,
+        job_id: &str,
+        task_id: &str,
+        execution_id: &str,
+    ) -> Result<Option<SystemTime>, String> {
+        let Some(snapshot) = self.get_job(job_id)? else {
+            return Ok(None);
+        };
+        let Some(task) = snapshot.job["tasks"]
+            .as_array()
+            .and_then(|tasks| tasks.iter().find(|task| task["id"] == task_id))
+        else {
+            return Ok(None);
+        };
+        if task["state"] != "RUNNING" || task["executionId"] != execution_id {
+            return Ok(None);
+        }
+        let Some(activity) = task["lastWorkerActivityAt"].as_str() else {
+            return Ok(None);
+        };
+        let activity = chrono::DateTime::parse_from_rfc3339(activity)
+            .map_err(|_| "invalid durable Worker activity timestamp")?;
+        let seconds = activity.timestamp();
+        if seconds < 0 {
+            return Err("Worker activity timestamp predates Unix epoch".into());
+        }
+        Ok(Some(
+            SystemTime::UNIX_EPOCH
+                + Duration::new(seconds as u64, activity.timestamp_subsec_nanos()),
+        ))
+    }
 }
 use rusqlite::OptionalExtension;
 
@@ -211,5 +415,50 @@ mod tests {
             reader.get_job("201").unwrap().unwrap().job["state"],
             "ACTIVE"
         );
+    }
+
+    #[test]
+    fn worker_activity_reader_is_execution_fenced_and_restart_durable() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("activity.sqlite");
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch("CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at TEXT NOT NULL);").unwrap();
+        let job = serde_json::json!({"id":"91","tasks":[{"id":"101","state":"RUNNING","executionId":"exec-1","lastWorkerActivityAt":"2026-11-13T20:00:04.123456789Z"}]});
+        db.execute(
+            "INSERT INTO job_snapshot VALUES ('91',?1,'2026-11-13T20:00:04.123456789Z')",
+            [job.to_string()],
+        )
+        .unwrap();
+        drop(db);
+
+        let reader = RelayReader::open(&path).unwrap();
+        let activity = reader
+            .worker_activity_at("91", "101", "exec-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            activity.duration_since(SystemTime::UNIX_EPOCH).unwrap(),
+            Duration::new(1_794_600_004, 123_456_789)
+        );
+        assert!(reader
+            .worker_activity_at("91", "101", "stale-exec")
+            .unwrap()
+            .is_none());
+        assert!(reader
+            .worker_activity_at("91", "missing", "exec-1")
+            .unwrap()
+            .is_none());
+        let db = Connection::open(&path).unwrap();
+        let finished = serde_json::json!({"id":"91","tasks":[{"id":"101","state":"SUCCEEDED","executionId":"exec-1","lastWorkerActivityAt":"2026-11-13T20:00:04.123456789Z"}]});
+        db.execute(
+            "UPDATE job_snapshot SET json=?1 WHERE job_id='91'",
+            [finished.to_string()],
+        )
+        .unwrap();
+        drop(db);
+        assert!(reader
+            .worker_activity_at("91", "101", "exec-1")
+            .unwrap()
+            .is_none());
     }
 }

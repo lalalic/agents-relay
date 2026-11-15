@@ -32,6 +32,7 @@ pub struct NativeScriptResult {
     pub worker: WorkerResult,
 }
 pub(crate) fn task_input(
+    job_id: &str,
     task_id: &str,
     execution_id: &str,
     owner: &str,
@@ -42,7 +43,7 @@ pub(crate) fn task_input(
         transport: "event".into(),
         id: event.into(),
         payload: json!({
-        "taskId":task_id,"executionId":execution_id,"leaseOwner":owner,"attempt":attempt}),
+        "jobId":job_id,"taskId":task_id,"executionId":execution_id,"leaseOwner":owner,"attempt":attempt}),
     }
 }
 pub(crate) fn exact_process(
@@ -184,6 +185,7 @@ pub fn execute_claimed_script(
                 job_id: &claim.job_id,
                 task_id: &claim.task_id,
                 input: task_input(
+                    &claim.job_id,
                     &claim.task_id,
                     &claim.execution_id,
                     &claim.owner,
@@ -280,7 +282,8 @@ pub(crate) fn finish_script_worker(
         event_id: event.into(),
         payload: json!({
             "event_id":key,"type":event,"jobId":claim.job_id,
-            "taskId":claim.task_id,"executionId":claim.execution_id,"reason":reason,
+            "taskId":claim.task_id,"executionId":claim.execution_id,
+            "leaseOwner":claim.owner,"attempt":claim.attempt,"reason":reason,
         }),
     };
     let result = valid_result.ok().map(|data| {
@@ -295,25 +298,52 @@ pub(crate) fn finish_script_worker(
     });
     let graph = Graph::parse(include_str!("../../workflow/task-lifecycle.mmd"))?;
     let lifecycle = TaskLifecycle::new(&graph);
-    let (finished, _) = lifecycle.apply_with_launch_receipt(
-        authority,
-        TaskTransition {
-            job_id: &claim.job_id,
-            task_id: &claim.task_id,
-            input: task_input(
-                &claim.task_id,
-                &claim.execution_id,
-                &claim.owner,
-                claim.attempt,
-                event,
-            ),
-            guard_facts: &HashMap::new(),
-            at: verified_at,
-            events: vec![receipt],
-        },
-        result,
-        claim,
-    )?;
+    let mut transition_at = verified_at.to_owned();
+    let mut timestamp_retries = 0;
+    let (finished, _) = loop {
+        match lifecycle.apply_with_launch_receipt(
+            authority,
+            TaskTransition {
+                job_id: &claim.job_id,
+                task_id: &claim.task_id,
+                input: task_input(
+                    &claim.job_id,
+                    &claim.task_id,
+                    &claim.execution_id,
+                    &claim.owner,
+                    claim.attempt,
+                    event,
+                ),
+                guard_facts: &HashMap::new(),
+                at: &transition_at,
+                events: vec![receipt.clone()],
+            },
+            result.clone(),
+            claim,
+        ) {
+            Ok(committed) => break committed,
+            Err(error) if error.contains("non-monotonic Job updatedAt") => {
+                // Independent Workers can finish within the same clock
+                // millisecond. Recompute only the mechanics timestamp after
+                // the latest durable Job write, then retry the same Graph
+                // transition and idempotent terminal event.
+                timestamp_retries += 1;
+                if timestamp_retries > 64 {
+                    return Err(
+                        "terminal transition timestamp kept losing concurrent Job ordering".into(),
+                    );
+                }
+                let latest = authority
+                    .read_job(&claim.job_id)?
+                    .ok_or("Worker Job missing while ordering terminal transition")?;
+                let updated_at = latest["updatedAt"]
+                    .as_str()
+                    .ok_or("Worker Job timestamp missing while ordering terminal transition")?;
+                transition_at = crate::supervised_script::after_time(updated_at)?;
+            }
+            Err(error) => return Err(error),
+        }
+    };
     let new_state = finished.job["tasks"]
         .as_array()
         .ok_or("Worker result tasks missing")?
@@ -331,4 +361,20 @@ pub(crate) fn finish_script_worker(
         reason,
         worker: worker.clone(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::task_input;
+
+    #[test]
+    fn worker_graph_input_binds_exact_job_task_execution_and_claim() {
+        let input = task_input("91", "101", "exec-1", "worker-1", 2, "task.completed");
+        assert_eq!(input.payload["jobId"], "91");
+        assert_eq!(input.payload["taskId"], "101");
+        assert_eq!(input.payload["executionId"], "exec-1");
+        assert_eq!(input.payload["leaseOwner"], "worker-1");
+        assert_eq!(input.payload["attempt"], 2);
+        assert_eq!(input.id, "task.completed");
+    }
 }

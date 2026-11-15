@@ -7,6 +7,13 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
+fn valid_git_sha(value: &str) -> bool {
+    matches!(value.len(), 40 | 64)
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
 fn reviewer(task: &Value) -> bool {
     matches!(
         task.get("agentName").and_then(Value::as_str),
@@ -152,7 +159,7 @@ pub fn propose_final_review(
     job: &Value,
     verified_local_head: &str,
 ) -> Result<FinalReviewProposal, String> {
-    if verified_local_head.len() > 256 || verified_local_head.chars().any(char::is_whitespace) {
+    if !valid_git_sha(verified_local_head) {
         return Err("invalid verified local Git head".into());
     }
     let job_id = job
@@ -254,42 +261,66 @@ mod tests {
     #[test]
     fn only_graph_selects_review_create_after_settlement() {
         let mut job = basic();
-        let ready = propose_final_review(&job, "0123456").unwrap();
+        let head = "0123456789abcdef0123456789abcdef01234567";
+        let ready = propose_final_review(&job, head).unwrap();
         assert!(ready.allowed);
         assert_eq!(ready.actions[0].id, "review.create");
         job["tasks"][0]["state"] = json!("RUNNING");
-        assert!(!propose_final_review(&job, "0123456").unwrap().allowed);
+        assert!(!propose_final_review(&job, head).unwrap().allowed);
         job["tasks"][0]["state"] = json!("SUCCEEDED");
         job["plans"] = json!([{"status":"PLANNING"}]);
-        assert!(!propose_final_review(&job, "0123456").unwrap().allowed);
+        assert!(!propose_final_review(&job, head).unwrap().allowed);
         job["plans"] = json!([]);
-        job["review"] = json!({"outcome":"pending","headSha":"0123456","taskId":"102"});
+        job["review"] = json!({"outcome":"pending","headSha":head,"taskId":"102"});
         job["tasks"]
             .as_array_mut()
             .unwrap()
             .push(json!({"id":"102","agentName":"job-acceptance-reviewer",
-            "reviewHeadSha":"0123456","state":"RUNNING","kind":"work"}));
-        assert!(!propose_final_review(&job, "0123456").unwrap().allowed);
+            "reviewHeadSha":head,"state":"RUNNING","kind":"work"}));
+        assert!(!propose_final_review(&job, head).unwrap().allowed);
     }
     #[test]
     fn final_review_is_head_fenced_and_no_approval_is_inferred() {
         let mut job = basic();
-        job["review"] = json!({"outcome":"approved","headSha":"HEAD-A","taskId":"102"});
+        let head_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let head_b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        job["review"] = json!({"outcome":"approved","headSha":head_a,"taskId":"102"});
         job["tasks"]
             .as_array_mut()
             .unwrap()
             .push(json!({"id":"102","agentName":"reviewer",
-            "reviewHeadSha":"HEAD-A","state":"SUCCEEDED","kind":"work"}));
-        let approved = propose_final_review(&job, "HEAD-A").unwrap();
+            "reviewHeadSha":head_a,"state":"SUCCEEDED","kind":"work"}));
+        let approved = propose_final_review(&job, head_a).unwrap();
         assert!(!approved.allowed, "never repeat approved current Review");
         assert!(!approved
             .actions
             .iter()
             .any(|action| action.id == "review.requestMerge"));
         assert!(
-            !propose_final_review(&job, "HEAD-B").unwrap().allowed,
+            !propose_final_review(&job, head_b).unwrap().allowed,
             "head change must pass through review.head.changed before new Review"
         );
         assert!(propose_final_review(&job, " ").is_err());
+    }
+
+    #[test]
+    fn verified_local_head_must_be_a_full_lowercase_git_sha() {
+        let job = basic();
+        for invalid in [
+            "0123456",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "0123456789abcdef0123456789abcdef0123456g",
+            "0123456789abcdef0123456789abcdef01234567 ",
+        ] {
+            assert!(
+                propose_final_review(&job, invalid).is_err(),
+                "accepted {invalid}"
+            );
+        }
+        assert!(propose_final_review(
+            &job,
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        )
+        .is_ok());
     }
 }

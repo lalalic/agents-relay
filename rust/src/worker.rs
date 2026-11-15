@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 pub struct WorkerSpec {
     /// An absolute executable is mandatory, avoiding PATH or shell injection.
@@ -49,6 +49,22 @@ pub fn run_worker<F>(
 ) -> Result<WorkerResult, String>
 where
     F: FnOnce(u32) -> Result<(), String>,
+{
+    run_worker_with_activity(spec, cancelled, on_started, || Ok(None))
+}
+
+/// Execute with an optional durable activity timestamp. Newer timestamps move
+/// the inactivity deadline to `activity + timeout`; receipts and local wakeups
+/// are deliberately not inputs to this effect.
+pub fn run_worker_with_activity<F, A>(
+    spec: &WorkerSpec,
+    cancelled: &AtomicBool,
+    on_started: F,
+    mut activity_at: A,
+) -> Result<WorkerResult, String>
+where
+    F: FnOnce(u32) -> Result<(), String>,
+    A: FnMut() -> Result<Option<SystemTime>, String>,
 {
     if !spec.executable.is_absolute() || !spec.cwd.is_absolute() {
         return Err("absolute executable and cwd required".into());
@@ -89,6 +105,8 @@ where
     }
     let mut timed_out = false;
     let mut was_cancelled = false;
+    let mut deadline = started_at + spec.timeout;
+    let mut last_activity = None;
     let status = loop {
         if let Some(status) = child
             .try_wait()
@@ -111,7 +129,28 @@ where
             was_cancelled = true;
             break terminate_group(&mut child, group, spec.terminate_grace)?;
         }
-        if started_at.elapsed() >= spec.timeout {
+        let activity = match activity_at() {
+            Ok(activity) => activity,
+            Err(error) => {
+                return match terminate_group(&mut child, group, spec.terminate_grace) {
+                    Ok(_) => Err(error),
+                    Err(cleanup) => Err(format!("{error}; Worker cleanup failed: {cleanup}")),
+                };
+            }
+        };
+        if let Some(activity) = activity {
+            if last_activity.is_none_or(|previous| activity > previous) {
+                let activity_deadline = activity
+                    .checked_add(spec.timeout)
+                    .ok_or("Worker activity deadline overflow")?;
+                deadline = Instant::now()
+                    + activity_deadline
+                        .duration_since(SystemTime::now())
+                        .unwrap_or(Duration::ZERO);
+                last_activity = Some(activity);
+            }
+        }
+        if Instant::now() >= deadline {
             timed_out = true;
             break terminate_group(&mut child, group, spec.terminate_grace)?;
         }
@@ -205,6 +244,72 @@ mod tests {
         let result = run_worker(&program, &AtomicBool::new(false), |_| Ok(())).unwrap();
         assert!(result.timed_out);
         assert!(result.elapsed_ms < 2500);
+    }
+    #[test]
+    fn accepted_durable_activity_renews_deadline_without_changing_group_cleanup() {
+        use std::sync::{Arc, Mutex};
+        use std::time::SystemTime;
+
+        let folder = tempfile::tempdir().unwrap();
+        let program = spec(
+            folder.path(),
+            "renewed",
+            "sleep 0.30",
+            Duration::from_millis(250),
+        );
+        let activity = Arc::new(Mutex::new(None));
+        let writer = Arc::clone(&activity);
+        let update = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(140));
+            *writer.lock().unwrap() = Some(SystemTime::now());
+        });
+        let result = run_worker_with_activity(
+            &program,
+            &AtomicBool::new(false),
+            |_| Ok(()),
+            || Ok(*activity.lock().unwrap()),
+        )
+        .unwrap();
+        update.join().unwrap();
+        assert!(
+            !result.timed_out,
+            "new accepted activity should renew inactivity deadline"
+        );
+        assert_eq!(result.exit_code, Some(0));
+        assert!(result.elapsed_ms >= 250);
+    }
+    #[test]
+    fn activity_reader_failure_terminates_the_exact_worker_group() {
+        let folder = tempfile::tempdir().unwrap();
+        let pid_file = folder.path().join("child.pid");
+        let program = spec(
+            folder.path(),
+            "reader-error",
+            &format!("sleep 5 & echo $! > {}; wait", pid_file.display()),
+            Duration::from_secs(3),
+        );
+        let error = run_worker_with_activity(
+            &program,
+            &AtomicBool::new(false),
+            |_| Ok(()),
+            || {
+                thread::sleep(Duration::from_millis(50));
+                Err("durable activity read failed".into())
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("durable activity read failed"));
+        let pid = fs::read_to_string(pid_file)
+            .unwrap()
+            .trim()
+            .parse::<u32>()
+            .unwrap();
+        let status = Command::new("/bin/ps")
+            .args(["-p", &pid.to_string(), "-o", "stat="])
+            .output()
+            .unwrap();
+        let state = String::from_utf8(status.stdout).unwrap();
+        assert!(state.trim().is_empty() || state.trim().starts_with('Z'));
     }
     #[test]
     fn real_worker_cancellation_and_failed_registration_stop_child() {

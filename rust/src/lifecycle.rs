@@ -3,7 +3,7 @@
 //! implements only side-effect-free mutation primitives; unknown effects fail.
 use crate::authority::{CommittedJob, RelayAuthority, ScriptClaim, WorkflowEvent};
 use crate::graph::{Decision, Graph, GraphInput};
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -46,9 +46,137 @@ pub struct TaskTransition<'a> {
 pub struct TaskLifecycle<'g> {
     graph: &'g Graph,
 }
+
+/// Record accepted Worker activity and extend the durable fencing lease from
+/// that activity's timestamp. Called only after the canonical Graph accepts
+/// the lifecycle event, inside the same SQLite snapshot transaction.
+fn renew_worker_activity(task: &mut Value, activity_at: &str) -> Result<(), String> {
+    let activity = chrono::DateTime::parse_from_rfc3339(activity_at)
+        .map_err(|_| "invalid Worker activity timestamp")?;
+    let timeout_ms = task["timeoutMs"]
+        .as_i64()
+        .filter(|timeout| *timeout > 0)
+        .ok_or("Worker Task inactivity timeout missing")?;
+    let renewed = activity + chrono::Duration::milliseconds(timeout_ms + 30_000);
+    let current = task["leaseExpiresAt"]
+        .as_str()
+        .ok_or("Worker Task lease expiry missing")?;
+    let current = chrono::DateTime::parse_from_rfc3339(current)
+        .map_err(|_| "invalid Worker Task lease expiry")?;
+    if renewed > current {
+        task["leaseExpiresAt"] =
+            Value::String(renewed.to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
+    }
+    task["lastWorkerActivityAt"] = Value::String(activity_at.into());
+    Ok(())
+}
+
+fn maybe_renew_worker_activity(task: &mut Value, activity_at: &str) -> Result<(), String> {
+    if task.get("timeoutMs").and_then(Value::as_i64).is_some()
+        && task.get("leaseExpiresAt").and_then(Value::as_str).is_some()
+    {
+        renew_worker_activity(task, activity_at)?;
+    }
+    Ok(())
+}
+
 impl<'g> TaskLifecycle<'g> {
     pub fn new(graph: &'g Graph) -> Self {
         Self { graph }
+    }
+
+    /// Apply a correlated nonterminal Worker event through the canonical Task
+    /// Graph and persist its inbox receipt with the Task snapshot. Accepted
+    /// activity renews the durable inactivity deadline; it never writes a
+    /// Task result.
+    pub(crate) fn apply_inbound_worker_event(
+        &self,
+        store: &mut RelayAuthority,
+        request: TaskTransition<'_>,
+        claim: &ScriptClaim,
+        receipt: &WorkflowEvent,
+    ) -> Result<bool, String> {
+        let TaskTransition {
+            job_id,
+            task_id,
+            input,
+            guard_facts,
+            at,
+            ..
+        } = request;
+        if !matches!(input.id.as_str(), "task.started" | "task.progress") {
+            return Err("inbound Worker lifecycle event must be start or progress".into());
+        }
+        if claim.job_id != job_id || claim.task_id != task_id {
+            return Err("Worker lifecycle claim identity mismatch".into());
+        }
+        let mut decision = None;
+        let applied = store.commit_job_with_tx(job_id, at, |tx, job| {
+            let mut next = job.clone();
+            let task = next["tasks"].as_array_mut()
+                .and_then(|tasks| tasks.iter_mut().find(|task| task["id"] == task_id))
+                .ok_or_else(|| format!("Unknown Task '{task_id}' in Job '{job_id}'"))?;
+            let state = task["state"].as_str().ok_or("Task state missing")?.to_owned();
+            let execution_id = input.payload["executionId"].as_str().ok_or("Worker execution ID missing")?;
+            let owner = input.payload["leaseOwner"].as_str().ok_or("Worker lease owner missing")?;
+            let attempt = input.payload["attempt"].as_i64().ok_or("Worker attempt missing")?;
+            let expiry = task["leaseExpiresAt"].as_str().ok_or("current Task lease missing")?;
+            let expiry = chrono::DateTime::parse_from_rfc3339(expiry).map_err(|_| "invalid current Task lease")?;
+            let observed = chrono::DateTime::parse_from_rfc3339(at).map_err(|_| "invalid ingress timestamp")?;
+            if task["executionId"] != execution_id || task["leaseOwner"] != owner
+                || task["attempt"] != attempt || claim.execution_id != execution_id
+                || claim.owner != owner || claim.attempt != attempt || expiry <= observed
+                || !task["executionHistory"].as_array().is_some_and(|history| history.iter().any(|row| row["id"] == execution_id && row["attempt"] == attempt)) {
+                return Err("Worker lifecycle event is stale or outside its current lease".into());
+            }
+            let previous: Option<(String, String)> = tx.query_row(
+                "SELECT event_id,payload_json FROM workflow_event_inbox WHERE consumer_id='rust-worker-lifecycle' AND event_key=?1",
+                [&receipt.key], |row| Ok((row.get(0)?, row.get(1)?)),
+            ).optional().map_err(|error| error.to_string())?;
+            if let Some((event_id, payload)) = previous {
+                if event_id != receipt.event_id || serde_json::from_str::<Value>(&payload).map_err(|error| error.to_string())? != receipt.payload {
+                    return Err("Worker lifecycle receipt key collision".into());
+                }
+                return Err("duplicate Worker lifecycle event".into());
+            }
+            if input.id == "task.progress" {
+                let event_at = receipt.payload["timestamp"].as_str().ok_or("Worker progress timestamp missing")?;
+                let event_at = chrono::DateTime::parse_from_rfc3339(event_at).map_err(|_| "invalid Worker progress timestamp")?;
+                if task.get("lastWorkerActivityAt").or_else(|| task.get("lastProgressEventAt")).and_then(Value::as_str).is_some_and(|previous| {
+                    chrono::DateTime::parse_from_rfc3339(previous).is_ok_and(|previous| event_at <= previous)
+                }) {
+                    return Err("Worker progress event is stale or out of order".into());
+                }
+            }
+            let graph_decision = self.graph.decide(&state, input.clone(), guard_facts)?;
+            let crate::graph::Decision::Accepted { target, actions, .. } = &graph_decision else {
+                return Err(format!("Graph denied Task transition {state} on {}", input.id));
+            };
+            apply_pure_task_actions(task, actions)?;
+            task["state"] = Value::String(target.clone());
+            task["updatedAt"] = Value::String(at.into());
+            if input.id == "task.progress" {
+                task["lastProgressEventAt"] = receipt.payload["timestamp"].clone();
+            }
+            if matches!(input.id.as_str(), "task.started" | "task.progress") {
+                let activity_at = receipt.payload["timestamp"]
+                    .as_str()
+                    .ok_or("Worker activity timestamp missing")?;
+                maybe_renew_worker_activity(task, activity_at)?;
+            }
+            next["updatedAt"] = Value::String(at.into());
+            tx.execute(
+                "INSERT INTO workflow_event_inbox(consumer_id,event_key,event_id,payload_json,consumed_at) VALUES('rust-worker-lifecycle',?1,?2,?3,?4)",
+                params![receipt.key, receipt.event_id, serde_json::to_string(&receipt.payload).map_err(|error| error.to_string())?, at],
+            ).map_err(|error| error.to_string())?;
+            decision = Some(graph_decision);
+            Ok((next, vec![]))
+        });
+        match applied {
+            Ok(_) => Ok(decision.is_some()),
+            Err(error) if error == "duplicate Worker lifecycle event" => Ok(false),
+            Err(error) => Err(error),
+        }
     }
     pub fn apply(
         &self,
@@ -67,7 +195,7 @@ impl<'g> TaskLifecycle<'g> {
         request: TaskTransition<'_>,
         result: Option<Value>,
     ) -> Result<(CommittedJob, Decision), String> {
-        self.apply_internal(store, request, result, None)
+        self.apply_internal(store, request, result, None, false)
     }
 
     /// Complete a real worker generation and its launch Action receipt in ONE
@@ -80,7 +208,20 @@ impl<'g> TaskLifecycle<'g> {
         result: Option<Value>,
         claim: &ScriptClaim,
     ) -> Result<(CommittedJob, Decision), String> {
-        self.apply_internal(store, request, result, Some(claim))
+        self.apply_internal(store, request, result, Some(claim), false)
+    }
+
+    /// Consume a terminal event that already arrived through an external
+    /// transport. The inbox receipt and Task snapshot commit atomically, while
+    /// the consumed event is not echoed into the outbound event queue.
+    pub(crate) fn apply_with_inbound_launch_receipt(
+        &self,
+        store: &mut RelayAuthority,
+        request: TaskTransition<'_>,
+        result: Option<Value>,
+        claim: &ScriptClaim,
+    ) -> Result<(CommittedJob, Decision), String> {
+        self.apply_internal(store, request, result, Some(claim), true)
     }
 
     fn apply_internal(
@@ -89,6 +230,7 @@ impl<'g> TaskLifecycle<'g> {
         request: TaskTransition<'_>,
         result: Option<Value>,
         launch: Option<&ScriptClaim>,
+        suppress_outbox: bool,
     ) -> Result<(CommittedJob, Decision), String> {
         let TaskTransition {
             job_id,
@@ -142,6 +284,66 @@ impl<'g> TaskLifecycle<'g> {
                     return Err("Task attempt generation mismatch".into());
                 }
             }
+            let terminal_receipt = if let Some(claim) = launch.filter(|_| {
+                matches!(input.id.as_str(), "task.completed" | "task.failed")
+            }) {
+                if claim.job_id != job_id
+                    || claim.task_id != task_id
+                    || input.payload.get("jobId").and_then(Value::as_str) != Some(job_id)
+                    || input.payload.get("taskId").and_then(Value::as_str) != Some(task_id)
+                    || input.payload.get("executionId").and_then(Value::as_str)
+                        != Some(claim.execution_id.as_str())
+                    || input.payload.get("leaseOwner").and_then(Value::as_str)
+                        != Some(claim.owner.as_str())
+                    || input.payload.get("attempt").and_then(Value::as_i64)
+                        != Some(claim.attempt)
+                {
+                    return Err("worker terminal event identity does not match its claim".into());
+                }
+                if input.id == "task.completed" && result.is_none() {
+                    return Err("worker task.completed requires verified structured output".into());
+                }
+                let receipt = events
+                    .iter()
+                    .filter(|event| event.event_id == input.id)
+                    .collect::<Vec<_>>();
+                if receipt.len() != 1 {
+                    return Err("worker terminal event requires exactly one receipt".into());
+                }
+                let receipt = receipt[0];
+                let key = format!("{}/{}/{}/terminal", job_id, task_id, claim.execution_id);
+                if receipt.key != key
+                    || receipt.payload["event_id"] != key
+                    || receipt.payload["type"] != input.id
+                    || receipt.payload["jobId"] != job_id
+                    || receipt.payload["taskId"] != task_id
+                    || receipt.payload["executionId"] != claim.execution_id
+                    || receipt.payload["leaseOwner"] != claim.owner
+                    || receipt.payload["attempt"] != claim.attempt
+                {
+                    return Err("worker terminal event receipt identity mismatch".into());
+                }
+                let previous: Option<(String, String)> = tx
+                    .query_row(
+                        "SELECT event_id,payload_json FROM workflow_event_inbox WHERE consumer_id='rust-worker-terminal' AND event_key=?1",
+                        [&receipt.key],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()
+                    .map_err(|e| e.to_string())?;
+                if let Some((event_id, payload)) = previous {
+                    if event_id != receipt.event_id
+                        || serde_json::from_str::<Value>(&payload).map_err(|e| e.to_string())?
+                            != receipt.payload
+                    {
+                        return Err("worker terminal receipt key collision".into());
+                    }
+                    return Err("duplicate worker terminal event".into());
+                }
+                Some(receipt)
+            } else {
+                None
+            };
             let graph_decision = self.graph.decide(&state, input.clone(), guard_facts)?;
             let Decision::Accepted {
                 target, actions, ..
@@ -200,6 +402,9 @@ impl<'g> TaskLifecycle<'g> {
             if result.is_some() && (input.id != "task.completed" || target != "SUCCEEDED") {
                 return Err("structured result requires Graph-authorized task.completed".into());
             }
+            if result.is_some() && !crate::authority::dependency_revision_still_current(job, task) {
+                return Err("dependency revision evidence is stale or has unsettled upstream work".into());
+            }
             apply_pure_task_actions(task, actions)?;
             // Graph owns the FAILED transition. Preserve its correlated
             // Worker error on the same atomic Task snapshot so recovery
@@ -234,6 +439,14 @@ impl<'g> TaskLifecycle<'g> {
                 }
                 task["result"] = result.clone();
             }
+            if let Some(receipt) = terminal_receipt {
+                tx.execute(
+                    "INSERT INTO workflow_event_inbox(consumer_id,event_key,event_id,payload_json,consumed_at) VALUES('rust-worker-terminal',?1,?2,?3,?4)",
+                    params![receipt.key, receipt.event_id,
+                        serde_json::to_string(&receipt.payload).map_err(|e| e.to_string())?, at],
+                )
+                .map_err(|e| e.to_string())?;
+            }
             if let Some(claim)=launch {
                 if !matches!(input.id.as_str(),"task.completed"|"task.failed")
                     || state!="RUNNING"
@@ -251,9 +464,13 @@ impl<'g> TaskLifecycle<'g> {
             }
             task["state"] = Value::String(target.clone());
             task["updatedAt"] = Value::String(at.into());
+            if matches!(input.id.as_str(), "task.started" | "task.progress") {
+                let activity_at = input.payload.get("timestamp").and_then(Value::as_str).unwrap_or(at);
+                maybe_renew_worker_activity(task, activity_at)?;
+            }
             next["updatedAt"] = Value::String(at.into());
             decision = Some(graph_decision);
-            Ok((next, events))
+            Ok((next, if suppress_outbox { vec![] } else { events }))
         })?;
         Ok((
             committed,

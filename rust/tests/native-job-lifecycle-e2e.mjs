@@ -86,7 +86,7 @@ test('Graph completion cannot bypass Review/merge, incomplete DAG, or source fen
   assert.equal(done.completed,false,'unfinished coordinator');
   updateJob(v.db,jobId,j=>{j.reviewEnabled=true;j.tasks[0].state='SUCCEEDED';});
   assert.equal(call(cli,['complete','--db',v.db,'--job-id',jobId]).completed,false);
-  updateJob(v.db,jobId,j=>{j.reviewEnabled=false;j.autoMerge=true;});
+  updateJob(v.db,jobId,j=>{j.reviewEnabled=false;j.autoMerge=true;j.tasks[0].state='RUNNING';});
   assert.equal(call(cli,['complete','--db',v.db,'--job-id',jobId]).completed,false);
   updateJob(v.db,jobId,j=>{j.autoMerge=false;j.tasks[0].state='AWAITING_DECISION';});
   assert.equal(call(cli,['complete','--db',v.db,'--job-id',jobId]).completed,false);

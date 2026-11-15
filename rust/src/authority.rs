@@ -3,22 +3,32 @@
 //! No independent scheduler or workflow policy exists in this module.
 mod coordinator;
 mod dependencies;
+mod escalation;
 mod ids;
 pub use coordinator::{graph_hash, ChildMaterialization, DAGExecutor, DAGMaterialize};
+pub use escalation::{TroubleshooterEscalation, TroubleshooterEscalationRequest};
 mod ledger;
 mod native_job;
-pub use native_job::{NativeCreatedJob, NativeJobSpec};
+mod native_task;
+mod planner;
+pub use native_job::{NativeCreatedJob, NativeJobSpec, NativeObjectiveJobSpec};
+pub use native_task::{NativeCreatedTask, NativeTaskSpec};
+pub use planner::NativePlannerApply;
 mod process;
 mod projection;
 mod recovery;
 mod review;
+mod troubleshooter;
 pub use recovery::RecoveredLease;
 mod scheduler;
 pub use ids::EntityKind;
 pub use ledger::{ActionIdentity, ActionOutcome, ActionTrace};
 pub use process::{probe_process, ExecutionProcessRecord, ProcessProbe};
 pub use projection::{ProjectionItem, ProjectionRequest, ProjectionRetry};
-pub use review::{review_fingerprint, ReviewDelivery, ReviewReceipt, ReviewResume};
+pub use review::{
+    review_fingerprint, InteractiveReviewBinding, InteractiveReviewFailure, ReviewDelivery,
+    ReviewReceipt, ReviewResume,
+};
 use rusqlite::{
     params, Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior,
 };
@@ -27,6 +37,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path;
 use std::time::Duration;
+pub use troubleshooter::{CreatedTroubleshooter, TroubleshooterAgent};
+
+pub(crate) fn dependency_revision_still_current(job: &Value, task: &Value) -> bool {
+    dependencies::dependency_revision_still_current(job, task)
+}
 
 const PUBLICATION_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS workflow_event_outbox (
@@ -154,6 +169,7 @@ impl RelayAuthority {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| e.to_string())?;
+        Self::prepare_publication(&tx)?;
         let (stored_json, stored_time): (String, String) = tx
             .query_row(
                 "SELECT json,updated_at FROM job_snapshot WHERE job_id=?1",
@@ -166,7 +182,6 @@ impl RelayAuthority {
         let original: Value = serde_json::from_str(&stored_json).map_err(|e| e.to_string())?;
         let (next, events) = mutate(&tx, &original)?;
         check_snapshot(job_id, &original, &next, &stored_time, at)?;
-        Self::prepare_publication(&tx)?;
         let serialized = serde_json::to_string(&next).map_err(|e| e.to_string())?;
         let changes = tx
             .execute(
@@ -227,6 +242,36 @@ impl RelayAuthority {
             params![consumer_id,event.key,event.event_id,serde_json::to_string(&event.payload).map_err(|e|e.to_string())?,at])
             .map_err(|e|e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
+        Ok(true)
+    }
+
+    /// Check whether this exact inbound receipt was already committed. This
+    /// read-only fast path lets stale or expired redelivery remain an
+    /// idempotent no-op; the transactional consumer still repeats the check
+    /// under the SQLite writer lock to handle concurrent delivery.
+    pub fn has_consumed_event(
+        &self,
+        consumer_id: &str,
+        event: &WorkflowEvent,
+    ) -> Result<bool, String> {
+        if consumer_id.is_empty() || consumer_id.len() > 256 {
+            return Err("invalid consumer ID".into());
+        }
+        validate_event(event)?;
+        let previous: Option<(String, String)> = self.connection.query_row(
+            "SELECT event_id,payload_json FROM workflow_event_inbox WHERE consumer_id=?1 AND event_key=?2",
+            params![consumer_id,event.key],
+            |row| Ok((row.get(0)?,row.get(1)?)),
+        ).optional().map_err(|error| error.to_string())?;
+        let Some((event_id, payload)) = previous else {
+            return Ok(false);
+        };
+        if event_id != event.event_id
+            || serde_json::from_str::<Value>(&payload).map_err(|error| error.to_string())?
+                != event.payload
+        {
+            return Err("consumer event key collision".into());
+        }
         Ok(true)
     }
     pub fn pending_events(&self) -> Result<Vec<WorkflowEvent>, String> {

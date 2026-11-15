@@ -4,10 +4,16 @@
 pub mod agent_graph;
 pub mod authority;
 pub mod dispatch;
+pub mod escalation;
 pub mod final_review;
 pub mod graph;
 pub mod lifecycle;
+pub mod local_git;
+pub mod native_context;
+#[cfg(unix)]
+pub mod native_control;
 pub mod native_daemon;
+pub mod native_ingress;
 pub mod native_job;
 pub mod native_model;
 pub mod native_outbox;

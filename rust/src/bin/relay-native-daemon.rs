@@ -57,13 +57,45 @@ fn run() -> Result<(), String> {
     } else {
         None
     };
+    let ingress_port = if args.contains(&"--nats-ingress-port".to_string()) {
+        let parsed = opt(&args, "--nats-ingress-port")?
+            .parse::<u16>()
+            .map_err(|e| e.to_string())?;
+        if parsed == 0 || !repeat {
+            return Err("--nats-ingress-port requires --loop and a nonzero port".into());
+        }
+        Some(parsed)
+    } else {
+        None
+    };
     let db = options.db.clone();
     let daemon = SingleNodeDaemon::acquire(options)?;
+    #[cfg(unix)]
+    let control = if repeat {
+        Some(agents_relay_rust::native_control::NativeControlServer::bind(&db)?)
+    } else {
+        None
+    };
+    let ingress = ingress_port.map(|port| {
+        let path = db.clone();
+        let stopped = Arc::clone(&stopped);
+        thread::spawn(move || {
+            agents_relay_rust::native_ingress::run_nats_ingress(path, port, stopped)
+        })
+    });
     loop {
         if stopped.load(Ordering::SeqCst) {
             break;
         }
         let report = daemon.tick(Arc::clone(&stopped))?;
+        #[cfg(unix)]
+        if let Some(control) = &control {
+            for _ in 0..16 {
+                if !control.serve_one(&db)? {
+                    break;
+                }
+            }
+        }
         let published = if let Some(port) = publish_port {
             let mut authority = agents_relay_rust::authority::RelayAuthority::open_existing(&db)?;
             agents_relay_rust::native_outbox::publish_pending(&mut authority, port)?
@@ -82,8 +114,17 @@ fn run() -> Result<(), String> {
             if stopped.load(Ordering::SeqCst) {
                 break;
             }
+            #[cfg(unix)]
+            if let Some(control) = &control {
+                if control.serve_one(&db)? {
+                    continue;
+                }
+            }
             thread::sleep(Duration::from_millis(100.min(interval)));
         }
+    }
+    if let Some(ingress) = ingress {
+        let _ = ingress.join();
     }
     Ok(())
 }

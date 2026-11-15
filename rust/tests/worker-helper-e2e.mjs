@@ -5,9 +5,14 @@ import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {spawn,execFileSync} from 'node:child_process';
 import {setTimeout as delay} from 'node:timers/promises';
+import {DatabaseSync} from 'node:sqlite';
 const binary=resolve(import.meta.dirname,'../target/debug/relay-worker-helper');
 const parentScript=resolve(import.meta.dirname,'./fixtures/worker-helper-parent.mjs');
 function start(dir,mode){
+ const db=new DatabaseSync(join(dir,'relay.sqlite'));
+ db.exec('CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL)');
+ db.prepare('INSERT INTO job_snapshot VALUES (?,?,?)').run('91',JSON.stringify({id:'91',tasks:[{id:'101',state:'RUNNING',executionId:'exec-1'}]}),'2026-11-13T20:00:00Z');
+ db.close();
  const child=spawn(process.execPath,[parentScript,binary,dir,mode],{stdio:['ignore','pipe','pipe']});
  let output='',errors='';
  child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
@@ -38,6 +43,18 @@ test('native helper streams started/finished protocol and preserves worker outpu
   assert.equal(result.cancelled,false);
   assert.equal(readFileSync(join(folder,'worker.out'),'utf8'),'hello');
   assert.equal(readFileSync(join(folder,'worker.err'),'utf8'),'warn');
+ }finally{run.child.kill('SIGKILL');rmSync(folder,{recursive:true,force:true});}
+});
+test('native helper renews its timeout from a newly committed activity snapshot',async()=>{
+ const folder=mkdtempSync(join(tmpdir(),'relay-helper-test-'));
+ const run=start(folder,'renew');
+ try{
+  const text=await until(()=>run.output.includes('FINISHED ')?run.output:null);
+  const line=text.split('\n').find(x=>x.startsWith('FINISHED '));
+  const result=JSON.parse(line.slice('FINISHED '.length));
+  assert.equal(result.exitCode,0);
+  assert.equal(result.timedOut,false);
+  assert.ok(result.elapsedMs>=500,'worker should outlive its original inactivity deadline');
  }finally{run.child.kill('SIGKILL');rmSync(folder,{recursive:true,force:true});}
 });
 test('real SIGKILL of parent cancels worker and reaps the process group',async()=>{

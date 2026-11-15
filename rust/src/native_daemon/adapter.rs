@@ -1,6 +1,6 @@
 //! Trusted local executor manifest, private execution request and WorkerSpec.
-//! Selection is an explicit caller-supplied port; Graph/Router policy stays
-//! outside this adapter. No production provider or implicit shell fallback.
+//! Graph owns eligibility. This adapter binds the durable provider decision to
+//! trusted executor configuration and resolves project context references.
 use super::NativeDaemonOptions;
 use crate::worker::WorkerSpec;
 use serde::Deserialize;
@@ -33,6 +33,10 @@ pub struct NativeScriptAdapter {
     // Explicit native-pilot Model Router decision for DAG children only.
     pub routing: Option<Value>,
     pub worker_selection: Option<Value>,
+    /// Optional version-matched CLI inputs for the shared prompt Action. Model
+    /// Workers that opt in receive a minimal, immutable per-execution Job file.
+    pub prompt_cli: Option<PathBuf>,
+    pub prompt_node: Option<PathBuf>,
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -78,6 +82,23 @@ pub(super) fn manifest(opt: &NativeDaemonOptions, root: &Path) -> Result<ScriptM
         }
         if agent.routing.is_some() != agent.worker_selection.is_some() {
             return Err("Model route and Worker selection must be supplied together".into());
+        }
+        if agent.prompt_cli.is_some() != agent.prompt_node.is_some()
+            || agent.prompt_cli.as_ref().is_some_and(|path| {
+                !path.is_absolute()
+                    || !path.is_file()
+                    || !path
+                        .parent()
+                        .is_some_and(|parent| parent.join("model-routing.js").is_file())
+            })
+            || agent
+                .prompt_node
+                .as_ref()
+                .is_some_and(|path| !path.is_absolute() || !path.is_file())
+        {
+            return Err(
+                "Model prompt Action requires absolute existing CLI and Node executables".into(),
+            );
         }
         if let (Some(route), Some(selection)) = (&agent.routing, &agent.worker_selection) {
             if agent.kind != NativeAdapterKind::Model
@@ -125,16 +146,39 @@ fn private_dir(root: &Path, path: &Path) -> Result<(), String> {
     Ok(())
 }
 fn project_root(job: &Value, root: &Path) -> Result<PathBuf, String> {
-    let project = job["projectRoot"]
+    let git_root = job["projectRoot"]
         .as_str()
         .ok_or("Job projectRoot missing")?;
-    let path = Path::new(project)
+    let git_root = Path::new(git_root)
         .canonicalize()
         .map_err(|e| e.to_string())?;
-    if !path.starts_with(root) {
+    if !git_root.starts_with(root) {
         return Err("native Script project outside isolated root".into());
     }
-    Ok(path)
+    let Some(relative) = job["projectPath"].as_str() else {
+        return Ok(git_root);
+    };
+    let relative = Path::new(relative);
+    if relative.is_absolute()
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        return Err("Job projectPath must be a safe repository-relative directory".into());
+    }
+    let project = git_root
+        .join(relative)
+        .canonicalize()
+        .map_err(|e| format!("Job projectPath missing: {e}"))?;
+    if !project.starts_with(&git_root) || !project.is_dir() {
+        return Err("Job projectPath escapes canonical Git root".into());
+    }
+    Ok(project)
 }
 pub(super) fn script_spec(
     root: &Path,
@@ -184,6 +228,18 @@ pub(super) fn script_spec(
     let input = task["input"]
         .as_str()
         .ok_or("native Worker Task input must be a string")?;
+    let agent_name = task["agentName"]
+        .as_str()
+        .ok_or("native Worker Agent missing")?;
+    let git_root = Path::new(job["projectRoot"].as_str().ok_or("Job Git root missing")?)
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let context_role = match agent_name {
+        "troubleshooter" => "troubleshooter",
+        "reviewer" | "job-acceptance-reviewer" => "reviewer",
+        _ => "worker",
+    };
+    let context = crate::native_context::resolve(&project, &git_root, context_role, agent_name)?;
     let attempt = task["attempt"]
         .as_i64()
         .ok_or("native Worker Task attempt missing")?
@@ -192,7 +248,7 @@ pub(super) fn script_spec(
     let mut request = serde_json::json!({
         "jobId":id,"taskId":task_id,"executionId":execution_id,
         "leaseOwner":"rust-native-isolated","adapter":adapter_name,"attempt":attempt,
-        "agentName":task["agentName"],"input":input,
+        "agentName":agent_name,"input":input,"executionContext":context,
     });
     if adapter.kind == NativeAdapterKind::Model {
         let routing = task.get("routing").ok_or("Model Task missing routing")?;
@@ -206,7 +262,59 @@ pub(super) fn script_spec(
             return Err("Model requires existing provider/model route".into());
         }
         request["routing"] = routing.clone();
-        request["workerSelection"] = task["workerSelection"].clone();
+        let selection = task
+            .get("workerSelection")
+            .ok_or("Model Task missing durable Worker selection")?;
+        if selection["adapter"] != "codex"
+            || selection["workerId"]
+                .as_str()
+                .is_none_or(|value| value.trim().is_empty())
+            || adapter
+                .worker_selection
+                .as_ref()
+                .is_some_and(|configured| configured != selection)
+            || adapter
+                .routing
+                .as_ref()
+                .is_some_and(|configured| configured != &request["routing"])
+        {
+            return Err(
+                "Model route or Worker Router selection does not match trusted executor configuration"
+                    .into(),
+            );
+        }
+        request["workerSelection"] = selection.clone();
+        if let (Some(cli), Some(node)) = (&adapter.prompt_cli, &adapter.prompt_node) {
+            let mut prompt_job = job.clone();
+            let mut prompt_task = task.clone();
+            prompt_task["executionId"] = serde_json::json!(execution_id);
+            prompt_task["attempt"] = serde_json::json!(attempt);
+            prompt_task["state"] = serde_json::json!("RUNNING");
+            prompt_task["leaseOwner"] = serde_json::json!("rust-native-isolated");
+            prompt_job["tasks"] = serde_json::json!([prompt_task]);
+            let prompt_path = dir.join("prompt-job.json");
+            let prompt_bytes = serde_json::to_vec(&prompt_job).map_err(|e| e.to_string())?;
+            if prompt_bytes.len() > 1_048_576 {
+                return Err("native Worker prompt snapshot exceeds 1MiB".into());
+            }
+            let mut prompt_file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
+                .open(&prompt_path)
+                .map_err(|e| format!("private native Worker prompt snapshot: {e}"))?;
+            prompt_file
+                .write_all(&prompt_bytes)
+                .map_err(|e| e.to_string())?;
+            prompt_file.sync_all().map_err(|e| e.to_string())?;
+            request["promptAction"] = serde_json::json!({
+                "nodeExecutable":node,
+                "cli":cli,
+                "modelRoutingModule":cli.parent().ok_or("prompt CLI directory missing")?.join("model-routing.js"),
+                "jobFile":prompt_path,
+            });
+        }
     }
     let bytes = serde_json::to_vec(&request).map_err(|e| e.to_string())?;
     if bytes.len() > 1_048_576 {
