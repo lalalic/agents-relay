@@ -4,10 +4,12 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
+import { createHash } from 'node:crypto';
 import { SQLiteRelayStore } from '../dist/relay-store.js';
 import { InMemoryStore } from '../dist/store.js';
 import { ProjectedDurableStore } from '../dist/projected-store.js';
 import {
+  eventOnlyReviewEligible,
   interactiveDecisionFingerprint,
   normalizeInteractiveDecision,
 } from '../dist/interactive-invocation.js';
@@ -38,7 +40,9 @@ const decisionEvent = (jobId, taskId, executionId, decision, feedback='', id='')
 async function temporaryStore() {
   const dir = await mkdtemp(join(tmpdir(), 'agents-relay-interactive-'));
   const store = new SQLiteRelayStore(join(dir, 'relay.db'));
-  return { store, dbPath: join(dir, 'relay.db'), dispose: async () => { store.close(); await rm(dir, { recursive: true, force: true }); } };
+  let activeStore = store;
+  return { store, dbPath: join(dir, 'relay.db'), setStore: value => { activeStore = value; },
+    dispose: async () => { activeStore.close(); await rm(dir, { recursive: true, force: true }); } };
 }
 
 test('execution-scoped review binds once, deduplicates, rejects stale decisions, and resumes',async()=>{
@@ -66,11 +70,20 @@ test('execution-bound decision normalization does not require invocation or Git 
  assert.equal(delivery.invocationId,'exec-1');
  assert.equal(delivery.revision,'exec-1');
  assert.equal(interactiveDecisionFingerprint(delivery),interactiveDecisionFingerprint({...delivery,eventId:'other',deliveredAt:'later'}));
+ assert.equal(interactiveDecisionFingerprint(delivery),createHash('sha256').update(JSON.stringify({
+  jobId:'job',taskId:'task',executionId:'exec-1',invocationId:'exec-1',revision:'exec-1',
+  decision:'approved',feedback:'good',comments:[],
+ })).digest('hex'),'legacy bound-decision fingerprints remain stable across deployment');
  assert.notEqual(interactiveDecisionFingerprint(delivery),interactiveDecisionFingerprint({...delivery,feedback:'different'}));
- for(const key of ['invocationId','revision','commitSha','revisionId','contentHash']){
+ for(const key of ['commitSha','revisionId','contentHash']){
   const changed=structuredClone(event);changed.data.interactive[key]='unexpected';
   assert.equal(normalizeInteractiveDecision(changed),null,key+' must not be accepted');
  }
+ const explicitBound=structuredClone(event);
+ explicitBound.data.interactive.invocationId='bound-invocation';
+ explicitBound.data.interactive.revision='bound-revision';
+ assert.equal(normalizeInteractiveDecision(explicitBound).invocationId,'bound-invocation',
+  'explicit bound identity remains available for durable matching');
 });
 
 test('iPhone decision releases waiting Task and only resumes same Task',async()=>{
@@ -115,17 +128,51 @@ test('SQLite durable decision recovers after event delivery loss',async()=>{
  }finally{await fixture.dispose()}
 });
 
-test('an unbound decision cannot bypass CLI request, even with valid execution identity',async()=>{
+test('an event-only decision needs complete immutable identity and cannot finalize its running Task',async()=>{
  const fixture=await temporaryStore();
  try{
   const job=makeJob();await fixture.store.saveJob(job);
   const reconciler=managedReconciler(new ProjectedDurableStore(fixture.store,new InMemoryStore(job)),{owner:'test',adapters:[]});
-  const payload=decisionEvent(job.id,job.tasks[0].id,'exec-1','approved','');
-  assert.match((await reconciler.applyEvent(payload)).reason,/stale/);
-  const forged=structuredClone(payload);forged.event_id='forged';forged.source.id='job/other/task/task-interactive/execution/exec-1';
-  assert.equal((await reconciler.applyEvent(forged)).applied,false);
-  assert.equal((await fixture.store.loadJob(job.id)).tasks[0].interactiveInvocation,undefined);
+  const payload=decisionEvent(job.id,job.tasks[0].id,'exec-1','changes_requested','revise');
+  payload.data.interactive = { ...payload.data.interactive, invocationId:'inv-1', revision:'a'.repeat(64),
+    contentHash:'a'.repeat(64), revisionId:'rev-1', requestId:'request-1', idempotencyKey:'decision-1' };
+  const normalized=normalizeInteractiveDecision(payload);
+  assert.ok(normalized);
+  assert.equal(eventOnlyReviewEligible(normalized),true);
+  assert.equal(eventOnlyReviewEligible({...normalized,feedback:undefined}),false,
+   'the shared eligibility guard must reject missing feedback at the persistence boundary');
+  const incomplete=structuredClone(payload);delete incomplete.data.interactive.requestId;
+  assert.match((await reconciler.applyEvent(incomplete)).reason,/ignored/);
+  const accepted=await reconciler.applyEvent(payload);
+  assert.equal(accepted.reason,'task.interactive_decision.accepted');
+  let current=await fixture.store.loadJob(job.id);
+  assert.equal(current.tasks[0].state,'RUNNING');
+  assert.equal(current.tasks[0].executionId,'exec-1');
+  assert.equal(current.tasks[0].interactiveInvocation.status,'changes_requested');
+  assert.equal(current.state,'ACTIVE','an accepted preview decision is not Job completion');
   await reconciler.close();
+  fixture.store.close();
+  const reopened=new SQLiteRelayStore(fixture.dbPath);
+  fixture.setStore(reopened);
+  fixture.store=reopened;
+  const restarted=managedReconciler(new ProjectedDurableStore(reopened,new InMemoryStore(job)),{owner:'test-restart',adapters:[]});
+  assert.match((await restarted.applyEvent({...payload,event_id:'duplicate-after-restart'})).reason,/duplicate/);
+  const replay=structuredClone(payload);replay.event_id='replayed-revision';
+  replay.data.interactive.invocationId='other-invocation';
+  replay.data.interactive.idempotencyKey='other-idempotency-key';
+  assert.match((await restarted.applyEvent(replay)).reason,/stale/);
+  const nextRevision=structuredClone(payload);nextRevision.event_id='next-revision';
+  nextRevision.data.interactive = { ...payload.data.interactive, invocationId:'inv-2', revision:'b'.repeat(64),
+    contentHash:'b'.repeat(64), revisionId:'rev-2', requestId:'request-2', idempotencyKey:'decision-2',
+    decision:'approved', feedback:'' };
+  assert.equal((await restarted.applyEvent(nextRevision)).reason,'task.interactive_decision.accepted');
+  const forged=structuredClone(nextRevision);forged.event_id='forged';forged.source.id='job/other/task/task-interactive/execution/exec-1';
+  assert.equal((await restarted.applyEvent(forged)).applied,false);
+  current=await reopened.loadJob(job.id);
+  assert.equal(current.tasks[0].state,'RUNNING');
+  assert.equal(current.tasks[0].interactiveInvocation.status,'approved');
+  assert.equal(current.tasks[0].interactiveInvocation.contentHash,'b'.repeat(64));
+  await restarted.close();
  }finally{await fixture.dispose()}
 });
 

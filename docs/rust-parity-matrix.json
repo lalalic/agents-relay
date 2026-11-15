@@ -109,13 +109,16 @@
     },
     {
       "capability": "Interactive human Review",
-      "nodeBehavior": "Host Preview decisions bind to current invocation, execution, revision, and durable Task state; approval is never inferred from delivery.",
+      "nodeBehavior": "Host Preview decisions bind to current invocation, execution, revision, and durable Task state; event-only decisions require complete immutable content/request identity for the current active execution; approval is never inferred from delivery.",
       "nodeSources": ["src/interactive-invocation.ts", "src/host-invocation-store.ts", "workflow/interactive-invocation.mmd"],
-      "rustBehavior": "Rust has durable invocation-bound decision acceptance and resume primitives, but host Preview integration and live human decision flow are not part of production service.",
-      "rustSources": ["rust/src/authority/review.rs", "rust/src/authority/review/resume.rs"],
+      "rustBehavior": "Rust has durable invocation-bound and complete event-only decision acceptance plus same-Task resume primitives; host Preview integration and live human decision flow are not part of the production service.",
+      "rustSources": ["rust/src/authority/review.rs", "rust/src/authority/review/resume.rs", "workflow/interactive-invocation.mmd"],
       "status": "NOT_RUN",
-      "evidence": [{"kind": "live-only", "detail": "Authenticated host Preview, physical mobile Request Changes/Approve, and newly deployed Rust service behavior have not been run for this task."}],
-      "nextAction": "Run authenticated real-host/mobile Review and stale/forged receipt checks after a separately authorized integration is available."
+      "evidence": [
+        {"kind": "deterministic-test", "detail": "Node and Rust tests cover event-only content/request identity validation, current-execution fencing, same-revision replay rejection, durable duplicate handling after reopening SQLite, and no Task/Job completion from the accepted decision."},
+        {"kind": "live-only", "detail": "NOT_RUN. Evidence gap: no authenticated host Preview or physical mobile Request Changes/Approve run, and no newly deployed Rust service integration. Risk: source checks do not prove the real host binds the decision to the current invocation/execution/content or that the active worker consumes it safely. Owner: Job owner/orchestrator. Prerequisites: deployed host integration, authenticated device/provider access, and a current Job/Task execution eligible for review; never use Job 629 before it is terminal with its owner decision preserved and new owner authorization."}
+      ],
+      "nextAction": "Run authenticated real-host/mobile Review and stale/forged receipt checks after a separately authorized production integration is available."
     },
     {
       "capability": "Plans and planner orchestration",
@@ -174,8 +177,8 @@
       "rustBehavior": "No production cutover or real production-shaped Dashboard/Review/JEL run was performed for this task.",
       "rustSources": ["rust/README.md", "rust/src/native_daemon.rs"],
       "status": "NOT_RUN",
-      "evidence": [{"kind": "live-only", "detail": "No live service, browser, physical iPhone, provider, cutover, rollback, or Job 629 operation was performed."}],
-      "nextAction": "Keep Node production operational; require Job 629 terminal with review preserved, complete live JEL/UI parity, rollback proof, and explicit owner cutover authorization."
+      "evidence": [{"kind": "live-only", "detail": "NOT_RUN. Evidence gap: no production-shaped service, real browser, physical iPhone, live provider, cutover, rollback, or Job 629 operation was performed. Risk: source and isolated pilot evidence cannot establish full JEL/UI parity, unified-store compatibility, single-writer safety, or rollback. Owner: Job owner/orchestrator. Prerequisites: Job 629 terminal with owner review preserved, complete source parity, live JEL/UI/provider verification, backup and rollback proof, and explicit owner cutover authorization."}],
+      "nextAction": "Keep Node production operational; complete the stated live prerequisites before any separately authorized single-writer cutover."
     }
   ]
 }

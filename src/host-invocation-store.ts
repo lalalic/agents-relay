@@ -109,6 +109,8 @@ export function recordHostInvocationDecision(
       status: delivery.decision === 'approved' ? 'approved' : 'changes_requested',
       boundAt: bound ? invocation.boundAt : delivery.deliveredAt, decidedAt: delivery.deliveredAt,
       feedback: delivery.feedback, comments: delivery.comments, idempotencyKey: delivery.idempotencyKey,
+      contentHash: delivery.contentHash, revisionId: delivery.revisionId,
+      previewId: delivery.previewId, requestId: delivery.requestId,
     };
     task.interactiveInvocation = decidedInvocation;
     const candidate = Date.parse(delivery.deliveredAt);
