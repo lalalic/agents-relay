@@ -66,6 +66,17 @@ test('Live Rust namespace persists own real Jobs, real HTTP Dashboard, rejects p
   assert.equal(content.backend,'rust-native');
   assert.equal(content.jobs.length,1);
   assert.equal(content.jobs[0].state,'COMPLETED');
+  const summary=await(await fetch(base+'/api/runtime-summary')).json();
+  assert.deepEqual(summary,{
+    activeJobs:0,runningTasks:0,workers:{chatgpt:0,codex:0},models:[],running:[]
+  });
+  const status=invoke(cli,['status','--host','127.0.0.1','--port',String(port)],f.env);
+  assert.deepEqual(status,summary,'native CLI status must match Rust HTTP and Node summary schema');
+  const statusLocalhost=invoke(cli,['status','--host','localhost','--port',String(port)],f.env);
+  assert.deepEqual(statusLocalhost,summary);
+  assert.match(invoke(cli,['status','--host','remote-host.example','--port',String(port)],f.env,2),
+    /loopback/,'Remote status is not authenticated or implemented, must reject');
+
   assert.deepEqual({total:content.total,page:content.page,pageSize:content.pageSize,totalPages:content.totalPages},
     {total:1,page:1,pageSize:20,totalPages:1});
   assert.deepEqual(content.repositories,['rust-live']);

@@ -292,8 +292,8 @@ serve,--repo,MISSING,src/cli-help.ts:321,,Unimplemented or no verified Rust-nati
 serve,--subject-prefix,MISSING,src/cli-support.ts:201 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
 serve,--thread-id,MISSING,src/cli-help.ts:322,,Unimplemented or no verified Rust-native parameter parity
 serve,--usage-window-days,MISSING,src/cli.ts:308 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-status,--host,MISSING,src/cli-help.ts:181,,Unimplemented or no verified Rust-native parameter parity
-status,--port,MISSING,src/cli-help.ts:181,,Unimplemented or no verified Rust-native parameter parity
+status,--host,PARTIAL,src/cli-help.ts:181,rust/src/bin/relay-native-job/status.rs,Localhost E2E PASS; remote host not supported yet
+status,--port,PASS,src/cli-help.ts:181,rust/src/bin/relay-native-job/status.rs,Rust Dashboard native HTTP status on random port E2E
 task cancel,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
 task cancel,--repo,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
 task cancel,--task-id,PARTIAL,src/cli-help.ts:248,rust/src/bin/relay-native-job.rs (partial pilot path),"Native option exists, but Node-compatible semantics not fully verified"

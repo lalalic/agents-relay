@@ -13,6 +13,7 @@ Usage: relay-native-job <command> [options]\n\
   task list --id JOB [--repo REPO] [--db SQLITE]\n\
   task show --id JOB --task-id TASK [--repo REPO] [--db SQLITE]\n\
   task events --id JOB --task-id TASK [--limit 1..60] [--order asc|desc] [--after CURSOR] [--db SQLITE]\n\
+  status [--host 127.0.0.1|localhost] [--port 8787]\n\
 Other Node CLI commands are not yet fully ported. docs/rust-cli-head-to-head.md\n";
 
 pub fn default_db() -> Result<PathBuf, String> {

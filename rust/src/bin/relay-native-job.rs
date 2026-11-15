@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 mod foreground;
 #[path = "relay-native-job/node_compat.rs"]
 mod node_compat;
+#[path = "relay-native-job/status.rs"]
+mod status;
 
 fn value(args: &[String], name: &str) -> Result<String, String> {
     if args.iter().filter(|a| a.as_str() == name).count() > 1 {
@@ -293,6 +295,9 @@ fn run() -> Result<(), String> {
         ("job", Some("list" | "show")) | ("task", Some("list" | "show" | "events"))
     ) {
         return node_compat::dispatch(&args);
+    }
+    if command == "status" {
+        return status::run(&args[1..]);
     }
     let path = db(&args)?;
     let result = match command {

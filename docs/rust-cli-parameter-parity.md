@@ -3,7 +3,7 @@
 Source: Node cli-help.ts and all src/cli*.ts flag literals. Every listed parameter has a current mark. PASS requires actual executable E2E evidence. Rust-only CLI options are documented separately.
 
 Actions/groups: 66; individual parameter cells: 448.
-Counts: INTERNAL_NOT_USER=2, MISSING=357, NODE_MISMATCH=4, PARTIAL=22, PASS=18, RETIRED=45.
+Counts: INTERNAL_NOT_USER=2, MISSING=355, NODE_MISMATCH=4, PARTIAL=23, PASS=19, RETIRED=45.
 
 Full machine-readable checklist: docs/rust-cli-parameter-parity.csv
 
@@ -577,12 +577,12 @@ Overall: PARTIAL. MISSING=17.
 
 ### status
 
-Overall: PARTIAL. MISSING=2.
+Overall: PARTIAL. PARTIAL=1, PASS=1.
 
 | Parameter | Mark | Evidence or gap |
 |---|---|---|
-| `--host` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--port` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--host` | PARTIAL | Localhost E2E PASS; remote host not supported yet |
+| `--port` | PASS | Rust Dashboard native HTTP status on random port E2E |
 
 ### task cancel
 

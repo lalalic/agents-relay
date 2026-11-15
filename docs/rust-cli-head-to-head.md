@@ -46,7 +46,7 @@ Only verified real Rust execution may be PASS. Every Node CLI option has an expl
 | `review job` | 0 | 0 | 3 | 0 | 0 | NOT COMPLETE |
 | `review run` | 0 | 0 | 5 | 0 | 0 | NOT COMPLETE |
 | `serve` | 0 | 0 | 17 | 0 | 0 | NOT COMPLETE |
-| `status` | 0 | 0 | 2 | 0 | 0 | NOT COMPLETE |
+| `status` | 1 | 1 | 0 | 0 | 0 | PARTIAL (local RuntimeSummary passed; remote --host not supported) |
 | `task cancel` | 0 | 1 | 2 | 0 | 0 | NOT COMPLETE |
 | `task classify` | 0 | 0 | 7 | 0 | 0 | NOT COMPLETE |
 | `task comment` | 0 | 0 | 5 | 0 | 0 | NOT COMPLETE |

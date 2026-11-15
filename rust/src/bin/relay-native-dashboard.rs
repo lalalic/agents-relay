@@ -228,6 +228,93 @@ fn jobs_page(
     }))
 }
 
+fn runtime_summary(jobs: &[Value], now_millis: i64) -> Value {
+    use std::collections::BTreeMap;
+    let mut active_jobs = 0usize;
+    let mut running = Vec::new();
+    let mut codex = 0usize;
+    let mut chatgpt = 0usize;
+    let mut models = BTreeMap::<String, usize>::new();
+    for job in jobs {
+        if job["state"] != "ACTIVE" {
+            continue;
+        }
+        active_jobs += 1;
+        for task in job["tasks"].as_array().into_iter().flatten() {
+            if task["state"] != "RUNNING" {
+                continue;
+            }
+            let Some(execution) = task["executionId"].as_str().filter(|s| !s.is_empty()) else {
+                continue;
+            };
+            if task["leaseOwner"].as_str().is_none_or(str::is_empty) {
+                continue;
+            }
+            let Some(expiry) = task["leaseExpiresAt"]
+                .as_str()
+                .and_then(|date| chrono::DateTime::parse_from_rfc3339(date).ok())
+                .map(|date| date.timestamp_millis())
+            else {
+                continue;
+            };
+            if expiry <= now_millis {
+                continue;
+            }
+            let worker = task["workerSelection"]["adapter"]
+                .as_str()
+                .or_else(|| task["adapter"].as_str())
+                .unwrap_or("unknown");
+            if worker == "chatgpt" {
+                chatgpt += 1;
+            } else if worker == "codex" {
+                codex += 1;
+            }
+            let model = task["routing"]["model"].as_str();
+            if let Some(name) = model.filter(|name| !name.is_empty()) {
+                *models.entry(name.to_owned()).or_default() += 1;
+            }
+            running.push(json!({
+                "repository": job["repository"], "prNumber":job["prNumber"],
+                "jobId":job["id"],"jobTitle":job["title"], "taskId":task["id"],
+                "agentName":task["agentName"], "worker":worker,
+                "provider":task["routing"]["provider"], "model":model,
+                "executionId":execution, "leaseExpiresAt":task["leaseExpiresAt"]
+            }));
+        }
+    }
+    let mut models = models
+        .into_iter()
+        .map(|(model, count)| json!({"model":model,"count":count}))
+        .collect::<Vec<_>>();
+    models.sort_by(|a, b| {
+        b["count"]
+            .as_u64()
+            .cmp(&a["count"].as_u64())
+            .then_with(|| a["model"].as_str().cmp(&b["model"].as_str()))
+    });
+    json!({"activeJobs":active_jobs,"runningTasks":running.len(),
+        "workers":{"chatgpt":chatgpt,"codex":codex}, "models":models,"running":running})
+}
+fn durable_runtime_summary(reader: &RelayReader) -> Result<Value, String> {
+    let mut offset = 0u32;
+    let mut jobs = Vec::new();
+    loop {
+        let items = reader.list_jobs(1000, offset)?;
+        let n = items.len() as u32;
+        jobs.extend(items.into_iter().map(|snapshot| snapshot.job));
+        if n < 1000 {
+            break;
+        }
+        offset = offset.checked_add(n).ok_or("summary offset overflow")?;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis();
+    let now = i64::try_from(now).map_err(|_| "timestamp exceeds i64")?;
+    Ok(runtime_summary(&jobs, now))
+}
+
 fn respond(tcp: &mut TcpStream, status: &str, ctype: &str, payload: &[u8]) -> Result<(), String> {
     let head=format!("HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nContent-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'\r\nConnection: close\r\n\r\n",payload.len());
     tcp.write_all(head.as_bytes()).map_err(|e| e.to_string())?;
@@ -380,6 +467,16 @@ fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(),
             "200 OK",
             &json!({"backend":"rust-native","namespace":"rust-live","ok":true}),
         ),
+        "/api/runtime-summary" => {
+            match RelayReader::open(db).and_then(|reader| durable_runtime_summary(&reader)) {
+                Ok(summary) => respond_json(&mut tcp, "200 OK", &summary),
+                Err(error) => respond_json(
+                    &mut tcp,
+                    "500 Internal Server Error",
+                    &json!({"error":error}),
+                ),
+            }
+        }
         "/api/jobs" => {
             match RelayReader::open(db).and_then(|reader| jobs_page(&reader, &parameters)) {
                 Ok(page) => respond_json(&mut tcp, "200 OK", &page),
@@ -551,5 +648,45 @@ fn main() {
     if let Err(e) = run() {
         eprintln!("relay-native-dashboard: {e}");
         std::process::exit(2);
+    }
+}
+
+#[cfg(test)]
+mod runtime_summary_tests {
+    use super::*;
+    #[test]
+    fn only_live_leases_count_and_model_sorting_is_stable() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-15T16:00:00Z")
+            .unwrap()
+            .timestamp_millis();
+        let mut job = json!({
+          "id":"7","repository":"rust","prNumber":0,"title":"Calculator","state":"ACTIVE",
+          "tasks":[
+           {"id":"1","state":"RUNNING","executionId":"exec-1","leaseOwner":"owner",
+            "leaseExpiresAt":"2026-11-15T17:00:00Z","adapter":"codex",
+            "agentName":"coder","routing":{"model":"gpt-6","provider":"openrouter"}},
+           {"id":"2","state":"RUNNING","executionId":"exec-2","leaseOwner":"owner",
+            "leaseExpiresAt":"2026-11-15T15:00:00Z","adapter":"chatgpt",
+            "agentName":"reviewer","routing":{"model":"gpt-6","provider":"chatgpt"}},
+           {"id":"3","state":"RUNNING","executionId":null,"leaseOwner":"owner",
+            "leaseExpiresAt":"2026-11-15T17:00:00Z","adapter":"codex"},
+           {"id":"4","state":"RUNNING","executionId":"exec-4","leaseOwner":"owner",
+            "leaseExpiresAt":"2026-11-15T17:00:00Z","adapter":"chatgpt",
+            "routing":{"model":"gpt-5","provider":"chatgpt"}}
+          ]
+        });
+        let summary = runtime_summary(&[job.clone()], now);
+        assert_eq!(summary["activeJobs"], 1);
+        assert_eq!(summary["runningTasks"], 2);
+        assert_eq!(summary["workers"], json!({"codex":1,"chatgpt":1}));
+        assert_eq!(
+            summary["models"],
+            json!([
+          {"model":"gpt-5","count":1},{"model":"gpt-6","count":1}])
+        );
+        assert_eq!(summary["running"][0]["taskId"], "1");
+        assert_eq!(summary["running"][1]["taskId"], "4");
+        job["state"] = json!("COMPLETED");
+        assert_eq!(runtime_summary(&[job], now)["runningTasks"], 0);
     }
 }

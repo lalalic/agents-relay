@@ -31,28 +31,28 @@ relay-native-daemon,--max-tasks,RUST_ONLY_OR_INTERNAL,rust/src/bin/relay-native-
 relay-native-daemon,--nats-ingress-port,RUST_ONLY_OR_INTERNAL,rust/src/bin/relay-native-daemon.rs:60
 relay-native-daemon,--nats-port,RUST_ONLY_OR_INTERNAL,rust/src/bin/relay-native-daemon.rs:49
 relay-native-daemon,--once,RUST_ONLY_OR_INTERNAL,rust/src/bin/relay-native-daemon.rs:2
-relay-native-dashboard,--db,RUST_ONLY_OR_INTERNAL,rust/src/bin/relay-native-dashboard.rs:510
-relay-native-dashboard,--port,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-dashboard.rs:512
-relay-native-job,--db,RUST_ONLY_OR_INTERNAL,rust/src/bin/relay-native-job.rs:34
-relay-native-job,--dependency-validity,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:56
-relay-native-job,--deps,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:55
-relay-native-job,--draft,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:63
-relay-native-job,--graph-file,RUST_ONLY_OR_INTERNAL,rust/src/bin/relay-native-job.rs:305
-relay-native-job,--help,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:283
-relay-native-job,--input,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:47
-relay-native-job,--input-file,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:48
-relay-native-job,--job-id,RUST_ONLY_OR_INTERNAL,rust/src/bin/relay-native-job.rs:46
-relay-native-job,--output,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:49
-relay-native-job,--output-path,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:50
-relay-native-job,--parent,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:54
-relay-native-job,--priority,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:52
-relay-native-job,--project-root,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:304
-relay-native-job,--reason,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:216
-relay-native-job,--repository,RUST_ONLY_OR_INTERNAL,rust/src/bin/relay-native-job.rs:309
-relay-native-job,--request-key,RUST_ONLY_OR_INTERNAL,rust/src/bin/relay-native-job.rs:310
-relay-native-job,--story-size,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:53
-relay-native-job,--task-id,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:216
-relay-native-job,--title,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:51
+relay-native-dashboard,--db,RUST_ONLY_OR_INTERNAL,rust/src/bin/relay-native-dashboard.rs:607
+relay-native-dashboard,--port,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-dashboard.rs:609
+relay-native-job,--db,RUST_ONLY_OR_INTERNAL,rust/src/bin/relay-native-job.rs:36
+relay-native-job,--dependency-validity,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:58
+relay-native-job,--deps,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:57
+relay-native-job,--draft,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:65
+relay-native-job,--graph-file,RUST_ONLY_OR_INTERNAL,rust/src/bin/relay-native-job.rs:310
+relay-native-job,--help,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:285
+relay-native-job,--input,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:49
+relay-native-job,--input-file,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:50
+relay-native-job,--job-id,RUST_ONLY_OR_INTERNAL,rust/src/bin/relay-native-job.rs:48
+relay-native-job,--output,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:51
+relay-native-job,--output-path,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:52
+relay-native-job,--parent,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:56
+relay-native-job,--priority,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:54
+relay-native-job,--project-root,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:309
+relay-native-job,--reason,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:218
+relay-native-job,--repository,RUST_ONLY_OR_INTERNAL,rust/src/bin/relay-native-job.rs:314
+relay-native-job,--request-key,RUST_ONLY_OR_INTERNAL,rust/src/bin/relay-native-job.rs:315
+relay-native-job,--story-size,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:55
+relay-native-job,--task-id,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:218
+relay-native-job,--title,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job.rs:53
 relay-native-job/foreground,--concurrency,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job/foreground.rs:27
 relay-native-job/foreground,--db,RUST_ONLY_OR_INTERNAL,rust/src/bin/relay-native-job/foreground.rs:19
 relay-native-job/foreground,--foreground,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job/foreground.rs:31
@@ -69,10 +69,14 @@ relay-native-job/foreground,--task-id,NAME_OVERLAPS_NODE (not proof of semantics
 relay-native-job/read-only,--after,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job/node_compat.rs:15
 relay-native-job/read-only,--db,RUST_ONLY_OR_INTERNAL,rust/src/bin/relay-native-job/node_compat.rs:10
 relay-native-job/read-only,--foreground,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job/node_compat.rs:12
-relay-native-job/read-only,--help,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job/node_compat.rs:191
+relay-native-job/read-only,--help,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job/node_compat.rs:192
+relay-native-job/read-only,--host,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job/node_compat.rs:16
 relay-native-job/read-only,--id,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job/node_compat.rs:11
 relay-native-job/read-only,--limit,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job/node_compat.rs:15
-relay-native-job/read-only,--no-github,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job/node_compat.rs:30
+relay-native-job/read-only,--no-github,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job/node_compat.rs:31
 relay-native-job/read-only,--order,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job/node_compat.rs:15
+relay-native-job/read-only,--port,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job/node_compat.rs:16
 relay-native-job/read-only,--repo,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job/node_compat.rs:10
 relay-native-job/read-only,--task-id,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job/node_compat.rs:12
+relay-native-job/status,--host,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job/status.rs:8
+relay-native-job/status,--port,NAME_OVERLAPS_NODE (not proof of semantics),rust/src/bin/relay-native-job/status.rs:8

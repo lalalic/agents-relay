@@ -81,10 +81,12 @@ proof={
 'job run':'--id --task-id --repo --foreground --concurrency',
 'job show':'--id --repo','job list':'--repo',
 'task list':'--id --repo','task show':'--id --repo --task-id',
-'task events':'--id --repo --task-id --limit --order'}
+'task events':'--id --repo --task-id --limit --order',
+'status':'--port'}
 proof={k:set(v.split()) for k,v in proof.items()}
 partial={
 'job run':'--project-path --no-github',
+'status':'--host',
 'job create':'--title --project-root',
 'job update':'--title --priority',
 'task create':'--title --priority --story-size --deps --parent --draft --dependency-validity --input-file --input --output --output-path',
@@ -108,6 +110,7 @@ def source_ref(cmd,flag):
 def rust_ref(cmd,status):
     if status not in {'PASS','PARTIAL'}:return ''
     if cmd=='job run':return 'rust/src/bin/relay-native-job/foreground.rs'
+    if cmd=='status':return 'rust/src/bin/relay-native-job/status.rs'
     if cmd in {'job list','job show','task list','task show','task events','global help'}:
         return 'rust/src/bin/relay-native-job/node_compat.rs'
     return 'rust/src/bin/relay-native-job.rs (partial pilot path)'
@@ -118,6 +121,8 @@ for cmd in sorted(entries):
         elif cmd=='job merge':status='RETIRED';reason='Node CLI throws legacy merge error; Graph owns local merge'
         elif flag in reject or (cmd=='job create' and flag in {'--base','--body','--head','--start'}):
             status='RETIRED';reason='Node handler explicitly rejects deprecated or task-only option'
+        elif cmd=='status' and flag=='--port':status='PASS';reason='Rust Dashboard native HTTP status on random port E2E'
+        elif cmd=='status' and flag=='--host':status='PARTIAL';reason='Localhost E2E PASS; remote host not supported yet'
         elif flag in proof.get(cmd,set()):status='PASS';reason='Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15'
         elif cmd=='task events' and flag=='--after':
             status='PARTIAL';reason='Rust accepted --after 0, but multi-page cursor equivalence with Node is not verified'
