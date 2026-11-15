@@ -12,28 +12,28 @@ PASS means real Rust-native executable evidence; PARTIAL / MISSING / NODE_MISMAT
 | `blocker ensure` | 0 | 0 | 11 | 0 | 0 | NOT COMPLETE |
 | `blocker resolve` | 0 | 0 | 3 | 0 | 0 | NOT COMPLETE |
 | `blocker show` | 0 | 1 | 1 | 0 | 0 | NOT COMPLETE |
-| `context resolve` | 0 | 0 | 7 | 0 | 0 | NOT COMPLETE |
+| `context resolve` | 0 | 7 | 0 | 0 | 0 | NOT COMPLETE |
 | `escalation` | 0 | 0 | 9 | 0 | 0 | NOT COMPLETE |
 | `global help` | 0 | 2 | 0 | 0 | 0 | NOT COMPLETE |
 | `init` | 0 | 0 | 12 | 9 | 0 | NOT COMPLETE |
 | `internal subprocess` | 0 | 0 | 0 | 0 | 2 | NOT COMPLETE |
 | `job cancel` | 0 | 2 | 0 | 0 | 0 | NOT COMPLETE |
-| `job create` | 0 | 12 | 16 | 13 | 0 | NOT COMPLETE |
+| `job create` | 0 | 27 | 1 | 13 | 0 | NOT COMPLETE |
 | `job list` | 1 | 0 | 0 | 0 | 0 | PASS |
 | `job merge` | 0 | 0 | 0 | 2 | 0 | RETIRED (Node already rejects legacy PR merge) |
 | `job pause` | 0 | 2 | 0 | 0 | 0 | NOT COMPLETE |
 | `job resume` | 0 | 2 | 0 | 0 | 0 | NOT COMPLETE |
 | `job run` | 5 | 2 | 6 | 4 | 0 | NOT COMPLETE |
 | `job show` | 2 | 0 | 0 | 0 | 0 | PASS |
-| `job unblock` | 0 | 0 | 3 | 0 | 0 | NOT COMPLETE |
+| `job unblock` | 0 | 3 | 0 | 0 | 0 | NOT COMPLETE |
 | `job update` | 0 | 11 | 9 | 9 | 0 | NOT COMPLETE |
 | `migrate-local-repositories` | 0 | 0 | 2 | 0 | 0 | NOT COMPLETE |
 | `plan` | 0 | 0 | 11 | 0 | 0 | NOT COMPLETE |
-| `plan apply` | 0 | 0 | 5 | 0 | 0 | NOT COMPLETE |
-| `plan context` | 0 | 0 | 4 | 0 | 0 | NOT COMPLETE |
-| `projection conflicts` | 0 | 0 | 2 | 0 | 0 | NOT COMPLETE |
+| `plan apply` | 0 | 5 | 0 | 0 | 0 | NOT COMPLETE |
+| `plan context` | 0 | 4 | 0 | 0 | 0 | NOT COMPLETE |
+| `projection conflicts` | 0 | 2 | 0 | 0 | 0 | NOT COMPLETE |
 | `projection resolve` | 0 | 0 | 5 | 0 | 0 | NOT COMPLETE |
-| `prompt` | 0 | 0 | 7 | 0 | 0 | NOT COMPLETE |
+| `prompt` | 0 | 5 | 2 | 0 | 0 | NOT COMPLETE |
 | `reconcile` | 0 | 0 | 11 | 0 | 0 | NOT COMPLETE |
 | `record` | 0 | 0 | 7 | 0 | 0 | NOT COMPLETE |
 | `review interactive` | 0 | 0 | 4 | 0 | 0 | NOT COMPLETE |
@@ -63,7 +63,7 @@ PASS means real Rust-native executable evidence; PARTIAL / MISSING / NODE_MISMAT
 | `task show` | 3 | 0 | 0 | 0 | 0 | PASS |
 | `task supersede` | 0 | 0 | 2 | 0 | 0 | NOT COMPLETE |
 | `task unblock` | 0 | 4 | 1 | 0 | 0 | NOT COMPLETE |
-| `task update` | 0 | 8 | 23 | 4 | 0 | NOT COMPLETE |
+| `task update` | 0 | 31 | 0 | 4 | 0 | NOT COMPLETE |
 | `workflow action` | 0 | 6 | 8 | 0 | 0 | NOT COMPLETE |
 | `workflow actions` | 1 | 0 | 0 | 0 | 0 | PASS |
 | `workflow discover` | 1 | 0 | 0 | 0 | 0 | PASS |

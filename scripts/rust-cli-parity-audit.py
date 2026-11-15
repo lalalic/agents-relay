@@ -95,15 +95,16 @@ partial={
 'job run':'--project-path --no-github',
 'status':'--host',
 'workflow action':'--action --repo --id --task-id --reason --response',
-'job create':'--title --project-root --repo --id --priority --objective --objective-file --project-path --review --no-review --auto-merge --no-auto-merge',
+'job create':'--title --project-root --repo --id --priority --objective --objective-file --project-path --review --no-review --auto-merge --no-auto-merge --coordinator-graph --coordinator-graph-file --coordinator-input --coordinator-input-file --coordinator-output-path --coordinator-project-root --coordinator-shared-root --coordinator-workspace-root --creator-thread-id --github-repo --idempotency-key --implementation-thread-id --no-github --reviewer-thread-id --tag',
 'job pause':'--repo --id',
 'job resume':'--repo --id',
-'job cancel':'--repo --id',
-'job update':'--title --priority --id --repo --objective --objective-file --project-path --review --no-review --auto-merge --no-auto-merge',
+'job cancel':'--repo --id --reason',
+'job unblock':'--repo --id --reason',
+'job update':'--title --priority --id --repo --objective --objective-file --project-path --project-root --review --no-review --auto-merge --no-auto-merge',
 'task cancel':'--task-id --id --repo',
 'task retry':'--task-id --id --repo',
 'task create':'--title --priority --story-size --deps --parent --draft --dependency-validity --input-file --input --output --output-path --id --repo',
-'task update':'--title --priority --story-size --input --input-file --id --repo --task-id',
+'task update':'--title --priority --story-size --input --input-file --id --repo --task-id --adapter --agent --agent-graph --agent-graph-file --attachments --capabilities --chatgpt-project --chatgpt-tab-close-policy --clear-routing --cwd --dependency-validity --deps --draft --max-attempts --model --parent --profile --project --provider --queue --reasoning --store-dir --timeout',
 'task unblock':'--id --repo --task-id --reason',
 'agent-register':'--id --repo --agent-id --name --responsibility --role --capabilities --boundaries --endpoint --endpoint-kind --runtime --adapter --provider --model --availability --labels --trust-domains --regions',
 'agent-discover':'--id --repo --capabilities --runtime --availability --trust-domain --task-kind --explore',
@@ -112,7 +113,12 @@ partial={
 'review interactive fail':'--id --task-id --execution-id --reason',
 'review interactive abort':'--id --task-id --execution-id',
 'blocker show':'--id',
-'artifact validate':'--artifact --schema'}
+'artifact validate':'--artifact --schema',
+'context resolve':'--agents --global-root --project-path --role --shared-root --skills --workspace-root',
+'prompt':'--adapter --id --output --repo --task-id',
+'plan context':'--execution-id --id --plan-id --repo',
+'plan apply':'--execution-id --file --id --plan-id --repo',
+'projection conflicts':'--id --repo'}
 partial={k:set(v.split()) for k,v in partial.items()}
 partial_commands=set(proof)|set(partial)|{'reconcile','serve','status','escalation'}
 def source_ref(cmd,flag):
@@ -133,12 +139,14 @@ def rust_ref(cmd,status):
     if status not in {'PASS','PARTIAL'}:return ''
     if cmd=='job run':return 'rust/src/bin/relay-native-job/foreground.rs'
     if cmd=='status':return 'rust/src/bin/relay-native-job/status.rs'
+    if cmd in {'prompt','context resolve'}:return 'rust/src/bin/relay-native-job/context_cli.rs'
     if cmd.startswith('job ') and cmd not in {'job show','job list','job run'}:return 'rust/src/bin/relay-native-job/job_cli.rs'
     if cmd.startswith('task ') and cmd not in {'task list','task show','task events'}:return 'rust/src/bin/relay-native-job/task_cli.rs'
     if cmd.startswith('agent-'):return 'rust/src/bin/relay-native-job/agent_cli.rs'
     if cmd=='artifact validate':return 'rust/src/bin/relay-native-job/platform_cli.rs'
     if cmd.startswith('review ') or cmd.startswith('blocker ') or cmd.startswith('projection '):return 'rust/src/bin/relay-native-job/review_cli.rs'
     if cmd=='reconcile':return 'rust/src/bin/relay-native-job/planner_cli.rs'
+    if cmd in {'plan context','plan apply'}:return 'rust/src/bin/relay-native-job/planner_cli.rs'
     if cmd=='workflow verify':return 'rust/src/bin/relay-native-job/workflow_verify.rs'
     if cmd.startswith('workflow '):return 'rust/src/bin/relay-native-job/workflow.rs'
     if cmd in {'job list','job show','task list','task show','task events','global help'}:

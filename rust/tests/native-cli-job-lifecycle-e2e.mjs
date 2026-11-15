@@ -35,7 +35,7 @@ test('invalid arguments, repository mismatch, unsafe active cancel and unblock l
    [['update','--repo','sample','--id','91','--priority','P9'],/priority/],
    [['pause','--repo','wrong','--id','91'],/binding mismatch/],
    [['cancel','--repo','sample','--id','91'],/active execution/],
-   [['unblock','--repo','sample','--id','91','--reason','go'],/incomplete/],
+   [['unblock','--repo','sample','--id','91','--reason','go'],/requires native daemon-controlled Graph authority/],
    [['update','--repo','sample','--id','91','--title','A','--title','B'],/duplicate option/],
   ]){const r=invoke(v.root,v.db,...args);assert.equal(r.status,2,r.stderr);assert.match(r.stderr,pattern);assert.deepEqual(readFileSync(v.db),before);}
  }finally{rmSync(v.root,{recursive:true,force:true});}

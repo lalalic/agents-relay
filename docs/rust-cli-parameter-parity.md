@@ -3,7 +3,7 @@
 Source: Node cli-help.ts and all src/cli*.ts flag literals. Every listed parameter has a current mark. PASS requires actual executable E2E evidence. Rust-only CLI options are documented separately.
 
 Actions/groups: 66; individual parameter cells: 458.
-Counts: INTERNAL_NOT_USER=2, MISSING=261, NODE_MISMATCH=4, PARTIAL=111, PASS=35, RETIRED=45.
+Counts: INTERNAL_NOT_USER=2, MISSING=197, NODE_MISMATCH=4, PARTIAL=175, PASS=35, RETIRED=45.
 
 Full machine-readable checklist: docs/rust-cli-parameter-parity.csv
 
@@ -113,17 +113,17 @@ Overall: PARTIAL. MISSING=1, PARTIAL=1.
 
 ### context resolve
 
-Overall: MISSING. MISSING=7.
+Overall: PARTIAL. PARTIAL=7.
 
 | Parameter | Mark | Evidence or gap |
 |---|---|---|
-| `--agents` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--global-root` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--project-path` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--role` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--shared-root` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--skills` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--workspace-root` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--agents` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--global-root` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--project-path` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--role` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--shared-root` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--skills` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--workspace-root` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 
 ### escalation
 
@@ -189,34 +189,34 @@ Overall: PARTIAL. PARTIAL=2.
 
 ### job create
 
-Overall: PARTIAL. MISSING=16, PARTIAL=12, RETIRED=13.
+Overall: PARTIAL. MISSING=1, PARTIAL=27, RETIRED=13.
 
 | Parameter | Mark | Evidence or gap |
 |---|---|---|
 | `--auto-merge` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--base` | RETIRED | Node handler explicitly rejects deprecated or task-only option |
 | `--body` | RETIRED | Node handler explicitly rejects deprecated or task-only option |
-| `--coordinator-graph` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--coordinator-graph-file` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--coordinator-input` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--coordinator-input-file` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--coordinator-output-path` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--coordinator-project-root` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--coordinator-shared-root` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--coordinator-workspace-root` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--creator-thread-id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--coordinator-graph` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--coordinator-graph-file` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--coordinator-input` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--coordinator-input-file` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--coordinator-output-path` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--coordinator-project-root` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--coordinator-shared-root` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--coordinator-workspace-root` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--creator-thread-id` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--cron` | RETIRED | Node handler explicitly rejects deprecated or task-only option |
 | `--execution-mode` | RETIRED | Node handler explicitly rejects deprecated or task-only option |
-| `--github-repo` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--github-repo` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--head` | RETIRED | Node handler explicitly rejects deprecated or task-only option |
 | `--id` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
-| `--idempotency-key` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--implementation-thread-id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--idempotency-key` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--implementation-thread-id` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--initial-plan` | MISSING | Unimplemented or no verified Rust-native parameter parity |
 | `--missed-run-policy` | RETIRED | Node handler explicitly rejects deprecated or task-only option |
 | `--mode` | RETIRED | Node handler explicitly rejects deprecated or task-only option |
 | `--no-auto-merge` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
-| `--no-github` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--no-github` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--no-review` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--objective` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--objective-file` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
@@ -225,14 +225,14 @@ Overall: PARTIAL. MISSING=16, PARTIAL=12, RETIRED=13.
 | `--project-root` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--repo` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--review` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
-| `--reviewer-thread-id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--reviewer-thread-id` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--schedule` | RETIRED | Node handler explicitly rejects deprecated or task-only option |
 | `--schedule-concurrency` | RETIRED | Node handler explicitly rejects deprecated or task-only option |
 | `--schedule-cron` | RETIRED | Node handler explicitly rejects deprecated or task-only option |
 | `--schedule-next-run` | RETIRED | Node handler explicitly rejects deprecated or task-only option |
 | `--schedule-timezone` | RETIRED | Node handler explicitly rejects deprecated or task-only option |
 | `--start` | RETIRED | Node handler explicitly rejects deprecated or task-only option |
-| `--tag` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--tag` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--title` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 
 ### job list
@@ -305,13 +305,13 @@ Overall: PARTIAL. PASS=2.
 
 ### job unblock
 
-Overall: MISSING. MISSING=3.
+Overall: PARTIAL. PARTIAL=3.
 
 | Parameter | Mark | Evidence or gap |
 |---|---|---|
-| `--id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--reason` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--repo` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--id` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--reason` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--repo` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 
 ### job update
 
@@ -378,35 +378,35 @@ Overall: MISSING. MISSING=11.
 
 ### plan apply
 
-Overall: MISSING. MISSING=5.
+Overall: PARTIAL. PARTIAL=5.
 
 | Parameter | Mark | Evidence or gap |
 |---|---|---|
-| `--execution-id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--file` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--plan-id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--repo` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--execution-id` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--file` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--id` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--plan-id` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--repo` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 
 ### plan context
 
-Overall: MISSING. MISSING=4.
+Overall: PARTIAL. PARTIAL=4.
 
 | Parameter | Mark | Evidence or gap |
 |---|---|---|
-| `--execution-id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--plan-id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--repo` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--execution-id` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--id` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--plan-id` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--repo` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 
 ### projection conflicts
 
-Overall: MISSING. MISSING=2.
+Overall: PARTIAL. PARTIAL=2.
 
 | Parameter | Mark | Evidence or gap |
 |---|---|---|
-| `--id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--repo` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--id` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--repo` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 
 ### projection resolve
 
@@ -422,17 +422,17 @@ Overall: MISSING. MISSING=5.
 
 ### prompt
 
-Overall: MISSING. MISSING=7.
+Overall: PARTIAL. MISSING=2, PARTIAL=5.
 
 | Parameter | Mark | Evidence or gap |
 |---|---|---|
-| `--adapter` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--adapter` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--eval-file` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--output` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--id` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--output` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--plan-id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--repo` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--task-id` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--repo` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--task-id` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 
 ### reconcile
 
@@ -802,44 +802,44 @@ Overall: PARTIAL. MISSING=1, PARTIAL=4.
 
 ### task update
 
-Overall: PARTIAL. MISSING=23, PARTIAL=8, RETIRED=4.
+Overall: PARTIAL. PARTIAL=31, RETIRED=4.
 
 | Parameter | Mark | Evidence or gap |
 |---|---|---|
-| `--adapter` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--agent` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--agent-graph` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--agent-graph-file` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--attachments` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--capabilities` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--chatgpt-project` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--chatgpt-tab-close-policy` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--clear-routing` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--adapter` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--agent` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--agent-graph` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--agent-graph-file` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--attachments` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--capabilities` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--chatgpt-project` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--chatgpt-tab-close-policy` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--clear-routing` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--content-only` | RETIRED | Node handler explicitly rejects deprecated or task-only option |
-| `--cwd` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--dependency-validity` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--deps` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--draft` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--cwd` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--dependency-validity` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--deps` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--draft` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--id` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--input` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--input-file` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
-| `--max-attempts` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--model` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--max-attempts` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--model` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--no-content-only` | RETIRED | Node handler explicitly rejects deprecated or task-only option |
-| `--parent` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--parent` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--priority` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
-| `--profile` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--project` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--provider` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--queue` | MISSING | Unimplemented or no verified Rust-native parameter parity |
-| `--reasoning` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--profile` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--project` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--provider` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--queue` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
+| `--reasoning` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--repo` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--shortcut-execution` | RETIRED | Node handler explicitly rejects deprecated or task-only option |
 | `--shortcut-local` | RETIRED | Node handler explicitly rejects deprecated or task-only option |
-| `--store-dir` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--store-dir` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--story-size` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--task-id` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
-| `--timeout` | MISSING | Unimplemented or no verified Rust-native parameter parity |
+| `--timeout` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 | `--title` | PARTIAL | Native option exists, but Node-compatible semantics not fully verified |
 
 ### workflow action

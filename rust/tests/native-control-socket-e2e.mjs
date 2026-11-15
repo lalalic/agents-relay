@@ -74,8 +74,8 @@ test('native control socket is single-writer, authenticated, allowlisted, and re
   assert.equal(oversized.ok,false);assert.match(oversized.error,/exceeds 64 KiB/);
   const invalid=invoke(f,createArgs(f,['--priority','P8']));
   assert.equal(invalid.status,2,invalid.stderr);assert.match(invalid.stderr,/priority must be P0, P1, P2, or P3/);
-  const blocked=invoke(f,['job','update','--db',f.db,'--job-id','861','--title','No direct writes']);
-  assert.equal(blocked.status,2);assert.match(blocked.stderr,/live Job update is not yet supported by the native daemon control socket/);
+  const unknown=invoke(f,['job','update','--db',f.db,'--id','861','--repo','agents-relay','--title','No unknown Job']);
+  assert.equal(unknown.status,2);assert.match(unknown.stderr,/unknown Job/);
   const sql=new DatabaseSync(f.db);assert.equal(sql.prepare('SELECT count(*) AS n FROM job_snapshot').get().n,0);sql.close();
   const created=invoke(f,createArgs(f));assert.equal(created.status,0,created.stderr);assert.equal(JSON.parse(created.stdout).created,true);
   assert.deepEqual(readJob(f.db).repository,'agents-relay');
@@ -95,4 +95,174 @@ test('native live mutation fails closed without daemon socket and never falls ba
   const result=invoke(f,createArgs(f));assert.equal(result.status,2);assert.match(result.stderr,/control socket unavailable/);
   const sql=new DatabaseSync(f.db);assert.equal(sql.prepare('SELECT count(*) AS n FROM job_snapshot').get().n,0);sql.close();
  }finally{rmSync(f.home,{recursive:true,force:true});}
+});
+
+
+test('Rust-only live Job update, pause, resume and cancel go through daemon sole writer and survive restart', {concurrency:false}, async()=>{
+ const f=fixture();let child;
+ const mutate=(action,fields=[])=>invoke(f,['job',action,'--db',f.db,'--id','861','--repo','agents-relay',...fields]);
+ try{
+  child=start(f);await waitForSocket(f,child);
+  const created=invoke(f,createArgs(f));assert.equal(created.status,0,created.stderr);
+  const updated=mutate('update',['--title','Updated by Rust','--priority','P1',
+    '--objective','Updated objective','--no-review','--no-auto-merge']);
+  assert.equal(updated.status,0,updated.stderr);
+  assert.equal(JSON.parse(updated.stdout).operation,'job.update');
+  const original=readJob(f.db);
+  assert.equal(original.title,'Updated by Rust');
+  assert.equal(original.priority,'P1');
+  assert.equal(original.objective,'Updated objective');
+  assert.equal(original.reviewEnabled,false);
+  assert.equal(original.autoMerge,false);
+  // All invalid mutations must fail before or within the daemon CAS, with no DB write.
+  const before=JSON.stringify(readJob(f.db));
+  for(const [args,pattern] of [
+    [['job','update','--db',f.db,'--id','861','--repo','wrong','--title','spoofed'],/binding mismatch/],
+    [['job','update','--db',f.db,'--id','861','--repo','agents-relay','--priority','P99'],/priority must/],
+    [['job','update','--db',f.db,'--id','861','--repo','agents-relay','--review','--no-review'],/conflicting/],
+    [['job','update','--db',f.db,'--id','861','--repo','agents-relay','--project-root','/not-a-real-directory'],/projectRoot/],
+    [['job','pause','--db',f.db,'--id','861','--repo','agents-relay','--title','silently-ignored'],/refusing to discard/],
+    [['job','resume','--db',f.db,'--id','861','--repo','agents-relay','--reason','ignored'],/refusing to discard/],
+    [['job','cancel','--db',f.db,'--id','861','--repo','agents-relay','--priority','P0'],/refusing to discard/],
+  ]){
+   const rejected=invoke(f,args);
+   assert.equal(rejected.status,2,rejected.stderr);
+   assert.match(rejected.stderr,pattern);
+   assert.equal(JSON.stringify(readJob(f.db)),before,'invalid request mutated durable Job');
+  }
+  const denied=await rawRequest(f.socket,{
+   version:1,operation:'job.update',repository:'agents-relay',id:'861',
+   title:'',objective:'',project_root:'',project_path:null,priority:'',
+   review_enabled:false,auto_merge:false,changes:{state:'COMPLETED'}
+  });
+  assert.equal(denied.ok,false);
+  assert.match(denied.error,/unsupported Job update property state/);
+  assert.equal(JSON.stringify(readJob(f.db)),before);
+  const paused=mutate('pause');assert.equal(paused.status,0,paused.stderr);
+  assert.equal(JSON.parse(paused.stdout).operation,'job.pause');
+  const pausedAt=readJob(f.db).pause.requestedAt;
+  const again=mutate('pause');assert.equal(again.status,0,again.stderr);
+  assert.equal(readJob(f.db).pause.requestedAt,pausedAt,'repeated pause has one durable receipt');
+  await stop(child);child=null;
+  child=start(f);await waitForSocket(f,child);
+  assert.equal(readJob(f.db).pause.requestedAt,pausedAt,'pause survived daemon restart');
+  const resumed=mutate('resume');assert.equal(resumed.status,0,resumed.stderr);
+  assert.equal(readJob(f.db).pause,undefined);
+  const cancelled=mutate('cancel',['--reason','User requested cancel']);
+  assert.equal(cancelled.status,0,cancelled.stderr);
+  assert.equal(readJob(f.db).state,'CANCELLED');
+  const terminal=JSON.stringify(readJob(f.db));
+  const noResume=mutate('resume');
+  assert.equal(noResume.status,2);assert.match(noResume.stderr,/Cannot resume terminal Job/);
+  assert.equal(JSON.stringify(readJob(f.db)),terminal);
+  const noCancel=mutate('cancel');
+  assert.equal(noCancel.status,2);assert.match(noCancel.stderr,/canonical Job Graph denied cancellation|unknown event/);
+  assert.equal(JSON.stringify(readJob(f.db)),terminal);
+ }finally{if(child)await stop(child);rmSync(f.home,{recursive:true,force:true});}
+});
+
+test('live control refuses pause and cancel while an execution lease is active', {concurrency:false}, async()=>{
+ const f=fixture();let child;
+ try{
+  child=start(f);await waitForSocket(f,child);
+  assert.equal(invoke(f,createArgs(f)).status,0);
+  const sql=new DatabaseSync(f.db);
+  const j=readJob(f.db);
+  // Keep this Job DRAFT so the daemon does not execute a synthetic worker.
+  j.state='DRAFT';
+  j.tasks=[{id:'1',title:'running',state:'RUNNING',
+   executionId:'execution-1',leaseOwner:'daemon-1',leaseExpiresAt:'2099-01-01T00:00:00Z'}];
+  sql.prepare('UPDATE job_snapshot SET json=? WHERE job_id=?').run(JSON.stringify(j),'861');
+  sql.close();
+  const before=JSON.stringify(readJob(f.db));
+  for(const action of ['pause','cancel']){
+    const result=invoke(f,['job',action,'--db',f.db,'--id','861','--repo','agents-relay']);
+    assert.equal(result.status,2,result.stderr);
+    assert.match(result.stderr,/active executions|active Task execution/);
+    assert.equal(JSON.stringify(readJob(f.db)),before,'did not forge cancellation of active worker');
+  }
+ }finally{if(child)await stop(child);rmSync(f.home,{recursive:true,force:true});}
+});
+
+test('job unblock atomically retries blocked Troubleshooters only, preserving Graph provenance and rejecting pending human escalations', {concurrency:false}, async()=>{
+ const f=fixture();let child;
+ const command=(reason='External blocker resolved')=>invoke(f,['job','unblock','--db',f.db,
+    '--id','861','--repo','agents-relay','--reason',reason]);
+ try{
+  child=start(f);await waitForSocket(f,child);
+  assert.equal(invoke(f,createArgs(f)).status,0);
+  const sql=new DatabaseSync(f.db);
+  const j=readJob(f.db);
+  const stamp='2026-11-15T11:00:00Z';
+  j.tasks=[
+   {id:'1',kind:'worker',agentName:'troubleshooter',state:'BLOCKED',title:'Troubleshoot A',
+    updatedAt:stamp,attempt:3,maxAttempts:2,error:'Blocked A',failureReason:'external',
+    blockedBaseline:{blockedAt:stamp,reason:'Blocked A'},blockedBy:{cause:'external'},leaseOwner:null,executionId:null},
+   {id:'2',kind:'worker',agentName:'troubleshooter',state:'BLOCKED',title:'Troubleshoot B',
+    updatedAt:stamp,attempt:2,maxAttempts:5,error:'Blocked B',leaseOwner:null,executionId:null},
+   {id:'3',kind:'worker',agentName:'developer',state:'BLOCKED',title:'Unrelated blocked work',
+    updatedAt:stamp,attempt:1,maxAttempts:2,error:'Blocked work',leaseOwner:null,executionId:null}
+  ];
+  sql.prepare('UPDATE job_snapshot SET json=? WHERE job_id=?').run(JSON.stringify(j),'861');
+  sql.close();
+  const empty=command(' ');
+  assert.equal(empty.status,2);assert.match(empty.stderr,/requires nonempty --reason/);
+  const badRepo=invoke(f,['job','unblock','--db',f.db,'--id','861','--repo','another','--reason','done']);
+  assert.equal(badRepo.status,2);assert.match(badRepo.stderr,/binding mismatch/);
+  const before=JSON.stringify(readJob(f.db));
+  assert.equal(command('--malformed').status,2);
+  assert.equal(JSON.stringify(readJob(f.db)),before,'invalid request is read-only');
+  const response=command();
+  assert.equal(response.status,0,response.stderr);
+  const summary=JSON.parse(response.stdout);
+  assert.equal(summary.jobId,'861');
+  assert.deepEqual(summary.resumedTasks,['1','2']);
+  const after=readJob(f.db);
+  assert.equal(after.tasks[0].state,'QUEUED');
+  assert.equal(after.tasks[1].state,'QUEUED');
+  assert.equal(after.tasks[2].state,'BLOCKED','unrelated blocked non-Troubleshooter stays blocked');
+  assert.equal(after.tasks[0].attempt,0);
+  assert.equal(after.tasks[0].maxAttempts,3);
+  assert.equal(after.tasks[1].maxAttempts,5);
+  assert.equal(after.tasks[0].error,null);
+  assert.equal(after.tasks[0].failureReason,undefined);
+  assert.equal(after.tasks[0].blockedBy,undefined);
+  assert.equal(after.tasks[0].unblock.event,'task.unblocked');
+  assert.equal(after.tasks[0].unblock.source,'cli');
+  assert.equal(after.tasks[0].unblock.reason,'External blocker resolved');
+  assert.equal(after.tasks[0].unblock.baseline.reason,'Blocked A');
+  assert.equal(command().status,2,'duplicate unblock must not spin a new round');
+  await stop(child);child=null;
+  child=start(f);await waitForSocket(f,child);
+  assert.equal(readJob(f.db).tasks[0].state,'QUEUED','unblock state survives daemon restart');
+ }finally{if(child)await stop(child);rmSync(f.home,{recursive:true,force:true});}
+});
+
+test('job unblock never forges a human response or bypasses active Troubleshooter lease', {concurrency:false}, async()=>{
+ const f=fixture();let child;
+ try{
+  child=start(f);await waitForSocket(f,child);
+  assert.equal(invoke(f,createArgs(f)).status,0);
+  const sql=new DatabaseSync(f.db);
+  const j=readJob(f.db);
+  j.tasks=[{id:'1',kind:'worker',agentName:'troubleshooter',state:'BLOCKED',
+   title:'Blocked escalation',updatedAt:'2026-11-15T11:00:00Z',attempt:2,maxAttempts:3,
+   escalation:{id:'escalation-1',status:'pending',requiredAction:'Human verification'},
+   leaseOwner:null,executionId:null}];
+  const save=sql.prepare('UPDATE job_snapshot SET json=? WHERE job_id=?');
+  save.run(JSON.stringify(j),'861');
+  const run=()=>invoke(f,['job','unblock','--db',f.db,'--id','861','--repo','agents-relay','--reason','claim resolved']);
+  const before=JSON.stringify(readJob(f.db));
+  const denied=run();assert.equal(denied.status,2);
+  assert.match(denied.stderr,/authorized human response/);
+  assert.equal(JSON.stringify(readJob(f.db)),before);
+  j.tasks[0].escalation.status='resolved';
+  j.tasks[0].leaseOwner='still-working';
+  j.tasks[0].executionId='exec-current';
+  save.run(JSON.stringify(j),'861');
+  const active=JSON.stringify(readJob(f.db));
+  const lease=run();assert.equal(lease.status,2);assert.match(lease.stderr,/active Troubleshooter execution lease/);
+  assert.equal(JSON.stringify(readJob(f.db)),active);
+  sql.close();
+ }finally{if(child)await stop(child);rmSync(f.home,{recursive:true,force:true});}
 });

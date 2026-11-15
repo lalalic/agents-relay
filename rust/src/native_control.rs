@@ -2,9 +2,12 @@
 //! Requests are deliberately typed and allowlisted; the daemon is the only
 //! process that opens RelayAuthority for these production CLI mutations.
 use crate::authority::{NativeObjectiveJobSpec, RelayAuthority};
+use crate::graph::{Decision, Graph, GraphInput};
 use crate::native_daemon::isolated_store_root;
+use crate::supervised_script::after_time;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
@@ -31,6 +34,12 @@ pub struct ControlRequest {
     pub priority: String,
     pub review_enabled: bool,
     pub auto_merge: bool,
+    /// Only Job update supports this allowlisted patch; absent in legacy create requests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changes: Option<Value>,
+    /// Optional reason for safe Job cancellation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -128,9 +137,355 @@ fn write_response(stream: &mut UnixStream, response: ControlResponse) -> Result<
         .write_all(&data)
         .map_err(|e| format!("control response write failed: {e}"))
 }
-fn dispatch(db: &Path, request: ControlRequest) -> Result<Value, String> {
-    if request.version != 1 || request.operation != "job.create" {
+
+/// Called ONLY in the daemon's serialized control loop, after acquiring its
+/// lifetime single-writer lock. The Graph remains the authority for cancel;
+/// active Task/Planner leases are never cleared by a control request.
+/// Job-wide unblock uses the same authoritative Mermaid Graph gates as Node:
+/// only effectively BLOCKED Troubleshooter tasks with no pending human response.
+/// A single SQLite IMMEDIATE transaction unblocks all or none.
+fn dispatch_job_unblock(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if request.changes.is_some() {
+        return Err("job.unblock does not accept update fields".into());
+    }
+    let reason = request
+        .reason
+        .as_deref()
+        .ok_or("job unblock requires --reason")?;
+    if reason.trim().is_empty() || reason.len() > 2048 {
+        return Err("job unblock requires nonempty --reason of at most 2048 bytes".into());
+    }
+    let mut authority = RelayAuthority::open_existing(db)?;
+    let previous = authority.read_job(&request.id)?.ok_or("unknown Job")?;
+    if previous["repository"].as_str() != Some(request.repository.as_str()) {
+        return Err("Local Job/PR binding mismatch".into());
+    }
+    let at = after_time(
+        previous["updatedAt"]
+            .as_str()
+            .ok_or("Job timestamp missing")?,
+    )?;
+    let unblock = Graph::parse(include_str!("../../workflow/authoritative-unblock.mmd"))?;
+    let lifecycle = Graph::parse(include_str!("../../workflow/task-lifecycle.mmd"))?;
+    let mut facts = HashMap::new();
+    facts.insert("blockedTroubleshooter".into(), true);
+    let validated = unblock.decide(
+        "blocked",
+        GraphInput {
+            transport: "event".into(),
+            id: "task.authoritative_unblock".into(),
+            payload: json!({}),
+        },
+        &facts,
+    )?;
+    let Decision::Accepted {
+        target, actions, ..
+    } = validated
+    else {
+        return Err("authoritative Unblock Graph rejected blocked Troubleshooter".into());
+    };
+    if target != "troubleshooter_queued" || !actions.iter().any(|a| a.id == "unblock.retry") {
+        return Err("unexpected Unblock Graph target or action".into());
+    }
+    facts.clear();
+    facts.insert("troubleshooterTask".into(), true);
+    let task_decision = lifecycle.decide(
+        "BLOCKED",
+        GraphInput {
+            transport: "event".into(),
+            id: "task.unblocked".into(),
+            payload: json!({}),
+        },
+        &facts,
+    )?;
+    let Decision::Accepted {
+        target,
+        actions: task_actions,
+        ..
+    } = task_decision
+    else {
+        return Err("canonical Task Graph rejected Troubleshooter unblock".into());
+    };
+    if target != "QUEUED" {
+        return Err("unexpected Task Graph unblock target".into());
+    }
+    let result=authority.commit_job(&request.id,&at,|prior|{
+        if prior["repository"].as_str()!=Some(request.repository.as_str()){
+            return Err("Job identity changed".into());
+        }
+        if matches!(prior["state"].as_str(),Some("CANCELLED"|"COMPLETED")){
+            return Err("cannot unblock terminal Job".into());
+        }
+        let source_tasks=prior["tasks"].as_array().ok_or("Job tasks missing")?;
+        let blocked=source_tasks.iter().filter(|t|
+            t["kind"]!="planner"&&t["agentName"]=="troubleshooter"&&t["state"]=="BLOCKED"
+        ).collect::<Vec<_>>();
+        if blocked.is_empty(){return Err("Job has no effective BLOCKED work task".into());}
+        if blocked.iter().any(|t|t["escalation"]["status"]=="pending"){
+            return Err("Blocked Troubleshooter requires an authorized human response; use task unblock --response".into());
+        }
+        if blocked.iter().any(|t|t.get("executionId").is_some_and(|v|!v.is_null())
+            ||t.get("leaseOwner").is_some_and(|v|!v.is_null())){
+            return Err("cannot unblock active Troubleshooter execution lease".into());
+        }
+        let mut next=prior.clone();
+        for task in next["tasks"].as_array_mut().into_iter().flatten(){
+            if task["kind"]=="planner"||task["agentName"]!="troubleshooter"||task["state"]!="BLOCKED"{continue;}
+            let baseline=task.get("blockedBaseline").filter(|v|!v.is_null()).cloned()
+                .unwrap_or_else(||json!({"blockedAt":task["updatedAt"],"reason":task["error"]}));
+            let mut record=json!({
+                "event":"task.unblocked","at":at,"source":"cli","reason":reason,
+                "baseline":baseline,"facts":[format!("unblock: {reason}")]
+            });
+            if let Some(head)=prior["headSha"].as_str(){
+                record["currentHeadSha"]=json!(head);
+            }
+            task["blockedBaseline"]=baseline;
+            task["unblock"]=record;
+            for action in &task_actions{
+                match action.id.as_str(){
+                    "mutation.clearError"=>task["error"]=Value::Null,
+                    "mutation.clearFailureReason"=>{task.as_object_mut().map(|m|m.remove("failureReason"));},
+                    _=>return Err(format!("unexpected Task unblock action {}",action.id)),
+                }
+            }
+            task["state"]=json!("QUEUED");
+            task["attempt"]=json!(0);
+            task["maxAttempts"]=json!(task["maxAttempts"].as_i64().unwrap_or(0).max(3));
+            task["leaseOwner"]=Value::Null;
+            task["leaseExpiresAt"]=Value::Null;
+            task["executionId"]=Value::Null;
+            task.as_object_mut().map(|m|m.remove("blockedBy"));
+            task["updatedAt"]=json!(at);
+        }
+        next["updatedAt"]=json!(at);
+        Ok((next,vec![]))
+    })?;
+    let resumed = result.job["tasks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|task| task["unblock"]["source"] == "cli" && task["unblock"]["at"] == at)
+        .filter_map(|task| task["id"].as_str())
+        .collect::<Vec<_>>();
+    Ok(json!({"jobId":request.id,"resumedTasks":resumed}))
+}
+
+fn dispatch_job_mutation(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if request.version != 1 {
+        return Err("unsupported native control version".into());
+    }
+    if request.id.trim().is_empty()
+        || request.id.len() > 128
+        || request.repository.trim().is_empty()
+        || request.repository.len() > 500
+    {
+        return Err("Job mutation requires exact --id and --repo identities".into());
+    }
+    if request.operation == "job.unblock" {
+        return dispatch_job_unblock(db, request);
+    }
+    let operation = request.operation.as_str();
+    if !matches!(
+        operation,
+        "job.update" | "job.pause" | "job.resume" | "job.cancel"
+    ) {
         return Err("unsupported native control operation".into());
+    }
+    if operation != "job.update" && request.changes.is_some() {
+        return Err("Job lifecycle operation does not accept update fields".into());
+    }
+    if operation != "job.cancel" && request.reason.is_some() {
+        return Err("--reason is only valid for job.cancel".into());
+    }
+    if request
+        .reason
+        .as_ref()
+        .is_some_and(|reason| reason.len() > 2048)
+    {
+        return Err("Job cancellation reason exceeds 2048 bytes".into());
+    }
+    let changes = if operation == "job.update" {
+        let map = request
+            .changes
+            .as_ref()
+            .and_then(Value::as_object)
+            .ok_or("job.update requires a JSON object of mutable fields")?;
+        if map.is_empty() {
+            return Err("job.update requires at least one mutable option".into());
+        }
+        for key in map.keys() {
+            if !matches!(
+                key.as_str(),
+                "title"
+                    | "objective"
+                    | "projectRoot"
+                    | "projectPath"
+                    | "priority"
+                    | "reviewEnabled"
+                    | "autoMerge"
+            ) {
+                return Err(format!("unsupported Job update property {key}"));
+            }
+        }
+        for key in ["title", "objective"] {
+            if let Some(value) = map.get(key) {
+                let s = value
+                    .as_str()
+                    .ok_or_else(|| format!("{key} must be text"))?;
+                if s.trim().is_empty()
+                    || (key == "title" && s.len() > 200)
+                    || (key == "objective" && s.len() > 65_536)
+                {
+                    return Err(format!("{key} is empty or exceeds permitted length"));
+                }
+            }
+        }
+        if let Some(value) = map.get("priority") {
+            if !value
+                .as_str()
+                .is_some_and(|x| matches!(x, "P0" | "P1" | "P2" | "P3"))
+            {
+                return Err("priority must be P0, P1, P2, or P3".into());
+            }
+        }
+        for key in ["reviewEnabled", "autoMerge"] {
+            if map.get(key).is_some_and(|x| !x.is_boolean()) {
+                return Err(format!("{key} must be boolean"));
+            }
+        }
+        if let Some(root) = map.get("projectRoot") {
+            let root = root.as_str().ok_or("projectRoot must be a string")?;
+            let path = Path::new(root)
+                .canonicalize()
+                .map_err(|e| format!("projectRoot: {e}"))?;
+            if !path.is_dir() || !path.is_absolute() {
+                return Err("projectRoot must be an existing absolute directory".into());
+            }
+        }
+        if let Some(path) = map.get("projectPath") {
+            if !(path.is_null() || path.as_str().is_some()) {
+                return Err("projectPath must be a string or null".into());
+            }
+        }
+        Some(map.clone())
+    } else {
+        None
+    };
+    let mut authority = RelayAuthority::open_existing(db)?;
+    let original = authority.read_job(&request.id)?.ok_or("unknown Job")?;
+    if original["repository"].as_str() != Some(request.repository.as_str()) {
+        return Err("Local Job/PR binding mismatch".into());
+    }
+    let at = after_time(
+        original["updatedAt"]
+            .as_str()
+            .ok_or("Job timestamp missing")?,
+    )?;
+    let reason = request.reason.clone();
+    let result=authority.commit_job(&request.id,&at,|prior|{
+        // Defense in depth: commit reads the actual current snapshot under
+        // IMMEDIATE SQLite transaction, not the stale preflight snapshot.
+        if prior["repository"].as_str()!=Some(request.repository.as_str()){
+            return Err("Job repository identity changed".into());
+        }
+        let mut next=prior.clone();
+        match operation{
+            "job.update"=>{
+                let changes=changes.as_ref().expect("validated patch");
+                for (key,value) in changes{
+                    if key=="projectRoot" {
+                        let canonical=Path::new(value.as_str().unwrap()).canonicalize()
+                            .map_err(|e|format!("projectRoot: {e}"))?;
+                        next[key]=json!(canonical.to_string_lossy().to_string());
+                    }else {
+                        next[key]=value.clone();
+                    }
+                }
+                if let Some(path)=next["projectPath"].as_str(){
+                    let root=next["projectRoot"].as_str().ok_or("Job projectRoot missing")?;
+                    let canonical_root=Path::new(root).canonicalize().map_err(|e|e.to_string())?;
+                    let candidate=canonical_root.join(path).canonicalize().map_err(|e|format!("projectPath: {e}"))?;
+                    if !candidate.starts_with(&canonical_root){
+                        return Err("projectPath escapes Job projectRoot".into());
+                    }
+                }
+            }
+            "job.pause"=>{
+                if matches!(prior["state"].as_str(),Some("COMPLETED"|"CANCELLED"|"FAILED")){
+                    return Err("Cannot pause terminal Job".into());
+                }
+                if prior.get("pause").is_none_or(Value::is_null){
+                    for task in prior["tasks"].as_array().into_iter().flatten(){
+                        if matches!(task["state"].as_str(),Some("RUNNING"|"AWAITING_DECISION"))
+                            || task.get("executionId").is_some_and(|x|!x.is_null())
+                            || task.get("leaseOwner").is_some_and(|x|!x.is_null()){
+                            return Err("pause requires daemon-coordinated cancellation of active executions; refusing to clear a live lease".into());
+                        }
+                    }
+                    next["pause"]=json!({"generation":1,"requestedAt":at});
+                }
+            }
+            "job.resume"=>{
+                if matches!(prior["state"].as_str(),Some("COMPLETED"|"CANCELLED"|"FAILED")){
+                    return Err("Cannot resume terminal Job".into());
+                }
+                next.as_object_mut().ok_or("Job object expected")?.remove("pause");
+            }
+            "job.cancel"=>{
+                // Reuse the exact production Job and Task Mermaid Graphs.
+                let graph=Graph::parse(include_str!("../../workflow/job-lifecycle.mmd"))?;
+                let state=prior["state"].as_str().ok_or("Job state missing")?;
+                let decision=graph.decide(state,GraphInput{transport:"event".into(),id:"cancel".into(),payload:json!({})},&HashMap::new())?;
+                let Decision::Accepted{target,actions,..}=decision else {
+                    return Err("canonical Job Graph denied cancellation".into());
+                };
+                if target!="CANCELLED"||!actions.iter().any(|a|a.id=="effect.cancelActiveTasks"){
+                    return Err("canonical Job Graph selected unsupported cancellation effect".into());
+                }
+                if prior["plans"].as_array().is_some_and(|plans|plans.iter().any(|plan|plan["status"]=="PLANNING")){
+                    return Err("cancel with active Planner lease requires coordinated Planner cancellation".into());
+                }
+                let task_graph=Graph::parse(include_str!("../../workflow/task-lifecycle.mmd"))?;
+                for task in next["tasks"].as_array_mut().into_iter().flatten(){
+                    let state=task["state"].as_str().ok_or("Task state missing")?.to_owned();
+                    if matches!(state.as_str(),"RUNNING"|"AWAITING_DECISION")
+                        || task.get("executionId").is_some_and(|x|!x.is_null())
+                        || task.get("leaseOwner").is_some_and(|x|!x.is_null()){
+                        return Err("cancel with active Task execution requires coordinated process shutdown".into());
+                    }
+                    if matches!(state.as_str(),"DRAFT"|"QUEUED"){
+                        let effect=task_graph.decide(&state,GraphInput{transport:"event".into(),id:"cancel".into(),payload:json!({})},&HashMap::new())?;
+                        let Decision::Accepted{target,..}=effect else {
+                            return Err(format!("canonical Task Graph denied cancellation for Task {}",task["id"]));
+                        };
+                        if target!="CANCELLED"{return Err("unexpected Task cancellation state".into());}
+                        task["state"]=json!("CANCELLED");
+                        task["error"]=json!(reason.as_deref().unwrap_or("Job cancelled"));
+                        task["updatedAt"]=json!(at);
+                    }else if !matches!(state.as_str(),"SUCCEEDED"|"FAILED"|"CANCELLED"){
+                        return Err(format!("unsafe cancellation of Task in state {state}"));
+                    }
+                }
+                next["state"]=json!("CANCELLED");
+            }
+            _=>unreachable!(),
+        }
+        next["updatedAt"]=json!(at);
+        Ok((next,vec![]))
+    })?;
+    Ok(json!({"job":result.job,"operation":operation}))
+}
+
+fn dispatch(db: &Path, request: ControlRequest) -> Result<Value, String> {
+    if request.version != 1 {
+        return Err("unsupported native control version".into());
+    }
+    if request.operation != "job.create" {
+        return dispatch_job_mutation(db, &request);
+    }
+    if request.changes.is_some() || request.reason.is_some() {
+        return Err("job.create does not accept mutation fields".into());
     }
     if request.id.trim().is_empty() || request.id.len() > 128 {
         return Err("job.create requires an explicit Job ID of at most 128 bytes".into());
@@ -179,6 +534,14 @@ fn dispatch(db: &Path, request: ControlRequest) -> Result<Value, String> {
         priority: &request.priority,
         review_enabled: request.review_enabled,
         auto_merge: request.auto_merge,
+        idempotency_key: None,
+        tag: None,
+        github_repo: None,
+        creator_thread_id: None,
+        reviewer_thread_id: None,
+        implementation_thread_id: None,
+        continuation: None,
+        no_github: false,
         at: &at,
     })?;
     Ok(json!({"job":job,"created":true,"deduplicated":false}))
@@ -257,16 +620,6 @@ impl NativeControlServer {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::peer_is_authorized;
-
-    #[test]
-    fn control_socket_authorizes_only_the_daemon_uid() {
-        assert!(peer_is_authorized(501, 501));
-        assert!(!peer_is_authorized(502, 501));
-    }
-}
 impl Drop for NativeControlServer {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
@@ -309,4 +662,15 @@ pub fn request(db: &Path, request: &ControlRequest) -> Result<Value, String> {
     response
         .result
         .ok_or_else(|| "daemon returned no mutation readback".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::peer_is_authorized;
+
+    #[test]
+    fn control_socket_authorizes_only_the_daemon_uid() {
+        assert!(peer_is_authorized(501, 501));
+        assert!(!peer_is_authorized(502, 501));
+    }
 }

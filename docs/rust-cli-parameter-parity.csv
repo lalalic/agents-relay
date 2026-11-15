@@ -52,13 +52,13 @@ blocker resolve,--repo,MISSING,src/cli-help.ts:281,,Unimplemented or no verified
 blocker resolve,--resolution,MISSING,src/cli-help.ts:281,,Unimplemented or no verified Rust-native parameter parity
 blocker show,--id,PARTIAL,src/cli.ts:18 (source token; confirm branch),rust/src/bin/relay-native-job/review_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 blocker show,--repo,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-context resolve,--agents,MISSING,src/cli-help.ts:293,,Unimplemented or no verified Rust-native parameter parity
-context resolve,--global-root,MISSING,src/cli-help.ts:294,,Unimplemented or no verified Rust-native parameter parity
-context resolve,--project-path,MISSING,src/cli-help.ts:292,,Unimplemented or no verified Rust-native parameter parity
-context resolve,--role,MISSING,src/cli-help.ts:293,,Unimplemented or no verified Rust-native parameter parity
-context resolve,--shared-root,MISSING,src/cli-help.ts:294,,Unimplemented or no verified Rust-native parameter parity
-context resolve,--skills,MISSING,src/cli-help.ts:293,,Unimplemented or no verified Rust-native parameter parity
-context resolve,--workspace-root,MISSING,src/cli-help.ts:294,,Unimplemented or no verified Rust-native parameter parity
+context resolve,--agents,PARTIAL,src/cli-help.ts:293,rust/src/bin/relay-native-job/context_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+context resolve,--global-root,PARTIAL,src/cli-help.ts:294,rust/src/bin/relay-native-job/context_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+context resolve,--project-path,PARTIAL,src/cli-help.ts:292,rust/src/bin/relay-native-job/context_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+context resolve,--role,PARTIAL,src/cli-help.ts:293,rust/src/bin/relay-native-job/context_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+context resolve,--shared-root,PARTIAL,src/cli-help.ts:294,rust/src/bin/relay-native-job/context_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+context resolve,--skills,PARTIAL,src/cli-help.ts:293,rust/src/bin/relay-native-job/context_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+context resolve,--workspace-root,PARTIAL,src/cli-help.ts:294,rust/src/bin/relay-native-job/context_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 escalation,--blocked-on,MISSING,src/cli-help.ts:177,,Unimplemented or no verified Rust-native parameter parity
 escalation,--blocked-on-file,MISSING,src/cli-help.ts:177,,Unimplemented or no verified Rust-native parameter parity
 escalation,--context,MISSING,src/cli-help.ts:177,,Unimplemented or no verified Rust-native parameter parity
@@ -96,27 +96,27 @@ job cancel,--repo,PARTIAL,src/cli-help.ts:170,rust/src/bin/relay-native-job/job_
 job create,--auto-merge,PARTIAL,src/cli-help.ts:119,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 job create,--base,RETIRED,src/cli.ts:197 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
 job create,--body,RETIRED,src/cli.ts:197 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
-job create,--coordinator-graph,MISSING,src/cli-help.ts:121,,Unimplemented or no verified Rust-native parameter parity
-job create,--coordinator-graph-file,MISSING,src/cli-help.ts:121,,Unimplemented or no verified Rust-native parameter parity
-job create,--coordinator-input,MISSING,src/cli-help.ts:121,,Unimplemented or no verified Rust-native parameter parity
-job create,--coordinator-input-file,MISSING,src/cli-help.ts:121,,Unimplemented or no verified Rust-native parameter parity
-job create,--coordinator-output-path,MISSING,src/cli-help.ts:122,,Unimplemented or no verified Rust-native parameter parity
-job create,--coordinator-project-root,MISSING,src/cli-help.ts:122,,Unimplemented or no verified Rust-native parameter parity
-job create,--coordinator-shared-root,MISSING,src/cli-help.ts:123,,Unimplemented or no verified Rust-native parameter parity
-job create,--coordinator-workspace-root,MISSING,src/cli-help.ts:123,,Unimplemented or no verified Rust-native parameter parity
-job create,--creator-thread-id,MISSING,src/cli-help.ts:119,,Unimplemented or no verified Rust-native parameter parity
+job create,--coordinator-graph,PARTIAL,src/cli-help.ts:121,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+job create,--coordinator-graph-file,PARTIAL,src/cli-help.ts:121,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+job create,--coordinator-input,PARTIAL,src/cli-help.ts:121,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+job create,--coordinator-input-file,PARTIAL,src/cli-help.ts:121,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+job create,--coordinator-output-path,PARTIAL,src/cli-help.ts:122,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+job create,--coordinator-project-root,PARTIAL,src/cli-help.ts:122,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+job create,--coordinator-shared-root,PARTIAL,src/cli-help.ts:123,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+job create,--coordinator-workspace-root,PARTIAL,src/cli-help.ts:123,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+job create,--creator-thread-id,PARTIAL,src/cli-help.ts:119,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 job create,--cron,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
 job create,--execution-mode,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
-job create,--github-repo,MISSING,src/cli.ts:228 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+job create,--github-repo,PARTIAL,src/cli.ts:228 (source token; confirm branch),rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 job create,--head,RETIRED,src/cli.ts:197 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
 job create,--id,PARTIAL,src/cli-help.ts:118,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
-job create,--idempotency-key,MISSING,src/cli.ts:28 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-job create,--implementation-thread-id,MISSING,src/cli-help.ts:119,,Unimplemented or no verified Rust-native parameter parity
+job create,--idempotency-key,PARTIAL,src/cli.ts:28 (source token; confirm branch),rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+job create,--implementation-thread-id,PARTIAL,src/cli-help.ts:119,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 job create,--initial-plan,MISSING,src/cli-help.ts:119,,Unimplemented or no verified Rust-native parameter parity
 job create,--missed-run-policy,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
 job create,--mode,RETIRED,src/cli.ts:155 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
 job create,--no-auto-merge,PARTIAL,src/cli-help.ts:119,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
-job create,--no-github,MISSING,src/cli.ts:388 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+job create,--no-github,PARTIAL,src/cli.ts:388 (source token; confirm branch),rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 job create,--no-review,PARTIAL,src/cli-help.ts:119,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 job create,--objective,PARTIAL,src/cli-help.ts:119,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 job create,--objective-file,PARTIAL,src/cli-help.ts:119,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
@@ -125,14 +125,14 @@ job create,--project-path,PARTIAL,src/cli-help.ts:119,rust/src/bin/relay-native-
 job create,--project-root,PARTIAL,src/cli.ts:228 (source token; confirm branch),rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 job create,--repo,PARTIAL,src/cli-help.ts:118,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 job create,--review,PARTIAL,src/cli-help.ts:119,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
-job create,--reviewer-thread-id,MISSING,src/cli-help.ts:119,,Unimplemented or no verified Rust-native parameter parity
+job create,--reviewer-thread-id,PARTIAL,src/cli-help.ts:119,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 job create,--schedule,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
 job create,--schedule-concurrency,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
 job create,--schedule-cron,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
 job create,--schedule-next-run,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
 job create,--schedule-timezone,RETIRED,src/cli-support.ts:261 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
 job create,--start,RETIRED,src/cli.ts:192 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
-job create,--tag,MISSING,src/cli-help.ts:119,,Unimplemented or no verified Rust-native parameter parity
+job create,--tag,PARTIAL,src/cli-help.ts:119,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 job create,--title,PARTIAL,src/cli-help.ts:119,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 job list,--repo,PASS,src/cli-help.ts:160,rust/src/bin/relay-native-job/node_compat.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
 job merge,--id,RETIRED,src/cli-help.ts:166,,Node CLI throws legacy merge error; Graph owns local merge
@@ -160,9 +160,9 @@ job run,--task-id,PASS,src/cli-help.ts:134,rust/src/bin/relay-native-job/foregro
 job run,--workspace-root,MISSING,src/cli.ts:281 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
 job show,--id,PASS,src/cli-help.ts:154,rust/src/bin/relay-native-job/node_compat.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
 job show,--repo,PASS,src/cli-help.ts:154,rust/src/bin/relay-native-job/node_compat.rs,Real Rust-only Calculator Job 7 and read-only CLI smoke on 2026-11-15
-job unblock,--id,MISSING,src/cli-help.ts:167,,Unimplemented or no verified Rust-native parameter parity
-job unblock,--reason,MISSING,src/cli-help.ts:167,,Unimplemented or no verified Rust-native parameter parity
-job unblock,--repo,MISSING,src/cli-help.ts:167,,Unimplemented or no verified Rust-native parameter parity
+job unblock,--id,PARTIAL,src/cli-help.ts:167,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+job unblock,--reason,PARTIAL,src/cli-help.ts:167,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+job unblock,--repo,PARTIAL,src/cli-help.ts:167,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 job update,--auto-merge,PARTIAL,src/cli-help.ts:147,rust/src/bin/relay-native-job/job_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 job update,--continue-input,MISSING,src/cli-support.ts:258 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
 job update,--continue-kind,MISSING,src/cli.ts:271 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
@@ -205,29 +205,29 @@ plan,--planner-command,MISSING,src/cli.ts:280 (source token; confirm branch),,Un
 plan,--prompt,MISSING,src/cli-help.ts:256,,Unimplemented or no verified Rust-native parameter parity
 plan,--prompt-file,MISSING,src/cli-help.ts:256,,Unimplemented or no verified Rust-native parameter parity
 plan,--repo,MISSING,src/cli-help.ts:253,,Unimplemented or no verified Rust-native parameter parity
-plan apply,--execution-id,MISSING,src/cli.ts:394 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-plan apply,--file,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-plan apply,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-plan apply,--plan-id,MISSING,src/cli.ts:394 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-plan apply,--repo,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-plan context,--execution-id,MISSING,src/cli.ts:394 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-plan context,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-plan context,--plan-id,MISSING,src/cli.ts:394 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-plan context,--repo,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-projection conflicts,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-projection conflicts,--repo,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+plan apply,--execution-id,PARTIAL,src/cli.ts:394 (source token; confirm branch),rust/src/bin/relay-native-job/planner_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+plan apply,--file,PARTIAL,src/cli.ts:41 (source token; confirm branch),rust/src/bin/relay-native-job/planner_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+plan apply,--id,PARTIAL,src/cli.ts:18 (source token; confirm branch),rust/src/bin/relay-native-job/planner_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+plan apply,--plan-id,PARTIAL,src/cli.ts:394 (source token; confirm branch),rust/src/bin/relay-native-job/planner_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+plan apply,--repo,PARTIAL,src/cli.ts:41 (source token; confirm branch),rust/src/bin/relay-native-job/planner_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+plan context,--execution-id,PARTIAL,src/cli.ts:394 (source token; confirm branch),rust/src/bin/relay-native-job/planner_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+plan context,--id,PARTIAL,src/cli.ts:18 (source token; confirm branch),rust/src/bin/relay-native-job/planner_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+plan context,--plan-id,PARTIAL,src/cli.ts:394 (source token; confirm branch),rust/src/bin/relay-native-job/planner_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+plan context,--repo,PARTIAL,src/cli.ts:41 (source token; confirm branch),rust/src/bin/relay-native-job/planner_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+projection conflicts,--id,PARTIAL,src/cli.ts:18 (source token; confirm branch),rust/src/bin/relay-native-job/review_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+projection conflicts,--repo,PARTIAL,src/cli.ts:41 (source token; confirm branch),rust/src/bin/relay-native-job/review_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 projection resolve,--action,MISSING,src/cli-projection.ts:9 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
 projection resolve,--id,MISSING,src/cli.ts:18 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
 projection resolve,--note,MISSING,src/cli-projection.ts:11 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
 projection resolve,--projection-id,MISSING,src/cli-projection.ts:8 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
 projection resolve,--repo,MISSING,src/cli.ts:41 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-prompt,--adapter,MISSING,src/cli-help.ts:78,,Unimplemented or no verified Rust-native parameter parity
+prompt,--adapter,PARTIAL,src/cli-help.ts:78,rust/src/bin/relay-native-job/context_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 prompt,--eval-file,MISSING,src/cli-help.ts:80,,Unimplemented or no verified Rust-native parameter parity
-prompt,--id,MISSING,src/cli-help.ts:78,,Unimplemented or no verified Rust-native parameter parity
-prompt,--output,MISSING,src/cli-help.ts:78,,Unimplemented or no verified Rust-native parameter parity
+prompt,--id,PARTIAL,src/cli-help.ts:78,rust/src/bin/relay-native-job/context_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+prompt,--output,PARTIAL,src/cli-help.ts:78,rust/src/bin/relay-native-job/context_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 prompt,--plan-id,MISSING,src/cli-help.ts:78,,Unimplemented or no verified Rust-native parameter parity
-prompt,--repo,MISSING,src/cli-help.ts:83,,Unimplemented or no verified Rust-native parameter parity
-prompt,--task-id,MISSING,src/cli-help.ts:79,,Unimplemented or no verified Rust-native parameter parity
+prompt,--repo,PARTIAL,src/cli-help.ts:83,rust/src/bin/relay-native-job/context_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+prompt,--task-id,PARTIAL,src/cli-help.ts:79,rust/src/bin/relay-native-job/context_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 reconcile,--events,MISSING,src/cli-help.ts:309,,Unimplemented or no verified Rust-native parameter parity
 reconcile,--file,MISSING,src/cli-help.ts:307,,Unimplemented or no verified Rust-native parameter parity
 reconcile,--host,MISSING,src/cli.ts:438 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
@@ -391,40 +391,40 @@ task unblock,--reason,PARTIAL,src/cli.ts:47 (source token; confirm branch),rust/
 task unblock,--repo,PARTIAL,src/cli.ts:41 (source token; confirm branch),rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 task unblock,--response,MISSING,src/cli.ts:51 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
 task unblock,--task-id,PARTIAL,src/cli.ts:20 (source token; confirm branch),rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
-task update,--adapter,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
-task update,--agent,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
-task update,--agent-graph,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
-task update,--agent-graph-file,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
-task update,--attachments,MISSING,src/cli.ts:192 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
-task update,--capabilities,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
-task update,--chatgpt-project,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
-task update,--chatgpt-tab-close-policy,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
-task update,--clear-routing,MISSING,src/cli-help.ts:212,,Unimplemented or no verified Rust-native parameter parity
+task update,--adapter,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+task update,--agent,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+task update,--agent-graph,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+task update,--agent-graph-file,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+task update,--attachments,PARTIAL,src/cli.ts:192 (source token; confirm branch),rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+task update,--capabilities,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+task update,--chatgpt-project,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+task update,--chatgpt-tab-close-policy,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+task update,--clear-routing,PARTIAL,src/cli-help.ts:212,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 task update,--content-only,RETIRED,src/cli.ts:184 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
-task update,--cwd,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
-task update,--dependency-validity,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
-task update,--deps,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
-task update,--draft,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--cwd,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+task update,--dependency-validity,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+task update,--deps,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+task update,--draft,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 task update,--id,PARTIAL,src/cli-help.ts:209,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 task update,--input,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 task update,--input-file,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
-task update,--max-attempts,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
-task update,--model,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--max-attempts,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+task update,--model,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 task update,--no-content-only,RETIRED,src/cli.ts:184 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
-task update,--parent,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--parent,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 task update,--priority,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
-task update,--profile,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
-task update,--project,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
-task update,--provider,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
-task update,--queue,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
-task update,--reasoning,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--profile,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+task update,--project,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+task update,--provider,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+task update,--queue,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
+task update,--reasoning,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 task update,--repo,PARTIAL,src/cli-help.ts:209,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 task update,--shortcut-execution,RETIRED,src/cli.ts:184 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
 task update,--shortcut-local,RETIRED,src/cli.ts:36 (source token; confirm branch),,Node handler explicitly rejects deprecated or task-only option
-task update,--store-dir,MISSING,src/cli-support.ts:55 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity
+task update,--store-dir,PARTIAL,src/cli-support.ts:55 (source token; confirm branch),rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 task update,--story-size,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 task update,--task-id,PARTIAL,src/cli-help.ts:209,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
-task update,--timeout,MISSING,src/cli-help.ts:210,,Unimplemented or no verified Rust-native parameter parity
+task update,--timeout,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 task update,--title,PARTIAL,src/cli-help.ts:210,rust/src/bin/relay-native-job/task_cli.rs,"Native option exists, but Node-compatible semantics not fully verified"
 workflow action,--action,PARTIAL,src/cli-projection.ts:9 (source token; confirm branch),rust/src/bin/relay-native-job/workflow.rs,Native Rust workflow action delegates Task retry/cancel/unblock to canonical Graph Task CLI (isolated E2E); other Actions and live ingress remain unported
 workflow action,--context,MISSING,src/cli.ts:52 (source token; confirm branch),,Unimplemented or no verified Rust-native parameter parity

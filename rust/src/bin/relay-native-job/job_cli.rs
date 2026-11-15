@@ -4,9 +4,9 @@
 use agents_relay_rust::authority::{NativeObjectiveJobSpec, RelayAuthority};
 use agents_relay_rust::graph::{Decision, Graph, GraphInput};
 use agents_relay_rust::native_daemon::isolated_store_root;
-use agents_relay_rust::native_job::{DagJobRequest, create_dag_job};
+use agents_relay_rust::native_job::{create_dag_job, DagJobRequest};
 use agents_relay_rust::supervised_script::after_time;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -83,9 +83,6 @@ fn ensure_isolated(db: &Path) -> Result<(), String> {
     isolated_store_root(db).map(|_| ())
 }
 pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
-    if action == "unblock" {
-        return Err("job unblock is incomplete: native Troubleshooter response authorization and recovery effects are not implemented".into());
-    }
     if action == "create" {
         for flag in [
             "--shortcut-local",
@@ -146,15 +143,113 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
         std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live");
     if live_socket_mode {
         agents_relay_rust::native_daemon::live_store_root(&path)?;
-        if action != "create" {
-            return Err(format!(
-                "live Job {action} is not yet supported by the native daemon control socket"
-            ));
+        if !matches!(
+            action,
+            "create" | "update" | "pause" | "resume" | "cancel" | "unblock"
+        ) {
+            return Err(format!("unsupported native live Job action {action}"));
         }
     } else {
         ensure_isolated(&path)?;
     }
     let (repo, id) = identity(&o, action == "create")?;
+    if live_socket_mode && action != "create" {
+        // Explicit per-verb option allowlist: no unported CLI parameter can
+        // vanish when handing off a mutation to the daemon.
+        let allowed: &[&str] = match action {
+            "update" => &[
+                "--db",
+                "--id",
+                "--job-id",
+                "--repo",
+                "--title",
+                "--objective",
+                "--objective-file",
+                "--project-root",
+                "--project-path",
+                "--priority",
+                "--review",
+                "--no-review",
+                "--auto-merge",
+                "--no-auto-merge",
+            ],
+            "pause" | "resume" => &["--db", "--id", "--job-id", "--repo"],
+            "cancel" | "unblock" => &["--db", "--id", "--job-id", "--repo", "--reason"],
+            _ => unreachable!(),
+        };
+        if let Some(key) = o.keys().find(|key| !allowed.contains(&key.as_str())) {
+            return Err(format!(
+                "live Job {action} does not support {key}; refusing to discard the option"
+            ));
+        }
+        if o.contains_key("--review") && o.contains_key("--no-review")
+            || o.contains_key("--auto-merge") && o.contains_key("--no-auto-merge")
+            || o.contains_key("--objective") && o.contains_key("--objective-file")
+        {
+            return Err("conflicting Job update flags".into());
+        }
+        let mut changes = serde_json::Map::new();
+        if action == "update" {
+            for (flag, key) in [
+                ("--title", "title"),
+                ("--objective", "objective"),
+                ("--project-root", "projectRoot"),
+                ("--project-path", "projectPath"),
+                ("--priority", "priority"),
+            ] {
+                if let Some(value) = o.get(flag) {
+                    changes.insert(key.into(), json!(value));
+                }
+            }
+            if let Some(file) = o.get("--objective-file") {
+                let canonical = Path::new(file)
+                    .canonicalize()
+                    .map_err(|e| format!("objective-file: {e}"))?;
+                let store = isolated_store_root(&path)?;
+                if !canonical.is_file() || !canonical.starts_with(&store) {
+                    return Err("objective file must be inside the Rust live store root".into());
+                }
+                let contents = std::fs::read_to_string(&canonical).map_err(|e| e.to_string())?;
+                changes.insert("objective".into(), json!(contents));
+            }
+            for (positive, negative, key) in [
+                ("--review", "--no-review", "reviewEnabled"),
+                ("--auto-merge", "--no-auto-merge", "autoMerge"),
+            ] {
+                if o.contains_key(positive) {
+                    changes.insert(key.into(), json!(true));
+                }
+                if o.contains_key(negative) {
+                    changes.insert(key.into(), json!(false));
+                }
+            }
+            if changes.is_empty() {
+                return Err("job update requires at least one mutable option".into());
+            }
+        }
+        return agents_relay_rust::native_control::request(
+            &path,
+            &agents_relay_rust::native_control::ControlRequest {
+                version: 1,
+                operation: format!("job.{action}"),
+                repository: repo.into(),
+                id: id.into(),
+                title: String::new(),
+                objective: String::new(),
+                project_root: String::new(),
+                project_path: None,
+                priority: String::new(),
+                review_enabled: false,
+                auto_merge: false,
+                changes: if action == "update" {
+                    Some(Value::Object(changes))
+                } else {
+                    None
+                },
+                reason: o.get("--reason").cloned(),
+            },
+        );
+    }
     if action == "create" {
         if o.contains_key("--review") && o.contains_key("--no-review")
             || o.contains_key("--auto-merge") && o.contains_key("--no-auto-merge")
@@ -187,7 +282,22 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
             return Err("--project-root must be absolute".into());
         }
         if live_socket_mode {
-            let supported = ["--db", "--id", "--job-id", "--repo", "--title", "--objective", "--objective-file", "--project-root", "--project-path", "--priority", "--review", "--no-review", "--auto-merge", "--no-auto-merge"];
+            let supported = [
+                "--db",
+                "--id",
+                "--job-id",
+                "--repo",
+                "--title",
+                "--objective",
+                "--objective-file",
+                "--project-root",
+                "--project-path",
+                "--priority",
+                "--review",
+                "--no-review",
+                "--auto-merge",
+                "--no-auto-merge",
+            ];
             if let Some(key) = o.keys().find(|key| !supported.contains(&key.as_str())) {
                 return Err(format!("live job create {key} requires a daemon control protocol extension; refusing to discard field"));
             }
@@ -222,11 +332,14 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
                             .into(),
                         review_enabled: !o.contains_key("--no-review"),
                         auto_merge: !o.contains_key("--no-auto-merge"),
+                        changes: None,
+                        reason: None,
                     },
                 );
             }
             #[cfg(not(unix))]
             return Err("native daemon control socket requires Unix".into());
+        }
 
         if o.contains_key("--continue-kind") != o.contains_key("--continue-target") {
             return Err("--continue-kind and --continue-target must be supplied together".into());
@@ -367,7 +480,6 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
             if !candidate.starts_with(&canonical_project) {
                 return Err("--project-path must resolve inside --project-root".into());
             }
-
         }
         let now = agents_relay_rust::supervised_script::current_time();
         let mut a = RelayAuthority::open_existing(&path)?;
@@ -398,6 +510,9 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
         return Ok(json!({"job":job,"created":true}));
     }
     if !matches!(action, "update" | "pause" | "resume" | "cancel") {
+        if action == "unblock" {
+            return Err("job unblock requires native daemon-controlled Graph authority".into());
+        }
         return Err(format!("unsupported native Job action {action}"));
     }
     let mut a = RelayAuthority::open_existing(&path)?;
@@ -528,19 +643,15 @@ mod create_tests {
         );
         assert_eq!(job["tasks"][0]["state"], "QUEUED");
         assert_eq!(job["tasks"][0]["input"], original);
-        assert!(
-            job["tasks"][0]["agentGraph"]
-                .as_str()
-                .unwrap()
-                .contains("agent:join")
-        );
+        assert!(job["tasks"][0]["agentGraph"]
+            .as_str()
+            .unwrap()
+            .contains("agent:join"));
         assert_eq!(job["tasks"].as_array().unwrap().len(), 1);
         let initial = argv(&["--initial-plan"]);
-        assert!(
-            run("create", &initial)
-                .unwrap_err()
-                .contains("Coordinator starts directly")
-        );
+        assert!(run("create", &initial)
+            .unwrap_err()
+            .contains("Coordinator starts directly"));
         let incomplete = vec![
             "--db".into(),
             db.to_string_lossy().into_owned(),
@@ -553,11 +664,9 @@ mod create_tests {
             "--coordinator-input".into(),
             "input".into(),
         ];
-        assert!(
-            run("create", &incomplete)
-                .unwrap_err()
-                .contains("Coordinator requires")
-        );
+        assert!(run("create", &incomplete)
+            .unwrap_err()
+            .contains("Coordinator requires"));
         let unsupported = vec![
             "--db".into(),
             db.to_string_lossy().into_owned(),
@@ -567,11 +676,9 @@ mod create_tests {
             "x".into(),
             "--shortcut-local".into(),
         ];
-        assert!(
-            run("create", &unsupported)
-                .unwrap_err()
-                .contains("deprecated or removed")
-        );
+        assert!(run("create", &unsupported)
+            .unwrap_err()
+            .contains("deprecated or removed"));
         std::env::remove_var("RELAY_RUST_EXPERIMENTAL_TEST_ONLY");
     }
 }
