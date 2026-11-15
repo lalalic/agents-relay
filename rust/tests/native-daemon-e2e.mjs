@@ -26,6 +26,14 @@ function task(id,jobId,deps=[],state='QUEUED'){
  attempt:0,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,
  error:null,result:null,timeoutMs:1200,createdAt:t0,updatedAt:t0};
 }
+function terminalRecovery(id,jobId,parentTaskId,recoveryForAttempt,state='SUCCEEDED'){
+ return {...task(id,jobId,[],state),title:'Troubleshooter',agentName:'troubleshooter',adapter:'model',
+  capabilities:['model'],parentTaskId,recoveryForAttempt,attempt:1,maxAttempts:3,
+  error:'old recovery error',failureReason:'old recovery failure',leaseOwner:'old-owner',
+  leaseExpiresAt:'2026-11-13T20:00:01.000Z',executionId:'old-recovery-execution',
+  executionHistory:[{id:'old-recovery-execution',attempt:1,startedAt:t0}],
+  result:{data:{summary:'preserved terminal recovery evidence'}}};
+}
 async function save(store,root,id,tasks){
  await store.saveJob({id,title:'native daemon '+id,repository:'example',projectRoot:root,prNumber:0,
   state:'ACTIVE',reviewEnabled:true,createdAt:t0,updatedAt:t0,tasks});
@@ -106,6 +114,51 @@ test('daemon refuses production or unmarked SQLite before any worker launch',asy
   const sql=new DatabaseSync(f.db);
   assert.equal(sql.prepare('SELECT count(*) AS n FROM sqlite_master WHERE name=\'workflow_action_trace\'').get().n,0);
   sql.close();
+ }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
+});
+test('daemon reopens eligible Troubleshooter once and rejects stale or wrong lineage without false success',async()=>{
+ const f=fixture();let store;
+ try{
+  const eligible={...task('101','91',[],'FAILED'),attempt:2,error:'original failure'};
+  const stale={...task('201','91',[],'FAILED'),attempt:2,error:'stale recovery episode'};
+  const wrongLineage={...task('301','91',[],'FAILED'),attempt:2,error:'wrong recovery owner'};
+  const missingEpisode={...task('401','91',[],'FAILED'),attempt:2,error:'missing recovery episode'};
+  const unboundRecovery=terminalRecovery('402','91','401',1);
+  delete unboundRecovery.recoveryForAttempt;
+  store=new SQLiteRelayStore(f.db);
+  await save(store,f.dir,'91',[eligible,terminalRecovery('102','91','101',1),
+   stale,terminalRecovery('202','91','201',2),wrongLineage,terminalRecovery('302','91','999',1),
+   missingEpisode,unboundRecovery]);
+  store.close();store=null;
+
+  const first=once(f);
+  assert.equal(first.tasksReopened,1,JSON.stringify(first));
+  assert.equal(first.tasksClaimed,0,'reopened Troubleshooter must remain queued without a worker receipt');
+  store=new SQLiteRelayStore(f.db);
+  const job=await store.loadJob('91');
+  assert.deepEqual(job.tasks.map(t=>t.state),['FAILED','QUEUED','FAILED','SUCCEEDED','FAILED','SUCCEEDED','FAILED','SUCCEEDED']);
+  assert.equal(job.tasks[0].state,'FAILED','original failure must remain failed');
+  assert.equal(job.tasks[1].recoveryForAttempt,2);
+  assert.equal(job.tasks[1].result.data.summary,'preserved terminal recovery evidence');
+  assert.deepEqual(job.tasks[1].executionHistory,[{id:'old-recovery-execution',attempt:1,startedAt:t0}]);
+  assert.equal(job.tasks[1].error,null);
+  assert.equal(job.tasks[1].failureReason,undefined);
+  assert.equal(job.tasks[1].leaseOwner,null);
+  assert.equal(job.tasks[1].leaseExpiresAt,null);
+  assert.equal(job.tasks[1].executionId,null);
+  assert.equal(job.tasks[3].recoveryForAttempt,2,'stale episode must remain untouched');
+  assert.equal(job.tasks[5].state,'SUCCEEDED','wrong parent identity must remain untouched');
+  assert.equal(job.tasks[7].state,'SUCCEEDED','missing recovery episode must remain untouched');
+  store.close();store=null;
+
+  const restart=once(f);
+  assert.equal(restart.tasksReopened,0,'restart must not reopen the same failure episode again');
+  assert.equal(restart.tasksClaimed,0,'no process receipt may complete the recovery');
+  const sql=new DatabaseSync(f.db);
+  assert.equal(sql.prepare("SELECT count(*) AS n FROM workflow_event_outbox WHERE event_id='troubleshooter.reopened'").get().n,1);
+  assert.equal(sql.prepare("SELECT count(*) AS n FROM workflow_event_outbox WHERE event_id='task.completed'").get().n,0);
+  sql.close();
+  console.log('Troubleshooter recovery: Graph-selected reopen persisted once; stale/wrong lineage and false completion rejected');
  }finally{store?.close();rmSync(f.dir,{recursive:true,force:true});}
 });
 test('SIGKILL daemon -> helper kills owned worker -> restart marks proven expired execution FAILED once',async()=>{

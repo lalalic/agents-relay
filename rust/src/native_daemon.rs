@@ -37,6 +37,7 @@ pub struct NativeTick {
     pub tasks_succeeded: usize,
     pub tasks_failed: usize,
     pub tasks_recovered: usize,
+    pub tasks_reopened: usize,
     pub reviews_resumed: usize,
     pub jobs_completed: usize,
     pub blocked: Vec<String>,
@@ -179,6 +180,10 @@ pub(crate) fn tick_with_stop(
             continue;
         }
         resume_approved_native_reviews(&mut authority, &id, &mut report)?;
+        let reopen_at = after_time(job["updatedAt"].as_str().ok_or("Job timestamp missing")?)?;
+        report.tasks_reopened += authority
+            .reconcile_troubleshooter_reopens(&id, &reopen_at)?
+            .len();
         reconcile_native_dag(&mut authority, &id, &root, &agents, &mut report)?;
         job = authority
             .read_job(&id)?

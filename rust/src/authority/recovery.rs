@@ -4,10 +4,11 @@
 //! record or uncertain process never gets silently retried or marked complete.
 use super::process::query_record;
 use super::{probe_process, ProcessProbe, RelayAuthority, WorkflowEvent};
-use crate::graph::{Decision, Graph, GraphInput};
+use crate::dispatch::ActionPorts;
+use crate::graph::{ActionDecision, Decision, Graph, GraphInput};
 use crate::lifecycle::apply_pure_task_actions;
 use crate::recovery::inspect_expired_execution;
-use chrono::DateTime;
+use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -31,6 +32,36 @@ pub struct ReopenedRecovery {
     pub attempt: i64,
     pub state: String,
     pub event_key: String,
+}
+
+struct RecoveryReopenPorts<'a> {
+    task: &'a mut Value,
+    at: &'a str,
+}
+
+impl ActionPorts for RecoveryReopenPorts<'_> {
+    fn persist_transition(&mut self, source: &str, target: &str) -> Result<(), String> {
+        if self.task.get("state").and_then(Value::as_str) != Some(source) {
+            return Err("Troubleshooter state changed during recovery reopen".into());
+        }
+        self.task["state"] = Value::String(target.into());
+        self.task["updatedAt"] = Value::String(self.at.into());
+        Ok(())
+    }
+
+    fn execute_action(&mut self, action_id: &str, input: &GraphInput) -> Result<Value, String> {
+        let action = ActionDecision {
+            id: action_id.into(),
+            input: input.clone(),
+            emitted_events: vec![],
+        };
+        apply_pure_task_actions(self.task, &[action])?;
+        Ok(json!({"payloads":{}}))
+    }
+
+    fn publish_event(&mut self, _event_id: &str, _payload: &Value) -> Result<(), String> {
+        Err("recovery reopen Graph has no emitted events".into())
+    }
 }
 
 impl RelayAuthority {
@@ -92,16 +123,26 @@ impl RelayAuthority {
                 .and_then(Value::as_str)
                 .ok_or("Troubleshooter state missing")?;
             let graph = Graph::parse(include_str!("../../../workflow/task-lifecycle.mmd"))?;
-            let decision = graph.decide(
-                state,
-                GraphInput {
-                    transport: "event".into(),
-                    id: "recovery.reopen".into(),
-                    payload: json!({"taskId": recovery_task_id, "originalTaskId": original_task_id, "attempt": attempt}),
-                },
+            let input = GraphInput {
+                transport: "event".into(),
+                id: "recovery.reopen".into(),
+                payload: json!({"taskId": recovery_task_id, "originalTaskId": original_task_id, "attempt": attempt}),
+            };
+            let state = state.to_string();
+            let mut next = prior.clone();
+            let entry = next
+                .get_mut("tasks")
+                .and_then(Value::as_array_mut)
+                .and_then(|items| items.iter_mut().find(|task| task["id"] == recovery_task_id))
+                .ok_or("Troubleshooter disappeared during reopen")?;
+            let mut ports = RecoveryReopenPorts { task: entry, at };
+            let dispatched = graph.dispatch(
+                &state,
+                input,
                 &HashMap::from([("troubleshooterRecovery".into(), true)]),
+                &mut ports,
             )?;
-            let Decision::Accepted { target, actions, .. } = decision else {
+            let Decision::Accepted { target, actions, .. } = dispatched.decision else {
                 return Err("Task Graph denied Troubleshooter recovery reopen".into());
             };
             if target != "QUEUED"
@@ -115,16 +156,15 @@ impl RelayAuthority {
             }
 
             let event_key = format!("recovery-reopen:{job_id}:{recovery_task_id}:{attempt}");
-            let mut next = prior.clone();
             let entry = next
                 .get_mut("tasks")
                 .and_then(Value::as_array_mut)
                 .and_then(|items| items.iter_mut().find(|task| task["id"] == recovery_task_id))
                 .ok_or("Troubleshooter disappeared during reopen")?;
-            apply_pure_task_actions(entry, &actions)?;
-            entry["state"] = json!(target);
+            if entry["state"] != target {
+                return Err("Graph dispatcher did not persist recovery transition".into());
+            }
             entry["recoveryForAttempt"] = json!(attempt);
-            entry["updatedAt"] = json!(at);
             next["updatedAt"] = json!(at);
             reopened = Some(ReopenedRecovery {
                 job_id: job_id.into(),
@@ -143,6 +183,102 @@ impl RelayAuthority {
             }]))
         })?;
         reopened.ok_or_else(|| "Troubleshooter recovery reopen did not commit".into())
+    }
+
+    /// Reconcile pending Troubleshooter reopens from durable Task state. The
+    /// Graph dispatcher selects and applies each `recovery.reopen` transition;
+    /// the transactional effect rechecks the exact lineage and episode.
+    pub fn reconcile_troubleshooter_reopens(
+        &mut self,
+        job_id: &str,
+        at: &str,
+    ) -> Result<Vec<ReopenedRecovery>, String> {
+        let Some(job) = self.read_job(job_id)? else {
+            return Err(format!("Unknown Job {job_id}"));
+        };
+        if job.get("state").and_then(Value::as_str) != Some("ACTIVE")
+            || job.get("pause").is_some_and(|value| !value.is_null())
+        {
+            return Ok(vec![]);
+        }
+        let tasks = job
+            .get("tasks")
+            .and_then(Value::as_array)
+            .ok_or("Job Task snapshot missing")?;
+        let mut candidates = Vec::new();
+        for original in tasks {
+            if original.get("kind").and_then(Value::as_str) == Some("planner")
+                || original.get("agentName").and_then(Value::as_str) == Some("troubleshooter")
+                || original.get("state").and_then(Value::as_str) != Some("FAILED")
+            {
+                continue;
+            }
+            let Some(original_id) = original.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            let mut recoveries = tasks
+                .iter()
+                .filter(|candidate| {
+                    candidate.get("agentName").and_then(Value::as_str) == Some("troubleshooter")
+                        && candidate.get("parentTaskId").and_then(Value::as_str)
+                            == Some(original_id)
+                })
+                .collect::<Vec<_>>();
+            if recoveries.iter().any(|candidate| {
+                matches!(
+                    candidate.get("state").and_then(Value::as_str),
+                    Some("DRAFT" | "QUEUED" | "RUNNING" | "BLOCKED")
+                )
+            }) {
+                continue;
+            }
+            recoveries.sort_by_key(|candidate| {
+                candidate
+                    .get("recoveryForAttempt")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(-1)
+            });
+            let Some(recovery) = recoveries.last() else {
+                continue;
+            };
+            if !matches!(
+                recovery.get("state").and_then(Value::as_str),
+                Some("SUCCEEDED" | "CANCELLED")
+            ) {
+                continue;
+            }
+            let Some(attempt) = original.get("attempt").and_then(Value::as_i64) else {
+                continue;
+            };
+            let Some(recovered_attempt) =
+                recovery.get("recoveryForAttempt").and_then(Value::as_i64)
+            else {
+                continue;
+            };
+            if recovered_attempt >= attempt {
+                continue;
+            }
+            let Some(recovery_id) = recovery.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            candidates.push((original_id.to_string(), recovery_id.to_string()));
+        }
+        let mut reopened = Vec::new();
+        let mut current_at = at.to_string();
+        for (original_id, recovery_id) in candidates {
+            let result = self.reopen_troubleshooter_recovery(
+                job_id,
+                &original_id,
+                &recovery_id,
+                &current_at,
+            )?;
+            reopened.push(result);
+            current_at = (DateTime::parse_from_rfc3339(&current_at)
+                .map_err(|_| "invalid recovery reopen timestamp")?
+                + ChronoDuration::milliseconds(1))
+            .to_rfc3339_opts(SecondsFormat::Millis, true);
+        }
+        Ok(reopened)
     }
 
     /// Recovery is never a Worker retry. It records unknown outcome as FAILED,
