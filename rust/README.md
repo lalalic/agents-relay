@@ -62,6 +62,24 @@ A Coordinator DAG may be created from a project-local Mermaid file and
 execution-bound input file. Graph decisions are made from the canonical
 workflow/job-lifecycle.mmd, not a second Rust-only state machine.
 
+The `relay-native-job task create` action adds a guarded ordinary Task to an
+existing Job in that same isolated SQLite authority. It accepts inline or
+root-local file input, task-pr/file output, priority, story size, parent and
+dependency metadata. The Task Lifecycle Graph selects its initial state from
+dependency facts; the Job Lifecycle Graph activates a DRAFT Job. IDs and the
+snapshot commit in one SQLite transaction. The command requires an explicit
+`--db` and `RELAY_RUST_EXPERIMENTAL_TEST_ONLY=isolated-test`; it rejects the
+Rust live namespace and does not schedule workers. This bounded mutation does
+not provide production CLI/API or service parity.
+
+Example:
+
+```sh
+relay-native-job task create --db /tmp/relay-rust-authority-demo/relay.sqlite \\
+  --job-id 101 --input-file /tmp/relay-rust-authority-demo/task.md \\
+  --output task-pr --story-size M --priority P1
+```
+
 The native daemon closes a Job only when all tasks succeeded, the
 Job explicitly disabled both Final Review and auto-merge, there are no active
 interactive Review/Plan/resolution states, and the canonical Job Graph permits
