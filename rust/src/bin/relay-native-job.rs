@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 
 #[path = "relay-native-job/agent_cli.rs"]
 mod agent_cli;
+#[path = "relay-native-job/context_cli.rs"]
+mod context_cli;
 #[path = "relay-native-job/foreground.rs"]
 mod foreground;
 #[path = "relay-native-job/job_cli.rs"]
@@ -189,6 +191,9 @@ fn run() -> Result<(), String> {
         command,
         "artifact" | "context" | "prompt" | "migrate-local-repositories"
     ) {
+        if matches!(command, "context" | "prompt") {
+            return context_cli::dispatch(&args);
+        }
         return platform_cli::dispatch(&args);
     }
     if command == "workflow" {
