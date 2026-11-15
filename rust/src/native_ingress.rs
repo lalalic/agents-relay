@@ -1373,6 +1373,7 @@ mod tests {
 
     #[test]
     fn authenticated_nats_session_delivers_wait_and_bound_review_decision() {
+        use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat};
         use std::net::TcpListener;
         use std::thread;
         use std::time::Instant;
@@ -1387,12 +1388,15 @@ mod tests {
         std::env::remove_var("AGENTS_RELAY_NATS_USERNAME");
         std::env::remove_var("AGENTS_RELAY_NATS_PASSWORD");
         let (_dir, path, mut store) = running();
-        let bind_at = crate::supervised_script::after_time(
-            store.read_job("91").unwrap().unwrap()["updatedAt"]
-                .as_str()
-                .unwrap(),
-        )
-        .unwrap();
+        // The ingress checks that an event timestamp is no later than its
+        // receipt timestamp. Keep these wire fixtures comfortably in the
+        // past so scheduling jitter cannot turn them into future events.
+        let event_time = |seconds_ago: i64| {
+            let now = DateTime::parse_from_rfc3339(&current_time()).unwrap();
+            (now - ChronoDuration::seconds(seconds_ago))
+                .to_rfc3339_opts(SecondsFormat::Millis, true)
+        };
+        let bind_at = event_time(60);
         store
             .commit_job("91", &bind_at, |previous| {
                 let mut job = previous.clone();
@@ -1404,14 +1408,14 @@ mod tests {
                 Ok((job, vec![]))
             })
             .unwrap();
-        let waiting_at = crate::supervised_script::after_time(&bind_at).unwrap();
+        let waiting_at = event_time(30);
         let waiting = json!({
             "event_id":"waiting-wire-1","type":"task.interactive_waiting",
             "job_id":"91","task_id":"101","timestamp":waiting_at,
             "source":{"id":"job/91/task/101/execution/ingress-exec","component":"interactive-review"},
             "data":{}
         });
-        let decision_at = crate::supervised_script::after_time(&waiting_at).unwrap();
+        let decision_at = event_time(15);
         let decision = json!({
             "event_id":"decision-wire-1","type":"task.interactive_decision",
             "job_id":"91","task_id":"101","timestamp":decision_at,
