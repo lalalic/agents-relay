@@ -137,7 +137,7 @@ fn read_bounded_output(path: &Path) -> Result<Vec<u8>, String> {
     }
     let file = OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
         .open(path)
         .map_err(|error| format!("escalation executor output unavailable: {error}"))?;
     let metadata = file.metadata().map_err(|error| error.to_string())?;
@@ -435,6 +435,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(symlink_result.state, "technical_failure");
+        let fifo_result = run_configured_escalation(
+            &request,
+            Some("[\"/bin/sh\",\"-c\",\"rm -f \\\"$(dirname \\\"$1\\\")/result.json\\\"; mkfifo \\\"$(dirname \\\"$1\\\")/result.json\\\"\"]"),
+        )
+        .unwrap();
+        assert_eq!(fifo_result.state, "technical_failure");
         let mut invalid_cwd = request;
         invalid_cwd.cwd = Some(
             std::env::temp_dir().join(format!("missing-escalation-cwd-{}", uuid::Uuid::new_v4())),
