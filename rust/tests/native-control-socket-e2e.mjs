@@ -75,7 +75,7 @@ test('native control socket is single-writer, authenticated, allowlisted, and re
   const invalid=invoke(f,createArgs(f,['--priority','P8']));
   assert.equal(invalid.status,2,invalid.stderr);assert.match(invalid.stderr,/priority must be P0, P1, P2, or P3/);
   const blocked=invoke(f,['job','update','--db',f.db,'--job-id','861','--title','No direct writes']);
-  assert.equal(blocked.status,2);assert.match(blocked.stderr,/only job create through the daemon control socket/);
+  assert.equal(blocked.status,2);assert.match(blocked.stderr,/live Job update is not yet supported by the native daemon control socket/);
   const sql=new DatabaseSync(f.db);assert.equal(sql.prepare('SELECT count(*) AS n FROM job_snapshot').get().n,0);sql.close();
   const created=invoke(f,createArgs(f));assert.equal(created.status,0,created.stderr);assert.equal(JSON.parse(created.stdout).created,true);
   assert.deepEqual(readJob(f.db).repository,'agents-relay');

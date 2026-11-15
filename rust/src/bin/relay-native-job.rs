@@ -125,13 +125,13 @@ fn run() -> Result<(), String> {
                 .into(),
         );
     };
+    // Production Rust CLI reads and attached foreground monitoring remain
+    // functional while the daemon owns the single-writer lock. Legacy direct
+    // mutation verbs never gain authority merely from RELAY_RUST_LIVE_MODE.
     if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live")
-        && !(command == "job" && args.get(1).is_some_and(|action| action == "create"))
+        && matches!(command, "init" | "create" | "activate" | "update")
     {
-        return Err(
-            "native live mode currently permits only job create through the daemon control socket"
-                .into(),
-        );
+        return Err("legacy direct Job mutation is forbidden in Rust live mode; use daemon-owned native Job control".into());
     }
     if command == "job" && args.get(1).is_some_and(|action| action == "merge") {
         return Err("job merge is retired: local Git merge is a Graph-owned effect; do not request GitHub PR merge via CLI".into());

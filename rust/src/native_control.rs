@@ -214,6 +214,12 @@ impl NativeControlServer {
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(false),
             Err(e) => return Err(format!("control socket accept failed: {e}")),
         };
+        // Listener is nonblocking, but an accepted client may inherit the flag
+        // on supported Unix platforms. Switch this individual, timeout-bounded
+        // connection to blocking I/O before reading its first request byte.
+        stream
+            .set_nonblocking(false)
+            .map_err(|e| format!("configure accepted control socket: {e}"))?;
         let expected_uid = unsafe { libc::geteuid() };
         let response = match peer_uid(&stream) {
             Ok(uid) if peer_is_authorized(uid, expected_uid) => match read_request(&mut stream) {
