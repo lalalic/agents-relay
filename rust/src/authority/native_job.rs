@@ -7,6 +7,19 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
+pub struct NativeObjectiveJobSpec<'a> {
+    pub repository: &'a str,
+    pub id: Option<&'a str>,
+    pub title: &'a str,
+    pub objective: &'a str,
+    pub project_root: &'a str,
+    pub project_path: Option<&'a str>,
+    pub priority: &'a str,
+    pub review_enabled: bool,
+    pub auto_merge: bool,
+    pub at: &'a str,
+}
+
 pub struct NativeJobSpec<'a> {
     pub repository: &'a str,
     pub title: &'a str,
@@ -23,6 +36,68 @@ pub struct NativeCreatedJob {
     pub created: bool,
 }
 impl RelayAuthority {
+    pub fn create_native_objective_job(
+        &mut self,
+        spec: NativeObjectiveJobSpec<'_>,
+    ) -> Result<Value, String> {
+        if spec.repository.is_empty()
+            || spec.repository.len() > 100
+            || !spec
+                .repository
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+        {
+            return Err("invalid repository identity".into());
+        }
+        if spec.title.trim().is_empty()
+            || spec.title.len() > 200
+            || spec.objective.trim().is_empty()
+            || spec.objective.len() > 1_048_576
+        {
+            return Err("Job title/objective must be nonempty and within size limits".into());
+        }
+        if !matches!(spec.priority, "P0" | "P1" | "P2" | "P3") {
+            return Err("--priority must be P0, P1, P2, or P3".into());
+        }
+        chrono::DateTime::parse_from_rfc3339(spec.at).map_err(|_| "invalid Job timestamp")?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
+        let job_id = if let Some(id) = spec.id {
+            if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) || id == "0" {
+                return Err("--id must be a positive decimal Job ID".into());
+            }
+            id.to_owned()
+        } else {
+            allocate_entity_id_in_tx(&tx, spec.repository, EntityKind::Job, None, &HashSet::new())?
+        };
+        let exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM job_snapshot WHERE job_id=?1)",
+                [&job_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if exists {
+            return Err("Job ID already exists".into());
+        }
+        let job = json!({"id":job_id,"title":spec.title,"objective":spec.objective,"repository":spec.repository,
+            "projectRoot":spec.project_root,"projectPath":spec.project_path,"priority":spec.priority,
+            "state":"DRAFT","runtimeStatus":"DRAFT","prNumber":0,"reviewEnabled":spec.review_enabled,
+            "autoMerge":spec.auto_merge,"tasks":[],"plans":[],"createdAt":spec.at,"updatedAt":spec.at});
+        tx.execute(
+            "INSERT INTO job_snapshot(job_id,json,updated_at) VALUES(?1,?2,?3)",
+            params![
+                job_id,
+                serde_json::to_string(&job).map_err(|e| e.to_string())?,
+                spec.at
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(job)
+    }
     pub fn create_native_dag_job(
         &mut self,
         spec: NativeJobSpec<'_>,

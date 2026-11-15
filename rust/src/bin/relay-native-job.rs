@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 
 #[path = "relay-native-job/foreground.rs"]
 mod foreground;
+#[path = "relay-native-job/job_cli.rs"]
+mod job_cli;
 #[path = "relay-native-job/node_compat.rs"]
 mod node_compat;
 #[path = "relay-native-job/planner_cli.rs"]
@@ -292,6 +294,24 @@ fn run() -> Result<(), String> {
             return node_compat::dispatch(&[]);
         }
         return foreground::run(&args[2..]);
+    }
+    if command == "job"
+        && args.get(1).is_some_and(|action| {
+            matches!(
+                action.as_str(),
+                "create" | "update" | "pause" | "resume" | "cancel" | "unblock"
+            )
+        })
+    {
+        if args[2..].iter().any(|arg| arg == "--help" || arg == "-h") {
+            return node_compat::dispatch(&[]);
+        }
+        let value = job_cli::run(args[1].as_str(), &args[2..])?;
+        println!(
+            "{}",
+            serde_json::to_string(&value).map_err(|e| e.to_string())?
+        );
+        return Ok(());
     }
     if args.iter().any(|a| a == "--help" || a == "-h") {
         return node_compat::dispatch(&[]);

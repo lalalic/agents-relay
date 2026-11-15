@@ -10,7 +10,7 @@ pub use escalation::{TroubleshooterEscalation, TroubleshooterEscalationRequest};
 mod ledger;
 mod native_job;
 mod native_task;
-pub use native_job::{NativeCreatedJob, NativeJobSpec};
+pub use native_job::{NativeCreatedJob, NativeJobSpec, NativeObjectiveJobSpec};
 pub use native_task::{NativeCreatedTask, NativeTaskSpec};
 mod process;
 mod projection;
