@@ -160,8 +160,9 @@ test('Live Rust Dashboard reads daemon-owned Jobs, durable events and authentica
   assert.equal(noMatch.total,0);
   assert.deepEqual(noMatch.jobs,[]);
   const html=await(await fetch(base+'/')).text();
-  assert.match(html,/Rust Relay Live/);
-  assert.match(html,/fetch\('api\/jobs'/);
+  assert.match(html,/Agents Relay Console/);
+  assert.match(html,/window\.__RUST_BOOTSTRAP__/);
+  for(const tab of ['jobs','usage','rules','qa','graphs']) assert.match(html,new RegExp('id="'+tab+'-tab"'));
   assert.equal((await fetch(base+'/api/jobs',{method:'POST'})).status,405);
   assert.equal((await fetch(base+'/api/jobs?q=%ZZ')).status,400);
   assert.equal((await fetch(base+'/api/jobs/%2e%2e')).status,404);
@@ -179,10 +180,13 @@ test('Live Rust Dashboard reads daemon-owned Jobs, durable events and authentica
   const taskListResponse=await fetch(taskListUrl);
   assert.equal(taskListResponse.status,200);
   const taskList=await taskListResponse.json();
-  assert.deepEqual(taskList,durableBefore.job.tasks,'Task list matches the Node Job snapshot Task array');
+  assert.equal(taskList.length,durableBefore.job.tasks.length);
+  assert.deepEqual(taskList.map(t=>t.id),durableBefore.job.tasks.map(t=>t.id));
+  assert.ok(taskList.every(t=>!('input' in t)&&!('output' in t)&&!('result' in t)),
+    'public Task API excludes private worker data');
   const taskId=durableBefore.job.tasks[0].id;
   const taskDetailUrl=taskListUrl+'/'+taskId;
-  assert.deepEqual(await(await fetch(taskDetailUrl)).json(),durableBefore.job.tasks[0]);
+  assert.deepEqual(await(await fetch(taskDetailUrl)).json(),taskList[0]);
   assert.equal((await fetch(taskListUrl+'/',{method:'POST'})).status,405);
   assert.equal((await fetch(base+'/api/jobs/not-numeric/tasks')).status,404);
   assert.equal((await fetch(base+'/api/jobs/999999/tasks')).status,404);
@@ -280,8 +284,10 @@ test('Live Rust Dashboard reads daemon-owned Jobs, durable events and authentica
   assert.equal(activeResult.total,1);
   assert.equal(activeResult.jobs[0].state,'ACTIVE');
   const activeTasks=await(await fetch(base+'/api/jobs/'+active.jobId+'/tasks')).json();
-  assert.deepEqual(activeTasks,activeBefore.job.tasks);
-  assert.equal((await fetch(base+'/api/jobs/'+active.jobId+'/tasks/'+activeTasks[0].id)).status,200);
+  assert.deepEqual(activeTasks.map(task=>task.id),activeBefore.job.tasks.map(task=>task.id));
+  assert.ok(activeTasks.every(task=>!('input' in task)&&!('output' in task)&&!('result' in task)&&!('interactiveInvocation' in task)),
+    'public Task list omits private content and invocation metadata');
+  assert.deepEqual(await(await fetch(base+'/api/jobs/'+active.jobId+'/tasks/'+activeTasks[0].id)).json(),activeTasks[0]);
   assert.deepEqual(invoke(cli,['show','--db',f.db,'--job-id',active.jobId],f.env),activeBefore);
   const bothStates=await(await fetch(base+'/api/jobs?status=ACTIVE&status=COMPLETED&pageSize=1')).json();
   assert.equal(bothStates.total,2);
@@ -307,7 +313,7 @@ test('Live Rust Dashboard reads daemon-owned Jobs, durable events and authentica
   assert.deepEqual(await(await fetch(eventUrl)).json(),eventsBefore);
   assert.deepEqual(invoke(cli,['show','--db',f.db,'--job-id',active.jobId],f.env),activeBefore);
   assert.deepEqual(await(await fetch(taskListUrl)).json(),taskList);
-  assert.deepEqual(await(await fetch(taskDetailUrl)).json(),durableBefore.job.tasks[0]);
+  assert.deepEqual(await(await fetch(taskDetailUrl)).json(),taskList[0]);
   const restartedJobs=(await(await fetch(base+'/api/jobs')).json()).jobs;
   assert.equal(restartedJobs.find(job=>job.id===j.jobId).state,'COMPLETED');
   assert.equal(restartedJobs.find(job=>job.id===active.jobId).state,'ACTIVE');

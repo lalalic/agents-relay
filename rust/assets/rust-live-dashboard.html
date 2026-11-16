@@ -1,47 +1,900 @@
-<!doctype html><html lang="en"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Rust Relay Live · Agents Relay</title>
-<style>
-:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#10151b;color:#e8edf2}
-*{box-sizing:border-box}body{max-width:1080px;margin:auto;padding:24px 16px}
-header{display:flex;align-items:center;gap:15px;flex-wrap:wrap}h1{font-size:1.45rem;margin:0}
-p,.muted{color:#9eacb9;font-size:.87rem}.pill{border-radius:20px;background:#183528;color:#b3e4c8;padding:6px 10px;font-size:.8rem}
-nav{display:flex;gap:14px;align-items:center;margin-left:auto}a{color:#a6c8fd;text-decoration:none}
-button{font:inherit;color:inherit;background:#253343;border:1px solid #3a4a5e;padding:8px 13px;border-radius:9px;cursor:pointer}
-section{margin-top:20px;border:1px solid #354252;border-radius:13px;overflow:hidden;background:#18212b}
-h2{font-size:1rem;margin:0;padding:13px 16px;background:#1d2835}
-#list{padding:6px 16px}.job{padding:14px 0;border-bottom:1px solid #334052}
-.job:last-child{border:0}.job summary{cursor:pointer;font-weight:600}
-.state{font-size:.79rem;font-weight:600;color:#92bfff}.state.complete{color:#a6daba}
-.task{font-size:.86rem;padding:6px 0;display:flex;justify-content:space-between;gap:15px}
-.detail{padding:9px 16px}
-</style></head><body>
-<header><h1>Rust Relay Live</h1><span class="pill">Native Rust Scheduler</span>
-<nav><a href="../">Main Dashboard</a><button id="refresh" type="button">Refresh</button></nav></header>
-<p>Persistent Rust-owned Jobs · read-only dashboard · no automatic human approval or publishing.</p>
-<section><h2>Rust Jobs</h2><div id="list" aria-live="polite">Loading...</div></section>
-<p id="status" role="status" class="muted"></p>
+<!doctype html>
+<html lang="en" data-dashboard-contract="safe-dom,named-relay-events,snapshot-events,bounded-event-history">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agents Relay Console</title>
+  <style>
+    :root { color-scheme: light dark; --bg:#f3f5f8; --surface:#fff; --surface2:#f8fafc; --border:#d8dee7; --text:#17202b; --muted:#687587; --accent:#285f86; --accent2:#e8f1f8; --ok:#19703a; --warn:#8b5b08; --bad:#a33c3c; --shadow:0 1px 2px rgba(15,23,42,.06); }
+    * { box-sizing:border-box; }
+    [hidden] { display:none !important; }
+    body { margin:0; min-height:100vh; background:var(--bg); color:var(--text); font:14px/1.45 ui-sans-serif,system-ui,sans-serif; }
+    header { position:sticky; top:0; z-index:3; background:var(--surface); border-bottom:1px solid var(--border); padding:.8rem 1rem; }
+    .brand { display:flex; align-items:baseline; gap:.65rem; min-width:0; }
+    .version { margin-left:auto; color:var(--muted); font-size:.72rem; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; white-space:nowrap; }
+    .runtime-summary { display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; margin-top:.55rem; }
+    .runtime-stat { padding:.18rem .45rem; border:1px solid var(--border); border-radius:999px; background:var(--surface2); color:var(--muted); font-size:.72rem; white-space:nowrap; }
+    .runtime-stat strong { color:var(--text); }
+    h1 { margin:0; font-size:1.08rem; letter-spacing:-.02em; }
+    .tagline,.subtle { color:var(--muted); font-size:.78rem; }
+    .warning-banner { margin:.65rem 0 0; padding:.5rem .65rem; border:1px solid #e6bf62; border-radius:.4rem; background:#fff4d6; color:#6f4b00; font-size:.78rem; font-weight:700; }
+    .tagline { margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    nav[role="tablist"] { display:flex; gap:.3rem; margin-top:.65rem; }
+    nav button { border:0; border-radius:.35rem; background:transparent; color:var(--muted); padding:.38rem .68rem; font:inherit; font-weight:700; cursor:pointer; }
+    nav button[aria-selected="true"] { background:var(--accent); color:#fff; }
+    button:focus-visible,a:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    main { max-width:1500px; margin:auto; padding:1rem; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:1rem; align-items:start; }
+    .panel { min-width:0; background:var(--surface); border:1px solid var(--border); border-radius:.55rem; box-shadow:var(--shadow); }
+    .panel-head { display:flex; align-items:center; justify-content:space-between; gap:.6rem; padding:.65rem .75rem; border-bottom:1px solid var(--border); }
+    .panel-head h2,.panel-head h3 { margin:0; color:var(--muted); font-size:.75rem; letter-spacing:.07em; text-transform:uppercase; min-width:0; }
+    #workspace-heading { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #selected-job-title { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .panel-actions { display:flex; align-items:center; gap:.55rem; flex-wrap:wrap; min-width:0; }
+    #jobs-view .panel-head { display:flex; align-items:center; justify-content:space-between; gap:.65rem; }
+    #jobs-view .panel-actions { display:flex; align-items:center; justify-content:flex-end; gap:.4rem; flex-wrap:wrap; min-width:0; }
+    .job-filters,.jobs-actions { display:flex; align-items:center; gap:.35rem; min-width:0; }
+    .job-filters { flex:1 1 auto; }
+    .jobs-actions { flex:none; }
+    .job-filter,.refresh-button { min-height:2rem; border:1px solid var(--border); border-radius:.45rem; background:var(--surface); color:var(--text); padding:.3rem .5rem; font:inherit; font-size:.72rem; font-weight:650; }
+    .job-filter { width:8rem; max-width:8rem; flex:none; }
+    #status-filter { width:9.5rem; max-width:9.5rem; font-size:.66rem; }
+    #repo-filter { width:8rem; max-width:8rem; }
+    .refresh-button { color:var(--muted); font-weight:700; cursor:pointer; transition:border-color .15s ease,background .15s ease; }
+    .refresh-button:hover { background:#ffffff10; color:var(--text); }
+    .job-filter:focus-visible,.refresh-button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    .jobs-feedback { flex:none; min-width:0; max-width:12rem; font-size:.67rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .jobs-feedback:empty { display:none; }
+    .jobs-feedback:not(:empty) { flex-basis:100%; max-width:none; text-align:right; white-space:normal; }
+    .job-search { flex:1 1 11rem; width:12rem; min-width:8rem; max-width:18rem; border:1px solid var(--border); border-radius:.45rem; background:var(--surface); color:var(--text); padding:.3rem .5rem; font:inherit; font-size:.72rem; }
+    .job-search:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+    .quick-filter { border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--muted); padding:.27rem .42rem; font:inherit; font-size:.7rem; font-weight:750; cursor:pointer; }
+    .quick-filter[aria-pressed="true"] { border-color:var(--accent); background:var(--accent2); color:var(--accent); }
+    .refresh-button { border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--muted); padding:.28rem .55rem; font:inherit; font-size:.72rem; font-weight:700; cursor:pointer; }
+    .refresh-button:disabled { cursor:default; opacity:.55; }
+    .icon-button { display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; width:2.5rem; height:2.5rem; padding:0; border:0; border-radius:50%; color:var(--muted); background:transparent; cursor:pointer; }
+    .icon-button svg { display:block; width:1.3rem; height:1.3rem; fill:none; stroke:currentColor; stroke-width:1.9; stroke-linecap:round; stroke-linejoin:round; }
+    .icon-button:hover { color:var(--accent); background:var(--accent2); }
+    .icon-button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    .icon-button:disabled { cursor:default; opacity:.4; }
+    .job-status-button[data-state="ACTIVE"],.job-status-button[data-state="COMPLETED"] { color:var(--ok); background:#e5f3e9; }
+    .job-status-button[data-state="DRAFT"] { color:#3f51b5; background:#eef2ff; }
+    .job-status-button[data-state="CANCELLED"],.job-status-button[data-state="IDLE"] { color:var(--muted); background:#edf0f4; }
+    .job-status-button .status-center { fill:currentColor; stroke:none; }
+    .job-state-select[data-state="ACTIVE"],.job-state-select[data-state="COMPLETED"] { color:var(--ok); background:#e5f3e9; border-color:transparent; }
+    .job-state-select[data-state="DRAFT"] { color:#3f51b5; background:#eef2ff; border-color:transparent; }
+    .job-state-select[data-state="CANCELLED"] { color:var(--muted); background:#edf0f4; border-color:transparent; }
+    .mobile-only { display:none; }
+    .panel-body { padding:.75rem; overflow:auto; max-height:calc(100vh - 11.5rem); }
+    #jobs-workspace > .panel:first-child .panel-body { overflow:visible; max-height:none; }
+    .jobs-panel { grid-row:1/span 2; }
+    .workspace { display:grid; gap:1rem; }
+    .job-list,.tree,.event-list { list-style:none; margin:0; padding:0; }
+    .job-list { display:grid; gap:.35rem; }
+    .job-row { display:grid; gap:.2rem; padding:.35rem .45rem; border:1px solid transparent; border-radius:.4rem; cursor:pointer; }
+    .job-row[aria-current="true"] { border-color:var(--accent); background:var(--accent2); }
+    .job-row.complete-unmerged { border-color:#d69a1b; background:#fff8df; }
+    .job-row.complete-unmerged[aria-current="true"] { border-color:#b77900; background:#fff0bd; }
+    .job-content { min-width:0; display:grid; gap:.2rem; }
+    .job-button { min-width:0; display:block; padding:.12rem 0; border:0; background:transparent; color:inherit; text-align:left; font:inherit; cursor:pointer; }
+    .job-title { font-weight:750; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .job-last-line { display:flex; align-items:center; justify-content:space-between; gap:.5rem; min-width:0; }
+    .job-last-line .subtle:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .job-last-line .subtle:last-child { flex:none; white-space:nowrap; }
+    .job-primary { display:flex; align-items:center; justify-content:space-between; gap:.45rem; min-width:0; }
+    .job-status-line { display:flex; align-items:center; gap:.3rem; min-width:0; white-space:nowrap; }
+    .job-status-line .badge { flex:0 0 auto; }
+    .badge { display:inline-flex; align-items:center; border-radius:999px; padding:.06rem .42rem; min-height:1.35rem; font-size:.68rem; font-weight:800; }
+    .badge.ACTIVE,.badge.RUNNING,.badge.SUCCEEDED,.badge.COMPLETED,.badge.MERGED { background:#e5f3e9; color:var(--ok); }
+    .badge.BLOCKED,.badge.DRAFT,.badge.QUEUED,.badge.WAITING,.badge.AWAITING_DECISION,.badge.OPEN { background:#fff1d2; color:var(--warn); }
+    .badge.FAILED { background:#ffe8e8; color:var(--bad); }
+    .badge.IDLE,.badge.CANCELLED { background:#edf0f4; color:var(--muted); }
+    .badge.DRAFT { background:#eef2ff; color:#3f51b5; }
+    .badge.shortcut-mode { background:var(--accent2); color:var(--accent); border:1px solid var(--accent); }
+    .badge.MERGE_PENDING { background:#ffe3a3; color:#7a4a00; }
+    .details-dialog { width:min(850px,calc(100vw - 2rem)); max-height:85vh; overflow:auto; border:1px solid var(--border); border-radius:.6rem; background:var(--surface); color:var(--text); box-shadow:0 18px 55px #0004; padding:1rem; } .details-dialog::backdrop { background:#17202b99; } .details-dialog-head { display:flex; justify-content:space-between; align-items:center; gap:1rem; position:sticky; top:-1rem; background:var(--surface); padding:.5rem 0; } .details-dialog pre { white-space:pre-wrap; overflow-wrap:anywhere; background:var(--surface2); padding:.7rem; border-radius:.4rem; } .details-dialog h3 { font-size:.8rem; margin:1rem 0 .3rem; }
+    .job-summary,.detail-groups { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.55rem; }
+    .detail-group { min-width:0; padding:.5rem; background:var(--surface2); border:1px solid var(--border); border-radius:.4rem; }
+    .detail-label { margin:0; color:var(--muted); font-size:.66rem; text-transform:uppercase; letter-spacing:.04em; }
+    .detail-value { margin:.12rem 0 0; font-weight:650; overflow-wrap:anywhere; }
+    .section-title { margin:.8rem 0 .35rem; color:var(--muted); font-size:.72rem; letter-spacing:.05em; text-transform:uppercase; }
+    ul.tree { display:grid; gap:.25rem; min-width:0; max-width:100%; }
+    ul.tree li { min-width:0; max-width:100%; }
+    ul.tree ul { width:calc(100% - .6rem); min-width:0; max-width:calc(100% - .6rem); list-style:none; margin:.2rem 0 .1rem .6rem; padding-left:.6rem; border-left:1px solid var(--border); }
+    .task-line { display:flex; align-items:center; gap:.2rem; min-width:0; }
+    .task-fold { flex:0 0 auto; width:1.35rem; padding:.32rem 0; border:0; background:transparent; color:var(--muted); font:inherit; cursor:pointer; }
+    .task-row { width:100%; max-width:100%; overflow:hidden; flex:1 1 0; display:flex; align-items:center; gap:.4rem; min-width:0; padding:.32rem .38rem; border:0; border-radius:.35rem; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+    .task-row[aria-current="true"] { background:var(--accent2); }
+    .task-row .badge { flex:0 0 auto; }
+    .task-id { min-width:0; max-width:100%; flex:1 1 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font: .77rem ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .task-actions { display:flex; justify-content:flex-end; gap:.25rem; margin-bottom:.5rem; }
+    .task-link { color:var(--accent); font-weight:700; }
+    .agent-graph { display:grid; gap:.45rem; margin-top:.55rem; padding:.55rem; border:1px solid var(--border); border-radius:.4rem; background:var(--surface2); overflow:auto; }
+    .agent-wave { display:flex; align-items:center; gap:.4rem; min-width:max-content; }
+    .agent-node { padding:.32rem .48rem; border:1px solid var(--border); border-radius:.35rem; background:var(--surface); font:.73rem ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .agent-arrow { color:var(--muted); font-weight:800; }
+    .agent-graph-source { margin:.1rem 0 0; padding:.45rem; border-radius:.35rem; background:var(--surface); color:var(--muted); font:.7rem/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre; overflow:auto; }
+    .event-list { display:grid; gap:.45rem; }
+    .event-item { padding:.34rem .42rem .42rem; border-left:3px solid transparent; border-bottom:1px solid var(--border); border-radius:.28rem; }
+    .event-item.event-error { border-left-color:var(--bad); background:#fff4f4; }
+    .event-item.event-error .event-kind,.event-item.event-error .event-message { color:var(--bad); }
+    .event-item.event-warn { border-left-color:var(--warn); background:#fff9eb; }
+    .event-item.event-warn .event-kind { color:var(--warn); }
+    .event-meta { display:flex; flex-wrap:wrap; gap:.4rem; color:var(--muted); font-size:.68rem; }
+    .event-kind { color:var(--accent); font-weight:800; }
+    .event-message { margin:.12rem 0 0; overflow-wrap:anywhere; }
+    #usage-view,#graphs-view,#rules-view,#shortcuts-view,#worker-rules-view { grid-column:1 / -1; }
+    .graphs-browser { display:grid; grid-template-columns:minmax(190px,260px) minmax(0,1fr); gap:.75rem; min-height:60vh; }
+    .graph-list { display:grid; align-content:start; gap:.35rem; }
+    .graph-button { width:100%; display:grid; gap:.08rem; padding:.48rem .55rem; border:1px solid var(--border); border-radius:.4rem; background:var(--surface2); color:var(--text); text-align:left; font:inherit; cursor:pointer; }
+    .graph-button[aria-current="true"] { border-color:var(--accent); background:var(--accent2); }
+    .graph-button strong { font-size:.78rem; }
+    .graph-button span { color:var(--muted); font:.66rem ui-monospace,SFMono-Regular,Menlo,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .graph-preview { min-width:0; display:grid; align-content:start; gap:.55rem; }
+    .graph-preview-head { display:flex; justify-content:space-between; gap:.7rem; align-items:baseline; flex-wrap:wrap; }
+    .graph-preview-head h3 { margin:0; font-size:.95rem; }
+    .graph-canvas { min-height:24rem; display:grid; place-items:center; overflow:auto; padding:1rem; border:1px solid var(--border); border-radius:.45rem; background:var(--surface2); }
+    .graph-canvas svg { max-width:none; height:auto; }
+    .graph-canvas svg rect.background { display:none; }
+    .graph-canvas svg .edgeLabel rect, .graph-canvas svg .edgeLabel .labelBkg, .graph-canvas svg .edgeLabel .background { fill:transparent !important; opacity:0 !important; }
+    .graph-navigation { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin-bottom:.7rem; }
+    .graph-canvas .node.drillable { cursor:pointer; }
+    .graph-canvas .node.drillable text, .graph-canvas .node.drillable tspan { fill:#2367b1; }
+    .jel-chart .node.jel-inspectable { cursor:pointer; }
+    .jel-chart .node.jel-inspectable:focus-visible { outline:2px solid #2563eb; outline-offset:3px; }
+    .jel-source { overflow:auto; white-space:pre; font:12px/1.5 ui-monospace,monospace; }
+    .graph-dialog { box-sizing:border-box; width:98vw; height:96vh; height:96dvh; max-width:none; max-height:none; padding:.55rem; border:1px solid var(--border); border-radius:.5rem; background:var(--surface); color:var(--text); }
+    .graph-dialog[open] { display:flex; flex-direction:column; gap:.25rem; }
+    .graph-dialog::backdrop { background:#17202b99; }
+    .graph-dialog-header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.7rem; padding:.3rem .5rem; }
+    .graph-dialog-viewport { flex:1; min-height:0; min-width:0; overflow:auto; cursor:grab; background:var(--surface2); border:1px solid var(--border); border-radius:.4rem; }
+    .graph-dialog-viewport:active { cursor:grabbing; }
+    .graph-dialog-viewport .graph-canvas { display:grid; width:max-content; min-width:100%; min-height:100%; overflow:visible; }
+    .graph-canvas .node text { pointer-events:none; }
+    .graph-source { margin:0; max-height:22rem; overflow:auto; padding:.7rem; border:1px solid var(--border); border-radius:.4rem; background:var(--surface2); color:var(--muted); font:.72rem/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre; }
+    .graph-source-details summary { cursor:pointer; color:var(--muted); font-size:.74rem; font-weight:700; }
+    .rules-editor { display:grid; gap:.65rem; }
+    .rules-help { margin:0; color:var(--muted); font-size:.8rem; }
+    .rules-textarea { width:100%; min-height:55vh; resize:vertical; border:1px solid var(--border); border-radius:.45rem; background:var(--surface2); color:var(--text); padding:.8rem; font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .rules-footer { display:flex; align-items:center; justify-content:space-between; gap:.75rem; flex-wrap:wrap; }
+    .rules-save { border:1px solid var(--accent); border-radius:.35rem; background:var(--accent); color:#fff; padding:.38rem .8rem; font:inherit; font-weight:750; cursor:pointer; }
+    .rules-save:disabled { opacity:.55; cursor:default; }
+    .usage-providers { display:grid; gap:.55rem; }
+    .usage-provider { display:grid; grid-template-columns:minmax(130px,180px) minmax(0,1fr); gap:1rem; align-items:center; padding:.7rem .8rem; border:1px solid var(--border); border-radius:.45rem; background:var(--surface2); }
+    .usage-provider h3 { margin:0; font-size:.86rem; }
+    .usage-bars { display:grid; gap:1rem; }
+    .usage-row { display:grid; gap:.35rem; }
+    .usage-label { display:flex; justify-content:space-between; gap:1rem; font-weight:700; }
+    .usage-track { height:.72rem; overflow:hidden; border:1px solid var(--border); border-radius:999px; background:var(--surface2); }
+    .usage-fill { height:100%; width:0; border-radius:inherit; background:var(--accent); transition:width .2s ease; }
+    .usage-details { border-top:1px solid var(--border); padding-top:.45rem; }
+    .usage-details summary { cursor:pointer; color:var(--muted); font-size:.72rem; font-weight:700; }
+    .usage-details-body { display:grid; gap:.3rem; margin-top:.4rem; overflow-wrap:anywhere; }
+    .empty,.error-state { padding:.85rem; border:1px dashed var(--border); border-radius:.4rem; color:var(--muted); }
+    .error-state,.error-text { color:var(--bad); }
+    .skeleton { height:3.2rem; border-radius:.4rem; background:linear-gradient(90deg,#edf0f4,#fafbfc,#edf0f4); animation:pulse 1.2s infinite; }
+    @keyframes pulse { 50% { opacity:.55; } }
+    @media (max-width:1050px) { main { grid-template-columns:1fr; } .jobs-panel { grid-row:auto; } .panel-body { max-height:24rem; } #jobs-workspace > .panel:first-child .panel-body { max-height:none; } }
+    @media (max-width:650px) {
+      header { padding:.65rem .7rem; }
+      nav[role="tablist"] { overflow-x:auto; padding-bottom:.1rem; }
+      nav button { flex:0 0 auto; white-space:nowrap; }
+      main { padding:.5rem; gap:.65rem; }
+      body[data-mobile-jobs-view="list"] #jobs-workspace { display:none; }
+      body[data-mobile-jobs-view="detail"] #jobs-view { display:none; }
+      .mobile-only { display:inline-flex; }
+      #jobs-view .panel-head { display:grid; align-items:start; }
+      #jobs-view .panel-actions { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; width:100%; gap:.25rem; }
+      .runtime-summary { display:none; }
+      #jobs-view .job-filters { display:grid; grid-template-columns:minmax(0,1fr) 5.8rem 4.6rem; align-items:center; gap:.25rem; min-width:0; }
+      #jobs-view .job-search { width:100%; min-width:0; max-width:none; min-height:2.25rem; }
+      #jobs-view .job-filter { width:100%; max-width:none; min-width:0; text-transform:none; font-size:.69rem; min-height:2.25rem; padding:.2rem .15rem; }
+      #jobs-view .jobs-actions { justify-content:flex-end; }
+      #jobs-view .jobs-feedback { grid-column:1 / -1; text-align:left; }
+      #jobs-view #jobs-refresh { width:2.25rem; height:2.25rem; }
+      #jobs-workspace > .panel:first-child > .panel-head { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:.3rem; align-items:center; }
+      #jobs-workspace > .panel:first-child > .panel-head .panel-actions { flex-wrap:nowrap; gap:.05rem; }
+      #jobs-view .panel-body { max-height:none; }
+      #jobs-workspace { gap:.65rem; }
+      #jobs-workspace .panel-body { max-height:none; }
+      #usage-view .panel-head { padding:.6rem .7rem .35rem; }
+      #usage-view .panel-head .subtle { display:none; }
+      .graphs-browser { grid-template-columns:1fr; min-height:0; }
+      .graph-list { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .graph-canvas { min-height:18rem; }
+      #usage-view .panel-body { padding:.45rem .5rem .65rem; max-height:none; }
+      #usage-view .usage-providers { gap:.45rem; }
+      #usage-view .usage-provider {
+        grid-template-columns:1fr;
+        gap:.55rem;
+        padding:.65rem .7rem;
+        border-radius:.55rem;
+        background:var(--surface);
+      }
+      #usage-view .usage-provider h3 { font-size:.78rem; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+      #usage-view .usage-bars { gap:.7rem; }
+      #usage-view .usage-row { gap:.25rem; }
+      #usage-view .usage-label { align-items:baseline; gap:.5rem; font-size:.78rem; }
+      #usage-view .usage-label span:last-child { font-size:1.05rem; font-weight:800; color:var(--text); }
+      #usage-view .usage-track { height:.48rem; border:0; background:var(--border); }
+      #usage-view .usage-row .subtle { font-size:.68rem; line-height:1.25; }
+      #usage-view .usage-provider > .detail-value { font-size:1.2rem; font-weight:800; }
+      #usage-view .usage-details { padding-top:.35rem; }
+      #usage-view .usage-details-body { font-size:.68rem; }
+      .details-dialog { width:min(850px,calc(100vw - 2rem)); max-height:85vh; overflow:auto; border:1px solid var(--border); border-radius:.6rem; background:var(--surface); color:var(--text); box-shadow:0 18px 55px #0004; padding:1rem; } .details-dialog::backdrop { background:#17202b99; } .details-dialog-head { display:flex; justify-content:space-between; align-items:center; gap:1rem; position:sticky; top:-1rem; background:var(--surface); padding:.5rem 0; } .details-dialog pre { white-space:pre-wrap; overflow-wrap:anywhere; background:var(--surface2); padding:.7rem; border-radius:.4rem; } .details-dialog h3 { font-size:.8rem; margin:1rem 0 .3rem; }
+    .job-summary,.detail-groups { grid-template-columns:1fr; }
+      .panel-head { padding:.55rem .6rem; }
+      .panel-body { padding:.6rem; }
+      .tagline { display:none; }
+    }
+    @media (prefers-reduced-motion:reduce) { .skeleton { animation:none; } .usage-fill { transition:none; } }
+  .router-rules-workspace{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start;min-width:0}.router-rules-pane{min-width:0;max-width:100%;overflow:hidden}.rules-editor .rules-textarea{min-height:420px}.audit-log{display:flex;flex-direction:column;gap:8px;max-height:500px;overflow:auto;min-width:0}.audit-entry{border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--surface)}.audit-entry-head{display:flex;justify-content:space-between;gap:8px;align-items:center}.audit-entry pre{white-space:pre-wrap;word-break:break-word;margin:8px 0 0;font-size:11px}.router-test-panel{margin-top:16px;border-top:1px solid var(--border);padding-top:12px}.router-test-results{margin-top:8px;display:flex;flex-direction:column;gap:6px;max-height:480px;overflow:auto;min-width:0}.router-test-results pre{white-space:pre;overflow:auto;max-width:100%;font-size:11px;line-height:1.45;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px}.router-test-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)}@media(max-width:900px){.router-rules-workspace{grid-template-columns:1fr}.router-rules-pane{max-height:none}.router-test-results{max-height:420px}}@media(max-width:650px){#rules-view .panel-head .subtle{display:none}#rules-view .panel-body{max-height:none;overflow:visible;padding:.6rem}#rules-view .router-rules-workspace{gap:.9rem}#rules-view .rules-help{font-size:.74rem;line-height:1.4}#rules-view .rules-textarea{min-height:52vh;padding:.65rem;font-size:12px}#rules-view .rules-footer{align-items:stretch}#rules-view .rules-footer>.subtle{width:100%}#rules-view .rules-footer>div{width:100%;display:grid;grid-template-columns:1fr 1fr;gap:.5rem}#rules-view .rules-save{min-height:44px;width:100%;padding:.55rem .7rem}#rules-view .router-rules-pane>.panel-head{padding:.55rem 0}#rules-view .audit-log{max-height:none}#rules-view .audit-entry-head{align-items:flex-start}#rules-view .audit-entry-head .subtle{display:block;flex:0 0 auto}#rules-view .router-test-panel{min-width:0;max-width:100%;overflow:hidden}#rules-view .router-test-results{max-height:none;width:100%;max-width:100%;overflow-x:hidden}#rules-view .router-test-results>*{min-width:0;max-width:100%}#rules-view .router-test-results pre{width:100%;box-sizing:border-box;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;font-size:11px;padding:.65rem}#rules-view .router-test-row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><h1>Agents Relay Console</h1><p class="tagline">Durable PR state is authoritative; events are observability.</p><span class="version">v2.0.258</span> <a id="rust-live-link" class="version" href="/rust/">Rust Live</a></div>
+  <div id="runtime-summary" class="runtime-summary" aria-label="Runtime summary"></div>
+  <div id="rate-limit-warning" class="warning-banner" role="status" hidden></div>
+  <nav role="tablist" aria-label="Console views">
+    <button id="jobs-tab" type="button" role="tab" aria-selected="true" aria-controls="jobs-view">Jobs</button>
+    <button id="usage-tab" type="button" role="tab" aria-selected="false" aria-controls="usage-view">Usage</button>
+    <button id="rules-tab" type="button" role="tab" aria-selected="false" aria-controls="rules-view">Router Rules</button>
+    <button id="qa-tab" type="button" role="tab" aria-selected="false" aria-controls="qa-view">Troubleshooter Q&A</button>
+    <button id="graphs-tab" type="button" role="tab" aria-selected="false" aria-controls="graphs-view">Workflow</button>
+  </nav>
+</header>
+<main>
+  <section id="jobs-view" role="tabpanel" aria-labelledby="jobs-tab" class="panel jobs-panel">
+    <div class="panel-head"><h2>Jobs</h2><div class="panel-actions"><div class="job-filters"><input id="job-search" class="job-search" type="search" placeholder="Search" aria-label="Search jobs by title or PR number"><select id="status-filter" class="job-filter" aria-label="Filter jobs by status (default excludes cancelled)"><option value="">No cancelled</option><option value="DRAFT">DRAFT</option><option value="ACTIVE">ACTIVE</option><option value="COMPLETED">COMPLETED</option><option value="CANCELLED">CANCELLED</option></select><select id="repo-filter" class="job-filter" aria-label="Filter jobs by repository"><option value="">All repos</option></select></div><div class="jobs-actions"><button id="jobs-refresh" class="icon-button" type="button" aria-label="Refresh jobs" title="Refresh jobs"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 11a8 8 0 1 0 1 5"/><path d="M20 4v7h-7"/></svg></button></div><span id="jobs-feedback" class="jobs-feedback subtle" role="status" aria-live="polite"></span></div></div>
+    <div class="panel-body" aria-live="polite"><ul id="job-list" class="job-list"><li class="skeleton" aria-hidden="true"></li></ul></div>
+  </section>
+  <div class="workspace" id="jobs-workspace">
+    <section class="panel" aria-labelledby="workspace-heading">
+      <div class="panel-head"><button id="mobile-jobs-back" class="icon-button mobile-only" type="button" aria-label="Back to Jobs" title="Back to Jobs"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M19 12H5m7-7-7 7 7 7"/></svg></button><h2 id="workspace-heading"><span id="selected-job-title" class="subtle"></span></h2><div class="panel-actions"><button id="job-content-open" class="icon-button job-status-button" type="button" aria-label="Job details" title="Job details" data-state="IDLE"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3" class="status-center"/></svg></button><button id="selected-job-refresh" class="icon-button" type="button" aria-label="Refresh selected job" title="Refresh selected job"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 11a8 8 0 1 0 1 5"/><path d="M20 4v7h-7"/></svg></button></div></div>
+      <div class="panel-body">
+        <div id="job-detail"><div class="skeleton"></div></div>
+        <h3 class="section-title">Task hierarchy</h3>
+        <ul id="task-tree" class="tree"><li class="skeleton"></li></ul>
+        <h3 class="section-title">Task detail</h3>
+        <div id="task-detail"><p class="empty">Select a task to inspect execution details.</p></div>
+      </div>
+    </section>
+    <section class="panel" id="events-panel" aria-labelledby="events-heading">
+      <div class="panel-head"><h2 id="events-heading">Events</h2><div class="panel-actions"><button id="events-all-tasks" class="icon-button" type="button" aria-label="Show events for all tasks" title="All tasks"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 6h2m4 0h10M4 12h2m4 0h10M4 18h2m4 0h10"/></svg></button><span id="events-scope" class="subtle">Job-wide · newest first · 60 max</span></div></div>
+      <div class="panel-body"><ol id="event-feed" class="event-list"><li class="empty">Waiting for events.</li></ol></div>
+    </section>
+  </div>
+  <section id="usage-view" role="tabpanel" aria-labelledby="usage-tab" hidden>
+    <div class="panel">
+      <div class="panel-head"><h2 id="usage-heading">Usage</h2><span id="usage-meta" class="subtle"></span></div>
+      <div class="panel-body" id="usage-root" aria-live="polite"><div class="skeleton"></div></div>
+    </div>
+  </section>
+  <section id="graphs-view" role="tabpanel" aria-labelledby="graphs-tab" hidden>
+    <div class="panel">
+      <div class="panel-head"><h2>Workflow Graphs</h2><span id="graphs-meta" class="subtle"></span></div>
+      <div class="panel-body">
+        <div class="graphs-browser">
+          <div id="graph-list" class="graph-list" aria-label="Workflow graphs"></div>
+          <div class="graph-preview">
+            <div id="graph-navigation" class="graph-navigation" aria-label="Graph navigation"><button type="button" id="graph-back" class="refresh-button">Back</button><button type="button" id="graph-forward" class="refresh-button">Forward</button><button type="button" id="graph-entry" class="refresh-button">Entry</button><span id="graph-breadcrumb" class="subtle"></span></div>
+            <div id="graph-detail" class="graph-source" aria-live="polite" hidden></div>
+            <div class="graph-preview-head"><h3 id="graph-title">Select a graph</h3><button type="button" id="graph-maximize" class="refresh-button">Maximize graph</button></div><p id="graph-description" class="subtle"></p><span id="graph-path" class="subtle"></span>
+            <div id="graph-canvas" class="graph-canvas"><p class="empty">Select a graph to inspect it.</p></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+  <div id="jel-chart" class="graph-canvas jel-chart" aria-live="polite" hidden></div>
+  <dialog id="graph-dialog" class="graph-dialog" aria-label="Graph viewer"><div class="graph-dialog-header"><strong id="graph-dialog-title">Workflow graph</strong><div class="graph-navigation"><button type="button" id="graph-zoom-out" class="refresh-button" aria-label="Zoom out">−</button><span id="graph-zoom-level" aria-live="polite">100%</span><button type="button" id="graph-zoom-in" class="refresh-button" aria-label="Zoom in">+</button><button type="button" id="graph-zoom-reset" class="refresh-button">Fit</button><button type="button" id="graph-dialog-close" class="refresh-button">Close</button></div></div><div id="graph-dialog-viewport" class="graph-dialog-viewport"></div></dialog>
+  <section id="rules-view" role="tabpanel" aria-labelledby="rules-tab" hidden><div class="panel"><div class="panel-head"><h2>Router Rules</h2><span id="rules-meta" class="subtle"></span></div><div class="panel-body"><div class="router-rules-workspace"><div class="router-rules-pane rules-editor"><h3>Rules Editor</h3><p class="rules-help">Execution Router rules with an explicit <code>[choices]</code> section (provider: model [reasoning] entries, additive to profile defaults) and a <code>[routing-instruction]</code> section forwarded verbatim to Laya. Relay deduplicates, applies hard gates, and sends one merged choice list; impossible routes remain excluded by code and Codex stays the deterministic fallback.</p><textarea id="rules-text" class="rules-textarea" spellcheck="true" aria-label="Execution router rules" placeholder="[choices]
+openai: sol medium, luna high
+zai: glm-5.3-flash high
+
+[routing-instruction]
+Prefer zai until its quota resets; otherwise use the openai default."></textarea><div class="rules-footer"><span id="rules-status" class="subtle" aria-live="polite"></span><div><button id="rules-test" class="rules-save" type="button">Test Router</button> <button id="rules-save" class="rules-save" type="button">Save rules</button></div></div></div><div class="router-rules-pane"><div class="panel-head"><h3>Audit Log</h3><button id="audit-refresh" type="button">Refresh</button></div><div id="audit-log" class="audit-log" aria-live="polite"><p class="empty">Loading latest routing decisions…</p></div></div></div><div class="router-test-panel"><h3>Test Router Result</h3><div id="router-test-results" class="router-test-results" aria-live="polite"><p class="empty">Select a Job and Task, then run Test Router.</p></div></div></div></div></section>
+  <section id="qa-view" role="tabpanel" aria-labelledby="qa-tab" hidden>
+    <div class="panel"><div class="panel-head"><h2>Troubleshooter Q&A</h2><span class="subtle">skills/agents-relay/troubleshooter-qa.md</span></div>
+      <div class="panel-body"><div class="rules-editor">
+        <p class="rules-help">Edit Markdown directly. Troubleshooter reads this file as guidance, not workflow policy.</p>
+        <textarea id="qa-text" class="rules-textarea" spellcheck="true" aria-label="Troubleshooter Q&A Markdown"></textarea>
+        <div class="rules-footer"><span id="qa-status" class="subtle" aria-live="polite"></span><div><button id="qa-reload" class="rules-save" type="button">Reload</button> <button id="qa-save" class="rules-save" type="button">Save Q&A</button></div></div>
+      </div></div></div>
+  </section>
+</main>
+<script src="/assets/mermaid-lite.js"></script>
 <script>
 'use strict';
-const list=document.getElementById('list'),status=document.getElementById('status');
-function el(tag,cls,text){const node=document.createElement(tag);node.className=cls||'';if(text!==undefined)node.textContent=String(text);return node}
-function render(jobs){
- list.replaceChildren();
- if(!jobs.length){list.append(el('p','muted','No Rust Jobs yet. Use native CLI to create a Job.'));return}
- for(const job of jobs){
-  const details=el('details','job'),head=el('summary','', '#'+job.id+' · '+job.title+'  ('+job.state+')');
-  details.append(head);
-  const tasks=el('div','detail');
-  for(const task of job.tasks||[]){const line=el('div','task');line.append(el('span','', '#'+task.id+' · '+(task.title||task.agent||'Task')),el('span','state',task.state));tasks.append(line)}
-  details.append(tasks);list.append(details);
- }
+// Compatibility contracts retained for dashboard tests:
+// function taskDetail(
+// location.hash = selectedJob ? '#/jobs/' + encodeURIComponent(selectedJob) : '#/jobs'
+// const url = githubPrUrl(job.repository, job.prNumber);
+// const link = document.createElement('a');
+// link.href = url;
+// link.target = '_blank';
+// link.rel = 'noopener noreferrer';
+// link.textContent = 'PR #' + job.prNumber;
+// while (eventFeed.children.length > MAX_EVENTS)
+// function usageBar(label, window)
+const MAX_EVENTS=60;
+const DASHBOARD_VERSION="2.0.258";
+const jobsTab=document.querySelector('#jobs-tab');
+const usageTab=document.querySelector('#usage-tab');
+const graphsTab=document.querySelector('#graphs-tab');
+const rulesTab=document.querySelector('#rules-tab');
+const qaTab=document.querySelector('#qa-tab');
+const qaView=document.querySelector('#qa-view');
+const qaText=document.querySelector('#qa-text');
+const qaStatus=document.querySelector('#qa-status');
+const qaSave=document.querySelector('#qa-save');
+let qaRevision='';
+
+const jobsView=document.querySelector('#jobs-view');
+const usageView=document.querySelector('#usage-view');
+const graphsView=document.querySelector('#graphs-view');
+const rulesView=document.querySelector('#rules-view');
+const jobsWorkspace=document.querySelector('#jobs-workspace');
+const jobList=document.querySelector('#job-list');
+const jobsRefresh=document.querySelector('#jobs-refresh');
+const jobSearch=document.querySelector('#job-search');
+const repoFilter=document.querySelector('#repo-filter');
+const statusFilter=document.querySelector('#status-filter');
+const jobsFeedback=document.querySelector('#jobs-feedback');
+const selectedJobRefresh=document.querySelector('#selected-job-refresh');
+const jobContentButton=document.querySelector('#job-content-open');
+const mobileJobsBack=document.querySelector('#mobile-jobs-back');
+const mobileJobs=window.matchMedia('(max-width:650px)');
+const jobDetail=document.querySelector('#job-detail');
+const taskTree=document.querySelector('#task-tree');
+const taskDetailRoot=document.querySelector('#task-detail');
+const eventFeed=document.querySelector('#event-feed');
+const eventsAllTasks=document.querySelector('#events-all-tasks');
+const eventsScope=document.querySelector('#events-scope');
+const selectedJobTitle=document.querySelector('#selected-job-title');
+const usageRoot=document.querySelector('#usage-root');
+const usageMeta=document.querySelector('#usage-meta');
+const graphsMeta=document.querySelector('#graphs-meta');
+const graphList=document.querySelector('#graph-list');
+const graphTitle=document.querySelector('#graph-title');
+const graphPath=document.querySelector('#graph-path');
+const graphCanvas=document.querySelector('#graph-canvas');
+const graphDescription=document.querySelector('#graph-description');
+const rulesText=document.querySelector('#rules-text');
+const rulesMeta=document.querySelector('#rules-meta');
+const rulesStatus=document.querySelector('#rules-status');
+const rulesSave=document.querySelector('#rules-save');const rulesTest=document.querySelector('#rules-test');const routerTestResults=document.querySelector('#router-test-results');const auditLog=document.querySelector('#audit-log');const auditRefresh=document.querySelector('#audit-refresh');
+const rateLimitWarning=document.querySelector('#rate-limit-warning');
+const runtimeSummary=document.querySelector('#runtime-summary');
+let jobs=[];
+let selectedJob=sessionStorage.getItem('agents-relay:selected-job');
+let selectedTaskId=sessionStorage.getItem('agents-relay:selected-task');
+let selectedRepo=storedFilterValue('agents-relay:repo-filter');
+let selectedStatus=storedFilterValue('agents-relay:status-filter');
+let jobRepositories=[];
+let searchQuery=sessionStorage.getItem('agents-relay:job-search')||'';
+let workflowGraphs=[];
+let selectedGraphId='entry';
+const WORKFLOW_SOURCE_REF="10b9f5d9003e424a9dc27366f0723f9649939e96";
+let eventTaskId=selectedTaskId;
+const collapsedTasks=new Set();
+const expandedTasks=new Set();
+const displayedEventIds=new Set();
+function value(input){return input===null||input===undefined||input===''?'—':String(input);}
+function storedFilterValue(key){const stored=sessionStorage.getItem(key);if(!stored)return '';try{const parsed=JSON.parse(stored);if(Array.isArray(parsed))return parsed.length===1&&typeof parsed[0]==='string'?parsed[0]:'';if(typeof parsed==='string')return parsed;}catch{return stored;}return '';}
+function text(input){return document.createTextNode(value(input));}
+function element(name,className,child){const node=document.createElement(name);if(className)node.className=className;if(child)node.append(child);return node;}
+function yamlScalar(input){if(input===null)return 'null';if(typeof input==='boolean'||typeof input==='number')return String(input);return JSON.stringify(String(input));}
+function yamlDump(input,indent=0){const pad=' '.repeat(indent);if(Array.isArray(input)){if(!input.length)return pad+'[]';return input.map(item=>{if(item&&typeof item==='object'){return pad+'-\n'+yamlDump(item,indent+2);}return pad+'- '+yamlScalar(item);}).join('\n');}if(input&&typeof input==='object'){const entries=Object.entries(input);if(!entries.length)return pad+'{}';const lines=[];for(const [key,item] of entries){if(typeof item==='string'&&item.includes('\n')){lines.push(pad+key+': |');for(const line of item.replace(/\n$/,'').split('\n'))lines.push(' '.repeat(indent+2)+line);continue;}if(item&&typeof item==='object'){lines.push(pad+key+':');lines.push(yamlDump(item,indent+2));}else{lines.push(pad+key+': '+yamlScalar(item));}}return lines.join('\n');}return pad+yamlScalar(input);}
+function field(label,input){const box=element('div','detail-group');box.append(element('p','detail-label',text(label)),element('p','detail-value',text(input)));return box;}
+function threadField(label,threadId){const box=element('div','detail-group');box.append(element('p','detail-label',text(label)));const id=String(threadId||'').trim();if(!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(id)){box.append(element('p','detail-value',text(id||'—')));return box;}const link=document.createElement('a');link.className='detail-value';link.href='https://chatgpt.com/c/'+encodeURIComponent(id);link.target='implementation';link.rel='noopener noreferrer';link.textContent=id.slice(0,8);link.title=id;box.append(link);return box;}function markdownField(label,input){const box=element('div','detail-group');box.append(element('p','detail-label',text(label)),markdownValue(input));return box;}
+function rememberSelection(){if(selectedJob)sessionStorage.setItem('agents-relay:selected-job',selectedJob);else sessionStorage.removeItem('agents-relay:selected-job');if(selectedTaskId)sessionStorage.setItem('agents-relay:selected-task',selectedTaskId);else sessionStorage.removeItem('agents-relay:selected-task');}
+function syncMobileJobsView(){const detail=mobileJobs.matches&&Boolean(selectedJob)&&location.hash.startsWith('#/jobs/');document.body.dataset.mobileJobsView=detail?'detail':'list';}
+function shortManagedId(id,repository,kind){const parts=String(repository||'').split('/');if(parts.length!==2)return String(id||'');const prefix=kind+'-'+parts[0].length+'-'+parts[0]+'-'+parts[1]+'-';const value=String(id||'');const suffix=value.startsWith(prefix)?value.slice(prefix.length):'';return /^[0-9]+$/.test(suffix)?'#'+suffix:value;}function jobSelectionKey(job){return job?String(job.repository||'')+'|'+String(job.id||''):'';}function dedupeJobs(entries){const byId=new Map();for(const job of entries){const key=jobSelectionKey(job);if(!key)continue;const existing=byId.get(key);if(!existing){byId.set(key,job);continue;}const fresh=isFreshEnough(job.updatedAt,existing.updatedAt);const preferred=fresh?job:existing;const other=fresh?existing:job;byId.set(key,{...other,...preferred,prNumber:Number(preferred.prNumber||0)>0?preferred.prNumber:other.prNumber});}return [...byId.values()];}
+function jobForSelection(selection){return jobs.find(job=>jobSelectionKey(job)===selection)||jobs.find(job=>job.id===selection)||null;}
+function selected(){return jobForSelection(selectedJob)||jobs[0]||null;}
+function counts(tasks){const out={};for(const task of Array.isArray(tasks)?tasks:[])out[task.state]=(out[task.state]||0)+1;return out;}
+function compactCounts(input){const order=['RUNNING','AWAITING_DECISION','BLOCKED','FAILED','QUEUED','DRAFT','SUCCEEDED','CANCELLED'];return order.filter(state=>input[state]).map(state=>input[state]+' '+state).join(', ')||'No tasks';}
+function relativeTime(timestamp){if(!timestamp)return '—';const parsed=Date.parse(timestamp);if(!Number.isFinite(parsed))return value(timestamp);const seconds=Math.max(0,Math.round((Date.now()-parsed)/1000));if(seconds<60)return 'just now';if(seconds<3600)return Math.floor(seconds/60)+'m ago';if(seconds<86400)return Math.floor(seconds/3600)+'h ago';return Math.floor(seconds/86400)+'d ago';}
+function safePrUrl(repository,prNumber){if(typeof repository!=='string'||!Number.isInteger(prNumber)||prNumber<=0)return null;const parts=repository.split('/');if(parts.length!==2)return null;const [owner,repo]=parts;if(!owner||!repo||owner==='.'||owner==='..'||repo==='.'||repo==='..')return null;if(!/^[A-Za-z0-9-]+$/.test(owner)||!/^[A-Za-z0-9._-]+$/.test(repo))return null;return 'https://github.com/'+owner+'/'+repo+'/pull/'+prNumber;}
+function safeCommitUrl(repository,sha){if(typeof repository!=='string'||typeof sha!=='string'||!/^[0-9a-f]{7,64}$/i.test(sha))return null;const parts=repository.split('/');if(parts.length!==2||!parts[0]||!parts[1])return null;return 'https://github.com/'+parts[0]+'/'+parts[1]+'/commit/'+sha;}
+function commitField(label,job,sha){const box=element('div','detail-group');box.append(element('p','detail-label',text(label)));const line=element('p','detail-value');const url=safeCommitUrl(job?.githubRepo,sha);if(url){const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener noreferrer';link.textContent=sha.slice(0,7);line.append(link);}else line.append(text(sha||'—'));box.append(line);return box;}
+function prField(job){if(Number(job.prNumber||0)===0)return field('GitHub PR','Not applicable');const box=element('div','detail-group');box.append(element('p','detail-label',text('GitHub PR')));const line=element('p','detail-value');const prNumber=Number(job.prNumber||0);const url=safePrUrl(job.githubRepo,prNumber);if(url){const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='PR #'+prNumber;line.append(link);}else line.append(text('unavailable'));box.append(line);return box;}
+function safeWorkerThreadUrl(input,adapter){try{const url=new URL(input);const parts=url.pathname.split('/');const domain=adapter==='z'?'chat.z.ai':'chatgpt.com';if(url.protocol!=='https:'||url.hostname!==domain||parts.length!==3||parts[1]!=='c'||!/^[A-Za-z0-9_-]{8,160}$/.test(parts[2]))return null;return url.origin+url.pathname;}catch{return null;}}
+function chatField(task){const box=element('div','detail-group');box.append(element('p','detail-label',text('Worker threads')));const items=Array.isArray(task.threadHistory)?task.threadHistory.slice(-8).reverse():[];if(items.length===0)items.push({threadUrl:task.threadUrl,attempt:task.attempt});let shown=0;for(const item of items){const url=safeWorkerThreadUrl(item.threadUrl,task.adapter);if(!url)continue;const line=element('p','detail-value');const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open '+(task.adapter==='z'?'Z.ai':'ChatGPT')+' thread'+(Number.isInteger(item.attempt)?' · attempt '+item.attempt:'');line.append(link);box.append(line);shown++;}if(!shown){const line=element('p','detail-value');if(task.adapter==='chatgpt'&&typeof task.threadId==='string'){const url=safeWorkerThreadUrl('https://chatgpt.com/c/'+encodeURIComponent(task.threadId),'chatgpt');if(url){const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open ChatGPT thread';line.append(link);shown++;}}if(!shown)line.append(text('—'));box.append(line);}return box;}
+function taskCommentField(task){const box=element('div','detail-group');box.append(element('p','detail-label',text('PR comment')));const line=element('p','detail-value');if(typeof task.taskUrl==='string'&&task.taskUrl.startsWith('https://github.com/')){const link=document.createElement('a');link.className='task-link';link.href=task.taskUrl;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open task comment';line.append(link);}else line.append(text('—'));box.append(line);return box;}
+function parseAgentGraphSource(source){if(typeof source!=='string'||!source.trim())return null;const agents=new Map(),edges=[];for(const raw of source.split(/\r?\n/)){const line=raw.trim();if(!line||line.startsWith('%%')||line.startsWith('flowchart '))continue;let match=line.match(/^([A-Za-z_][A-Za-z0-9_.-]*)(?:\[agent:([A-Za-z_][A-Za-z0-9_.-]*)\])?\s*-->\s*([A-Za-z_][A-Za-z0-9_.-]*)(?:\[agent:([A-Za-z_][A-Za-z0-9_.-]*)\])?$/);if(match){agents.set(match[1],match[2]||agents.get(match[1])||match[1]);agents.set(match[3],match[4]||agents.get(match[3])||match[3]);edges.push([match[1],match[3]]);continue;}match=line.match(/^([A-Za-z_][A-Za-z0-9_.-]*)\[agent:([A-Za-z_][A-Za-z0-9_.-]*)\]$/);if(match){agents.set(match[1],match[2]);continue;}return null;}const incoming=new Map([...agents.keys()].map(id=>[id,0]));for(const [,to] of edges)incoming.set(to,(incoming.get(to)||0)+1);const remaining=new Map(incoming),waves=[];let ready=[...remaining].filter(([,degree])=>degree===0).map(([id])=>id).sort();while(ready.length){waves.push(ready);const next=[];for(const id of ready)for(const [from,to] of edges)if(from===id){const degree=(remaining.get(to)||0)-1;remaining.set(to,degree);if(degree===0)next.push(to);}ready=[...new Set(next)].sort();}return {agents,waves};}
+function agentGraphField(task){if(typeof task.agentGraph!=='string'||!task.agentGraph.trim())return null;const box=element('div','detail-group');box.style.gridColumn='1 / -1';box.append(element('p','detail-label',text('Task agent graph')));const graph=element('div','agent-graph');const parsed=parseAgentGraphSource(task.agentGraph);if(parsed&&parsed.waves.length){parsed.waves.forEach((wave,index)=>{const row=element('div','agent-wave');if(index>0)row.append(element('span','agent-arrow',text('↓')));for(const id of wave)row.append(element('span','agent-node',text(id+' · '+(parsed.agents.get(id)||id))));graph.append(row);});}const source=document.createElement('pre');source.className='agent-graph-source';source.textContent=task.agentGraph;graph.append(source);box.append(graph);return box;}
+function clearEvents(){displayedEventIds.clear();eventFeed.replaceChildren(element('li','empty',text('Waiting for events.')));}
+async function loadEventHistory(){const job=selected();if(!job){clearEvents();return;}const params=new URLSearchParams({job:job.id,limit:String(MAX_EVENTS)});if(eventTaskId)params.set('task',eventTaskId);try{const history=await loadJSON('/api/events?'+params.toString());clearEvents();for(const event of Array.isArray(history)?history.slice().reverse():[])addEvent(event);}catch{clearEvents();}}
+function copySelectedJobIdentity(job){if(!job||!navigator.clipboard?.writeText)return;void navigator.clipboard.writeText(repoName(job.repository)+'/'+value(job.id)).catch(()=>{});}
+function selectJob(job){selectedJob=jobSelectionKey(job);selectedTaskId=null;eventTaskId=null;rememberSelection();clearEvents();location.hash=selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs';copySelectedJobIdentity(job);renderAll();void loadEventHistory();}
+function matchesQuickFilter(job){return !selectedStatus?["DRAFT","ACTIVE","COMPLETED"].some(status=>status==='DRAFT'?job.draft||job.state==='DRAFT':job.state===status):selectedStatus==='DRAFT'?job.draft||job.state==='DRAFT':job.state===selectedStatus;}
+function matchesSearch(job){const query=searchQuery.trim().toLowerCase();if(!query)return true;const pr=String(job.prNumber||'');const normalized=query.replace(/^prs*#?/,'').replace(/^#/,'');return String(job.title||job.id||'').toLowerCase().includes(query)||String(job.id||'').toLowerCase().includes(query)||shortManagedId(job.id,job.repository,'j').toLowerCase().includes(query)||pr.includes(normalized);}
+function filteredJobs(){return jobs.filter(job=>(!selectedRepo||selectedRepo===job.repository)&&matchesQuickFilter(job)&&matchesSearch(job)).slice(0,20);}
+function syncFilters(){
+  const repos=jobRepositories.length?jobRepositories:[...new Set(jobs.map(job=>job.repository).filter(Boolean))].sort();
+  const repoOptions=[new Option('All repos',''),...repos.map(repo=>new Option(repo,repo))];
+  if(repoFilter.options.length!==repoOptions.length||[...repoFilter.options].some((option,index)=>option.value!==repoOptions[index].value))repoFilter.replaceChildren(...repoOptions);
+  if(selectedRepo&&!repos.includes(selectedRepo))selectedRepo='';
+  if(!['','DRAFT','ACTIVE','COMPLETED','CANCELLED'].includes(selectedStatus))selectedStatus='';
+  statusFilter.value=selectedStatus;
+  repoFilter.value=selectedRepo;
+  if(jobSearch.value!==searchQuery)jobSearch.value=searchQuery;
 }
-async function load(){
- try{
-  const response=await fetch('api/jobs',{cache:'no-store'});if(!response.ok)throw Error('HTTP '+response.status);
-  const data=await response.json();if(data.backend!=='rust-native')throw Error('Unexpected backend');
-  render(data.jobs||[]);status.textContent='Rust backend connected · '+(data.jobs||[]).length+' Jobs · '+new Date().toLocaleTimeString();
- }catch(error){status.textContent='Rust backend unavailable: '+error.message}
+function repoName(repository){if(typeof repository!=='string'||!repository)return 'unknown-repo';const parts=repository.split('/').filter(Boolean);return parts.at(-1)||repository;}
+const buildJelDiagram=function jobJelDiagram(job) {
+    const lines = ['flowchart LR'];
+    const safe = (value) => String(value ?? 'Unknown').replace(/https?:\/\/[^\s]*/gi, '').replace(/[^\p{L}\p{N} _./()—:-]/gu, '').slice(0, 100);
+    const now = Date.now();
+    const instant = (value) => {
+        if (typeof value !== 'string' || !value)
+            return null;
+        const parsed = Date.parse(value);
+        return Number.isFinite(parsed) && parsed <= now ? parsed : null;
+    };
+    const elapsed = (start, end) => {
+        const from = instant(start);
+        const to = end === 'NOW' ? now : instant(end);
+        if (from === null || to === null || to < from)
+            return '—';
+        const seconds = Math.floor((to - from) / 1000);
+        if (seconds < 60)
+            return seconds + 's';
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60)
+            return minutes + 'm' + String(seconds % 60).padStart(2, '0') + 's';
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24)
+            return hours + 'h' + String(minutes % 60).padStart(2, '0') + 'm';
+        return Math.floor(hours / 24) + 'd' + String(hours % 24).padStart(2, '0') + 'h';
+    };
+    const terminalTask = (task) => ['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(task.state || '');
+    const workElapsed = (work) => {
+        const starts = work.map(task => instant(task.createdAt)).filter((time) => time !== null);
+        if (starts.length !== work.length || !starts.length)
+            return '—';
+        const ends = work.map(task => instant(task.updatedAt)).filter((time) => time !== null);
+        return elapsed(new Date(Math.min(...starts)).toISOString(), work.every(terminalTask) && ends.length === work.length ? new Date(Math.max(...ends)).toISOString() : 'NOW');
+    };
+    const node = (id, label, time) => lines.push('  ' + id + '["' + safe(label).slice(0, 80) + ' (' + safe(time) + ')"]');
+    const edge = (from, to, reason = '') => lines.push('  ' + from + ' -->' + (reason ? '|' + safe(reason) + '|' : '') + ' ' + to);
+    const tasks = Array.isArray(job.tasks) ? job.tasks : [];
+    const isReviewer = (task) => ['job-acceptance-reviewer', 'reviewer'].includes(task.agentName || '');
+    const isTroubleshooter = (task) => task.agentName === 'troubleshooter';
+    // These dashed observation branches are not workflow transitions: persisted
+    // Task facts are projected without inferring a new scheduling decision.
+    const diagnostics = (executionId, suffix, work, troubleshoot) => {
+        const failed = new Set();
+        const add = (kind, label, time, origin) => {
+            const id = kind + '_' + suffix + '_' + String(lines.filter(line => line.startsWith('  ' + kind + '_' + suffix + '_')).length);
+            node(id, label, time);
+            lines.push('  ' + (origin ? taskNodeId(origin) : executionId) + ' -.-> ' + id);
+            lines.push('  class ' + id + ' jel' + kind[0].toUpperCase() + kind.slice(1));
+        };
+        for (const task of work) {
+            if (task.state === 'FAILED') {
+                const key = (task.id || 'unknown') + ':' + String(task.attempt ?? '?');
+                failed.add(key);
+                add('failed', 'Failed', elapsed(task.createdAt, task.updatedAt), task);
+            }
+            if (typeof task.attempt === 'number' && Number.isInteger(task.attempt) && task.attempt > 1) {
+                const history = Array.isArray(task.executionHistory) ? task.executionHistory : [];
+                const current = history.slice().reverse().find(record => record.attempt === task.attempt);
+                add('retry', 'Retry', elapsed(current?.startedAt, terminalTask(task) ? task.updatedAt : 'NOW'), task);
+            }
+        }
+        for (const task of troubleshoot) {
+            const parent = work.find(candidate => candidate.id === task.parentTaskId);
+            if (parent && Number.isInteger(task.recoveryForAttempt) && (task.recoveryForAttempt ?? 0) > 0) {
+                const key = (parent.id || 'unknown') + ':' + task.recoveryForAttempt;
+                if (!failed.has(key)) {
+                    failed.add(key);
+                    // Recovery-for-attempt is durable evidence of a failed attempt, but
+                    // not of its terminal timestamp: display unknown, never fabricate.
+                    add('failed', 'Failed', '—', parent);
+                }
+            }
+            add('troubleshooter', task.title || task.agentName || 'Troubleshooter', workElapsed([task]), parent);
+        }
+    };
+    // Exact Task IDs, DAG lineage and dependencies are persisted facts, not inferred
+    // workflow transitions. Task nodes are clickable in the dashboard after SVG sanitization.
+    const taskNodeId = (task) => 'task_' + tasks.indexOf(task);
+    const taskElapsed = (task) => {
+        const end = terminalTask(task) ? task.updatedAt : 'NOW';
+        const coordinator = (task.kind || '').toLowerCase() === 'coordinator' ||
+            (/coordinator/i.test(task.agentName || '') && !task.dagNode) || !!task.agentGraph;
+        const history = Array.isArray(task.executionHistory) ? task.executionHistory : [];
+        const last = history.slice().reverse().find(record => record.attempt === task.attempt);
+        const run = coordinator ? '—' : elapsed(last?.startedAt, end);
+        return run !== '—' ? run : elapsed(task.createdAt, end);
+    };
+    const taskNodes = (stage, work) => {
+        const byId = new Map(work.filter(task => task.id).map(task => [task.id, task]));
+        for (const task of work) {
+            const id = taskNodeId(task);
+            node(id, task.title?.trim() || task.agentName?.trim() || task.id || 'Task', taskElapsed(task));
+            if (task.state === 'FAILED')
+                lines.push('  class ' + id + ' jelFailed');
+            else if ((task.attempt || 0) > 1)
+                lines.push('  class ' + id + ' jelRetry');
+            const parent = task.parentTaskId ? byId.get(task.parentTaskId) : undefined;
+            if (parent)
+                edge(taskNodeId(parent), id, 'DAG child');
+            else
+                lines.push('  ' + stage + ' -.-> ' + id);
+            for (const dependency of task.dependencies || []) {
+                const upstream = byId.get(dependency);
+                if (upstream && upstream !== parent)
+                    edge(taskNodeId(upstream), id, 'depends');
+            }
+        }
+    };
+    const finish = () => {
+        // The browser applies the same palette *after* SVG sanitization; Mermaid
+        // styling alone is not trusted to survive the safe SVG renderer.
+        lines.push('  classDef jelFailed fill:#fee2e2,stroke:#b91c1c,color:#991b1b,stroke-width:2px');
+        lines.push('  classDef jelRetry fill:#ede9fe,stroke:#7c3aed,color:#5b21b6,stroke-width:2px');
+        lines.push('  classDef jelTroubleshooter fill:#fef3c7,stroke:#b45309,color:#92400e,stroke-width:2px');
+        lines.push('  classDef jelReviewer fill:#dbeafe,stroke:#2563eb,color:#1e40af,stroke-width:2px');
+        return lines.join('\n');
+    };
+    const plans = Array.isArray(job.plans) ? job.plans : [];
+    const jobEnd = ['COMPLETED', 'CANCELLED'].includes(job.state || '') ? job.updatedAt : 'NOW';
+    const firstStart = plans[0]?.createdAt || (job.tasks || []).map(task => task.createdAt).filter(Boolean).sort()[0];
+    node('created', 'Create', elapsed(job.createdAt, firstStart || jobEnd));
+    const rounds = plans.length ? plans : [{ id: '', round: 1, status: 'NOT STARTED', generatedTaskIds: [] }];
+    let previous = 'created';
+    const allocated = new Set();
+    for (let i = 0; i < rounds.length; i++) {
+        const plan = rounds[i];
+        const number = Number.isInteger(plan.round) && (plan.round ?? 0) > 0 ? plan.round : i + 1;
+        const suffix = String(i + 1);
+        const planId = 'plan_' + suffix;
+        const executeId = 'execute_' + suffix;
+        const reviewId = 'review_' + suffix;
+        const assigned = new Set(Array.isArray(plan.generatedTaskIds) ? plan.generatedTaskIds : []);
+        const candidates = tasks.filter(task => !isReviewer(task) && !isTroubleshooter(task));
+        if (plans.length) {
+            for (const task of candidates)
+                if (task.planningDecisionId === plan.id || task.planningRound === number)
+                    assigned.add(task.id || '');
+            // DAG children often have only parentTaskId; inherit the parent round.
+            for (let depth = 0; depth < candidates.length; depth++) {
+                let changed = false;
+                for (const task of candidates)
+                    if (task.parentTaskId && assigned.has(task.parentTaskId) && !assigned.has(task.id || '')) {
+                        assigned.add(task.id || '');
+                        changed = true;
+                    }
+                if (!changed)
+                    break;
+            }
+        }
+        const work = plans.length
+            ? candidates.filter(task => !allocated.has(task.id || '') && (assigned.has(task.id || '') || (i === rounds.length - 1)))
+            : candidates;
+        for (const task of work)
+            if (task.id)
+                allocated.add(task.id);
+        if (plans.length)
+            node(planId, 'Plan ' + number, elapsed(plan.createdAt, plan.status === 'PLANNING' ? 'NOW' : plan.updatedAt));
+        node(executeId, 'Execute ' + number, workElapsed(work));
+        const workIds = new Set(work.map(task => task.id));
+        const troubleshoot = tasks.filter(task => isTroubleshooter(task) &&
+            (workIds.has(task.parentTaskId || '') || task.planningDecisionId === plan.id || !plans.length));
+        taskNodes(executeId, work);
+        diagnostics(executeId, suffix, work, troubleshoot);
+        const nextPlan = plans[i + 1];
+        // Review Tasks are not guaranteed to carry the Plan ID. Use their persisted
+        // timestamps within the current round, never guess a Review duration.
+        const reviewTasks = tasks.filter(task => isReviewer(task) &&
+            (!plans.length || (instant(task.createdAt) !== null && instant(plan.createdAt) !== null &&
+                instant(task.createdAt) >= instant(plan.createdAt) && (!nextPlan?.createdAt || (instant(nextPlan.createdAt) !== null && instant(task.createdAt) < instant(nextPlan.createdAt))))));
+        node(reviewId, 'Final Review ' + number, workElapsed(reviewTasks));
+        for (const task of reviewTasks) {
+            node(taskNodeId(task), task.title?.trim() || task.agentName || task.id || 'Final Review', taskElapsed(task));
+            lines.push('  ' + reviewId + ' -.-> ' + taskNodeId(task));
+            lines.push('  class ' + taskNodeId(task) + (task.state === 'FAILED' ? ' jelFailed' : ' jelReviewer'));
+        }
+        if (plans.length) {
+            edge(previous, planId, i > 0 && plan.trigger?.source === 'review' ? 'changes required' : '');
+            edge(planId, executeId);
+        }
+        else
+            edge(previous, executeId);
+        edge(executeId, reviewId);
+        previous = reviewId;
+    }
+    const merge = job.localMerge?.status === 'failed' ? 'FAILED' : job.localMerge?.status === 'succeeded' || job.githubState === 'MERGED' || job.publication?.version ? 'DONE' : job.state === 'COMPLETED' ? 'NOT RECORDED' : 'PENDING';
+    const mergeStart = job.review?.outcome === 'approved' ? job.review.updatedAt : undefined;
+    const mergeEnd = merge === 'DONE' ? job.localMerge?.updatedAt || job.mergedAt : merge === 'PENDING' && mergeStart ? 'NOW' : undefined;
+    node('merge', 'Merge', elapsed(mergeStart, mergeEnd));
+    node('finished', 'Job', elapsed(job.createdAt, jobEnd));
+    edge(previous, 'merge');
+    edge('merge', 'finished');
+    return finish();
+};
+const jelChart=document.querySelector('#jel-chart');
+function inspectJelTask(id){
+  if(!selected()?.tasks?.some(task=>task.id===id))return;
+  selectedTaskId=id;eventTaskId=id;rememberSelection();clearEvents();
+  dismissGraphViewer();renderAll();void loadEventHistory();
+  document.querySelector('#task-detail').scrollIntoView({block:'start',behavior:'smooth'});
 }
-document.getElementById('refresh').addEventListener('click',load);load();setInterval(load,3000);
-</script></body></html>
+let jelRenderSequence=0;
+async function openJelChart(job){
+  const renderId=++jelRenderSequence;
+  jelChart.replaceChildren(element('p','subtle',text('Rendering job lifecycle…')));
+  showGraphViewer(jelChart,'JEL · '+value(job.repository)+'/'+value(job.id));
+  const source=buildJelDiagram(job);
+  try{
+    if(!window.mermaid)throw new Error('Mermaid unavailable');
+    if(!window.__relayMermaidReady){window.mermaid.initialize({startOnLoad:false,securityLevel:'strict',flowchart:{htmlLabels:false}});window.__relayMermaidReady=true;}
+    const rendered=await window.mermaid.render('relay-jel-'+renderId,source);
+    if(renderId!==jelRenderSequence||!graphDialog.open||graphViewerContent!==jelChart)return;
+    const svg=sanitizeGraphSvg(rendered.svg);
+    const definitions=graphNodeDefinitions(source);
+    for(const node of svg.querySelectorAll('g.node')){const entry=Array.from(definitions.entries()).find(([key])=>node.id.includes('-flowchart-'+key+'-'));if(entry)addNodeLabel(node,entry[1]);}
+    applyGraphPalette(svg);
+    applyJelHighlights(svg);
+    for(const node of svg.querySelectorAll('g.node')){
+      const match=node.id.match(/-flowchart-task_([0-9]+)-/);
+      const task=match?job.tasks?.[Number(match[1])]:null;
+      if(!task?.id)continue;
+      node.classList.add('jel-inspectable');node.setAttribute('role','button');node.setAttribute('tabindex','0');
+      node.setAttribute('aria-label','Inspect Task '+task.id);
+      node.addEventListener('click',()=>inspectJelTask(task.id));
+      node.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();inspectJelTask(task.id);}});
+    }
+    jelChart.replaceChildren(svg);
+    fitGraphViewer();
+  }catch(error){
+    if(renderId!==jelRenderSequence||!graphDialog.open||graphViewerContent!==jelChart)return;
+    jelChart.replaceChildren(element('pre','jel-source',text(source)));
+  }
+}
+function applyJelHighlights(svg){
+  const palette={failed:['#fee2e2','#b91c1c','#991b1b'],retry:['#ede9fe','#7c3aed','#5b21b6'],troubleshooter:['#fef3c7','#b45309','#92400e'],review:['#dbeafe','#2563eb','#1e40af']};
+  for(const node of svg.querySelectorAll('g.node')){
+    const taskIndex=node.id.match(/-flowchart-task_([0-9]+)-/);
+    const task=taskIndex?selected()?.tasks?.[Number(taskIndex[1])]:null;
+    const kind=node.id.includes('-flowchart-failed_')||task?.state==='FAILED'?'failed':
+      node.id.includes('-flowchart-retry_')||(task?.attempt||0)>1?'retry':
+      node.id.includes('-flowchart-troubleshooter_')||task?.agentName==='troubleshooter'?'troubleshooter':
+      task&&['job-acceptance-reviewer','reviewer'].includes(task.agentName)?'review':null;
+    if(!kind)continue;
+    node.classList.add('jel-'+kind);
+    const [fill,stroke,color]=palette[kind];
+    for(const shape of node.querySelectorAll('rect,polygon,circle,ellipse')){shape.setAttribute('fill',fill);shape.setAttribute('stroke',stroke);shape.setAttribute('stroke-width','2');}
+    for(const label of node.querySelectorAll('text,tspan'))label.setAttribute('fill',color);
+  }
+}
+function jelField(job){const box=element('div','detail-group');box.append(element('p','detail-label',text('Job Execution Lifecycle')));const line=element('p','detail-value');const link=element('a','',text('View JEL chart'));link.href='#graph-dialog';link.addEventListener('click',event=>{event.preventDefault();void openJelChart(job);});line.append(link);box.append(line);return box;}
+function renderJobList(){jobList.replaceChildren();const visible=filteredJobs();if(!jobs.length){jobList.append(element('li','empty',text('No durable jobs discovered.')));return;}if(!visible.length){jobList.append(element('li','empty',text('No jobs match the selected filters.')));return;}for(const job of visible){const row=element('div','job-row'+(isCompleteUnmerged(job)?' complete-unmerged':''));row.setAttribute('aria-current',String(jobSelectionKey(job)===selectedJob));row.addEventListener('click',()=>selectJob(job));const content=element('div','job-content');const select=document.createElement('button');select.type='button';select.className='job-button';select.setAttribute('aria-current',String(jobSelectionKey(job)===selectedJob));select.title=job.title||job.id;select.addEventListener('click',event=>{event.stopPropagation();selectJob(job);});select.append(element('span','job-title',text(repoName(job.repository)+'/'+value(job.id)+(Number(job.prNumber||0)>0?'/PR#'+value(job.prNumber):'')+': '+value(job.title||job.id))));const states=element('span','job-status-line');states.append(element('span','badge '+value(job.state),text(value(job.state))));states.append(element('span','badge '+value(job.runtimeStatus||'IDLE'),text(value(job.runtimeStatus||'IDLE'))));if(job.publicationFailure)states.append(element('span','badge FAILED',text('PUBLISH FAILED: '+value(job.publicationFailure.stage))));else if(job.publication?.version)states.append(element('span','badge SUCCEEDED',text('v'+job.publication.version)));else if(Number(job.prNumber||0)>0&&job.githubState==='MERGED')states.append(element('span','badge MERGED',text('PR Merged')));else if(job.state==='COMPLETED'&&job.githubState==='CLOSED')states.append(element('span','badge SUCCEEDED',text('PR Archived')));if(job.state==='ACTIVE'&&job.reviewEnabled!==false)states.append(element('span','badge flag-review',text('REVIEW REQUIRED')));if(job.localMerge?.status==='failed')states.append(element('span','badge FAILED',text('MERGE FAILED: '+value(job.localMerge.error||'Unknown error'))));else if(isCompleteUnmerged(job))states.append(element('span','badge MERGE_PENDING',text('MERGE PENDING')));const primary=element('div','job-primary');primary.append(states);const lastLine=element('div','job-last-line');lastLine.append(element('span','subtle',text(compactCounts(counts(job.tasks)))),element('span','subtle',text(relativeTime(job.updatedAt))));content.append(select,primary,lastLine);row.append(content);jobList.append(element('li','',row));}}
+function taskTagDisplay(job,task){const display=task.tag&&job?.tag?.values?.[task.tag];return typeof display==='string'&&display?display:null;}
+function taskVerdict(job,task){if(task.state!=="SUCCEEDED")return null;const data=task.result?.data||{};if(["reviewer","job-acceptance-reviewer"].includes(task.agentName)){const verdict=data.verdict||((job?.review?.taskId===task.id)?job.review.outcome:null);return ({approved:"APPROVED",pass:"APPROVED","changes-required":"CHANGES REQUIRED",changes_required:"CHANGES REQUIRED"})[verdict]||null;}if(task.agentName==="troubleshooter"){const original=job?.tasks?.find(t=>t.id===task.parentTaskId);const resolution=original?.resolution;if(resolution?.state!=="resolved"||resolution.owner!=="troubleshooter")return null;return ({exact_original_retry:"RETRY VERIFIED",same_job_dependency:"DEPENDENCY REGISTERED",blocker_job_dependency:"BLOCKER REGISTERED",cancel_supersede:"SUPERSEDED"})[resolution.path]||null;}return null;}function taskSubtreeComplete(task,children){return ['SUCCEEDED','CANCELLED'].includes(task.state)&&(children.get(task.id)||[]).every(child=>taskSubtreeComplete(child,children));}
+function taskStateLabel(task){const resolution=task?.resolution?.state;return task?.state==='FAILED'&&typeof resolution==='string'&&resolution.trim()?task.state+' / '+resolution:task.state;}
+function taskNode(task,children,depth){const li=element('li');const nested=children.get(task.id)||[];const line=element('div','task-line');if(nested.length){const key=(selectedJob||'')+':'+task.id;const collapsed=collapsedTasks.has(key)||(!expandedTasks.has(key)&&taskSubtreeComplete(task,children));const fold=document.createElement('button');fold.type='button';fold.className='task-fold';fold.setAttribute('aria-expanded',String(!collapsed));fold.setAttribute('aria-label',(collapsed?'Expand ':'Collapse ')+task.id);fold.textContent=collapsed?'▸':'▾';line.append(fold);const ul=element('ul','tree');ul.hidden=collapsed;for(const child of nested)ul.append(taskNode(child,children,depth+1));fold.addEventListener('click',()=>{const next=!ul.hidden;ul.hidden=next;fold.setAttribute('aria-expanded',String(!next));fold.setAttribute('aria-label',(next?'Expand ':'Collapse ')+task.id);fold.textContent=next?'▸':'▾';if(next){collapsedTasks.add(key);expandedTasks.delete(key);}else{collapsedTasks.delete(key);expandedTasks.add(key);}});li.append(line,ul);}else li.append(line);const row=document.createElement('button');row.type='button';row.className='task-row';row.setAttribute('aria-current',String(task.id===selectedTaskId));row.title=task.id;row.addEventListener('click',()=>{const deselect=selectedTaskId===task.id;selectedTaskId=deselect?null:task.id;eventTaskId=deselect?null:task.id;rememberSelection();clearEvents();renderAll();void loadEventHistory();});const label=element('span','task-id',text(value(task.id)+': '+value(task.title||task.input?.split(/\r?\n/).find(line=>line.trim())?.trim()||shortManagedId(task.id,selected()?.repository,'t'))));label.style.paddingLeft=Math.min(depth,4)*6+'px';const verdict=taskVerdict(selected(),task);row.append(label,element('span','badge '+(verdict==='APPROVED'||verdict==='RESOLVED'?'SUCCEEDED':verdict==='CHANGES REQUIRED'||verdict==='WAITING'?'BLOCKED':value(task.state)),text(task.state==='FAILED'?taskStateLabel(task):(verdict||task.state))));const tag=taskTagDisplay(selected(),task);if(tag){const badge=element('span','task-tag',text(tag));badge.title=(selected()?.tag?.description||'Task tag')+': '+task.tag;row.append(badge);}line.append(row);return li;}
+function buildTree(tasks){taskTree.replaceChildren();if(!Array.isArray(tasks)||!tasks.length){taskTree.append(element('li','empty',text('No tasks in durable state.')));return;}const work=tasks.filter(task=>task.kind!=='planner');if(!work.length){taskTree.append(element('li','empty',text('No work tasks in durable state.')));return;}const known=new Set(work.map(task=>task.id));const children=new Map();const roots=[];for(const task of work){if(!task.parentTaskId||!known.has(task.parentTaskId))roots.push(task);else{const siblings=children.get(task.parentTaskId)||[];siblings.push(task);children.set(task.parentTaskId,siblings);}}for(const task of roots)taskTree.append(taskNode(task,children,0));}
+function attemptBudget(task){const attempt=Number(task?.attempt)||0;const max=Number(task?.maxAttempts)||0;if(max>=3&&max%3===0){const effectiveMax=Math.max(max,Math.ceil(attempt/3)*3);return attempt+' / 3×'+(effectiveMax/3);}return attempt+' / '+max;}
+const JOB_STATES=['DRAFT','ACTIVE','COMPLETED','CANCELLED'];
+async function setJobState(job,state,select){if(!job||state===job.state)return;select.disabled=true;try{const params=new URLSearchParams({id:job.id,state,repo:job.repository,pr:String(job.prNumber)});const response=await fetch('/api/job-state?'+params.toString(),{method:'POST'});if(!response.ok)throw new Error(response.status+' '+response.statusText);const updated=await response.json();const index=jobs.findIndex(candidate=>jobSelectionKey(candidate)===jobSelectionKey(job));if(index>=0)jobs[index]=updated;else jobs.push(updated);renderAll();void loadEventHistory();}catch(error){select.title='Set job lifecycle state: '+error.message;select.value=job.state;}finally{select.disabled=false;}}
+function jobStateField(job){const box=element('div','detail-group');box.append(element('p','detail-label',text('Lifecycle state')));const select=document.createElement('select');select.className='job-filter job-state-select';select.dataset.state=job.state;select.setAttribute('aria-label','Job lifecycle state');for(const state of JOB_STATES)select.append(new Option(state,state));select.value=job.state;select.disabled=true;select.title='Read-only Rust Dashboard: change state through Relay CLI';select.addEventListener('change',()=>void setJobState(job,select.value,select));box.append(select);return box;}
+const TASK_STATES=['DRAFT','QUEUED','RUNNING','AWAITING_DECISION','BLOCKED','SUCCEEDED','FAILED','CANCELLED'];
+async function setTaskState(task,state,select){const job=selected();if(!job||state===task.state)return;select.disabled=true;try{const params=new URLSearchParams({id:job.id,task:task.id,state,repo:job.repository,pr:String(job.prNumber)});const response=await fetch('/api/task-state?'+params.toString(),{method:'POST'});if(!response.ok)throw new Error(response.status+' '+response.statusText);const updated=await response.json();const index=jobs.findIndex(candidate=>jobSelectionKey(candidate)===jobSelectionKey(job));if(index>=0)jobs[index]=updated;else jobs.push(updated);renderAll();void loadEventHistory();}catch(error){select.title='Set task state: '+error.message;select.value=task.state;}finally{select.disabled=false;}}
+function taskStateField(task){const box=element('div','detail-group');box.append(element('p','detail-label',text('State')));const select=document.createElement('select');select.className='job-filter task-state-select';select.setAttribute('aria-label','Task state');for(const state of TASK_STATES)select.append(new Option(state,state));select.value=task.state;select.disabled=true;select.title='Read-only Rust Dashboard: change state through Relay CLI';select.addEventListener('change',()=>void setTaskState(task,select.value,select));box.append(select);return box;}
+function manualOverrideField(task){const rows=Array.isArray(task.manualStateOverrides)?task.manualStateOverrides:[];const last=rows.at(-1);return field('Manual override',last?last.from+' → '+last.to+' · '+relativeTime(last.at):'—');}
+function iconSvg(name){const paths={close:'M5 5l14 14M19 5 5 19',detail:'M7 3h7l4 4v14H7zM14 3v5h4M10 12h5m-5 4h5'};const ns='http://www.w3.org/2000/svg';const svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('aria-hidden','true');const path=document.createElementNS(ns,'path');path.setAttribute('d',paths[name]);svg.append(path);return svg;}
+function showDetailsDialog(title,sections){const dialog=element('dialog','details-dialog');dialog.setAttribute('aria-label',title);const head=element('div','details-dialog-head');const name=element('strong','',text(title));const close=element('button','icon-button');close.append(iconSvg('close'));close.type='button';close.setAttribute('aria-label','Close details');close.title='Close details';close.addEventListener('click',()=>dialog.close());head.append(name,close);dialog.append(head);for(const [label,value] of sections){if(value===undefined||value===null||value==='')continue;dialog.append(element('h3','',text(label)));const content=element('pre');content.textContent=typeof value==='string'?value:JSON.stringify(value,null,2);dialog.append(content);}dialog.addEventListener('close',()=>dialog.remove());document.body.append(dialog);dialog.showModal();}function openJobDetails(){const job=selected();if(!job)return;showDetailsDialog('Job '+job.id+' · '+value(job.title),[['Objective',job.objective],['Description',job.description],['State',job.state],['Plans',job.plans?.map(p=>({id:p.id,status:p.status,assessment:p.assessment,error:p.error,generatedTaskIds:p.generatedTaskIds}))],['Review',job.review],['Outcome',job.result],['Publication',job.publication],['Failure',job.error]]);}function openTaskDetails(task){const result=task.result?.data??task.result;showDetailsDialog('Task '+task.id+' · '+value(task.title),[['Input / task objective',task.input],['State',task.state],['Conclusion',result],['Result summary',task.result?.summary],['Planner assessment',task.plannerResult?.assessment],['Resolution',task.resolution],['Resolution classification',task.resolutionClassification],['Failure',task.failureReason||task.error],['Dependencies',task.dependencies]]);}document.querySelector('#job-content-open').addEventListener('click',openJobDetails);function renderTaskDetail(task){taskDetailRoot.replaceChildren();if(!task){taskDetailRoot.append(element('p','empty',text('Select a task to inspect execution details.')));return;}const routing=task.routing||{};const groups=element('div','detail-groups');groups.append(field('Title',task.title||'—'),field('Task ID',task.id),field('Kind',task.kind||'work'),taskStateField(task),...(task.state==='FAILED'&&task.resolution?.state?[field('Resolution state',task.resolution.state),field('Resolution path',task.resolution.path||'—'),field('Resolution target',task.resolution.targetTaskId||'—')]:[]),manualOverrideField(task),field('Planning decision',task.planningDecisionId||'—'),field('Planning source',task.planningSource||'—'),field('Planning round',task.planningRound===undefined?'—':String(task.planningRound)),field('Project / agent',value(task.projectName)+' / '+value(task.agentName)),field('Parent task',task.parentTaskId||'root'),...(task.resolutionClassification?[field('Resolution classification',task.resolutionClassification.kind),field('Resolution target',task.resolutionClassification.targetTaskId),field('Resolution evidence',task.resolutionClassification.evidence),field('Resolution reason',task.resolutionClassification.reason)]:[]),field('Adapter',task.adapter),field('Provider / model',value(routing.provider)+' / '+value(routing.model)),field('Reasoning / profile',value(routing.reasoning||routing.profile)),field('Attempt',attemptBudget(task)),field('Dependencies',Array.isArray(task.dependencies)&&task.dependencies.length?task.dependencies.join(', '):'none'),taskCommentField(task),chatField(task));const job=selected();if(task.reviewHeadSha&&job)groups.append(commitField('HEAD commit',job,task.reviewHeadSha));const graph=agentGraphField(task);if(graph)groups.append(graph);if(task.plannerResult)groups.append(field('Objective status',task.plannerResult.objective_status),markdownField('Assessment',task.plannerResult.assessment));if(task.error)groups.append(field('Error',task.error));const result=task.result?.data??task.result;if(result){groups.append(field('Conclusion',result.verdict||result.outcome?.verdict||task.result?.summary||'Available'));}taskDetailRoot.append(groups);const details=element('button','icon-button');details.append(iconSvg('detail'));details.type='button';details.setAttribute('aria-label','Task details and conclusion');details.title='Task details and conclusion';details.addEventListener('click',()=>openTaskDetails(task));taskDetailRoot.append(details);}
+function reviewStatus(job){const review=job?.review;if(!review)return 'Not started';if(review.outcome==='approved'&&review.headSha===job.headSha)return 'MERGE READY · approved';const stale=Array.isArray(job?.tasks)&&job.tasks.some(task=>['reviewer','job-acceptance-reviewer'].includes(task.agentName)&&task.reviewHeadSha&&job.headSha&&task.reviewHeadSha!==job.headSha);if(stale)return 'STALE · awaiting review';return String(review.outcome||'pending').replace('_',' ').toUpperCase();}function renderSelectedJob(){jobDetail.replaceChildren();const job=selected();if(!job){selectedJobTitle.textContent='';jobContentButton.disabled=true;jobContentButton.dataset.state='IDLE';jobDetail.append(element('div','empty',text('No durable jobs discovered.')));buildTree([]);renderTaskDetail(null);return;}selectedJobTitle.textContent=value(job.title||job.id);jobContentButton.disabled=false;jobContentButton.dataset.state=JOB_STATES.includes(job.state)?job.state:'IDLE';jobContentButton.setAttribute('aria-label','Job details · '+value(job.state));jobContentButton.title='Job details · '+value(job.state);if(jobSelectionKey(job)!==selectedJob){selectedJob=jobSelectionKey(job);selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}const summary=element('div','job-summary');summary.append(field('PR state',Number(job.prNumber||0)===0?'Not applicable':job.githubState||'UNKNOWN'),jobStateField(job),field('Runtime status',job.runtimeStatus||'IDLE'),field('Review',job.reviewEnabled===false?'Not required':reviewStatus(job)),field('Creator thread',job.creatorThreadId||'—'),threadField('Implementation thread',job.implementationThreadId),threadField('Reviewer thread',job.reviewerThreadId),commitField('Review head SHA',job,job.review?.headSha||job.headSha||''),prField(job),field('Repository',job.repository||'—'),field('Project root',job.projectRoot||'—'),field('Project path',job.projectPath||'.'),field('Last activity',relativeTime(job.updatedAt)),field('Task states',compactCounts(job.tasks)),jelField(job));jobDetail.append(summary);const selectedTask=(job.tasks||[]).find(task=>task.id===selectedTaskId)||null;if(selectedTaskId&&!selectedTask){selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}buildTree(job.tasks||[]);renderTaskDetail(selectedTask);renderEventScope();}function renderAll(){jobs.sort(compareJobs);syncFilters();renderJobList();renderSelectedJob();syncMobileJobsView();}
+function isCompleteUnmerged(job){return job.runtimeStatus==='MERGE_PENDING';}
+function compareJobs(a,b){const lifecycleGroup=job=>job.state==='COMPLETED'||job.state==='CANCELLED'?1:0;const timestamp=job=>{const updated=Date.parse(job.updatedAt||'');if(Number.isFinite(updated))return updated;const created=Date.parse(job.createdAt||'');return Number.isFinite(created)?created:0;};return lifecycleGroup(a)-lifecycleGroup(b)||timestamp(b)-timestamp(a)||String(a.repository||'').localeCompare(String(b.repository||''))||String(a.id||'').localeCompare(String(b.id||''));}
+async function loadJSON(url){const response=await fetch(url);if(!response.ok)throw new Error(response.status+' '+response.statusText);return response.json();}
+async function refreshVersion(){try{const live=await loadJSON('/api/version');if(live?.version&&live.version!==DASHBOARD_VERSION)location.reload();}catch{}}
+function renderRateLimitStatus(status){
+  if(!status?.limited){rateLimitWarning.hidden=true;rateLimitWarning.textContent='';return;}
+  const until=status.cooldownUntil?new Date(status.cooldownUntil):null;
+  const suffix=until&&!Number.isNaN(until.getTime())?' Live GitHub refresh will retry after '+until.toLocaleTimeString()+'.':' Live GitHub refresh is temporarily paused.';
+  rateLimitWarning.textContent='GitHub API rate limit reached. Showing cached job data.'+suffix;
+  rateLimitWarning.hidden=false;
+}
+function runtimePill(label,value){const pill=element('span','runtime-stat');pill.append(document.createTextNode(label+' '),element('strong','',text(value)));return pill;}
+async function drawRuntimeSummary(){try{const summary=await loadJSON('/api/runtime-summary');runtimeSummary.replaceChildren(runtimePill('Active Jobs',summary.activeJobs||0),runtimePill('Running Tasks',summary.runningTasks||0),runtimePill('ChatGPT',summary.workers?.chatgpt||0),runtimePill('Codex',summary.workers?.codex||0));for(const item of Array.isArray(summary.models)?summary.models:[])runtimeSummary.append(runtimePill(item.model,item.count));}catch{runtimeSummary.replaceChildren();}}
+async function refreshStatus(){try{renderRateLimitStatus(await loadJSON('/api/status'));}catch{renderRateLimitStatus(null);}}
+function rememberJobFilters(){sessionStorage.setItem('agents-relay:repo-filter',selectedRepo);sessionStorage.setItem('agents-relay:status-filter',selectedStatus);sessionStorage.setItem('agents-relay:job-search',searchQuery);}
+function jobsQuery(force=false){const params=new URLSearchParams();if(searchQuery.trim())params.set('q',searchQuery.trim());if(selectedStatus)params.set('status',selectedStatus);if(selectedRepo)params.set('repo',selectedRepo);if(force)params.set('refresh','1');return params.toString();}
+let jobsRequestSequence=0;
+async function refresh(force=true){const requestSequence=++jobsRequestSequence;jobsRefresh.disabled=true;jobsFeedback.textContent='';try{const params=jobsQuery(force);const discovered=await loadJSON('/api/jobs'+(params?'?'+params:''));if(requestSequence!==jobsRequestSequence)return;const result=Array.isArray(discovered)?{jobs:discovered,repositories:[...new Set(discovered.map(job=>job.repository).filter(Boolean))].sort()}:discovered;jobs=dedupeJobs(Array.isArray(result.jobs)?result.jobs:[]).sort(compareJobs).slice(0,20);jobRepositories=result.repositories||[];void drawRuntimeSummary();jobs.sort(compareJobs);if(selectedJob&&!jobForSelection(selectedJob)){selectedJob=null;selectedTaskId=null;}if(!selectedJob){const match=location.hash.match(/^#\/jobs\/(.+)$/);const fromHash=match?decodeURIComponent(match[1]):null;const fromRoute=jobForSelection(fromHash);selectedJob=jobSelectionKey(fromRoute||jobs[0]);}rememberSelection();rememberJobFilters();renderAll();void loadEventHistory();jobsFeedback.textContent='';}catch(error){if(requestSequence!==jobsRequestSequence)return;jobsFeedback.textContent='Refresh failed: '+error.message;jobList.replaceChildren(element('li','error-state',text('Could not load jobs: '+error.message)));}finally{if(requestSequence===jobsRequestSequence){jobsRefresh.disabled=false;syncFilters();}}}
+function renderEventScope(){const task=eventTaskId&&selected()?.tasks?.find(candidate=>candidate.id===eventTaskId);eventsAllTasks.disabled=!task;eventsAllTasks.setAttribute('aria-pressed',String(!task));eventsScope.textContent=task?'Task '+task.id+' · newest first · 60 max':'Job-wide · newest first · 60 max';}
+function eventLabel(type){return ({'task.process.launched':'Process launched','task.started':'Worker started','task.process.exited':'Sync process exited','task.process.async_exited':'Async process exited','task.completed':'Worker completed','task.failed':'Worker failed','task.blocked':'Worker blocked','review.started':'Review started','review.approved':'Review approved','review.changes_required':'Review changes required','review.blocked':'Review blocked'})[type]||type||'Event';}
+function eventSeverity(event,level){const type=String(event?.type||'').toLowerCase(),eventLevel=String(event?.level||level||'').toLowerCase(),outcome=String(event?.outcome||event?.status||'').toLowerCase();if(eventLevel==='error'||outcome==='failed'||type.endsWith('.failed')||type==='task.failed')return 'error';if(eventLevel==='warn'||outcome==='blocked'||type.endsWith('.blocked')||type==='task.blocked'||type==='review.blocked')return 'warn';return 'normal';}
+function addEvent(event,level){const current=selected();if(!event||current&&event.job_id&&event.job_id!==current.id||eventTaskId&&event.task_id!==eventTaskId)return;if(event.event_id&&displayedEventIds.has(event.event_id))return;if(event.event_id)displayedEventIds.add(event.event_id);const severity=eventSeverity(event,level);const item=element('li','event-item'+(severity==='error'?' event-error':severity==='warn'?' event-warn':''));const meta=element('div','event-meta');meta.append(element('span','event-kind',text(eventLabel(event.type))),element('span','event-type',text(event.type||'event')),element('span','',text(relativeTime(event.timestamp))),element('span','',text('task: '+value(event.task_id))));item.append(meta);const message=element('p','event-message',text(event.message||'Event received'));item.append(message);eventFeed.querySelector('.empty')?.remove();eventFeed.prepend(item);while(eventFeed.children.length>MAX_EVENTS)eventFeed.lastElementChild?.remove();}
+function resetText(windowData){if(!Number.isFinite(windowData.resetsAt))return '';const at=new Date(windowData.resetsAt*1000);const minutes=Math.max(0,Math.ceil((at.getTime()-Date.now())/60000));const relative=minutes<60?minutes+'m':minutes<1440?Math.floor(minutes/60)+'h '+minutes%60+'m':Math.floor(minutes/1440)+'d '+Math.floor((minutes%1440)/60)+'h';return 'Resets '+at.toLocaleString()+' · in '+relative;}
+function usageBar(label,windowData){const percent=Math.max(0,Math.min(100,100-windowData.usedPercent));const row=element('div','usage-row');const heading=element('div','usage-label');heading.append(element('span','',text(label)),element('span','',text(Math.round(percent)+'%')));const track=element('div','usage-track');track.setAttribute('role','progressbar');track.setAttribute('aria-label',label+' available');track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');track.setAttribute('aria-valuenow',String(percent));const fill=element('div','usage-fill');fill.style.width=percent+'%';track.append(fill);row.append(heading,track);const reset=resetText(windowData);if(reset)row.append(element('div','subtle',text(reset)));return row;}
+function usageProvider(provider){const card=element('section','usage-provider');card.append(element('h3','',text(provider.label)));const usage=provider.usage||{};if(!usage.available||!usage.fiveHour||!usage.weekly){card.append(element('p','empty',text(usage.reason||'Account usage telemetry is unavailable.')));return card;}const bars=element('div','usage-bars');bars.append(usageBar('5-hour remaining',usage.fiveHour),usageBar('Weekly remaining',usage.weekly));card.append(bars);return card;}
+function formatCredit(value,currency){if(value===null||value===undefined||!Number.isFinite(Number(value)))return '—';const number=Number(value);if(currency==='USD')return '$'+number.toFixed(2);if(currency==='CNY')return '¥'+number.toFixed(2);return number.toFixed(2)+' '+currency;}
+function creditProvider(provider){const row=element('section','usage-provider');row.append(element('h3','',text(provider.label)));const credits=provider.credits||{};if(!credits.available||!Array.isArray(credits.balances)||!credits.balances.length){row.append(element('p','empty',text(credits.reason||'Credit balance is unavailable.')));return row;}const balance=credits.balances[0];row.append(element('div','detail-value',text(formatCredit(balance.remaining,balance.currency))));return row;}
+function shortReset(reset){if(!Number.isFinite(reset))return '';const at=new Date(reset*1000);const minutes=Math.max(0,Math.ceil((at.getTime()-Date.now())/60000));const relative=minutes<60?minutes+'m':minutes<1440?Math.floor(minutes/60)+'h '+minutes%60+'m':Math.floor(minutes/1440)+'d '+Math.floor((minutes%1440)/60)+'h';return 'Reset '+relative;}
+function githubBucket(label,bucket){const row=element('div','usage-row');const heading=element('div','usage-label');heading.append(element('span','',text(label)),element('span','',text(bucket.remaining+' / '+bucket.limit)));const percent=bucket.limit>0?Math.max(0,Math.min(100,100*bucket.remaining/bucket.limit)):0;const track=element('div','usage-track');track.setAttribute('role','progressbar');track.setAttribute('aria-label',label+' remaining');track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');track.setAttribute('aria-valuenow',String(Math.round(percent)));const fill=element('div','usage-fill');fill.style.width=percent+'%';track.append(fill);row.append(heading,track);const reset=shortReset(bucket.reset);if(reset){const hint=element('div','subtle',text(reset));hint.title=new Date(bucket.reset*1000).toLocaleString();row.append(hint);}return row;}
+function githubCounterLine(label,values){const entries=Object.entries(values||{}).sort((a,b)=>Number(b[1])-Number(a[1])).slice(0,8);return entries.length?element('div','subtle',text(label+' · '+entries.map(([key,count])=>key+' '+count).join(' · '))):null;}
+function githubDiagnostics(status){const body=element('div','usage-details-body');if(status?.calls)body.append(element('div','subtle',text('Calls · GraphQL '+(status.calls.graphql||0)+' · REST '+(status.calls.rest||0)+' · quota '+(status.calls.rateLimit||0))));const operations=githubCounterLine('GraphQL operations',status?.graphql?.operations);if(operations)body.append(operations);const contexts=githubCounterLine('GraphQL contexts',status?.graphql?.contexts);if(contexts)body.append(contexts);if(status?.readPaths){body.append(element('div','subtle',text('Reads · scans '+(status.readPaths.workspaceScans||0)+' · PR '+(status.readPaths.prRefreshes||0)+' · coalesced '+(status.readPaths.prRefreshCoalesced||0))));const triggers=githubCounterLine('Refresh triggers',status.readPaths.prRefreshesByTrigger);if(triggers)body.append(triggers);const coalesced=githubCounterLine('Coalesced',status.readPaths.prRefreshCoalescedByTrigger);if(coalesced)body.append(coalesced);}if(!body.children.length)return null;const details=element('details','usage-details');details.append(element('summary','',text('Diagnostics')),body);return details;}
+function githubUsageCard(effective,status){
+  const card=element('section','usage-provider');
+  card.append(element('h3','',text('GitHub API')));
+  const bars=element('div','usage-bars');
+  if(effective)bars.append(githubBucket('Available',effective));
+  else bars.append(element('p','empty',text('Quota unavailable')));
+  const diagnostics=githubDiagnostics(status);
+  if(diagnostics)bars.append(diagnostics);
+  card.append(bars);
+  return card;
+}
+async function drawUsage(){try{const overview=await loadJSON('/api/usage');usageRoot.replaceChildren();usageMeta.textContent='Real account telemetry when available';const providers=Array.isArray(overview.providers)?overview.providers:[];const credits=Array.isArray(overview.credits)?overview.credits:[];const grid=element('div','usage-providers');if(overview.githubEffective||overview.githubStatus)grid.append(githubUsageCard(overview.githubEffective,overview.githubStatus));for(const provider of providers)grid.append(usageProvider(provider));for(const provider of credits)grid.append(creditProvider(provider));if(!grid.children.length){usageRoot.append(element('p','empty',text('Usage telemetry is unavailable.')));return;}usageRoot.append(grid);}catch(error){usageMeta.textContent='Unavailable';usageRoot.replaceChildren(element('p','error-state',text('Usage unavailable: '+error.message)));}}
+function selectedWorkflowGraph(){return workflowGraphs.find(graph=>graph.id===selectedGraphId)||null;}
+function graphLinks(source){const links=new Map();for(const line of source.split('\n')){const match=/^\s*click\s+([A-Za-z0-9_]+)\s+href\s+"([a-z0-9-]+\.mmd)"(?:\s+"[^"\n]*")?\s*$/.exec(line);if(!match)continue;const id=match[2].slice(0,-4);if(workflowGraphs.some(graph=>graph.id===id))links.set(match[1],id);}return links;}
+function graphFromHash(){if(location.hash==='#/graphs'||location.hash==='#/graphs/entry')return 'main';if(!location.hash.startsWith('#/graphs/'))return null;const id=location.hash.slice(9);return /^[a-z0-9-]+$/.test(id)?id:null;}
+const WORKFLOW_NAV_KEY='agents-relay:workflow-navigation';
+function graphHistory(){try{const value=JSON.parse(sessionStorage.getItem(WORKFLOW_NAV_KEY)||'null');if(value&&Array.isArray(value.entries)&&value.entries.every(id=>typeof id==='string'&&/^[a-z0-9-]+$/.test(id)))return value;}catch{}return {entries:[]};}
+function saveGraphHistory(data){sessionStorage.setItem(WORKFLOW_NAV_KEY,JSON.stringify(data));}
+function graphHistoryIndex(){const n=history.state?.workflowIndex;return Number.isInteger(n)&&n>=0?n:null;}
+function initializeGraphHistory(){const route=graphFromHash();if(route===null)return;let data=graphHistory();const index=graphHistoryIndex();if(index!==null&&data.entries[index]===route)return;data={entries:[route]};saveGraphHistory(data);history.replaceState({...history.state,workflowIndex:0,workflowPath:route==='main'?['main']:['main',route]},'');}
+function navigateGraph(id){if(id!=='entry'&&!workflowGraphs.some(graph=>graph.id===id))return;if(graphFromHash()===null)return;initializeGraphHistory();const data=graphHistory();const current=graphHistoryIndex()??0;const path=history.state?.workflowPath;const valid=Array.isArray(path)&&path.at(-1)===graphFromHash()&&path[0]==='main';const nextPath=id==='main'?['main']:[...(valid?path:['main']),id];data.entries=data.entries.slice(0,current+1);data.entries.push(id);saveGraphHistory(data);history.pushState({workflowIndex:current+1,workflowPath:nextPath},'','#/graphs/'+id);syncGraphRoute();}
+function syncGraphRoute(){const route=graphFromHash();if(route===null)return;initializeGraphHistory();selectedGraphId=route;renderGraphList();void renderSelectedGraph();}
+function renderGraphNavigation(){const graph=selectedWorkflowGraph();initializeGraphHistory();const data=graphHistory();const index=graphHistoryIndex()??0;document.querySelector('#graph-back').disabled=index<=0;document.querySelector('#graph-forward').disabled=index>=data.entries.length-1;const path=history.state?.workflowPath;const names=Array.isArray(path)&&path.at(-1)===selectedGraphId?path:[selectedGraphId==='main'?'main':'main',...(selectedGraphId==='main'?[]:[selectedGraphId])];document.querySelector('#graph-breadcrumb').textContent=names.map(id=>id==='main'?'Main (conceptual)':workflowGraphs.find(g=>g.id===id)?.name||id).join(' / ');}
+function renderGraphList(){graphList.replaceChildren();if(!workflowGraphs.length){graphList.append(element('p','empty',text('No workflow graphs found.')));return;}for(const graph of workflowGraphs){const button=document.createElement('button');button.type='button';button.className='graph-button';button.setAttribute('aria-current',String(graph.id===selectedGraphId));button.append(element('strong','',text(graph.name)),element('span','',text(graph.path)));button.addEventListener('click',()=>navigateGraph(graph.id));graphList.append(button);}}
+async function graphDetail(kind,name){const panel=document.querySelector('#graph-detail');panel.hidden=false;panel.replaceChildren(element('strong','',text(kind+': '+name)),element('p','subtle',text('Loading authoritative references…')));try{const params=new URLSearchParams({graph:selectedGraphId,kind,name});const result=await loadJSON('/api/graph-symbol?'+params);panel.replaceChildren(element('strong','',text(kind+': '+name)));const sections=[['Graph',[result.graph]],['Canonical contract',result.contracts],['Implementation',result.implementation],['Tests',result.tests]];for(const [heading,refs] of sections){panel.append(element('p','detail-label',text(heading)));if(!refs?.length){panel.append(element('p','subtle',text('No exact symbol reference found.')));continue;}for(const ref of refs){const link=element('a','',text(ref.path+(ref.line>0?':'+ref.line:'')+' ['+(ref.evidence==='exact-token'?'verified graph token':'text-search suggestion')+']'));if(WORKFLOW_SOURCE_REF){link.href='https://github.com/lalalic/agents-relay/blob/'+WORKFLOW_SOURCE_REF+'/'+ref.path+(ref.line>0?'#L'+ref.line:'');link.target='_blank';link.rel='noopener noreferrer';}else{link.removeAttribute('href');link.title='Source revision unavailable';}link.target='_blank';link.rel='noopener noreferrer';panel.append(link,document.createTextNode('  '));}}panel.scrollIntoView({block:'nearest'});}catch(error){panel.append(element('p','error-state',text('Reference lookup unavailable: '+error.message)));}}
+function interactiveNode(node,callback,label){node.classList.add('drillable');node.setAttribute('tabindex','0');node.setAttribute('role','button');node.setAttribute('aria-label',label);node.addEventListener('click',callback);node.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();callback();}});}
+function graphNodeDefinitions(source){const result=new Map();for(const line of source.split('\n')){const pattern=/([A-Za-z0-9_]+)(?:\["([^"\n]+)"\]|\{"([^"\n]+)"\})/g;for(const match of line.matchAll(pattern))result.set(match[1],match[2]||match[3]);}return result;}
+function addNodeLabel(node,label){const ns='http://www.w3.org/2000/svg';const old=node.querySelector('g.label');if(old)old.remove();const textNode=document.createElementNS(ns,'text');textNode.setAttribute('x','0');textNode.setAttribute('y','0');textNode.setAttribute('text-anchor','middle');textNode.setAttribute('dominant-baseline','middle');textNode.setAttribute('fill','#182536');textNode.setAttribute('font-size','13');const rect=node.querySelector('rect.label-container,rect.basic,rect');const width=Math.max(65,Number(rect?.getAttribute('width')||135)-14);const maxChars=Math.max(9,Math.floor(width/7.2));const words=label.split(/\s+/);const lines=[];let current='';for(const word of words){if(current&&(current+' '+word).length>maxChars){lines.push(current);current=word;}else current=current?current+' '+word:word;}if(current)lines.push(current);for(let i=0;i<lines.length;i++){const tspan=document.createElementNS(ns,'tspan');tspan.setAttribute('x','0');tspan.setAttribute('dy',i===0?String(-((lines.length-1)*7)):'14');tspan.textContent=lines[i];textNode.append(tspan);}node.append(textNode);}
+function sanitizeGraphSvg(markup){const parsed=new DOMParser().parseFromString(markup.replace(/^<svg\b/,'<svg xmlns:xlink="http://www.w3.org/1999/xlink"'),'image/svg+xml');const source=parsed.documentElement;if(source.localName!=='svg'||parsed.querySelector('parsererror'))throw new Error('Invalid SVG');const ns='http://www.w3.org/2000/svg';const elements=new Set(['svg','g','path','rect','circle','ellipse','line','polyline','polygon','text','tspan','defs','marker','title','desc','clipPath']);const attributes=new Set(['id','class','viewBox','width','height','x','y','x1','y1','x2','y2','cx','cy','r','rx','ry','d','points','transform','fill','stroke','stroke-width','stroke-dasharray','stroke-linecap','stroke-linejoin','opacity','fill-opacity','stroke-opacity','font-size','font-family','font-weight','text-anchor','dominant-baseline','markerWidth','markerHeight','markerUnits','refX','refY','orient','preserveAspectRatio','clip-path','marker-start','marker-mid','marker-end','role','aria-label']);const clean=node=>{if(node.nodeType===3)return document.createTextNode(node.textContent||'');if(node.nodeType!==1||node.namespaceURI!==ns||!elements.has(node.localName))return null;const out=document.createElementNS(ns,node.localName);for(const attr of node.attributes){if(!attr.namespaceURI&&attr.name==='style'){for(const declaration of attr.value.split(';')){const split=declaration.indexOf(':');if(split<0)continue;const property=declaration.slice(0,split).trim();const cssValue=declaration.slice(split+1).trim();if((property==='stroke'||property==='fill')&&/^(?:#[0-9a-fA-F]{3,8}|rgb\([0-9.,%\s]+\)|none|currentColor)$/.test(cssValue))out.setAttribute(property,cssValue);else if(property==='stroke-width'&&/^[0-9]+(?:\.[0-9]+)?(?:px)?$/.test(cssValue))out.setAttribute(property,cssValue);}continue;}if(attr.namespaceURI||!attributes.has(attr.name))continue;if(['marker-start','marker-mid','marker-end','clip-path'].includes(attr.name)){if(!attr.value.startsWith('url(#')||!attr.value.endsWith(')')||!(/^[a-zA-Z0-9_-]+$/.test(attr.value.slice(5,-1))))continue;}else if(attr.value.toLowerCase().includes('url(')||attr.value.includes('<')||attr.value.includes('>'))continue;out.setAttribute(attr.name,attr.value);}for(const child of node.childNodes){const safe=clean(child);if(safe)out.appendChild(safe);}return out;};return clean(source);}
+function applyGraphPalette(svg){const ns='http://www.w3.org/2000/svg';for(const path of svg.querySelectorAll('path')){if(path.closest('marker')){if(!path.hasAttribute('fill'))path.setAttribute('fill','#65768a');continue;}if(!path.hasAttribute('fill'))path.setAttribute('fill','none');if(!path.hasAttribute('stroke'))path.setAttribute('stroke','#65768a');}for(const node of svg.querySelectorAll('g.node')){const error=node.classList.contains('failure')||node.classList.contains('exception');for(const shape of node.querySelectorAll('rect,polygon,circle,ellipse')){shape.setAttribute('fill',error?'#ffe4e4':'#f9fbff');shape.setAttribute('stroke',error?'#be3030':'#657f9e');shape.setAttribute('stroke-width','1.3');}for(const label of node.querySelectorAll('text'))label.setAttribute('fill',node.classList.contains('drillable')?'#2367b1':error?'#7c1818':'#182536');}for(const rect of svg.querySelectorAll('rect')){if(!rect.closest('g.node')&&!rect.hasAttribute('fill'))rect.setAttribute('fill','#ffffff');}for(const label of svg.querySelectorAll('text'))if(!label.hasAttribute('fill'))label.setAttribute('fill','#182536');}
+async function renderSelectedGraph(){const graph=selectedWorkflowGraph();renderGraphNavigation();document.querySelector('#graph-detail').hidden=true;if(!graph){graphTitle.textContent='Graph not found';graphPath.textContent='';graphDescription.textContent='';graphCanvas.replaceChildren(element('p','error-state',text('Graph not found: '+selectedGraphId+'. Select Entry or another graph.')));return;}graphTitle.textContent=graph.name;graphDescription.textContent=graph.description||'';graphPath.textContent=graph.path;graphCanvas.replaceChildren(element('p','subtle',text('Rendering…')));try{if(!window.mermaid)throw new Error('Mermaid renderer unavailable');if(!window.__relayMermaidReady){window.mermaid.initialize({startOnLoad:false,securityLevel:'strict',flowchart:{htmlLabels:false}});window.__relayMermaidReady=true;}const rendered=await window.mermaid.render('relay-graph-'+graph.id.replace(/[^A-Za-z0-9_-]/g,'-'),graph.source.replace(/^\s*click\s+[^\n]*$/gm,''));if(graph.id!==selectedGraphId)return;const svg=sanitizeGraphSvg(rendered.svg);graphCanvas.replaceChildren(svg);const definitions=graphNodeDefinitions(graph.source);for(const node of svg.querySelectorAll('g.node')){const entry=Array.from(definitions.entries()).find(([key])=>node.id.includes('-flowchart-'+key+'-'));const label=entry?.[1]||'';if(label)addNodeLabel(node,label);const target=entry?.[0];const next=target?graphLinks(graph.source).get(target):null;if(next){interactiveNode(node,()=>navigateGraph(next),'Explore '+target);}else{const match=/^(state|guard|action):\s*([A-Za-z0-9_.-]+)/.exec(label);if(match)interactiveNode(node,()=>graphDetail(match[1]==='guard'?'Guard':match[1]==='action'?'Action':'State',match[2]),'Inspect '+match[1]+' '+match[2]);}}applyGraphPalette(svg);}catch(error){graphCanvas.replaceChildren(element('p','error-state',text('Visual preview unavailable: '+error.message+'.')));}}
+async function drawGraphs(){try{const graphs=await loadJSON('/api/graphs');workflowGraphs=Array.isArray(graphs)?graphs:[];const requested=graphFromHash();selectedGraphId=requested||'main';graphsMeta.textContent=(workflowGraphs.length-1)+' executable workflow graphs · main is conceptual';renderGraphList();await renderSelectedGraph();}catch(error){graphsMeta.textContent='Unavailable';workflowGraphs=[];selectedGraphId='main';renderGraphList();await renderSelectedGraph();graphPath.textContent='Executable graphs unavailable: '+error.message;}}
+function auditWorker(record){return value(record?.selected?.worker?.adapter??record?.worker?.adapter??record?.selected?.worker?.id??record?.worker?.id);}
+function auditModel(record){const model=record?.selected?.model;return value(typeof model==='string'?model:model?.model);}
+function renderAudit(records){auditLog.replaceChildren();if(!Array.isArray(records)||!records.length){auditLog.append(element('p','empty',text('No schema v5 routing decisions yet.')));return;}for(const record of records){const card=element('article','audit-entry');const head=element('div','audit-entry-head');head.append(element('strong','',text(auditWorker(record)+' · '+auditModel(record))),element('span','subtle',text(new Date(record.timestamp).toLocaleString())));card.append(head);const correlation=record.correlation||{};card.append(element('div','subtle',text([correlation.job_id,correlation.task_id].filter(Boolean).join(' / ')||'uncorrelated')));const probabilities=record.decision_evidence?.probabilities||{};const gates=(record.gate_results||[]).filter(item=>!item.eligible).map(item=>item.candidate_id+': '+item.rejection_reasons.join(', '));const nl=String.fromCharCode(10);const details=document.createElement('pre');details.textContent='fallback: '+String(Boolean(record.decision_evidence?.fallback))+(Object.keys(probabilities).length?nl+'probabilities: '+JSON.stringify(probabilities,null,2):'')+(gates.length?nl+'rejected: '+gates.join(nl):'');card.append(details);auditLog.append(card);}}
+async function drawAudit(){auditRefresh.disabled=true;try{renderAudit(await loadJSON('/api/decision-audit'));}catch(error){auditLog.replaceChildren(element('p','error-state',text('Audit unavailable: '+error.message)));}finally{auditRefresh.disabled=false;}}
+async function drawRules(){rulesStatus.textContent='';try{const rules=await loadJSON('/api/execution-router-rules');rulesText.value=typeof rules.text==='string'?rules.text:'';rulesMeta.textContent=rules.hash&&rules.hash!=='none'?'Loaded · '+rules.hash.slice(0,12):'No custom rules saved';}catch(error){rulesMeta.textContent='Unavailable';rulesStatus.textContent='Could not load rules: '+error.message;}void drawAudit();}
+async function testRouter(){rulesTest.disabled=true;routerTestResults.replaceChildren(element('p','subtle',text('Calling router with current status…')));try{if(!selectedJob||!selectedTaskId)throw new Error('Select a Job and Task first');const response=await fetch('/api/router-test',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jobId:selected()?.id,taskId:selectedTaskId})});if(!response.ok)throw new Error(response.status+' '+await response.text());const result=await response.json();const routeSelection=result.selected||{};const payload={selected:routeSelection,proposed_fields:result.proposedFields||{},probabilities:result.probabilities||{},fallback:Boolean(result.fallback),effective_choices:result.effectiveChoices||[],routing_instruction:result.routingInstruction||'',merged_choices:result.mergedChoices||[],hard_gates:result.gates||[],laya_input:result.decisionInput||null};routerTestResults.replaceChildren(element('strong','',text((routeSelection.worker||'—')+' · '+(routeSelection.model||'—'))));routerTestResults.append(element('div','subtle',text('route: '+(routeSelection.route||'—'))),element('pre','',text(yamlDump(payload))));}catch(error){routerTestResults.replaceChildren(element('p','error-state',text('Router test failed: '+error.message)));}finally{rulesTest.disabled=false;}}
+async function saveRules(){rulesSave.disabled=true;rulesStatus.textContent='Saving…';try{const response=await fetch('/api/execution-router-rules',{method:'PUT',headers:{'content-type':'text/plain; charset=utf-8'},body:rulesText.value});if(!response.ok)throw new Error(response.status+' '+await response.text());const rules=await response.json();rulesMeta.textContent='Saved · '+rules.hash.slice(0,12);rulesStatus.textContent='Saved. New routing decisions will load these rules.';}catch(error){rulesStatus.textContent='Save failed: '+error.message;}finally{rulesSave.disabled=false;}}
+async function drawQa(){qaStatus.textContent='Loading…';try{const result=await loadJSON('/api/troubleshooter-qa');qaText.value=result.text;qaRevision=result.hash;qaStatus.textContent='Loaded';}catch(error){qaStatus.textContent='Load failed: '+error.message;}}
+async function saveQa(){qaSave.disabled=true;qaStatus.textContent='Saving…';try{const response=await fetch('/api/troubleshooter-qa',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({text:qaText.value,hash:qaRevision})});if(!response.ok)throw new Error(response.status+' '+await response.text());const saved=await response.json();qaRevision=saved.hash;qaStatus.textContent='Saved to Markdown file';}catch(error){qaStatus.textContent='Save failed: '+error.message;}finally{qaSave.disabled=false;}}
+function showView(view){const isJobs=view==='jobs';const isUsage=view==='usage';const isGraphs=view==='graphs';const isRules=view==='rules';const isQa=view==='qa';qaView.hidden=!isQa;qaTab.setAttribute('aria-selected',String(isQa));jobsView.hidden=!isJobs;jobsWorkspace.hidden=!isJobs;usageView.hidden=!isUsage;graphsView.hidden=!isGraphs;rulesView.hidden=!isRules;jobsTab.setAttribute('aria-selected',String(isJobs));usageTab.setAttribute('aria-selected',String(isUsage));graphsTab.setAttribute('aria-selected',String(isGraphs));rulesTab.setAttribute('aria-selected',String(isRules));if(isUsage)void drawUsage();else if(isGraphs)void drawGraphs();else if(isRules)void drawRules();else if(isQa)void drawQa();}
+jobsTab.addEventListener('click',()=>{location.hash=selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs';showView('jobs');});
+jobsRefresh.addEventListener('click',()=>void refresh(true));
+eventsAllTasks.addEventListener('click',()=>{eventTaskId=null;clearEvents();renderEventScope();void loadEventHistory();});
+function applyLocalJobFilters(){rememberJobFilters();renderJobList();}
+repoFilter.addEventListener('change',()=>{selectedRepo=repoFilter.value;applyLocalJobFilters();});
+jobSearch.addEventListener('input',()=>{searchQuery=jobSearch.value;applyLocalJobFilters();});
+statusFilter.addEventListener('change',()=>{selectedStatus=statusFilter.value;applyLocalJobFilters();});
+selectedJobRefresh.addEventListener('click',()=>void refreshSelected());
+mobileJobsBack.addEventListener('click',()=>{location.hash='#/jobs';syncMobileJobsView();window.scrollTo({top:0,behavior:'instant'});});
+mobileJobs.addEventListener('change',syncMobileJobsView);
+window.addEventListener('hashchange',syncMobileJobsView);
+usageTab.addEventListener('click',()=>{location.hash='#/usage';showView('usage');});
+graphsTab.addEventListener('click',()=>{location.hash='#/graphs/entry';showView('graphs');});
+document.querySelector('#graph-entry').addEventListener('click',()=>navigateGraph('main'));
+const graphDialog=document.querySelector('#graph-dialog');
+const graphViewport=document.querySelector('#graph-dialog-viewport');
+const graphZoomLevel=document.querySelector('#graph-zoom-level');
+let graphZoom=1;
+let graphViewerContent=null;
+let graphViewerHome=null;
+let graphViewerNext=null;
+let graphViewerWasHidden=false;
+function graphViewerSvg(){return graphViewerContent?.querySelector('svg')||null;}
+function graphIntrinsicSize(svg){
+  const view=svg.viewBox?.baseVal;
+  const width=view?.width||Number.parseFloat(svg.getAttribute('width'))||svg.getBoundingClientRect().width||900;
+  const height=view?.height||Number.parseFloat(svg.getAttribute('height'))||svg.getBoundingClientRect().height||500;
+  return {width:Math.max(1,width),height:Math.max(1,height)};
+}
+function setGraphZoom(value,preserveCenter=true){
+  const svg=graphViewerSvg();
+  const dimensions=svg?graphIntrinsicSize(svg):null;
+  const centerX=dimensions?(graphViewport.scrollLeft+graphViewport.clientWidth/2)/(dimensions.width*graphZoom):0;
+  const centerY=dimensions?(graphViewport.scrollTop+graphViewport.clientHeight/2)/(dimensions.height*graphZoom):0;
+  graphZoom=Math.max(.05,Math.min(6,Number.isFinite(value)?value:1));
+  if(svg&&dimensions){
+    svg.style.width=dimensions.width*graphZoom+'px';
+    svg.style.height=dimensions.height*graphZoom+'px';
+    svg.style.maxWidth='none';
+    if(preserveCenter){
+      graphViewport.scrollLeft=dimensions.width*graphZoom*centerX-graphViewport.clientWidth/2;
+      graphViewport.scrollTop=dimensions.height*graphZoom*centerY-graphViewport.clientHeight/2;
+    }
+  }
+  graphZoomLevel.textContent=Math.round(graphZoom*100)+'%';
+}
+function fitGraphViewer(){
+  const svg=graphViewerSvg();
+  if(!svg){setGraphZoom(1,false);return;}
+  const {width,height}=graphIntrinsicSize(svg);
+  const availableWidth=Math.max(1,graphViewport.clientWidth-48);
+  const availableHeight=Math.max(1,graphViewport.clientHeight-48);
+  setGraphZoom(Math.min(availableWidth/width,availableHeight/height),false);
+  graphViewport.scrollLeft=Math.max(0,(graphViewport.scrollWidth-graphViewport.clientWidth)/2);
+  graphViewport.scrollTop=Math.max(0,(graphViewport.scrollHeight-graphViewport.clientHeight)/2);
+}
+function showGraphViewer(content,title){
+  if(graphDialog.open)return;
+  // A native dialog close event can arrive after a fast reopen. Restore the
+  // previous content synchronously so it is never orphaned by replaceChildren.
+  if(graphViewerContent)closeGraphViewer();
+  graphViewerContent=content;
+  graphViewerHome=content.parentNode;
+  graphViewerNext=content.nextSibling;
+  graphViewerWasHidden=content.hidden;
+  content.hidden=false;
+  graphViewport.replaceChildren(content);
+  document.querySelector('#graph-dialog-title').textContent=title;
+  graphDialog.showModal();
+  graphViewport.scrollLeft=0;
+  graphViewport.scrollTop=0;
+  fitGraphViewer();
+}
+function closeGraphViewer(){
+  const content=graphViewerContent;
+  if(!content)return;
+  if(content===jelChart)jelRenderSequence++;
+  const svg=graphViewerSvg();
+  if(svg){svg.style.width='';svg.style.height='';svg.style.maxWidth='';}
+  const next=graphViewerNext?.parentNode===graphViewerHome?graphViewerNext:null;
+  graphViewerHome.insertBefore(content,next);
+  content.hidden=graphViewerWasHidden;
+  graphViewerContent=null;
+  graphViewerHome=null;
+  graphViewerNext=null;
+  graphZoom=1;
+  graphZoomLevel.textContent='100%';
+}
+document.querySelector('#graph-maximize').addEventListener('click',()=>showGraphViewer(graphCanvas,graphTitle.textContent));
+function dismissGraphViewer(){if(graphDialog.open)graphDialog.close();closeGraphViewer();}
+graphDialog.addEventListener('close',()=>{if(!graphDialog.open)closeGraphViewer();});
+graphDialog.addEventListener('cancel',event=>{event.preventDefault();dismissGraphViewer();});
+document.querySelector('#graph-dialog-close').addEventListener('click',dismissGraphViewer);
+document.querySelector('#graph-zoom-in').addEventListener('click',()=>setGraphZoom(graphZoom*1.25));
+document.querySelector('#graph-zoom-out').addEventListener('click',()=>setGraphZoom(graphZoom/1.25));
+document.querySelector('#graph-zoom-reset').addEventListener('click',fitGraphViewer);
+graphViewport.addEventListener('wheel',event=>{if(!event.ctrlKey&&!event.metaKey)return;event.preventDefault();setGraphZoom(graphZoom*(event.deltaY<0?1.15:1/1.15));},{passive:false});
+let graphDrag=null;
+graphViewport.addEventListener('pointerdown',event=>{
+  if(event.target.closest('.drillable')||event.button!==0)return;
+  graphDrag={id:event.pointerId,x:event.clientX,y:event.clientY,left:graphViewport.scrollLeft,top:graphViewport.scrollTop};
+  graphViewport.setPointerCapture(event.pointerId);
+});
+graphViewport.addEventListener('pointermove',event=>{
+  if(!graphDrag||event.pointerId!==graphDrag.id)return;
+  graphViewport.scrollLeft=graphDrag.left-(event.clientX-graphDrag.x);
+  graphViewport.scrollTop=graphDrag.top-(event.clientY-graphDrag.y);
+});
+for(const eventName of ['pointerup','pointercancel','lostpointercapture'])graphViewport.addEventListener(eventName,()=>{graphDrag=null;});
+document.querySelector('#graph-back').addEventListener('click',()=>history.back());
+document.querySelector('#graph-forward').addEventListener('click',()=>history.forward());
+window.addEventListener('popstate',()=>{if(graphFromHash()){renderGraphNavigation();showView('graphs');}else if(location.hash==='#/usage')showView('usage');else if(location.hash==='#/execution-router-rules')showView('rules');else if(location.hash==='#/troubleshooter-qa')showView('qa');else showView('jobs');});
+window.addEventListener('hashchange',()=>{if(graphFromHash()){renderGraphNavigation();showView('graphs');}else if(location.hash==='#/usage')showView('usage');else if(location.hash==='#/execution-router-rules')showView('rules');else if(location.hash==='#/troubleshooter-qa')showView('qa');else showView('jobs');});
+rulesTab.addEventListener('click',()=>{location.hash='#/execution-router-rules';showView('rules');});
+qaTab.addEventListener('click',()=>{location.hash='#/troubleshooter-qa';showView('qa');});
+qaSave.addEventListener('click',()=>void saveQa());
+document.querySelector('#qa-reload').addEventListener('click',()=>{if(!qaText.value||confirm('Discard unsaved Q&A edits and reload?'))void drawQa();});
+rulesSave.addEventListener('click',()=>void saveRules());
+rulesTest.addEventListener('click',()=>void testRouter());
+auditRefresh.addEventListener('click',()=>void drawAudit());
+window.addEventListener('keydown',event=>{if(event.key==='Tab'&&event.altKey){event.preventDefault();const views=['jobs','usage','graphs','rules','qa'];const current=location.hash==='#/usage'?'usage':graphFromHash()?'graphs':location.hash==='#/execution-router-rules'?'rules':location.hash==='#/troubleshooter-qa'?'qa':'jobs';const next=views[(views.indexOf(current)+1)%views.length];location.hash=next==='usage'?'#/usage':next==='graphs'?'#/graphs':next==='rules'?'#/execution-router-rules':next==='qa'?'#/troubleshooter-qa':(selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs');showView(next);}});
+function parseMessage(message){try{return JSON.parse(message.data);}catch{return null;}}
+function isFreshEnough(incoming,current){const a=Date.parse(incoming||''),b=Date.parse(current||'');return !Number.isFinite(b)||!Number.isFinite(a)||a>=b;}
+function applyStatePatch(patch){if(!patch?.jobId)return false;const job=jobs.find(candidate=>candidate.id===patch.jobId);if(!job)return false;if(patch.jobState&&isFreshEnough(patch.jobUpdatedAt,job.updatedAt)){job['state']=patch.jobState;if(patch.jobUpdatedAt)job.updatedAt=patch.jobUpdatedAt;}if(patch.taskId&&patch.taskState){const task=(job.tasks||[]).find(candidate=>candidate.id===patch.taskId);if(task&&isFreshEnough(patch.taskUpdatedAt,task.updatedAt)){task['state']=patch.taskState;if(patch.taskUpdatedAt)task.updatedAt=patch.taskUpdatedAt;}}return true;}
+async function refreshJobSnapshot(jobId){const known=jobs.find(job=>job.id===jobId);if(!known)return;try{const params=new URLSearchParams({id:known.id,repo:known.repository,pr:String(known.prNumber||0)});const latest=await loadJSON('/api/job?'+params);upsertFreshJob(latest);renderAll();}catch{/* The current stream and next manual refresh remain available. */}}
+function upsertFreshJob(incoming){if(!incoming)return;const index=jobs.findIndex(job=>jobSelectionKey(job)===jobSelectionKey(incoming));if(index<0){jobs.push(incoming);return;}if(isFreshEnough(incoming.updatedAt,jobs[index].updatedAt))jobs[index]={...incoming,prNumber:Number(incoming.prNumber||0)>0?incoming.prNumber:jobs[index].prNumber};}
+const stream=new EventSource('/events');
+stream.onmessage=message=>{const payload=parseMessage(message);if(payload?.job){upsertFreshJob(payload.job);renderAll();void drawRuntimeSummary();}};
+stream.addEventListener('relay',message=>{const payload=parseMessage(message);if(payload?.job)upsertFreshJob(payload.job);else if(payload?.statePatch)applyStatePatch(payload.statePatch);if(payload?.statePatch)void refreshJobSnapshot(payload.statePatch.jobId);if(payload?.event)addEvent(payload.event);renderAll();void drawRuntimeSummary();});
+if(location.hash==='#/usage')showView('usage');else if(graphFromHash())showView('graphs');else if(location.hash==='#/execution-router-rules')showView('rules');else if(location.hash==='#/troubleshooter-qa')showView('qa');else showView('jobs');void refresh(false);
+setInterval(()=>{if(location.hash==='#/usage')void drawUsage();},30000);
+setInterval(()=>void refreshVersion(),30000);
+async function refreshSelected(){const job=selected();if(!job){await refresh();return;}selectedJobRefresh.disabled=true;try{const params=new URLSearchParams({id:job.id,repo:job.repository,pr:String(job.prNumber)});const updated=await loadJSON('/api/job?'+params.toString());const index=jobs.findIndex(candidate=>jobSelectionKey(candidate)===jobSelectionKey(job));if(index>=0)jobs[index]=updated;else jobs.push(updated);selectedJob=jobSelectionKey(updated);rememberSelection();renderAll();}catch(error){jobsFeedback.textContent='Selected job refresh failed: '+error.message;}finally{selectedJobRefresh.disabled=false;}}
+</script>
+</body>
+</html>

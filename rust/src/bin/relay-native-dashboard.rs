@@ -10,8 +10,13 @@ use std::sync::Arc;
 use std::{thread, time::Duration};
 #[path = "relay-native-dashboard/review_preview.rs"]
 mod review_preview;
+#[path = "relay-native-dashboard/tabs.rs"]
+mod tabs;
 
 const HTML: &str = include_str!("../../assets/rust-live-dashboard.html");
+const ORIGINAL_UI_COMPAT: &str = include_str!("../../assets/dashboard-compat.js");
+const MERMAID_LITE: &str = include_str!("../../assets/mermaid-lite.js");
+const NODE_PACKAGE_JSON: &str = include_str!("../../../package.json");
 const JOB_PAGE_SIZE: usize = 20;
 
 fn argument(args: &[String], name: &str) -> Result<String, String> {
@@ -315,8 +320,146 @@ fn durable_runtime_summary(reader: &RelayReader) -> Result<Value, String> {
     Ok(runtime_summary(&jobs, now))
 }
 
+// Public Dashboard transport is read-only and intentionally excludes private
+// Task inputs, outputs, result payloads, project filesystem paths and tokens.
+// Keep the hierarchy and operational metadata needed by the original UI.
+fn browser_task_projection(task: &Value) -> Value {
+    let mut safe = serde_json::Map::new();
+    for key in [
+        "id",
+        "title",
+        "state",
+        "kind",
+        "agentName",
+        "parentTaskId",
+        "dependencies",
+        "createdAt",
+        "updatedAt",
+        "attempt",
+        "maxAttempts",
+        "adapter",
+        "executionId",
+        "startedAt",
+        "completedAt",
+        "tag",
+        "workerSelection",
+        "routing",
+        "reviewHeadSha",
+        "leaseExpiresAt",
+    ] {
+        if let Some(value) = task.get(key).filter(|value| !value.is_null()) {
+            safe.insert(key.to_owned(), value.clone());
+        }
+    }
+    Value::Object(safe)
+}
+
+fn browser_job_projection(job: Value) -> Value {
+    let mut safe = serde_json::Map::new();
+    for key in [
+        "id",
+        "title",
+        "state",
+        "runtimeStatus",
+        "repository",
+        "createdAt",
+        "updatedAt",
+        "prNumber",
+        "autoMerge",
+        "reviewEnabled",
+        "closedAt",
+    ] {
+        if let Some(value) = job.get(key).filter(|value| !value.is_null()) {
+            safe.insert(key.to_owned(), value.clone());
+        }
+    }
+    if let Some(tasks) = job["tasks"].as_array() {
+        let tasks = tasks
+            .iter()
+            .map(browser_task_projection)
+            .collect::<Vec<_>>();
+        safe.insert("tasks".into(), Value::Array(tasks));
+    }
+    Value::Object(safe)
+}
+
+fn detailed_jobs_page(
+    reader: &RelayReader,
+    parameters: &HashMap<String, Vec<String>>,
+) -> Result<Value, String> {
+    let mut page = jobs_page(reader, parameters)?;
+    if let Some(jobs) = page["jobs"].as_array_mut() {
+        for job in jobs {
+            let id = job["id"].as_str().ok_or("Job missing id")?.to_owned();
+            let snapshot = reader.get_job(&id)?.ok_or("Job changed during snapshot")?;
+            *job = browser_job_projection(snapshot.job);
+        }
+    }
+    Ok(page)
+}
+
+fn initial_events(reader: &RelayReader, jobs: &Value) -> Value {
+    let mut result = serde_json::Map::new();
+    for job in jobs["jobs"].as_array().into_iter().flatten() {
+        if let Some(id) = job["id"].as_str() {
+            if let Ok(page) = reader.task_events(id, None, 60, "desc", 0) {
+                let events = page
+                    .events
+                    .into_iter()
+                    .map(|event| {
+                        json!({
+                            "event_id":event["event_id"],"id":event["event_id"],
+                            "type":event["type"],"timestamp":event["timestamp"],
+                            "job_id":event["job_id"],"task_id":event["task_id"],
+                        })
+                    })
+                    .collect();
+                result.insert(id.to_owned(), Value::Array(events));
+            }
+        }
+    }
+    Value::Object(result)
+}
+fn html_with_bootstrap(db: &Path) -> Result<String, String> {
+    // Render the initial state into HTML so every Tab works immediately, even
+    // when managed browser tabs delay background fetches after a click.
+    // Values are sourced from the same read-only Rust authority as the APIs.
+    let reader = RelayReader::open(db)?;
+    let jobs = detailed_jobs_page(&reader, &HashMap::new())?;
+    let events = initial_events(&reader, &jobs);
+    let version: Value =
+        serde_json::from_str(NODE_PACKAGE_JSON).map_err(|e| format!("package manifest: {e}"))?;
+    let initial = json!({
+        "jobs":jobs,
+        "events":events,
+        "runtime":durable_runtime_summary(&reader)?,
+        "version":version["version"],
+        "status":{"limited":false,"cooldownUntil":null},
+        "usage":tabs::usage(&reader)?,
+        "graphs":tabs::graphs(),
+        "audit":tabs::audit(&reader)?,
+        "rules":tabs::read_settings(tabs::Settings::Router).unwrap_or_else(|error|
+            json!({"error":error})),
+        "qa":tabs::read_settings(tabs::Settings::TroubleshooterQa).unwrap_or_else(|error|
+            json!({"error":error})),
+    });
+    let safe_json = initial
+        .to_string()
+        .replace('<', "\\u003c")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029");
+    let source = "<script>\n'use strict';";
+    if !HTML.contains(source) {
+        return Err("Original Dashboard script marker missing".into());
+    }
+    let prefix = format!(
+        "<script>window.__RUST_BOOTSTRAP__={safe_json};</script>\n<script src=\"/assets/dashboard-compat.js\"></script>\n"
+    );
+    Ok(HTML.replacen(source, &format!("{prefix}{source}"), 1))
+}
+
 fn respond(tcp: &mut TcpStream, status: &str, ctype: &str, payload: &[u8]) -> Result<(), String> {
-    let head=format!("HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nContent-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'\r\nConnection: close\r\n\r\n",payload.len());
+    let head=format!("HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nContent-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'\r\nConnection: close\r\n\r\n",payload.len());
     tcp.write_all(head.as_bytes()).map_err(|e| e.to_string())?;
     tcp.write_all(payload).map_err(|e| e.to_string())
 }
@@ -333,7 +476,7 @@ fn respond_json(tcp: &mut TcpStream, status: &str, value: &Value) -> Result<(), 
 fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(), String> {
     tcp.set_read_timeout(Some(Duration::from_secs(2)))
         .map_err(|e| e.to_string())?;
-    tcp.set_write_timeout(Some(Duration::from_secs(2)))
+    tcp.set_write_timeout(Some(Duration::from_secs(20)))
         .map_err(|e| e.to_string())?;
     let mut reader = BufReader::new(tcp.try_clone().map_err(|e| e.to_string())?);
     let mut head = String::new();
@@ -447,6 +590,181 @@ fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(),
             )
         };
     }
+    if fields[0] == "POST" && path == "/api/settings/save" {
+        // Only trusted local same-origin browser POSTs may update config.
+        let host = headers.get("host").map(String::as_str).unwrap_or("");
+        let origin = headers.get("origin").map(String::as_str).unwrap_or("");
+        if !(host.starts_with("127.0.0.1:") || host.starts_with("localhost:"))
+            || origin != format!("http://{host}")
+        {
+            return respond_json(
+                &mut tcp,
+                "403 Forbidden",
+                &json!({"error":"Local same-origin browser required"}),
+            );
+        }
+        if headers.get("content-type").is_none_or(|v| {
+            v.split(';').next().map(str::trim) != Some("application/x-www-form-urlencoded")
+        }) {
+            return respond_json(
+                &mut tcp,
+                "415 Unsupported Media Type",
+                &json!({"error":"form-urlencoded required"}),
+            );
+        }
+        let Some(length) = headers
+            .get("content-length")
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v <= 450_000)
+        else {
+            return respond_json(
+                &mut tcp,
+                "413 Content Too Large",
+                &json!({"error":"bounded Content-Length required"}),
+            );
+        };
+        let mut body = vec![0; length];
+        if let Err(e) = reader.read_exact(&mut body) {
+            return respond_json(&mut tcp, "400 Bad Request", &json!({"error":e.to_string()}));
+        }
+        let text = match String::from_utf8(body) {
+            Ok(value) => value,
+            Err(_) => {
+                return respond_json(
+                    &mut tcp,
+                    "400 Bad Request",
+                    &json!({"error":"UTF-8 form required"}),
+                )
+            }
+        };
+        let fields = match query_parameters(&format!("/?{text}")) {
+            Ok(params) => params,
+            Err(error) => {
+                return respond_json(&mut tcp, "400 Bad Request", &json!({"error":error}))
+            }
+        };
+        let Some(kind_value) = first_value(&fields, "kind") else {
+            return respond_json(
+                &mut tcp,
+                "400 Bad Request",
+                &json!({"error":"missing settings kind"}),
+            );
+        };
+        let kind = match kind_value {
+            "rules" => tabs::Settings::Router,
+            "qa" => tabs::Settings::TroubleshooterQa,
+            _ => {
+                return respond_json(
+                    &mut tcp,
+                    "400 Bad Request",
+                    &json!({"error":"invalid settings kind"}),
+                )
+            }
+        };
+        if fields.len() != 3 || fields.values().any(|v| v.len() != 1) {
+            return respond_json(
+                &mut tcp,
+                "400 Bad Request",
+                &json!({"error":"exact kind, text and hash required"}),
+            );
+        }
+        let (Some(content), Some(hash)) =
+            (first_value(&fields, "text"), first_value(&fields, "hash"))
+        else {
+            return respond_json(
+                &mut tcp,
+                "400 Bad Request",
+                &json!({"error":"text and hash required"}),
+            );
+        };
+        let encoded = json!({"text":content,"hash":hash}).to_string();
+        let result = tabs::save_settings(kind, encoded.as_bytes());
+        let feedback = match result {
+            Ok(_) => format!("saved-{kind_value}"),
+            Err(tabs::SaveFailure::Conflict) => format!("conflict-{kind_value}"),
+            Err(_) => format!("failed-{kind_value}"),
+        };
+        let location = if kind_value == "qa" {
+            format!("/?save={feedback}#/troubleshooter-qa")
+        } else {
+            format!("/?save={feedback}#/execution-router-rules")
+        };
+        let response=format!("HTTP/1.1 303 See Other\r\nLocation: {location}\r\nContent-Length: 0\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n");
+        return tcp
+            .write_all(response.as_bytes())
+            .map_err(|e| e.to_string());
+    }
+    if fields[0] == "PUT"
+        && matches!(
+            path,
+            "/api/execution-router-rules" | "/api/troubleshooter-qa"
+        )
+    {
+        // This dashboard is tunneled. Never expose configuration writes on the
+        // public tunnel: operators must use their local same-origin browser.
+        let host = headers.get("host").map(String::as_str).unwrap_or("");
+        let origin = headers.get("origin").map(String::as_str).unwrap_or("");
+        if !(host.starts_with("127.0.0.1:") || host.starts_with("localhost:"))
+            || origin != format!("http://{host}")
+        {
+            return respond_json(
+                &mut tcp,
+                "403 Forbidden",
+                &json!({"error":"Settings writes require local same-origin browser"}),
+            );
+        }
+        if headers
+            .get("content-type")
+            .is_none_or(|v| v.split(';').next().map(str::trim) != Some("application/json"))
+        {
+            return respond_json(
+                &mut tcp,
+                "415 Unsupported Media Type",
+                &json!({"error":"application/json required"}),
+            );
+        }
+        let max = if path == "/api/troubleshooter-qa" {
+            131_584
+        } else {
+            66_048
+        };
+        let Some(length) = headers
+            .get("content-length")
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v <= max)
+        else {
+            return respond_json(
+                &mut tcp,
+                "413 Content Too Large",
+                &json!({"error":"bounded Content-Length required"}),
+            );
+        };
+        let mut payload = vec![0; length];
+        if let Err(e) = reader.read_exact(&mut payload) {
+            return respond_json(&mut tcp, "400 Bad Request", &json!({"error":e.to_string()}));
+        }
+        let kind = if path == "/api/troubleshooter-qa" {
+            tabs::Settings::TroubleshooterQa
+        } else {
+            tabs::Settings::Router
+        };
+        return match tabs::save_settings(kind, &payload) {
+            Ok(data) => respond_json(&mut tcp, "200 OK", &data),
+            Err(tabs::SaveFailure::Conflict) => respond_json(
+                &mut tcp,
+                "409 Conflict",
+                &json!({"error":"Settings changed on disk; reload before saving"}),
+            ),
+            Err(tabs::SaveFailure::Invalid(reason)) => {
+                respond_json(&mut tcp, "400 Bad Request", &json!({"error":reason}))
+            }
+            Err(tabs::SaveFailure::Storage(reason)) => respond_json(
+                &mut tcp,
+                "503 Service Unavailable",
+                &json!({"error":reason}),
+            ),
+        };
+    }
     if fields[0] != "GET" {
         return respond(
             &mut tcp,
@@ -456,12 +774,152 @@ fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(),
         );
     }
     match path {
-        "/" => respond(
+        "/assets/mermaid-lite.js" => respond(
             &mut tcp,
             "200 OK",
-            "text/html; charset=utf-8",
-            HTML.as_bytes(),
+            "application/javascript; charset=utf-8",
+            MERMAID_LITE.as_bytes(),
         ),
+        "/assets/dashboard-compat.js" => respond(
+            &mut tcp,
+            "200 OK",
+            "application/javascript; charset=utf-8",
+            ORIGINAL_UI_COMPAT.as_bytes(),
+        ),
+        "/events" => respond(&mut tcp, "204 No Content", "text/plain", b""),
+        "/api/version" => {
+            let package: Value = serde_json::from_str(NODE_PACKAGE_JSON)
+                .map_err(|e| format!("package manifest: {e}"))?;
+            respond_json(&mut tcp, "200 OK", &json!({"version":package["version"]}))
+        }
+        "/api/status" => respond_json(
+            &mut tcp,
+            "200 OK",
+            &json!({"limited":false,"cooldownUntil":null}),
+        ),
+        "/api/dashboard/job" => {
+            let id = first_value(&parameters, "id").unwrap_or("");
+            if id.is_empty() || id.len() > 20 || !id.bytes().all(|b| b.is_ascii_digit()) {
+                return respond_json(
+                    &mut tcp,
+                    "404 Not Found",
+                    &json!({"error":"Invalid Job id"}),
+                );
+            }
+            match RelayReader::open(db).and_then(|reader| reader.get_job(id)) {
+                Ok(Some(snapshot)) => {
+                    respond_json(&mut tcp, "200 OK", &browser_job_projection(snapshot.job))
+                }
+                Ok(None) => {
+                    respond_json(&mut tcp, "404 Not Found", &json!({"error":"Job not found"}))
+                }
+                Err(error) => respond_json(
+                    &mut tcp,
+                    "500 Internal Server Error",
+                    &json!({"error":error}),
+                ),
+            }
+        }
+        "/api/dashboard/jobs" => {
+            match RelayReader::open(db).and_then(|reader| detailed_jobs_page(&reader, &parameters))
+            {
+                Ok(jobs) => respond_json(&mut tcp, "200 OK", &jobs),
+                Err(error) => respond_json(
+                    &mut tcp,
+                    "500 Internal Server Error",
+                    &json!({"error":error}),
+                ),
+            }
+        }
+        "/rust/" | "/" => match html_with_bootstrap(db) {
+            Ok(html) => respond(
+                &mut tcp,
+                "200 OK",
+                "text/html; charset=utf-8",
+                html.as_bytes(),
+            ),
+            Err(error) => respond_json(
+                &mut tcp,
+                "500 Internal Server Error",
+                &json!({"error":error}),
+            ),
+        },
+        "/api/views" => respond_json(&mut tcp, "200 OK", &tabs::configured_views()),
+        "/api/graphs" => respond_json(&mut tcp, "200 OK", &tabs::graphs()),
+        "/api/graph-symbol" => {
+            match (
+                first_value(&parameters, "graph"),
+                first_value(&parameters, "kind"),
+                first_value(&parameters, "name"),
+            ) {
+                (Some(graph), Some(kind), Some(name)) => {
+                    match tabs::graph_symbol(graph, kind, name) {
+                        Some(data) => respond_json(&mut tcp, "200 OK", &data),
+                        None => respond_json(
+                            &mut tcp,
+                            "404 Not Found",
+                            &json!({"error":"Canonical symbol not found"}),
+                        ),
+                    }
+                }
+                _ => respond_json(
+                    &mut tcp,
+                    "400 Bad Request",
+                    &json!({"error":"graph, kind, name required"}),
+                ),
+            }
+        }
+        "/api/usage" => match RelayReader::open(db).and_then(|reader| tabs::usage(&reader)) {
+            Ok(value) => respond_json(&mut tcp, "200 OK", &value),
+            Err(error) => respond_json(
+                &mut tcp,
+                "500 Internal Server Error",
+                &json!({"error":error}),
+            ),
+        },
+        "/api/decision-audit" => {
+            match RelayReader::open(db).and_then(|reader| tabs::audit(&reader)) {
+                Ok(value) => respond_json(&mut tcp, "200 OK", &value),
+                Err(error) => respond_json(
+                    &mut tcp,
+                    "500 Internal Server Error",
+                    &json!({"error":error}),
+                ),
+            }
+        }
+        "/api/router-test" => {
+            match (
+                first_value(&parameters, "job"),
+                first_value(&parameters, "task"),
+            ) {
+                (Some(job), Some(task)) => match RelayReader::open(db)
+                    .and_then(|reader| tabs::inspect_route(&reader, job, task))
+                {
+                    Ok(value) => respond_json(&mut tcp, "200 OK", &value),
+                    Err(error) => {
+                        respond_json(&mut tcp, "400 Bad Request", &json!({"error":error}))
+                    }
+                },
+                _ => respond_json(
+                    &mut tcp,
+                    "400 Bad Request",
+                    &json!({"error":"select a Job and Task first"}),
+                ),
+            }
+        }
+        "/api/execution-router-rules" | "/api/troubleshooter-qa" => {
+            let kind = if path == "/api/troubleshooter-qa" {
+                tabs::Settings::TroubleshooterQa
+            } else {
+                tabs::Settings::Router
+            };
+            match tabs::read_settings(kind) {
+                Ok(value) => respond_json(&mut tcp, "200 OK", &value),
+                Err(error) => {
+                    respond_json(&mut tcp, "503 Service Unavailable", &json!({"error":error}))
+                }
+            }
+        }
         "/api/health" => respond_json(
             &mut tcp,
             "200 OK",
@@ -545,7 +1003,11 @@ fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(),
                 return respond_json(&mut tcp, "404 Not Found", &json!({}));
             }
             match RelayReader::open(db).and_then(|reader| reader.list_tasks(id)) {
-                Ok(Some(tasks)) => respond_json(&mut tcp, "200 OK", &Value::Array(tasks)),
+                Ok(Some(tasks)) => respond_json(
+                    &mut tcp,
+                    "200 OK",
+                    &Value::Array(tasks.iter().map(browser_task_projection).collect()),
+                ),
                 Ok(None) => respond_json(&mut tcp, "404 Not Found", &json!({})),
                 Err(error) if error.contains("not found") => {
                     respond_json(&mut tcp, "404 Not Found", &json!({"error":error}))
@@ -571,7 +1033,7 @@ fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(),
                 return respond_json(&mut tcp, "404 Not Found", &json!({}));
             }
             match RelayReader::open(db).and_then(|reader| reader.get_task(id, task_id)) {
-                Ok(Some(task)) => respond_json(&mut tcp, "200 OK", &task),
+                Ok(Some(task)) => respond_json(&mut tcp, "200 OK", &browser_task_projection(&task)),
                 Ok(None) => respond_json(&mut tcp, "404 Not Found", &json!({})),
                 Err(error) if error.contains("not found") => {
                     respond_json(&mut tcp, "404 Not Found", &json!({"error":error}))
