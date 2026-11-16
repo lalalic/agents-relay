@@ -783,6 +783,59 @@ fn unblock(args: &[String]) -> Result<Value, String> {
     })?;
     result(&c.job, tid)
 }
+fn supersede(args: &[String]) -> Result<Value, String> {
+    let options = parse(
+        args,
+        &[
+            "--db",
+            "--id",
+            "--job-id",
+            "--repo",
+            "--task-id",
+            "--reason",
+        ],
+        &[],
+    )?;
+    let (db, id) = identify(&options)?;
+    let repo = options
+        .get("--repo")
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("task supersede requires --repo")?;
+    let task_id = options
+        .get("--task-id")
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("task supersede requires --task-id")?;
+    let reason = options
+        .get("--reason")
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("task supersede requires --reason")?;
+    let request = agents_relay_rust::native_control::ControlRequest {
+        version: 1,
+        operation: "task.supersede".into(),
+        repository: repo.clone(),
+        id,
+        title: String::new(),
+        objective: String::new(),
+        project_root: String::new(),
+        project_path: None,
+        priority: String::new(),
+        review_enabled: false,
+        auto_merge: false,
+        changes: None,
+        reason: Some(reason.clone()),
+        task_id: Some(task_id.clone()),
+        message: None,
+        recovery_task_id: None,
+        diagnosis: None,
+        classification: None,
+    };
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        agents_relay_rust::native_control::request(&db, &request)
+    } else {
+        agents_relay_rust::native_control::supersede_task_isolated(&db, &request)
+    }
+}
+
 fn classify(args: &[String]) -> Result<Value, String> {
     let options = parse(
         args,
@@ -1060,6 +1113,9 @@ fn comment(args: &[String]) -> Result<Value, String> {
 }
 
 pub fn run(args: &[String]) -> Result<Value, String> {
+    if args.get(1).is_some_and(|action| action == "supersede") {
+        return supersede(args);
+    }
     if args.get(1).is_some_and(|action| action == "classify") {
         return classify(args);
     }

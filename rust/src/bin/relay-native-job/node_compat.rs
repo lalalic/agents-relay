@@ -13,6 +13,7 @@ Usage: relay-native-job <command> [options]\n\
   task list --id JOB [--repo REPO] [--db SQLITE]\n\
   task show --id JOB --task-id TASK [--repo REPO] [--db SQLITE]\n\
   task comment --db SQLITE --id JOB --repo REPO --task-id TASK (--message TEXT | --message-file FILE|-)\n\
+  task supersede --db SQLITE --id JOB --repo REPO --task-id CANCELLED --reason EXPLANATION\n\
   task classify --db SQLITE --id JOB --repo REPO --task-id FAILED --classification superseded|invalid --target-task-id TASK (--evidence TEXT|--evidence-file FILE) (--reason TEXT|--reason-file FILE)\n\
   task recover --db SQLITE --id JOB --repo REPO --task-id FAILED --recovery-task-id TROUBLESHOOTER [--failure-kind KIND --reason TEXT --evidence TEXT --reroute --exclude-current-route]\\n\\\n  task comments --id JOB --task-id TASK [--repo REPO] [--db SQLITE]\n\
   task context --id JOB --task-id TASK --execution-id EXEC [--repo REPO] [--db SQLITE]\n\

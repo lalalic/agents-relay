@@ -1028,9 +1028,173 @@ pub fn classify_task_isolated(db: &Path, request: &ControlRequest) -> Result<Val
     dispatch_task_classify(db, request)
 }
 
+#[derive(Default)]
+struct NativeSupersedeApproval {
+    authorized: bool,
+}
+impl ActionPorts for NativeSupersedeApproval {
+    fn persist_transition(&mut self, from: &str, to: &str) -> Result<(), String> {
+        if from != "unresolved" || to != "resolved" {
+            return Err("Task Resolution Graph rejected cancel supersede".into());
+        }
+        Ok(())
+    }
+    fn execute_action(&mut self, id: &str, _input: &GraphInput) -> Result<Value, String> {
+        if id != "resolution.cancelSupersede" {
+            return Err(format!(
+                "Task Resolution Graph selected unexpected supersede effect {id}"
+            ));
+        }
+        self.authorized = true;
+        Ok(json!({"ok":true,"payloads":{}}))
+    }
+    fn publish_event(&mut self, event: &str, _payload: &Value) -> Result<(), String> {
+        Err(format!("unexpected Task supersede event {event}"))
+    }
+}
+
+/// Supersede is evidence annotation of an already CANCELLED Task. It never
+/// cancels a Worker, changes a Task's state, or creates replacement work.
+fn dispatch_task_supersede(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if request.changes.is_some()
+        || request.message.is_some()
+        || request.classification.is_some()
+        || request.recovery_task_id.is_some()
+        || request.diagnosis.is_some()
+        || !request.title.is_empty()
+        || !request.objective.is_empty()
+        || !request.project_root.is_empty()
+        || request.project_path.is_some()
+        || !request.priority.is_empty()
+        || request.review_enabled
+        || request.auto_merge
+    {
+        return Err("task.supersede accepts only Task ID and reason".into());
+    }
+    if request.id.trim().is_empty()
+        || request.id.len() > 128
+        || request.repository.trim().is_empty()
+        || request.repository.len() > 500
+    {
+        return Err("task.supersede requires exact Job ID and repository".into());
+    }
+    let task_id = request
+        .task_id
+        .as_deref()
+        .filter(|s| !s.trim().is_empty() && s.len() <= 128)
+        .ok_or("task supersede requires --task-id")?;
+    let reason = request
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && s.len() <= 4096)
+        .ok_or("task supersede requires nonempty --reason of at most 4096 bytes")?;
+    let mut authority = RelayAuthority::open_existing(db)?;
+    let before = authority.read_job(&request.id)?.ok_or("unknown Job")?;
+    if before["repository"].as_str() != Some(request.repository.as_str()) {
+        return Err("repository identity mismatch".into());
+    }
+    let at = after_time(
+        before["updatedAt"]
+            .as_str()
+            .ok_or("Job timestamp missing")?,
+    )?;
+    let proposal = json!({"path":"cancel_supersede","targetTaskId":task_id,
+        "rootCause":reason,"solution":"Superseded by later corrected durable work"});
+    let facts = HashMap::from([
+        ("recoveryOwnerAvailable".into(), false),
+        ("plannerOwnerAvailable".into(), true),
+        ("freshRecoveryExecution".into(), true),
+        ("exactOriginalRetry".into(), false),
+        ("sameJobDependency".into(), false),
+        ("blockerJobDependency".into(), false),
+        ("escalationGate".into(), false),
+        ("genuinelyObsolete".into(), true),
+    ]);
+    let graph = Graph::parse(include_str!("../../workflow/task-resolution.mmd"))?;
+    let mut approval = NativeSupersedeApproval::default();
+    let selected = graph.dispatch_through_transient(
+        "unresolved",
+        GraphInput {
+            transport: "event".into(),
+            id: "resolution.propose".into(),
+            payload: proposal.clone(),
+        },
+        &facts,
+        |state| {
+            matches!(
+                state,
+                "check_owner" | "check_path" | "check_fresh_execution"
+            )
+        },
+        &mut approval,
+    )?;
+    if !approval.authorized
+        || !matches!(selected.decision,Decision::Accepted{ref target,..} if target=="resolved")
+    {
+        return Err("Task Resolution Graph rejected cancellation supersede".into());
+    }
+    let committed = authority.commit_job(&request.id, &at, |prior| {
+        if prior["repository"].as_str() != Some(request.repository.as_str()) {
+            return Err("Job repository changed before supersede".into());
+        }
+        let original = prior["tasks"]
+            .as_array()
+            .and_then(|tasks| tasks.iter().find(|t| t["id"] == task_id))
+            .ok_or("Task to supersede not found")?;
+        if original["kind"] == "planner" || original["state"] != "CANCELLED" {
+            return Err("task supersede requires already CANCELLED non-Planner Task".into());
+        }
+        if ["leaseOwner", "leaseExpiresAt", "executionId"]
+            .iter()
+            .any(|key| original.get(*key).is_some_and(|v| !v.is_null()))
+        {
+            return Err("task supersede refuses active Task execution lease".into());
+        }
+        if original["resolution"]["path"] == "cancel_supersede" {
+            return Err("Task already superseded; original evidence is immutable".into());
+        }
+        if matches!(
+            original["resolution"]["state"].as_str(),
+            Some("active" | "waiting")
+        ) {
+            return Err("task supersede cannot override active resolution ownership".into());
+        }
+        let mut next = prior.clone();
+        let task = next["tasks"]
+            .as_array_mut()
+            .and_then(|tasks| tasks.iter_mut().find(|t| t["id"] == task_id))
+            .ok_or("Task disappeared during supersede")?;
+        let mut resolution = proposal.clone();
+        resolution["state"] = json!("resolved");
+        resolution["owner"] = json!("external");
+        resolution["updatedAt"] = json!(at);
+        task["resolution"] = resolution;
+        task["error"] = json!(format!("Superseded {reason}"));
+        task["updatedAt"] = json!(at);
+        next["updatedAt"] = json!(at);
+        Ok((next, vec![]))
+    })?;
+    committed.job["tasks"]
+        .as_array()
+        .and_then(|tasks| tasks.iter().find(|t| t["id"] == task_id))
+        .cloned()
+        .ok_or_else(|| "superseded Task missing from committed Job".to_owned())
+}
+pub fn supersede_task_isolated(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        return Err("production Task supersede requires daemon-owned control".into());
+    }
+    isolated_store_root(db)?;
+    dispatch_task_supersede(db, request)
+}
+
 fn dispatch(db: &Path, request: ControlRequest) -> Result<Value, String> {
     if request.version != 1 {
         return Err("unsupported native control version".into());
+    }
+    if request.operation == "task.supersede" {
+        return dispatch_task_supersede(db, &request);
     }
     if request.operation == "task.classify" {
         return dispatch_task_classify(db, &request);
