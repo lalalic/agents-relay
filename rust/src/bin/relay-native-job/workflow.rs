@@ -168,12 +168,23 @@ pub fn run(args: &[String]) -> Result<(), String> {
         let operation = match selected {
             "task.retry" => "retry",
             "task.recover" => "recover",
+            "task.escalate" => "escalate",
             "task.cancel" => "cancel",
             "task.unblock" => "unblock",
             _ => return Err(format!("workflow action {selected} requires Graph-owned recovery/host authorization not yet implemented; refusing unsafe mutation")),
         };
         let permitted: &[&str] = match operation {
             "retry" => &["--action", "--db", "--repo", "--id", "--task-id"],
+            "escalate" => &[
+                "--action",
+                "--db",
+                "--repo",
+                "--id",
+                "--task-id",
+                "--required-action",
+                "--resolution-condition",
+                "--context",
+            ],
             "recover" => &[
                 "--action",
                 "--db",
@@ -232,6 +243,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
             "--reason",
             "--evidence",
             "--response",
+            "--required-action",
+            "--resolution-condition",
+            "--context",
         ] {
             if let Some(value) = options.get(key) {
                 task_args.extend([key.to_owned(), value.clone()]);

@@ -783,6 +783,75 @@ fn unblock(args: &[String]) -> Result<Value, String> {
     })?;
     result(&c.job, tid)
 }
+fn escalate(args: &[String]) -> Result<Value, String> {
+    let options = parse(
+        args,
+        &[
+            "--db",
+            "--id",
+            "--job-id",
+            "--repo",
+            "--task-id",
+            "--required-action",
+            "--resolution-condition",
+            "--context",
+        ],
+        &[],
+    )?;
+    let (db, id) = identify(&options)?;
+    let repo = options
+        .get("--repo")
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("task escalate requires --repo")?;
+    let task_id = options
+        .get("--task-id")
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("task escalate requires --task-id")?;
+    let value = |key: &str| -> Result<String, String> {
+        let text = options
+            .get(key)
+            .ok_or_else(|| format!("task escalate requires {key}"))?
+            .trim();
+        if text.is_empty() || text.len() > 4096 {
+            return Err(format!(
+                "task escalate {key} must be nonempty and at most 4096 bytes"
+            ));
+        }
+        Ok(text.to_owned())
+    };
+    let details = json!({
+        "requiredAction":value("--required-action")?,
+        "resolutionCondition":value("--resolution-condition")?,
+        "context":value("--context")?,
+    });
+    let request = agents_relay_rust::native_control::ControlRequest {
+        version: 1,
+        operation: "task.escalate".into(),
+        repository: repo.clone(),
+        id,
+        title: String::new(),
+        objective: String::new(),
+        project_root: String::new(),
+        project_path: None,
+        priority: String::new(),
+        review_enabled: false,
+        auto_merge: false,
+        changes: None,
+        reason: None,
+        task_id: Some(task_id.clone()),
+        message: None,
+        recovery_task_id: None,
+        diagnosis: None,
+        classification: None,
+        escalation: Some(details),
+    };
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        agents_relay_rust::native_control::request(&db, &request)
+    } else {
+        agents_relay_rust::native_control::escalate_task_isolated(&db, &request)
+    }
+}
+
 fn supersede(args: &[String]) -> Result<Value, String> {
     let options = parse(
         args,
@@ -828,6 +897,7 @@ fn supersede(args: &[String]) -> Result<Value, String> {
         recovery_task_id: None,
         diagnosis: None,
         classification: None,
+        escalation: None,
     };
     if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
         agents_relay_rust::native_control::request(&db, &request)
@@ -942,6 +1012,7 @@ fn classify(args: &[String]) -> Result<Value, String> {
         classification: Some(
             json!({"kind":kind,"targetTaskId":target,"evidence":evidence,"reason":reason}),
         ),
+        escalation: None,
     };
     if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
         agents_relay_rust::native_control::request(&db, &request)
@@ -1026,6 +1097,7 @@ fn recover(args: &[String]) -> Result<Value, String> {
         recovery_task_id: Some(recovery_id.clone()),
         diagnosis,
         classification: None,
+        escalation: None,
     };
     if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
         agents_relay_rust::native_control::request(&db, &request)
@@ -1103,6 +1175,7 @@ fn comment(args: &[String]) -> Result<Value, String> {
         recovery_task_id: None,
         diagnosis: None,
         classification: None,
+        escalation: None,
     };
     let live = std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live");
     if live {
@@ -1113,6 +1186,9 @@ fn comment(args: &[String]) -> Result<Value, String> {
 }
 
 pub fn run(args: &[String]) -> Result<Value, String> {
+    if args.get(1).is_some_and(|action| action == "escalate") {
+        return escalate(args);
+    }
     if args.get(1).is_some_and(|action| action == "supersede") {
         return supersede(args);
     }

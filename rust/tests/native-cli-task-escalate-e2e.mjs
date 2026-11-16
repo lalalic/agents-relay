@@ -1,0 +1,195 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,mkdirSync,writeFileSync,rmSync,existsSync,chmodSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join,resolve} from 'node:path';
+import {spawn,spawnSync} from 'node:child_process';
+import {DatabaseSync} from 'node:sqlite';
+import {setTimeout as delay} from 'node:timers/promises';
+const dir=process.env.CARGO_TARGET_DIR??resolve(import.meta.dirname,'../target');
+const cli=join(dir,'debug/relay-native-job');
+const daemon=join(dir,'debug/relay-native-daemon');
+const helper=join(dir,'debug/relay-worker-helper');
+const isolated={...process.env,RELAY_RUST_EXPERIMENTAL_TEST_ONLY:'isolated-test',RELAY_RUST_LIVE_MODE:''};
+function run(env,args,status=0){
+ const p=spawnSync(cli,args,{env,encoding:'utf8',timeout:12000});
+ assert.equal(p.status,status,p.stderr||p.stdout);
+ return status===0?JSON.parse(p.stdout):p.stderr;
+}
+function load(db,id){
+ const s=new DatabaseSync(db);
+ try{return JSON.parse(s.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(id).json);}
+ finally{s.close();}
+}
+function save(db,job){
+ const s=new DatabaseSync(db);
+ try{s.prepare('UPDATE job_snapshot SET json=? WHERE job_id=?').run(JSON.stringify(job),job.id);}
+ finally{s.close();}
+}
+function events(db){
+ const s=new DatabaseSync(db);
+ try{
+  return s.prepare('SELECT event_id,payload_json FROM workflow_event_outbox ORDER BY event_id')
+   .all().map(r=>JSON.parse(r.payload_json));
+ }finally{s.close();}
+}
+function seed(job,f){
+ job.tasks=[
+  {id:f.original,jobId:f.id,title:'original',kind:'work',state:'FAILED',attempt:2,
+   maxAttempts:3,dependencies:[],agentName:'implementation',
+   executionId:null,leaseOwner:null,leaseExpiresAt:null,
+   failureReason:'timeout',error:'worker timed out',resolution:null,
+   executionHistory:[{id:'previous-failed-exec',attempt:1}]},
+  {id:f.recovery,jobId:f.id,title:'troubleshooter',kind:'work',state:'RUNNING',
+   agentName:'troubleshooter',parentTaskId:f.original,attempt:1,maxAttempts:3,
+   dependencies:[],executionId:'recovery-exec',leaseOwner:'worker',
+   leaseExpiresAt:'2099-01-01T00:00:00.000Z',
+   executionHistory:[{id:'recovery-exec',attempt:1}],result:null,error:null,failureReason:null}
+ ];
+ return job;
+}
+function fixture(){
+ const root=mkdtempSync(join(tmpdir(),'relay-rust-authority-escalate-'));
+ mkdirSync(join(root,'project'));
+ writeFileSync(join(root,'.relay-rust-authority-isolated-test'),'isolated-test');
+ const db=join(root,'relay.sqlite'),id='85',repo='escalate-repo';
+ run(isolated,['init','--db',db]);
+ run(isolated,['job','create','--db',db,'--id',id,'--repo',repo,
+   '--objective','Escalate an actual failing worker to a human',
+   '--project-root',join(root,'project'),'--no-review']);
+ const f={root,db,id,repo,original:'original',recovery:'troubleshooter'};
+ const job=seed(load(db,id),f);job.state='ACTIVE';save(db,job);
+ return f;
+}
+const request=(f,flags=[])=>['task','escalate','--db',f.db,'--id',f.id,'--repo',f.repo,
+ '--task-id',f.recovery,'--required-action','Confirm owner decision',
+ '--resolution-condition','Owner response recorded',
+ '--context','Diagnosed real failed execution',...flags];
+
+test('Graph-authorized Task escalate persists pending human gate and exactly two durable Outbox events',()=>{
+ const f=fixture();
+ try{
+  const before=load(f.db,f.id);
+  const escalated=run(isolated,request(f));
+  assert.equal(escalated.id,f.recovery);
+  assert.equal(escalated.state,'BLOCKED');
+  assert.equal(escalated.escalation.status,'pending');
+  assert.equal(escalated.escalation.requiredAction,'Confirm owner decision');
+  assert.equal(escalated.escalation.resolutionCondition,'Owner response recorded');
+  assert.equal(escalated.escalation.context,'Diagnosed real failed execution');
+  assert.equal(escalated.escalation.response,undefined,'no human approval is fabricated');
+  assert.equal(escalated.leaseOwner,null);
+  assert.equal(escalated.executionId,null);
+  const after=load(f.db,f.id);
+  assert.equal(after.tasks.length,before.tasks.length);
+  assert.equal(after.tasks[0].state,'FAILED','original semantic Task remains failed');
+  assert.equal(after.tasks[0].resolution.path,'escalation_gate');
+  assert.equal(after.tasks[0].resolution.owner,'troubleshooter');
+  assert.deepEqual(after.tasks[1],escalated);
+  assert.deepEqual(events(f.db).map(e=>e.type).sort(),['escalation.requested','task.blocked']);
+  assert.deepEqual(run(isolated,request(f)),escalated,'same request is deduplicated');
+  assert.deepEqual(load(f.db,f.id),after);
+  assert.equal(events(f.db).length,2,'replayed escalation publishes no duplicate event');
+ }finally{rmSync(f.root,{recursive:true,force:true});}
+});
+test('Task escalate rejects forged repo, unknown lineage, unsupported fields and blank request without changing Job',()=>{
+ const f=fixture();
+ try{
+  const original=JSON.stringify(load(f.db,f.id));
+  const invalid=[
+   [request(f,['--unsupported','yes']),/unrecognized task/],
+   [request(f,['--required-action','double']),/duplicate option/],
+   [request(f).map((s,i,a)=>a[i-1]==='--repo'?'forged':s),/repository identity mismatch/],
+   [request(f).map((s,i,a)=>a[i-1]==='--task-id'?'unknown':s),/recovery Task missing/],
+   [request(f).map((s,i,a)=>a[i-1]==='--required-action'?' ':s),/nonempty/],
+   [request(f).map((s,i,a)=>a[i-1]==='--context'?' ':s),/nonempty/],
+   [request(f).map((s,i,a)=>a[i-1]==='--resolution-condition'?' ':s),/nonempty/],
+  ];
+  for(const [argv,expect] of invalid){
+   assert.match(run(isolated,argv,2),expect);
+   assert.equal(JSON.stringify(load(f.db,f.id)),original,'invalid escalation mutated Job');
+  }
+  const bad=[
+   j=>j.tasks[0].state='QUEUED',
+   j=>j.tasks[1].agentName='worker',
+   j=>j.tasks[1].parentTaskId='other',
+   j=>j.tasks[1].state='SUCCEEDED',
+  ];
+  for(const mutate of bad){
+   const j=JSON.parse(original);mutate(j);save(f.db,j);
+   const previous=JSON.stringify(load(f.db,f.id));
+   assert.match(run(isolated,request(f),2),/Troubleshooter|original Task|cannot escalate/);
+   assert.equal(JSON.stringify(load(f.db,f.id)),previous);
+   save(f.db,JSON.parse(original));
+  }
+ }finally{rmSync(f.root,{recursive:true,force:true});}
+});
+test('workflow action task.escalate delegates to same Graph/Outbox authority without duplicate escalation',()=>{
+ const f=fixture();
+ try{
+  const cmd=['workflow','action','--db',f.db,'--id',f.id,'--repo',f.repo,
+   '--task-id',f.recovery,'--action','task.escalate',
+   '--required-action','Confirm owner decision',
+   '--resolution-condition','Owner response recorded',
+   '--context','Diagnosed real failed execution'];
+  const result=run(isolated,cmd);
+  assert.equal(result.state,'BLOCKED');
+  assert.equal(result.escalation.status,'pending');
+  assert.equal(events(f.db).length,2);
+  assert.deepEqual(run(isolated,cmd),result);
+  assert.equal(events(f.db).length,2);
+ }finally{rmSync(f.root,{recursive:true,force:true});}
+});
+
+test('Live task escalate uses daemon-owned socket and keeps pending human gate after restart',async()=>{
+ const home=mkdtempSync('/tmp/rr-esc-');
+ const root=join(home,'.local/state/agents-relay/rust-live');
+ mkdirSync(root,{recursive:true,mode:0o700});chmodSync(root,0o700);
+ writeFileSync(join(root,'.relay-rust-live-namespace-v1'),'rust-relay-owned-standalone-namespace-v1\n',{mode:0o600});
+ writeFileSync(join(root,'manifest.json'),JSON.stringify({agents:{}}));
+ const db=join(root,'relay.sqlite');
+ const sql=new DatabaseSync(db);
+ sql.exec('PRAGMA journal_mode=WAL; CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL); CREATE TABLE relay_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE agent_snapshot(agent_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL);');
+ sql.close();chmodSync(db,0o600);
+ const env={...process.env,HOME:home,RELAY_RUST_LIVE_MODE:'pilot-live',RELAY_RUST_EXPERIMENTAL_TEST_ONLY:''};
+ const f={db,id:'86',repo:'escalate-repo',original:'original',recovery:'troubleshooter',
+  socket:join(root,'.rc.sock')};
+ let child;
+ function start(){
+  const p=spawn(daemon,['--loop','--db',db,'--manifest',join(root,'manifest.json'),
+   '--helper',helper,'--interval-ms','100'],{env,stdio:['ignore','pipe','pipe']});
+  p.err='';p.stderr.on('data',c=>p.err+=c);return p;
+ }
+ async function ready(){
+  for(let i=0;i<100;i++){
+   if(existsSync(f.socket))return;
+   if(child.exitCode!==null)throw Error('daemon failed: '+child.err);
+   await delay(20);
+  }
+  throw Error('daemon socket unavailable');
+ }
+ async function stop(){
+  if(!child||child.exitCode!==null)return;
+  child.kill('SIGTERM');
+  await Promise.race([new Promise(ok=>child.once('exit',ok)),delay(3000)]);
+  if(child.exitCode===null){child.kill('SIGKILL');await new Promise(ok=>child.once('exit',ok));}
+ }
+ try{
+  assert.match(run(env,request(f),2),/control socket unavailable/);
+  child=start();await ready();
+  assert.equal(run(env,['job','create','--db',db,'--id',f.id,'--repo',f.repo,
+   '--objective','Human escalation E2E','--project-root',root]).created,true);
+  await stop();child=null;
+  // Keep disposable Job DRAFT to prevent scheduler running test-only Tasks.
+  save(db,seed(load(db,f.id),f));
+  child=start();await ready();
+  const result=run(env,request(f));
+  assert.equal(result.state,'BLOCKED');
+  assert.equal(result.escalation.status,'pending');
+  assert.equal(events(db).length,2);
+  await stop();child=null;
+  child=start();await ready();
+  assert.equal(load(db,f.id).tasks[1].escalation.status,'pending');
+  assert.equal(events(db).length,2);
+ }finally{await stop();rmSync(home,{recursive:true,force:true});}
+});

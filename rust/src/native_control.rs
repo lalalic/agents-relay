@@ -1,7 +1,7 @@
 //! Private same-user control socket for mutations owned by the native daemon.
 //! Requests are deliberately typed and allowlisted; the daemon is the only
 //! process that opens RelayAuthority for these production CLI mutations.
-use crate::authority::{NativeObjectiveJobSpec, RelayAuthority};
+use crate::authority::{NativeObjectiveJobSpec, RelayAuthority, TroubleshooterEscalationRequest};
 use crate::dispatch::ActionPorts;
 use crate::graph::{Decision, Graph, GraphInput};
 use crate::lifecycle::apply_pure_task_actions;
@@ -57,6 +57,9 @@ pub struct ControlRequest {
     /// Graph-governed FAILED Task classification with evidence and target.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub classification: Option<Value>,
+    /// Structured Troubleshooter human-escalation request, not human approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub escalation: Option<Value>,
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -498,7 +501,8 @@ fn dispatch_job_mutation(db: &Path, request: &ControlRequest) -> Result<Value, S
 /// result, Task updatedAt or lifecycle state. The authoritative Job snapshot
 /// is the append-only source of truth. Never interpret comments as approvals.
 fn dispatch_task_comment(db: &Path, request: &ControlRequest) -> Result<Value, String> {
-    if request.classification.is_some()
+    if request.escalation.is_some()
+        || request.classification.is_some()
         || request.changes.is_some()
         || request.reason.is_some()
         || request.recovery_task_id.is_some()
@@ -622,7 +626,8 @@ impl ActionPorts for NativeRecoveryApproval {
 /// CLI recovery shares this exact function in isolated E2E and the daemon's
 /// private Unix-socket single-writer transport. No direct live SQLite writes.
 fn dispatch_task_recover(db: &Path, request: &ControlRequest) -> Result<Value, String> {
-    if request.classification.is_some()
+    if request.escalation.is_some()
+        || request.classification.is_some()
         || request.changes.is_some()
         || request.reason.is_some()
         || request.message.is_some()
@@ -867,7 +872,8 @@ pub fn recover_task_isolated(db: &Path, request: &ControlRequest) -> Result<Valu
 /// Graph. Classification is evidence metadata, never an authorization to
 /// complete, retry, cancel or create a replacement Task.
 fn dispatch_task_classify(db: &Path, request: &ControlRequest) -> Result<Value, String> {
-    if request.changes.is_some()
+    if request.escalation.is_some()
+        || request.changes.is_some()
         || request.reason.is_some()
         || request.message.is_some()
         || request.recovery_task_id.is_some()
@@ -1056,7 +1062,8 @@ impl ActionPorts for NativeSupersedeApproval {
 /// Supersede is evidence annotation of an already CANCELLED Task. It never
 /// cancels a Worker, changes a Task's state, or creates replacement work.
 fn dispatch_task_supersede(db: &Path, request: &ControlRequest) -> Result<Value, String> {
-    if request.changes.is_some()
+    if request.escalation.is_some()
+        || request.changes.is_some()
         || request.message.is_some()
         || request.classification.is_some()
         || request.recovery_task_id.is_some()
@@ -1189,9 +1196,100 @@ pub fn supersede_task_isolated(db: &Path, request: &ControlRequest) -> Result<Va
     dispatch_task_supersede(db, request)
 }
 
+fn dispatch_task_escalate(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if request.changes.is_some()
+        || request.reason.is_some()
+        || request.message.is_some()
+        || request.recovery_task_id.is_some()
+        || request.diagnosis.is_some()
+        || request.classification.is_some()
+        || !request.title.is_empty()
+        || !request.objective.is_empty()
+        || !request.project_root.is_empty()
+        || request.project_path.is_some()
+        || !request.priority.is_empty()
+        || request.review_enabled
+        || request.auto_merge
+    {
+        return Err("task.escalate accepts only Task escalation fields".into());
+    }
+    if request.id.trim().is_empty()
+        || request.id.len() > 128
+        || request.repository.trim().is_empty()
+        || request.repository.len() > 500
+    {
+        return Err("task.escalate requires exact Job ID and repository".into());
+    }
+    let task_id = request
+        .task_id
+        .as_deref()
+        .filter(|s| !s.trim().is_empty() && s.len() <= 128)
+        .ok_or("task escalate requires --task-id")?;
+    let supplied = request
+        .escalation
+        .as_ref()
+        .and_then(Value::as_object)
+        .ok_or("task escalate requires --required-action, --resolution-condition and --context")?;
+    for key in supplied.keys() {
+        if !matches!(
+            key.as_str(),
+            "requiredAction" | "resolutionCondition" | "context"
+        ) {
+            return Err(format!("unsupported task escalation property {key}"));
+        }
+    }
+    let text = |key: &str| -> Result<String, String> {
+        let raw = supplied
+            .get(key)
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("task escalate requires {key}"))?
+            .trim();
+        if raw.is_empty() || raw.len() > 4096 {
+            return Err(format!(
+                "task escalate {key} must be nonempty and at most 4096 bytes"
+            ));
+        }
+        Ok(raw.to_owned())
+    };
+    let event = TroubleshooterEscalationRequest {
+        required_action: text("requiredAction")?,
+        resolution_condition: text("resolutionCondition")?,
+        context: text("context")?,
+    };
+    let mut authority = RelayAuthority::open_existing(db)?;
+    let before = authority.read_job(&request.id)?.ok_or("unknown Job")?;
+    if before["repository"].as_str() != Some(request.repository.as_str()) {
+        return Err("repository identity mismatch".into());
+    }
+    let at = after_time(
+        before["updatedAt"]
+            .as_str()
+            .ok_or("Job timestamp missing")?,
+    )?;
+    authority.request_troubleshooter_escalation(&request.id, task_id, &event, &at)?;
+    let job = authority
+        .read_job(&request.id)?
+        .ok_or("Job missing after escalation")?;
+    job["tasks"]
+        .as_array()
+        .and_then(|tasks| tasks.iter().find(|t| t["id"] == task_id))
+        .cloned()
+        .ok_or_else(|| "Escalated Task missing after commit".to_owned())
+}
+pub fn escalate_task_isolated(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        return Err("production Task escalation requires daemon-owned control".into());
+    }
+    isolated_store_root(db)?;
+    dispatch_task_escalate(db, request)
+}
+
 fn dispatch(db: &Path, request: ControlRequest) -> Result<Value, String> {
     if request.version != 1 {
         return Err("unsupported native control version".into());
+    }
+    if request.operation == "task.escalate" {
+        return dispatch_task_escalate(db, &request);
     }
     if request.operation == "task.supersede" {
         return dispatch_task_supersede(db, &request);
@@ -1205,7 +1303,8 @@ fn dispatch(db: &Path, request: ControlRequest) -> Result<Value, String> {
     if request.operation == "task.comment" {
         return dispatch_task_comment(db, &request);
     }
-    if request.classification.is_some()
+    if request.escalation.is_some()
+        || request.classification.is_some()
         || request.task_id.is_some()
         || request.message.is_some()
         || request.recovery_task_id.is_some()

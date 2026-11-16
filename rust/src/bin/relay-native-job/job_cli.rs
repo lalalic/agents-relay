@@ -252,6 +252,7 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
                 recovery_task_id: None,
                 diagnosis: None,
                 classification: None,
+                escalation: None,
             },
         );
     }
@@ -344,6 +345,7 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
                         recovery_task_id: None,
                         diagnosis: None,
                         classification: None,
+                        escalation: None,
                     },
                 );
             }
