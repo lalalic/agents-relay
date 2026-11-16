@@ -715,7 +715,7 @@ fn update(args: &[String]) -> Result<Value, String> {
     result(&committed.job, tid)
 }
 fn unblock(args: &[String]) -> Result<Value, String> {
-    let o = parse(
+    let options = parse(
         args,
         &[
             "--db",
@@ -728,60 +728,64 @@ fn unblock(args: &[String]) -> Result<Value, String> {
         ],
         &[],
     )?;
-    let (db, jid) = identify(&o)?;
-    let tid = o
+    let (db, id) = identify(&options)?;
+    let tid = options
         .get("--task-id")
+        .filter(|s| !s.trim().is_empty())
         .ok_or("task unblock requires --task-id")?;
-    let reason = o.get("--reason").map(String::as_str).unwrap_or("");
-    let response = o.get("--response").map(String::as_str).unwrap_or("");
+    let reason = options.get("--reason").map(String::as_str).unwrap_or("");
+    let response = options.get("--response").map(String::as_str).unwrap_or("");
     if reason.trim().is_empty() && response.trim().is_empty() {
         return Err("task unblock requires --reason or --response".into());
     }
-    let mut a = RelayAuthority::open_existing(&db)?;
-    let job = verify_job(&a, &jid, o.get("--repo"))?;
-    let current = task(&job, tid)?;
-    if current["agentName"] == "troubleshooter" && current["escalation"]["status"] == "pending" {
-        return Err(
-            "native task unblock cannot impersonate an authorized human escalation response".into(),
-        );
-    }
-    if current["state"] != "BLOCKED"
-        || current["agentName"] != "troubleshooter"
-        || current["kind"] == "planner"
-    {
-        return Err("native unblock requires an effective BLOCKED Troubleshooter Task".into());
-    }
-    if job["state"] != "ACTIVE" || job.get("pause").is_some_and(|v| !v.is_null()) {
-        return Err("native unblock requires an active, unpaused Job".into());
-    }
-    if ["executionId", "leaseOwner", "leaseExpiresAt"]
-        .iter()
-        .any(|k| current.get(*k).is_some_and(|v| !v.is_null()))
-    {
-        return Err("native unblock requires an inactive Task without a lease".into());
-    }
-    let at = after_time(job["updatedAt"].as_str().ok_or("Job timestamp missing")?)?;
-    let graph = Graph::parse(include_str!("../../../../workflow/task-lifecycle.mmd"))?;
-    let c = a.commit_job(&jid, &at, |prior| {
-        if prior["state"] != "ACTIVE" || prior.get("pause").is_some_and(|v| !v.is_null()) {
-            return Err("Job changed before unblock; it must remain active and unpaused".into());
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        if options.contains_key("--response") {
+            return Err(
+                "task unblock cannot consume human --response; use task resume-troubleshooter"
+                    .into(),
+            );
         }
-        let mut next = prior.clone();
-        let t = next["tasks"].as_array_mut().and_then(|ts| ts.iter_mut().find(|t| t["id"] == *tid)).ok_or("Task not found")?;
-        if t["state"] != "BLOCKED" || t["agentName"] != "troubleshooter" || t["escalation"]["status"] == "pending"
-            || ["executionId", "leaseOwner", "leaseExpiresAt"].iter().any(|k| t.get(*k).is_some_and(|v| !v.is_null())) {
-            return Err("Task changed before unblock or is awaiting an authorized human response".into());
-        }
-        let d = graph.decide("BLOCKED", GraphInput { transport: "event".into(), id: "task.unblocked".into(), payload: json!({}) }, &HashMap::from([("troubleshooterTask".into(), true)]))?;
-        let Decision::Accepted { target, actions, .. } = d else { return Err("canonical Task Graph denied unblock".into()) };
-        if target != "QUEUED" { return Err("canonical Task Graph selected unexpected unblock state".into()) }
-        for action in actions { match action.id.as_str() { "mutation.clearError" => t["error"] = Value::Null, "mutation.clearFailureReason" => { if let Some(m)=t.as_object_mut(){m.shift_remove("failureReason");} }, _ => return Err(format!("unsupported unblock action {}", action.id)) } }
-        t["state"] = json!(target); t["attempt"] = json!(0); t["maxAttempts"] = json!(t["maxAttempts"].as_i64().unwrap_or(3).max(3));
-        t["executionId"] = Value::Null; t["leaseOwner"] = Value::Null; t["leaseExpiresAt"] = Value::Null; t["blockedBy"] = Value::Null;
-        t["unblock"] = json!({"event":"task.unblocked","at":at,"source":"cli","reason":if reason.trim().is_empty(){response}else{reason}});
-        t["updatedAt"] = json!(at); next["updatedAt"] = json!(at); Ok((next, vec![]))
-    })?;
-    result(&c.job, tid)
+        let repo = options
+            .get("--repo")
+            .filter(|s| !s.trim().is_empty())
+            .ok_or("production task unblock requires --repo")?;
+        let request = agents_relay_rust::native_control::ControlRequest {
+            version: 1,
+            operation: "task.unblock".into(),
+            repository: repo.clone(),
+            id,
+            title: String::new(),
+            objective: String::new(),
+            project_root: String::new(),
+            project_path: None,
+            priority: String::new(),
+            review_enabled: false,
+            auto_merge: false,
+            changes: None,
+            reason: Some(reason.trim().into()),
+            task_id: Some(tid.clone()),
+            message: None,
+            recovery_task_id: None,
+            diagnosis: None,
+            classification: None,
+            escalation: None,
+            human_response: None,
+        };
+        agents_relay_rust::native_control::request(&db, &request)
+    } else {
+        let mut authority = RelayAuthority::open_existing(&db)?;
+        verify_job(&authority, &id, options.get("--repo"))?;
+        agents_relay_rust::native_job::unblock_troubleshooter_task(
+            &mut authority,
+            &id,
+            tid,
+            if reason.trim().is_empty() {
+                response
+            } else {
+                reason
+            },
+        )
+    }
 }
 fn retry_live_or_isolated(args: &[String]) -> Result<Value, String> {
     let options = parse(
@@ -1350,6 +1354,9 @@ fn comment(args: &[String]) -> Result<Value, String> {
 }
 
 pub fn run(args: &[String]) -> Result<Value, String> {
+    if args.get(1).is_some_and(|action| action == "unblock") {
+        return unblock(args);
+    }
     if args.get(1).is_some_and(|action| action == "retry") {
         return retry_live_or_isolated(args);
     }

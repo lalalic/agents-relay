@@ -1497,9 +1497,62 @@ pub fn retry_task_isolated(db: &Path, request: &ControlRequest) -> Result<Value,
     dispatch_task_retry(db, request)
 }
 
+fn dispatch_task_unblock(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if request.changes.is_some()
+        || request.message.is_some()
+        || request.recovery_task_id.is_some()
+        || request.diagnosis.is_some()
+        || request.classification.is_some()
+        || request.escalation.is_some()
+        || request.human_response.is_some()
+        || !request.title.is_empty()
+        || !request.objective.is_empty()
+        || !request.project_root.is_empty()
+        || request.project_path.is_some()
+        || !request.priority.is_empty()
+        || request.review_enabled
+        || request.auto_merge
+    {
+        return Err("task.unblock accepts only exact Task identity and reason".into());
+    }
+    if request.id.trim().is_empty()
+        || request.id.len() > 128
+        || request.repository.trim().is_empty()
+        || request.repository.len() > 500
+    {
+        return Err("task.unblock requires exact Job ID and repository".into());
+    }
+    let tid = request
+        .task_id
+        .as_deref()
+        .filter(|s| !s.trim().is_empty() && s.len() <= 128)
+        .ok_or("task unblock requires --task-id")?;
+    let reason = request
+        .reason
+        .as_deref()
+        .filter(|s| !s.trim().is_empty() && s.len() <= 2048)
+        .ok_or("task unblock requires nonempty --reason of at most 2048 bytes")?;
+    let mut authority = RelayAuthority::open_existing(db)?;
+    let job = authority.read_job(&request.id)?.ok_or("unknown Job")?;
+    if job["repository"].as_str() != Some(request.repository.as_str()) {
+        return Err("repository identity mismatch".into());
+    }
+    crate::native_job::unblock_troubleshooter_task(&mut authority, &request.id, tid, reason)
+}
+pub fn unblock_task_isolated(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        return Err("production Task unblock requires daemon-owned control".into());
+    }
+    isolated_store_root(db)?;
+    dispatch_task_unblock(db, request)
+}
+
 fn dispatch(db: &Path, request: ControlRequest) -> Result<Value, String> {
     if request.version != 1 {
         return Err("unsupported native control version".into());
+    }
+    if request.operation == "task.unblock" {
+        return dispatch_task_unblock(db, &request);
     }
     if request.operation == "task.retry" {
         return dispatch_task_retry(db, &request);

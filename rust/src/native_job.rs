@@ -331,6 +331,100 @@ pub fn cancel_queued_task(
     Ok(json!({"jobId":job_id,"taskId":task_id,"task":task}))
 }
 
+/// Reopen an inactive BLOCKED Troubleshooter after external evidence clears
+/// the blocker. A pending human escalation is NOT an unblockable blocker:
+/// only the authorized, separately bound response path may release that gate.
+pub fn unblock_troubleshooter_task(
+    authority: &mut RelayAuthority,
+    job_id: &str,
+    task_id: &str,
+    reason: &str,
+) -> Result<Value, String> {
+    let reason = reason.trim();
+    if reason.is_empty() || reason.len() > 2048 {
+        return Err("task unblock requires nonempty reason of at most 2048 bytes".into());
+    }
+    let snapshot = authority.read_job(job_id)?.ok_or("unknown Job")?;
+    let at = after_time(
+        snapshot["updatedAt"]
+            .as_str()
+            .ok_or("Job timestamp missing")?,
+    )?;
+    let graph = Graph::parse(include_str!("../../workflow/task-lifecycle.mmd"))?;
+    let committed = authority.commit_job(job_id, &at, |prior| {
+        if prior["state"] != "ACTIVE" || prior.get("pause").is_some_and(|v| !v.is_null()) {
+            return Err("native unblock requires an active, unpaused Job".into());
+        }
+        let mut next = prior.clone();
+        let task = next["tasks"]
+            .as_array_mut()
+            .and_then(|tasks| tasks.iter_mut().find(|t| t["id"] == task_id))
+            .ok_or("Task not found")?;
+        if task["state"] != "BLOCKED"
+            || task["agentName"] != "troubleshooter"
+            || task["kind"] == "planner"
+        {
+            return Err("native unblock requires an effective BLOCKED Troubleshooter Task".into());
+        }
+        if task["escalation"]["status"] == "pending" {
+            return Err(
+                "native task unblock cannot impersonate an authorized human escalation response"
+                    .into(),
+            );
+        }
+        if ["executionId", "leaseOwner", "leaseExpiresAt"]
+            .iter()
+            .any(|k| task.get(*k).is_some_and(|v| !v.is_null()))
+        {
+            return Err("native unblock requires an inactive Task without a lease".into());
+        }
+        let decision = graph.decide(
+            "BLOCKED",
+            GraphInput {
+                transport: "event".into(),
+                id: "task.unblocked".into(),
+                payload: json!({}),
+            },
+            &HashMap::from([("troubleshooterTask".into(), true)]),
+        )?;
+        let Decision::Accepted {
+            target, actions, ..
+        } = decision
+        else {
+            return Err("canonical Task Graph denied unblock".into());
+        };
+        if target != "QUEUED" {
+            return Err("canonical Task Graph selected unexpected unblock state".into());
+        }
+        for action in actions {
+            match action.id.as_str() {
+                "mutation.clearError" => task["error"] = Value::Null,
+                "mutation.clearFailureReason" => {
+                    task.as_object_mut()
+                        .map(|o| o.shift_remove("failureReason"));
+                }
+                _ => return Err(format!("unsupported unblock action {}", action.id)),
+            }
+        }
+        task["state"] = json!(target);
+        task["attempt"] = json!(0);
+        task["maxAttempts"] = json!(task["maxAttempts"].as_i64().unwrap_or(3).max(3));
+        task["executionId"] = Value::Null;
+        task["leaseOwner"] = Value::Null;
+        task["leaseExpiresAt"] = Value::Null;
+        task["blockedBy"] = Value::Null;
+        task["unblock"] = json!({"event":"task.unblocked","at":at,"source":"cli","reason":reason});
+        task["updatedAt"] = json!(at);
+        next["updatedAt"] = json!(at);
+        Ok((next, vec![]))
+    })?;
+    let task = committed.job["tasks"]
+        .as_array()
+        .and_then(|tasks| tasks.iter().find(|t| t["id"] == task_id))
+        .ok_or("unblocked Task missing from committed Job")?;
+    Ok(json!({"jobId":job_id,"taskId":task_id,"task":task}))
+}
+
 /// Requeue a failed, inactive ordinary Task through the canonical lifecycle
 /// Graph. Recovery-owned, Planner, DAG, and currently leased work is excluded.
 pub fn retry_failed_task(
