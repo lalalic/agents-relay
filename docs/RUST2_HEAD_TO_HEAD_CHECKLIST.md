@@ -69,7 +69,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/decision-audit.ts` | `rust/src/decision_audit.rs` | PENDING | — |
 | `src/decision.ts` | `rust/src/decision.rs` | PENDING | — |
 | `src/dependency-revision-execution.ts` | `rust/src/dependency_revision_execution.rs` | PENDING | — |
-| `src/dependency-validity.ts` | `rust/src/dependency_validity.rs` | PENDING | — |
+| `src/dependency-validity.ts` | `rust/src/dependency_validity.rs` | PASS | 327 shared differential fixtures across 4 ports; Rust native tests 5/5; Node focused regression 4/4; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/escalation-notifier.ts` | `rust/src/escalation_notifier.rs` | PENDING | — |
 | `src/events-bus-runtime.ts` | `rust/src/events_bus_runtime.rs` | PENDING | — |
 | `src/events.ts` | `rust/src/events.rs` | PENDING | — |
@@ -131,7 +131,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/planner-runtime.ts` | `rust/src/planner_runtime.rs` | PENDING | — |
 | `src/planner-task-context.ts` | `rust/src/planner_task_context.rs` | PENDING | — |
 | `src/planner-task-ids.ts` | `rust/src/planner_task_ids.rs` | PENDING | — |
-| `src/planner-task-title.ts` | `rust/src/planner_task_title.rs` | PENDING | — |
+| `src/planner-task-title.ts` | `rust/src/planner_task_title.rs` | PASS | 327 shared differential fixtures across 4 ports; Rust native tests 5/5; Node focused regression 4/4; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/planner.ts` | `rust/src/planner.rs` | PENDING | — |
 | `src/pool.ts` | `rust/src/pool.rs` | PENDING | — |
 | `src/process-identity.ts` | `rust/src/process_identity.rs` | PENDING | — |
@@ -194,10 +194,10 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/task-inactivity-watchdog.ts` | `rust/src/task_inactivity_watchdog.rs` | PENDING | — |
 | `src/task-recovery.ts` | `rust/src/task_recovery.rs` | PENDING | — |
 | `src/task-tag.ts` | `rust/src/task_tag.rs` | PENDING | — |
-| `src/task-title.ts` | `rust/src/task_title.rs` | PENDING | — |
+| `src/task-title.ts` | `rust/src/task_title.rs` | PASS | 327 shared differential fixtures across 4 ports; Rust native tests 5/5; Node focused regression 4/4; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/task-transitions.ts` | `rust/src/task_transitions.rs` | PENDING | — |
 | `src/task-update.ts` | `rust/src/task_update.rs` | PENDING | — |
-| `src/terminal-event-recovery.ts` | `rust/src/terminal_event_recovery.rs` | PENDING | — |
+| `src/terminal-event-recovery.ts` | `rust/src/terminal_event_recovery.rs` | PASS | 327 shared differential fixtures across 4 ports; Rust native tests 5/5; Node focused regression 4/4; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/troubleshooter-fallback.ts` | `rust/src/troubleshooter_fallback.rs` | PENDING | — |
 | `src/troubleshooter-qa-api.ts` | `rust/src/troubleshooter_qa_api.rs` | PENDING | — |
 | `src/troubleshooter.ts` | `rust/src/troubleshooter.rs` | PENDING | — |
@@ -255,3 +255,19 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 - Baseline is pinned, but each source port must re-check any subsequent Node main changes before calling itself equivalent.
 - Never silently mark a test passed; include command, case fixture and output in evidence.
 - Do not change Node `src/`, `test/`, `workflow/`, or deploy running services while the new Rust port is incomplete.
+
+## Verified head-to-head batches
+
+### Batch 1 — pure Node helpers (2026-11-16)
+
+- [x] `src/task-title.ts` → `rust/src/task_title.rs`: JS whitespace, prefix removal, UTF-16 truncation including unmatched surrogate serializations.
+- [x] `src/planner-task-title.ts` → `rust/src/planner_task_title.rs`: required string, whitespace trimming, 5–8-word validation, exact errors.
+- [x] `src/dependency-validity.ts` → `rust/src/dependency_validity.rs`: valid/invalid policies, declared edges, object-property ordering, `__proto__`.
+- [x] `src/terminal-event-recovery.ts` → `rust/src/terminal_event_recovery.rs`: recovery guard truth table and exact reminder text.
+- [x] `npm run build` — rebuilt authoritative Node baseline before comparison.
+- [x] `node --test rust/tests/head_to_head.mjs` — **327/327** Node/Rust cases matched, including negative/error outcomes.
+- [x] `cargo test --offline --manifest-path rust/Cargo.toml` — **5/5** Rust-native tests passed.
+- [x] `cargo clippy --offline --manifest-path rust/Cargo.toml --all-targets -- -D warnings` — passed.
+- [x] `node --import ./test/test-store-env.mjs --test test/dependency-validity.test.js test/terminal-event-recovery.test.js` — **4/4** Node regressions passed in isolated store.
+
+Current ported source modules: **4 / 227**. The CLI used by this batch is a test-only differential entry point, **not** the runtime/daemon, dashboard, workflow, Graph, scheduler or SQLite service. Those remain `PENDING` until directly ported and verified.

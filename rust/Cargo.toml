@@ -1,0 +1,12 @@
+# New rust2 crate: replaces the discarded rewrite with only verified head-to-head Node source ports.
+[package]
+name = "agents-relay-rust2"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[[bin]]
+name = "relay-rust2-parity"
+path = "src/bin/relay-rust2-parity.rs"

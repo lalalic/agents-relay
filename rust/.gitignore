@@ -1,0 +1,2 @@
+# New rust2 build outputs: keep independently compiled parity binaries out of Git.
+/target/
