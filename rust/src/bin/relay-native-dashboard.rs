@@ -10,6 +10,8 @@ use std::sync::Arc;
 use std::{thread, time::Duration};
 #[path = "relay-native-dashboard/account_usage.rs"]
 mod account_usage;
+#[path = "relay-native-dashboard/events_history.rs"]
+mod events_history;
 #[path = "relay-native-dashboard/review_preview.rs"]
 mod review_preview;
 #[path = "relay-native-dashboard/tabs.rs"]
@@ -1035,17 +1037,16 @@ fn handle(
                     }
                 }
             };
-            let order = "desc";
             let task_id = task_id.filter(|task_id| !task_id.is_empty());
-            if historical {
-                // Legacy event history was owned by a separate Events Bus.
-                // A missing Rust inbox is not proof that a Task had no events.
-                return respond_json(&mut tcp, "200 OK", &Value::Array(Vec::new()));
-            }
-            let result = RelayReader::open(db)
-                .and_then(|reader| reader.task_events(job_id, task_id, limit, order, 0));
+            let result = if historical {
+                events_history::historical(job_id, task_id, limit)
+            } else {
+                RelayReader::open(db).and_then(|reader|
+                    events_history::native(db, &reader, job_id, task_id, limit))
+            };
             match result {
-                Ok(page) => respond_json(&mut tcp, "200 OK", &Value::Array(page.events)),
+                Ok(events) => respond_json(&mut tcp, "200 OK", &events),
+                Err(error) if historical => respond_json(&mut tcp, "503 Service Unavailable", &json!({"error":error})),
                 Err(error) if error.contains("not found") => {
                     respond_json(&mut tcp, "404 Not Found", &json!({"error":error}))
                 }

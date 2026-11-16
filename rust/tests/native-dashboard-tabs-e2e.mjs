@@ -4,6 +4,7 @@ import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync,chmod
 import {join,resolve} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:net';
+import {createServer as createHttpServer} from 'node:http';
 import {DatabaseSync} from 'node:sqlite';
 import {setTimeout as delay} from 'node:timers/promises';
 const executable=resolve(process.env.CARGO_TARGET_DIR??join(import.meta.dirname,'../target'),'debug/relay-native-dashboard');
@@ -95,6 +96,22 @@ test('Rust Dashboard all five views and native Jobs, Usage, Graphs, Router audit
   const route=await json(base+'/api/router-test?job=101&task=501');
   assert.equal(route.routing.model,'gpt-6');assert.match(route.source,/not a fresh/);
   assert.equal((await fetch(base+'/api/router-test?job=101')).status,400);
+  // Durable process observations are shown explicitly as ledger projections,
+  // not fabricated task.started or task.progress publications.
+  const trace=new DatabaseSync(f.db);
+  trace.exec(`CREATE TABLE execution_process(
+    job_id TEXT NOT NULL,task_id TEXT NOT NULL,execution_id TEXT NOT NULL,
+    observed_at TEXT NOT NULL,ended_at TEXT,
+    PRIMARY KEY(job_id,task_id,execution_id))`);
+  trace.prepare('INSERT INTO execution_process VALUES(?,?,?,?,?)').run(
+    '101','501','verified-exec-1','2026-11-15T12:01:00.000Z','2026-11-15T12:02:00.000Z');
+  trace.close();
+  const nativeEvents=await json(base+'/api/events?job=101&task=501');
+  assert.deepEqual(nativeEvents.map(event=>event.type),
+    ['task.process.ended','task.process.observed']);
+  assert.ok(nativeEvents.every(event=>event.source.component==='verified-execution-ledger'));
+  assert.deepEqual(await json(base+'/api/events?job=101&task=502'),[]);
+
  }finally{await stop(child);rmSync(f.home,{recursive:true,force:true})}
 });
 test('Router Rules and Q&A saved to isolated canonical files with CAS, local Origin and size protections',async()=>{
@@ -179,6 +196,7 @@ test('Router Rules and Q&A saved to isolated canonical files with CAS, local Ori
 });
 
 test('original root shows existing historical Relay Jobs without merging with Rust-owned jobs', async()=>{
+ let bus;
  const f=fixture(); let child;
  const archiveDb=join(f.home,'historic-relay.sqlite');
  const archive=new DatabaseSync(archiveDb);
@@ -193,6 +211,21 @@ test('original root shows existing historical Relay Jobs without merging with Ru
        input:'private secret',output:{path:'/private'},result:{secret:'hidden'}}]}),updatedAt);
   }
   archive.close();
+  // Mock the authoritative Events Bus on a disposable loopback server.
+  // No request is sent to the actual production history of the host.
+  bus=createHttpServer((req,res)=>{
+    const url=new URL(req.url,'http://127.0.0.1');
+    const job=url.searchParams.get('job');
+    const task=url.searchParams.get('task');
+    const event={event_id:'bus-start-641',job_id:'641',task_id:'6410',
+      timestamp:'2026-11-15T12:00:03.000Z',type:'task.started',message:'Verified start'};
+    const rows=job==='641'&&(!task||task==='6410')?[{cursor:12,event}]:[];
+    res.writeHead(200,{'content-type':'application/json'});
+    res.end(JSON.stringify({job_id:job,order:'desc',next_cursor:rows.length?12:0,events:rows}));
+  });
+  await new Promise(ok=>bus.listen(0,'127.0.0.1',ok));
+  f.env.EVENTS_BUS_API_URL='http://127.0.0.1:'+bus.address().port;
+
   const server=await start(f,['--history-db',archiveDb]);child=server.child;
   const {base}=server;
   const html=await(await fetch(base+'/')).text();
@@ -217,10 +250,14 @@ test('original root shows existing historical Relay Jobs without merging with Ru
   assert.equal((await json(base+'/api/dashboard/job?id=101')).id,'101');
   assert.equal((await json(base+'/api/usage?source=history')).jobs,3);
   assert.equal((await json(base+'/api/usage?source=history')).providers[0].label,'OpenAI');
-  assert.deepEqual(await json(base+'/api/events?job=641&source=history'),[],
-    'historical Event Bus cannot be faked from Rust event inbox');
+  assert.deepEqual((await json(base+'/api/events?job=641&source=history')).map(event=>event.type),
+    ['task.started'],'historical Jobs read the real Events Bus response contract');
+  assert.deepEqual(await json(base+'/api/events?job=641&task=missing&source=history'),[]);
+  assert.deepEqual(await json(base+'/api/events?job=642&source=history'),[]);
+  assert.deepEqual(await json(base+'/api/events?job=641'),[],
+    'numeric Job IDs must never mix native events with historical Events Bus records');
   assert.equal((await fetch(base+'/api/dashboard/job?id=bad&source=history')).status,404);
   assert.equal((await fetch(base+'/api/dashboard/jobs?source=history',{method:'POST'})).status,405);
   assert.equal((await json(base+'/api/dashboard/jobs?status=CANCELLED&source=history')).jobs[0].id,'643');
- }finally{await stop(child);rmSync(f.home,{recursive:true,force:true})}
+ }finally{await stop(child);if(bus)await new Promise(ok=>bus.close(ok));rmSync(f.home,{recursive:true,force:true})}
 });
