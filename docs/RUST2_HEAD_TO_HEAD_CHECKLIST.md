@@ -412,3 +412,11 @@ Node sources: **227**; legacy Rust tracked paths scheduled for deletion: **148**
 - Baseline is pinned, but each source port must re-check any subsequent Node main changes before calling itself equivalent.
 - Never silently mark a test passed; include command, case fixture and output in evidence.
 - Do not change Node `src/`, `test/`, `workflow/`, or deploy running services while the new Rust port is incomplete.
+
+## Retired local build/deployment cleanup (2026-11-16)
+
+- [x] Stopped 19 old `relay-native-dashboard` processes with SIGTERM; no matching Rust Relay process remained. Reason: user explicitly retired Rust Relay before new port.
+- [x] Removed ignored `rust/target/` (~3.9 GB). Reason: old compiled debug/release artifacts are not a source port and should not be reused.
+- [x] Removed `~/.local/lib/agents-relay-rust-live/` (~395 MB). Reason: installed legacy Rust executables would bypass new head-to-head port.
+- [x] Removed `~/.local/bin/relay-native-job` symlink targeting retired deployment. Reason: prevent accidentally invoking removed implementation.
+- [x] Preserved Node.js Relay and SQLite runtime/state files. Reason: Node is behavioral baseline, durable state is not a build artifact.
