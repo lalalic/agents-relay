@@ -25,7 +25,7 @@ ${dashboardStyles}
 </head>
 <body>
 <header>
-  <div class="brand"><h1>Agents Relay Console</h1><p class="tagline">Durable PR state is authoritative; events are observability.</p><span class="version">v${dashboardVersion}</span> <a id="rust-live-link" class="version" href="/rust/">Rust Live</a></div>
+  <div class="brand"><h1>Agents Relay Console</h1><p class="tagline">Durable PR state is authoritative; events are observability.</p><span class="version">v${dashboardVersion}</span></div>
   <div id="runtime-summary" class="runtime-summary" aria-label="Runtime summary"></div>
   <div id="rate-limit-warning" class="warning-banner" role="status" hidden></div>
   <nav role="tablist" aria-label="Console views">

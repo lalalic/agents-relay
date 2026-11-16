@@ -439,8 +439,12 @@ AGENTS_RELAY_STORE_DIR=$(mktemp -d) cargo test --locked --manifest-path rust/Car
 From the repository root:
 
 ```sh
-npm run test:rust
-npm run build:rust
+npm run build
+cargo test --locked --manifest-path rust/Cargo.toml
+cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets -- -D warnings
+cargo build --locked --manifest-path rust/Cargo.toml --all-targets
+node --test rust/tests/*.mjs
+cargo build --locked --release --manifest-path rust/Cargo.toml
 ```
 
 This runs Rust unit tests, Clippy, all-target test binary builds and
@@ -575,7 +579,7 @@ The Rust integration fixture binaries in `rust/examples/` require:
 - a sibling `.relay-rust-authority-isolated-test` marker file.
 
 No production SQLite connection, state-changing command or worker execution
-is exposed from `agents-relay-rust` main CLI. `npm run test:rust` verifies:
+is exposed from `agents-relay-rust` main CLI. The Rust test commands above verify:
 
 - TypeScript Job write → Rust transactional update/event/inbox → TypeScript
   read, plus cross-language global Task ID and idempotency compatibility.
