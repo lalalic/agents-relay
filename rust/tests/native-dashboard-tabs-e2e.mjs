@@ -30,10 +30,10 @@ function fixture(){
  return {home,root,db,qaFile,sourceRoot,rulesPath:join(home,'.agents-relay/execution-router-rules.md'),
    env:{...process.env,HOME:home,AGENTS_RELAY_SOURCE_ROOT:sourceRoot,RELAY_RUST_LIVE_MODE:'pilot-live'}};
 }
-async function start(f){
+async function start(f,extraArgs=[]){
  const socket=createServer();await new Promise(ok=>socket.listen(0,'127.0.0.1',ok));
  const port=socket.address().port;await new Promise(ok=>socket.close(ok));
- const child=spawn(executable,['--db',f.db,'--port',String(port)],{env:f.env,stdio:['ignore','pipe','pipe']});
+ const child=spawn(executable,['--db',f.db,'--port',String(port),...extraArgs],{env:f.env,stdio:['ignore','pipe','pipe']});
  let stderr='';child.stderr.on('data',b=>stderr+=b.toString());
  const base='http://127.0.0.1:'+port;
  for(let i=0;i<85;i++){
@@ -75,8 +75,10 @@ test('Rust Dashboard all five views and native Jobs, Usage, Graphs, Router audit
   assert.equal((await fetch(base+'/api/dashboard/job?id=missing')).status,404);
   const usage=await json(base+'/api/usage');
   assert.equal(usage.jobs,1);assert.equal(usage.tasks,2);assert.equal(usage.attempts,3);
-  assert.equal(usage.executionRecords,1);assert.equal(usage.routes['openai / gpt-6'],1);
-  assert.equal(usage.accountQuota.available,false);
+  assert.equal(usage.executionRecords,1);
+  assert.deepEqual(usage.providers.map(provider=>provider.id),['openai','zai']);
+  assert.deepEqual(usage.credits.map(provider=>provider.id),['deepseek','openrouter']);
+  assert.ok(usage.providers.every(provider=>typeof provider.usage.available==='boolean'));
   const graphs=await json(base+'/api/graphs');
   assert.equal(graphs.length,20);
   assert.ok(graphs.every(g=>g.source.length>20));
@@ -87,6 +89,9 @@ test('Rust Dashboard all five views and native Jobs, Usage, Graphs, Router audit
   assert.equal((await fetch(base+'/api/graph-symbol?graph=../secret&kind=Event&name=retry')).status,404);
   const audit=await json(base+'/api/decision-audit');
   assert.equal(audit.length,2);
+  assert.ok(audit[0].correlation.job_id);
+  assert.ok(audit[0].selected.worker.adapter);
+  assert.ok(Array.isArray(audit[0].gate_results));
   const route=await json(base+'/api/router-test?job=101&task=501');
   assert.equal(route.routing.model,'gpt-6');assert.match(route.source,/not a fresh/);
   assert.equal((await fetch(base+'/api/router-test?job=101')).status,400);
@@ -158,8 +163,64 @@ test('Router Rules and Q&A saved to isolated canonical files with CAS, local Ori
   const malicious='</script><script>window.__injected=1</script>\\n';
   assert.equal((await put(base,'/api/troubleshooter-qa',malicious,qaBeforeInjection.hash)).status,200);
   const html=await(await fetch(base)).text();
-  assert.ok(html.includes('\\u003c/script>'));
+  assert.ok(!html.includes('__RUST_BOOTSTRAP__'),'Original browser code is static, never injected');
   assert.ok(!html.includes(malicious));
   assert.equal(readFileSync(f.qaFile,'utf8'),malicious);
+  // Unmodified Node UI submits Router Rules as plain text.
+  const existingRules=await json(base+'/api/execution-router-rules');
+  const originalUiRules=existingRules.text+'\n# Original UI plain-text contract\n';
+  const originalUiSave=await fetch(base+'/api/execution-router-rules',{
+    method:'PUT',headers:{origin:base,'content-type':'text/plain; charset=utf-8'},
+    body:originalUiRules
+  });
+  assert.equal(originalUiSave.status,200);
+  assert.equal(readFileSync(f.rulesPath,'utf8'),originalUiRules);
+ }finally{await stop(child);rmSync(f.home,{recursive:true,force:true})}
+});
+
+test('original root shows existing historical Relay Jobs without merging with Rust-owned jobs', async()=>{
+ const f=fixture(); let child;
+ const archiveDb=join(f.home,'historic-relay.sqlite');
+ const archive=new DatabaseSync(archiveDb);
+ try{
+  archive.exec('CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL)');
+  const put=archive.prepare('INSERT INTO job_snapshot(job_id,json,updated_at) VALUES(?,?,?)');
+  for(const [id,state] of [['641','COMPLETED'],['642','ACTIVE'],['643','CANCELLED']]){
+   const updatedAt='2026-11-15T12:00:00.000Z';
+   put.run(id,JSON.stringify({id,title:'Historical '+id,state,repository:'agents-relay',
+     projectRoot:'/do/not/expose',updatedAt,createdAt:updatedAt,
+     tasks:[{id:id+'0',title:'Historical Task',state:'SUCCEEDED',
+       input:'private secret',output:{path:'/private'},result:{secret:'hidden'}}]}),updatedAt);
+  }
+  archive.close();
+  const server=await start(f,['--history-db',archiveDb]);child=server.child;
+  const {base}=server;
+  const html=await(await fetch(base+'/')).text();
+  assert.ok(!html.includes('__RELAY_DASH_SOURCE__'));
+  assert.ok(!html.includes('dashboard-compat.js'));
+  assert.ok(!html.includes('/do/not/expose'));
+  assert.ok(!html.includes('private secret'));
+  assert.equal(await(await fetch(base+'/rust/')).text(),html,
+    'Both views render byte-identical original client code');
+  const originalClientHistory=await (await fetch(base+'/api/jobs',{headers:{referer:base+'/'}})).json();
+  assert.equal(originalClientHistory.total,2);
+  const originalClientNative=await (await fetch(base+'/api/jobs',{headers:{referer:base+'/rust/'}})).json();
+  assert.equal(originalClientNative.total,1);
+  const originalJobDetail=await (await fetch(base+'/api/job?id=641',{headers:{referer:base+'/'}})).json();
+  assert.equal(originalJobDetail.id,'641');
+  const historic=await json(base+'/api/dashboard/jobs?source=history');
+  assert.equal(historic.total,2,'default filter excludes cancelled');
+  assert.deepEqual(historic.jobs.map(j=>j.id),['642','641']);
+  assert.equal(historic.jobs[0].tasks[0].input,undefined);
+  assert.equal((await json(base+'/api/dashboard/jobs')).jobs[0].id,'101');
+  assert.equal((await json(base+'/api/dashboard/job?id=641&source=history')).id,'641');
+  assert.equal((await json(base+'/api/dashboard/job?id=101')).id,'101');
+  assert.equal((await json(base+'/api/usage?source=history')).jobs,3);
+  assert.equal((await json(base+'/api/usage?source=history')).providers[0].label,'OpenAI');
+  assert.deepEqual(await json(base+'/api/events?job=641&source=history'),[],
+    'historical Event Bus cannot be faked from Rust event inbox');
+  assert.equal((await fetch(base+'/api/dashboard/job?id=bad&source=history')).status,404);
+  assert.equal((await fetch(base+'/api/dashboard/jobs?source=history',{method:'POST'})).status,405);
+  assert.equal((await json(base+'/api/dashboard/jobs?status=CANCELLED&source=history')).jobs[0].id,'643');
  }finally{await stop(child);rmSync(f.home,{recursive:true,force:true})}
 });

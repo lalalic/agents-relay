@@ -5,17 +5,17 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{thread, time::Duration};
+#[path = "relay-native-dashboard/account_usage.rs"]
+mod account_usage;
 #[path = "relay-native-dashboard/review_preview.rs"]
 mod review_preview;
 #[path = "relay-native-dashboard/tabs.rs"]
 mod tabs;
 
 const HTML: &str = include_str!("../../assets/rust-live-dashboard.html");
-const ORIGINAL_UI_COMPAT: &str = include_str!("../../assets/dashboard-compat.js");
-const MERMAID_LITE: &str = include_str!("../../assets/mermaid-lite.js");
 const NODE_PACKAGE_JSON: &str = include_str!("../../../package.json");
 const JOB_PAGE_SIZE: usize = 20;
 
@@ -398,68 +398,43 @@ fn detailed_jobs_page(
     Ok(page)
 }
 
-fn initial_events(reader: &RelayReader, jobs: &Value) -> Value {
-    let mut result = serde_json::Map::new();
-    for job in jobs["jobs"].as_array().into_iter().flatten() {
-        if let Some(id) = job["id"].as_str() {
-            if let Ok(page) = reader.task_events(id, None, 60, "desc", 0) {
-                let events = page
-                    .events
-                    .into_iter()
-                    .map(|event| {
-                        json!({
-                            "event_id":event["event_id"],"id":event["event_id"],
-                            "type":event["type"],"timestamp":event["timestamp"],
-                            "job_id":event["job_id"],"task_id":event["task_id"],
-                        })
-                    })
-                    .collect();
-                result.insert(id.to_owned(), Value::Array(events));
-            }
-        }
-    }
-    Value::Object(result)
+fn original_audit_schema(records: Value) -> Value {
+    let transformed = records
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|record| {
+            json!({
+                "timestamp":record["at"],
+                "correlation":{"job_id":record["jobId"],"task_id":record["taskId"]},
+                "selected":{"worker":{"adapter":record["provider"]},
+                            "model":record["model"]},
+                "decision_evidence":{"fallback":false},
+                "gate_results":[],
+                "source":"Rust durable Task routing record (not a fresh router decision)",
+            })
+        })
+        .collect::<Vec<_>>();
+    Value::Array(transformed)
 }
-fn html_with_bootstrap(db: &Path) -> Result<String, String> {
-    // Render the initial state into HTML so every Tab works immediately, even
-    // when managed browser tabs delay background fetches after a click.
-    // Values are sourced from the same read-only Rust authority as the APIs.
-    let reader = RelayReader::open(db)?;
-    let jobs = detailed_jobs_page(&reader, &HashMap::new())?;
-    let events = initial_events(&reader, &jobs);
-    let version: Value =
-        serde_json::from_str(NODE_PACKAGE_JSON).map_err(|e| format!("package manifest: {e}"))?;
-    let initial = json!({
-        "jobs":jobs,
-        "events":events,
-        "runtime":durable_runtime_summary(&reader)?,
-        "version":version["version"],
-        "status":{"limited":false,"cooldownUntil":null},
-        "usage":tabs::usage(&reader)?,
-        "graphs":tabs::graphs(),
-        "audit":tabs::audit(&reader)?,
-        "rules":tabs::read_settings(tabs::Settings::Router).unwrap_or_else(|error|
-            json!({"error":error})),
-        "qa":tabs::read_settings(tabs::Settings::TroubleshooterQa).unwrap_or_else(|error|
-            json!({"error":error})),
-    });
-    let safe_json = initial
-        .to_string()
-        .replace('<', "\\u003c")
-        .replace('\u{2028}', "\\u2028")
-        .replace('\u{2029}', "\\u2029");
-    let source = "<script>\n'use strict';";
-    if !HTML.contains(source) {
-        return Err("Original Dashboard script marker missing".into());
+
+fn dashboard_usage(reader: &RelayReader, source: &str) -> Result<Value, String> {
+    let mut usage = account_usage::snapshot();
+    let durable = tabs::usage(reader)?;
+    // Operational counters are optional server-side metadata. The original
+    // browser consumes only providers / credits / githubEffective.
+    for key in ["jobs", "tasks", "attempts", "executionRecords"] {
+        usage[key] = durable[key].clone();
     }
-    let prefix = format!(
-        "<script>window.__RUST_BOOTSTRAP__={safe_json};</script>\n<script src=\"/assets/dashboard-compat.js\"></script>\n"
-    );
-    Ok(HTML.replacen(source, &format!("{prefix}{source}"), 1))
+    if source == "history" {
+        usage["backend"] = json!("rust-read-only-history");
+        usage["source"] = json!("historical Relay SQLite snapshots");
+    }
+    Ok(usage)
 }
 
 fn respond(tcp: &mut TcpStream, status: &str, ctype: &str, payload: &[u8]) -> Result<(), String> {
-    let head=format!("HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nContent-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'\r\nConnection: close\r\n\r\n",payload.len());
+    let head=format!("HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nContent-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'unsafe-inline'; connect-src 'self'\r\nConnection: close\r\n\r\n",payload.len());
     tcp.write_all(head.as_bytes()).map_err(|e| e.to_string())?;
     tcp.write_all(payload).map_err(|e| e.to_string())
 }
@@ -473,7 +448,12 @@ fn respond_json(tcp: &mut TcpStream, status: &str, value: &Value) -> Result<(), 
     )
 }
 
-fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(), String> {
+fn handle(
+    mut tcp: TcpStream,
+    db: &Path,
+    history_db: Option<&Path>,
+    host_token: Option<&str>,
+) -> Result<(), String> {
     tcp.set_read_timeout(Some(Duration::from_secs(2)))
         .map_err(|e| e.to_string())?;
     tcp.set_write_timeout(Some(Duration::from_secs(20)))
@@ -528,6 +508,33 @@ fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(),
         Err(error) => {
             return respond_json(&mut tcp, "400 Bad Request", &json!({"error": error}));
         }
+    };
+    // The archive is a read-only projection. The isolated Rust authority
+    // remains the only writer and receives all authenticated host decisions.
+    let referer = headers.get("referer").map(String::as_str).unwrap_or("");
+    // The ORIGINAL browser client calls the same root /api/* endpoints from
+    // both pages. Choose the read-only source by the page referrer; the
+    // authenticated native authority and all mutation endpoints remain fenced.
+    let referer_path = referer
+        .split("://")
+        .nth(1)
+        .and_then(|authority| authority.find('/').map(|index| &authority[index..]))
+        .unwrap_or("");
+    let referer_history =
+        history_db.is_some() && (referer_path == "/" || referer_path.starts_with("/?"));
+    let historical = first_value(&parameters, "source") == Some("history")
+        || (first_value(&parameters, "source").is_none() && referer_history);
+    if historical && history_db.is_none() {
+        return respond_json(
+            &mut tcp,
+            "400 Bad Request",
+            &json!({"error":"Historical Relay snapshot is not configured"}),
+        );
+    }
+    let view_db = if historical {
+        history_db.unwrap_or(db)
+    } else {
+        db
     };
     if fields[0] == "POST"
         && matches!(
@@ -713,9 +720,14 @@ fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(),
                 &json!({"error":"Settings writes require local same-origin browser"}),
             );
         }
-        if headers
-            .get("content-type")
-            .is_none_or(|v| v.split(';').next().map(str::trim) != Some("application/json"))
+        let rules_plain_text = path == "/api/execution-router-rules"
+            && headers
+                .get("content-type")
+                .is_some_and(|v| v.split(';').next().map(str::trim) == Some("text/plain"));
+        if !rules_plain_text
+            && headers
+                .get("content-type")
+                .is_none_or(|v| v.split(';').next().map(str::trim) != Some("application/json"))
         {
             return respond_json(
                 &mut tcp,
@@ -748,6 +760,35 @@ fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(),
         } else {
             tabs::Settings::Router
         };
+        let payload = if rules_plain_text {
+            // The unchanged Node UI does not send a revision token for
+            // Router Rules. Read the current file and perform a server-side
+            // compare-and-swap. The public tunnel cannot reach this branch.
+            let current = match tabs::read_settings(kind) {
+                Ok(current) => current,
+                Err(error) => {
+                    return respond_json(
+                        &mut tcp,
+                        "503 Service Unavailable",
+                        &json!({"error":error}),
+                    )
+                }
+            };
+            match String::from_utf8(payload) {
+                Ok(text) => json!({"text":text,"hash":current["hash"]})
+                    .to_string()
+                    .into_bytes(),
+                Err(_) => {
+                    return respond_json(
+                        &mut tcp,
+                        "400 Bad Request",
+                        &json!({"error":"UTF-8 rules required"}),
+                    )
+                }
+            }
+        } else {
+            payload
+        };
         return match tabs::save_settings(kind, &payload) {
             Ok(data) => respond_json(&mut tcp, "200 OK", &data),
             Err(tabs::SaveFailure::Conflict) => respond_json(
@@ -774,18 +815,6 @@ fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(),
         );
     }
     match path {
-        "/assets/mermaid-lite.js" => respond(
-            &mut tcp,
-            "200 OK",
-            "application/javascript; charset=utf-8",
-            MERMAID_LITE.as_bytes(),
-        ),
-        "/assets/dashboard-compat.js" => respond(
-            &mut tcp,
-            "200 OK",
-            "application/javascript; charset=utf-8",
-            ORIGINAL_UI_COMPAT.as_bytes(),
-        ),
         "/events" => respond(&mut tcp, "204 No Content", "text/plain", b""),
         "/api/version" => {
             let package: Value = serde_json::from_str(NODE_PACKAGE_JSON)
@@ -797,6 +826,29 @@ fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(),
             "200 OK",
             &json!({"limited":false,"cooldownUntil":null}),
         ),
+        "/api/job" => {
+            let id = first_value(&parameters, "id").unwrap_or("");
+            if id.is_empty() || id.len() > 20 || !id.bytes().all(|b| b.is_ascii_digit()) {
+                return respond_json(
+                    &mut tcp,
+                    "404 Not Found",
+                    &json!({"error":"Invalid Job id"}),
+                );
+            }
+            match RelayReader::open(view_db).and_then(|reader| reader.get_job(id)) {
+                Ok(Some(snapshot)) => {
+                    respond_json(&mut tcp, "200 OK", &browser_job_projection(snapshot.job))
+                }
+                Ok(None) => {
+                    respond_json(&mut tcp, "404 Not Found", &json!({"error":"Job not found"}))
+                }
+                Err(error) => respond_json(
+                    &mut tcp,
+                    "500 Internal Server Error",
+                    &json!({"error":error}),
+                ),
+            }
+        }
         "/api/dashboard/job" => {
             let id = first_value(&parameters, "id").unwrap_or("");
             if id.is_empty() || id.len() > 20 || !id.bytes().all(|b| b.is_ascii_digit()) {
@@ -806,7 +858,7 @@ fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(),
                     &json!({"error":"Invalid Job id"}),
                 );
             }
-            match RelayReader::open(db).and_then(|reader| reader.get_job(id)) {
+            match RelayReader::open(view_db).and_then(|reader| reader.get_job(id)) {
                 Ok(Some(snapshot)) => {
                     respond_json(&mut tcp, "200 OK", &browser_job_projection(snapshot.job))
                 }
@@ -821,7 +873,8 @@ fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(),
             }
         }
         "/api/dashboard/jobs" => {
-            match RelayReader::open(db).and_then(|reader| detailed_jobs_page(&reader, &parameters))
+            match RelayReader::open(view_db)
+                .and_then(|reader| detailed_jobs_page(&reader, &parameters))
             {
                 Ok(jobs) => respond_json(&mut tcp, "200 OK", &jobs),
                 Err(error) => respond_json(
@@ -831,19 +884,12 @@ fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(),
                 ),
             }
         }
-        "/rust/" | "/" => match html_with_bootstrap(db) {
-            Ok(html) => respond(
-                &mut tcp,
-                "200 OK",
-                "text/html; charset=utf-8",
-                html.as_bytes(),
-            ),
-            Err(error) => respond_json(
-                &mut tcp,
-                "500 Internal Server Error",
-                &json!({"error":error}),
-            ),
-        },
+        "/rust/" | "/" => respond(
+            &mut tcp,
+            "200 OK",
+            "text/html; charset=utf-8",
+            HTML.as_bytes(),
+        ),
         "/api/views" => respond_json(&mut tcp, "200 OK", &tabs::configured_views()),
         "/api/graphs" => respond_json(&mut tcp, "200 OK", &tabs::graphs()),
         "/api/graph-symbol" => {
@@ -869,7 +915,9 @@ fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(),
                 ),
             }
         }
-        "/api/usage" => match RelayReader::open(db).and_then(|reader| tabs::usage(&reader)) {
+        "/api/usage" => match RelayReader::open(view_db).and_then(|reader| {
+            dashboard_usage(&reader, if historical { "history" } else { "native" })
+        }) {
             Ok(value) => respond_json(&mut tcp, "200 OK", &value),
             Err(error) => respond_json(
                 &mut tcp,
@@ -878,8 +926,8 @@ fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(),
             ),
         },
         "/api/decision-audit" => {
-            match RelayReader::open(db).and_then(|reader| tabs::audit(&reader)) {
-                Ok(value) => respond_json(&mut tcp, "200 OK", &value),
+            match RelayReader::open(view_db).and_then(|reader| tabs::audit(&reader)) {
+                Ok(value) => respond_json(&mut tcp, "200 OK", &original_audit_schema(value)),
                 Err(error) => respond_json(
                     &mut tcp,
                     "500 Internal Server Error",
@@ -892,7 +940,7 @@ fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(),
                 first_value(&parameters, "job"),
                 first_value(&parameters, "task"),
             ) {
-                (Some(job), Some(task)) => match RelayReader::open(db)
+                (Some(job), Some(task)) => match RelayReader::open(view_db)
                     .and_then(|reader| tabs::inspect_route(&reader, job, task))
                 {
                     Ok(value) => respond_json(&mut tcp, "200 OK", &value),
@@ -926,7 +974,7 @@ fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(),
             &json!({"backend":"rust-native","namespace":"rust-live","ok":true}),
         ),
         "/api/runtime-summary" => {
-            match RelayReader::open(db).and_then(|reader| durable_runtime_summary(&reader)) {
+            match RelayReader::open(view_db).and_then(|reader| durable_runtime_summary(&reader)) {
                 Ok(summary) => respond_json(&mut tcp, "200 OK", &summary),
                 Err(error) => respond_json(
                     &mut tcp,
@@ -936,7 +984,9 @@ fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(),
             }
         }
         "/api/jobs" => {
-            match RelayReader::open(db).and_then(|reader| jobs_page(&reader, &parameters)) {
+            match RelayReader::open(view_db)
+                .and_then(|reader| detailed_jobs_page(&reader, &parameters))
+            {
                 Ok(page) => respond_json(&mut tcp, "200 OK", &page),
                 Err(error) => respond_json(
                     &mut tcp,
@@ -987,6 +1037,11 @@ fn handle(mut tcp: TcpStream, db: &Path, host_token: Option<&str>) -> Result<(),
             };
             let order = "desc";
             let task_id = task_id.filter(|task_id| !task_id.is_empty());
+            if historical {
+                // Legacy event history was owned by a separate Events Bus.
+                // A missing Rust inbox is not proof that a Task had no events.
+                return respond_json(&mut tcp, "200 OK", &Value::Array(Vec::new()));
+            }
             let result = RelayReader::open(db)
                 .and_then(|reader| reader.task_events(job_id, task_id, limit, order, 0));
             match result {
@@ -1068,6 +1123,16 @@ fn run() -> Result<(), String> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     let db = PathBuf::from(argument(&args, "--db")?);
     isolated_store_root(&db)?;
+    let history_db = if args.iter().any(|arg| arg == "--history-db") {
+        let path = PathBuf::from(argument(&args, "--history-db")?);
+        if path == db {
+            return Err("history DB must not be the Rust writable authority".into());
+        }
+        RelayReader::open(&path)?;
+        Some(path)
+    } else {
+        None
+    };
     let port: u16 = argument(&args, "--port")?.parse().map_err(|_| "bad port")?;
     if port == 0 {
         return Err("port must be nonzero".into());
@@ -1084,18 +1149,47 @@ fn run() -> Result<(), String> {
         "{}",
         json!({"type":"ready","backend":"rust-native","port":port})
     );
+    // macOS accepted sockets can retain O_NONBLOCK from the listener.
+    // The handler uses bounded blocking read/write timeouts, so make each
+    // accepted socket blocking explicitly. Isolate slow clients from other
+    // incoming requests with a bounded worker count.
+    const MAX_HTTP_CLIENTS: usize = 128;
+    let active = Arc::new(AtomicUsize::new(0));
+    let review_host_token = std::env::var("RELAY_RUST_REVIEW_HOST_TOKEN").ok();
     while !stopped.load(Ordering::SeqCst) {
         match listener.accept() {
-            Ok((client, _)) => {
-                if let Err(e) = handle(
-                    client,
-                    &db,
-                    std::env::var("RELAY_RUST_REVIEW_HOST_TOKEN")
-                        .ok()
-                        .as_deref(),
-                ) {
-                    eprintln!("native dashboard: {e}");
+            Ok((mut client, _)) => {
+                if let Err(e) = client.set_nonblocking(false) {
+                    eprintln!("native dashboard: unable to reset client socket: {e}");
+                    continue;
                 }
+                if active.fetch_add(1, Ordering::AcqRel) >= MAX_HTTP_CLIENTS {
+                    active.fetch_sub(1, Ordering::AcqRel);
+                    let _ = respond_json(
+                        &mut client,
+                        "503 Service Unavailable",
+                        &json!({"error":"Dashboard request concurrency limit"}),
+                    );
+                    continue;
+                }
+                let db = db.clone();
+                let history_db = history_db.clone();
+                let host_token = review_host_token.clone();
+                let active = Arc::clone(&active);
+                thread::spawn(move || {
+                    struct ActiveGuard(Arc<AtomicUsize>);
+                    impl Drop for ActiveGuard {
+                        fn drop(&mut self) {
+                            self.0.fetch_sub(1, Ordering::AcqRel);
+                        }
+                    }
+                    let _guard = ActiveGuard(active);
+                    if let Err(e) =
+                        handle(client, &db, history_db.as_deref(), host_token.as_deref())
+                    {
+                        eprintln!("native dashboard: {e}");
+                    }
+                });
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(30))

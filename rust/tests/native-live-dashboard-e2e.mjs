@@ -161,7 +161,8 @@ test('Live Rust Dashboard reads daemon-owned Jobs, durable events and authentica
   assert.deepEqual(noMatch.jobs,[]);
   const html=await(await fetch(base+'/')).text();
   assert.match(html,/Agents Relay Console/);
-  assert.match(html,/window\.__RUST_BOOTSTRAP__/);
+  assert.ok(!html.includes('window.__RUST_BOOTSTRAP__'),'The original HTML is not modified');
+  assert.ok(!html.includes('dashboard-compat.js'));
   for(const tab of ['jobs','usage','rules','qa','graphs']) assert.match(html,new RegExp('id="'+tab+'-tab"'));
   assert.equal((await fetch(base+'/api/jobs',{method:'POST'})).status,405);
   assert.equal((await fetch(base+'/api/jobs?q=%ZZ')).status,400);

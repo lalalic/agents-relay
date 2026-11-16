@@ -37,11 +37,11 @@ title/ID search (`q`), repeated or comma-separated durable lifecycle filters
 `page`/`pageSize` pagination (page size is capped at 20). It returns the
 filtered Jobs, the unfiltered repository list, and normalized pagination
 metadata. `GET /api/jobs/{id}` returns one sanitized Job and Task summary.
-`GET /api/jobs/{id}/tasks` returns the ordered full Task array from that Job's
-authoritative snapshot, and `GET /api/jobs/{id}/tasks/{taskId}` returns one
-matching Task snapshot. These job-scoped reads match the Task records embedded
-in the Node Dashboard's `GET /api/job?id={id}` response. Missing Jobs or Tasks
-and malformed numeric path IDs return 404. All routes use the read-only SQLite
+`GET /api/jobs/{id}/tasks` returns the ordered sanitized Task hierarchy,
+and `GET /api/jobs/{id}/tasks/{taskId}` returns one sanitized Task.
+Public reads exclude private Task inputs, outputs, results and local project
+paths, including the original Node Dashboard's potentially sensitive fields.
+Missing Jobs or Tasks and malformed numeric path IDs return 404. All routes use the read-only SQLite
 reader; a successful HTTP response does not imply Task success or change
 lifecycle state.
 `GET /api/events?job=ID[&task=ID][&limit=N]` returns an array of matching events
@@ -54,10 +54,45 @@ query parameters just like the Node Dashboard wrapper; it does not expose
 cursor pagination. The production Node Dashboard reads the Events Bus history
 service (`src/dashboard-data.ts` -> `src/events-bus-runtime.ts`), whose global
 cursor is not present in the Rust SQLite inbox/outbox. It does not read the
-production Events Bus history, mutate
-lifecycle state, expose worker inputs/outputs, or provide the production
-Dashboard control surface. This endpoint slice is not full Dashboard or
-production API parity.
+production Events Bus history or change lifecycle state. The Rust server serves the **exact original Node Dashboard HTML, CSS, and
+JavaScript bytes** generated from `src/dashboard-html.ts`. It does not
+rewrite the browser client, monkey-patch `fetch`, change its controls, or
+replace Mermaid. The original Mermaid 11 CDN URL is preserved and the Rust
+Content-Security-Policy permits that same URL. The client has a byte-for-byte
+parity test: `node rust/scripts/verify-original-dashboard-ui.mjs`.
+
+Rust implements the original `/api/jobs`, `/api/job`, `/api/usage`,
+`/api/graphs`, `/api/graph-symbol`, `/api/decision-audit`,
+`/api/execution-router-rules`, and `/api/troubleshooter-qa` routes,
+keeping their original response shapes. The Usage backend reads real
+OpenAI/Codex and Z.ai quota windows plus DeepSeek/OpenRouter credits
+read-only. Unavailable provider values remain unavailable, never replaced
+by inferred Job counts. Expensive probes are cached for 30 seconds.
+
+Some backend functionality remains incomplete: the old Events Bus history
+cannot be reconstructed from the Rust Job snapshots; the true new Router
+Test action is not connected; and Job/Task lifecycle mutations are not
+available through the Dashboard. Such gaps must be fixed in the Rust
+backend, **not** through alternative frontend implementations. Configuration
+writes are restricted to local same-origin requests; the public tunnel
+cannot change Router Rules or Troubleshooter Q&A. Native Graph/CLI commands
+remain the authority for lifecycle transitions. Client reuse is not evidence
+of full backend API parity.
+
+### Historical Node Relay inventory (Rust read-only bridge)
+
+Optionally pass `--history-db "$HOME/.agents-relay/relay.sqlite"`.
+This is a read-only view of former Node Relay Jobs; it does not migrate,
+schedule, or combine Jobs with the Rust namespace. `/` reads historical
+Jobs and `/rust/` reads Rust-native Jobs. Both pages serve the **same exact**
+client bytes; the Rust server selects the proper read-only SQLite authority
+using the referring page or an explicit `source=history` query parameter.
+Native mutations remain fenced to the `--db` Rust authority. The public
+Job/Task read projection omits private worker inputs/outputs, results,
+interactive invocation payloads, and local project paths.
+
+Historical Event Bus history is not available from those snapshots.
+A historical read-only view is not a cutover of its Jobs to Rust scheduling.
 
 ### Authenticated host Preview binding
 
