@@ -60,6 +60,9 @@ pub struct ControlRequest {
     /// Structured Troubleshooter human-escalation request, not human approval.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub escalation: Option<Value>,
+    /// Explicit operator-supplied response; never inferred or synthesized.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub human_response: Option<String>,
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -501,7 +504,8 @@ fn dispatch_job_mutation(db: &Path, request: &ControlRequest) -> Result<Value, S
 /// result, Task updatedAt or lifecycle state. The authoritative Job snapshot
 /// is the append-only source of truth. Never interpret comments as approvals.
 fn dispatch_task_comment(db: &Path, request: &ControlRequest) -> Result<Value, String> {
-    if request.escalation.is_some()
+    if request.human_response.is_some()
+        || request.escalation.is_some()
         || request.classification.is_some()
         || request.changes.is_some()
         || request.reason.is_some()
@@ -626,7 +630,8 @@ impl ActionPorts for NativeRecoveryApproval {
 /// CLI recovery shares this exact function in isolated E2E and the daemon's
 /// private Unix-socket single-writer transport. No direct live SQLite writes.
 fn dispatch_task_recover(db: &Path, request: &ControlRequest) -> Result<Value, String> {
-    if request.escalation.is_some()
+    if request.human_response.is_some()
+        || request.escalation.is_some()
         || request.classification.is_some()
         || request.changes.is_some()
         || request.reason.is_some()
@@ -872,7 +877,8 @@ pub fn recover_task_isolated(db: &Path, request: &ControlRequest) -> Result<Valu
 /// Graph. Classification is evidence metadata, never an authorization to
 /// complete, retry, cancel or create a replacement Task.
 fn dispatch_task_classify(db: &Path, request: &ControlRequest) -> Result<Value, String> {
-    if request.escalation.is_some()
+    if request.human_response.is_some()
+        || request.escalation.is_some()
         || request.changes.is_some()
         || request.reason.is_some()
         || request.message.is_some()
@@ -1062,7 +1068,8 @@ impl ActionPorts for NativeSupersedeApproval {
 /// Supersede is evidence annotation of an already CANCELLED Task. It never
 /// cancels a Worker, changes a Task's state, or creates replacement work.
 fn dispatch_task_supersede(db: &Path, request: &ControlRequest) -> Result<Value, String> {
-    if request.escalation.is_some()
+    if request.human_response.is_some()
+        || request.escalation.is_some()
         || request.changes.is_some()
         || request.message.is_some()
         || request.classification.is_some()
@@ -1197,7 +1204,8 @@ pub fn supersede_task_isolated(db: &Path, request: &ControlRequest) -> Result<Va
 }
 
 fn dispatch_task_escalate(db: &Path, request: &ControlRequest) -> Result<Value, String> {
-    if request.changes.is_some()
+    if request.human_response.is_some()
+        || request.changes.is_some()
         || request.reason.is_some()
         || request.message.is_some()
         || request.recovery_task_id.is_some()
@@ -1284,9 +1292,116 @@ pub fn escalate_task_isolated(db: &Path, request: &ControlRequest) -> Result<Val
     dispatch_task_escalate(db, request)
 }
 
+fn dispatch_task_resume_troubleshooter(
+    db: &Path,
+    request: &ControlRequest,
+) -> Result<Value, String> {
+    if request.changes.is_some()
+        || request.reason.is_some()
+        || request.message.is_some()
+        || request.recovery_task_id.is_some()
+        || request.diagnosis.is_some()
+        || request.classification.is_some()
+        || request.escalation.is_some()
+        || !request.title.is_empty()
+        || !request.objective.is_empty()
+        || !request.project_root.is_empty()
+        || request.project_path.is_some()
+        || !request.priority.is_empty()
+        || request.review_enabled
+        || request.auto_merge
+    {
+        return Err(
+            "task.resume-troubleshooter accepts only explicit human response and Task identity"
+                .into(),
+        );
+    }
+    if request.id.trim().is_empty()
+        || request.id.len() > 128
+        || request.repository.trim().is_empty()
+        || request.repository.len() > 500
+    {
+        return Err("task.resume-troubleshooter requires exact Job ID and repository".into());
+    }
+    let task_id = request
+        .task_id
+        .as_deref()
+        .filter(|s| !s.trim().is_empty() && s.len() <= 128)
+        .ok_or("task resume-troubleshooter requires --task-id")?;
+    let response = request
+        .human_response
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && s.len() <= 16_000)
+        .ok_or("task resume-troubleshooter requires nonempty --response of at most 16000 bytes")?;
+    let mut authority = RelayAuthority::open_existing(db)?;
+    let before = authority.read_job(&request.id)?.ok_or("unknown Job")?;
+    if before["repository"].as_str() != Some(request.repository.as_str()) {
+        return Err("repository identity mismatch".into());
+    }
+    if matches!(before["state"].as_str(), Some("COMPLETED" | "CANCELLED")) {
+        return Err("cannot respond to terminal Job escalation".into());
+    }
+    let recovery = before["tasks"]
+        .as_array()
+        .and_then(|tasks| tasks.iter().find(|t| t["id"] == task_id))
+        .ok_or("Troubleshooter Task not found")?;
+    if recovery["agentName"] != "troubleshooter"
+        || recovery["state"] != "BLOCKED"
+        || recovery["escalation"]["status"] != "pending"
+    {
+        return Err("Task is not a blocked pending Troubleshooter escalation".into());
+    }
+    let original_id = recovery["parentTaskId"]
+        .as_str()
+        .ok_or("Troubleshooter original Task binding missing")?;
+    if recovery["escalation"]["originalTaskId"] != original_id
+        || !before["tasks"].as_array().is_some_and(|tasks| {
+            tasks
+                .iter()
+                .any(|t| t["id"] == original_id && t["state"] == "FAILED")
+        })
+    {
+        return Err("pending Troubleshooter escalation original Task binding changed".into());
+    }
+    if ["executionId", "leaseOwner", "leaseExpiresAt"]
+        .iter()
+        .any(|k| recovery.get(*k).is_some_and(|v| !v.is_null()))
+    {
+        return Err("cannot respond while Troubleshooter has active execution lease".into());
+    }
+    let at = after_time(
+        before["updatedAt"]
+            .as_str()
+            .ok_or("Job timestamp missing")?,
+    )?;
+    authority.resume_troubleshooter_escalation(&request.id, task_id, response, &at)?;
+    let updated = authority
+        .read_job(&request.id)?
+        .ok_or("Job missing after response")?;
+    updated["tasks"]
+        .as_array()
+        .and_then(|tasks| tasks.iter().find(|t| t["id"] == task_id))
+        .cloned()
+        .ok_or_else(|| "responded Task missing after commit".to_owned())
+}
+pub fn resume_troubleshooter_isolated(
+    db: &Path,
+    request: &ControlRequest,
+) -> Result<Value, String> {
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        return Err("production Troubleshooter response requires daemon-owned control".into());
+    }
+    isolated_store_root(db)?;
+    dispatch_task_resume_troubleshooter(db, request)
+}
+
 fn dispatch(db: &Path, request: ControlRequest) -> Result<Value, String> {
     if request.version != 1 {
         return Err("unsupported native control version".into());
+    }
+    if request.operation == "task.resume-troubleshooter" {
+        return dispatch_task_resume_troubleshooter(db, &request);
     }
     if request.operation == "task.escalate" {
         return dispatch_task_escalate(db, &request);
@@ -1303,7 +1418,8 @@ fn dispatch(db: &Path, request: ControlRequest) -> Result<Value, String> {
     if request.operation == "task.comment" {
         return dispatch_task_comment(db, &request);
     }
-    if request.escalation.is_some()
+    if request.human_response.is_some()
+        || request.escalation.is_some()
         || request.classification.is_some()
         || request.task_id.is_some()
         || request.message.is_some()

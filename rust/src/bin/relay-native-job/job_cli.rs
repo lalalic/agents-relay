@@ -253,6 +253,7 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
                 diagnosis: None,
                 classification: None,
                 escalation: None,
+                human_response: None,
             },
         );
     }
@@ -346,6 +347,7 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
                         diagnosis: None,
                         classification: None,
                         escalation: None,
+                        human_response: None,
                     },
                 );
             }

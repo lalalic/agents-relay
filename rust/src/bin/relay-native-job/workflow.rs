@@ -169,12 +169,21 @@ pub fn run(args: &[String]) -> Result<(), String> {
             "task.retry" => "retry",
             "task.recover" => "recover",
             "task.escalate" => "escalate",
+            "task.resume-troubleshooter" => "resume-troubleshooter",
             "task.cancel" => "cancel",
             "task.unblock" => "unblock",
             _ => return Err(format!("workflow action {selected} requires Graph-owned recovery/host authorization not yet implemented; refusing unsafe mutation")),
         };
         let permitted: &[&str] = match operation {
             "retry" => &["--action", "--db", "--repo", "--id", "--task-id"],
+            "resume-troubleshooter" => &[
+                "--action",
+                "--db",
+                "--repo",
+                "--id",
+                "--task-id",
+                "--response",
+            ],
             "escalate" => &[
                 "--action",
                 "--db",

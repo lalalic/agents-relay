@@ -783,6 +783,60 @@ fn unblock(args: &[String]) -> Result<Value, String> {
     })?;
     result(&c.job, tid)
 }
+fn resume_troubleshooter(args: &[String]) -> Result<Value, String> {
+    let options = parse(
+        args,
+        &[
+            "--db",
+            "--id",
+            "--job-id",
+            "--repo",
+            "--task-id",
+            "--response",
+        ],
+        &[],
+    )?;
+    let (db, id) = identify(&options)?;
+    let repo = options
+        .get("--repo")
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("task resume-troubleshooter requires --repo")?;
+    let task_id = options
+        .get("--task-id")
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("task resume-troubleshooter requires --task-id")?;
+    let response=options.get("--response").map(|s|s.trim())
+        .filter(|s|!s.is_empty()&&s.len()<=16_000)
+        .ok_or("task resume-troubleshooter requires explicit nonempty --response of at most 16000 bytes")?;
+    let request = agents_relay_rust::native_control::ControlRequest {
+        version: 1,
+        operation: "task.resume-troubleshooter".into(),
+        repository: repo.clone(),
+        id,
+        title: String::new(),
+        objective: String::new(),
+        project_root: String::new(),
+        project_path: None,
+        priority: String::new(),
+        review_enabled: false,
+        auto_merge: false,
+        changes: None,
+        reason: None,
+        task_id: Some(task_id.clone()),
+        message: None,
+        recovery_task_id: None,
+        diagnosis: None,
+        classification: None,
+        escalation: None,
+        human_response: Some(response.to_owned()),
+    };
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        agents_relay_rust::native_control::request(&db, &request)
+    } else {
+        agents_relay_rust::native_control::resume_troubleshooter_isolated(&db, &request)
+    }
+}
+
 fn escalate(args: &[String]) -> Result<Value, String> {
     let options = parse(
         args,
@@ -844,6 +898,7 @@ fn escalate(args: &[String]) -> Result<Value, String> {
         diagnosis: None,
         classification: None,
         escalation: Some(details),
+        human_response: None,
     };
     if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
         agents_relay_rust::native_control::request(&db, &request)
@@ -898,6 +953,7 @@ fn supersede(args: &[String]) -> Result<Value, String> {
         diagnosis: None,
         classification: None,
         escalation: None,
+        human_response: None,
     };
     if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
         agents_relay_rust::native_control::request(&db, &request)
@@ -1013,6 +1069,7 @@ fn classify(args: &[String]) -> Result<Value, String> {
             json!({"kind":kind,"targetTaskId":target,"evidence":evidence,"reason":reason}),
         ),
         escalation: None,
+        human_response: None,
     };
     if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
         agents_relay_rust::native_control::request(&db, &request)
@@ -1098,6 +1155,7 @@ fn recover(args: &[String]) -> Result<Value, String> {
         diagnosis,
         classification: None,
         escalation: None,
+        human_response: None,
     };
     if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
         agents_relay_rust::native_control::request(&db, &request)
@@ -1176,6 +1234,7 @@ fn comment(args: &[String]) -> Result<Value, String> {
         diagnosis: None,
         classification: None,
         escalation: None,
+        human_response: None,
     };
     let live = std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live");
     if live {
@@ -1186,6 +1245,12 @@ fn comment(args: &[String]) -> Result<Value, String> {
 }
 
 pub fn run(args: &[String]) -> Result<Value, String> {
+    if args
+        .get(1)
+        .is_some_and(|action| action == "resume-troubleshooter")
+    {
+        return resume_troubleshooter(args);
+    }
     if args.get(1).is_some_and(|action| action == "escalate") {
         return escalate(args);
     }

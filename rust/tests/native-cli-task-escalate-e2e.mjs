@@ -141,6 +141,73 @@ test('workflow action task.escalate delegates to same Graph/Outbox authority wit
  }finally{rmSync(f.root,{recursive:true,force:true});}
 });
 
+test('Explicit Troubleshooter response resumes pending Graph state once, preserves FAILED original and Outbox receipts',()=>{
+ const f=fixture();
+ try{
+  const initial=run(isolated,request(f));
+  assert.equal(initial.escalation.status,'pending');
+  assert.equal(initial.escalation.response,undefined);
+  assert.equal(events(f.db).length,2);
+  const respond=['task','resume-troubleshooter','--db',f.db,'--id',f.id,'--repo',f.repo,
+    '--task-id',f.recovery,'--response','Operator confirmed exact corrective action'];
+  const updated=run(isolated,respond);
+  assert.equal(updated.state,'QUEUED');
+  assert.equal(updated.escalation.status,'responded');
+  assert.equal(updated.escalation.response,'Operator confirmed exact corrective action');
+  assert.equal(updated.leaseOwner,null);
+  assert.equal(updated.executionId,null);
+  assert.equal(load(f.db,f.id).tasks[0].state,'FAILED');
+  assert.deepEqual(events(f.db).map(e=>e.type).sort(),
+    ['escalation.requested','task.blocked','task.unblocked']);
+  const persisted=load(f.db,f.id);
+  assert.match(run(isolated,respond,2),/not a blocked pending Troubleshooter/);
+  assert.deepEqual(load(f.db,f.id),persisted);
+  assert.equal(events(f.db).length,3,'duplicate human response must not produce another event');
+ }finally{rmSync(f.root,{recursive:true,force:true});}
+});
+test('Troubleshooter response requires explicit text, exact pending lineage, and does not rewrite Job on errors',()=>{
+ const f=fixture();
+ try{
+  const params=['task','resume-troubleshooter','--db',f.db,'--id',f.id,'--repo',f.repo,
+   '--task-id',f.recovery,'--response','Operator verified'];
+  let before=JSON.stringify(load(f.db,f.id));
+  assert.match(run(isolated,params,2),/Escalation ID missing|not a blocked pending/);
+  assert.equal(JSON.stringify(load(f.db,f.id)),before);
+  run(isolated,request(f));
+  const invalid=[
+   [params.filter((x,i,a)=>x!=='--response'&&a[i-1]!=='--response'),/requires explicit nonempty --response/],
+   [params.map((x,i,a)=>a[i-1]==='--response'?'   ':x),/requires explicit nonempty --response/],
+   [[...params,'--response','duplicate'],/duplicate option/],
+   [[...params,'--unexpected','ignored'],/unrecognized task/],
+   [params.map((x,i,a)=>a[i-1]==='--repo'?'wrong':x),/repository identity mismatch/],
+   [params.map((x,i,a)=>a[i-1]==='--task-id'?'original':x),/not a blocked pending/],
+  ];
+  before=JSON.stringify(load(f.db,f.id));
+  for(const [params,regex] of invalid){
+   assert.match(run(isolated,params,2),regex);
+   assert.equal(JSON.stringify(load(f.db,f.id)),before);
+  }
+  const j=load(f.db,f.id);
+  j.tasks[0].state='SUCCEEDED';save(f.db,j);
+  before=JSON.stringify(load(f.db,f.id));
+  assert.match(run(isolated,params,2),/original Task binding changed/);
+  assert.equal(JSON.stringify(load(f.db,f.id)),before);
+ }finally{rmSync(f.root,{recursive:true,force:true});}
+});
+test('workflow action task.resume-troubleshooter requires explicit bound human reply and uses same Graph',()=>{
+ const f=fixture();
+ try{
+  run(isolated,request(f));
+  const action=['workflow','action','--db',f.db,'--id',f.id,'--repo',f.repo,
+   '--task-id',f.recovery,'--action','task.resume-troubleshooter',
+   '--response','Operator recorded evidence'];
+  const restored=run(isolated,action);
+  assert.equal(restored.state,'QUEUED');
+  assert.equal(restored.escalation.response,'Operator recorded evidence');
+  assert.equal(events(f.db).length,3);
+ }finally{rmSync(f.root,{recursive:true,force:true});}
+});
+
 test('Live task escalate uses daemon-owned socket and keeps pending human gate after restart',async()=>{
  const home=mkdtempSync('/tmp/rr-esc-');
  const root=join(home,'.local/state/agents-relay/rust-live');
@@ -191,5 +258,12 @@ test('Live task escalate uses daemon-owned socket and keeps pending human gate a
   child=start();await ready();
   assert.equal(load(db,f.id).tasks[1].escalation.status,'pending');
   assert.equal(events(db).length,2);
+  const response=['task','resume-troubleshooter','--db',db,'--id',f.id,'--repo',f.repo,
+   '--task-id',f.recovery,'--response','Operator response through private Rust socket'];
+  const restored=run(env,response);
+  assert.equal(restored.state,'QUEUED');
+  assert.equal(restored.escalation.status,'responded');
+  assert.equal(restored.escalation.response,'Operator response through private Rust socket');
+  assert.equal(events(db).length,3);
  }finally{await stop();rmSync(home,{recursive:true,force:true});}
 });
