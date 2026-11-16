@@ -86,7 +86,7 @@ test('workflow action routes retry/cancel/unblock through the same Graph-authori
   const persisted=snapshot(f).tasks.find(t=>t.id===made.taskId);
   assert.equal(persisted.state,'CANCELLED');
   const before=snapshot(f);
-  assert.match(f.call([...base,'--action','task.recover','--recovery-task-id','999'],2),/requires Graph-owned recovery/);
+  assert.match(f.call([...base,'--action','task.recover','--recovery-task-id','999'],2),/Troubleshooter recovery Task not found/);
   assert.deepEqual(snapshot(f),before,'unsupported recovery must not mutate SQLite');
   assert.match(f.call([...base,'--action','task.retry','--reason','ignored'],2),/refusing to silently ignore/);
   assert.deepEqual(snapshot(f),before);

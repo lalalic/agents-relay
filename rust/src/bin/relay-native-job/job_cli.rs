@@ -249,6 +249,8 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
                 reason: o.get("--reason").cloned(),
                 task_id: None,
                 message: None,
+                recovery_task_id: None,
+                diagnosis: None,
             },
         );
     }
@@ -338,6 +340,8 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
                         reason: None,
                         task_id: None,
                         message: None,
+                        recovery_task_id: None,
+                        diagnosis: None,
                     },
                 );
             }

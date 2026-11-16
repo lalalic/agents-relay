@@ -2,7 +2,9 @@
 //! Requests are deliberately typed and allowlisted; the daemon is the only
 //! process that opens RelayAuthority for these production CLI mutations.
 use crate::authority::{NativeObjectiveJobSpec, RelayAuthority};
+use crate::dispatch::ActionPorts;
 use crate::graph::{Decision, Graph, GraphInput};
+use crate::lifecycle::apply_pure_task_actions;
 use crate::native_daemon::isolated_store_root;
 use crate::supervised_script::after_time;
 use serde::{Deserialize, Serialize};
@@ -46,6 +48,12 @@ pub struct ControlRequest {
     /// Supplementary text only; never a Task lifecycle or human Review decision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// Exact currently leased Troubleshooter recovery identity, not a new Task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_task_id: Option<String>,
+    /// Optional diagnosis; its route flags are only valid with a failureKind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnosis: Option<Value>,
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -489,6 +497,8 @@ fn dispatch_job_mutation(db: &Path, request: &ControlRequest) -> Result<Value, S
 fn dispatch_task_comment(db: &Path, request: &ControlRequest) -> Result<Value, String> {
     if request.changes.is_some()
         || request.reason.is_some()
+        || request.recovery_task_id.is_some()
+        || request.diagnosis.is_some()
         || !request.title.is_empty()
         || !request.objective.is_empty()
         || !request.project_root.is_empty()
@@ -580,14 +590,289 @@ pub fn append_task_comment_isolated(db: &Path, request: &ControlRequest) -> Resu
     dispatch_task_comment(db, request)
 }
 
+#[derive(Default)]
+struct NativeRecoveryApproval {
+    authorized: bool,
+}
+impl ActionPorts for NativeRecoveryApproval {
+    fn persist_transition(&mut self, from: &str, to: &str) -> Result<(), String> {
+        if from != "unresolved" || to != "resolved" {
+            return Err("Task Resolution Graph did not authorize exact original retry".into());
+        }
+        Ok(())
+    }
+    fn execute_action(&mut self, id: &str, _input: &GraphInput) -> Result<Value, String> {
+        if id != "resolution.activateRecovery" {
+            return Err(format!(
+                "Task Resolution Graph selected unexpected effect {id}"
+            ));
+        }
+        self.authorized = true;
+        Ok(json!({"ok":true,"payloads":{}}))
+    }
+    fn publish_event(&mut self, id: &str, _payload: &Value) -> Result<(), String> {
+        Err(format!("unexpected Task Resolution emitted event {id}"))
+    }
+}
+
+/// CLI recovery shares this exact function in isolated E2E and the daemon's
+/// private Unix-socket single-writer transport. No direct live SQLite writes.
+fn dispatch_task_recover(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if request.changes.is_some()
+        || request.reason.is_some()
+        || request.message.is_some()
+        || !request.title.is_empty()
+        || !request.objective.is_empty()
+        || !request.project_root.is_empty()
+        || request.project_path.is_some()
+        || !request.priority.is_empty()
+        || request.review_enabled
+        || request.auto_merge
+    {
+        return Err("task.recover accepts only Task recovery fields".into());
+    }
+    if request.id.trim().is_empty()
+        || request.id.len() > 128
+        || request.repository.trim().is_empty()
+        || request.repository.len() > 500
+    {
+        return Err("task.recover requires exact Job ID and repository".into());
+    }
+    let task_id = request
+        .task_id
+        .as_deref()
+        .filter(|s| !s.trim().is_empty() && s.len() <= 128)
+        .ok_or("task recover requires --task-id")?;
+    let recovery_id = request
+        .recovery_task_id
+        .as_deref()
+        .filter(|s| !s.trim().is_empty() && s.len() <= 128)
+        .ok_or("task recover requires --recovery-task-id")?;
+    if task_id == recovery_id {
+        return Err("original and Troubleshooter IDs must differ".into());
+    }
+    let diagnosis = request
+        .diagnosis
+        .as_ref()
+        .map(|d| {
+            let o = d
+                .as_object()
+                .ok_or("recovery diagnosis must be a JSON object")?;
+            for key in o.keys() {
+                if !matches!(
+                    key.as_str(),
+                    "failureKind" | "reason" | "evidence" | "reroute" | "excludeCurrentRoute"
+                ) {
+                    return Err(format!("unsupported recovery diagnosis field {key}"));
+                }
+            }
+            let kind = o
+                .get("failureKind")
+                .and_then(Value::as_str)
+                .ok_or("diagnosis requires failureKind")?;
+            if !matches!(
+                kind,
+                "adapter_failure"
+                    | "model_failure"
+                    | "provider_failure"
+                    | "task_failure"
+                    | "unknown"
+            ) {
+                return Err("Invalid recovery failureKind".into());
+            }
+            let reason = o
+                .get("reason")
+                .and_then(Value::as_str)
+                .ok_or("diagnosis requires reason")?;
+            if reason.trim().is_empty() || reason.len() > 4096 {
+                return Err(
+                    "Recovery diagnosis requires nonempty reason of at most 4096 bytes".into(),
+                );
+            }
+            if o.get("evidence").is_some_and(|v| !v.is_string()) {
+                return Err("diagnosis evidence must be text".into());
+            }
+            if o.get("evidence")
+                .and_then(Value::as_str)
+                .is_some_and(|s| s.len() > 16000)
+            {
+                return Err("recovery evidence exceeds 16000 bytes".into());
+            }
+            for f in ["reroute", "excludeCurrentRoute"] {
+                if o.get(f).is_some_and(|v| !v.is_boolean()) {
+                    return Err(format!("{f} must be boolean"));
+                }
+            }
+            let reroute = o.get("reroute").and_then(Value::as_bool).unwrap_or(false);
+            let exclude = o
+                .get("excludeCurrentRoute")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if exclude && !reroute {
+                return Err("Cannot exclude route without reroute".into());
+            }
+            Ok((
+                kind.to_owned(),
+                reason.trim().to_owned(),
+                o.get("evidence").and_then(Value::as_str).map(str::to_owned),
+                reroute,
+                exclude,
+            ))
+        })
+        .transpose()?;
+    let mut authority = RelayAuthority::open_existing(db)?;
+    let before = authority.read_job(&request.id)?.ok_or("unknown Job")?;
+    if before["repository"].as_str() != Some(request.repository.as_str()) {
+        return Err("repository identity mismatch".into());
+    }
+    let at = after_time(
+        before["updatedAt"]
+            .as_str()
+            .ok_or("Job timestamp missing")?,
+    )?;
+    let resolution_graph = Graph::parse(include_str!("../../workflow/task-resolution.mmd"))?;
+    let lifecycle = Graph::parse(include_str!("../../workflow/task-lifecycle.mmd"))?;
+    let committed=authority.commit_job(&request.id,&at,|prior|{
+        if prior["repository"].as_str()!=Some(request.repository.as_str()){
+            return Err("repository identity changed before Task recovery".into());
+        }
+        if prior["state"]!="ACTIVE"||prior.get("pause").is_some_and(|v|!v.is_null()){
+            return Err("task recover requires active unpaused Job".into());
+        }
+        let original=prior["tasks"].as_array().and_then(|tasks|tasks.iter().find(|t|t["id"]==task_id))
+            .ok_or("original Task not found")?;
+        let recovery=prior["tasks"].as_array().and_then(|tasks|tasks.iter().find(|t|t["id"]==recovery_id))
+            .ok_or("Troubleshooter recovery Task not found")?;
+        if original["kind"]=="planner"||original["state"]!="FAILED"{
+            return Err("exact-original recovery requires FAILED non-Planner Task".into());
+        }
+        if ["executionId","leaseOwner","leaseExpiresAt"].iter().any(|k|
+            original.get(*k).is_some_and(|v|!v.is_null())){
+            return Err("original FAILED Task still has active execution lease".into());
+        }
+        if recovery["agentName"]!="troubleshooter"||recovery["parentTaskId"]!=task_id
+            ||!matches!(recovery["state"].as_str(),Some("QUEUED"|"RUNNING")){
+            return Err("task recover requires active Troubleshooter recovery with exact parent Task".into());
+        }
+        let execution=recovery["executionId"].as_str().filter(|s|!s.is_empty())
+            .ok_or("Troubleshooter has no current execution for fresh resolution")?;
+        if original["resolution"]["recoveryExecutionId"].as_str()==Some(execution){
+            return Err("Task recovery already recorded for this Troubleshooter execution".into());
+        }
+        if matches!(original["resolution"]["state"].as_str(),Some("active"|"waiting")){
+            return Err("original Task has active or waiting recovery ownership".into());
+        }
+        let proposal=json!({
+            "path":"exact_original_retry","targetTaskId":task_id,
+            "recoveryExecutionId":execution,
+            "rootCause":original["failureReason"].as_str().or_else(||original["error"].as_str()).unwrap_or("durable failure"),
+            "solution":format!("Recover exact original Task via {recovery_id}")
+        });
+        let facts=HashMap::from([
+            ("recoveryOwnerAvailable".into(),true),
+            ("plannerOwnerAvailable".into(),false),
+            ("freshRecoveryExecution".into(),true),
+            ("exactOriginalRetry".into(),true),
+            ("sameJobDependency".into(),false),
+            ("blockerJobDependency".into(),false),
+            ("escalationGate".into(),false),
+            ("genuinelyObsolete".into(),false),
+        ]);
+        let mut approval=NativeRecoveryApproval::default();
+        let selected=resolution_graph.dispatch_through_transient(
+            "unresolved",
+            GraphInput{transport:"event".into(),id:"resolution.propose".into(),payload:proposal.clone()},
+            &facts,
+            |state|matches!(state,"check_owner"|"check_path"|"check_fresh_execution"),
+            &mut approval,
+        )?;
+        if !approval.authorized||!matches!(selected.decision,Decision::Accepted{ref target,..} if target=="resolved"){
+            return Err("Task Resolution Graph rejected exact-original recovery".into());
+        }
+        let transition=lifecycle.decide("FAILED",GraphInput{
+            transport:"event".into(),id:"retry".into(),payload:json!({"taskId":task_id})
+        },&HashMap::new())?;
+        let Decision::Accepted{target,actions,..}=transition else{
+            return Err("Task lifecycle Graph denied failed Task retry".into());
+        };
+        if target!="QUEUED"{return Err("unexpected lifecycle recovery target".into());}
+        let mut next=prior.clone();
+        let task=next["tasks"].as_array_mut().and_then(|tasks|tasks.iter_mut().find(|t|t["id"]==task_id))
+            .ok_or("original Task disappeared during recovery")?;
+        task["state"]=json!(target);
+        apply_pure_task_actions(task,&actions)?;
+        task["error"]=Value::Null;
+        task["leaseOwner"]=Value::Null;
+        task["leaseExpiresAt"]=Value::Null;
+        task["executionId"]=Value::Null;
+        let max_attempts=task["maxAttempts"].as_i64().ok_or("Task maxAttempts missing")?;
+        let attempt=task["attempt"].as_i64().ok_or("Task attempt missing")?;
+        let budget=max_attempts.max(attempt);
+        task["maxAttempts"]=json!(((budget/3+1)*3).max(3));
+        if let Some((kind,reason,evidence,reroute,exclude))=&diagnosis{
+            if *exclude&&task["routing"].is_object(){
+                let route=&task["routing"];
+                let provider=route["provider"].as_str().unwrap_or("");
+                let model=route["model"].as_str().unwrap_or("");
+                let profile=route["profile"].as_str();
+                let present=task["routingExclusions"].as_array().is_some_and(|existing|existing.iter().any(|item|
+                    item["provider"]==provider&&item["model"]==model&&item["profile"].as_str()==profile));
+                if !present{
+                    let mut excluded=json!({"provider":provider,"model":model,"reason":reason,"at":at});
+                    if let Some(profile)=profile{excluded["profile"]=json!(profile);}
+                    if task["routingExclusions"].is_null(){task["routingExclusions"]=json!([]);}
+                    task["routingExclusions"].as_array_mut().ok_or("routingExclusions must be array")?
+                        .push(excluded);
+                }
+            }
+            let mut context=json!({"failureKind":kind,"reason":reason,"recoveryTaskId":recovery_id,
+                "at":at,"reroute":reroute});
+            if let Some(evidence)=evidence{if !evidence.is_empty(){context["evidence"]=json!(evidence);}}
+            task["recoveryContext"]=context;
+            if *reroute{
+                task.as_object_mut().ok_or("Task must be object")?.remove("routing");
+                task.as_object_mut().ok_or("Task must be object")?.remove("workerSelection");
+            }
+        }
+        let mut resolution=proposal;
+        resolution["state"]=json!("resolved");
+        resolution["owner"]=json!("troubleshooter");
+        resolution["updatedAt"]=json!(at);
+        task["resolution"]=resolution;
+        task["updatedAt"]=json!(at);
+        next["updatedAt"]=json!(at);
+        Ok((next,vec![]))
+    })?;
+    committed.job["tasks"]
+        .as_array()
+        .and_then(|tasks| tasks.iter().find(|t| t["id"] == task_id))
+        .cloned()
+        .ok_or_else(|| "recovered Task missing from committed Job".to_string())
+}
+
+pub fn recover_task_isolated(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        return Err("production Task recovery requires daemon-owned control".into());
+    }
+    isolated_store_root(db)?;
+    dispatch_task_recover(db, request)
+}
+
 fn dispatch(db: &Path, request: ControlRequest) -> Result<Value, String> {
     if request.version != 1 {
         return Err("unsupported native control version".into());
     }
+    if request.operation == "task.recover" {
+        return dispatch_task_recover(db, &request);
+    }
     if request.operation == "task.comment" {
         return dispatch_task_comment(db, &request);
     }
-    if request.task_id.is_some() || request.message.is_some() {
+    if request.task_id.is_some()
+        || request.message.is_some()
+        || request.recovery_task_id.is_some()
+        || request.diagnosis.is_some()
+    {
         return Err("task fields are only valid for task.comment".into());
     }
     if request.operation != "job.create" {

@@ -783,6 +783,89 @@ fn unblock(args: &[String]) -> Result<Value, String> {
     })?;
     result(&c.job, tid)
 }
+fn recover(args: &[String]) -> Result<Value, String> {
+    let options = parse(
+        args,
+        &[
+            "--db",
+            "--id",
+            "--job-id",
+            "--repo",
+            "--task-id",
+            "--recovery-task-id",
+            "--failure-kind",
+            "--reason",
+            "--evidence",
+        ],
+        &["--reroute", "--exclude-current-route"],
+    )?;
+    let (db, id) = identify(&options)?;
+    let repo = options
+        .get("--repo")
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("task recover requires --repo")?;
+    let task_id = options
+        .get("--task-id")
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("task recover requires --task-id")?;
+    let recovery_id = options
+        .get("--recovery-task-id")
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("task recover requires --recovery-task-id")?;
+    if !options.contains_key("--failure-kind")
+        && [
+            "--reason",
+            "--evidence",
+            "--reroute",
+            "--exclude-current-route",
+        ]
+        .iter()
+        .any(|flag| options.contains_key(*flag))
+    {
+        return Err("task recover diagnosis flags require --failure-kind and --reason".into());
+    }
+    let diagnosis = options
+        .get("--failure-kind")
+        .map(|kind| {
+            let reason = options
+                .get("--reason")
+                .filter(|s| !s.trim().is_empty())
+                .ok_or("--failure-kind requires --reason")?;
+            let mut data = json!({"failureKind":kind,"reason":reason,
+            "reroute":options.contains_key("--reroute"),
+            "excludeCurrentRoute":options.contains_key("--exclude-current-route")});
+            if let Some(evidence) = options.get("--evidence") {
+                data["evidence"] = json!(evidence);
+            }
+            Ok::<Value, String>(data)
+        })
+        .transpose()?;
+    let request = agents_relay_rust::native_control::ControlRequest {
+        version: 1,
+        operation: "task.recover".into(),
+        repository: repo.clone(),
+        id,
+        title: String::new(),
+        objective: String::new(),
+        project_root: String::new(),
+        project_path: None,
+        priority: String::new(),
+        review_enabled: false,
+        auto_merge: false,
+        changes: None,
+        reason: None,
+        task_id: Some(task_id.clone()),
+        message: None,
+        recovery_task_id: Some(recovery_id.clone()),
+        diagnosis,
+    };
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        agents_relay_rust::native_control::request(&db, &request)
+    } else {
+        agents_relay_rust::native_control::recover_task_isolated(&db, &request)
+    }
+}
+
 fn comment(args: &[String]) -> Result<Value, String> {
     let options = parse(
         args,
@@ -849,6 +932,8 @@ fn comment(args: &[String]) -> Result<Value, String> {
         reason: None,
         task_id: Some(task_id.clone()),
         message: Some(trimmed.into()),
+        recovery_task_id: None,
+        diagnosis: None,
     };
     let live = std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live");
     if live {
@@ -859,6 +944,9 @@ fn comment(args: &[String]) -> Result<Value, String> {
 }
 
 pub fn run(args: &[String]) -> Result<Value, String> {
+    if args.get(1).is_some_and(|action| action == "recover") {
+        return recover(args);
+    }
     if args.get(1).is_some_and(|action| action == "comment") {
         return comment(args);
     }

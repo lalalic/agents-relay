@@ -83,6 +83,11 @@ fn parse(args: &[String], allowed: &[&str]) -> Result<HashMap<String, String>, S
         if options.contains_key(key) {
             return Err(format!("duplicate workflow option {key}"));
         }
+        if matches!(key, "--reroute" | "--exclude-current-route") {
+            options.insert(key.to_owned(), "true".into());
+            i += 1;
+            continue;
+        }
         let value = args
             .get(i + 1)
             .filter(|v| !v.starts_with("--") && (!v.is_empty() || key == "--id"))
@@ -162,12 +167,26 @@ pub fn run(args: &[String]) -> Result<(), String> {
         }
         let operation = match selected {
             "task.retry" => "retry",
+            "task.recover" => "recover",
             "task.cancel" => "cancel",
             "task.unblock" => "unblock",
             _ => return Err(format!("workflow action {selected} requires Graph-owned recovery/host authorization not yet implemented; refusing unsafe mutation")),
         };
         let permitted: &[&str] = match operation {
             "retry" => &["--action", "--db", "--repo", "--id", "--task-id"],
+            "recover" => &[
+                "--action",
+                "--db",
+                "--repo",
+                "--id",
+                "--task-id",
+                "--recovery-task-id",
+                "--failure-kind",
+                "--reason",
+                "--evidence",
+                "--reroute",
+                "--exclude-current-route",
+            ],
             "cancel" => &[
                 "--action",
                 "--db",
@@ -204,9 +223,23 @@ pub fn run(args: &[String]) -> Result<(), String> {
             "--db".into(),
             db.to_string_lossy().to_string(),
         ];
-        for key in ["--repo", "--id", "--task-id", "--reason", "--response"] {
+        for key in [
+            "--repo",
+            "--id",
+            "--task-id",
+            "--recovery-task-id",
+            "--failure-kind",
+            "--reason",
+            "--evidence",
+            "--response",
+        ] {
             if let Some(value) = options.get(key) {
                 task_args.extend([key.to_owned(), value.clone()]);
+            }
+        }
+        for flag in ["--reroute", "--exclude-current-route"] {
+            if options.contains_key(flag) {
+                task_args.push(flag.to_owned());
             }
         }
         let result = super::task_cli::run(&task_args)?;

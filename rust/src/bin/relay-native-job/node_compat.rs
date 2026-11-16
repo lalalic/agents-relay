@@ -13,7 +13,7 @@ Usage: relay-native-job <command> [options]\n\
   task list --id JOB [--repo REPO] [--db SQLITE]\n\
   task show --id JOB --task-id TASK [--repo REPO] [--db SQLITE]\n\
   task comment --db SQLITE --id JOB --repo REPO --task-id TASK (--message TEXT | --message-file FILE|-)\n\
-  task comments --id JOB --task-id TASK [--repo REPO] [--db SQLITE]\n\
+  task recover --db SQLITE --id JOB --repo REPO --task-id FAILED --recovery-task-id TROUBLESHOOTER [--failure-kind KIND --reason TEXT --evidence TEXT --reroute --exclude-current-route]\\n\\\n  task comments --id JOB --task-id TASK [--repo REPO] [--db SQLITE]\n\
   task context --id JOB --task-id TASK --execution-id EXEC [--repo REPO] [--db SQLITE]\n\
   task events --id JOB --task-id TASK [--limit 1..60] [--order asc|desc] [--after CURSOR] [--db SQLITE]\n\
   status [--host 127.0.0.1|localhost] [--port 8787]\n\
