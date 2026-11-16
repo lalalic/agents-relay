@@ -35,7 +35,9 @@ pub(crate) fn reconcile_native_final_review(
     let Ok(project_root) = Path::new(project_root).canonicalize() else {
         return Ok(());
     };
-    if !project_root.starts_with(isolated_root) || !project_root.join(".git").exists() {
+    if crate::native_daemon::authorized_project(isolated_root, &project_root).is_err()
+        || !project_root.join(".git").exists()
+    {
         return Ok(());
     }
     let head = match verified_local_head(&project_root) {

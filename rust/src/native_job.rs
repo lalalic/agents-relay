@@ -3,7 +3,9 @@
 use crate::agent_graph::AgentGraph;
 use crate::authority::{NativeJobSpec, RelayAuthority};
 use crate::graph::{Decision, Graph, GraphInput};
-use crate::native_daemon::isolated_store_root;
+use crate::native_daemon::{
+    authorized_context_root, authorized_project, canonical_live_mode, isolated_store_root,
+};
 use crate::supervised_script::after_time;
 use rusqlite::{Connection, OptionalExtension, Transaction};
 use serde_json::{json, Value};
@@ -70,7 +72,7 @@ pub fn init_isolated_store(db: &Path) -> Result<(), String> {
 fn bounded_file(root: &Path, path: &Path) -> Result<PathBuf, String> {
     let canonical = path.canonicalize().map_err(|e| e.to_string())?;
     if !canonical.is_file() || !canonical.starts_with(root) {
-        return Err("native Job input/graph outside isolated root".into());
+        return Err("native Job input/graph outside authorized project root".into());
     }
     Ok(canonical)
 }
@@ -128,10 +130,7 @@ pub fn create_dag_job(request: DagJobRequest<'_>) -> Result<Value, String> {
         auto_merge,
     } = request;
     let root = isolated_store_root(db)?;
-    let project = project.canonicalize().map_err(|e| e.to_string())?;
-    if !project.starts_with(&root) || !project.is_dir() {
-        return Err("native project outside isolated root".into());
-    }
+    let project = authorized_project(&root, project)?;
     if let Some(relative) = project_path {
         let candidate = project
             .join(relative)
@@ -143,7 +142,15 @@ pub fn create_dag_job(request: DagJobRequest<'_>) -> Result<Value, String> {
     }
     let graph = match inline_graph {
         Some(value) => value.to_owned(),
-        None => fs::read_to_string(bounded_file(&root, graph_file)?).map_err(|e| e.to_string())?,
+        None => fs::read_to_string(bounded_file(
+            if canonical_live_mode() {
+                &project
+            } else {
+                &root
+            },
+            graph_file,
+        )?)
+        .map_err(|e| e.to_string())?,
     };
     let parsed = AgentGraph::parse(&graph)?;
     if parsed.nodes.is_empty() {
@@ -151,12 +158,22 @@ pub fn create_dag_job(request: DagJobRequest<'_>) -> Result<Value, String> {
     }
     let input = match inline_input {
         Some(value) => value.to_owned(),
-        None => fs::read_to_string(bounded_file(&root, input_file)?).map_err(|e| e.to_string())?,
+        None => fs::read_to_string(bounded_file(
+            if canonical_live_mode() {
+                &project
+            } else {
+                &root
+            },
+            input_file,
+        )?)
+        .map_err(|e| e.to_string())?,
     };
     let workspace = workspace_root
-        .map(|p| canonical_root(&root, p))
+        .map(|p| authorized_context_root(&root, p))
         .transpose()?;
-    let shared = shared_root.map(|p| canonical_root(&root, p)).transpose()?;
+    let shared = shared_root
+        .map(|p| authorized_context_root(&root, p))
+        .transpose()?;
     let workspace_string = workspace.as_ref().map(|p| p.to_string_lossy().into_owned());
     let shared_string = shared.as_ref().map(|p| p.to_string_lossy().into_owned());
     let parent = output_file
@@ -164,10 +181,13 @@ pub fn create_dag_job(request: DagJobRequest<'_>) -> Result<Value, String> {
         .ok_or("output parent missing")?
         .canonicalize()
         .map_err(|e| e.to_string())?;
-    if !parent.starts_with(&root)
-        || output_file
-            .symlink_metadata()
-            .is_ok_and(|m| m.file_type().is_symlink())
+    if !parent.starts_with(if canonical_live_mode() {
+        &project
+    } else {
+        &root
+    }) || output_file
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
     {
         return Err("native Coordinator output must be a new file inside isolated root".into());
     }
@@ -199,18 +219,10 @@ pub fn create_dag_job(request: DagJobRequest<'_>) -> Result<Value, String> {
         at: &now,
     })?;
     Ok(
-        json!({"jobId":created.job_id,"coordinatorTaskId":created.coordinator_task_id,
-        "created":created.created,"state":"DRAFT"}),
+        json!({"jobId":created.job_id,"id":created.job_id,"job":created.job_id,
+        "coordinatorTaskId":created.coordinator_task_id,"taskId":created.coordinator_task_id,
+        "repository":repository,"created":created.created,"state":"DRAFT"}),
     )
-}
-fn canonical_root(root: &Path, path: &Path) -> Result<PathBuf, String> {
-    let path = path.canonicalize().map_err(|e| e.to_string())?;
-    if !path.starts_with(root) || !path.is_dir() {
-        return Err(
-            "native Coordinator context root must be a directory inside isolated root".into(),
-        );
-    }
-    Ok(path)
 }
 pub fn activate_job(db: &Path, job_id: &str) -> Result<Value, String> {
     isolated_store_root(db)?;

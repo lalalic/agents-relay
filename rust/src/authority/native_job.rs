@@ -7,6 +7,60 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
+/// Same immutable local repository binding as src/unified-job-registry.ts.
+/// Legacy stores include source_registry; isolated Rust fixtures may not.
+/// Called inside the same IMMEDIATE transaction as Job and global ID creation.
+fn register_unified_job(
+    tx: &rusqlite::Transaction<'_>,
+    job_id: &str,
+    repository: &str,
+    project_root: &str,
+) -> Result<(), String> {
+    let unified: i64 = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='source_registry')",
+        [], |row| row.get(0),
+    ).map_err(|e| e.to_string())?;
+    if unified == 0 {
+        return Ok(());
+    }
+    let mut stmt = tx
+        .prepare(
+            "SELECT job_id,json FROM job_snapshot WHERE job_id<>?1 \
+         AND json_extract(json,'$.repository')=?2",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![job_id, repository], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+    for row in rows {
+        let (sibling_id, encoded) = row.map_err(|e| e.to_string())?;
+        let sibling: Value = serde_json::from_str(&encoded).map_err(|e| e.to_string())?;
+        if sibling["projectRoot"].as_str() != Some(project_root) {
+            return Err(format!("Local repository identity collision: {repository} belongs to a different projectRoot (Job {sibling_id})"));
+        }
+    }
+    drop(stmt);
+    tx.execute(
+        "INSERT INTO source_registry(job_id,source_file,repository,pr_number) \
+         VALUES (?1,?2,?3,0) ON CONFLICT(job_id) DO NOTHING",
+        params![job_id, format!("unified:{job_id}"), repository],
+    )
+    .map_err(|e| e.to_string())?;
+    let binding = tx
+        .query_row(
+            "SELECT repository,pr_number FROM source_registry WHERE job_id=?1",
+            [job_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .map_err(|e| e.to_string())?;
+    if binding.0 != repository || binding.1 != 0 {
+        return Err("canonical source_registry identity/PR binding mismatch".into());
+    }
+    Ok(())
+}
+
 pub struct NativeObjectiveJobSpec<'a> {
     pub repository: &'a str,
     pub id: Option<&'a str>,
@@ -171,6 +225,7 @@ impl RelayAuthority {
             }
         }
         job["graphStartContext"] = json!({"noGitHub":spec.no_github});
+        register_unified_job(&tx, &job_id, spec.repository, spec.project_root)?;
         tx.execute(
             "INSERT INTO job_snapshot(job_id,json,updated_at) VALUES(?1,?2,?3)",
             params![
@@ -314,6 +369,7 @@ impl RelayAuthority {
             "implementationThreadId":spec.implementation_thread_id,"continuation":spec.continuation,
             "createdAt":spec.at,"updatedAt":spec.at
         });
+        register_unified_job(&tx, &job_id, spec.repository, spec.project_root)?;
         tx.execute(
             "INSERT INTO job_snapshot(job_id,json,updated_at) VALUES(?1,?2,?3)",
             params![

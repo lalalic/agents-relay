@@ -2,6 +2,7 @@
 //! Graph owns eligibility. This adapter binds the durable provider decision to
 //! trusted executor configuration and resolves project context references.
 use super::NativeDaemonOptions;
+use crate::native_daemon::authorized_project;
 use crate::worker::WorkerSpec;
 use serde::Deserialize;
 use serde_json::Value;
@@ -152,9 +153,7 @@ fn project_root(job: &Value, root: &Path) -> Result<PathBuf, String> {
     let git_root = Path::new(git_root)
         .canonicalize()
         .map_err(|e| e.to_string())?;
-    if !git_root.starts_with(root) {
-        return Err("native Script project outside isolated root".into());
-    }
+    authorized_project(root, &git_root)?;
     let Some(relative) = job["projectPath"].as_str() else {
         return Ok(git_root);
     };

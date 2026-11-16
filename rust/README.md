@@ -1,10 +1,61 @@
 # Relay Rust backend — staged native rewrite
 
-The Rust rewrite now includes a **real transactional SQLite backend** and a
-**physical native Script Worker** in addition to the Graph shadow engine. It
-is **not** a production Relay replacement yet: the installed TypeScript
-Reconciler remains the single production writer/scheduler until L1/L2/L3,
-Review/JEL/DAG and recovery equivalence gates are met.
+The Rust rewrite includes real transactional SQLite Job and Task semantics,
+physical Workers, Graph-backed Coordinator scheduling and a protected
+single-node native foreground path. Its **canonical database compatibility**
+with the existing Relay store now has a separate test. It is **not yet a full
+production replacement**: full L3 recovery, Review, Router and canonical
+runtime cutover must still pass without discarding existing Jobs or leases.
+
+## Canonical SQLite / Neo Project foreground parity (2026-11-16)
+
+The original, authoritative SQLite database is **not copied into a new Rust
+store**. The opt-in canonical mode opens exactly
+`$HOME/.agents-relay/relay.sqlite` with the existing Node schema and global
+Job/Task ID sequence. Its `source_registry` insert and Job+Coordinator Task
+creation are one SQLite IMMEDIATE transaction. The Rust daemon skips all
+preexisting Node-owned Jobs without an explicit native intake fingerprint; it
+must never claim another reconciler's Task lease.
+
+The per-user runtime side directory
+`$HOME/.local/state/agents-relay/canonical-rust` is **not another DB**; it is
+for a private lock, control socket, trusted Worker manifest, and execution
+requests. Before enabling canonical mode, that directory must be owned by the
+current user, mode `0700`, contain the explicitly approved marker file
+`.canonical-relay-owner-v1` with exact text
+`canonical-rust-operator-approved-v1\n`, and the environment must set
+`RELAY_RUST_LIVE_MODE=canonical-live`. There is no automatic migration,
+implicit production access or silent fallback to a second database.
+
+Verified on a disposable, real-schema SQLite online backup (original source
+unchanged), including four physical Script Workers:
+
+```sh
+cargo build --locked --manifest-path rust/Cargo.toml --all-targets
+RELAY_CANONICAL_SOURCE_DB="$HOME/.agents-relay/relay.sqlite" \
+  node --test rust/tests/native-canonical-sqlite-l3-e2e.mjs
+node --test rust/tests/native-neo-project-foreground-e2e.mjs
+node --test rust/tests/review-parity.mjs
+node --test rust/tests/parity-matrix.test.mjs
+```
+
+The Neo E2E calls the real `neo/.bin/neo-project-run.mjs` implementation with
+an isolated `NEO_RELAY_EXECUTABLE`-compatible wrapper, not mocked Relay
+responses. It proves the `source → designer → face → motion` Coordinator
+scheduling, *not* actual Rodin/Blender/Face content execution. Do not use
+Dashboard port `8787` as a write endpoint.
+
+The Rust-only CLI, DAG, worker, storage and review regression suite now
+passes **179/179 tests** (`node --test --test-concurrency=1 rust/tests/*.mjs`).
+The original full TypeScript L3 suite still fails **12 of 78 cases**, covering
+Planner/recovery/Review convergence. Passing the Rust-only suite does not
+validate or excuse those failed acceptance scenarios.
+
+The authoritative open L3 capabilities and exact cutover blockers are in
+[`rust/docs/parity-matrix.json`](docs/parity-matrix.json). A passing Rust
+**subtest** does not grant permission to replace the production scheduler or
+claim prior Node-owned Jobs. Retain the current PM2 installation while
+remaining L3, managed Review, recovery, and provider gates are not verified.
 
 ## Rust live service, read-only Dashboard (2026-11-14)
 
@@ -21,11 +72,10 @@ intentional while the Vlog production Job is pending human Review.
 - Rust CLI can initialize its own store, create/activate/inspect Jobs.
 - Native loop Daemon schedules and completes only Graph-authorized no-review
   Jobs. No approval, merge, publishing or revision is inferred.
-- Native Dashboard reads are read-only on 127.0.0.1:8788, with authenticated
-  host Preview binding and decision endpoints described below. The existing
-  TypeScript Dashboard presents the read-only surface at /rust/ through a
-  GET-only proxy.
-  The ordinary TypeScript Job list remains unchanged.
+- The native Rust Dashboard is served by Rust at `127.0.0.1:8787` and
+  public `https://agents.qili2.com/`, with unchanged original Node browser
+  client. `/` projects historical Node Jobs and `/rust/` projects the
+  isolated Rust Jobs. The historical Events Bus is queried read-only.
 - Only the Rust-owned DB receives native Worker claims. A production
   TypeScript SQLite path cannot pass the Rust namespace fence.
 - Rust dashboard GET /api/jobs lists at most 20 sanitized Job/task state
@@ -70,8 +120,8 @@ read-only. Unavailable provider values remain unavailable, never replaced
 by inferred Job counts. Expensive probes are cached for 30 seconds.
 
 Some backend functionality remains incomplete: the old Events Bus history
-cannot be reconstructed from the Rust Job snapshots; the true new Router
-Test action is not connected; and Job/Task lifecycle mutations are not
+is read via its authoritative local Events Bus API, not reconstructed from SQLite;
+the true new Router Test action is not connected; and Job/Task lifecycle mutations are not
 available through the Dashboard. Such gaps must be fixed in the Rust
 backend, **not** through alternative frontend implementations. Configuration
 writes are restricted to local same-origin requests; the public tunnel

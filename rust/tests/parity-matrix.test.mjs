@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const matrix = JSON.parse(readFileSync(resolve(import.meta.dirname, '../../docs/rust-parity-matrix.json'), 'utf8'));
+const matrix = JSON.parse(readFileSync(resolve(import.meta.dirname, '../docs/parity-matrix.json'), 'utf8'));
 
 test('every unresolved Rust parity capability has one verified convergence milestone', () => {
   const allowedStatuses = new Set(matrix.statuses);

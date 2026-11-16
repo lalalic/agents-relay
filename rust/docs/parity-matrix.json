@@ -1,0 +1,159 @@
+{
+  "statuses": [
+    "PASS",
+    "FAIL",
+    "NOT_RUN"
+  ],
+  "reviewedAt": "2026-11-16",
+  "sourceOfTruth": "Node src/ and workflow/*.mmd; Rust tests must compare actual effects and durable SQLite writes",
+  "nodeL3Baseline": {
+    "total": 78,
+    "passed": 65,
+    "failed": 12,
+    "skipped": 1,
+    "result": "FAIL",
+    "verification": "npm run test:verification:l3"
+  },
+  "rustVerification": {
+    "total": 179,
+    "passed": 179,
+    "failed": 0,
+    "skipped": 0,
+    "result": "PASS",
+    "scope": "rust/tests/*.mjs — all current Rust tests, not full Node L3 production equivalence"
+  },
+  "capabilities": [
+    {
+      "capability": "canonical-single-SQLite-schema-and-global-IDs",
+      "status": "PASS",
+      "evidence": "rust/tests/native-canonical-sqlite-l3-e2e.mjs with RELAY_CANONICAL_SOURCE_DB online backup of real DB"
+    },
+    {
+      "capability": "canonical-four-stage-coordinator-foreground-with-real-script-processes",
+      "status": "PASS",
+      "evidence": "rust/tests/native-canonical-sqlite-l3-e2e.mjs, source/designer/face/motion 5 durable Tasks complete"
+    },
+    {
+      "capability": "Node-vs-Rust-interactive-Review-fingerprint-and-bound-approval",
+      "status": "PASS",
+      "evidence": "rust/tests/review-parity.mjs; unbound event-only approval must be stale"
+    },
+    {
+      "capability": "Neo-project-run-foreground-Rust-CLI-real-four-agent-processes",
+      "status": "PASS",
+      "evidence": "rust/tests/native-neo-project-foreground-e2e.mjs using actual neo/.bin/neo-project-run.mjs and Rust CLI/Worker Helper in disposable canonical SQLite"
+    },
+    {
+      "capability": "Node-vs-Rust-all-CLI-options-and-Neo-project-run-foreground",
+      "status": "NOT_RUN",
+      "evidence": "Neo project integrated foreground E2E and installed CLI cutover not yet verified"
+    },
+    {
+      "capability": "canonical-daemon-exclusive-control-and-crash-recovery",
+      "status": "NOT_RUN",
+      "evidence": "canonical mode single-writer ownership with real filesystem and existing Node leases not fully verified"
+    },
+    {
+      "capability": "native-planner-rounds-and-final-review",
+      "status": "FAIL",
+      "evidence": "Node full L3 failure: L3 objective-only Final Review; Rust full parity not proven"
+    },
+    {
+      "capability": "troubleshooter-targeted-revision-and-fault-recovery",
+      "status": "FAIL",
+      "evidence": "Node full L3 failures: Planner/Worker/Reviewer, targeted revision and human escalation"
+    },
+    {
+      "capability": "managed-human-review-changes-requested-and-repeat-approval",
+      "status": "NOT_RUN",
+      "evidence": "Rust isolated host decision tests pass; real Neo Mobile managed multi-round approval on canonical DB not proven"
+    },
+    {
+      "capability": "complete-Node-L3-78-test-equivalence",
+      "status": "FAIL",
+      "evidence": "npm run test:verification:l3 recorded 65/78 passing, 12 failing, 1 skipped"
+    },
+    {
+      "capability": "real-Provider-Router-and-Toy-Teddy-four-Stage-pipeline",
+      "status": "NOT_RUN",
+      "evidence": "Only controlled script Workers tested; Rodin, Blender, Face and Motion agents not exercised through native Relay"
+    },
+    {
+      "capability": "native-Events-Bus-realtime-lifecycle-publication",
+      "status": "NOT_RUN",
+      "evidence": "Rust event inbox/outbox and native process ledger exist; full native event publishing not verified"
+    },
+    {
+      "capability": "production-cutover-no-dual-writer-and-rollback",
+      "status": "NOT_RUN",
+      "evidence": "Only real DB online backup has been written; production unchanged"
+    }
+  ],
+  "convergencePlan": [
+    {
+      "milestone": "L3-1 CLI parity",
+      "capabilities": [
+        "Node-vs-Rust-all-CLI-options-and-Neo-project-run-foreground"
+      ],
+      "plannedVerification": "Run real neo project run --foreground through Rust CLI on disposable canonical SQLite fixture with all arguments and check durable Job/Task responses",
+      "evidenceOwner": "rust/tests/native-canonical-sqlite-l3-e2e.mjs",
+      "cutoverBlocker": "Neo must not write to read-only Dashboard 8787"
+    },
+    {
+      "milestone": "L3-2 writer safety",
+      "capabilities": [
+        "canonical-daemon-exclusive-control-and-crash-recovery"
+      ],
+      "plannedVerification": "Competing canonical writer and daemon SIGKILL / recovery on disposable copy; verify existing Node leases unaffected",
+      "evidenceOwner": "rust/src/native_daemon.rs",
+      "cutoverBlocker": "No concurrent reconciler may claim same Job"
+    },
+    {
+      "milestone": "L3-3 recovery",
+      "capabilities": [
+        "native-planner-rounds-and-final-review",
+        "troubleshooter-targeted-revision-and-fault-recovery",
+        "complete-Node-L3-78-test-equivalence"
+      ],
+      "plannedVerification": "Head-to-head replay all original Node L3 failing scenarios through Rust backend with same Graph, snapshots and immutable decisions",
+      "evidenceOwner": "rust/tests and test/verification/l3-*.test.mjs",
+      "cutoverBlocker": "Review, troubleshooter and Final Review convergence cannot be skipped"
+    },
+    {
+      "milestone": "L3-4 real Review",
+      "capabilities": [
+        "managed-human-review-changes-requested-and-repeat-approval"
+      ],
+      "plannedVerification": "Real Neo Mobile approve/revise/re-review on native canonical Job and correct Head SHA",
+      "evidenceOwner": "rust/src/native_daemon/review.rs",
+      "cutoverBlocker": "Human approval must never be inferred"
+    },
+    {
+      "milestone": "L3-5 providers",
+      "capabilities": [
+        "real-Provider-Router-and-Toy-Teddy-four-Stage-pipeline"
+      ],
+      "plannedVerification": "Run real Toy Teddy Rodin Builder, Designer Blender, Face and Motion using native CLI/Daemon, collect output and visual evidence",
+      "evidenceOwner": "rust/src/native_daemon/adapter.rs",
+      "cutoverBlocker": "Script fixture success is not real Provider or Toy success"
+    },
+    {
+      "milestone": "L3-6 events",
+      "capabilities": [
+        "native-Events-Bus-realtime-lifecycle-publication"
+      ],
+      "plannedVerification": "Verify started/progress/failed/completed events from a fresh Rust Job via Events Bus and Dashboard",
+      "evidenceOwner": "rust/src/authority.rs and rust/src/native_ingress.rs",
+      "cutoverBlocker": "Existing historical replay is not sufficient"
+    },
+    {
+      "milestone": "L3-7 cutover",
+      "capabilities": [
+        "production-cutover-no-dual-writer-and-rollback"
+      ],
+      "plannedVerification": "Evidence-gated single-writer cutover, real canonical SQLite integrity before/after, rollback using current release",
+      "evidenceOwner": "rust/tests/native-canonical-sqlite-l3-e2e.mjs",
+      "cutoverBlocker": "No full migration until all L3 verification paths pass"
+    }
+  ]
+}

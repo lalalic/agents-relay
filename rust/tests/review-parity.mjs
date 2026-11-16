@@ -7,7 +7,7 @@ import {spawnSync} from 'node:child_process';
 import {DatabaseSync} from 'node:sqlite';
 import {SQLiteRelayStore} from '../../dist/relay-store.js';
 import {interactiveDecisionFingerprint} from '../../dist/interactive-invocation.js';
-const bin=resolve(import.meta.dirname,'../target/debug/examples/interop_fixture');
+const bin=resolve(process.env.CARGO_TARGET_DIR ?? join(import.meta.dirname,'../target'),'debug/examples/interop_fixture');
 const initial='2099-01-01T00:00:00.000Z';
 function rust(op,db,job,delivery){
  const result=spawnSync(bin,[op,db,job,op==='review-resume'?'2099-01-01T00:00:02.000Z':initial,typeof delivery==='string'?delivery:JSON.stringify(delivery)],{
@@ -63,7 +63,7 @@ test('Rust Review ledger matches TypeScript fingerprint, decision, duplicate, co
   console.log('Review parity: TS fingerprint + Rust accepted + TS duplicate/stale + SQLite authority');
  }finally{store?.close();rmSync(dir,{recursive:true,force:true});}
 });
-test('event-only explicit invocation identity has matching Node and Rust fingerprint and is accepted',async()=>{
+test('unbound event-only Review matches Node fingerprint and is rejected as stale',async()=>{
  const {dir,db}=setup();let store;
  try{
   store=new SQLiteRelayStore(db);
@@ -77,11 +77,12 @@ test('event-only explicit invocation identity has matching Node and Rust fingerp
   const fingerprint=interactiveDecisionFingerprint(decision);
   assert.equal(rust('review-fingerprint',db,'91',decision).fingerprint,fingerprint,
    'event-only fingerprints must preserve invocation identity in both implementations');
-  assert.equal(rust('review',db,'91',decision).outcome,'accepted');
+  assert.equal(rust('review',db,'91',decision).outcome,'stale');
   store=new SQLiteRelayStore(db);
+  assert.equal((await store.recordHostInvocationDecision(decision,fingerprint)).outcome,'stale');
   const snapshot=await store.loadJob('91');
-  assert.equal(snapshot.tasks[0].interactiveInvocation.invocationId,'review-invocation-1');
-  assert.equal(snapshot.tasks[0].state,'RUNNING','acceptance does not complete or requeue the Task');
+  assert.equal(snapshot.tasks[0].interactiveInvocation,undefined);
+  assert.equal(snapshot.tasks[0].state,'RUNNING','stale Review cannot complete or requeue the Task');
  }finally{store?.close();rmSync(dir,{recursive:true,force:true});}
 });
 test('Rust denies unbound Review, terminal Job Review, and leaves snapshots unmodified',async()=>{

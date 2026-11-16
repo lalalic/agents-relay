@@ -4,6 +4,7 @@ use super::adapter::{NativeAdapterKind, ScriptManifest};
 use super::NativeTick;
 use crate::agent_graph::AgentGraph;
 use crate::authority::{DAGExecutor, DAGMaterialize, RelayAuthority};
+use crate::native_daemon::{authorized_project, canonical_live_mode};
 use crate::supervised_script::after_time;
 use std::path::Path;
 
@@ -79,8 +80,7 @@ pub(super) fn reconcile_native_dag(
         // may not reference another workspace or the canonical user tree.
         let Some(project) = job["projectRoot"]
             .as_str()
-            .and_then(|path| Path::new(path).canonicalize().ok())
-            .filter(|path| path.starts_with(root))
+            .and_then(|path| authorized_project(root, Path::new(path)).ok())
         else {
             report.blocked.push(format!(
                 "{job_id}/{parent_id}: DAG project outside isolated root"
@@ -97,7 +97,13 @@ pub(super) fn reconcile_native_dag(
             let bounded = Path::new(output)
                 .parent()
                 .and_then(|directory| directory.canonicalize().ok())
-                .is_some_and(|directory| directory.starts_with(root));
+                .is_some_and(|directory| {
+                    directory.starts_with(if canonical_live_mode() {
+                        &project
+                    } else {
+                        root
+                    })
+                });
             if !bounded {
                 report.blocked.push(format!(
                     "{job_id}/{parent_id}: DAG output path outside isolated root"

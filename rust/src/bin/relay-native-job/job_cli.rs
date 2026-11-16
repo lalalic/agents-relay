@@ -3,7 +3,9 @@
 //! writer coordination is available for production stores.
 use agents_relay_rust::authority::{NativeObjectiveJobSpec, RelayAuthority};
 use agents_relay_rust::graph::{Decision, Graph, GraphInput};
-use agents_relay_rust::native_daemon::isolated_store_root;
+use agents_relay_rust::native_daemon::{
+    authorized_project, canonical_live_mode, isolated_store_root,
+};
 use agents_relay_rust::native_job::{create_dag_job, DagJobRequest};
 use agents_relay_rust::supervised_script::after_time;
 use serde_json::{json, Value};
@@ -268,9 +270,18 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
             s.clone()
         } else if let Some(p) = o.get("--objective-file") {
             let p = Path::new(p).canonicalize().map_err(|e| e.to_string())?;
-            let root = isolated_store_root(&path)?;
-            if !p.starts_with(&root) || !p.is_file() {
-                return Err("objective file must be inside isolated store root".into());
+            let isolated = isolated_store_root(&path)?;
+            let allowed = if canonical_live_mode() {
+                let project = o
+                    .get("--coordinator-project-root")
+                    .or_else(|| o.get("--project-root"))
+                    .ok_or("objective-file needs an authorized project root")?;
+                authorized_project(&isolated, Path::new(project))?
+            } else {
+                isolated
+            };
+            if !p.starts_with(&allowed) || !p.is_file() {
+                return Err("objective file must be inside authorized project root".into());
             }
             std::fs::read_to_string(p).map_err(|e| e.to_string())?
         } else {
@@ -420,14 +431,30 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
             }
             if let Some(file) = o.get("--coordinator-graph-file") {
                 let path = Path::new(file).canonicalize().map_err(|e| e.to_string())?;
-                if !path.starts_with(isolated_store_root(&db_path)?) {
-                    return Err("Coordinator graph file must be inside isolated store root".into());
+                let isolated = isolated_store_root(&db_path)?;
+                let allowed = if canonical_live_mode() {
+                    authorized_project(&isolated, Path::new(root))?
+                } else {
+                    isolated
+                };
+                if !path.starts_with(&allowed) {
+                    return Err(
+                        "Coordinator graph file must be inside authorized project root".into(),
+                    );
                 }
             }
             if let Some(file) = o.get("--coordinator-input-file") {
                 let path = Path::new(file).canonicalize().map_err(|e| e.to_string())?;
-                if !path.starts_with(isolated_store_root(&db_path)?) {
-                    return Err("Coordinator input file must be inside isolated store root".into());
+                let isolated = isolated_store_root(&db_path)?;
+                let allowed = if canonical_live_mode() {
+                    authorized_project(&isolated, Path::new(root))?
+                } else {
+                    isolated
+                };
+                if !path.starts_with(&allowed) {
+                    return Err(
+                        "Coordinator input file must be inside authorized project root".into(),
+                    );
                 }
             }
             let output = PathBuf::from(o.get("--coordinator-output-path").unwrap());
@@ -482,12 +509,7 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
             return Err("--initial-plan requires a configured native Planner runtime; Rust job create does not fabricate Planner rounds".into());
         }
         let isolated_root = isolated_store_root(&path)?;
-        let canonical_project = Path::new(root).canonicalize().map_err(|e| e.to_string())?;
-        if !canonical_project.is_dir() || !canonical_project.starts_with(&isolated_root) {
-            return Err(
-                "--project-root must be an existing directory inside the isolated store".into(),
-            );
-        }
+        let canonical_project = authorized_project(&isolated_root, Path::new(root))?;
         if let Some(relative) = o.get("--project-path") {
             let candidate = canonical_project
                 .join(relative)

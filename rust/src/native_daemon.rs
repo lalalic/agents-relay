@@ -94,10 +94,132 @@ pub fn live_store_root(db: &Path) -> Result<PathBuf, String> {
     Ok(root)
 }
 
+/// The production DB is an explicit, operator-authorized, *shared* SQLite
+/// authority. Runtime locks, sockets, and execution requests live in a private
+/// companion directory; there is never a second Job database or ID sequence.
+/// Only the canonical, non-symlinked HOME/.agents-relay/relay.sqlite is eligible.
+pub fn canonical_live_mode() -> bool {
+    std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("canonical-live")
+}
+
+pub fn canonical_store_root(db: &Path) -> Result<PathBuf, String> {
+    if !canonical_live_mode() {
+        return Err("canonical Relay mode is not enabled".into());
+    }
+    let home = PathBuf::from(std::env::var("HOME").map_err(|_| "HOME not set")?)
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let expected = home.join(".agents-relay/relay.sqlite");
+    let parent = expected.parent().ok_or("canonical DB parent missing")?;
+    if db != expected
+        || db.canonicalize().map_err(|e| e.to_string())? != expected
+        || !parent.is_dir()
+    {
+        return Err(
+            "Rust canonical mode requires the real, non-aliased ~/.agents-relay/relay.sqlite"
+                .into(),
+        );
+    }
+    let root = home.join(".local/state/agents-relay/canonical-rust");
+    if !root.is_dir() || root.canonicalize().map_err(|e| e.to_string())? != root {
+        return Err("canonical runtime directory must be pre-provisioned, not a symlink".into());
+    }
+    if std::fs::read_to_string(root.join(".canonical-relay-owner-v1")).map_err(|e| e.to_string())?
+        != "canonical-rust-operator-approved-v1\n"
+    {
+        return Err("canonical Rust requires explicit operator ownership marker".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let runtime = std::fs::metadata(&root).map_err(|e| e.to_string())?;
+        let database = std::fs::symlink_metadata(&expected).map_err(|e| e.to_string())?;
+        let uid = unsafe { nix::libc::geteuid() };
+        if runtime.uid() != uid
+            || runtime.permissions().mode() & 0o777 != 0o700
+            || database.uid() != uid
+            || !database.file_type().is_file()
+            || database.permissions().mode() & 0o022 != 0
+        {
+            return Err("canonical Relay database/runtime ownership or permissions invalid".into());
+        }
+    }
+    Ok(root)
+}
+
+/// Project access is bound to Neo's configured, independent Git repositories.
+/// Isolated test and pilot-live modes keep their existing stricter root fence.
+pub fn authorized_project(root: &Path, path: &Path) -> Result<PathBuf, String> {
+    let project = path.canonicalize().map_err(|e| e.to_string())?;
+    if !project.is_dir() {
+        return Err("Job project root must be a directory".into());
+    }
+    if !canonical_live_mode() {
+        return project
+            .starts_with(root)
+            .then_some(project)
+            .ok_or_else(|| "native project outside isolated root".into());
+    }
+    let home = PathBuf::from(std::env::var("HOME").map_err(|_| "HOME not set")?);
+    let neo = if let Ok(value) = std::env::var("NEO_ROOT") {
+        PathBuf::from(value)
+    } else {
+        let cfg = home.join(".config/neo/workspace.json");
+        if cfg.is_file() {
+            let contents: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(cfg).map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?;
+            if contents["schemaVersion"] != 1 {
+                return Err("invalid Neo workspace configuration".into());
+            }
+            PathBuf::from(
+                contents["neoRoot"]
+                    .as_str()
+                    .ok_or("Neo root not configured")?,
+            )
+        } else {
+            home.join("Workspace")
+        }
+    };
+    let neo = neo
+        .canonicalize()
+        .map_err(|e| format!("Neo root unavailable: {e}"))?;
+    if project == neo || !project.starts_with(&neo) || !project.join(".git").exists() {
+        return Err("canonical Job must use an independent Git repository under Neo root".into());
+    }
+    Ok(project)
+}
+
+pub fn authorized_context_root(root: &Path, path: &Path) -> Result<PathBuf, String> {
+    let context = path.canonicalize().map_err(|e| e.to_string())?;
+    if !context.is_dir() {
+        return Err("Coordinator context root must be a directory".into());
+    }
+    if !canonical_live_mode() {
+        return context
+            .starts_with(root)
+            .then_some(context)
+            .ok_or_else(|| "native Coordinator context outside isolated root".into());
+    }
+    let home = PathBuf::from(std::env::var("HOME").map_err(|_| "HOME not set")?)
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    // Node's Neo Project harness shares the Workspace tree, plus trusted
+    // per-user ~/.agents context. Neither path is supplied by the HTTP client.
+    if context.starts_with(home.join("Workspace")) || context.starts_with(home.join(".agents")) {
+        Ok(context)
+    } else {
+        Err("canonical Coordinator context is outside trusted user workspace".into())
+    }
+}
+
 /// The production TypeScript store is NEVER eligible for native execution.
 /// A Rust-owned persistent namespace is supported separately, with no job
 /// state shared with or claimed by the running TypeScript reconciler.
 pub fn isolated_store_root(db: &Path) -> Result<PathBuf, String> {
+    if canonical_live_mode() {
+        return canonical_store_root(db);
+    }
     if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
         let root = live_store_root(db)?;
         if !db.is_file()
@@ -186,6 +308,12 @@ pub(crate) fn tick_with_stop(
         };
         report.jobs_seen += 1;
         if job["state"] != "ACTIVE" || job.get("pause").is_some_and(|v| !v.is_null()) {
+            continue;
+        }
+        // The canonical file contains legacy Node Jobs whose running leases
+        // and Graph state are not yet certified for native takeover. Never
+        // execute these from a second scheduler or infer Rust ownership.
+        if canonical_live_mode() && job["nativeIntakeHash"].as_str().is_none() {
             continue;
         }
         resume_accepted_native_reviews(&mut authority, &id, &mut report)?;

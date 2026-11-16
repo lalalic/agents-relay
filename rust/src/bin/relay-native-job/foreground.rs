@@ -27,6 +27,8 @@ fn parse(args: &[String]) -> Result<(HashMap<String, String>, HashSet<String>), 
         "--concurrency",
         "--max-ticks",
         "--project-path",
+        "--workspace-root",
+        "--shared-root",
     ];
     let flags = ["--foreground", "--no-github"];
     let mut values = HashMap::new();
@@ -142,6 +144,30 @@ pub fn run(args: &[String]) -> Result<(), String> {
         .map_err(|e| format!("Job projectRoot: {e}"))?;
         if requested != stored {
             return Err("--project-path differs from canonical Job projectRoot".into());
+        }
+    }
+    // Node's `neo project run --foreground` passes both execution-context
+    // roots. Never discard them: verify against immutable Coordinator input.
+    for (option, stored_field) in [
+        ("--workspace-root", "workspaceRoot"),
+        ("--shared-root", "sharedRoot"),
+    ] {
+        if let Some(value) = get(option) {
+            let requested = Path::new(value)
+                .canonicalize()
+                .map_err(|e| format!("{option}: {e}"))?;
+            let stored = Path::new(
+                job["graphStartContext"][stored_field]
+                    .as_str()
+                    .ok_or_else(|| format!("Coordinator {stored_field} missing"))?,
+            )
+            .canonicalize()
+            .map_err(|e| format!("stored {stored_field}: {e}"))?;
+            if requested != stored {
+                return Err(format!(
+                    "{option} differs from canonical Coordinator {stored_field}"
+                ));
+            }
         }
     }
     let task = job["tasks"]
