@@ -213,9 +213,9 @@ pub fn authorized_context_root(root: &Path, path: &Path) -> Result<PathBuf, Stri
     }
 }
 
-/// The production TypeScript store is NEVER eligible for native execution.
-/// A Rust-owned persistent namespace is supported separately, with no job
-/// state shared with or claimed by the running TypeScript reconciler.
+/// Isolated and pilot stores remain fenced from the existing Node namespace.
+/// Canonical Relay mode is a separate explicit, operator-marked SQLite owner
+/// that does not claim preexisting Node Jobs without native intake authority.
 pub fn isolated_store_root(db: &Path) -> Result<PathBuf, String> {
     if canonical_live_mode() {
         return canonical_store_root(db);

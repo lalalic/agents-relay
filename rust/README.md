@@ -352,7 +352,7 @@ dependency Graph selects stale marking and the Task Lifecycle Graph cancels
 that child before creating any replacement. Native Script claims and terminal
 completion also reject a stale revision vector. This is isolated parity only:
 it does not prove full DAG, provider, scheduler, or production parity, which
-remains `FAIL` in `docs/rust-parity-matrix.json`.
+remains `FAIL` in [`docs/parity-matrix.json`](docs/parity-matrix.json).
 
 Focused checks (all stores isolated with `AGENTS_RELAY_STORE_DIR`):
 
@@ -708,6 +708,7 @@ TypeScript scheduler, tests, or graphs, and cannot establish a full L3 pass.
 
 The focused `npm run test:l3:dag` **does** pass all 22 Coordinator/Review
 scenarios, including changes-requested and re-approval. Do not confuse those
-gates. The Rust public CLI stays read-only and Rust writer library operations
-remain isolated from production SQLite until full convergence/recovery gates
-are independently green.
+gates. The Rust CLI has an explicitly operator-marked canonical SQLite mode,
+but the live daemon and Dashboard have **not** been cut over, and existing
+Node-owned Jobs must not be claimed until the remaining full L3 and recovery
+gates are independently green.
