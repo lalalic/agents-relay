@@ -1,10 +1,17 @@
 // New differential CLI: exposes verified Node source-module ports to isolated Rust/Node fixture comparisons.
 use agents_relay_rust2::{
+    cli_local_merge_config::configure_local_git_merge,
     dependency_validity::validate_dependency_validity,
     final_review_role::is_final_review_agent,
+    github_binding_order::order_github_binding_candidates,
+    github_branch_projection::authoritative_branch_push_args,
     job_execution_slot::{job_has_active_execution, job_has_conflicting_execution},
+    planned_review_head::bind_planned_review_head,
     planner_agent_roles::validate_planner_agent_roles,
+    planner_history_cleanup::parse_planner_history_cleanup,
     planner_task_title::required_planner_task_title,
+    projection_failure_dedupe::ProjectionFailureDeduplicator,
+    review_revision_merge::preserve_review_revision_history,
     task_title::{derive_task_title, json_string_from_utf16},
     terminal_event_recovery::{
         terminal_recovery_eligible, terminal_recovery_prompt, TerminalRecoveryFacts,
@@ -78,8 +85,68 @@ fn invoke(request: &Value) -> Result<String, String> {
             request["executionId"].as_str().unwrap_or("")
         ))
         .to_string()),
+        "authoritativeBranchPushArgs" => Ok(json!(authoritative_branch_push_args(
+            request["sourceRef"].as_str().unwrap_or(""),
+            request["branch"].as_str().unwrap_or(""),
+            request["remoteHeadSha"].as_str(),
+            request["remoteTreeMatchesBase"].as_bool().unwrap_or(false),
+        ))
+        .to_string()),
+        "configureLocalGitMerge" => {
+            let mut job = request["job"].clone();
+            configure_local_git_merge(
+                &mut job,
+                request["source"].as_str().unwrap_or(""),
+                request["target"].as_str().unwrap_or(""),
+                request["localOnly"].as_bool().unwrap_or(false),
+            )?;
+            Ok(job.to_string())
+        }
+        "preserveReviewRevisionHistory" => {
+            let mut merged = request["merged"].clone();
+            preserve_review_revision_history(&request["local"], &mut merged);
+            Ok(merged.to_string())
+        }
+        "orderGitHubBindingCandidates" => Ok(json!(order_github_binding_candidates(
+            request["items"]
+                .as_array()
+                .ok_or("items must be an array")?,
+        ))
+        .to_string()),
+        "parsePlannerHistoryCleanup" => {
+            let result = match request.get("value") {
+                Some(value) => parse_planner_history_cleanup(value)?,
+                None => None,
+            };
+            Ok(json!(result).to_string())
+        }
+        "projectionFailureShouldReport" => {
+            let report = PROJECTION_FAILURE_DEDUPLICATOR.with(|dedupe| {
+                dedupe.borrow_mut().should_report(
+                    request["jobId"].as_str().unwrap_or(""),
+                    request["updatedAt"].as_str().unwrap_or(""),
+                    request["reason"].as_str().unwrap_or(""),
+                    request["classification"].as_str().unwrap_or(""),
+                )
+            });
+            Ok(json!(report).to_string())
+        }
+        "resetProjectionFailureDeduplicator" => {
+            PROJECTION_FAILURE_DEDUPLICATOR.with(|dedupe| dedupe.borrow_mut().reset());
+            Ok(Value::Null.to_string())
+        }
+        "bindPlannedReviewHead" => {
+            let mut task = request["task"].clone();
+            bind_planned_review_head(&mut task, request["localHeadSha"].as_str())?;
+            Ok(json!({"task": task, "saveCalls": 1}).to_string())
+        }
         _ => Err(format!("unknown operation: {op}")),
     }
+}
+
+thread_local! {
+    static PROJECTION_FAILURE_DEDUPLICATOR: std::cell::RefCell<ProjectionFailureDeduplicator> =
+        std::cell::RefCell::new(ProjectionFailureDeduplicator::default());
 }
 
 fn main() {

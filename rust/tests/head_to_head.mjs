@@ -11,11 +11,66 @@ import { jobHasActiveExecution, jobHasConflictingExecution } from '../../dist/jo
 import { requiredPlannerTaskTitle } from '../../dist/planner-task-title.js';
 import { validateDependencyValidity } from '../../dist/dependency-validity.js';
 import { terminalRecoveryEligible, terminalRecoveryPrompt } from '../../dist/terminal-event-recovery.js';
+import { authoritativeBranchPushArgs } from '../../dist/github-branch-projection.js';
+import { configureLocalGitMerge } from '../../dist/cli-local-merge-config.js';
+import { preserveReviewRevisionHistory } from '../../dist/review-revision-merge.js';
+import { orderGitHubBindingCandidates } from '../../dist/github-binding-order.js';
+import { parsePlannerHistoryCleanup } from '../../dist/planner-history-cleanup.js';
+import { ProjectionFailureDeduplicator } from '../../dist/projection-failure-dedupe.js';
+import { bindPlannedReviewHead } from '../../dist/planned-review-head.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const rustBinary = resolve(root, 'rust/target/debug/relay-rust2-parity');
 const ready = {hasSession:true,hasThread:true,terminalObserved:false,recoveryAttempts:0,outcomeUncertain:false,cancelled:false};
 const cases = [];
+// These operations share one parity process; reset is explicit so dedupe vectors model instance lifetime.
+for (const options of [
+  {sourceRef:'refs/relay/job-1',branch:'feature',remoteHeadSha:null,remoteTreeMatchesBase:false},
+  {sourceRef:'local',branch:'a/b',remoteHeadSha:'abc123',remoteTreeMatchesBase:true},
+  {sourceRef:'local',branch:'main',remoteHeadSha:'',remoteTreeMatchesBase:true},
+  {sourceRef:'local',branch:'main',remoteHeadSha:'sha',remoteTreeMatchesBase:false},
+]) cases.push({op:'authoritativeBranchPushArgs',...options});
+for (const [state,source,target,localOnly] of [
+  ['ACTIVE','refs/heads/feature','refs/heads/main',false],
+  ['DRAFT','refs/heads/review','refs/heads/main',true],
+  ['COMPLETED','refs/heads/x','refs/heads/main',false],
+  ['ACTIVE','','refs/heads/main',false],
+  ['ACTIVE','source','main',false],
+]) cases.push({op:'configureLocalGitMerge',job:{id:'j',state,localMerge:{status:'old'}},source,target,localOnly});
+for (const [local,merged] of [
+  [{reviewRevisionRequests:[{id:'local'}],reviewRevisionRounds:[1]},{reviewRevisionRequests:[{id:'remote'}],reviewRevisionRounds:[2],state:'ACTIVE'}],
+  [{},{reviewRevisionRequests:[1],reviewRevisionRounds:[2],state:'DRAFT'}],
+  [{reviewRevisionRequests:null,reviewRevisionRounds:[]},{reviewRevisionRequests:[1],reviewRevisionRounds:[2]}],
+]) cases.push({op:'preserveReviewRevisionHistory',local,merged});
+const candidate=(id,state,prNumber,createdAt)=>({snapshotPath:`/${id}.json`,job:{id,state,prNumber,createdAt}});
+cases.push({op:'orderGitHubBindingCandidates',items:[
+  candidate('terminal-unbound','COMPLETED',0,'2026-01-01'),candidate('bound','ACTIVE',1,'2026-01-04'),
+  candidate('fresh-old','ACTIVE',0,'2026-01-01'),candidate('terminal-bound','CANCELLED',3,'2026-01-03'),
+  candidate('unbound-new','DRAFT',0,'2026-01-05'),candidate('terminal-late','COMPLETED',0,'2026-01-06'),
+]});
+for (const value of [
+  undefined, null, [], {}, [{taskId:'t',outcome:'unresolved',evidence:'log',reason:'no longer needed'}],
+  [{taskId:'t',outcome:'superseded',evidence:'commit',reason:'replaced',targetTaskId:'t2'}],
+  [{taskId:'t',outcome:'invalid',evidence:'bad',reason:'invalidated'}],
+  [{taskId:'t',outcome:'cancelled_review',evidence:'review',reason:'cancelled',targetTaskId:''}],
+  [{taskId:' ',outcome:'unresolved',evidence:'e',reason:'r'}],
+  [{taskId:'\ufeff',outcome:'unresolved',evidence:'e',reason:'r'}],
+  [{taskId:'a',outcome:'unresolved',evidence:'e',reason:'r'},{taskId:'a',outcome:'unresolved',evidence:'e2',reason:'r2'}],
+  [{taskId:'a',outcome:'unresolved',evidence:'\t',reason:'r'}],
+]) cases.push({op:'parsePlannerHistoryCleanup',...(value===undefined?{}:{value})});
+cases.push({op:'resetProjectionFailureDeduplicator'});
+for (const entry of [
+  ['j1','v1','boom','terminal'],['j1','v1','boom','terminal'],['j1','v1','different','terminal'],
+  ['j1','v2','boom','terminal'],['j1','v2','boom','transient'],['j1','v2','boom','terminal'],
+  ['j2','v1','same','terminal'],['j1','v2','boom','terminal'],
+]) cases.push({op:'projectionFailureShouldReport',jobId:entry[0],updatedAt:entry[1],reason:entry[2],classification:entry[3]});
+cases.push({op:'resetProjectionFailureDeduplicator'});
+for (const [task,head] of [
+  [{id:'review-1',input:'Review it'},'abc123'],
+  [{id:'review-2',input:'Review it'},''],
+  [{id:'review-3',input:'Review the current immutable local source head as a PRE-MERGE approval gate.'},'def456'],
+  [{id:'review-4',input:'Existing context'},null],
+]) cases.push({op:'bindPlannedReviewHead',task,localHeadSha:head});
 for (const input of [
   '', '  \n \t', '# My Title', '###### Heading', '####### Heading', '#NoWhitespace',
   '- alpha', '*  alpha', '+\talpha', '1. alpha', '12)  alpha', '01) alpha',
@@ -102,7 +157,8 @@ for(const candidate of [
    cases.push({op:'jobHasConflictingExecution',job:{tasks:[candidate],plans},candidate});
  }
 }
-function nodeReference(request) {
+let projectionDeduplicator = new ProjectionFailureDeduplicator();
+async function nodeReference(request) {
   try {
     let value;
     switch(request.op) {
@@ -115,13 +171,26 @@ function nodeReference(request) {
       case 'validateDependencyValidity': value=validateDependencyValidity(request.dependencies,request.value,request.field);break;
       case 'terminalRecoveryEligible': value=terminalRecoveryEligible(request.facts);break;
       case 'terminalRecoveryPrompt': value=terminalRecoveryPrompt(request.executionId);break;
+      case 'authoritativeBranchPushArgs': value=authoritativeBranchPushArgs(request);break;
+      case 'configureLocalGitMerge': configureLocalGitMerge(request.job,request.source,request.target,request.localOnly);value=request.job;break;
+      case 'preserveReviewRevisionHistory': preserveReviewRevisionHistory(request.local,request.merged);value=request.merged;break;
+      case 'orderGitHubBindingCandidates': value=orderGitHubBindingCandidates(request.items);break;
+      case 'parsePlannerHistoryCleanup': value=parsePlannerHistoryCleanup(request.value);break;
+      case 'resetProjectionFailureDeduplicator': projectionDeduplicator=new ProjectionFailureDeduplicator();value=null;break;
+      case 'projectionFailureShouldReport': value=projectionDeduplicator.shouldReport(request.jobId,request.updatedAt,request.reason,request.classification);break;
+      case 'bindPlannedReviewHead': {
+        let saveCalls=0;
+        await bindPlannedReviewHead({saveTask:async task=>{saveCalls++;return task;}},request.task,request.localHeadSha);
+        value={task:request.task,saveCalls};
+        break;
+      }
       default: throw new Error('unrecognized op');
     }
     return {ok:true,value:value??null};
   }catch(e){return {ok:false,error:e.message};}
 }
 
-test('seven direct Node source ports produce matching results and errors',()=>{
+test('fourteen direct Node source ports produce matching results and errors',async()=>{
   const build=spawnSync('cargo',['build','--offline','--manifest-path','rust/Cargo.toml'],{cwd:root,encoding:'utf8',timeout:90000});
   assert.equal(build.status,0,`Rust build failed: ${build.stderr}`);
   const input=cases.map(item=>JSON.stringify(item)).join('\n')+'\n';
@@ -131,8 +200,9 @@ test('seven direct Node source ports produce matching results and errors',()=>{
   assert.equal(rustLines.length,cases.length);
   for(let i=0;i<cases.length;i++) {
     const actual=JSON.parse(rustLines[i]);
-    const expected=nodeReference(JSON.parse(JSON.stringify(cases[i])));
+    const expected=await nodeReference(JSON.parse(JSON.stringify(cases[i])));
     assert.deepStrictEqual(actual,expected,`Mismatch in case ${i}: ${JSON.stringify(cases[i])}`);
+    assert.equal(JSON.stringify(actual),JSON.stringify(expected),`Serialized JSON mismatch in case ${i}: ${JSON.stringify(cases[i])}`);
   }
-  console.log(`Verified ${cases.length} exact Node/Rust differential cases (including errors, Unicode, and recovery guards).`);
+  console.log(`Verified ${cases.length} exact Node/Rust differential cases (including errors, Unicode, stateful reset sequences, and projection behavior).`);
 });

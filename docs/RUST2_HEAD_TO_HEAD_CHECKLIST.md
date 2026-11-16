@@ -43,7 +43,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/cli-foreground.ts` | `rust/src/cli_foreground.rs` | PENDING | — |
 | `src/cli-help.ts` | `rust/src/cli_help.rs` | PENDING | — |
 | `src/cli-job-create.ts` | `rust/src/cli_job_create.rs` | PENDING | — |
-| `src/cli-local-merge-config.ts` | `rust/src/cli_local_merge_config.rs` | PENDING | — |
+| `src/cli-local-merge-config.ts` | `rust/src/cli_local_merge_config.rs` | PASS | 626 shared differential fixtures across 14 ports; merge success and validation errors compared (`rust/tests/head_to_head.mjs`) |
 | `src/cli-projection.ts` | `rust/src/cli_projection.rs` | PENDING | — |
 | `src/cli-prompt.ts` | `rust/src/cli_prompt.rs` | PENDING | — |
 | `src/cli-review.ts` | `rust/src/cli_review.rs` | PENDING | — |
@@ -84,8 +84,8 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/force-restate-validation.ts` | `rust/src/force_restate_validation.rs` | PENDING | — |
 | `src/force-restate.ts` | `rust/src/force_restate.rs` | PENDING | — |
 | `src/github-auth.ts` | `rust/src/github_auth.rs` | PENDING | — |
-| `src/github-binding-order.ts` | `rust/src/github_binding_order.rs` | PENDING | — |
-| `src/github-branch-projection.ts` | `rust/src/github_branch_projection.rs` | PENDING | — |
+| `src/github-binding-order.ts` | `rust/src/github_binding_order.rs` | PASS | 626 shared differential fixtures across 14 ports; stable ordering and priority groups compared (`rust/tests/head_to_head.mjs`) |
+| `src/github-branch-projection.ts` | `rust/src/github_branch_projection.rs` | PASS | 626 shared differential fixtures across 14 ports; normal and force-with-lease argv compared (`rust/tests/head_to_head.mjs`) |
 | `src/github-client.ts` | `rust/src/github_client.rs` | PENDING | — |
 | `src/github-pr-archive.ts` | `rust/src/github_pr_archive.rs` | PENDING | — |
 | `src/github-runtime-usage.ts` | `rust/src/github_runtime_usage.rs` | PENDING | — |
@@ -122,11 +122,11 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/observability.ts` | `rust/src/observability.rs` | PENDING | — |
 | `src/outcome-review.ts` | `rust/src/outcome_review.rs` | PENDING | — |
 | `src/owned-process.ts` | `rust/src/owned_process.rs` | PENDING | — |
-| `src/planned-review-head.ts` | `rust/src/planned_review_head.rs` | PENDING | — |
+| `src/planned-review-head.ts` | `rust/src/planned_review_head.rs` | PASS | 626 shared differential fixtures across 14 ports; head binding, exact prompt append, duplicate suppression, errors, and save count compared (`rust/tests/head_to_head.mjs`) |
 | `src/planner-agent-roles.ts` | `rust/src/planner_agent_roles.rs` | PASS | 587 shared differential fixtures across 7 ports; Rust native tests 8/8; Node focused regression 18/18; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/planner-child-recovery.ts` | `rust/src/planner_child_recovery.rs` | PENDING | — |
 | `src/planner-child.ts` | `rust/src/planner_child.rs` | PENDING | — |
-| `src/planner-history-cleanup.ts` | `rust/src/planner_history_cleanup.rs` | PENDING | — |
+| `src/planner-history-cleanup.ts` | `rust/src/planner_history_cleanup.rs` | PASS | 626 shared differential fixtures across 14 ports; valid, missing, malformed, duplicate, and target-required payloads compared (`rust/tests/head_to_head.mjs`) |
 | `src/planner-recovery.ts` | `rust/src/planner_recovery.rs` | PENDING | — |
 | `src/planner-runtime.ts` | `rust/src/planner_runtime.rs` | PENDING | — |
 | `src/planner-task-context.ts` | `rust/src/planner_task_context.rs` | PENDING | — |
@@ -136,7 +136,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/pool.ts` | `rust/src/pool.rs` | PENDING | — |
 | `src/process-identity.ts` | `rust/src/process_identity.rs` | PENDING | — |
 | `src/projected-store.ts` | `rust/src/projected_store.rs` | PENDING | — |
-| `src/projection-failure-dedupe.ts` | `rust/src/projection_failure_dedupe.rs` | PENDING | — |
+| `src/projection-failure-dedupe.ts` | `rust/src/projection_failure_dedupe.rs` | PASS | 626 shared differential fixtures across 14 ports; sequential duplicate/change/classification/reset vectors compared (`rust/tests/head_to_head.mjs`) |
 | `src/projection-failure-recovery.ts` | `rust/src/projection_failure_recovery.rs` | PENDING | — |
 | `src/projection-outbox.ts` | `rust/src/projection_outbox.rs` | PENDING | — |
 | `src/projection-recovery-runtime.ts` | `rust/src/projection_recovery_runtime.rs` | PENDING | — |
@@ -166,7 +166,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/review-generation-fence.ts` | `rust/src/review_generation_fence.rs` | PENDING | — |
 | `src/review-replan.ts` | `rust/src/review_replan.rs` | PENDING | — |
 | `src/review-revision-execution.ts` | `rust/src/review_revision_execution.rs` | PENDING | — |
-| `src/review-revision-merge.ts` | `rust/src/review_revision_merge.rs` | PENDING | — |
+| `src/review-revision-merge.ts` | `rust/src/review_revision_merge.rs` | PASS | 626 shared differential fixtures across 14 ports; local history copy/delete and null handling compared (`rust/tests/head_to_head.mjs`) |
 | `src/review-revision-model.ts` | `rust/src/review_revision_model.rs` | PENDING | — |
 | `src/review-revision-policy.ts` | `rust/src/review_revision_policy.rs` | PENDING | — |
 | `src/review-revision-settlement.ts` | `rust/src/review_revision_settlement.rs` | PENDING | — |
@@ -283,3 +283,27 @@ After Batch 1, ported source modules: **4 / 227**. The CLI used by this batch is
 - [x] `node --import ./test/test-store-env.mjs --test test/dependency-validity.test.js test/terminal-event-recovery.test.js test/targeted-revision-execution.test.js test/interactive-invocation.test.js` — **18/18** Node regression tests passed in isolated store.
 
 Current verified source modules: **7 / 227**; remaining: **220**. These checks verify ported functions only, not end-to-end Relay daemon or scheduler compatibility.
+
+### Batch 3 — GitHub projection, merge, and review-history effects (2026-11-16)
+
+- [x] `src/github-branch-projection.ts` → `rust/src/github_branch_projection.rs`: normal push and force-with-lease argument construction.
+- [x] `src/cli-local-merge-config.ts` → `rust/src/cli_local_merge_config.rs`: valid local merge configuration and exact validation failures.
+- [x] `src/review-revision-merge.ts` → `rust/src/review_revision_merge.rs`: SQLite review history preservation and deletion semantics.
+- [x] `src/github-binding-order.ts` → `rust/src/github_binding_order.rs`: priority ordering and stable timestamp tie ordering.
+- [x] `src/planner-history-cleanup.ts` → `rust/src/planner_history_cleanup.rs`: optional payload parsing, field validation, duplicate rejection, and target requirements.
+- [x] `src/projection-failure-dedupe.ts` → `rust/src/projection_failure_dedupe.rs`: terminal fault dedupe, classification reset, changed-version behavior, and explicit instance reset sequences.
+- [x] `src/planned-review-head.ts` → `rust/src/planned_review_head.rs`: immutable head assignment, exact rule append/deduplication, missing-head failure, and save effect.
+- [x] `node --test rust/tests/head_to_head.mjs` — **626/626** Node/Rust differential cases matched across fourteen ports, including negative and sequential stateful cases.
+- [x] `cargo test --offline --manifest-path rust/Cargo.toml` — **8/8** Rust-native tests passed.
+- [x] `cargo clippy --offline --manifest-path rust/Cargo.toml --all-targets -- -D warnings` — passed.
+- [x] Focused Node regressions: authoritative branch projection **1/1**, GitHub binding/review-head/projection-dedupe **4/4**.
+- [ ] Broader `test/core.test.js` run — **177/192** passed; 15 CLI subprocess tests failed (missing descendant PID file and child exit-code mismatches), so this is not recorded as a batch pass.
+
+Current verified source modules: **14 / 227**; remaining: **213**. Node integration effects remain part of the Node application; this batch verifies the listed Rust source ports, not end-to-end Relay runtime compatibility.
+
+### Independent adversarial review for Batch 3 (2026-11-16)
+
+- [x] `node --test rust/tests/head_to_head.mjs rust/tests/head_to_head_adversarial.mjs` — **626 + 4132 = 4758** direct Node/Rust differential cases passed.
+- [x] `cargo test --offline --manifest-path rust/Cargo.toml` — **15/15** Rust native cases passed.
+- [x] `cargo clippy --offline --manifest-path rust/Cargo.toml --all-targets -- -D warnings` — clean.
+- [x] Explicit `null` cleanup target rejected exactly as Node; mixed-case/diacritic ordering verified using macOS `en_US.UTF-8` POSIX collation; 4096-entry dedupe eviction verified. On non-macOS, non-ISO date-string collation still requires explicit cross-platform validation; canonical `createdAt` ISO values retain lexicographic parity.
