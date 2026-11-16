@@ -70,7 +70,7 @@ test('Rust live namespace refuses direct Task CLI mutation while daemon owns SQL
 test('native CLI rejects human escalation response impersonation and unsupported review mutations',()=>{
  const f=fixture();try{const made=create(f);patchTask(f,made.taskId,{state:'BLOCKED',agentName:'troubleshooter',kind:'work',escalation:{status:'pending'}});const before=snapshot(f);
   assert.match(f.call(['task','unblock','--db',f.db,'--id',f.jobId,'--task-id',made.taskId,'--response','approved'],2),/cannot impersonate an authorized human/);assert.deepEqual(snapshot(f),before);
-  assert.match(f.call(['task','classify','--db',f.db,'--id',f.jobId,'--task-id',made.taskId,'--classification','superseded','--target-task-id','999'],2),/not safely supported/);assert.deepEqual(snapshot(f),before);
+  assert.match(f.call(['task','classify','--db',f.db,'--id',f.jobId,'--task-id',made.taskId,'--classification','superseded','--target-task-id','999'],2),/task classify requires --repo/);assert.deepEqual(snapshot(f),before);
  }finally{close(f)}
 });
 

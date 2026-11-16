@@ -783,6 +783,120 @@ fn unblock(args: &[String]) -> Result<Value, String> {
     })?;
     result(&c.job, tid)
 }
+fn classify(args: &[String]) -> Result<Value, String> {
+    let options = parse(
+        args,
+        &[
+            "--db",
+            "--id",
+            "--job-id",
+            "--repo",
+            "--task-id",
+            "--classification",
+            "--target-task-id",
+            "--evidence",
+            "--evidence-file",
+            "--reason",
+            "--reason-file",
+        ],
+        &[],
+    )?;
+    let (db, id) = identify(&options)?;
+    let repo = options
+        .get("--repo")
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("task classify requires --repo")?;
+    let task_id = options
+        .get("--task-id")
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("task classify requires --task-id")?;
+    let target = options
+        .get("--target-task-id")
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("task classify requires --target-task-id")?;
+    let kind = options
+        .get("--classification")
+        .ok_or("task classify requires --classification")?;
+    if !matches!(kind.as_str(), "superseded" | "invalid") {
+        return Err("--classification must be superseded or invalid".into());
+    }
+    fn text(
+        options: &HashMap<String, String>,
+        name: &str,
+        file: &str,
+        limit: u64,
+    ) -> Result<String, String> {
+        if options.contains_key(name) == options.contains_key(file) {
+            return Err(format!(
+                "task classify requires exactly one of {name} or {file}"
+            ));
+        }
+        let value = if let Some(value) = options.get(name) {
+            value.clone()
+        } else {
+            let path = options.get(file).ok_or(format!("missing {file}"))?;
+            let mut buffer = Vec::new();
+            if path == "-" {
+                std::io::stdin()
+                    .take(limit + 1)
+                    .read_to_end(&mut buffer)
+                    .map_err(|e| format!("{file} stdin: {e}"))?;
+            } else {
+                std::fs::File::open(path)
+                    .map_err(|e| format!("{file}: {e}"))?
+                    .take(limit + 1)
+                    .read_to_end(&mut buffer)
+                    .map_err(|e| format!("{file}: {e}"))?;
+            }
+            String::from_utf8(buffer).map_err(|_| format!("{file} must be UTF-8"))?
+        };
+        let value = value.trim();
+        if value.is_empty() || value.len() > limit as usize {
+            return Err(format!(
+                "{name} requires nonempty text of at most {limit} bytes"
+            ));
+        }
+        Ok(value.to_owned())
+    }
+    if options.get("--evidence-file").is_some_and(|s| s == "-")
+        && options.get("--reason-file").is_some_and(|s| s == "-")
+    {
+        return Err(
+            "task classify cannot read both --evidence-file - and --reason-file - from stdin"
+                .into(),
+        );
+    }
+    let evidence = text(&options, "--evidence", "--evidence-file", 16_000)?;
+    let reason = text(&options, "--reason", "--reason-file", 4096)?;
+    let request = agents_relay_rust::native_control::ControlRequest {
+        version: 1,
+        operation: "task.classify".into(),
+        repository: repo.clone(),
+        id,
+        title: String::new(),
+        objective: String::new(),
+        project_root: String::new(),
+        project_path: None,
+        priority: String::new(),
+        review_enabled: false,
+        auto_merge: false,
+        changes: None,
+        reason: None,
+        task_id: Some(task_id.clone()),
+        message: None,
+        recovery_task_id: None,
+        diagnosis: None,
+        classification: Some(
+            json!({"kind":kind,"targetTaskId":target,"evidence":evidence,"reason":reason}),
+        ),
+    };
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        agents_relay_rust::native_control::request(&db, &request)
+    } else {
+        agents_relay_rust::native_control::classify_task_isolated(&db, &request)
+    }
+}
+
 fn recover(args: &[String]) -> Result<Value, String> {
     let options = parse(
         args,
@@ -858,6 +972,7 @@ fn recover(args: &[String]) -> Result<Value, String> {
         message: None,
         recovery_task_id: Some(recovery_id.clone()),
         diagnosis,
+        classification: None,
     };
     if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
         agents_relay_rust::native_control::request(&db, &request)
@@ -934,6 +1049,7 @@ fn comment(args: &[String]) -> Result<Value, String> {
         message: Some(trimmed.into()),
         recovery_task_id: None,
         diagnosis: None,
+        classification: None,
     };
     let live = std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live");
     if live {
@@ -944,6 +1060,9 @@ fn comment(args: &[String]) -> Result<Value, String> {
 }
 
 pub fn run(args: &[String]) -> Result<Value, String> {
+    if args.get(1).is_some_and(|action| action == "classify") {
+        return classify(args);
+    }
     if args.get(1).is_some_and(|action| action == "recover") {
         return recover(args);
     }

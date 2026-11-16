@@ -54,6 +54,9 @@ pub struct ControlRequest {
     /// Optional diagnosis; its route flags are only valid with a failureKind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diagnosis: Option<Value>,
+    /// Graph-governed FAILED Task classification with evidence and target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classification: Option<Value>,
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -495,7 +498,8 @@ fn dispatch_job_mutation(db: &Path, request: &ControlRequest) -> Result<Value, S
 /// result, Task updatedAt or lifecycle state. The authoritative Job snapshot
 /// is the append-only source of truth. Never interpret comments as approvals.
 fn dispatch_task_comment(db: &Path, request: &ControlRequest) -> Result<Value, String> {
-    if request.changes.is_some()
+    if request.classification.is_some()
+        || request.changes.is_some()
         || request.reason.is_some()
         || request.recovery_task_id.is_some()
         || request.diagnosis.is_some()
@@ -618,7 +622,8 @@ impl ActionPorts for NativeRecoveryApproval {
 /// CLI recovery shares this exact function in isolated E2E and the daemon's
 /// private Unix-socket single-writer transport. No direct live SQLite writes.
 fn dispatch_task_recover(db: &Path, request: &ControlRequest) -> Result<Value, String> {
-    if request.changes.is_some()
+    if request.classification.is_some()
+        || request.changes.is_some()
         || request.reason.is_some()
         || request.message.is_some()
         || !request.title.is_empty()
@@ -858,9 +863,177 @@ pub fn recover_task_isolated(db: &Path, request: &ControlRequest) -> Result<Valu
     dispatch_task_recover(db, request)
 }
 
+/// Classify one immutable FAILED Task under the canonical Task Resolution
+/// Graph. Classification is evidence metadata, never an authorization to
+/// complete, retry, cancel or create a replacement Task.
+fn dispatch_task_classify(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if request.changes.is_some()
+        || request.reason.is_some()
+        || request.message.is_some()
+        || request.recovery_task_id.is_some()
+        || request.diagnosis.is_some()
+        || !request.title.is_empty()
+        || !request.objective.is_empty()
+        || !request.project_root.is_empty()
+        || request.project_path.is_some()
+        || !request.priority.is_empty()
+        || request.review_enabled
+        || request.auto_merge
+    {
+        return Err("task.classify accepts only Task classification fields".into());
+    }
+    if request.id.trim().is_empty()
+        || request.id.len() > 128
+        || request.repository.trim().is_empty()
+        || request.repository.len() > 500
+    {
+        return Err("task.classify requires exact Job ID and repository".into());
+    }
+    let task_id = request
+        .task_id
+        .as_deref()
+        .filter(|s| !s.trim().is_empty() && s.len() <= 128)
+        .ok_or("task classify requires --task-id")?;
+    let classification = request
+        .classification
+        .as_ref()
+        .and_then(Value::as_object)
+        .ok_or("task classify requires evidence classification object")?;
+    for key in classification.keys() {
+        if !matches!(
+            key.as_str(),
+            "kind" | "targetTaskId" | "reason" | "evidence"
+        ) {
+            return Err(format!("unsupported classification field {key}"));
+        }
+    }
+    let kind = classification
+        .get("kind")
+        .and_then(Value::as_str)
+        .ok_or("task classify requires --classification")?;
+    if !matches!(kind, "superseded" | "invalid") {
+        return Err("--classification must be superseded or invalid".into());
+    }
+    let target_id = classification
+        .get("targetTaskId")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty() && s.len() <= 128)
+        .ok_or("task classify requires --target-task-id")?;
+    if task_id == target_id {
+        return Err("classification target must differ from original Task".into());
+    }
+    let evidence = classification
+        .get("evidence")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty() && s.len() <= 16_000)
+        .ok_or("classification requires nonempty evidence of at most 16000 bytes")?;
+    let reason = classification
+        .get("reason")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty() && s.len() <= 4096)
+        .ok_or("classification requires nonempty reason of at most 4096 bytes")?;
+    let mut authority = RelayAuthority::open_existing(db)?;
+    let before = authority.read_job(&request.id)?.ok_or("unknown Job")?;
+    if before["repository"].as_str() != Some(request.repository.as_str()) {
+        return Err("repository identity mismatch".into());
+    }
+    let at = after_time(
+        before["updatedAt"]
+            .as_str()
+            .ok_or("Job timestamp missing")?,
+    )?;
+    let graph = Graph::parse(include_str!("../../workflow/task-resolution.mmd"))?;
+    let mut facts = HashMap::from([
+        ("classifiableFailure".into(), true),
+        ("classificationSuperseded".into(), kind == "superseded"),
+        ("supersededEvidenceComplete".into(), kind == "superseded"),
+        ("invalidEvidenceComplete".into(), kind == "invalid"),
+    ]);
+    let decision=graph.decide("unresolved",GraphInput{
+        transport:"event".into(),id:"resolution.classify".into(),
+        payload:json!({"kind":kind,"targetTaskId":target_id,"reason":reason,"evidence":evidence}),
+    },&facts)?;
+    let Decision::Accepted {
+        target, actions, ..
+    } = decision
+    else {
+        return Err("Task Resolution Graph rejected classification".into());
+    };
+    let expected = if kind == "superseded" {
+        "resolution.classifySuperseded"
+    } else {
+        "resolution.classifyInvalid"
+    };
+    if target != "resolved" || actions.len() != 1 || actions[0].id != expected {
+        return Err("Task Resolution Graph selected unexpected classification effect".into());
+    }
+    facts.clear();
+    let saved = authority.commit_job(&request.id, &at, |current| {
+        if current["repository"].as_str() != Some(request.repository.as_str()) {
+            return Err("repository changed before Task classification".into());
+        }
+        let all = current["tasks"].as_array().ok_or("Job Tasks missing")?;
+        if !all.iter().any(|t| t["id"] == target_id) {
+            return Err(
+                "classification target must identify a different durable Task in this Job".into(),
+            );
+        }
+        let source = all
+            .iter()
+            .find(|t| t["id"] == task_id)
+            .ok_or("original Task not found")?;
+        if source["kind"] == "planner"
+            || source["state"] != "FAILED"
+            || source["failureReason"] == "worker_outcome_unknown"
+            || ["executionId", "leaseOwner", "leaseExpiresAt"]
+                .iter()
+                .any(|k| source.get(*k).is_some_and(|v| !v.is_null()))
+            || source
+                .get("resolutionClassification")
+                .is_some_and(|v| !v.is_null())
+            || matches!(
+                source["resolution"]["state"].as_str(),
+                Some("active" | "waiting")
+            )
+        {
+            return Err(
+                "Task Resolution Graph classification requires inactive unclassified FAILED Task"
+                    .into(),
+            );
+        }
+        let mut next = current.clone();
+        let original = next["tasks"]
+            .as_array_mut()
+            .and_then(|tasks| tasks.iter_mut().find(|t| t["id"] == task_id))
+            .ok_or("original Task disappeared")?;
+        original["resolutionClassification"] = json!({
+            "kind":kind,"targetTaskId":target_id,
+            "evidence":evidence.trim(),"reason":reason.trim(),"updatedAt":at,
+        });
+        original["updatedAt"] = json!(at);
+        next["updatedAt"] = json!(at);
+        Ok((next, vec![]))
+    })?;
+    saved.job["tasks"]
+        .as_array()
+        .and_then(|tasks| tasks.iter().find(|t| t["id"] == task_id))
+        .cloned()
+        .ok_or_else(|| "classified Task missing from committed Job".to_owned())
+}
+pub fn classify_task_isolated(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        return Err("production Task classification requires daemon-owned control".into());
+    }
+    isolated_store_root(db)?;
+    dispatch_task_classify(db, request)
+}
+
 fn dispatch(db: &Path, request: ControlRequest) -> Result<Value, String> {
     if request.version != 1 {
         return Err("unsupported native control version".into());
+    }
+    if request.operation == "task.classify" {
+        return dispatch_task_classify(db, &request);
     }
     if request.operation == "task.recover" {
         return dispatch_task_recover(db, &request);
@@ -868,7 +1041,8 @@ fn dispatch(db: &Path, request: ControlRequest) -> Result<Value, String> {
     if request.operation == "task.comment" {
         return dispatch_task_comment(db, &request);
     }
-    if request.task_id.is_some()
+    if request.classification.is_some()
+        || request.task_id.is_some()
         || request.message.is_some()
         || request.recovery_task_id.is_some()
         || request.diagnosis.is_some()
