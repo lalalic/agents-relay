@@ -70,8 +70,8 @@ test('native control socket is single-writer, authenticated, allowlisted, and re
   const rejected=await rawRequest(f.socket,{version:1,operation:'job.delete',repository:'agents-relay',id:'861',title:'x',objective:'x',project_root:f.root,project_path:null,priority:'P2',review_enabled:false,auto_merge:false});
   assert.equal(rejected.ok,false);assert.match(rejected.error,/unsupported native control operation/);
   assert.equal(statSync(f.socket).isSocket(),true,'private endpoint is a Unix socket');
-  const oversized=await rawRequest(f.socket,{version:1,operation:'job.create',repository:'agents-relay',id:'861',title:'x',objective:'x'.repeat(70000),project_root:f.root,project_path:null,priority:'P2',review_enabled:false,auto_merge:false});
-  assert.equal(oversized.ok,false);assert.match(oversized.error,/exceeds 64 KiB/);
+  const oversized=await rawRequest(f.socket,{version:1,operation:'job.create',repository:'agents-relay',id:'861',title:'x',objective:'x'.repeat(2*1024*1024+4096),project_root:f.root,project_path:null,priority:'P2',review_enabled:false,auto_merge:false});
+  assert.equal(oversized.ok,false);assert.match(oversized.error,/exceeds 2 MiB|oversized control request/);
   const invalid=invoke(f,createArgs(f,['--priority','P8']));
   assert.equal(invalid.status,2,invalid.stderr);assert.match(invalid.stderr,/priority must be P0, P1, P2, or P3/);
   const unknown=invoke(f,['job','update','--db',f.db,'--id','861','--repo','agents-relay','--title','No unknown Job']);

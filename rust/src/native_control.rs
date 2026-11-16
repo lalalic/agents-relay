@@ -1,7 +1,9 @@
 //! Private same-user control socket for mutations owned by the native daemon.
 //! Requests are deliberately typed and allowlisted; the daemon is the only
 //! process that opens RelayAuthority for these production CLI mutations.
-use crate::authority::{NativeObjectiveJobSpec, RelayAuthority, TroubleshooterEscalationRequest};
+use crate::authority::{
+    NativeObjectiveJobSpec, NativeTaskSpec, RelayAuthority, TroubleshooterEscalationRequest,
+};
 use crate::dispatch::ActionPorts;
 use crate::graph::{Decision, Graph, GraphInput};
 use crate::lifecycle::apply_pure_task_actions;
@@ -11,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -19,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const SOCKET_NAME: &str = ".rc.sock";
-const MAX_REQUEST: usize = 64 * 1024;
+const MAX_REQUEST: usize = 2 * 1024 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -63,6 +65,9 @@ pub struct ControlRequest {
     /// Explicit operator-supplied response; never inferred or synthesized.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub human_response: Option<String>,
+    /// Graph-bound Task creation payload. IDs are allocated by the daemon.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_create: Option<Value>,
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -133,23 +138,26 @@ fn read_request(stream: &mut UnixStream) -> Result<ControlRequest, String> {
     stream
         .set_read_timeout(Some(IO_TIMEOUT))
         .map_err(|e| e.to_string())?;
+    // One authenticated JSON-lines request per Unix stream. Buffer reads so
+    // a 1 MiB Task input does not require a million single-byte syscalls.
+    let mut reader = BufReader::with_capacity(16 * 1024, stream).take((MAX_REQUEST + 2) as u64);
     let mut data = Vec::with_capacity(1024);
-    let mut byte = [0u8; 1];
-    loop {
-        match stream.read(&mut byte) {
-            Ok(0) => return Err("incomplete control request".into()),
-            Ok(_) if byte[0] == b'\n' => break,
-            Ok(_) => {
-                if data.len() == MAX_REQUEST {
-                    return Err("control request exceeds 64 KiB".into());
-                }
-                data.push(byte[0]);
-            }
-            Err(e) => return Err(format!("control request read failed: {e}")),
-        }
+    reader
+        .read_until(b'\n', &mut data)
+        .map_err(|e| format!("control request read failed: {e}"))?;
+    if data.len() > MAX_REQUEST + 1 {
+        return Err("control request exceeds 2 MiB".into());
+    }
+    if data.last() != Some(&b'\n') {
+        return Err("incomplete or oversized control request (limit 2 MiB)".into());
+    }
+    data.pop();
+    if data.len() > MAX_REQUEST {
+        return Err("control request exceeds 2 MiB".into());
     }
     serde_json::from_slice(&data).map_err(|e| format!("invalid control request: {e}"))
 }
+
 fn write_response(stream: &mut UnixStream, response: ControlResponse) -> Result<(), String> {
     stream
         .set_write_timeout(Some(IO_TIMEOUT))
@@ -295,6 +303,10 @@ fn dispatch_job_unblock(db: &Path, request: &ControlRequest) -> Result<Value, St
 }
 
 fn dispatch_job_mutation(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if request.task_create.is_some() {
+        return Err("Task creation fields are only valid for task.create".into());
+    }
+
     if request.version != 1 {
         return Err("unsupported native control version".into());
     }
@@ -504,7 +516,8 @@ fn dispatch_job_mutation(db: &Path, request: &ControlRequest) -> Result<Value, S
 /// result, Task updatedAt or lifecycle state. The authoritative Job snapshot
 /// is the append-only source of truth. Never interpret comments as approvals.
 fn dispatch_task_comment(db: &Path, request: &ControlRequest) -> Result<Value, String> {
-    if request.human_response.is_some()
+    if request.task_create.is_some()
+        || request.human_response.is_some()
         || request.escalation.is_some()
         || request.classification.is_some()
         || request.changes.is_some()
@@ -630,7 +643,8 @@ impl ActionPorts for NativeRecoveryApproval {
 /// CLI recovery shares this exact function in isolated E2E and the daemon's
 /// private Unix-socket single-writer transport. No direct live SQLite writes.
 fn dispatch_task_recover(db: &Path, request: &ControlRequest) -> Result<Value, String> {
-    if request.human_response.is_some()
+    if request.task_create.is_some()
+        || request.human_response.is_some()
         || request.escalation.is_some()
         || request.classification.is_some()
         || request.changes.is_some()
@@ -877,7 +891,8 @@ pub fn recover_task_isolated(db: &Path, request: &ControlRequest) -> Result<Valu
 /// Graph. Classification is evidence metadata, never an authorization to
 /// complete, retry, cancel or create a replacement Task.
 fn dispatch_task_classify(db: &Path, request: &ControlRequest) -> Result<Value, String> {
-    if request.human_response.is_some()
+    if request.task_create.is_some()
+        || request.human_response.is_some()
         || request.escalation.is_some()
         || request.changes.is_some()
         || request.reason.is_some()
@@ -1068,7 +1083,8 @@ impl ActionPorts for NativeSupersedeApproval {
 /// Supersede is evidence annotation of an already CANCELLED Task. It never
 /// cancels a Worker, changes a Task's state, or creates replacement work.
 fn dispatch_task_supersede(db: &Path, request: &ControlRequest) -> Result<Value, String> {
-    if request.human_response.is_some()
+    if request.task_create.is_some()
+        || request.human_response.is_some()
         || request.escalation.is_some()
         || request.changes.is_some()
         || request.message.is_some()
@@ -1204,7 +1220,8 @@ pub fn supersede_task_isolated(db: &Path, request: &ControlRequest) -> Result<Va
 }
 
 fn dispatch_task_escalate(db: &Path, request: &ControlRequest) -> Result<Value, String> {
-    if request.human_response.is_some()
+    if request.task_create.is_some()
+        || request.human_response.is_some()
         || request.changes.is_some()
         || request.reason.is_some()
         || request.message.is_some()
@@ -1296,7 +1313,8 @@ fn dispatch_task_resume_troubleshooter(
     db: &Path,
     request: &ControlRequest,
 ) -> Result<Value, String> {
-    if request.changes.is_some()
+    if request.task_create.is_some()
+        || request.changes.is_some()
         || request.reason.is_some()
         || request.message.is_some()
         || request.recovery_task_id.is_some()
@@ -1400,7 +1418,8 @@ pub fn resume_troubleshooter_isolated(
 /// daemon already owns the lifetime SQLite lock; the CLI never opens a second
 /// production writer. RUNNING, leased and DAG-owned Tasks remain fail-closed.
 fn dispatch_task_cancel(db: &Path, request: &ControlRequest) -> Result<Value, String> {
-    if request.changes.is_some()
+    if request.task_create.is_some()
+        || request.changes.is_some()
         || request.message.is_some()
         || request.recovery_task_id.is_some()
         || request.diagnosis.is_some()
@@ -1452,7 +1471,8 @@ pub fn cancel_task_isolated(db: &Path, request: &ControlRequest) -> Result<Value
 
 /// Reuse the same canonical Graph retry reducer in the daemon single writer.
 fn dispatch_task_retry(db: &Path, request: &ControlRequest) -> Result<Value, String> {
-    if request.changes.is_some()
+    if request.task_create.is_some()
+        || request.changes.is_some()
         || request.reason.is_some()
         || request.message.is_some()
         || request.recovery_task_id.is_some()
@@ -1498,7 +1518,8 @@ pub fn retry_task_isolated(db: &Path, request: &ControlRequest) -> Result<Value,
 }
 
 fn dispatch_task_unblock(db: &Path, request: &ControlRequest) -> Result<Value, String> {
-    if request.changes.is_some()
+    if request.task_create.is_some()
+        || request.changes.is_some()
         || request.message.is_some()
         || request.recovery_task_id.is_some()
         || request.diagnosis.is_some()
@@ -1547,9 +1568,143 @@ pub fn unblock_task_isolated(db: &Path, request: &ControlRequest) -> Result<Valu
     dispatch_task_unblock(db, request)
 }
 
+/// Create a normal Task through the same authority/Graph/ID allocator used
+/// by isolated Rust CLI. The only production SQLite writer is the Daemon.
+/// Review Tasks and arbitrarily assigned IDs cannot be created via this API.
+fn dispatch_task_create(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if request.changes.is_some()
+        || request.reason.is_some()
+        || request.task_id.is_some()
+        || request.message.is_some()
+        || request.recovery_task_id.is_some()
+        || request.diagnosis.is_some()
+        || request.classification.is_some()
+        || request.escalation.is_some()
+        || request.human_response.is_some()
+        || !request.title.is_empty()
+        || !request.objective.is_empty()
+        || !request.project_root.is_empty()
+        || request.project_path.is_some()
+        || !request.priority.is_empty()
+        || request.review_enabled
+        || request.auto_merge
+    {
+        return Err("task.create accepts only Task creation fields and exact Job identity".into());
+    }
+    if request.id.trim().is_empty()
+        || request.id.len() > 128
+        || request.repository.trim().is_empty()
+        || request.repository.len() > 500
+    {
+        return Err("task.create requires exact Job ID and repository".into());
+    }
+    let fields = request
+        .task_create
+        .as_ref()
+        .and_then(Value::as_object)
+        .ok_or("task.create requires an allowlisted creation object")?;
+    for key in fields.keys() {
+        if !matches!(
+            key.as_str(),
+            "title"
+                | "input"
+                | "outputKind"
+                | "outputPath"
+                | "priority"
+                | "storySize"
+                | "parentTaskId"
+                | "dependencies"
+                | "dependencyValidity"
+                | "draft"
+        ) {
+            return Err(format!("unsupported Task creation property {key}"));
+        }
+    }
+    let string = |key: &str| -> Result<&str, String> {
+        fields
+            .get(key)
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("Task creation {key} must be a string"))
+    };
+    let title = fields
+        .get("title")
+        .map(|v| v.as_str().ok_or("Task creation title must be a string"))
+        .transpose()?;
+    let input = string("input")?;
+    let output_kind = string("outputKind")?;
+    let output_path = fields
+        .get("outputPath")
+        .map(|v| {
+            v.as_str()
+                .ok_or("Task creation outputPath must be a string")
+        })
+        .transpose()?;
+    let priority = string("priority")?;
+    let story_size = string("storySize")?;
+    let parent = fields
+        .get("parentTaskId")
+        .map(|v| {
+            v.as_str()
+                .ok_or("Task creation parentTaskId must be a string")
+        })
+        .transpose()?;
+    let dependencies: Vec<String> = serde_json::from_value(
+        fields
+            .get("dependencies")
+            .cloned()
+            .ok_or("Task creation dependencies required")?,
+    )
+    .map_err(|e| format!("Task dependencies: {e}"))?;
+    let dependency_validity = fields.get("dependencyValidity");
+    let draft = fields
+        .get("draft")
+        .and_then(Value::as_bool)
+        .ok_or("Task creation draft flag must be boolean")?;
+    let mut authority = RelayAuthority::open_existing(db)?;
+    let before = authority.read_job(&request.id)?.ok_or("unknown Job")?;
+    if before["repository"].as_str() != Some(request.repository.as_str()) {
+        return Err("repository identity mismatch".into());
+    }
+    let at = after_time(
+        before["updatedAt"]
+            .as_str()
+            .ok_or("Job timestamp missing")?,
+    )?;
+    let created = authority.create_native_task(NativeTaskSpec {
+        job_id: &request.id,
+        title,
+        input,
+        output_kind,
+        output_path,
+        priority,
+        story_size,
+        parent_task_id: parent,
+        dependencies: &dependencies,
+        dependency_validity,
+        draft,
+        at: &at,
+        agent_name: None,
+        review_head_sha: None,
+        routing: None,
+        worker_selection: None,
+    })?;
+    Ok(json!({"jobId":request.id,"taskId":created.task_id,
+        "created":created.created,"task":created.task}))
+}
+pub fn create_task_isolated(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        return Err("production Task creation requires daemon-owned control".into());
+    }
+    isolated_store_root(db)?;
+    dispatch_task_create(db, request)
+}
+
 fn dispatch(db: &Path, request: ControlRequest) -> Result<Value, String> {
     if request.version != 1 {
         return Err("unsupported native control version".into());
+    }
+    if request.operation == "task.create" {
+        return dispatch_task_create(db, &request);
     }
     if request.operation == "task.unblock" {
         return dispatch_task_unblock(db, &request);
@@ -1745,7 +1900,7 @@ pub fn request(db: &Path, request: &ControlRequest) -> Result<Value, String> {
         .map_err(|e| e.to_string())?;
     let mut data = serde_json::to_vec(request).map_err(|e| e.to_string())?;
     if data.len() > MAX_REQUEST {
-        return Err("control request exceeds 64 KiB".into());
+        return Err("control request exceeds 2 MiB".into());
     }
     data.push(b'\n');
     stream
@@ -1757,7 +1912,7 @@ pub fn request(db: &Path, request: &ControlRequest) -> Result<Value, String> {
         .read_to_end(&mut response)
         .map_err(|e| format!("control response read failed: {e}"))?;
     if response.len() > MAX_REQUEST {
-        return Err("control response exceeds 64 KiB".into());
+        return Err("control response exceeds 2 MiB".into());
     }
     let response: ControlResponse =
         serde_json::from_slice(&response).map_err(|e| format!("invalid control response: {e}"))?;

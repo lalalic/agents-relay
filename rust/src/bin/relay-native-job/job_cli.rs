@@ -254,6 +254,7 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
                 classification: None,
                 escalation: None,
                 human_response: None,
+                task_create: None,
             },
         );
     }
@@ -348,6 +349,7 @@ pub fn run(action: &str, args: &[String]) -> Result<Value, String> {
                         classification: None,
                         escalation: None,
                         human_response: None,
+                        task_create: None,
                     },
                 );
             }

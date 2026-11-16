@@ -221,9 +221,6 @@ fn apply_task_graph_transition(
 }
 
 fn create(args: &[String]) -> Result<Value, String> {
-    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
-        return Err("native Task creation is isolated-test only".into());
-    }
     let allowed = [
         "--db",
         "--id",
@@ -250,13 +247,32 @@ fn create(args: &[String]) -> Result<Value, String> {
     let input = if let Some(s) = inline {
         s.clone()
     } else {
-        let p = PathBuf::from(file.unwrap());
-        let root = isolated_store_root(&db)?;
-        let p = p.canonicalize().map_err(|e| format!("input file: {e}"))?;
-        if !p.is_file() || !p.starts_with(root) {
-            return Err("Task input file must be inside isolated store root".into());
+        let path = file.expect("validated input-file");
+        if path == "-" {
+            let mut bytes = Vec::new();
+            std::io::stdin()
+                .take(1_048_577)
+                .read_to_end(&mut bytes)
+                .map_err(|e| format!("Task input stdin: {e}"))?;
+            if bytes.len() > 1_048_576 {
+                return Err("Task input exceeds 1 MiB".into());
+            }
+            String::from_utf8(bytes).map_err(|_| "Task input stdin must be UTF-8")?
+        } else {
+            let p = PathBuf::from(path);
+            let root = isolated_store_root(&db)?;
+            let p = p.canonicalize().map_err(|e| format!("input file: {e}"))?;
+            if !p.is_file() || !p.starts_with(root) {
+                return Err("Task input file must be inside Rust store root".into());
+            }
+            let size = std::fs::metadata(&p)
+                .map_err(|e| format!("input file: {e}"))?
+                .len();
+            if size > 1_048_576 {
+                return Err("Task input file exceeds 1 MiB".into());
+            }
+            std::fs::read_to_string(p).map_err(|e| format!("Task input file: {e}"))?
         }
-        std::fs::read_to_string(p).map_err(|e| format!("Task input file: {e}"))?
     };
     let deps = o
         .get("--deps")
@@ -277,6 +293,61 @@ fn create(args: &[String]) -> Result<Value, String> {
         .map(String::as_str)
         .unwrap_or("M")
         .to_ascii_uppercase();
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        let repo = o
+            .get("--repo")
+            .filter(|s| !s.trim().is_empty())
+            .ok_or("production task create requires --repo")?;
+        let mut create = serde_json::Map::new();
+        create.insert("input".into(), json!(input));
+        create.insert(
+            "outputKind".into(),
+            json!(o.get("--output").ok_or("missing --output")?),
+        );
+        create.insert(
+            "priority".into(),
+            json!(o.get("--priority").map(String::as_str).unwrap_or("P2")),
+        );
+        create.insert("storySize".into(), json!(size));
+        create.insert("dependencies".into(), json!(deps));
+        create.insert("draft".into(), json!(o.contains_key("--draft")));
+        if let Some(v) = o.get("--title") {
+            create.insert("title".into(), json!(v));
+        }
+        if let Some(v) = o.get("--output-path") {
+            create.insert("outputPath".into(), json!(v));
+        }
+        if let Some(v) = o.get("--parent").filter(|s| !s.is_empty()) {
+            create.insert("parentTaskId".into(), json!(v));
+        }
+        if let Some(v) = validity {
+            create.insert("dependencyValidity".into(), v);
+        }
+        let request = agents_relay_rust::native_control::ControlRequest {
+            version: 1,
+            operation: "task.create".into(),
+            repository: repo.clone(),
+            id: jid,
+            title: String::new(),
+            objective: String::new(),
+            project_root: String::new(),
+            project_path: None,
+            priority: String::new(),
+            review_enabled: false,
+            auto_merge: false,
+            changes: None,
+            reason: None,
+            task_id: None,
+            message: None,
+            recovery_task_id: None,
+            diagnosis: None,
+            classification: None,
+            escalation: None,
+            human_response: None,
+            task_create: Some(Value::Object(create)),
+        };
+        return agents_relay_rust::native_control::request(&db, &request);
+    }
     let mut a = RelayAuthority::open_existing(&db)?;
     let job = verify_job(&a, &jid, o.get("--repo"))?;
     if matches!(job["state"].as_str(), Some("COMPLETED" | "CANCELLED")) {
@@ -770,6 +841,7 @@ fn unblock(args: &[String]) -> Result<Value, String> {
             classification: None,
             escalation: None,
             human_response: None,
+            task_create: None,
         };
         agents_relay_rust::native_control::request(&db, &request)
     } else {
@@ -824,6 +896,7 @@ fn retry_live_or_isolated(args: &[String]) -> Result<Value, String> {
             classification: None,
             escalation: None,
             human_response: None,
+            task_create: None,
         };
         agents_relay_rust::native_control::request(&db, &request)
     } else {
@@ -883,6 +956,7 @@ fn cancel_live_or_isolated(args: &[String]) -> Result<Value, String> {
             classification: None,
             escalation: None,
             human_response: None,
+            task_create: None,
         };
         agents_relay_rust::native_control::request(&db, &request)
     } else {
@@ -938,6 +1012,7 @@ fn resume_troubleshooter(args: &[String]) -> Result<Value, String> {
         classification: None,
         escalation: None,
         human_response: Some(response.to_owned()),
+        task_create: None,
     };
     if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
         agents_relay_rust::native_control::request(&db, &request)
@@ -1008,6 +1083,7 @@ fn escalate(args: &[String]) -> Result<Value, String> {
         classification: None,
         escalation: Some(details),
         human_response: None,
+        task_create: None,
     };
     if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
         agents_relay_rust::native_control::request(&db, &request)
@@ -1063,6 +1139,7 @@ fn supersede(args: &[String]) -> Result<Value, String> {
         classification: None,
         escalation: None,
         human_response: None,
+        task_create: None,
     };
     if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
         agents_relay_rust::native_control::request(&db, &request)
@@ -1179,6 +1256,7 @@ fn classify(args: &[String]) -> Result<Value, String> {
         ),
         escalation: None,
         human_response: None,
+        task_create: None,
     };
     if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
         agents_relay_rust::native_control::request(&db, &request)
@@ -1265,6 +1343,7 @@ fn recover(args: &[String]) -> Result<Value, String> {
         classification: None,
         escalation: None,
         human_response: None,
+        task_create: None,
     };
     if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
         agents_relay_rust::native_control::request(&db, &request)
@@ -1344,6 +1423,7 @@ fn comment(args: &[String]) -> Result<Value, String> {
         classification: None,
         escalation: None,
         human_response: None,
+        task_create: None,
     };
     let live = std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live");
     if live {
@@ -1354,6 +1434,9 @@ fn comment(args: &[String]) -> Result<Value, String> {
 }
 
 pub fn run(args: &[String]) -> Result<Value, String> {
+    if args.get(1).is_some_and(|action| action == "create") {
+        return create(args);
+    }
     if args.get(1).is_some_and(|action| action == "unblock") {
         return unblock(args);
     }
