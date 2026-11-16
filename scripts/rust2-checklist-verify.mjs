@@ -25,6 +25,17 @@ for(const row of rows){
   const first=readFileSync(file,'utf8').split('\n')[0];
   assert(first.startsWith('//')&&first.includes(row.source),`PASS Rust source missing Node provenance comment: ${row.target}`);
   assert(!/^\s*(?:—|-)\s*$/.test(row.evidence),`PASS without evidence: ${row.source}`);
+  // Check all runtime exports, not only that a Rust source file exists. A
+  // nominal PASS with omitted public functions/classes is not head-to-head.
+  const nodeText=readFileSync(resolve(root,row.source),'utf8');
+  const rustText=readFileSync(file,'utf8');
+  const runtimeExport=/\bexport\s+(?:(?:declare|async)\s+)?(function|class|const|enum)\s+([A-Za-z_$][\w$]*)/g;
+  for(const [,kind,symbol] of nodeText.matchAll(runtimeExport)){
+    const snake=symbol.replace(/([a-z0-9])([A-Z])/g,'$1_$2').replace(/([A-Z])([A-Z][a-z])/g,'$1_$2').toLowerCase();
+    const candidate=kind==='class'?[symbol]:kind==='const'?[snake,symbol]:[snake];
+    assert(candidate.some(name=>new RegExp(`\\bpub\\s+(?:async\\s+)?(?:fn|struct|const|static|enum)\\s+${name}\\b`).test(rustText)),
+      `PASS Rust source missing Node runtime export ${symbol}: ${row.target}`);
+  }
  }
 }
 for(const source of sources) assert(seen.has(source),`Missing source from checklist: ${source}`);
