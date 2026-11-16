@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
-import {existsSync,realpathSync,mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,chmodSync} from 'node:fs';
+import {existsSync,realpathSync,mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,chmodSync,copyFileSync,symlinkSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {homedir} from 'node:os';
 import {pathToFileURL} from 'node:url';
@@ -48,17 +48,22 @@ writeFileSync(process.env.RELAY_RESULT_PATH,JSON.stringify({jobId:req.jobId,
   const agents={};
   for(const name of ['source','designer','face','motion'])agents[name]={kind:'script',executable:process.execPath,args:[worker]};
   writeFileSync(join(runtime,'manifest.json'),JSON.stringify({agents}));
-  // Existing `NEO_RELAY_EXECUTABLE` contract is executable-only. A minimal
-  // wrapper supplies Rust's explicit SQLite, worker and stop-limit flags,
-  // without writing to Dashboard 8787 or changing the real Node CLI.
+  // Exercise the EXACT Rust production CLI shell wrapper, not a simplified
+  // hand-written test shim. Isolate HOME through Neo's test spawn port so the
+  // wrapper resolves the disposable SQLite and durable manifest.
   const wrapper=join(runtime,'relay-entry');
-  writeFileSync(wrapper,`#!/bin/sh\nset -eu\nexport HOME='${home}' RELAY_RUST_LIVE_MODE=canonical-live\ncase "$1:$2" in\n  job:run) exec '${relayCli}' "$@" --db '${db}' --helper '${workerHelper}' --interval-ms 100 --max-ticks 50 ;;\n  *) exec '${relayCli}' "$@" --db '${db}' ;;\nesac\n`);
+  copyFileSync(resolve(import.meta.dirname,'../scripts/agents-relay-native-cli.sh'),wrapper);
+  symlinkSync(relayCli,join(runtime,'relay-native-job'));
+  symlinkSync(workerHelper,join(runtime,'relay-worker-helper'));
   chmodSync(wrapper,0o700);
+  const spawnTest=(cmd,args,options)=>spawnSync(cmd,args,{
+   ...options,env:{...process.env,...options?.env,HOME:home},
+  });
   const {runProject}=await import(pathToFileURL(neoModule).href);
   const messages=[];
   const workspace={neoRoot:neo,harnessRoot:neo};
   await runProject(['--path',run,'--project','vlog','--foreground','--no-review'],{
-   workspace,relayExecutable:wrapper,emit:message=>messages.push(message)});
+   workspace,relayExecutable:wrapper,spawnSyncImpl:spawnTest,emit:message=>messages.push(message)});
   assert.equal(messages.length,1);
   const reported=JSON.parse(messages[0]);
   assert.equal(reported.project,'vlog');
@@ -78,7 +83,7 @@ writeFileSync(process.env.RELAY_RESULT_PATH,JSON.stringify({jobId:req.jobId,
   // The second run is bound to its original Job; it may not allocate a new one.
   const resumed=[];
   await runProject(['--path',run,'--project','vlog','--foreground','--no-review'],{
-   workspace,relayExecutable:wrapper,emit:message=>resumed.push(message)});
+   workspace,relayExecutable:wrapper,spawnSyncImpl:spawnTest,emit:message=>resumed.push(message)});
   const resume=JSON.parse(resumed[0]);
   assert.equal(resume.jobId,record.jobId);
   assert.equal(resume.reused,true);

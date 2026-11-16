@@ -284,6 +284,20 @@ fn task_value(spec: &NativeTaskSpec<'_>, job_id: &str, task_id: &str) -> Value {
     } else {
         json!({"kind":"task_pr"})
     };
+    // Node's raw `task create` uses timeoutMs=0 (pending explicit runtime
+    // configuration). The internal Final Review create action must instead
+    // supply the story-size runtime budget, or its native Worker can never
+    // start. Preserve both Node contracts rather than changing generic Tasks.
+    let timeout_ms: i64 = if spec.review_head_sha.is_some() {
+        match spec.story_size {
+            "S" => 300_000,
+            "M" => 900_000,
+            "L" => 2_700_000,
+            _ => unreachable!("validated story size"),
+        }
+    } else {
+        0
+    };
     let mut task = json!({
         "id":task_id,"jobId":job_id,"title":title,"kind":"work",
         "priority":spec.priority,"storySize":spec.story_size,
@@ -292,7 +306,7 @@ fn task_value(spec: &NativeTaskSpec<'_>, job_id: &str, task_id: &str) -> Value {
         "adapter":"codex","input":spec.input,"output":output,
         "attempt":0,"maxAttempts":3,"leaseOwner":null,"leaseExpiresAt":null,
         "executionId":null,"threadId":null,"result":null,"error":null,
-        "timeoutMs":0,"createdAt":spec.at,"updatedAt":spec.at,"state":"DRAFT"
+        "timeoutMs":timeout_ms,"createdAt":spec.at,"updatedAt":spec.at,"state":"DRAFT"
     });
     if let Some(agent_name) = spec.agent_name {
         task["agentName"] = json!(agent_name);

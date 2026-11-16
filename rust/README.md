@@ -39,17 +39,39 @@ node --test rust/tests/review-parity.mjs
 node --test rust/tests/parity-matrix.test.mjs
 ```
 
-The Neo E2E calls the real `neo/.bin/neo-project-run.mjs` implementation with
-an isolated `NEO_RELAY_EXECUTABLE`-compatible wrapper, not mocked Relay
-responses. It proves the `source → designer → face → motion` Coordinator
+The Neo E2E calls the real `neo/.bin/neo-project-run.mjs` implementation
+through the exact production `rust/scripts/agents-relay-native-cli.sh` wrapper,
+not mocked Relay responses. The production wrapper launches only Rust CLI
+commands and binds them to the existing canonical SQLite file; it does not
+invoke Node as a second backend. The live CLI symlink must be intentionally
+switched and verified separately from building this script. It proves the `source → designer → face → motion` Coordinator
 scheduling, *not* actual Rodin/Blender/Face content execution. Do not use
 Dashboard port `8787` as a write endpoint.
 
-The Rust-only CLI, DAG, worker, storage and review regression suite now
-passes **179/179 tests** (`node --test --test-concurrency=1 rust/tests/*.mjs`).
+The original Rust-only CLI, DAG, worker, storage and review regression
+suite passed **179/179 tests** before the new Model Worker and reviewed-DAG
+checks were added. Run `node --test --test-concurrency=1 rust/tests/*.mjs`
+for the current full count; do not infer all Node L3 acceptance cases passed.
 The original full TypeScript L3 suite still fails **12 of 78 cases**, covering
 Planner/recovery/Review convergence. Passing the Rust-only suite does not
 validate or excuse those failed acceptance scenarios.
+
+
+The physical native Codex adapter and manifest generator are
+`rust/src/bin/relay-native-model-worker.rs` and
+`rust/src/bin/relay-native-agent-manifest.rs`. The generator inventories
+**32 project Agent role names plus three Reviewer/Troubleshooter roles**, and
+binds the Model Router to the actual executable without changing project
+AGENTS.md or `.agent.md`. The native worker consumes the current execution's
+immutable Task/Router/Worker identity and runs the *read-only* original
+`dist/cli.js prompt` action on the same private Job snapshot as the Rust
+Worker. This is a Prompt Builder utility, **not** a Node Relay backend.
+A successful Codex process is not accepted without a nonempty completion
+summary and a route-bound `task.completed` receipt. A Final Reviewer must
+also return a structured verdict and the exact Git HEAD with conforming
+findings, or the native worker rejects it before the Review Graph can decide.
+These checks use simulated external Provider processes; they do not prove
+actual remote model, Rodin, Blender or media operation success.
 
 The authoritative open L3 capabilities and exact cutover blockers are in
 [`rust/docs/parity-matrix.json`](docs/parity-matrix.json). A passing Rust

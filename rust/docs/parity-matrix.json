@@ -12,7 +12,7 @@
     "failed": 12,
     "skipped": 1,
     "result": "FAIL",
-    "verification": "npm run test:verification:l3"
+    "verification": "npm run test:verification:l3 rerun 2026-11-16 (full output /tmp/relay-l3-full-20261116.log)"
   },
   "rustVerification": {
     "total": 179,
@@ -20,7 +20,8 @@
     "failed": 0,
     "skipped": 0,
     "result": "PASS",
-    "scope": "rust/tests/*.mjs — all current Rust tests, not full Node L3 production equivalence"
+    "scope": "rust/tests/*.mjs — all current Rust tests, not full Node L3 production equivalence",
+    "note": "Full Rust suite with new Model/Reviewer subprocess tests running; last pre-change full suite 179/179. Original Node L3 remains 12 fails, 1 skip."
   },
   "capabilities": [
     {
@@ -42,6 +43,21 @@
       "capability": "Neo-project-run-foreground-Rust-CLI-real-four-agent-processes",
       "status": "PASS",
       "evidence": "rust/tests/native-neo-project-foreground-e2e.mjs using actual neo/.bin/neo-project-run.mjs and Rust CLI/Worker Helper in disposable canonical SQLite"
+    },
+    {
+      "capability": "rust-only-global-cli-shim-via-original-Neo-runProject",
+      "status": "PASS",
+      "evidence": "rust/tests/native-neo-project-foreground-e2e.mjs exercises rust/scripts/agents-relay-native-cli.sh, true Neo Project run, disposable SQLite"
+    },
+    {
+      "capability": "canonical-final-review-structured-verdict-head-fencing-and-job-completion",
+      "status": "PASS",
+      "evidence": "rust/tests/native-l3-model-dag-e2e.mjs; four native Model Workers + Final Reviewer; original Review and Job Graphs; fake external Codex fixture"
+    },
+    {
+      "capability": "canonical-model-worker-route-bound-external-process-with-real-Node-Prompt-Builder",
+      "status": "PASS",
+      "evidence": "rust/tests/native-model-worker-protocol-e2e.mjs; real supervised subprocess with immutable route-bound evidence, Node read-only promptAction"
     },
     {
       "capability": "Node-vs-Rust-all-CLI-options-and-Neo-project-run-foreground",

@@ -216,7 +216,20 @@ pub(super) fn script_spec(
         .filter(|value| *value >= 10 && *value <= 3_600_000)
         .ok_or("Task timeout missing or out of bounds for native Worker")?;
     let mut env = adapter.env.clone();
-    env.insert("PATH".into(), "/usr/bin:/bin".into());
+    // Match the production Node executable search locations without inheriting
+    // a worker-controlled PATH. The original Relay CLI and Codex are normally
+    // in Homebrew and the user's fixed ~/.local/bin; /usr/bin:/bin alone made
+    // Troubleshooters unable to call the authorized Rust CLI.
+    let home = env
+        .get("HOME")
+        .cloned()
+        .or_else(|| std::env::var("HOME").ok())
+        .ok_or("native Worker HOME is unavailable")?;
+    if !std::path::Path::new(&home).is_absolute() || home.contains(':') {
+        return Err("native Worker HOME must be an absolute path without PATH delimiters".into());
+    }
+    let path = format!("{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
+    env.insert("PATH".into(), path);
     env.insert("RELAY_JOB_ID".into(), id.into());
     env.insert("RELAY_TASK_ID".into(), task_id.into());
     env.insert("RELAY_EXECUTION_ID".into(), execution_id.into());
@@ -248,6 +261,7 @@ pub(super) fn script_spec(
         "jobId":id,"taskId":task_id,"executionId":execution_id,
         "leaseOwner":"rust-native-isolated","adapter":adapter_name,"attempt":attempt,
         "agentName":agent_name,"input":input,"executionContext":context,
+        "reviewHeadSha":task.get("reviewHeadSha").cloned().unwrap_or(Value::Null),
     });
     if adapter.kind == NativeAdapterKind::Model {
         let routing = task.get("routing").ok_or("Model Task missing routing")?;
