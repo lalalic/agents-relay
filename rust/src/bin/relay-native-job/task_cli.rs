@@ -1345,7 +1345,10 @@ fn recover(args: &[String]) -> Result<Value, String> {
         human_response: None,
         task_create: None,
     };
-    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+    if matches!(
+        std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref(),
+        Some("pilot-live" | "canonical-live")
+    ) {
         agents_relay_rust::native_control::request(&db, &request)
     } else {
         agents_relay_rust::native_control::recover_task_isolated(&db, &request)

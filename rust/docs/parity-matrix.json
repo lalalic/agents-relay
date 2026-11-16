@@ -15,13 +15,13 @@
     "verification": "npm run test:verification:l3 rerun 2026-11-16 (full output /tmp/relay-l3-full-20261116.log)"
   },
   "rustVerification": {
-    "total": 179,
-    "passed": 179,
+    "total": 187,
+    "passed": 187,
     "failed": 0,
     "skipped": 0,
     "result": "PASS",
-    "scope": "rust/tests/*.mjs — all current Rust tests, not full Node L3 production equivalence",
-    "note": "Full Rust suite with new Model/Reviewer subprocess tests running; last pre-change full suite 179/179. Original Node L3 remains 12 fails, 1 skip."
+    "scope": "node --test --test-concurrency=1 rust/tests/*.mjs after physical Troubleshooter and socket fixes; add-on reviewed recovery E2E also 2/2 targeted",
+    "note": "187/187 native Rust suite passed before third Reviewer-fault case; focused physical recovery now 3/3. Old Node L3 still 12 failures, one skipped."
   },
   "capabilities": [
     {
@@ -48,6 +48,26 @@
       "capability": "rust-only-global-cli-shim-via-original-Neo-runProject",
       "status": "PASS",
       "evidence": "rust/tests/native-neo-project-foreground-e2e.mjs exercises rust/scripts/agents-relay-native-cli.sh, true Neo Project run, disposable SQLite"
+    },
+    {
+      "capability": "canonical-physical-Final-Reviewer-failure-exact-retry-and-head-bound-reapproval",
+      "status": "PASS",
+      "evidence": "rust/tests/native-l3-real-recovery-e2e.mjs: real Final Reviewer nonzero exit -> Rust numeric Troubleshooter -> exact reviewer Task retried -> structured SHA-matched approved Review -> COMPLETED; no invented approval"
+    },
+    {
+      "capability": "canonical-Task-recovery-control-socket-concurrent-with-running-Worker",
+      "status": "PASS",
+      "evidence": "rust/tests/native-l3-real-recovery-e2e.mjs: daemon-owned authenticated Unix socket must respond during physical Worker and Graph/SQLite transition"
+    },
+    {
+      "capability": "canonical-worker-recovery-with-separate-current-head-Final-Review",
+      "status": "PASS",
+      "evidence": "rust/tests/native-l3-real-recovery-e2e.mjs: real physical failure + recovered original Task + SHA-bound Final Reviewer + Job COMPLETED, no fake approval"
+    },
+    {
+      "capability": "canonical-physical-Task-failure-numeric-Troubleshooter-exact-recovery-and-DAG-completion",
+      "status": "PASS",
+      "evidence": "rust/tests/native-l3-real-recovery-e2e.mjs: real Worker exit 17 -> failed Task 1876 -> recovery 1877 -> original rerun -> completed; canonical Graph + SQLite"
     },
     {
       "capability": "canonical-final-review-structured-verdict-head-fencing-and-job-completion",
@@ -77,7 +97,7 @@
     {
       "capability": "troubleshooter-targeted-revision-and-fault-recovery",
       "status": "FAIL",
-      "evidence": "Node full L3 failures: Planner/Worker/Reviewer, targeted revision and human escalation"
+      "evidence": "Physical Worker or Final Reviewer fault, exact numeric Troubleshooter, full DAG recovery with/without current-head Final Review pass. Planner faults, old Node human escalation, review-to-merge convergence remain unverified."
     },
     {
       "capability": "managed-human-review-changes-requested-and-repeat-approval",

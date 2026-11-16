@@ -250,6 +250,17 @@ pub fn run(args: &[String]) -> Result<(), String> {
         Err(e) if e.contains("already active or lock unavailable") => None,
         Err(e) => return Err(e),
     };
+    // A foreground owner may execute Model/Troubleshooter workers that must
+    // synchronously call the Graph-owned recovery CLI before exiting. Serve
+    // that authenticated request on a separate Rust thread during tick().
+    #[cfg(unix)]
+    let _control = if owner.is_some() {
+        Some(agents_relay_rust::native_daemon::NativeControlLoop::bind(
+            &db,
+        )?)
+    } else {
+        None
+    };
     emit(
         json!({"event":"job.foreground.started","jobId":id,"taskId":task_id,
         "mode":if owner.is_some(){"owner"}else{"attached-read-only"},"reviewEnabled":job["reviewEnabled"]}),

@@ -230,6 +230,16 @@ pub(super) fn script_spec(
     }
     let path = format!("{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
     env.insert("PATH".into(), path);
+    // This is an authority-selected scope, not untrusted manifest input.
+    // A Troubleshooter's real tool loop must be able to call the version-
+    // matched Rust CLI and reach this daemon's authenticated control socket
+    // while its Worker generation is running. Without the mode, tools fell
+    // back to isolated-test and no production recovery was possible.
+    if let Ok(mode) = std::env::var("RELAY_RUST_LIVE_MODE") {
+        if matches!(mode.as_str(), "canonical-live" | "pilot-live") {
+            env.insert("RELAY_RUST_LIVE_MODE".into(), mode);
+        }
+    }
     env.insert("RELAY_JOB_ID".into(), id.into());
     env.insert("RELAY_TASK_ID".into(), task_id.into());
     env.insert("RELAY_EXECUTION_ID".into(), execution_id.into());

@@ -33,6 +33,52 @@ pub struct NativeDaemonOptions {
     pub helper: PathBuf,
     pub max_tasks: usize,
 }
+
+/// Keep the daemon-owned peer-credential-checked Unix control socket alive
+/// while a physical Worker is executing. Polling control only *after* tick()
+/// deadlocked any Troubleshooter calling `task recover` from inside that tick.
+/// The OS daemon lock still guarantees a single owner, and every socket write
+/// goes through the canonical Graph and SQLite IMMEDIATE transaction guards.
+#[cfg(unix)]
+pub struct NativeControlLoop {
+    running: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+#[cfg(unix)]
+impl NativeControlLoop {
+    pub fn bind(db: &Path) -> Result<Self, String> {
+        let server = crate::native_control::NativeControlServer::bind(db)?;
+        let path = db.to_path_buf();
+        let running = Arc::new(AtomicBool::new(true));
+        let flag = Arc::clone(&running);
+        let thread = std::thread::Builder::new()
+            .name("rust-relay-authority-control".into())
+            .spawn(move || {
+                while flag.load(Ordering::SeqCst) {
+                    match server.serve_one(&path) {
+                        Ok(_) => {}
+                        Err(error) => eprintln!("Rust Relay native control: {error}"),
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                // Drop of server securely removes the owned socket path.
+            })
+            .map_err(|e| format!("native control thread: {e}"))?;
+        Ok(Self {
+            running,
+            thread: Some(thread),
+        })
+    }
+}
+#[cfg(unix)]
+impl Drop for NativeControlLoop {
+    fn drop(&mut self) {
+        self.running.store(false, Ordering::SeqCst);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeTick {

@@ -73,6 +73,45 @@ findings, or the native worker rejects it before the Review Graph can decide.
 These checks use simulated external Provider processes; they do not prove
 actual remote model, Rodin, Blender or media operation success.
 
+
+### Physical L3 failure and verified recovery
+
+A canonical Rust Task that physically exits nonzero must first commit the
+Graph-authorized `task.failed` with exact worker identity and durable process
+exit evidence. The *supervised, local* terminal failure frees its expired
+execution generation's lease **only after** the ended process row and exact
+launch postcondition are verified in the same SQLite transaction. Imported
+external receipts without local PID evidence are not granted this cleanup.
+
+An active Rust daemon/foreground owner now serves its authenticated Unix
+control socket concurrently with a running Worker. Previously the socket
+was polled only after a blocking Worker tick; a Troubleshooter calling
+`agents-relay task recover` from that Worker would deadlock. The trusted
+worker receives only the daemon-selected `RELAY_RUST_LIVE_MODE`, not an
+unvalidated manifest override, and the CLI routes canonical recovery to the
+same daemon authority. All recovery writes remain under the original Task
+Resolution and Task Lifecycle Graphs; there is no second scheduler.
+
+After an exact-original retry, the Task retains a durable `resolution` record
+with the successful Troubleshooter execution ID. `local.completed` may count
+that recovery only when the original Task **and** its correctly linked,
+previous-episode Troubleshooter actually succeeded. An active, waiting, stale
+or fabricated resolution cannot satisfy completion. Tests exercise both
+review-disabled and current-Git-HEAD Final Review-required paths with a real
+first Worker exit and an actual second execution, using simulated provider
+responses (never a manufactured completion receipt from the scheduler).
+
+```sh
+node --test rust/tests/native-l3-real-recovery-e2e.mjs
+```
+
+The complete native Rust regression suite passed **187/187 tests**, plus
+**3/3** focused physical failure/recovery cases: Worker failure without
+Review, Worker failure plus current-head Final Review, and a failing Final
+Reviewer itself recovered by the original Troubleshooter protocol. The separate original TypeScript L3 acceptance suite still has
+12 failures. These recovery paths are not proof that all Planner, human
+escalation and multi-round Review scenarios have passed.
+
 The authoritative open L3 capabilities and exact cutover blockers are in
 [`rust/docs/parity-matrix.json`](docs/parity-matrix.json). A passing Rust
 **subtest** does not grant permission to replace the production scheduler or

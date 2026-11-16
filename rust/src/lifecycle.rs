@@ -461,6 +461,30 @@ impl<'g> TaskLifecycle<'g> {
                     params![at,claim.attempt_key,claim.execution_id,claim.attempt],
                 ).map_err(|e|e.to_string())?;
                 if changed!=1{return Err("missing fresh launch Action postcondition in Task transaction".into());}
+                if input.id == "task.failed" && target == "FAILED" && !suppress_outbox {
+                    // The locally supervised worker is physically settled.
+                    // Imported inbound receipts have no local process proof,
+                    // so their execution lease remains conservatively fenced.
+                    // The verified worker is already physically settled:
+                    // finish_script_worker recorded its ended process and the
+                    // correlated claim+outbox receipt passed the Graph and
+                    // exact launch postcondition above. Release this terminal
+                    // generation's lease as a transport lifecycle effect;
+                    // `task.recover` must NEVER act on an actively leased
+                    // failed Task. Preserve executionHistory and the durable
+                    // event/process ledgers for audit and retry fencing.
+                    let ended: Option<String> = tx.query_row(
+                        "SELECT ended_at FROM execution_process WHERE job_id=?1 AND task_id=?2 AND execution_id=?3",
+                        params![job_id,task_id,claim.execution_id],
+                        |row| row.get(0),
+                    ).optional().map_err(|e|e.to_string())?;
+                    if ended.as_deref().is_none_or(str::is_empty) {
+                        return Err("cannot clear a failed Task lease without a verified ended process".into());
+                    }
+                    task["leaseOwner"] = Value::Null;
+                    task["leaseExpiresAt"] = Value::Null;
+                    task["executionId"] = Value::Null;
+                }
             }
             task["state"] = Value::String(target.clone());
             task["updatedAt"] = Value::String(at.into());

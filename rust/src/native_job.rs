@@ -534,6 +534,53 @@ pub fn retry_failed_task(
     Ok(json!({"jobId":job_id,"taskId":task_id,"task":task}))
 }
 
+/// The canonical Task Resolution Graph records a *settled* recovery on the
+/// original Task. That record is durable provenance, not a pending blocker.
+/// Verify both the re-executed original and the exact successful recovery
+/// generation before allowing the ordinary Job completion Graph to decide.
+fn settled_exact_original_recovery(tasks: &[Value], task: &Value) -> bool {
+    let Some(resolution) = task.get("resolution").filter(|r| !r.is_null()) else {
+        return true;
+    };
+    if resolution["state"] != "resolved"
+        || resolution["path"] != "exact_original_retry"
+        || resolution["owner"] != "troubleshooter"
+        || resolution["targetTaskId"] != task["id"]
+        || task["state"] != "SUCCEEDED"
+    {
+        return false;
+    }
+    let Some(execution) = resolution["recoveryExecutionId"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+    else {
+        return false;
+    };
+    let Some(original_id) = task["id"].as_str() else {
+        return false;
+    };
+    let Some(attempt) = task["attempt"].as_i64() else {
+        return false;
+    };
+    tasks.iter().any(|recovery| {
+        recovery["agentName"] == "troubleshooter"
+            && recovery["parentTaskId"] == original_id
+            && recovery["state"] == "SUCCEEDED"
+            && recovery.get("result").is_some_and(|v| !v.is_null())
+            && recovery["recoveryForAttempt"]
+                .as_i64()
+                .is_some_and(|recovered| recovered < attempt)
+            && (recovery["executionId"] == execution
+                || recovery["executionHistory"]
+                    .as_array()
+                    .is_some_and(|history| {
+                        history
+                            .iter()
+                            .any(|generation| generation["id"] == execution)
+                    }))
+    })
+}
+
 fn no_review_completion_ready(job: &Value) -> bool {
     // These are deliberately conservative *facts*. JOB_GRAPH decides the
     // transition. Never infer approval from a worker's exit status.
@@ -558,7 +605,7 @@ fn no_review_completion_ready(job: &Value) -> bool {
     !tasks.is_empty()
         && tasks.iter().all(|t| {
             t["state"] == "SUCCEEDED"
-                && t.get("resolution").is_none_or(|r| r.is_null())
+                && settled_exact_original_recovery(tasks, t)
                 && t.get("interactiveInvocation").is_none_or(|r| r.is_null())
         })
 }
@@ -651,7 +698,7 @@ fn reviewed_local_completion_ready(job: &Value) -> bool {
             continue;
         }
         if task["state"] != "SUCCEEDED"
-            || task.get("resolution").is_some_and(|value| !value.is_null())
+            || !settled_exact_original_recovery(tasks, task)
             || task.get("escalation").is_some_and(|value| !value.is_null())
         {
             return false;
@@ -883,6 +930,57 @@ mod tests {
         default_enabled.as_object_mut().unwrap().remove("autoMerge");
         let (_dir, mut authority) = open_authority(default_enabled);
         assert!(complete_approved_local_job(&mut authority, "91").unwrap());
+    }
+
+    #[test]
+    fn recovered_original_needs_exact_successful_troubleshooter_generation() {
+        let original = json!({
+            "id":"1876","agentName":"designer","state":"SUCCEEDED","attempt":2,
+            "resolution":{"state":"resolved","owner":"troubleshooter",
+                "path":"exact_original_retry","targetTaskId":"1876",
+                "recoveryExecutionId":"recovery-exec-1"}
+        });
+        let recovery = json!({
+            "id":"1877","agentName":"troubleshooter","parentTaskId":"1876",
+            "recoveryForAttempt":1,"state":"SUCCEEDED","executionId":"recovery-exec-1",
+            "result":{"summary":"verified recovery result"}
+        });
+        let tasks = vec![original.clone(), recovery.clone()];
+        assert!(settled_exact_original_recovery(&tasks, &original));
+        let job = json!({"id":"91","repository":"example","state":"ACTIVE",
+            "updatedAt":AT,"reviewEnabled":false,"autoMerge":true,"plans":[],"tasks":tasks});
+        assert!(no_review_completion_ready(&job));
+        let mut forged = job.clone();
+        forged["tasks"][1]["state"] = json!("FAILED");
+        assert!(
+            !no_review_completion_ready(&forged),
+            "a failed Troubleshooter is not verified recovery"
+        );
+        forged = job.clone();
+        forged["tasks"][1]["executionId"] = json!("old-exec");
+        forged["tasks"][1]["executionHistory"] = json!([]);
+        assert!(
+            !no_review_completion_ready(&forged),
+            "an old recovery generation cannot confer completion"
+        );
+        forged = job.clone();
+        forged["tasks"][0]["resolution"]["state"] = json!("waiting");
+        assert!(
+            !no_review_completion_ready(&forged),
+            "an unresolved recovery remains blocking"
+        );
+        forged = job.clone();
+        forged["tasks"][1]["recoveryForAttempt"] = json!(2);
+        assert!(
+            !no_review_completion_ready(&forged),
+            "recovery must be from an earlier failure episode"
+        );
+        forged = job;
+        forged["tasks"][0]["resolution"]["path"] = json!("escalation_gate");
+        assert!(
+            !no_review_completion_ready(&forged),
+            "unverified human escalation cannot be completed"
+        );
     }
 
     #[test]
