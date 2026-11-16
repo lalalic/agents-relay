@@ -11,6 +11,8 @@ mod ledger;
 mod native_job;
 mod native_task;
 mod planner;
+mod planner_children;
+mod planner_request;
 pub use native_job::{NativeCreatedJob, NativeJobSpec, NativeObjectiveJobSpec};
 pub use native_task::{NativeCreatedTask, NativeTaskSpec};
 pub use planner::NativePlannerApply;
@@ -136,6 +138,40 @@ impl RelayAuthority {
             .map_err(|e| e.to_string())?;
         row.map(|json| serde_json::from_str(&json).map_err(|e| e.to_string()))
             .transpose()
+    }
+
+    /// Require that every interactive Task approval is actually recorded in
+    /// the host invocation decision ledger before any irreversible local Git
+    /// merge effect. A Task snapshot's `status: approved` cannot grant rights.
+    pub fn host_approvals_durable(&self, job_id: &str, job: &Value) -> Result<bool, String> {
+        for task in job["tasks"].as_array().ok_or("Job Tasks missing")? {
+            let Some(invocation) = task.get("interactiveInvocation").filter(|v| !v.is_null())
+            else {
+                continue;
+            };
+            if invocation["status"] != "approved" {
+                return Ok(false);
+            }
+            let task_id = task["id"].as_str().ok_or("interactive Task ID missing")?;
+            let invocation_id = invocation["invocationId"]
+                .as_str()
+                .ok_or("interactive invocation ID missing")?;
+            let execution_id = invocation["executionId"]
+                .as_str()
+                .ok_or("interactive execution ID missing")?;
+            let revision = invocation["revision"]
+                .as_str()
+                .ok_or("interactive revision missing")?;
+            let accepted: Option<i64> = self.connection.query_row(
+                "SELECT 1 FROM host_invocation_decision WHERE job_id=?1 AND task_id=?2 AND invocation_id=?3 AND execution_id=?4 AND revision=?5 AND decision='approved'",
+                params![job_id,task_id,invocation_id,execution_id,revision],
+                |row| row.get(0),
+            ).optional().map_err(|e|format!("host approval ledger unavailable: {e}"))?;
+            if accepted != Some(1) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Exposes transaction-scoped mutation to **Graph-authorized** callers;

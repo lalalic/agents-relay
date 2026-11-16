@@ -1014,7 +1014,10 @@ fn resume_troubleshooter(args: &[String]) -> Result<Value, String> {
         human_response: Some(response.to_owned()),
         task_create: None,
     };
-    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+    if matches!(
+        std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref(),
+        Some("pilot-live" | "canonical-live")
+    ) {
         agents_relay_rust::native_control::request(&db, &request)
     } else {
         agents_relay_rust::native_control::resume_troubleshooter_isolated(&db, &request)
@@ -1085,7 +1088,10 @@ fn escalate(args: &[String]) -> Result<Value, String> {
         human_response: None,
         task_create: None,
     };
-    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+    if matches!(
+        std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref(),
+        Some("pilot-live" | "canonical-live")
+    ) {
         agents_relay_rust::native_control::request(&db, &request)
     } else {
         agents_relay_rust::native_control::escalate_task_isolated(&db, &request)

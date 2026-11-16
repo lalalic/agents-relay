@@ -610,24 +610,36 @@ fn no_review_completion_ready(job: &Value) -> bool {
         })
 }
 
+pub(crate) fn reviewed_local_premerge_ready(job: &Value) -> bool {
+    // Exactly the same current-HEAD Review, settled Task, Plan, and recovery
+    // evidence used by local.completed, but without requiring a merge receipt
+    // before the Git effect has physically run. A status bit cannot bypass
+    // any other completion gate.
+    reviewed_local_readiness(job, false)
+}
+
 fn reviewed_local_completion_ready(job: &Value) -> bool {
+    reviewed_local_readiness(job, true)
+}
+
+fn reviewed_local_readiness(job: &Value, receipt_required: bool) -> bool {
     if job["state"] != "ACTIVE"
         || job["reviewEnabled"] == false
         // Match the canonical Node `autoMergeEnabled` fact: omitted/null means
         // enabled, and only an explicit false disables local completion.
         || job["autoMerge"] == false
         || job.get("prNumber").and_then(Value::as_i64).unwrap_or(0) != 0
-        || job.get("localMerge").is_some_and(|value| !value.is_null())
-        || job["tasks"].as_array().is_some_and(|tasks| {
-            tasks.iter().any(|task| {
-                task["kind"] != "planner"
-                    && !matches!(
-                        task["agentName"].as_str(),
-                        Some("job-acceptance-reviewer" | "reviewer" | "troubleshooter")
-                    )
-                    && task["output"]["kind"] == "task_pr"
-            })
-        })
+        || (receipt_required && ((job.get("localMerge").is_some_and(|value| !value.is_null())
+            || job["tasks"].as_array().is_some_and(|tasks| {
+                tasks.iter().any(|task| {
+                    task["kind"] != "planner"
+                        && !matches!(
+                            task["agentName"].as_str(),
+                            Some("job-acceptance-reviewer" | "reviewer" | "troubleshooter")
+                        )
+                        && task["output"]["kind"] == "task_pr"
+                })
+            })) && !crate::local_git::verified_local_merge_receipt(job)))
         || job.get("publication").is_some_and(|value| !value.is_null())
         || job.get("pause").is_some_and(|value| !value.is_null())
     {

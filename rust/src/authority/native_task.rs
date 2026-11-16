@@ -58,7 +58,7 @@ pub struct NativeCreatedTask {
     pub created: bool,
 }
 
-fn validate_spec(spec: &NativeTaskSpec<'_>) -> Result<(), String> {
+pub(super) fn validate_spec(spec: &NativeTaskSpec<'_>) -> Result<(), String> {
     if spec.job_id.is_empty() || spec.job_id.len() > 256 {
         return Err("invalid Job ID".into());
     }
@@ -162,7 +162,7 @@ fn dependencies_satisfied(job: &Value, dependencies: &[String]) -> Result<bool, 
     Ok(satisfied)
 }
 
-fn graph_task_state(task: &mut Value, job: &Value, draft: bool) -> Result<(), String> {
+pub(super) fn graph_task_state(task: &mut Value, job: &Value, draft: bool) -> Result<(), String> {
     if draft {
         return Ok(());
     }
@@ -195,7 +195,7 @@ fn graph_task_state(task: &mut Value, job: &Value, draft: bool) -> Result<(), St
     Ok(())
 }
 
-fn activate_draft_job(job: &mut Value) -> Result<(), String> {
+pub(super) fn activate_draft_job(job: &mut Value) -> Result<(), String> {
     if job["state"] != "DRAFT" {
         return Ok(());
     }
@@ -272,7 +272,7 @@ fn derive_title(input: &str) -> String {
     }
 }
 
-fn task_value(spec: &NativeTaskSpec<'_>, job_id: &str, task_id: &str) -> Value {
+pub(super) fn task_value(spec: &NativeTaskSpec<'_>, job_id: &str, task_id: &str) -> Value {
     let title = spec
         .title
         .map(str::trim)

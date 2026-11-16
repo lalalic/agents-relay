@@ -185,6 +185,72 @@ pub fn verified_local_head(repo: &Path) -> Result<String, String> {
     }
 }
 
+/// Read-only proof of a native local merge. A persisted `status=succeeded`
+/// flag by itself is insufficient to authorize Job completion: the actual
+/// Git source ref, target ref, merge commit parents and current Reviewer head
+/// must match the exact stored delivery receipt, or completion fails closed.
+pub fn verified_local_merge_receipt(job: &serde_json::Value) -> bool {
+    use std::process::Command;
+    let merge = &job["localMerge"];
+    if merge["status"] != "succeeded"
+        || merge["targetRef"] != "refs/heads/main"
+        || !merge["sourceRef"].as_str().is_some_and(ref_name_is_safe)
+        || merge["sourceRef"] == merge["targetRef"]
+        || merge["sourceSha"] != job["headSha"]
+        || merge["sourceSha"] != job["review"]["headSha"]
+    {
+        return false;
+    }
+    let Some(project) = job["projectRoot"].as_str() else {
+        return false;
+    };
+    let Some(source_ref) = merge["sourceRef"].as_str() else {
+        return false;
+    };
+    let Some(source_sha) = merge["sourceSha"].as_str().filter(|s| valid_sha(s)) else {
+        return false;
+    };
+    let Some(merged) = merge["mergedCommitSha"].as_str().filter(|s| valid_sha(s)) else {
+        return false;
+    };
+    let Some(parent) = merge["previousTargetSha"].as_str().filter(|s| valid_sha(s)) else {
+        return false;
+    };
+    let repo = Path::new(project);
+    let read = |args: &[&str]| -> Option<String> {
+        let out = Command::new("/usr/bin/git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .ok()?;
+        (out.status.success() && out.stdout.len() <= 1024 * 1024)
+            .then(|| String::from_utf8(out.stdout).ok())
+            .flatten()
+            .map(|s| s.trim().to_owned())
+    };
+    if read(&["rev-parse", "--verify", source_ref]).as_deref() != Some(source_sha)
+        || read(&["rev-parse", "--verify", "refs/heads/main"]).as_deref() != Some(merged)
+        || merge["projectionStrategy"] != "target_ref_push"
+    {
+        return false;
+    }
+    let expected = format!("{merged} {parent} {source_sha}");
+    if read(&["rev-list", "--parents", "-n", "1", merged]).as_deref() != Some(expected.as_str()) {
+        return false;
+    }
+    let Some(message) = read(&["show", "-s", "--format=%B", merged]) else {
+        return false;
+    };
+    let Some(job_id) = job["id"].as_str() else {
+        return false;
+    };
+    message.starts_with("Agents Relay local merge")
+        && message.contains(&format!("Agents-Relay-Source-SHA: {source_sha}"))
+        && message.contains(&format!("Agents-Relay-Job: {job_id}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

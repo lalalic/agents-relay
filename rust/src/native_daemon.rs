@@ -4,6 +4,8 @@
 //! backend from ever racing the production TypeScript daemon.
 mod adapter;
 mod dag;
+mod local_merge;
+mod planner;
 mod review;
 mod troubleshooter;
 use crate::authority::{probe_process, RelayAuthority, ScriptClaimRequest};
@@ -92,6 +94,9 @@ pub struct NativeTick {
     pub troubleshooters_created: usize,
     pub reviews_resumed: usize,
     pub review_revision_routes: usize,
+    pub planner_routes_bound: usize,
+    pub local_merges_succeeded: usize,
+    pub local_merges_failed: usize,
     pub review_results_applied: usize,
     pub reviews_queued: usize,
     pub jobs_completed: usize,
@@ -378,9 +383,10 @@ pub(crate) fn tick_with_stop(
             &after_time(job["updatedAt"].as_str().ok_or("Job timestamp missing")?)?,
         )?;
         report.tasks_queued += changed.len();
+        planner::reconcile_planner_routes(&mut authority, &id, &agents, &mut report)?;
         job = authority
             .read_job(&id)?
-            .ok_or("Job lost after dependency reconciliation")?;
+            .ok_or("Job lost after Planner routing")?;
         let mut launches = Vec::new();
         for task in job["tasks"].as_array().ok_or("Job Tasks invalid")? {
             let Some(task_id) = task["id"].as_str() else {
@@ -565,6 +571,13 @@ pub(crate) fn tick_with_stop(
             report
                 .blocked
                 .push(format!("{id}: Final Review scheduling failed: {error}"));
+        }
+        if let Err(error) =
+            local_merge::reconcile_local_merge(&mut authority, &id, &root, &mut report)
+        {
+            report
+                .blocked
+                .push(format!("{id}: local merge delivery blocked: {error}"));
         }
         if complete_approved_local_job(&mut authority, &id)?
             || complete_no_review_job(&mut authority, &id)?

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,writeFileSync,rmSync,existsSync,chmodSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,rmSync,existsSync,chmodSync,realpathSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {spawn,spawnSync} from 'node:child_process';
@@ -265,5 +265,84 @@ test('Live task escalate uses daemon-owned socket and keeps pending human gate a
   assert.equal(restored.escalation.status,'responded');
   assert.equal(restored.escalation.response,'Operator response through private Rust socket');
   assert.equal(events(db).length,3);
+ }finally{await stop();rmSync(home,{recursive:true,force:true});}
+});
+
+
+test('canonical SQLite human escalation: durable pending gate, daemon restart, exact explicit response over Rust-only Unix socket',async()=>{
+ const home=realpathSync(mkdtempSync('/tmp/rr-esc-canonical-'));
+ const root=join(home,'.local/state/agents-relay/canonical-rust');
+ const store=join(home,'.agents-relay');
+ const project=join(home,'Workspace/neo/escalation-project');
+ for(const folder of [root,store,project,join(home,'.config/neo')])mkdirSync(folder,{recursive:true});
+ chmodSync(root,0o700);
+ writeFileSync(join(root,'.canonical-relay-owner-v1'),'canonical-rust-operator-approved-v1\n');
+ writeFileSync(join(home,'.config/neo/workspace.json'),JSON.stringify({schemaVersion:1,neoRoot:join(home,'Workspace/neo')}));
+ assert.equal(spawnSync('git',['-C',project,'init','-q'],{encoding:'utf8'}).status,0);
+ writeFileSync(join(root,'manifest.json'),JSON.stringify({agents:{}}));
+ const db=join(store,'relay.sqlite');
+ const sql=new DatabaseSync(db);
+ sql.exec(`PRAGMA journal_mode=WAL;
+ CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL);
+ CREATE TABLE source_registry(job_id TEXT PRIMARY KEY,source_file TEXT NOT NULL UNIQUE,repository TEXT NOT NULL,pr_number INTEGER NOT NULL);
+ CREATE TABLE relay_meta(scope_job_id TEXT NOT NULL REFERENCES source_registry(job_id),key TEXT,value TEXT,PRIMARY KEY(scope_job_id,key));
+ CREATE TABLE sequences(repository TEXT,kind TEXT,value INTEGER,PRIMARY KEY(repository,kind));
+ INSERT INTO sequences VALUES('*','job',632);
+ INSERT INTO sequences VALUES('*','task',1873);`);
+ sql.close();chmodSync(db,0o600);
+ const env={...process.env,HOME:home,RELAY_RUST_LIVE_MODE:'canonical-live',RELAY_RUST_EXPERIMENTAL_TEST_ONLY:''};
+ const f={db,id:'633',repo:'escalation-project',original:'1874',recovery:'1875',root:home};
+ let child;
+ const socket=join(root,'.rc.sock');
+ function launch(){
+  const p=spawn(daemon,['--loop','--db',db,'--manifest',join(root,'manifest.json'),
+   '--helper',helper,'--interval-ms','100'],{env,stdio:['ignore','pipe','pipe']});
+  p.err='';p.stderr.on('data',data=>p.err+=data);return p;
+ }
+ async function ready(){
+  for(let i=0;i<120;i++){
+   if(existsSync(socket))return;
+   if(child.exitCode!==null)throw Error('canonical daemon exited: '+child.err);
+   await delay(25);
+  }
+  throw Error('canonical control socket not started');
+ }
+ async function stop(){
+  if(!child||child.exitCode!==null)return;
+  child.kill('SIGTERM');
+  await Promise.race([new Promise(ok=>child.once('exit',ok)),delay(3000)]);
+  if(child.exitCode===null){child.kill('SIGKILL');await new Promise(ok=>child.once('exit',ok));}
+ }
+ try{
+  assert.match(run(env,request(f),2),/control socket unavailable/);
+  child=launch();await ready();
+  const created=run(env,['job','create','--db',db,'--id',f.id,'--repo',f.repo,
+   '--objective','Escalate an actual failed Task and require human evidence',
+   '--project-root',project,'--no-review']);
+  assert.equal(created.created,true);
+  await stop();child=null;
+  const job=seed(load(db,f.id),f);job.state='DRAFT';save(db,job);
+  child=launch();await ready();
+  const requested=run(env,request(f));
+  assert.equal(requested.state,'BLOCKED');
+  assert.equal(requested.escalation.status,'pending');
+  assert.equal(requested.escalation.response,undefined);
+  assert.equal(load(db,f.id).tasks[0].state,'FAILED');
+  assert.deepEqual(events(db).map(e=>e.type).sort(),['escalation.requested','task.blocked']);
+  await stop();child=null;
+  child=launch();await ready();
+  assert.equal(load(db,f.id).tasks[1].escalation.status,'pending');
+  const restored=run(env,['task','resume-troubleshooter','--db',db,'--id',f.id,'--repo',f.repo,
+    '--task-id',f.recovery,'--response','Human operator explicitly authorized corrective evidence']);
+  assert.equal(restored.state,'QUEUED');
+  assert.equal(restored.escalation.status,'responded');
+  assert.equal(load(db,f.id).tasks[0].state,'FAILED');
+  assert.deepEqual(events(db).map(e=>e.type).sort(),['escalation.requested','task.blocked','task.unblocked']);
+  assert.match(run(env,['task','resume-troubleshooter','--db',db,'--id',f.id,'--repo',f.repo,
+    '--task-id',f.recovery,'--response','Replay same response'],2),/not a blocked pending/);
+  const check=new DatabaseSync(db);
+  assert.equal(check.prepare('SELECT repository FROM source_registry WHERE job_id=?').get(f.id).repository,f.repo);
+  assert.equal(check.prepare('PRAGMA quick_check').get().quick_check,'ok');
+  check.close();
  }finally{await stop();rmSync(home,{recursive:true,force:true});}
 });

@@ -15,13 +15,13 @@
     "verification": "npm run test:verification:l3 rerun 2026-11-16 (full output /tmp/relay-l3-full-20261116.log)"
   },
   "rustVerification": {
-    "total": 187,
-    "passed": 187,
+    "total": 197,
+    "passed": 197,
     "failed": 0,
     "skipped": 0,
     "result": "PASS",
-    "scope": "node --test --test-concurrency=1 rust/tests/*.mjs after physical Troubleshooter and socket fixes; add-on reviewed recovery E2E also 2/2 targeted",
-    "note": "187/187 native Rust suite passed before third Reviewer-fault case; focused physical recovery now 3/3. Old Node L3 still 12 failures, one skipped."
+    "scope": "node --test --test-concurrency=1 rust/tests/*.mjs from isolated staged source tree: 197/197; 116/116 Rust library unit; Clippy -D warnings clean",
+    "note": "This validates the native Rust suite, including new Planner/human/review/local-merge tests. The original Node L3 baseline still has 12 failing and one skipped cases; automatic Planner model execution and GitHub PR delivery remain separate."
   },
   "capabilities": [
     {
@@ -53,6 +53,31 @@
       "capability": "canonical-physical-Final-Reviewer-failure-exact-retry-and-head-bound-reapproval",
       "status": "PASS",
       "evidence": "rust/tests/native-l3-real-recovery-e2e.mjs: real Final Reviewer nonzero exit -> Rust numeric Troubleshooter -> exact reviewer Task retried -> structured SHA-matched approved Review -> COMPLETED; no invented approval"
+    },
+    {
+      "capability": "rust-local-git-conflict-backoff-retry-and-host-approval-ledger-gate",
+      "status": "PASS",
+      "evidence": "rust/tests/native-l3-local-git-merge-e2e.mjs: real merge conflict on checked-out/unoccupied main, local Git merge abort with source/Job identity validation, exp backoff, corrected retry and outbox, forged host approval denied; OS advisory lock releases on process crash"
+    },
+    {
+      "capability": "rust-local-git-merge-checked-out-or-unoccupied-target-verified-parentage",
+      "status": "PASS",
+      "evidence": "rust/tests/native-l3-local-git-merge-e2e.mjs: real no-ff Git merge, source/target SHA parentage, Graph authorization, SQLite Outbox events and Job COMPLETED"
+    },
+    {
+      "capability": "rust-changes-required-review-plan-physical-fix-new-head-rereview-and-local-completion",
+      "status": "PASS",
+      "evidence": "rust/tests/native-l3-review-revision-merge-e2e.mjs: first Final Reviewer changes_required -> Review-triggered Plan -> global fixer Task -> actual Git commit new SHA -> second Reviewer approved -> real local Git no-ff merge into main with exact parents -> SQLite outbox -> Job COMPLETED"
+    },
+    {
+      "capability": "rust-canonical-human-escalation-explicit-response-after-daemon-restart",
+      "status": "PASS",
+      "evidence": "rust/tests/native-cli-task-escalate-e2e.mjs: canonical SQLite, real daemon Unix socket, pending human gate across restart, explicit human response, immutable original failure and durable outbox"
+    },
+    {
+      "capability": "rust-manual-multi-round-planner-global-task-ids-and-dependency-dag",
+      "status": "PASS",
+      "evidence": "rust/tests/native-cli-planner-e2e.mjs: plan-1 in_progress two real allocated children with DAG; plan-2 satisfied; exact execution idempotency; stale execution rejected"
     },
     {
       "capability": "canonical-Task-recovery-control-socket-concurrent-with-running-Worker",
@@ -92,12 +117,12 @@
     {
       "capability": "native-planner-rounds-and-final-review",
       "status": "FAIL",
-      "evidence": "Node full L3 failure: L3 objective-only Final Review; Rust full parity not proven"
+      "evidence": "Manual Planner request/apply rounds and review-triggered corrective Plan now PASS; fully autonomous Planner provider and original Node 12-case parity remain unproven."
     },
     {
       "capability": "troubleshooter-targeted-revision-and-fault-recovery",
       "status": "FAIL",
-      "evidence": "Physical Worker or Final Reviewer fault, exact numeric Troubleshooter, full DAG recovery with/without current-head Final Review pass. Planner faults, old Node human escalation, review-to-merge convergence remain unverified."
+      "evidence": "Physical Task and Final Reviewer fault/recovery and canonical human escalation PASS; exact older Node synthetic targeted-revision tests still fail due non-Relay Task IDs."
     },
     {
       "capability": "managed-human-review-changes-requested-and-repeat-approval",
@@ -122,7 +147,7 @@
     {
       "capability": "production-cutover-no-dual-writer-and-rollback",
       "status": "NOT_RUN",
-      "evidence": "Only real DB online backup has been written; production unchanged"
+      "evidence": "Rust CLI/Daemon/Dashboard deployed to canonical SQLite with verified 460 historical Jobs and health; formal crash/rollback live exercise remains unverified."
     }
   ],
   "convergencePlan": [

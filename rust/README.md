@@ -105,12 +105,69 @@ responses (never a manufactured completion receipt from the scheduler).
 node --test rust/tests/native-l3-real-recovery-e2e.mjs
 ```
 
-The complete native Rust regression suite passed **187/187 tests**, plus
+The native Rust suite passed **197/197 tests** in the isolated staged-source
+regression run, alongside **116/116** Rust library unit tests and zero Clippy
+warnings, plus
 **3/3** focused physical failure/recovery cases: Worker failure without
 Review, Worker failure plus current-head Final Review, and a failing Final
 Reviewer itself recovered by the original Troubleshooter protocol. The separate original TypeScript L3 acceptance suite still has
 12 failures. These recovery paths are not proof that all Planner, human
 escalation and multi-round Review scenarios have passed.
+
+### Native Planner, human escalation, Review revision and local merge parity
+
+The original Node.js client and `src/` remain unchanged. The native Rust
+Planner now implements an explicit `plan request` (including the original
+`planner-trigger.mmd` Review trigger) and `plan apply` with `objective_status`
+`in_progress` and real child `next_tasks`. A single SQLite IMMEDIATE
+transaction binds the exact Planner generation, allocates globally ordered
+Task IDs, replaces temporary aliases in the dependency DAG, stores the
+Plan/Task provenance, and commits the original Plan Apply Graph effect.
+A second request is idempotent while the same Plan is PLANNING, and a new
+round cannot be created until previous implementation work is terminal.
+The provider still needs to supply the structured Plan candidate through
+`plan apply` (automatic Planner-provider execution remains a separate gate).
+
+Rust's daemon binds planned Model Tasks to a **trusted manifest-selected**
+provider/worker after verifying that the Task ID appears in the successful
+Plan's generatedTaskIds, with matching round and source. A Planner may never
+forge its own route. The native Review revision E2E exercises
+`changes_required -> Review-triggered Plan -> physical corrected file and Git
+commit -> different SHA -> new Final Reviewer -> approved -> real merge into main
+-> Job COMPLETED`
+without manufacturing a Review decision.
+
+Canonical human escalation and explicit `resume-troubleshooter` now use the
+same daemon-owned authenticated Unix socket in `canonical-live` as in pilot.
+The pending gate survives daemon restart; human action never silently
+completes the original failed Task.
+
+For configured `localMerge`, Rust now executes real Git `merge-tree`/
+`commit-tree`/CAS update of an unoccupied target or `git merge --no-ff` for
+a checked-out clean main worktree. The original Job Lifecycle Graph must
+select `effect.deliverLocalMerge`; `refs/heads/main`, the reviewed source SHA,
+exact Git merge parentage, host approvals in the durable decision ledger,
+and a committed successful receipt must all match before the Job transitions
+to COMPLETED. Git conflicts write `job.merge.failed` to the transactional
+SQLite Outbox with bounded backoff, clean up **only this Job's** identifiable
+in-progress merge, and permit retry after a real corrective Git commit. A trusted OS advisory
+file lock, rather than a persistent mkdir lock, automatically releases after
+process death, while Git CAS retains the exact target-ref fencing.
+The new Rust tests cover both checked-out and unoccupied `main`, conflict
+cleanup and retry, and forged human approvals. **This is local Git merge, not
+a GitHub PR merge.**
+
+```sh
+node --test rust/tests/native-cli-planner-e2e.mjs
+node --test rust/tests/native-cli-task-escalate-e2e.mjs
+node --test rust/tests/native-l3-review-revision-merge-e2e.mjs
+node --test rust/tests/native-l3-local-git-merge-e2e.mjs
+```
+
+The existing 78-case Node L3 suite still has 12 failing older scenarios,
+and the native automatic Planner Model provider, GitHub PR delivery, and
+some managed human/production-provider paths are not yet accepted. Never
+turn these gaps into fake Task IDs, approvals, merge receipts or test PASSes.
 
 The authoritative open L3 capabilities and exact cutover blockers are in
 [`rust/docs/parity-matrix.json`](docs/parity-matrix.json). A passing Rust

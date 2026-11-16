@@ -62,6 +62,42 @@ fn verify_repo(job: &Value, repo: Option<&String>) -> Result<(), String> {
         Ok(())
     }
 }
+fn plan_request(args: &[String]) -> Result<Value, String> {
+    let o = options(
+        args,
+        &[
+            "--db",
+            "--id",
+            "--job-id",
+            "--repo",
+            "--prompt",
+            "--trigger",
+        ],
+    )?;
+    let (db, id, repo) = identity(&o)?;
+    let mut authority = RelayAuthority::open_existing(&db)?;
+    let job = authority.read_job(&id)?.ok_or("Unknown Planner Job")?;
+    verify_repo(&job, repo.as_ref())?;
+    let trigger = o.get("--trigger").map(String::as_str).unwrap_or("manual");
+    if !matches!(trigger, "manual" | "review") {
+        return Err("Planner --trigger must be manual or review".into());
+    }
+    if trigger == "review"
+        && (job["review"]["outcome"] != "changes_required"
+            || job["review"]["taskId"].as_str().is_none_or(str::is_empty))
+    {
+        return Err(
+            "Review-triggered Plan requires current durable changes_required findings".into(),
+        );
+    }
+    let at = after_time(job["updatedAt"].as_str().ok_or("Job timestamp missing")?)?;
+    authority.request_native_plan(
+        &id,
+        o.get("--prompt").map(String::as_str),
+        trigger == "manual",
+        &at,
+    )
+}
 fn plan_context(args: &[String]) -> Result<Value, String> {
     let o = options(
         args,
@@ -154,7 +190,11 @@ fn plan_apply(args: &[String]) -> Result<Value, String> {
         .ok_or_else(|| format!("Unknown Job {id}"))?;
     verify_repo(&job, repo.as_ref())?;
     let at = after_time(job["updatedAt"].as_str().ok_or("Job timestamp missing")?)?;
-    let result = authority.apply_native_satisfied_plan(&id, plan, execution, &proposal, &at)?;
+    let result = if proposal["objective_status"] == "in_progress" {
+        authority.apply_native_child_plan(&id, plan, execution, &proposal, &at)?
+    } else {
+        authority.apply_native_satisfied_plan(&id, plan, execution, &proposal, &at)?
+    };
     serde_json::to_value(result).map_err(|e| e.to_string())
 }
 fn reconcile(args: &[String]) -> Result<Value, String> {
@@ -186,8 +226,8 @@ fn reconcile(args: &[String]) -> Result<Value, String> {
 }
 pub fn dispatch(command: &str, action: Option<&str>, args: &[String]) -> Result<Value, String> {
     match(command,action){
-    ("reconcile",_)=>reconcile(args), ("plan",Some("context"))=>plan_context(args), ("plan",Some("apply"))=>plan_apply(args),
-    ("plan",None)=>Err("native plan invocation is unavailable: no configured native Planner provider or durable Planner lease adapter; use plan context and plan apply with a matching active execution".into()),
+    ("reconcile",_)=>reconcile(args), ("plan",Some("context"))=>plan_context(args), ("plan",Some("apply"))=>plan_apply(args), ("plan",Some("request"))=>plan_request(args),
+    ("plan",None)=>plan_request(args),
     ("record",_)=>Err("native record backfill is unavailable: no evidence-verification and ownership action is implemented; no history was changed".into()),
     ("serve",_)=>Err("serve is not ported: use the separately supervised relay-native-daemon with an isolated store".into()),
     _=>Err("unsupported native Planner/lifecycle command".into())}
