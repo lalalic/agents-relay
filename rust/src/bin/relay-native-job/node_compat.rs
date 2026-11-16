@@ -13,6 +13,8 @@ Usage: relay-native-job <command> [options]\n\
   task list --id JOB [--repo REPO] [--db SQLITE]\n\
   task show --id JOB --task-id TASK [--repo REPO] [--db SQLITE]\n\
   task comment --db SQLITE --id JOB --repo REPO --task-id TASK (--message TEXT | --message-file FILE|-)\n\
+  task retry --db SQLITE --id JOB --repo REPO --task-id INACTIVE_FAILED\n\
+  task cancel --db SQLITE --id JOB --repo REPO --task-id UNLEASED --reason EXPLANATION\n\
   task resume-troubleshooter --db SQLITE --id JOB --repo REPO --task-id BLOCKED --response HUMAN_RESPONSE
 \
   task escalate --db SQLITE --id JOB --repo REPO --task-id TROUBLESHOOTER --required-action ACTION --resolution-condition CONDITION --context DETAILS\n\

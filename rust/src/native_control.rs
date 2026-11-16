@@ -1396,9 +1396,116 @@ pub fn resume_troubleshooter_isolated(
     dispatch_task_resume_troubleshooter(db, request)
 }
 
+/// Reuse the existing canonical Task lifecycle cancellation reducer. The
+/// daemon already owns the lifetime SQLite lock; the CLI never opens a second
+/// production writer. RUNNING, leased and DAG-owned Tasks remain fail-closed.
+fn dispatch_task_cancel(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if request.changes.is_some()
+        || request.message.is_some()
+        || request.recovery_task_id.is_some()
+        || request.diagnosis.is_some()
+        || request.classification.is_some()
+        || request.escalation.is_some()
+        || request.human_response.is_some()
+        || !request.title.is_empty()
+        || !request.objective.is_empty()
+        || !request.project_root.is_empty()
+        || request.project_path.is_some()
+        || !request.priority.is_empty()
+        || request.review_enabled
+        || request.auto_merge
+    {
+        return Err("task.cancel accepts only Task ID and cancellation reason".into());
+    }
+    if request.id.trim().is_empty()
+        || request.id.len() > 128
+        || request.repository.trim().is_empty()
+        || request.repository.len() > 500
+    {
+        return Err("task.cancel requires exact Job ID and repository".into());
+    }
+    let task_id = request
+        .task_id
+        .as_deref()
+        .filter(|s| !s.trim().is_empty() && s.len() <= 128)
+        .ok_or("task cancel requires --task-id")?;
+    let reason = request
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && s.len() <= 2048)
+        .ok_or("task cancel requires nonempty --reason of at most 2048 bytes")?;
+    let mut authority = RelayAuthority::open_existing(db)?;
+    let prior = authority.read_job(&request.id)?.ok_or("unknown Job")?;
+    if prior["repository"].as_str() != Some(request.repository.as_str()) {
+        return Err("repository identity mismatch".into());
+    }
+    crate::native_job::cancel_queued_task(&mut authority, &request.id, task_id, reason)
+}
+pub fn cancel_task_isolated(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        return Err("production Task cancellation requires daemon-owned control".into());
+    }
+    isolated_store_root(db)?;
+    dispatch_task_cancel(db, request)
+}
+
+/// Reuse the same canonical Graph retry reducer in the daemon single writer.
+fn dispatch_task_retry(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if request.changes.is_some()
+        || request.reason.is_some()
+        || request.message.is_some()
+        || request.recovery_task_id.is_some()
+        || request.diagnosis.is_some()
+        || request.classification.is_some()
+        || request.escalation.is_some()
+        || request.human_response.is_some()
+        || !request.title.is_empty()
+        || !request.objective.is_empty()
+        || !request.project_root.is_empty()
+        || request.project_path.is_some()
+        || !request.priority.is_empty()
+        || request.review_enabled
+        || request.auto_merge
+    {
+        return Err("task.retry accepts only Task ID and repository".into());
+    }
+    if request.id.trim().is_empty()
+        || request.id.len() > 128
+        || request.repository.trim().is_empty()
+        || request.repository.len() > 500
+    {
+        return Err("task.retry requires exact Job ID and repository".into());
+    }
+    let task_id = request
+        .task_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty() && id.len() <= 128)
+        .ok_or("task retry requires --task-id")?;
+    let mut authority = RelayAuthority::open_existing(db)?;
+    let previous = authority.read_job(&request.id)?.ok_or("unknown Job")?;
+    if previous["repository"].as_str() != Some(request.repository.as_str()) {
+        return Err("repository identity mismatch".into());
+    }
+    crate::native_job::retry_failed_task(&mut authority, &request.id, task_id)
+}
+pub fn retry_task_isolated(db: &Path, request: &ControlRequest) -> Result<Value, String> {
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        return Err("production Task retry requires daemon-owned control".into());
+    }
+    isolated_store_root(db)?;
+    dispatch_task_retry(db, request)
+}
+
 fn dispatch(db: &Path, request: ControlRequest) -> Result<Value, String> {
     if request.version != 1 {
         return Err("unsupported native control version".into());
+    }
+    if request.operation == "task.retry" {
+        return dispatch_task_retry(db, &request);
+    }
+    if request.operation == "task.cancel" {
+        return dispatch_task_cancel(db, &request);
     }
     if request.operation == "task.resume-troubleshooter" {
         return dispatch_task_resume_troubleshooter(db, &request);

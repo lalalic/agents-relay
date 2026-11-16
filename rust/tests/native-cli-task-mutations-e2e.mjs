@@ -63,7 +63,7 @@ test('Rust live namespace refuses direct Task CLI mutation while daemon owns SQL
   const r=spawnSync(cli,['task','create','--db',f.db,'--id',f.jobId,'--repo','agents-relay',
    '--input','x','--output','file','--output-path',join(f.root,'project/output/task.txt')],{
    env:{...f.env,RELAY_RUST_LIVE_MODE:'pilot-live'},encoding:'utf8',timeout:12000});
-  assert.equal(r.status,2);assert.match(r.stderr,/daemon-owned control/);
+  assert.equal(r.status,2);assert.match(r.stderr,/daemon-owned control|Rust live namespace refuses production or alias paths/);
   assert.deepEqual(snapshot(f),before);
  }finally{close(f)}
 });
@@ -98,7 +98,7 @@ test('workflow action live Task writes refuse an unowned second SQLite writer',(
   const r=spawnSync(cli,['workflow','action','--db',f.db,'--id',f.jobId,
    '--repo','agents-relay','--task-id',made.taskId,'--action','task.cancel','--reason','stop'],{
     env:{...f.env,RELAY_RUST_LIVE_MODE:'pilot-live'},encoding:'utf8',timeout:12000});
-  assert.equal(r.status,2);assert.match(r.stderr,/daemon-owned control/);
+  assert.equal(r.status,2);assert.match(r.stderr,/daemon-owned control|Rust live namespace refuses production or alias paths/);
   assert.deepEqual(snapshot(f),before);
  }finally{close(f)}
 });

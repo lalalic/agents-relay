@@ -783,6 +783,111 @@ fn unblock(args: &[String]) -> Result<Value, String> {
     })?;
     result(&c.job, tid)
 }
+fn retry_live_or_isolated(args: &[String]) -> Result<Value, String> {
+    let options = parse(
+        args,
+        &["--db", "--id", "--job-id", "--repo", "--task-id"],
+        &[],
+    )?;
+    let (db, id) = identify(&options)?;
+    let task_id = options
+        .get("--task-id")
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("task retry requires --task-id")?;
+    if std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live") {
+        let repo = options
+            .get("--repo")
+            .filter(|s| !s.trim().is_empty())
+            .ok_or("production task retry requires --repo")?;
+        let request = agents_relay_rust::native_control::ControlRequest {
+            version: 1,
+            operation: "task.retry".into(),
+            repository: repo.clone(),
+            id,
+            title: String::new(),
+            objective: String::new(),
+            project_root: String::new(),
+            project_path: None,
+            priority: String::new(),
+            review_enabled: false,
+            auto_merge: false,
+            changes: None,
+            reason: None,
+            task_id: Some(task_id.clone()),
+            message: None,
+            recovery_task_id: None,
+            diagnosis: None,
+            classification: None,
+            escalation: None,
+            human_response: None,
+        };
+        agents_relay_rust::native_control::request(&db, &request)
+    } else {
+        let mut authority = RelayAuthority::open_existing(&db)?;
+        verify_job(&authority, &id, options.get("--repo"))?;
+        retry_failed_task(&mut authority, &id, task_id)
+    }
+}
+
+fn cancel_live_or_isolated(args: &[String]) -> Result<Value, String> {
+    let options = parse(
+        args,
+        &[
+            "--db",
+            "--id",
+            "--job-id",
+            "--repo",
+            "--task-id",
+            "--reason",
+        ],
+        &[],
+    )?;
+    let (db, id) = identify(&options)?;
+    let task_id = options
+        .get("--task-id")
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("task cancel requires --task-id")?;
+    let reason = options
+        .get("--reason")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty() && s.len() <= 2048)
+        .ok_or("task cancel requires nonempty --reason of at most 2048 bytes")?;
+    let live = std::env::var("RELAY_RUST_LIVE_MODE").ok().as_deref() == Some("pilot-live");
+    if live {
+        let repo = options
+            .get("--repo")
+            .filter(|s| !s.trim().is_empty())
+            .ok_or("production task cancel requires --repo")?;
+        let request = agents_relay_rust::native_control::ControlRequest {
+            version: 1,
+            operation: "task.cancel".into(),
+            repository: repo.clone(),
+            id,
+            title: String::new(),
+            objective: String::new(),
+            project_root: String::new(),
+            project_path: None,
+            priority: String::new(),
+            review_enabled: false,
+            auto_merge: false,
+            changes: None,
+            reason: Some(reason.into()),
+            task_id: Some(task_id.clone()),
+            message: None,
+            recovery_task_id: None,
+            diagnosis: None,
+            classification: None,
+            escalation: None,
+            human_response: None,
+        };
+        agents_relay_rust::native_control::request(&db, &request)
+    } else {
+        let mut authority = RelayAuthority::open_existing(&db)?;
+        verify_job(&authority, &id, options.get("--repo"))?;
+        cancel_queued_task(&mut authority, &id, task_id, reason)
+    }
+}
+
 fn resume_troubleshooter(args: &[String]) -> Result<Value, String> {
     let options = parse(
         args,
@@ -1245,6 +1350,12 @@ fn comment(args: &[String]) -> Result<Value, String> {
 }
 
 pub fn run(args: &[String]) -> Result<Value, String> {
+    if args.get(1).is_some_and(|action| action == "retry") {
+        return retry_live_or_isolated(args);
+    }
+    if args.get(1).is_some_and(|action| action == "cancel") {
+        return cancel_live_or_isolated(args);
+    }
     if args
         .get(1)
         .is_some_and(|action| action == "resume-troubleshooter")
