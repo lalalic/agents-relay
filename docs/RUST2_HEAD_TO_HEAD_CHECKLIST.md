@@ -80,7 +80,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/execution-recovery.ts` | `rust/src/execution_recovery.rs` | PENDING | — |
 | `src/execution-routing.ts` | `rust/src/execution_routing.rs` | PENDING | — |
 | `src/feedback.ts` | `rust/src/feedback.rs` | PENDING | — |
-| `src/final-review-role.ts` | `rust/src/final_review_role.rs` | PENDING | — |
+| `src/final-review-role.ts` | `rust/src/final_review_role.rs` | PASS | 587 shared differential fixtures across 7 ports; Rust native tests 8/8; Node focused regression 18/18; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/force-restate-validation.ts` | `rust/src/force_restate_validation.rs` | PENDING | — |
 | `src/force-restate.ts` | `rust/src/force_restate.rs` | PENDING | — |
 | `src/github-auth.ts` | `rust/src/github_auth.rs` | PENDING | — |
@@ -96,7 +96,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/interactive-request.ts` | `rust/src/interactive_request.rs` | PENDING | — |
 | `src/interactive-resume.ts` | `rust/src/interactive_resume.rs` | PENDING | — |
 | `src/job-actions.ts` | `rust/src/job_actions.rs` | PENDING | — |
-| `src/job-execution-slot.ts` | `rust/src/job_execution_slot.rs` | PENDING | — |
+| `src/job-execution-slot.ts` | `rust/src/job_execution_slot.rs` | PASS | 587 shared differential fixtures across 7 ports; Rust native tests 8/8; Node focused regression 18/18; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/job-local-repository-migration.ts` | `rust/src/job_local_repository_migration.rs` | PENDING | — |
 | `src/job-pause.ts` | `rust/src/job_pause.rs` | PENDING | — |
 | `src/job-pr-number-migration.ts` | `rust/src/job_pr_number_migration.rs` | PENDING | — |
@@ -123,7 +123,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/outcome-review.ts` | `rust/src/outcome_review.rs` | PENDING | — |
 | `src/owned-process.ts` | `rust/src/owned_process.rs` | PENDING | — |
 | `src/planned-review-head.ts` | `rust/src/planned_review_head.rs` | PENDING | — |
-| `src/planner-agent-roles.ts` | `rust/src/planner_agent_roles.rs` | PENDING | — |
+| `src/planner-agent-roles.ts` | `rust/src/planner_agent_roles.rs` | PASS | 587 shared differential fixtures across 7 ports; Rust native tests 8/8; Node focused regression 18/18; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/planner-child-recovery.ts` | `rust/src/planner_child_recovery.rs` | PENDING | — |
 | `src/planner-child.ts` | `rust/src/planner_child.rs` | PENDING | — |
 | `src/planner-history-cleanup.ts` | `rust/src/planner_history_cleanup.rs` | PENDING | — |
@@ -270,4 +270,16 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 - [x] `cargo clippy --offline --manifest-path rust/Cargo.toml --all-targets -- -D warnings` — passed.
 - [x] `node --import ./test/test-store-env.mjs --test test/dependency-validity.test.js test/terminal-event-recovery.test.js` — **4/4** Node regressions passed in isolated store.
 
-Current ported source modules: **4 / 227**. The CLI used by this batch is a test-only differential entry point, **not** the runtime/daemon, dashboard, workflow, Graph, scheduler or SQLite service. Those remain `PENDING` until directly ported and verified.
+After Batch 1, ported source modules: **4 / 227**. The CLI used by this batch is a test-only differential entry point, **not** the runtime/daemon, dashboard, workflow, Graph, scheduler or SQLite service. Those remain `PENDING` until directly ported and verified.
+
+### Batch 2 — role and active-execution slot rules (2026-11-16)
+
+- [x] `src/final-review-role.ts` → `rust/src/final_review_role.rs`: canonical review identity and legacy reviewer alias.
+- [x] `src/planner-agent-roles.ts` → `rust/src/planner_agent_roles.rs`: duplicate role protection and Final Review ownership rejection.
+- [x] `src/job-execution-slot.ts` → `rust/src/job_execution_slot.rs`: Planner slot, coordinator slot exemption, sibling DAG concurrency, unrelated Task exclusion and interactive waits.
+- [x] `node --test rust/tests/head_to_head.mjs` — **587/587** Node/Rust differential cases matched across seven ports, with errors and negative cases.
+- [x] `cargo test --offline --manifest-path rust/Cargo.toml` — **8/8** native Rust tests passed.
+- [x] `cargo clippy --offline --manifest-path rust/Cargo.toml --all-targets -- -D warnings` — passed.
+- [x] `node --import ./test/test-store-env.mjs --test test/dependency-validity.test.js test/terminal-event-recovery.test.js test/targeted-revision-execution.test.js test/interactive-invocation.test.js` — **18/18** Node regression tests passed in isolated store.
+
+Current verified source modules: **7 / 227**; remaining: **220**. These checks verify ported functions only, not end-to-end Relay daemon or scheduler compatibility.

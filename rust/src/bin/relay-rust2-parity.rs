@@ -1,6 +1,9 @@
-// New differential CLI: exposes ports of four Node source modules to isolated Node/Rust fixture comparisons.
+// New differential CLI: exposes verified Node source-module ports to isolated Rust/Node fixture comparisons.
 use agents_relay_rust2::{
     dependency_validity::validate_dependency_validity,
+    final_review_role::is_final_review_agent,
+    job_execution_slot::{job_has_active_execution, job_has_conflicting_execution},
+    planner_agent_roles::validate_planner_agent_roles,
     planner_task_title::required_planner_task_title,
     task_title::{derive_task_title, json_string_from_utf16},
     terminal_event_recovery::{
@@ -13,6 +16,27 @@ use std::io::{self, BufRead};
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "isFinalReviewAgent" => {
+            Ok(json!(is_final_review_agent(request["name"].as_str())).to_string())
+        }
+        "validatePlannerAgentRoles" => {
+            let specs = request["specs"]
+                .as_array()
+                .ok_or("specs must be an array")?;
+            validate_planner_agent_roles(specs)?;
+            Ok(Value::Null.to_string())
+        }
+        "jobHasActiveExecution" => Ok(json!(job_has_active_execution(
+            &request["job"],
+            request["except"]["taskId"].as_str(),
+            request["except"]["planId"].as_str(),
+        ))
+        .to_string()),
+        "jobHasConflictingExecution" => Ok(json!(job_has_conflicting_execution(
+            &request["job"],
+            &request["candidate"],
+        ))
+        .to_string()),
         "deriveTaskTitle" => Ok(json_string_from_utf16(&derive_task_title(
             request["input"].as_str().unwrap_or(""),
             request["fallback"].as_str().unwrap_or("Task"),

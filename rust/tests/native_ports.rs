@@ -2,6 +2,9 @@
 // Node/Rust head_to_head.mjs remains the external authoritative differential oracle.
 use agents_relay_rust2::{
     dependency_validity::validate_dependency_validity,
+    final_review_role::is_final_review_agent,
+    job_execution_slot::{job_has_active_execution, job_has_conflicting_execution},
+    planner_agent_roles::validate_planner_agent_roles,
     planner_task_title::required_planner_task_title,
     task_title::{derive_task_title, json_string_from_utf16},
     terminal_event_recovery::{
@@ -77,4 +80,39 @@ fn terminal_recovery_is_single_reminder_with_original_identity() {
         ..ready
     }));
     assert!(terminal_recovery_prompt("execution-123").contains("ORIGINAL execution identity"));
+}
+
+#[test]
+fn final_review_identity_preserves_legacy_reviewer() {
+    assert!(is_final_review_agent(Some("reviewer")));
+    assert!(is_final_review_agent(Some("job-acceptance-reviewer")));
+    assert!(!is_final_review_agent(Some("Review")));
+}
+
+#[test]
+fn planner_agent_roles_fail_closed_on_repeated_owners() {
+    let specs = vec![
+        json!({"id":"a","agentName":" director "}),
+        json!({"id":"b","agentName":"director"}),
+    ];
+    assert!(validate_planner_agent_roles(&specs)
+        .unwrap_err()
+        .contains("duplicate effective Agent role director"));
+    assert!(validate_planner_agent_roles(&[
+        json!({"id":"a","agentName":"builder"}),
+        json!({"id":"b","agentName":"designer"}),
+    ])
+    .is_ok());
+}
+
+#[test]
+fn sibling_dag_tasks_share_slot_but_ordinary_workers_do_not() {
+    let a = json!({"id":"a","state":"RUNNING","executionId":"exec-a","dagNode":{"parentTaskId":"coord"}});
+    let sibling = json!({"id":"b","state":"RUNNING","executionId":"exec-b","dagNode":{"parentTaskId":"coord"}});
+    let unrelated = json!({"id":"c","state":"RUNNING","executionId":"exec-c"});
+    let siblings = json!({"tasks":[a.clone(),sibling],"plans":[]});
+    assert!(!job_has_conflicting_execution(&siblings, &a));
+    assert!(job_has_active_execution(&siblings, Some("a"), None));
+    let outsiders = json!({"tasks":[a.clone(),unrelated],"plans":[]});
+    assert!(job_has_conflicting_execution(&outsiders, &a));
 }

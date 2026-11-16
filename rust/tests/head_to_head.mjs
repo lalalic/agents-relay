@@ -5,6 +5,9 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { deriveTaskTitle } from '../../dist/task-title.js';
+import { isFinalReviewAgent } from '../../dist/final-review-role.js';
+import { validatePlannerAgentRoles } from '../../dist/planner-agent-roles.js';
+import { jobHasActiveExecution, jobHasConflictingExecution } from '../../dist/job-execution-slot.js';
 import { requiredPlannerTaskTitle } from '../../dist/planner-task-title.js';
 import { validateDependencyValidity } from '../../dist/dependency-validity.js';
 import { terminalRecoveryEligible, terminalRecoveryPrompt } from '../../dist/terminal-event-recovery.js';
@@ -53,11 +56,61 @@ for (const recoveryAttempts of [-3, -1, 0, 0.5, 0.9999, 1, 2, 12]) {
 }
 for (const executionId of ['', 'exec-original', '中文-exec-1', 'a/b/c', '"quoted"']) cases.push({op:'terminalRecoveryPrompt',executionId});
 
+for(const name of [null,undefined,'','reviewer','job-acceptance-reviewer','Reviewer',' job-acceptance-reviewer','implementation']) {
+  cases.push({op:'isFinalReviewAgent',name});
+}
+const taskSpec=(id,agentName)=>({id,agentName});
+for(const specs of [[],[taskSpec('a',null)],[taskSpec('a','director')],
+ [taskSpec('a','implementation'),taskSpec('b',null)],
+ [taskSpec('a','director'),taskSpec('b','director')],
+ [taskSpec('a','reviewer')],[taskSpec('a','job-acceptance-reviewer')],
+ [taskSpec('a','designer'),taskSpec('b','motion')],
+ [taskSpec('a',''),taskSpec('b','implementation')],
+ [taskSpec('a','  designer  '),taskSpec('b','designer')],
+ [taskSpec('a','director'),taskSpec('b','director'),taskSpec('c','director')],
+ [taskSpec('a','director'),taskSpec('b','job-acceptance-reviewer')],
+]) cases.push({op:'validatePlannerAgentRoles',specs});
+const task=(id,state,executionId,extras={})=>({id,state,executionId,...extras});
+const dag=(parentTaskId)=>({parentTaskId});
+const planner=(id,status,executionId)=>({id,status,executionId});
+for(const state of ['DRAFT','QUEUED','RUNNING','AWAITING_DECISION','BLOCKED','SUCCEEDED','FAILED','CANCELLED']) {
+ for(const executionId of [null,'exec-1']) {
+  for(const extras of [{},{dagNode:dag('coord')},{agentGraph:{graph:'a'},result:{data:{dag:{version:1}}}}]) {
+    const job={tasks:[task('a',state,executionId,extras)],plans:[]};
+    for(const except of [{},{taskId:'a'},{taskId:'other'}]) cases.push({op:'jobHasActiveExecution',job,except});
+  }
+ }
+}
+for(const plans of [[],[planner('p','PLANNING','exec')],[planner('p','SUCCEEDED','exec')],
+ [planner('p','PLANNING',null)],[planner('p','PLANNING','exec'),planner('q','PLANNING','exec')]]) {
+ const job={tasks:[],plans};
+ for(const except of [{},{planId:'p'},{planId:'q'}])cases.push({op:'jobHasActiveExecution',job,except});
+}
+for(const candidate of [
+ task('a','RUNNING','exec-1'),
+ task('a','RUNNING','exec-1',{dagNode:dag('coord')}),
+ task('a','RUNNING','exec-1',{dagNode:dag('other')}),
+]) {
+ for(const state of ['DRAFT','QUEUED','RUNNING','AWAITING_DECISION','SUCCEEDED','FAILED']) {
+  for(const extras of [{},{dagNode:dag('coord')},{dagNode:dag('other')},
+    {agentGraph:{graph:'x'},result:{data:{dag:{version:1}}}}]) {
+   const job={tasks:[candidate,task('b',state,'exec-2',extras)],plans:[]};
+   cases.push({op:'jobHasConflictingExecution',job,candidate});
+  }
+ }
+ for(const plans of [[],[planner('p','PLANNING','exec')],[planner('p','PLANNING',null)]]) {
+   cases.push({op:'jobHasConflictingExecution',job:{tasks:[candidate],plans},candidate});
+ }
+}
 function nodeReference(request) {
   try {
     let value;
     switch(request.op) {
       case 'deriveTaskTitle': value=deriveTaskTitle(request.input,request.fallback);break;
+      case 'isFinalReviewAgent': value=isFinalReviewAgent(request.name);break;
+      case 'validatePlannerAgentRoles': value=validatePlannerAgentRoles(request.specs);break;
+      case 'jobHasActiveExecution': value=jobHasActiveExecution(request.job,request.except);break;
+      case 'jobHasConflictingExecution': value=jobHasConflictingExecution(request.job,request.candidate);break;
       case 'requiredPlannerTaskTitle': value=requiredPlannerTaskTitle(request.value,request.index);break;
       case 'validateDependencyValidity': value=validateDependencyValidity(request.dependencies,request.value,request.field);break;
       case 'terminalRecoveryEligible': value=terminalRecoveryEligible(request.facts);break;
@@ -68,7 +121,7 @@ function nodeReference(request) {
   }catch(e){return {ok:false,error:e.message};}
 }
 
-test('four direct Node source ports produce matching results and errors',()=>{
+test('seven direct Node source ports produce matching results and errors',()=>{
   const build=spawnSync('cargo',['build','--offline','--manifest-path','rust/Cargo.toml'],{cwd:root,encoding:'utf8',timeout:90000});
   assert.equal(build.status,0,`Rust build failed: ${build.stderr}`);
   const input=cases.map(item=>JSON.stringify(item)).join('\n')+'\n';
