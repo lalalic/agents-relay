@@ -36,8 +36,8 @@ fn priority(job:&Value)->u8{
 }
 pub fn compare_job_priority(a:&Value,b:&Value)->std::cmp::Ordering{
     priority(a).cmp(&priority(b))
-        .then_with(||field(a,"createdAt").cmp(field(b,"createdAt")))
-        .then_with(||field(a,"id").cmp(field(b,"id")))
+        .then_with(||crate::dashboard_data::locale_compare(field(a,"createdAt"),field(b,"createdAt")))
+        .then_with(||crate::dashboard_data::locale_compare(field(a,"id"),field(b,"id")))
 }
 pub fn runnable_managed_jobs(items:&[Value])->Vec<Value>{
     let mut jobs=items.iter().filter_map(|item|item.get("job"))

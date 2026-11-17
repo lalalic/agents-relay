@@ -22,7 +22,7 @@ fn timestamp(row: &Value) -> i64 {
 // Node uses ICU collation; Darwin's en_US.UTF-8 strcoll_l follows the same
 // primary accent and secondary case weights for Relay's repository/id sorting.
 #[cfg(target_os = "macos")]
-fn locale_compare(a: &str, b: &str) -> Ordering {
+pub(crate) fn locale_compare(a: &str, b: &str) -> Ordering {
     use std::{ffi::CString, sync::OnceLock};
     // ICU (Node) sorts Latin accents at their base-letter primary weight, which
     // differs from Darwin strcoll_l. Compare primary weights before libc ties.
@@ -30,13 +30,13 @@ fn locale_compare(a: &str, b: &str) -> Ordering {
         s.chars()
             .flat_map(|c| {
                 match c {
-                    'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' => 'a',
-                    'é' | 'è' | 'ê' | 'ë' => 'e',
-                    'í' | 'ì' | 'î' | 'ï' => 'i',
-                    'ó' | 'ò' | 'ô' | 'ö' | 'õ' => 'o',
-                    'ú' | 'ù' | 'û' | 'ü' => 'u',
-                    'ñ' => 'n',
-                    'ç' => 'c',
+                    'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' | 'Á' | 'À' | 'Â' | 'Ä' | 'Ã' | 'Å' => 'a',
+                    'é' | 'è' | 'ê' | 'ë' | 'É' | 'È' | 'Ê' | 'Ë' => 'e',
+                    'í' | 'ì' | 'î' | 'ï' | 'Í' | 'Ì' | 'Î' | 'Ï' => 'i',
+                    'ó' | 'ò' | 'ô' | 'ö' | 'õ' | 'Ó' | 'Ò' | 'Ô' | 'Ö' | 'Õ' => 'o',
+                    'ú' | 'ù' | 'û' | 'ü' | 'Ú' | 'Ù' | 'Û' | 'Ü' => 'u',
+                    'ñ' | 'Ñ' => 'n',
+                    'ç' | 'Ç' => 'c',
                     other => other,
                 }
                 .to_lowercase()
@@ -75,18 +75,18 @@ fn locale_compare(a: &str, b: &str) -> Ordering {
         .then_with(|| b.cmp(a))
 }
 #[cfg(not(target_os = "macos"))]
-fn locale_compare(a: &str, b: &str) -> Ordering {
+pub(crate) fn locale_compare(a: &str, b: &str) -> Ordering {
     fn primary(s: &str) -> String {
         s.chars()
             .flat_map(|c| {
                 match c {
-                    'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' => 'a',
-                    'é' | 'è' | 'ê' | 'ë' => 'e',
-                    'í' | 'ì' | 'î' | 'ï' => 'i',
-                    'ó' | 'ò' | 'ô' | 'ö' | 'õ' => 'o',
-                    'ú' | 'ù' | 'û' | 'ü' => 'u',
-                    'ñ' => 'n',
-                    'ç' => 'c',
+                    'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' | 'Á' | 'À' | 'Â' | 'Ä' | 'Ã' | 'Å' => 'a',
+                    'é' | 'è' | 'ê' | 'ë' | 'É' | 'È' | 'Ê' | 'Ë' => 'e',
+                    'í' | 'ì' | 'î' | 'ï' | 'Í' | 'Ì' | 'Î' | 'Ï' => 'i',
+                    'ó' | 'ò' | 'ô' | 'ö' | 'õ' | 'Ó' | 'Ò' | 'Ô' | 'Ö' | 'Õ' => 'o',
+                    'ú' | 'ù' | 'û' | 'ü' | 'Ú' | 'Ù' | 'Û' | 'Ü' => 'u',
+                    'ñ' | 'Ñ' => 'n',
+                    'ç' | 'Ç' => 'c',
                     other => other,
                 }
                 .to_lowercase()

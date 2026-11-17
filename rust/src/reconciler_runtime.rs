@@ -71,13 +71,17 @@ pub struct RuntimeEffect{
     pub reconcile_detached:bool,pub reason:String,
     pub events:Vec<Value>,pub completed_generations:Vec<String>,
     pub cancel_generations:Vec<String>,
+    // Volatile effects are applied only after authoritative SQLite commit.
+    pub start_acknowledgements:Vec<(String,String)>,
+    pub watchdog_reschedules:Vec<(String,String)>,
 }
 impl RuntimeEffect{
     pub fn ignored(job:&Value,reason:impl Into<String>)->Self{
         Self{job:job.clone(),applied:false,reconcile:false,
             reconcile_detached:false,reason:reason.into(),
             events:Vec::new(),completed_generations:Vec::new(),
-            cancel_generations:Vec::new()}
+            cancel_generations:Vec::new(),
+            start_acknowledgements:Vec::new(),watchdog_reschedules:Vec::new()}
     }
     pub fn recognized(job:&Value,reason:impl Into<String>,reconcile:bool)->Self{
         let mut output=Self::ignored(job,reason);
@@ -170,7 +174,7 @@ impl ReconcilerRuntime{
         new_task["lastProgressEventAt"]=json!(stamp);
         result.job["tasks"][index]=new_task.clone();
         if let Some(execution)=new_task.get("executionId").and_then(Value::as_str){
-            self.arm_inactivity_watchdog(&new_task,execution);
+            result.watchdog_reschedules.push((id.into(),execution.into()));
         }
         let _=directory;
         Ok(result)
@@ -210,8 +214,8 @@ impl ReconcilerRuntime{
         next["lastProgressAt"]=json!(now);
         next["lastProgressEventAt"]=json!(field(event,"timestamp"));
         result.job["tasks"][index]=next.clone();
-        if let Some(live)=self.live.get_mut(id){live.worker_started=true;}
-        self.arm_inactivity_watchdog(&next,execution);
+        result.start_acknowledgements.push((id.into(),execution.into()));
+        result.watchdog_reschedules.push((id.into(),execution.into()));
         if old=="FAILED"{
             result.reconcile=true;result.reconcile_detached=true;
             result.reason="task.started.recovery".into();
@@ -340,7 +344,8 @@ impl ReconcilerRuntime{
             _=>{},
         }
         result.job["tasks"][index]=candidate;
-        if !prev.is_empty(){self.clear_execution(task_id,Some(&prev));}
+        // Persist Task generation first; in-memory process cancellation only
+        // occurs from finalize_after_commit, never on speculative snapshots.
         result.reconcile_detached=!is_final_review_agent(task.get("agentName").and_then(Value::as_str))
             &&event_type!="task.interactive_waiting";
         Ok(result)
@@ -416,7 +421,8 @@ impl ReconcilerRuntime{
             reconcile:review.wake,reconcile_detached:false,
             reason:reason.into(),events:review.events,
             completed_generations:Vec::new(),
-            cancel_generations:review.cancel_execution_ids
+            cancel_generations:review.cancel_execution_ids,
+            start_acknowledgements:Vec::new(),watchdog_reschedules:Vec::new()
         }
     }
     pub fn runtime_settled(
@@ -562,6 +568,24 @@ impl ReconcilerRuntime{
     /// Source rule: all irrecoverable effects run after a successful SQLite
     /// commit. This function is the single post-commit reconciliation boundary.
     pub fn finalize_after_commit(&mut self,effect:&RuntimeEffect){
+        // Only successful authoritative SQLite writes may publish a terminal
+        // generation claim, release an owned process or refresh a watchdog.
+        if !effect.applied{return;}
+        let job_id=field(&effect.job,"id");
+        for (task_id,execution_id) in &effect.start_acknowledgements{
+            if let Some(active)=self.live.get_mut(task_id){
+                if active.job_id==job_id&&active.execution_id==*execution_id{
+                    active.worker_started=true;
+                }
+            }
+        }
+        for (task_id,execution_id) in &effect.watchdog_reschedules{
+            if let Some(task)=current(&effect.job,task_id){
+                if field(task,"executionId")==execution_id{
+                    self.arm_inactivity_watchdog(task,execution_id);
+                }
+            }
+        }
         for source in &effect.completed_generations{
             claim_terminal_execution(source);
         }
@@ -570,6 +594,16 @@ impl ReconcilerRuntime{
             if ids.len()==6&&ids[0]=="job"&&ids[2]=="task"
                 &&ids[4]=="execution"{
                 self.cancel_execution_generation(ids[1],ids[3],ids[5]);
+                continue;
+            }
+            // Review, Task and watchdog reducers carry a bare execution UUID;
+            // resolve it under this Job, never cancel an unrelated Job/Task.
+            let matches=self.live.values().filter(|live|
+                live.job_id==job_id && live.execution_id==*execution)
+                .map(|live|(live.job_id.clone(),live.task_id.clone(),
+                    live.execution_id.clone())).collect::<Vec<_>>();
+            for (job_id,task_id,generation) in matches{
+                self.cancel_execution_generation(&job_id,&task_id,&generation);
             }
         }
     }

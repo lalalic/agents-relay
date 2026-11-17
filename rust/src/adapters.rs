@@ -150,6 +150,28 @@ pub fn chatgpt_tab_close_policy(input:Option<&str>,fallback:&str)
     }
     Ok(value.into())
 }
+/// Untyped JSON ingress preserves Node's runtime validation of unknown JS
+/// values (including truthy non-string arguments) before policy selection.
+pub fn chatgpt_tab_close_policy_value(input:Option<&Value>,fallback:&str)
+    ->Result<String,String>{
+    let value=input.unwrap_or(&Value::Null);
+    let truthy=match value{
+        Value::Null|Value::Bool(false)=>false,
+        Value::Number(n)=>n.as_f64().is_some_and(|n|n!=0.0),
+        Value::String(s)=>!s.is_empty(),
+        _=>true,
+    };
+    if !truthy{return chatgpt_tab_close_policy(None,fallback);}
+    if let Some(name)=value.as_str(){return chatgpt_tab_close_policy(Some(name),fallback);}
+    let raw=match value{
+        Value::Array(items)=>items.iter().map(|item|item.as_str()
+            .map(str::to_owned).unwrap_or_else(||if item.is_null(){String::new()}
+                else{item.to_string()})).collect::<Vec<_>>().join(","),
+        Value::Object(_)=>"[object Object]".to_owned(),
+        _=>value.to_string(),
+    };
+    Err(format!("Invalid ChatGPT tab close policy: {raw}"))
+}
 fn find_submitted_receipt(value:&Value)->Option<Value>{
     if let Some(text)=value.as_str(){
         return serde_json::from_str::<Value>(text).ok()
