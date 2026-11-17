@@ -337,3 +337,6 @@ pub mod planner;
 pub mod planner_runtime;
 pub mod adapters;
 pub mod pool;
+pub mod dashboard;
+pub mod reconciler_review;
+pub mod reconciler_runtime;
