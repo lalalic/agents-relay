@@ -11,6 +11,8 @@ regex = "1.13" # Port Node worker rejection regex semantics, including mixed sep
 sha2 = "0.10"
 chrono = { version = "0.4.45", default-features = false, features = ["std"] } # Node Date.parse and ISO timestamps for dashboard JEL parity.
 
+rusqlite = { version = "0.37.0", features = ["backup"] } # Node src/task-id-migration.ts: native SQLite online backup and atomic migration.
+
 [[bin]]
 name = "relay-rust2-parity"
 path = "src/bin/relay-rust2-parity.rs"

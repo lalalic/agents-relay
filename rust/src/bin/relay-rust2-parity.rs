@@ -166,6 +166,16 @@ fn workflow_engine_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "migrateTaskIds" => Ok(agents_relay_rust2::task_id_migration::migrate_task_ids(
+            request["databasePath"]
+                .as_str()
+                .ok_or("databasePath required")?,
+            request["backupPath"]
+                .as_str()
+                .ok_or("backupPath required")?,
+        )?
+        .to_string()),
+
         "agentSourceLayers" => Ok(
             agents_relay_rust2::agent_content_resolver::agent_source_layers(
                 request["projectPath"].as_str().unwrap_or(""),

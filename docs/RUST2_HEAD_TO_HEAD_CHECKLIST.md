@@ -190,7 +190,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/task-actions.ts` | `rust/src/task_actions.rs` | PENDING | — |
 | `src/task-comments.ts` | `rust/src/task_comments.rs` | PENDING | — |
 | `src/task-context.ts` | `rust/src/task_context.rs` | PENDING | — |
-| `src/task-id-migration.ts` | `rust/src/task_id_migration.rs` | PENDING | — |
+| `src/task-id-migration.ts` | `rust/src/task_id_migration.rs` | PASS | Direct hotfix: 7 cloned SQLite Node/Rust migrations, 3 preflight refusals, verified constraint rollback + immutable backup, 4 native tests, 3 original Node regressions (rust/tests/head_to_head_task_id_migration.mjs; rust/tests/native_task_id_migration.rs) |
 | `src/task-inactivity-watchdog.ts` | `rust/src/task_inactivity_watchdog.rs` | PENDING | — |
 | `src/task-recovery.ts` | `rust/src/task_recovery.rs` | PENDING | — |
 | `src/task-tag.ts` | `rust/src/task_tag.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; parse errors/limits, Unicode, allowed-tag filtering, data removal, and worker prompt (`rust/tests/head_to_head.mjs`) |
@@ -440,3 +440,13 @@ This is only the Job JEL graph projection; Dashboard HTTP routing, additional ta
 - [x] Differential self-review fixed Node vs Rust edge behavior: empty line within section frontmatter retains section parsing; quote stripping removes a single delimiter at each end, not all quotes; separately matched later YAML metadata; `\s` vs JavaScript Unicode whitespace semantics for Markdown links, headings and fenced code.
 - [x] `rust/tests/native_agent_content_resolver.rs`: **5** Rust-native tests for ordered source roots, nested replace/extend, anchored links, symlink boundary, cross-name shared inheritance, and unknown Agent.
 - [x] Original Node regression tests (`test/agent-content-resolver.test.js`, `test/agent-prompt-builder.test.js`, `test/managed-prompt-assembly.test.js`) **18/18 PASS**, with isolated SQLite and ephemeral project directories. No production Agent files, live Relay daemon or Jobs touched.
+
+### Direct Rust2 hotfix — one-time numeric Task ID migration (2026-11-16)
+
+- [x] `src/task-id-migration.ts` → `rust/src/task_id_migration.rs`: native `rusqlite` backup API and an **IMMEDIATE atomic transaction** for offline-only numeric Task-ID migration; no Node.js runtime or SQLite private-store shortcut.
+- [x] Check `ACTIVE` Jobs and already-migrated marker before backup; verify backup `PRAGMA integrity_check` and snapshot count before any write. Preserve backup on later transaction failure; reject preexisting backup, invalid Task IDs and source=backup.
+- [x] Globally allocate numeric Task IDs by deterministic Job ordering; preserve all duplicate historical Planner records while mapping references to the first chronological owner; update snapshot JSON and nested Task/Plan/revision/DAG references, relational ledgers, scoped JSON columns, Events Bus outbox, idempotency reservations and global Task sequence.
+- [x] Two-phase intermediate rowid rekeying prevents transient UNIQUE/PK collisions. Transaction rollback preserves original SQLite state if any table/check fails; failed offline migration never sets completion marker.
+- [x] `rust/tests/head_to_head_task_id_migration.mjs`: **7** complete migrations of independently cloned disposable SQLite databases (including duplicate IDs, cross-Job collisions, Unicode IDs, outbox, JSON, sequence), **3** fail-closed preflights, and late CHECK-constraint rollback compared against the original Node implementation; compare every SQLite table and backup snapshot.
+- [x] `rust/tests/native_task_id_migration.rs`: **4** native tests for verified pre-write backup and one-time execution, ACTIVE preflight, collision-free relational renaming, and full atomic rollback.
+- [x] Original Node `test/task-id-migration.test.js` **3/3 PASS** with isolated SQLite fixtures. No production SQLite files or live Relay writers accessed, stopped, or migrated.

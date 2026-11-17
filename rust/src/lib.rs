@@ -48,3 +48,6 @@ pub mod agent_prompt_builder;
 
 // Direct Node src/agent-content-resolver.ts implementation.
 pub mod agent_content_resolver;
+
+// Direct offline SQLite migration port of Node src/task-id-migration.ts.
+pub mod task_id_migration;
