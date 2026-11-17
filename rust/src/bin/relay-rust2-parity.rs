@@ -166,6 +166,9 @@ fn workflow_engine_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "dashboardStyles" => {
+            Ok(json!(agents_relay_rust2::dashboard_style::dashboard_styles).to_string())
+        }
         "observeProcess" => Ok(agents_relay_rust2::process_identity::observe_process(
             request["pid"].as_i64().unwrap_or(0),
         )

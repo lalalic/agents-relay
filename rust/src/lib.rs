@@ -35,6 +35,7 @@ pub mod workflow {
     pub mod mermaid;
 }
 pub mod cli_artifact;
+pub mod dashboard_style;
 pub mod dashboard_workflow_inspection;
 pub mod task_title;
 pub mod terminal_event_recovery;

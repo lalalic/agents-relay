@@ -63,7 +63,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/dashboard-data.ts` | `rust/src/dashboard_data.rs` | PENDING | — |
 | `src/dashboard-html.ts` | `rust/src/dashboard_html.rs` | PENDING | — |
 | `src/dashboard-jel.ts` | `rust/src/dashboard_jel.rs` | PENDING | — |
-| `src/dashboard-style.ts` | `rust/src/dashboard_style.rs` | PENDING | — |
+| `src/dashboard-style.ts` | `rust/src/dashboard_style.rs` | PASS | Direct hotfix: exact 25,275 byte runtime dashboard CSS literal, SHA-256 676e173854d712a21bf4cf0a3dfaa59bf015a458ce9a2b54d8e632a082a56c34 (rust/tests/head_to_head_dashboard_style.mjs) |
 | `src/dashboard-workflow-inspection.ts` | `rust/src/dashboard_workflow_inspection.rs` | PASS | Batch 6: Node/Rust differential fixtures cover valid exact Event/Action graph symbols, source/test references, malformed identifiers and traversal rejection (`rust/tests/head_to_head_batch6.mjs`); native path-safety test. |
 | `src/dashboard.ts` | `rust/src/dashboard.rs` | PENDING | — |
 | `src/decision-audit.ts` | `rust/src/decision_audit.rs` | PENDING | — |
@@ -406,3 +406,9 @@ These tests verify isolated protocol behavior but do not count as a production d
 - [x] Corrected out-of-range `process.kill(pid,0)` fallback to fail closed as `unknown`, and matched `pid=0` or negative PID probe behavior without transmitting a signal.
 
 Only isolated, specifically created process groups were terminated in verification. Production Relay processes and leases remain unchanged.
+
+### Direct Rust2 hotfix — static Dashboard CSS (2026-11-16)
+
+- [x] `src/dashboard-style.ts` → `rust/src/dashboard_style.rs`: copy the actual compiled Node template-string contents as a Rust native static `&str`, not as a runtime dependency on JavaScript or a placeholder.
+- [x] `rust/tests/head_to_head_dashboard_style.mjs`: assert every one of the **25,275** output bytes matches Node's runtime value, with SHA-256 `676e173854d712a21bf4cf0a3dfaa59bf015a458ce9a2b54d8e632a082a56c34`.
+- [x] This verifies only the static stylesheet; Dashboard dynamic HTML, JEL, tabs, server APIs and live browser E2E are separately pending.
