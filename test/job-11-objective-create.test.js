@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { localGitProject } from './local-git-project.js';
 
 test('ordinary job create rejects legacy PR binding flags before contacting Relay', () => {
-  for (const flag of ['--pr', '--head', '--base', '--body', '--local-merge-source', '--local-merge-target']) {
-    const result = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'owner/repo', '--objective', 'standalone', flag, flag === '--pr' ? '4' : 'main'], { encoding: 'utf8' });
+  for (const flag of ['--pr', '--head', '--base', '--body']) {
+    const result = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'repo', '--objective', 'standalone', flag, flag === '--pr' ? '4' : 'main'], { encoding: 'utf8' });
     assert.notEqual(result.status, 0, flag);
-    assert.match(result.stderr, /job create does not accept /);
+    assert.match(result.stderr, new RegExp(`Unsupported option ${flag}`));
   }
 });
 
@@ -16,10 +17,11 @@ test('objective creation accepts explicit request identity without conflating eq
   const { ensureManagedGitHubJob } = await import('../dist/cli-job-create.js');
   const directory = await mkdtemp(join(process.env.AGENTS_RELAY_STORE_DIR ?? '/tmp', 'job-11-identity-'));
   try {
+    const projectRoot=localGitProject(directory,'repo');
     const client = { request: async () => { throw new Error('offline'); }, graphql: async () => { throw new Error('offline'); } };
-    const first = await ensureManagedGitHubJob(client, 'owner/repo', new Set(), { objective: 'same', idempotencyKey: 'request-1', storeDirectory: directory });
-    const retry = await ensureManagedGitHubJob(client, 'owner/repo', new Set(), { objective: 'same', idempotencyKey: 'request-1', storeDirectory: directory });
-    const second = await ensureManagedGitHubJob(client, 'owner/repo', new Set(), { objective: 'same', idempotencyKey: 'request-2', storeDirectory: directory });
+    const first = await ensureManagedGitHubJob(client, 'repo', new Set(), { objective: 'same', idempotencyKey: 'request-1', projectRoot,storeDirectory: directory });
+    const retry = await ensureManagedGitHubJob(client, 'repo', new Set(), { objective: 'same', idempotencyKey: 'request-1', projectRoot,storeDirectory: directory });
+    const second = await ensureManagedGitHubJob(client, 'repo', new Set(), { objective: 'same', idempotencyKey: 'request-2', projectRoot,storeDirectory: directory });
     assert.equal(retry.job.id, first.job.id);
     assert.notEqual(second.job.id, first.job.id);
   } finally { await rm(directory, { recursive: true, force: true }); }
@@ -49,26 +51,4 @@ test('SQLite create-if-absent is atomic and preserves the first complete snapsho
     assert.equal((await store.createJobIfAbsent(second)).title, 'first');
     assert.equal((await store.loadJob('same')).objective, 'one');
   } finally { store.close(); await rm(directory, { recursive: true, force: true }); }
-});
-
-
-test('existing PR-bound SQLite Jobs remain readable and cannot be rebound', async () => {
-  const { ensureManagedGitHubJob } = await import('../dist/cli-job-create.js');
-  const { findJobIdSnapshot } = await import('../dist/local-job-registry.js');
-  const directory = await mkdtemp(join(process.env.AGENTS_RELAY_STORE_DIR ?? '/tmp', 'job-11-legacy-pr-'));
-  try {
-    const original = await ensureManagedGitHubJob({}, 'owner/repo', new Set(), {
-      prNumber: 47, objective: 'Existing legacy Job', storeDirectory: directory,
-    });
-    const snapshot = await findJobIdSnapshot(directory, original.job.id);
-    assert.equal(snapshot?.job.prNumber, 47);
-    assert.equal(snapshot?.job.repository, 'owner/repo');
-    assert.equal(snapshot?.job.objective, 'Existing legacy Job');
-    await assert.rejects(() => ensureManagedGitHubJob({}, 'owner/repo', new Set(), {
-      id: original.job.id, prNumber: 48, storeDirectory: directory,
-    }), /already bound/);
-    await assert.rejects(() => ensureManagedGitHubJob({}, 'other/repo', new Set(), {
-      id: original.job.id, prNumber: 47, storeDirectory: directory,
-    }), /already bound/);
-  } finally { await rm(directory, { recursive: true, force: true }); }
 });

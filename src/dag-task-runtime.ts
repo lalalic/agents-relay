@@ -37,7 +37,7 @@ async function graphNodeOutput(task:Task):Promise<Record<string,unknown>|null> {
  * This is a reconciliation projection, not an execution scheduler: the normal
  * Task graph owns dispatch and dependencies for every materialized child. */
 export async function reconcileDAGTasks(options:{store:DurableStore;jobId:string;
-  projectPathForTask:(job:Job,task:Task)=>Promise<string>;
+  cwdForTask:(job:Job,task:Task)=>Promise<string>;
   roots?:{sharedRoot?:string|null;workspaceRoot?:string|null;globalRoot?:string|null};
 }):Promise<void>{
  const {store,jobId}=options;
@@ -47,7 +47,7 @@ export async function reconcileDAGTasks(options:{store:DurableStore;jobId:string
    if(parent.state==='SUCCEEDED'||parent.state==='CANCELLED'||parent.state==='FAILED'||parent.state==='BLOCKED')continue;
    const graph=parseAgentGraph(parent.agentGraph!);
    const graphHash=sha(parent.agentGraph!);
-   const projectPath=await options.projectPathForTask(snapshot,parent);
+   const projectPath=await options.cwdForTask(snapshot,parent);
    const root=parent.output?.kind==='file' && isAbsolute(parent.output.path) ? out(parent) : join(projectPath,'.relay-dag-results',jobId,parent.id);
    if(parent.state==='QUEUED'){
      await store.mutateJob(jobId,job=>{
@@ -159,7 +159,7 @@ export async function selectDAGReviewExecutors(store:DurableStore,jobId:string):
 
 /** Run the DAG projection at the ordinary Reconciler scheduling boundary. */
 export async function reconcileDAGSchedule(options:{store:DurableStore;jobId:string;job:Job;
-  projectPathForTask:(job:Job,task:Task)=>Promise<string>;
+  cwdForTask:(job:Job,task:Task)=>Promise<string>;
   roots?:{sharedRoot?:string|null;workspaceRoot?:string|null;globalRoot?:string|null};
 }):Promise<Job>{
  if(!options.job.tasks.some(t=>unifiedDAG(options.job,t))){

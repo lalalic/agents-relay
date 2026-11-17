@@ -4,6 +4,7 @@ import { usage } from './cli-help.js';
 export async function runBlockerCommand(action: string, args: string[]): Promise<void> {
   if (!['add', 'ensure', 'resolve', 'show'].includes(action)) throw new Error(usage);
   if (action === 'ensure') {
+    if (hasArg(args, '--project-path')) throw new Error('Blocker Job --project-path is removed; use its independent Git root');
     const dependentRepository = repository(args);
     const dependentJobId = arg(args, '--id');
     const targetRepository = arg(args, '--target-repo');
@@ -27,7 +28,6 @@ export async function runBlockerCommand(action: string, args: string[]): Promise
       request: {
         requestId, targetRepository, dependentRepository, dependentJobId, dependentTaskId, reason,
         title, objective, resolutionMode: modeValue, origin, authorized: true,
-        projectPath: arg(args, '--project-path') || undefined,
       },
     }), null, 2));
     return;

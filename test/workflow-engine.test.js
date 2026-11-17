@@ -18,7 +18,7 @@ import { revisionLifecycle } from '../dist/workflow/revision-v2.js';
 import { dependencyRevisionLifecycle } from '../dist/workflow/dependency-revision-v2.js';
 import { taskRelatedActionV2 } from '../dist/workflow/task-related-action-v2.js';
 import { taskResolutionV2 } from '../dist/workflow/task-resolution.js';
-import { projectionConflictV2 } from '../dist/workflow/projection-conflict-v2.js';
+import { projectionConflictV2, projectionOutboxConflictV2 } from '../dist/workflow/projection-conflict-v2.js';
 import { orchestratorRescueV2 } from '../dist/workflow/orchestrator-rescue.js';
 import { interactiveInvocationGraph } from '../dist/interactive-invocation.js';
 import { forceRestateValidationV2 } from '../dist/workflow/force-restate-validation-v2.js';
@@ -101,6 +101,7 @@ test('every repository lifecycle graph file parses and validates with the produc
         ['task-related-action.mmd', taskRelatedActionV2],
         ['task-resolution.mmd', taskResolutionV2],
         ['projection-conflict.mmd', projectionConflictV2],
+        ['projection-outbox-conflict.mmd', projectionOutboxConflictV2],
         ['orchestrator-rescue.mmd', orchestratorRescueV2],
         ['interactive-invocation.mmd', interactiveInvocationGraph],
         ['force-restate-validation.mmd', forceRestateValidationV2],

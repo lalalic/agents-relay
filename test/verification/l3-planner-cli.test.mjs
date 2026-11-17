@@ -37,8 +37,8 @@ test('L3 plan apply CLI commits its Plan and Tasks to isolated SQLite', async ()
     const proposalFile = join(env.root, 'proposal.json');
     await writeFile(proposalFile, JSON.stringify(proposal));
     const cli = join(process.cwd(), 'dist', 'cli.js');
-    const result = spawnSync(process.execPath, [cli, 'plan', 'apply', '--no-github', '--repo', job.repository,
-      '--pr', '0', '--id', jobId, '--plan-id', planId, '--execution-id', executionId,
+    const result = spawnSync(process.execPath, [cli, 'plan', 'apply',  '--repo', job.repository,
+       '--id', jobId, '--plan-id', planId, '--execution-id', executionId,
       '--store-dir', env.storeDir, '--file', proposalFile], {
       cwd: process.cwd(), encoding: 'utf8', env: { ...env.env, AGENTS_RELAY_STORE_DIR: env.storeDir },
     });

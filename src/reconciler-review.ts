@@ -35,9 +35,9 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     if (this.options.noGitHub && this.options.localMergeEffect) return job.headSha ?? job.review?.headSha ?? null;
     if (this.options.headShaProvider) return this.options.headShaProvider(job);
     // GitHub PR head facts are audit-only. Source identity is local Git.
-    if (!this.options.projectPathForJob) return job.headSha ?? job.review?.headSha ?? null;
+    if (!this.options.cwdForJob) return job.headSha ?? job.review?.headSha ?? null;
     try {
-      const project = await this.options.projectPathForJob(job);
+      const project = await this.options.cwdForJob(job);
       if (job.localMerge?.sourceRef) return localSourceHead(project, job.localMerge.sourceRef);
       return localWorkingHead(project);
     } catch {
@@ -49,7 +49,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const currentReviewTask = job.review?.taskId ? job.tasks.find(task => task.id === job.review?.taskId) : undefined;
     return {
       reviewEnabled: job.reviewEnabled !== false,
-      jobActive: job.state === 'ACTIVE' || job.projectionRecovery?.status === 'repairing',
+      jobActive: job.state === 'ACTIVE',
       reviewWorkSettled: reviewWorkSettled(job),
       headAvailable: Boolean(headSha),
       reviewPlanReady: reviewPlanReady(job),
@@ -104,7 +104,6 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   private async createFinalReviewTask(job: Job, headSha: string): Promise<string> {
     const reviewRound=job.tasks.filter(task=>task.reviewHeadSha===headSha&&isFinalReviewAgent(task.agentName)).length+1;
     const id = allocateEntityId(relayStoreDirectory(), job.repository, 'task', `final-review:${job.id}:${headSha}:${reviewRound}`);
-    const reviewPrNumber = job.prNumber;
     const now = new Date().toISOString();
     const reviewGateTasks = implementationTasks(job);
     const reviewThread = resolveReviewerThreadDestination(job, this.options.reviewer?.threadId);
@@ -118,12 +117,12 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     }, this.options.reviewer?.threadId);
     const input = [
       `Job ID: ${job.id}`,
-      reviewPrNumber > 0 ? `Review PR #${reviewPrNumber} at exactly head SHA ${headSha}.` : `Review the local Job artifact at exactly head SHA ${headSha}.`,
+      `Review the local Git Job artifact at exactly head SHA ${headSha}.`,
       `Review head SHA: ${headSha}`,
       'Job objective: ' + (job.objective ?? job.description ?? job.title),
-      'Review the complete PR diff at this exact immutable head SHA, not only the dependency Tasks.',
+      'Review the complete local Git diff at this exact immutable head SHA, not only the dependency Tasks.',
       'Use the selected reviewer agent contract as the authoritative review protocol.',
-      'This is a PRE-MERGE artifact approval gate: inspect exact PR head, requirements, tests and genuine blocking defects.',
+      'This is a PRE-MERGE artifact approval gate: inspect the exact local Git head, requirements, tests and genuine blocking defects.',
       'Do not block approval because automatic merge, Job COMPLETED, or post-merge validation has not occurred yet.',
       'All non-review Tasks have terminal outcomes. Examine FAILED and CANCELLED Tasks and their recovery evidence; never approve an unresolved required outcome.',
       'The Final Review is the Job completion check. Persist concrete, owner-attributed findings with a changes-required verdict. A Job without an explicit Planner remains plan-free; request targeted revisions rather than assuming Relay creates a Planner round.',
@@ -145,21 +144,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     return id;
   }
 
-  private async projectedReviewHeadReady(job: Job, headSha: string): Promise<boolean> {
-    // Local-first Jobs may expose a review-only GitHub PR. Once such a PR is
-    // bound, its projected head must match the authoritative local head before
-    // a reviewer is asked to review that immutable PR identity.
-    if (!job.localMerge?.sourceRef || job.prNumber <= 0 || !this.store.pullRequestHead) return true;
-    try {
-      const projected = await this.store.pullRequestHead();
-      return projected?.sha === headSha;
-    } catch {
-      return false;
-    }
-  }
-
   protected async ensureFinalReview(job: Job, headSha: string | null): Promise<void> {
-    if (headSha && !(await this.projectedReviewHeadReady(job, headSha))) return;
     job = await settleReviewRevisionRound(this.store, job);
     // Restore the review gate only after an authoritative unblock of the original reviewer.
     const priorReviewTask = job.tasks.find(task => task.id === job.review?.taskId);

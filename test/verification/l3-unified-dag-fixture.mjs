@@ -29,7 +29,7 @@ export async function fixture(t,{reviews=[],modelB=false,mode='normal',parallel=
  execFileSync('git',['-C',project,'add','README.md']);execFileSync('git',['-C',project,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','init']);
  const id='19002',now=new Date().toISOString(),out=join(project,'result.json'),dbPath=join(root,'relay.sqlite');
  const dag=parallel?'flowchart TD\nA[agent:first] --> C[agent:last]\nB[agent:middle] --> C':graph;
- const job=createJobEntity({id,title:'Unified runtime L3',objective:'Three nodes',projectPath:'.',projectRoot:project,
+ const job=createJobEntity({id,title:'Unified runtime L3',objective:'Three nodes',projectRoot:project,
   prNumber:0,repository:'project',continuation:null,autoMerge:normalJob,reviewEnabled:false,
   createdAt:now,updatedAt:now,tasks:[]});
  const coordinatorId=allocateEntityId(relayStoreDirectory(),'project','task');
@@ -114,14 +114,14 @@ export async function run({input,runCommand}){
    })();return {id:'fixture-model',promise:work,cancel:()=>{}};
  }};
  const reconciler=managedReconciler(store,{owner:'dag-l3',maxConcurrent:3,adapters:[model],eventBus:bus,noGitHub:true,
-   projectPathForJob:async()=>project,executionContextRoots:{workspaceRoot:root}});
+   cwdForJob:async()=>project,executionContextRoots:{workspaceRoot:root}});
  const stop=await reconciler.watch(id);t.after(stop);
  async function activate(){await store.mutateJob(id,j=>{j.state='ACTIVE';return j});}
  async function startCLI(){
   const cli=fileURLToPath(new URL('../../dist/cli.js',import.meta.url));
   await mkdir(join(root,'stores'),{recursive:true});
   const result=spawnSync(process.execPath,[cli,'job','run','--id',id,'--task-id',coordinatorId,
-   '--no-github','--store-dir',join(root,'stores'),'--project-path',project,'--workspace-root',root],
+   '--store-dir',join(root,'stores'),'--workspace-root',root],
    {encoding:'utf8',timeout:15000,env:{...process.env,AGENTS_RELAY_STORE_DIR:root}});
   assert.equal(result.status,0,result.stderr);
   const receipt=JSON.parse(result.stdout);

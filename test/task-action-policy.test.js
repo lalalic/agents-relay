@@ -18,7 +18,6 @@ test('manual retry policy selects only active troubleshooter recoveries for the 
   const other=task('troubleshoot-other-a0','RUNNING',{agentName:'troubleshooter',parentTaskId:'other'});
   assert.deepEqual(selectRelatedTaskMutations(job([root,child,legacy,done,other]),root,'task.retry'), [
     {taskId:'troubleshoot-root-a0',mutation:'cancel',reason:'Superseded by manual retry of root'},
-    {taskId:'troubleshoot-root-a1',mutation:'cancel',reason:'Superseded by manual retry of root'},
   ]);
 });
 

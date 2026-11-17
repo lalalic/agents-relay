@@ -5,7 +5,7 @@ import { arg, storeFor } from './cli-support.js';
 import { resolveExecutionContext } from './execution-context.js';
 import { buildPlannerExecutionPrompt, type PlannerContext } from './planner.js';
 import { managedWorkerInput } from './managed-worker-input.js';
-import { resolveJobProjectRoot, resolveRepositoryProjectPath } from './workspace.js';
+import { resolveJobProjectRoot } from './workspace.js';
 import { taskExecutionContext } from './task-context.js';
 import { eventsBusHistoryPage } from './events-bus-runtime.js';
 import type { PromptAdapter } from './agent-prompt-builder.js';
@@ -31,7 +31,7 @@ export async function runPromptCommand(args: string[]): Promise<void> {
     const caseId = scenario.caseId && /^[a-zA-Z0-9_-]+$/.test(scenario.caseId) ? scenario.caseId : 'case';
     const job = createJobEntity({
       id: 'EVAL_ONLY', title: 'Isolated prompt quality evaluation', repository: 'eval/isolated', projectRoot: process.cwd(), prNumber: 0,
-      continuation: null, tasks: [], createdAt: now, updatedAt: now, projectPath,
+      continuation: null, tasks: [], createdAt: now, updatedAt: now,
     });
     const task = createTaskEntity(job, {
       id: `eval-${caseId}`, jobId: 'EVAL_ONLY', title: caseId, agentName: scenario.agentName,
@@ -54,7 +54,8 @@ export async function runPromptCommand(args: string[]): Promise<void> {
   const planId = arg(args, '--plan-id'), taskId = arg(args, '--task-id');
   if (!!planId === !!taskId) throw new Error('prompt requires exactly one of --plan-id or --task-id');
   const {job} = await storeFor(args,true);
-  const projectPath = arg(args, '--project-path') || resolveRepositoryProjectPath(await resolveJobProjectRoot(job), job.projectPath);
+  if (arg(args, '--project-path')) throw new Error('Job --project-path is removed; use --project-root on the independent Git repository');
+  const projectPath = await resolveJobProjectRoot(job);
   let prompt: string;
   if (planId) {
     const plan = job.plans?.find(item => item.id === planId);
@@ -103,7 +104,8 @@ export async function runPlanContextCommand(args: string[]): Promise<void> {
   const plan=job.plans?.find(p=>p.id===planId);
   if(!plan || plan.status!=='PLANNING' || plan.executionId!==executionId)
     throw new Error(`Stale Plan execution ${planId}/${executionId}; current state ${plan?.status??'not-found'}`);
-  const projectPath=arg(args,'--project-path') || resolveRepositoryProjectPath(await resolveJobProjectRoot(job),job.projectPath);
+  if (arg(args, '--project-path')) throw new Error('Job --project-path is removed; use the independent Git repository root');
+  const projectPath=await resolveJobProjectRoot(job);
   const context=await resolveExecutionContext(projectPath,'planner');
   const input:PlannerContext={job,tasks:job.tasks,objective:job.objective??job.description??job.title,
     previousPlannerTaskId:plan.previousPlanId,planExecution:{planId,executionId},

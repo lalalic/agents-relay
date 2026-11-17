@@ -14,7 +14,7 @@ test('force-restate rejects an unproved unknown outcome without changing FAILED 
  const target={...failed,id:'target',state:'SUCCEEDED',failureReason:undefined,error:null,executionHistory:[]};
  const job={id:jobId,title:'Force cleanup negative',objective:'Keep unknown outcome unresolved',repository:'isolated',prNumber:0,state:'ACTIVE',autoMerge:false,reviewEnabled:false,createdAt:at,updatedAt:at,tasks:[failed,target],plans:[]};
  const sqlite=new SQLiteRelayStore(join(env.storeDir,'relay.sqlite'),jobId);const store=new LocalAuthorityDurableStore(sqlite,new InMemoryStore(),undefined,true);await store.saveJob(job);
- const runtime=new Reconciler(store,{owner:'force-clean-negative',adapters:[],maxConcurrent:0,noGitHub:true,projectPathForJob:()=>process.cwd(),planner:{plan:async context=>({objective_status:'satisfied',assessment:'claimed classification without proof',next_tasks:[],history_cleanup:[{taskId:'unknown-failure',outcome:'superseded',targetTaskId:'target',evidence:'worker exited without a terminal event',reason:'claimed replaced'}]})}});
+ const runtime=new Reconciler(store,{owner:'force-clean-negative',adapters:[],maxConcurrent:0,noGitHub:true,cwdForJob:()=>process.cwd(),planner:{plan:async context=>({objective_status:'satisfied',assessment:'claimed classification without proof',next_tasks:[],history_cleanup:[{taskId:'unknown-failure',outcome:'superseded',targetTaskId:'target',evidence:'worker exited without a terminal event',reason:'claimed replaced'}]})}});
  try{
   await assert.rejects(runtime.planJob(jobId,undefined,true),/unknown execution outcome\. Keep it unresolved/);
   const current=await sqlite.loadJob(jobId);

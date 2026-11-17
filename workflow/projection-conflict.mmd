@@ -1,66 +1,69 @@
 ---
-title: Projection Conflict
-description: Recover local-main and origin-main divergence after a completed Job's GitHub projection fails.
+title: Completed Local Git Delivery
+description: Optionally deliver completed local main to a usable origin with independent bounded retries.
 name: projection-conflict
-authority: SQLite Relay Job snapshot
-trigger: projection.delivery_failed
-idempotency: job-id plus observed origin/main SHA
+authority: SQLite delivery state and completed Job snapshot
+trigger: job.completed or delivery.retry_due
+idempotency: job-id plus local main SHA
 actions:
-  - projection.createRecoveryTask
-  - projection.escalate
-effects:
-  - effect.projectLocalMerge
+  - delivery.claimInspection
+  - delivery.skip
+  - delivery.pushMain
+  - delivery.recordDelivered
+  - delivery.scheduleRetry
+  - delivery.recordExhausted
 guards:
-  - deterministicDefinitionConflict
-  - projection.recoveryEligible
-  - projection.recoveryExhausted
-  - projection.recoveryInProgress
-  - projection.retryAvailable
-  - projection.repairReviewed
-  - projection.repairFailed
+  - delivery.claimAvailable
+  - delivery.originUsable
+  - delivery.remoteMainPresent
+  - delivery.remoteContainsMain
+  - delivery.retryAvailable
+  - delivery.retryDue
 ---
 flowchart LR
 %% relay: initial classify
 classify["state: classify"]
-conflict["state: conflict"]
-repairing["state: repairing"]
-retry["state: retry"]
-escalated["state: escalated"]
-projected["state: projected"]
+inspect["state: inspect"]
+push["state: push"]
+waiting["state: waiting"]
+delivered["state: delivered"]
+skipped["state: skipped"]
+exhausted["state: exhausted"]
 
-eligible["guard: projection.recoveryEligible"]
-inProgress["guard: projection.recoveryInProgress"]
-deterministic["guard: deterministicDefinitionConflict"]
-exhausted["guard: projection.recoveryExhausted"]
-retryAvailable["guard: projection.retryAvailable"]
-reviewed["guard: projection.repairReviewed"]
-repairFailed["guard: projection.repairFailed"]
-createTask["action: projection.createRecoveryTask"]
-retryProjection["action: effect.projectLocalMerge"]
-escalate["action: projection.escalate"]
+originUsable["guard: delivery.originUsable"]
+claimAvailable["guard: delivery.claimAvailable"]
+claimInspection["action: delivery.claimInspection"]
+remoteMainPresent["guard: delivery.remoteMainPresent"]
+remoteContains["guard: delivery.remoteContainsMain"]
+retryAvailable["guard: delivery.retryAvailable"]
+retryDue["guard: delivery.retryDue"]
+skip["action: delivery.skip"]
+pushMain["action: delivery.pushMain"]
+recordDelivered["action: delivery.recordDelivered"]
+scheduleRetry["action: delivery.scheduleRetry"]
+recordExhausted["action: delivery.recordExhausted"]
 
-classify -->|on: projection.delivery_failed| inProgress
-inProgress -->|true| classify
-inProgress -->|false| eligible
-classify -->|on: projection.failed| deterministic
-deterministic -->|true| conflict
-deterministic -->|false| retry
-eligible -->|true| createTask
-eligible -->|false| exhausted
-exhausted -->|true| escalate
-exhausted -->|false| classify
-createTask --> repairing
-
-repairing -->|on: reconcile| reviewed
-retry -->|on: reconcile| retryAvailable
-reviewed -->|true| retryAvailable
-retryAvailable -->|true| retryProjection
-retryAvailable -->|false| escalate
-reviewed -->|false| repairFailed
-repairFailed -->|true| escalate
-repairFailed -->|false| repairing
-retryProjection --> retry
-escalate --> escalated
-
-retry -->|on: projection.delivered| projected
-retry -->|on: projection.delivery_failed| eligible
+classify -->|on: job.completed| claimAvailable
+claimAvailable -->|true| claimInspection
+claimAvailable -->|false| recordExhausted
+claimInspection --> inspect
+inspect -->|on: inspect.completed| originUsable
+originUsable -->|false| skip
+originUsable -->|true| remoteMainPresent
+remoteMainPresent -->|false| skip
+remoteMainPresent -->|true| remoteContains
+inspect -->|on: delivery.failed| retryAvailable
+remoteContains -->|true| recordDelivered
+remoteContains -->|false| pushMain
+pushMain --> push
+push -->|on: delivery.pushed| recordDelivered
+push -->|on: delivery.failed| retryAvailable
+retryAvailable -->|true| scheduleRetry
+retryAvailable -->|false| recordExhausted
+scheduleRetry --> waiting
+waiting -->|on: delivery.retry_due| retryDue
+retryDue -->|true| claimAvailable
+retryDue -->|false| waiting
+recordDelivered --> delivered
+skip --> skipped
+recordExhausted --> exhausted

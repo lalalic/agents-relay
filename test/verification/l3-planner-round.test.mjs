@@ -21,7 +21,7 @@ test('real Planner Plan round failure retries into committed child under isolate
  const observations=[];
  const failures=[];
  const unsubscribe=await bus.subscribeAll(event=>{observations.push(event.type)});
- const runtime=new Reconciler(store,{owner:'planner-l3',adapters:[{name:'codex',id:'planner-l3-worker',capabilities:['model']}],eventBus:bus,maxConcurrent:0,noGitHub:true,emit:async event=>{if(event.type==='runtime.persistence.failed')failures.push(event.message);},projectPathForJob:()=>process.cwd(),planner:{plan:async()=>{
+ const runtime=new Reconciler(store,{owner:'planner-l3',adapters:[{name:'codex',id:'planner-l3-worker',capabilities:['model']}],eventBus:bus,maxConcurrent:0,noGitHub:true,emit:async event=>{if(event.type==='runtime.persistence.failed')failures.push(event.message);},cwdForJob:()=>process.cwd(),planner:{plan:async()=>{
   attempts++;
   if(attempts===1)throw Error('Injected transient Planner provider failure');
   return {objective_status:'satisfied',assessment:'Work required before objective is fulfilled',
@@ -73,7 +73,7 @@ test('SQLite reconcile preserves historical Plan child and reopens the same Trou
  const sqlite=new SQLiteRelayStore(join(env.storeDir,'relay.sqlite'),jobId);
  const store=new LocalAuthorityDurableStore(sqlite,new InMemoryStore(),undefined,true);
  const runtime=new Reconciler(store,{owner:'planner-child-recovery-l3',adapters:[],eventBus:new MemoryEventBus(),
-  maxConcurrent:0,noGitHub:true,projectPathForJob:()=>process.cwd()});
+  maxConcurrent:0,noGitHub:true,cwdForJob:()=>process.cwd()});
  try{
   await store.saveJob(job);
   await runtime.reconcile(jobId);

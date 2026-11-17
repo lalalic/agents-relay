@@ -7,14 +7,17 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { buildPlannerExecutionPrompt } from '../dist/planner.js';
 import { resolveExecutionContext } from '../dist/execution-context.js';
+import { localGitProject } from './local-git-project.js';
 const exec = promisify(execFile);
 
 test('prompt CLI prints exact production Planner Builder text for all three adapters using durable plan identity', async () => {
   const dir = await mkdtemp(join(tmpdir(),'relay-prompt-cli-'));
   try {
-    const project=resolve('.'), now='2026-10-31T18:00:00.000Z', executionId='123e4567-e89b-12d3-a456-426614174000';
+    const project=localGitProject(dir,'repo');
+    await writeFile(join(project,'AGENTS.md'),'# Independent planner project\n');
+    const now='2026-10-31T18:00:00.000Z', executionId='123e4567-e89b-12d3-a456-426614174000';
     const plan={jobId:'537',id:'plan-2',round:2,source:'model-planner',previousPlanId:'plan-1',trigger:{source:'manual'},status:'SUCCEEDED',assessment:'Completed',generatedTaskIds:['473'],createdAt:now,updatedAt:now,appliedExecutionId:executionId};
-    const job={id:'537',repository:'lalalic/neo',prNumber:0,state:'ACTIVE',title:'Vlog',objective:'Build a test Vlog episode',projectPath:'vlog',
+    const job={id:'537',repository:'repo',prNumber:0,state:'ACTIVE',title:'Vlog',objective:'Build a test Vlog episode',projectRoot:project,
       createdAt:'2026-10-31T17:00:00Z',updatedAt:now,continuation:{},plans:[plan],
       tasks:[{id:'473',jobId:'537',kind:'work',createdAt:'2026-10-31T18:05:00.000Z',state:'SUCCEEDED'}]};
     const file=join(dir,'job.json');await writeFile(file,JSON.stringify(job));
@@ -22,7 +25,7 @@ test('prompt CLI prints exact production Planner Builder text for all three adap
     const history={...job,tasks:[],plans:[{...plan,status:'PLANNING',executionId,appliedExecutionId:undefined,generatedTaskIds:[]}]};
     const planner={job:history,tasks:[],objective:job.objective,previousPlannerTaskId:'plan-1',planExecution:{planId:plan.id,executionId},trigger:plan.trigger,executionContext:context};
     for(const adapter of ['codex','chatgpt','z']){
-      const {stdout,stderr}=await exec(process.execPath,['dist/cli.js','prompt','--file',file,'--id','537','--plan-id','plan-2','--project-path',project,'--adapter',adapter],{cwd:project,timeout:20_000});
+      const {stdout,stderr}=await exec(process.execPath,['dist/cli.js','prompt','--file',file,'--id','537','--plan-id','plan-2','--adapter',adapter],{cwd:resolve('.'),timeout:20_000});
       assert.equal(stdout.trimEnd(),await buildPlannerExecutionPrompt(planner,undefined,adapter));
       assert.match(stdout,/Job: 537\nTask: plan-2\nExecution: 123e4567/);
       assert.doesNotMatch(stdout,/PROFILE-JOB|PROFILE-PLAN|Job URL: null/);
@@ -31,7 +34,7 @@ test('prompt CLI prints exact production Planner Builder text for all three adap
       assert.doesNotMatch(stdout,/event-contract\.md|events-bus\/references\/protocol\.md/);
       assert.match(stdout,/Git repository working directory \(cwd\):/);
     }
-    const {stderr}=await exec(process.execPath,['dist/cli.js','prompt','--file',file,'--id','537','--plan-id','plan-2','--project-path',project,'--adapter','codex'],{cwd:project,timeout:20_000});
+    const {stderr}=await exec(process.execPath,['dist/cli.js','prompt','--file',file,'--id','537','--plan-id','plan-2','--adapter','codex'],{cwd:resolve('.'),timeout:20_000});
     assert.ok(typeof stderr==='string');
   } finally {await rm(dir,{recursive:true,force:true});}
 });

@@ -3,7 +3,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { createIsolatedEnvironment } from './harness.mjs';
-import { SQLiteRelayStore } from '../../dist/relay-store.js';
+import { SQLiteRelayStore, relayStoreDirectory } from '../../dist/relay-store.js';
+import { allocateEntityId } from '../../dist/job-task-id-sequence.js';
 import { LocalAuthorityDurableStore } from '../../dist/local-authority-store.js';
 import { InMemoryStore } from '../../dist/store.js';
 import { MemoryEventBus, eventFor } from '../../dist/events.js';
@@ -17,7 +18,7 @@ function task(id, dependencies = [], agentName = 'implementation', jobId = 'l3-f
   return { jobId, id, kind: 'work', agentName, adapter: 'codex', input: 'mock external agent', output: { kind: 'task_pr' }, parentTaskId: null, dependencies, capabilities: ['model'], workerRequirements: { capabilities: ['model'] }, workerSelection: { workerId: 'l3-worker', selectedBy: 'test', selectedAt: stamp }, routing: route, state: dependencies.length ? 'DRAFT' : 'QUEUED', attempt: 0, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, executionHistory: [], threadId: null, result: null, error: null, timeoutMs: 900000, createdAt: stamp, updatedAt: stamp };
 }
 
-function fakeAdapter(bus, outcomes, verdicts, heads, startedWaiters) {
+function fakeAdapter(bus, outcomes, verdicts, heads, startedWaiters, labelForTask) {
   const lastReviewResult = new Map();
   return {
     name: 'codex', id: 'l3-worker', capabilities: ['model', 'codex'],
@@ -38,7 +39,7 @@ function fakeAdapter(bus, outcomes, verdicts, heads, startedWaiters) {
           startedWaiters.delete(source.id);
         }
         await new Promise(resolve => setTimeout(resolve, 0));
-        const key = ['reviewer','job-acceptance-reviewer'].includes(currentTask.agentName) ? currentTask.id : currentTask.id;
+        const key = labelForTask(currentTask);
         const isReview = ['reviewer','job-acceptance-reviewer'].includes(currentTask.agentName);
         const queue = isReview ? verdicts[key] ?? verdicts['*'] : outcomes[key];
         const queuedResult = queue?.shift();
@@ -72,7 +73,24 @@ export async function runFullPath(scenario) {
   git('commit', '-m', 'Seed local L3 source');
   git('branch', '-M', 'main');
   git('branch', 'sim-source');
-  const jobId = `l3-${scenario.id}`;
+  const jobId = allocateEntityId(relayStoreDirectory(), env.repository, 'job', `l3-full:${scenario.id}`);
+  const taskAliases = new Map();
+  const names = new Map();
+  const sourceTasks = scenario.tasks ?? [{ id: 'a' }, { id: 'b', dependencies: ['a'] }];
+  for (const spec of sourceTasks) {
+    const id = allocateEntityId(relayStoreDirectory(), env.repository, 'task', `l3-full:${scenario.id}:${spec.id}`);
+    taskAliases.set(spec.id, id); names.set(id, spec.id);
+  }
+  const labelForTask = (item, job) => {
+    if (names.has(item.id)) return names.get(item.id);
+    if (item.agentName === 'troubleshooter' && names.has(item.parentTaskId)) return `troubleshoot-${names.get(item.parentTaskId)}`;
+    if (item.agentName === 'troubleshooter' && job) {
+      const parent = job.tasks.find(task => task.id === item.parentTaskId);
+      if (parent) return `troubleshoot-${labelForTask(parent, job)}`;
+    }
+    if (['reviewer','job-acceptance-reviewer'].includes(item.agentName) && item.reviewHeadSha) return `final-review-${item.reviewHeadSha}`;
+    return item.id;
+  };
   let sqlite = new SQLiteRelayStore(join(env.storeDir, 'relay.sqlite'), jobId);
   let store = new LocalAuthorityDurableStore(sqlite, new InMemoryStore(), undefined, true);
   const bus = new MemoryEventBus();
@@ -88,8 +106,8 @@ export async function runFullPath(scenario) {
   const mergeOutcomes = [...(scenario.mergeOutcomes ?? ['succeeded'])];
   const mergeReceipts = [];
   let runtime = new Reconciler(store, {
-    owner: 'l3-simulator', adapters: [fakeAdapter(bus, outcomes, verdicts, heads, startedWaiters)], eventBus: bus,
-    maxConcurrent: scenario.maxConcurrent ?? 4, noGitHub: true, projectPathForJob: async () => env.root,
+    owner: 'l3-simulator', adapters: [fakeAdapter(bus, outcomes, verdicts, heads, startedWaiters, labelForTask)], eventBus: bus,
+    maxConcurrent: scenario.maxConcurrent ?? 4, noGitHub: true, cwdForJob: async () => env.root,
     headShaProvider: () => heads.current,
     localMergeDelivery: (_path, receipt) => {
       if (mergeReceipts.length > 0 && mergeOutcomes.length === 0) return mergeReceipts.at(-1);
@@ -107,7 +125,7 @@ export async function runFullPath(scenario) {
   const snapshot = async () => sqlite.loadJob(jobId);
   const tick = async () => { await new Promise(resolve => setTimeout(resolve, 10)); await runtime.idle(); await runtime.reconcile(jobId); await runtime.idle(); };
   try {
-    const tasks = (scenario.tasks ?? [{ id: 'a' }, { id: 'b', dependencies: ['a'] }]).map(item => task(item.id, item.dependencies ?? [], item.agentName ?? 'implementation', jobId));
+    const tasks = sourceTasks.map(item => task(taskAliases.get(item.id), (item.dependencies ?? []).map(name => taskAliases.get(name) ?? name), item.agentName ?? 'implementation', jobId));
     await store.saveJob({ id: jobId, title: scenario.id, objective: scenario.objective ?? scenario.id, repository: env.repository, projectRoot: env.root, prNumber: 0, state: 'ACTIVE', autoMerge: scenario.autoMerge ?? true, reviewEnabled: scenario.reviewEnabled ?? true, headSha: heads.current, localMerge: { sourceRef: 'refs/heads/sim-source', targetRef: 'refs/heads/main', status: 'pending' }, createdAt: stamp, updatedAt: stamp, tasks });
     await store.saveAgent({
       id: 'l3-worker', name: 'L3 mock worker', responsibility: 'simulated external agent', role: 'worker', capabilities: ['model', 'codex'], boundaries: [],
@@ -132,7 +150,7 @@ export async function runFullPath(scenario) {
         await stop?.(); await runtime.close(); sqlite.close();
         sqlite = new SQLiteRelayStore(join(env.storeDir, 'relay.sqlite'), jobId);
         store = new LocalAuthorityDurableStore(sqlite, new InMemoryStore(), undefined, true);
-        runtime = new Reconciler(store, { owner: 'l3-simulator-restarted', adapters: [fakeAdapter(bus, outcomes, verdicts, heads, startedWaiters)], eventBus: bus, maxConcurrent: scenario.maxConcurrent ?? 4, noGitHub: true, projectPathForJob: async () => env.root, headShaProvider: () => heads.current, localMergeDelivery: (_path, receipt) => { if (mergeReceipts.length > 0 && mergeOutcomes.length === 0) return mergeReceipts.at(-1); const outcome = scenario.persistMergeFailure ? 'failed' : (mergeOutcomes.shift() ?? 'succeeded'); if (outcome === 'failed') throw new Error(scenario.mergeFailureReason ?? 'simulated dirty target worktree'); const mergedCommitSha = `merge-${mergeReceipts.length + 1}`; mergeReceipts.push({ sourceSha: receipt.sourceSha, mergedCommitSha }); return { sourceSha: receipt.sourceSha ?? heads.current, mergedCommitSha }; }, reviewer: { adapter: 'codex', workerId: 'l3-worker', routing: route, maxAttempts: 3 }, planner: { plan: async () => ({ objective_status: 'satisfied', assessment: 'Durable worker evidence verified.', next_tasks: [] }) } });
+        runtime = new Reconciler(store, { owner: 'l3-simulator-restarted', adapters: [fakeAdapter(bus, outcomes, verdicts, heads, startedWaiters, labelForTask)], eventBus: bus, maxConcurrent: scenario.maxConcurrent ?? 4, noGitHub: true, cwdForJob: async () => env.root, headShaProvider: () => heads.current, localMergeDelivery: (_path, receipt) => { if (mergeReceipts.length > 0 && mergeOutcomes.length === 0) return mergeReceipts.at(-1); const outcome = scenario.persistMergeFailure ? 'failed' : (mergeOutcomes.shift() ?? 'succeeded'); if (outcome === 'failed') throw new Error(scenario.mergeFailureReason ?? 'simulated dirty target worktree'); const mergedCommitSha = `merge-${mergeReceipts.length + 1}`; mergeReceipts.push({ sourceSha: receipt.sourceSha, mergedCommitSha }); return { sourceSha: receipt.sourceSha ?? heads.current, mergedCommitSha }; }, reviewer: { adapter: 'codex', workerId: 'l3-worker', routing: route, maxAttempts: 3 }, planner: { plan: async () => ({ objective_status: 'satisfied', assessment: 'Durable worker evidence verified.', next_tasks: [] }) } });
         stop = await runtime.watch(jobId);
         await runtime.reconcile(jobId);
       } else if (action.type === 'advance-head') {
@@ -144,7 +162,7 @@ export async function runFullPath(scenario) {
       await runtime.idle();
       for (let attempt = 0; attempt < 50; attempt += 1) await tick();
       const current = await snapshot();
-      trace.push({ event: action.type, jobState: current.state, headSha: heads.current, merge: current.localMerge ?? null, tasks: current.tasks.map(item => ({ id: item.id, agent: item.agentName, state: item.state, attempt: item.attempt, executionId: item.executionId, result: item.result, error: item.error })), progress: JSON.stringify(current) !== JSON.stringify(trace.at(-1)?.after) });
+      trace.push({ event: action.type, jobState: current.state, headSha: heads.current, merge: current.localMerge ?? null, tasks: current.tasks.map(item => ({ id: labelForTask(item, current), agent: item.agentName, state: item.state, attempt: item.attempt, executionId: item.executionId, result: item.result, error: item.error })), progress: JSON.stringify(current) !== JSON.stringify(trace.at(-1)?.after) });
       trace.at(-1).after = current;
     }
     // A launched adapter and its terminal event may be delivered on separate turns.
@@ -164,10 +182,10 @@ export async function runFullPath(scenario) {
     }
     const actual = await snapshot();
     const errors = [];
-    for (const [id, state] of Object.entries(scenario.expected?.tasks ?? {})) if (actual.tasks.find(item => item.id === id)?.state !== state) errors.push(`${id} expected ${state}`);
+    for (const [id, state] of Object.entries(scenario.expected?.tasks ?? {})) if (actual.tasks.find(item => labelForTask(item, actual) === id)?.state !== state) errors.push(`${id} expected ${state}`);
     if (scenario.expected?.jobState && actual.state !== scenario.expected.jobState) errors.push(`job expected ${scenario.expected.jobState}, got ${actual.state}`);
     if (scenario.expected?.mergeStatus && actual.localMerge?.status !== scenario.expected.mergeStatus) errors.push(`merge expected ${scenario.expected.mergeStatus}, got ${actual.localMerge?.status ?? 'none'}`);
-    const result = { schemaVersion: 3, scenarioId: scenario.id, outcome: errors.length ? 'FAIL' : 'PASS', actual: { jobState: actual.state, headSha: heads.current, review: actual.review ?? null, facts: localMergeFacts(actual, heads.current), tasks: Object.fromEntries(actual.tasks.map(item => [item.id, item.state])), localMerge: actual.localMerge ?? null }, trace, mergeReceipts, events: observedEvents, errors, authority: 'isolated SQLite via MemoryEventBus, Reconciler, Graph and dependency reconciliation' };
+    const result = { schemaVersion: 3, scenarioId: scenario.id, outcome: errors.length ? 'FAIL' : 'PASS', actual: { jobState: actual.state, headSha: heads.current, review: actual.review ?? null, facts: localMergeFacts(actual, heads.current), tasks: Object.fromEntries(actual.tasks.map(item => [labelForTask(item, actual), item.state])), persistedTaskIds: actual.tasks.map(item => item.id), localMerge: actual.localMerge ?? null }, trace, mergeReceipts, events: observedEvents.map(item => ({ ...item, taskId: labelForTask(actual.tasks.find(t => t.id === item.taskId) ?? { id: item.taskId }, actual) })), errors, authority: 'isolated SQLite via MemoryEventBus, Reconciler, Graph and dependency reconciliation' };
     if (scenario.outputDir) { mkdirSync(resolve(scenario.outputDir), { recursive: true }); writeFileSync(join(resolve(scenario.outputDir), 'report.json'), JSON.stringify(result, null, 2) + '\n'); writeFileSync(join(resolve(scenario.outputDir), 'report.md'), `# L3 production-path simulator\n\nScenario: ${scenario.id}\nResult: ${result.outcome}\n\n| Event | Job | Tasks |\n| --- | --- | --- |\n${trace.map(item => `| ${item.event} | ${item.jobState} | ${item.tasks.map(t => `${t.id}:${t.state}`).join(', ')} |`).join('\n')}\n${errors.map(error => `\n- ERROR: ${error}`).join('')}\n`); }
     return result;
   } finally { await stop?.(); await runtime.close(); sqlite.close(); env.cleanup(); }

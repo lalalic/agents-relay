@@ -1,4 +1,7 @@
-# V2 local lifecycle authority — migration and validation
+# V2 local lifecycle authority — migration and validation (historical)
+
+> Historical migration notes. The current public CLI is local-Git-only: old `--no-github`, GitHub and PR flags are unsupported; refer to `docs/evidence/relay-local-git-only-20261116.md` and `workflow/*.mmd` for active policy.
+
 
 ## Objective
 
@@ -82,7 +85,7 @@ production restart belong to an explicit later deployment step after review.
 
 ## Local repository identity and local-only execution
 
-Every Job binds `repository` to the local Git root directory name and immutable `projectRoot` to its validated canonical absolute path. `projectPath` is an optional nested path within that root; `githubRepo` is optional remote metadata. No `local/...` aliases or GitHub owner/repository identity belongs in `repository`. Worktrees are execution checkouts and never become Job roots. Local Git is the source of truth for JEL, final review, and merge; GitHub is optional publishing only.
+Every Job binds `repository` to the local Git root directory name and immutable `projectRoot` to its validated canonical absolute path. Each Project is a standalone Git repository; `githubRepo` is optional remote metadata. No `local/...` aliases or GitHub owner/repository identity belongs in `repository`. Worktrees are execution checkouts and never become Job roots. Local Git is the source of truth for JEL, final review, and merge; GitHub is optional publishing only.
 
 A code Job must configure a source branch and an integration branch explicitly. Both are local full Git refs (`refs/heads/...`). An example from inside the intended Git repository:
 
@@ -112,7 +115,7 @@ Jobs whose outputs are non-code artifacts (for example a `file` output) may comp
 
 With GitHub enabled or disabled, review head identity comes exclusively from the local source branch commit SHA, or the current local Git HEAD when no source ref is configured. A new source commit invalidates the old review and requires another review before merge. GitHub OPEN/MERGED/CLOSED and head facts are SQLite audit records only: they never start, stop, complete, cancel, or wake a Job/Task, and never gate local Task/Planner/Review dispatch.
 
-`--no-github` is a standalone mode. `reconcile` executes locally rather than only emitting a daemon wake event; normal mode retains event-triggered daemon reconciliation. The `--events none` flag can be used for a completely isolated local CLI workflow.
+The historical `--no-github` standalone flag has since been retired. Current public CLI commands use local Git and SQLite without GitHub or PR options. Use `--events none` only for explicitly isolated local tests; review the current Job lifecycle Graph and local-Git-only hotfix evidence for authoritative completion and optional post-terminal origin delivery.
 
 ## GitHub-enabled package publish events
 

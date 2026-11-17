@@ -8,7 +8,7 @@ import { GitHubStore, InMemoryStore } from '../dist/store.js';
 import { eventFor } from '../dist/events.js';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { deliverLocalMerge, localSourceHead } from '../dist/local-git-merge.js';
@@ -62,7 +62,7 @@ test('no-github Graph completes successful local Job without PR merge',async()=>
   const repo=localRepository();
   await store.saveJob({...job(), localMerge:{...mergeRefs}});
   const reconciler=managedReconciler(store,{owner:'no-github-test',adapters:[],
-    noGitHub:true,maxConcurrent:0,projectPathForJob:()=>repo.path});
+    noGitHub:true,maxConcurrent:0,cwdForJob:()=>repo.path});
   const completed=await reconciler.reconcile('local-job');
   assert.equal(completed.state,'COMPLETED');
   assert.equal(await store.pullRequestState(),'UNKNOWN');
@@ -82,7 +82,7 @@ test('no-github approved Review completes local Job without remote merge',async(
     updatedAt:timestamp(),
   }});
   const reconciler=managedReconciler(store,{owner:'no-github-review',adapters:[],
-    noGitHub:true,maxConcurrent:0,projectPathForJob:()=>repo.path});
+    noGitHub:true,maxConcurrent:0,cwdForJob:()=>repo.path});
   const event=eventFor('local-job','review-local',null,'review.approved','succeeded',
     'approved','orchestrator',{review:{headSha:repo.head,summary:'approved',blockingFindings:[]}});
   const applied=await reconciler.applyEvent(event);
@@ -99,7 +99,7 @@ test('no-github Planner context never fetches a PR head',async()=>{
   const {db,store}=fixture();
   await store.saveJob(job());
   const reconciler=managedReconciler(store,{owner:'no-github-planner',adapters:[],
-    noGitHub:true,maxConcurrent:0,projectPathForJob:()=>process.cwd()});
+    noGitHub:true,maxConcurrent:0,cwdForJob:()=>process.cwd()});
   const context=await reconciler.plannerContext(await store.load('local-job'),task());
   assert.ok(context);
   db.close();
@@ -130,7 +130,7 @@ test('merge conflict persists failure and leaves Job ACTIVE and target untouched
     const target=repo.git('rev-parse','main');
     await store.saveJob({...job(),localMerge:{...mergeRefs}});
     const reconciler=managedReconciler(store,{owner:'conflict-review',adapters:[],
-      noGitHub:true,maxConcurrent:0,projectPathForJob:()=>repo.path});
+      noGitHub:true,maxConcurrent:0,cwdForJob:()=>repo.path});
     const result=await reconciler.reconcile('local-job');
     assert.equal(result.state,'ACTIVE');
     assert.equal(result.localMerge.status,'failed');
@@ -159,7 +159,7 @@ test('commit after Review produces a new local HEAD, invalidating previous appro
     const reconciler=managedReconciler(store,{owner:'stale-review',adapters:[],
       noGitHub:true,maxConcurrent:0,reviewer:{adapter:'chatgpt',
         routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:timestamp()}},
-      projectPathForJob:()=>repo.path});
+      cwdForJob:()=>repo.path});
     await reconciler.reconcile('local-job');
     const saved=await store.load('local-job');
     assert.equal(saved.state,'ACTIVE');
@@ -181,14 +181,14 @@ test('reconciliation recovers merge delivery after SQLite reopen without duplica
     db=new SQLiteRelayStore(dbPath);
     store=makeStore();
     const reconciler=managedReconciler(store,{owner:'restart-test',adapters:[],
-      noGitHub:true,maxConcurrent:0,projectPathForJob:()=>repo.path});
+      noGitHub:true,maxConcurrent:0,cwdForJob:()=>repo.path});
     const result=await reconciler.reconcile('local-job');
     assert.equal(result.state,'COMPLETED');
     const head=repo.git('rev-parse','main');
     db.close();db=new SQLiteRelayStore(dbPath);
     store=makeStore();
     const rebooted=managedReconciler(store,{owner:'restart-test-2',adapters:[],
-      noGitHub:true,maxConcurrent:0,projectPathForJob:()=>repo.path});
+      noGitHub:true,maxConcurrent:0,cwdForJob:()=>repo.path});
     await rebooted.reconcile('local-job');
     assert.equal(repo.git('rev-parse','main'),head);
     assert.equal((await store.load('local-job')).localMerge.mergedCommitSha,head);
@@ -200,7 +200,7 @@ test('non-code local artifacts complete without a Git merge; code jobs cannot',a
   try {
     await store.saveJob(job([{...task(),output:{kind:'file',path:'runs/result.md'}}]));
     const reconciler=managedReconciler(store,{owner:'noncode-test',adapters:[],
-      noGitHub:true,maxConcurrent:0,projectPathForJob:()=>process.cwd()});
+      noGitHub:true,maxConcurrent:0,cwdForJob:()=>process.cwd()});
     assert.equal((await reconciler.reconcile('local-job')).state,'COMPLETED');
     assert.equal(await db.pendingProjectionCount(),0);
   } finally {db.close();}
@@ -208,7 +208,7 @@ test('non-code local artifacts complete without a Git merge; code jobs cannot',a
   try {
     await second.store.saveJob(job([{...task(),output:{kind:'task_pr'}}]));
     const reconciler=managedReconciler(second.store,{owner:'unconfigured-code-test',adapters:[],
-      noGitHub:true,maxConcurrent:0,projectPathForJob:()=>process.cwd()});
+      noGitHub:true,maxConcurrent:0,cwdForJob:()=>process.cwd()});
     assert.equal((await reconciler.reconcile('local-job')).state,'ACTIVE');
     assert.equal((await second.store.load('local-job')).localMerge,undefined);
   } finally {second.db.close();}
@@ -220,7 +220,7 @@ test('UNKNOWN GitHub state continues dispatch after a previous local Task succee
     const next={...task('QUEUED'),id:'next',dependencies:['prior'],output:{kind:'file',path:'runs/next.md'}};
     await store.saveJob(job([first,next]));
     const reconciler=managedReconciler(store,{owner:'unknown-continuation',adapters:[],
-      maxConcurrent:2,projectPathForJob:()=>process.cwd()});
+      maxConcurrent:2,cwdForJob:()=>process.cwd()});
     await reconciler.reconcile('local-job');
     const saved=await store.load('local-job');
     assert.notEqual(saved.tasks.find(t=>t.id==='next').state,'QUEUED');
@@ -235,9 +235,9 @@ test('durable CLI requires relay service while explicit --file demo remains loca
   const cli=fileURLToPath(new URL('../dist/cli.js',import.meta.url));
   const env={...process.env,HOME:home};
   try {
-    assert.throws(()=>execFileSync(process.execPath,[cli,'--no-github','job','create','--id','e2e-cli','--title','Offline Job','--objective','Local merge','--host','127.0.0.1','--port','1'],{cwd:repo.path,env,encoding:'utf8',timeout:5000}),/service unavailable|ECONNREFUSED/);
+    assert.throws(()=>execFileSync(process.execPath,[cli,'--no-github','job','create','--repo',basename(repo.path),'--id','e2e-cli','--title','Offline Job','--objective','Local merge'],{cwd:repo.path,env,encoding:'utf8',timeout:5000}),/Unsupported option --no-github/);
     const file=join(home,'demo.json');
-    execFileSync(process.execPath,[cli,'--no-github','init','--file',file,'--id','demo','--title','Demo'],{cwd:repo.path,env,encoding:'utf8',timeout:5000});
+    execFileSync(process.execPath,[cli,'init','--file',file,'--id','demo','--title','Demo'],{cwd:repo.path,env,encoding:'utf8',timeout:5000});
     assert.equal(JSON.parse(readFileSync(file,'utf8')).id,'demo');
   } finally { repo.close();rmSync(home,{recursive:true,force:true}); }
 });
@@ -256,7 +256,7 @@ test('local merge respects autoMerge=false and never mutates target ref',async()
     const target=repo.git('rev-parse','refs/heads/main');
     await store.saveJob({...job(),autoMerge:false,localMerge:{...mergeRefs}});
     const reconciler=managedReconciler(store,{owner:'local-auto-merge-optout',adapters:[],
-      noGitHub:true,maxConcurrent:0,projectPathForJob:()=>repo.path});
+      noGitHub:true,maxConcurrent:0,cwdForJob:()=>repo.path});
     const result=await reconciler.reconcile('local-job');
     assert.equal(result.state,'ACTIVE');
     assert.equal(result.localMerge.status,'pending');
@@ -278,7 +278,7 @@ test('local merge retry refreshes a stale source SHA and succeeds on the new com
     await store.saveJob({...job(),headSha:stale,localMerge:{...mergeRefs,sourceSha:stale,status:'failed',
       attempts:1,nextAttemptAt:'2020-01-01T00:00:00.000Z',error:'previous transient failure'}});
     const reconciler=managedReconciler(store,{owner:'refresh-local-merge-sha',adapters:[],
-      noGitHub:true,maxConcurrent:0,projectPathForJob:()=>repo.path});
+      noGitHub:true,maxConcurrent:0,cwdForJob:()=>repo.path});
     const result=await reconciler.reconcile('local-job');
     assert.equal(result.state,'COMPLETED');
     assert.equal(result.localMerge.sourceSha,fresh);
@@ -367,7 +367,7 @@ test('Graph completes code Job only after merge into checked-out main',async()=>
     repo.git('checkout','main');
     await store.saveJob({...job(),localMerge:{...mergeRefs}});
     const reconciler=managedReconciler(store,{owner:'main-checkedout-graph',adapters:[],
-      noGitHub:true,maxConcurrent:0,projectPathForJob:()=>repo.path});
+      noGitHub:true,maxConcurrent:0,cwdForJob:()=>repo.path});
     const result=await reconciler.reconcile('local-job');
     assert.equal(result.state,'COMPLETED');
     assert.equal(result.localMerge.status,'succeeded');
@@ -504,7 +504,7 @@ test('authoritative local merge completion never enqueues a second GitHub merge 
   try {
     await store.saveJob({...job(),prNumber:77,headSha:repo.head,localMerge:{...mergeRefs}});
     await store.applyPullRequestFacts({state:'OPEN',head:{ref:'feature',sha:repo.head},observedAt:timestamp()});
-    const reconciler=managedReconciler(store,{owner:'external-merge-after-local',adapters:[],noGitHub:false,maxConcurrent:0,projectPathForJob:()=>repo.path});
+    const reconciler=managedReconciler(store,{owner:'external-merge-after-local',adapters:[],noGitHub:false,maxConcurrent:0,cwdForJob:()=>repo.path});
     const completed=await reconciler.reconcile('local-job');
     assert.equal(completed.state,'COMPLETED');
     const durable=await store.load('local-job');
@@ -520,7 +520,7 @@ test('external merge enqueue failure cannot roll back authoritative local comple
   const repo=localRepository();
   const base=new InMemoryStore({...job(),prNumber:88,headSha:repo.head,localMerge:{...mergeRefs}});
   base.mergePullRequest=async()=>{throw new Error('projection transport unavailable');};
-  const reconciler=managedReconciler(base,{owner:'external-merge-isolation',adapters:[],noGitHub:false,maxConcurrent:0,projectPathForJob:()=>repo.path});
+  const reconciler=managedReconciler(base,{owner:'external-merge-isolation',adapters:[],noGitHub:false,maxConcurrent:0,cwdForJob:()=>repo.path});
   try {
     const completed=await reconciler.reconcile('local-job');
     assert.equal(completed.state,'COMPLETED');
@@ -556,6 +556,9 @@ test('local merge failure records reason and retry, then emits a successful reco
     assert.equal(recovered,true,JSON.stringify((await store.load('local-job')).localMerge));
     await store.drainWorkflowEvents(emit);
     assert.equal(events[1].type,'job.merge.succeeded');
-    assert.equal((await store.load('local-job')).state,'COMPLETED');
+    const completedJob=await store.load('local-job');
+    assert.equal(completedJob.state,'COMPLETED');
+    assert.equal(completedJob.remoteDelivery?.status,'pending','remote delivery is queued only after real local Graph completion');
+    assert.equal(completedJob.remoteDelivery?.mergedCommitSha,completedJob.localMerge?.mergedCommitSha);
   } finally {db.close();repo.close()}
 });

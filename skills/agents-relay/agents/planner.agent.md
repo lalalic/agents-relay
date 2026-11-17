@@ -142,14 +142,14 @@ If evidence is absent or execution outcome is unknown, disposition that historic
 - A Task describes what an agent must accomplish; never emit a shell command as a worker Task.
 - Use dependencies only for Task IDs inside the current Job, and only when execution order actually matters. Never encode cross-Job or cross-repository dependencies in `dependencies`.
 - Do not label authorized technical work in another repository as an owner action or request human escalation just because it crosses a repository boundary. Assign executable work that uses the pinned `blocker ensure` action under `contracts/blocker-job-recovery.md`; preserve escalation for a real owner-only decision.
-- When the current Job is a prerequisite for another durable Job/Task, emit that dependent in top-level `unblocks`. The current blocker Job owns this authoritative reverse relation. Dependent-side `blockedBy` is optional observability metadata and is not the source of truth. Use `resolutionMode: "merge"` when blocker PR merge is sufficient; use `"verified"` when publication, deployment, runtime health, human approval, or another post-merge fact must be verified.
+- When the current Job is a prerequisite for another durable Job/Task, emit that dependent in top-level `unblocks`. The current blocker Job owns this authoritative reverse relation. Dependent-side `blockedBy` is optional observability metadata and is not the source of truth. Use `resolutionMode: "merge"` when the blocker Job’s verified local Git merge is sufficient; use `"verified"` when publication, deployment, runtime health, human approval, or another post-merge fact must be verified.
 - Describe each child Task precisely enough for worker-router to decide from the Task itself. Do not invent Codex/ChatGPT capability labels. workerRequirements is optional and should normally be omitted; use an explicit runtime only when the objective already requires that runtime.
 - Do not choose codex/chatgpt, provider/model, or usage probes.
-- Every child Task must declare exactly one output: `task_pr` or `file`.
+- Every child Task must declare exactly one output: `task_pr` (historical serialized enum for local Git code work; **not** a GitHub pull request) or `file`. The equivalent public CLI spelling is `--output local-git`.
 - Every child Task must include `storySize` (`S`, `M`, or `L`); use `M` when uncertain.
 - Do not create bookkeeping, waiting, status-checking, wrapper, or planning Tasks. Your response itself is the planning round.
-- Relay owns lifecycle delivery for local-first Jobs. Never create a worker Task whose job is to perform the local Git merge, mark the Job `COMPLETED`, merge the projected GitHub PR, or wait/check for those Relay-owned effects. After implementation and required review are satisfied, return no lifecycle-completion Task; let the canonical Review/Local-Merge/Job Graph advance the Job.
-- When all executable implementation work is complete and the only remaining steps are Relay-owned final review, local merge, Job completion, or projected PR convergence, return `objective_status: "satisfied"` with `next_tasks: []`. Do not return `in_progress` with an empty task list before final review; that would leave the Job with no executable progress path.
+- Relay owns lifecycle delivery for local-first Jobs. Never create a worker Task whose job is to perform the local Git merge, mark the Job `COMPLETED`, push or merge a remote GitHub PR, or wait/check for any Relay-owned effect. After implementation and required review are satisfied, return no lifecycle-completion Task; let the canonical Review/Local-Merge/Job Graph advance the Job.
+- When all executable implementation work is complete and the only remaining steps are Relay-owned final review, local merge, Job completion, or optional post-completion origin delivery, return `objective_status: "satisfied"` with `next_tasks: []`. Do not return `in_progress` with an empty task list before final review; that would leave the Job with no executable progress path.
 - Do not print the candidate JSON as the final reply. Write it to a temporary file, invoke the execution-bound `apply_cli` with that file, and only return the exact successful `PLAN_APPLIED:<plan-id>:<execution-id>` receipt.
 
 ## Output
@@ -172,7 +172,7 @@ Each item in `next_tasks` contains **required `title`**, id, input, output, and 
 Use these exact serialized forms:
 
 - `output` is always an object, never a string:
-  - PR-backed work: `{"kind":"task_pr"}`
+  - Local Git code work (legacy serialized kind, no GitHub PR): `{"kind":"task_pr"}`
   - File artifact: `{"kind":"file","path":"runs/2026-09-26/example/output.md"}`
 - `agentGraph`, when present, is one executable Mermaid Agent Graph **string** using `flowchart TD|TB|LR|RL`, for example `"flowchart LR\n  build-log-editor --> build-log-producer"`. Do not emit `graph LR`, and do not emit an object with `nodes` or `edges`.
 - `priority`, when present, is exactly `"P0"`, `"P1"`, `"P2"`, or `"P3"`; otherwise omit it.

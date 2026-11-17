@@ -1,3 +1,4 @@
+import { localGitProject } from './local-git-project.js';
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -98,18 +99,17 @@ test('single SQLite consolidation preserves independent Job records, outboxes an
       assert.deepEqual(inventory.map(item=>item.jobs[0].id),['1','2']);
       assert.equal(inventory[0].path,target);
       assert.equal(inventory[1].path,target);
-      const opened=openLocalManagedStore('example/first',9,{directory:source});
-      assert.equal((await opened.store.load('1')).title,'Job 1');
-      opened.relay.close();
+      // Historical owner/repo Jobs are verified by immutable ID through scoped SQLite above.
       const firstOnly=createJobIdRegistryResolver(source,new Map(),{noGitHub:true});
       const resolved=await firstOnly('2');
       assert.equal((await resolved.store.load('2')).title,'Updated Job 2');
       resolved.relay.close();
       const client={request:async()=>{throw Error('no GitHub')},graphql:async()=>{throw Error('no GitHub')}};
-      const created=await ensureManagedGitHubJob(client,'example/third',new Set(),{title:'New unified job',objective:'unified',storeDirectory:source,idempotencyKey:'new-unified'});
+      const projectRoot=localGitProject(root,'third');
+      const created=await ensureManagedGitHubJob(client,'third',new Set(),{title:'New unified job',objective:'unified',projectRoot,storeDirectory:source,idempotencyKey:'new-unified'});
       assert.equal(created.job.id,'4');
       assert.equal((await discoverLocalRelayStoreSnapshots(source)).length,3);
-      const againCreated=await ensureManagedGitHubJob(client,'example/third',new Set(),{title:'New unified job',objective:'unified',storeDirectory:source,idempotencyKey:'new-unified'});
+      const againCreated=await ensureManagedGitHubJob(client,'third',new Set(),{title:'New unified job',objective:'unified',projectRoot,storeDirectory:source,idempotencyKey:'new-unified'});
       assert.equal(againCreated.job.id,'4');
     }
     const again=spawnSync('python3',['scripts/consolidate-relay-sqlite.py',source,target],{encoding:'utf8'});

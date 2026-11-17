@@ -31,6 +31,7 @@ test('every executable graph is loaded by production, without an orphan or silen
   'planner-orchestration.mmd',
   'planner-trigger.mmd',
   'projection-conflict.mmd',
+  'projection-outbox-conflict.mmd',
   'review-lifecycle.mmd',
   'revision-lifecycle.mmd',
   'task-lifecycle.mmd',

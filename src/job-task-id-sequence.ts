@@ -12,7 +12,8 @@ export function allocateEntityId(directory: string, repository: string, kind: 'j
   if(!repository)throw new Error('Task ID allocation requires a repository context');
   const prefix = '';
   const scope = '*';
-  const scopedRequestKey = requestKey ? (kind === 'task' ? requestKey : `${repository}:${requestKey}`) : undefined;
+  // Idempotency keys are repository-scoped for both globally allocated Job and Task IDs.
+  const scopedRequestKey = requestKey ? `${repository}:${requestKey}` : undefined;
   if (requestKey !== undefined && (!requestKey || requestKey.length > 512)) throw new Error('Invalid idempotency key');
   mkdirSync(directory,{recursive:true});
   const db = new DatabaseSync(relayUnifiedStorePath(directory));

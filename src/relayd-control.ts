@@ -21,7 +21,6 @@ import { discoverLocalRelayStoreSnapshots, SQLiteRelayStore } from './relay-stor
 import { openLocalManagedStore } from './local-managed-store.js';
 import { relayStoreDirectory } from './relay-store.js';
 import { createJobIdRegistryResolver } from './local-job-registry.js';
-import { projectAuthoritativeLocalMerge } from './local-merge-projection.js';
 import { archiveDisplayPullRequest } from './github-pr-archive.js';
 import { orderGitHubBindingCandidates } from './github-binding-order.js';
 import { githubAuthContext } from './github-auth.js';
@@ -41,7 +40,7 @@ import { applyJobActivateAction } from './job-actions.js';
 import { managedTaskUpdateHandler } from './task-update.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
-import { defaultWorkspaceRoot, discoverWorkspaceRepositories, ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveJobProjectRoot, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
+import { defaultWorkspaceRoot, ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveJobProjectRoot, resolveManagedProjectPath } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { createRuntimeStatusPublisher } from './runtime-status-events.js';
@@ -65,6 +64,7 @@ export function createWorkspaceControl(deps: any) {
     if (command === 'job.create') {
       const repository = typeof body.repository === 'string' ? body.repository : '';
       const options = (body.options && typeof body.options === 'object' ? body.options : {}) as Record<string, unknown>;
+      if (Object.hasOwn(options, 'projectPath')) throw new Error('Job projectPath is removed; use an independent local Git root');
       if (options.contentOnly !== undefined || options.executionMode !== undefined) throw new Error('Execution mode/content-only is obsolete; use normal Job reviewEnabled and autoMerge policy');
       if (!repository) throw new Error('job.create requires repository');
       if ('schedule' in options) throw new Error('Job schedules are unsupported');
@@ -75,8 +75,6 @@ export function createWorkspaceControl(deps: any) {
         title: typeof options.title === 'string' ? options.title : undefined,
         objective: typeof options.objective === 'string' ? options.objective : undefined,
         projectRoot: typeof options.projectRoot === 'string' ? options.projectRoot : undefined,
-        githubRepo: typeof options.githubRepo === 'string' ? options.githubRepo : undefined,
-        projectPath: typeof options.projectPath === 'string' ? options.projectPath : undefined,
         priority: options.priority as import('./types.js').Priority | undefined,
                 tag: options.tag as import('./types.js').Job['tag'] | undefined,
         reviewEnabled: typeof options.reviewEnabled === 'boolean' ? options.reviewEnabled : undefined,
@@ -85,16 +83,19 @@ export function createWorkspaceControl(deps: any) {
         reviewerThreadId: typeof options.reviewerThreadId === 'string' ? options.reviewerThreadId : undefined,
         creatorThreadId: typeof options.creatorThreadId === 'string' ? options.creatorThreadId : undefined,
         implementationThreadId: typeof options.implementationThreadId === 'string' ? options.implementationThreadId : undefined,
+        localMergeSource: typeof options.localMergeSource === 'string' ? options.localMergeSource : undefined,
+        localMergeTarget: typeof options.localMergeTarget === 'string' ? options.localMergeTarget : undefined,
         noGitHub: noGitHub || options.noGitHub === true,
         coordinator: options.coordinator as {graph:string;input:string;outputPath:string;projectRoot:string;workspaceRoot:string;sharedRoot?:string;globalRoot?:string}|undefined,
         persist: body.initialPlan !== true,
       });
       if (!repositories.includes(repository)) repositories.push(repository);
+      if (result.job.projectRoot) repositoryPaths.set(repository, result.job.projectRoot);
       await refreshAll();
       if (body.initialPlan === true) {
         const current = result.job;
         const existingPlan = current.plans?.at(-1);
-        if (existingPlan) return { repository, pr: result.pr.number, job: current.id, state: current.state, initialPlan: existingPlan.id, reused: true };
+        if (existingPlan) return { repository, job: current.id, state: current.state, initialPlan: existingPlan.id, reused: true };
         const unpublished = new InMemoryStore(current);
         const reconciler = makeReconciler(unpublished, concurrency);
         try {
@@ -110,8 +111,8 @@ export function createWorkspaceControl(deps: any) {
           return { repository, pr: committed.prNumber, job: committed.id, state: committed.state, initialPlan: committed.plans?.at(-1)?.id };
         } finally { await reconciler.close(); }
       }
-      if(options.coordinator)return {repository,pr:result.pr.number,job:result.job.id,state:result.job.state,taskId:result.job?.tasks?.find((task: import('./types.js').Task)=>task.title==='Coordinator'&&task.agentGraph)?.id??result.taskId};
-      return { repository, pr: result.pr.number, job: result.job.id, state: result.job.state };
+      if(options.coordinator)return {repository,job:result.job.id,state:result.job.state,taskId:result.job?.tasks?.find((task: import('./types.js').Task)=>task.title==='Coordinator'&&task.agentGraph)?.id??result.taskId};
+      return { repository, job: result.job.id, state: result.job.state };
     }
 
     if (!jobId) throw new Error(command + ' requires jobId');
@@ -159,8 +160,9 @@ export function createWorkspaceControl(deps: any) {
     }
     if (command === 'job.update') {
       const patch = (body.patch && typeof body.patch === 'object' ? body.patch : {}) as Record<string, unknown>;
+      if (Object.hasOwn(patch, 'projectPath')) throw new Error('Job projectPath is removed; use the independent Git repository root');
       if ('executionMode' in patch || 'schedule' in patch) throw new Error('Job execution modes and schedules are unsupported');
-      const mutable = ['title','objective','projectPath','priority','tag','autoMerge','reviewEnabled','reviewerThreadId','creatorThreadId','implementationThreadId','continuation','localMerge'] as const;
+      const mutable = ['title','objective','priority','tag','autoMerge','reviewEnabled','reviewerThreadId','creatorThreadId','implementationThreadId','continuation','localMerge'] as const;
       for (const key of mutable) if (Object.prototype.hasOwnProperty.call(patch, key)) {
         const value = patch[key];
         if (['reviewerThreadId', 'creatorThreadId', 'implementationThreadId'].includes(key)) {
@@ -200,10 +202,9 @@ export function createWorkspaceControl(deps: any) {
       // Trust fresh local Git truth, not the caller or PR projection. The
       // atomic reducer independently checks durable head and execution.
       const projectRoot = await resolveJobProjectRoot(job);
-      const projectPath = resolveRepositoryProjectPath(projectRoot, job.projectPath);
       const liveHead = job.localMerge?.sourceRef
-        ? localSourceHead(projectPath, job.localMerge.sourceRef)
-        : localWorkingHead(projectPath);
+        ? localSourceHead(projectRoot, job.localMerge.sourceRef)
+        : localWorkingHead(projectRoot);
       if (liveHead !== headSha) throw new Error('task.revise rejected: local Git source head changed since immutable review');
       const response = await submitTargetedRevisionRequest(store, jobId, {
         requestId, reviewTaskId, reviewExecutionId, headSha, originalTaskId,
@@ -293,6 +294,7 @@ export function createWorkspaceControl(deps: any) {
     if (command === 'blocker.ensure') {
       const request = body.request && typeof body.request === 'object' ? body.request as Record<string, unknown> : {};
       const readText = (field: string): string => typeof request[field] === 'string' ? request[field] : '';
+      if (Object.hasOwn(request, 'projectPath')) throw new Error('Blocker projectPath is removed; use a separate Git repository');
       if (request.origin !== 'planner' && request.origin !== 'troubleshooter') throw new Error('blocker.ensure origin must be planner or troubleshooter');
       if (request.resolutionMode !== 'merge' && request.resolutionMode !== 'verified') throw new Error('blocker.ensure resolutionMode must be merge or verified');
       const recoveryInput: BlockerRecoveryInput = {
@@ -305,7 +307,6 @@ export function createWorkspaceControl(deps: any) {
         reason: readText('reason'),
         title: readText('title'),
         objective: readText('objective'),
-        projectPath: typeof request.projectPath === 'string' && request.projectPath ? request.projectPath : undefined,
         resolutionMode: request.resolutionMode,
         origin: request.origin,
         authorized: request.authorized === true,
@@ -372,16 +373,9 @@ export function createWorkspaceControl(deps: any) {
       for (const target of summary.unblocked) await pool.reconcileLocalJob(target.jobId, 'control.blocker.resolve');
       await refreshAll(); return summary;
     }
-    if (command === 'projection.conflicts') return await binding.relay.listProjectionConflicts();
     if (command === 'job.reconcile') { await pool.reconcileLocalJob(jobId, 'control.job.reconcile'); return await store.load(jobId); }
     if (command === 'agent.discover') {
       return discoverAgents(await store.listAgents(), (body.requirements && typeof body.requirements === 'object' ? body.requirements : {}) as Parameters<typeof discoverAgents>[1]);
-    }
-    if (command === 'projection.resolve') {
-      const id = Number(body.projectionId); const action = body.action === 'discard_local' ? 'discard_local' : 'requeue';
-      if (!Number.isInteger(id) || id <= 0) throw new Error('projection resolve requires projectionId');
-      const resolved = await binding.relay.resolveProjectionConflict(id, { action, ...(typeof body.note === 'string' && body.note ? { note: body.note } : {}) });
-      if (!resolved) throw new Error(`Projection ${id} is not in a resolvable conflict state`); return { resolved: id, action };
     }
     if (command === 'record') {
       const task = body.task as import('./types.js').Task | undefined; if (!task || task.jobId !== jobId) throw new Error('record requires a task for this Job');

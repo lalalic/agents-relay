@@ -7,18 +7,18 @@ import { execFileSync } from 'node:child_process';
 import { ensureManagedGitHubJob } from '../dist/cli-job-create.js';
 import { resolveJobProjectRoot } from '../dist/workspace.js';
 
-test('Job identity is a validated local Git root, with nested projectPath and no implicit GitHub remote', async t => {
+test('Job identity is exactly one independent local Git root without any nested projectPath', async t => {
   const root = await mkdtemp(join(tmpdir(), 'relay-local-identity-'));
   const projectRoot = join(root, 'neo');
-  await mkdir(join(projectRoot, 'vlog'), { recursive: true });
+  await mkdir(projectRoot, { recursive: true });
   execFileSync('git', ['init', '-q', projectRoot]);
   t.after(() => rm(root, { recursive: true, force: true }));
   const { job } = await ensureManagedGitHubJob({}, basename(projectRoot), new Set(), {
-    projectRoot, projectPath: 'vlog', objective: 'nested project', storeDirectory: join(root, 'stores'), noGitHub: true,
+    projectRoot, objective: 'independent repo project', storeDirectory: join(root, 'stores'), noGitHub: true,
   });
   assert.equal(job.repository, 'neo');
   assert.equal(job.projectRoot, await realpath(projectRoot));
-  assert.equal(job.projectPath, 'vlog');
+  assert.equal(Object.hasOwn(job, 'projectPath'),false);
   assert.equal(job.githubRepo, undefined);
   assert.equal(await resolveJobProjectRoot(job), await realpath(projectRoot));
   await assert.rejects(resolveJobProjectRoot({ ...job, repository: 'wrong-root' }), /does not match Git root name/);

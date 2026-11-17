@@ -290,10 +290,10 @@ test('legacy Job metadata is discarded while planner result markers round-trip',
 });
 
 test('planner parses authoritative reverse cross-job unblocks and rejects malformed declarations', () => {
-  const result=parsePlannerResult({objective_status:'in_progress',assessment:'wait',unblocks:[{repository:'org/app',prNumber:42,jobId:'dependent',taskId:'consume',resolutionMode:'merge'}],next_tasks:[]});
-  assert.deepEqual(result.unblocks,[{repository:'org/app',prNumber:42,jobId:'dependent',taskId:'consume',resolutionMode:'merge'}]);
-  assert.throws(()=>parsePlannerResult({objective_status:'in_progress',assessment:'bad',unblocks:[{repository:'bad',prNumber:42,jobId:'dependent',taskId:'consume'}],next_tasks:[]}),/repository must be OWNER\/REPO/);
-  assert.throws(()=>parsePlannerResult({objective_status:'in_progress',assessment:'bad',unblocks:[{repository:'org/app',prNumber:0,jobId:'dependent',taskId:'consume'}],next_tasks:[]}),/positive integer/);
+  const result=parsePlannerResult({objective_status:'in_progress',assessment:'wait',unblocks:[{repository:'app',prNumber:0,jobId:'588',taskId:'877',resolutionMode:'merge'}],next_tasks:[]});
+  assert.deepEqual(result.unblocks,[{repository:'app',prNumber:0,jobId:'588',taskId:'877',resolutionMode:'merge'}]);
+  assert.throws(()=>parsePlannerResult({objective_status:'in_progress',assessment:'bad',unblocks:[{repository:'org/app',prNumber:0,jobId:'588',taskId:'877'}],next_tasks:[]}),/repository must be a local Git root identity/);
+  assert.throws(()=>parsePlannerResult({objective_status:'in_progress',assessment:'bad',unblocks:[{repository:'app',prNumber:-1,jobId:'588',taskId:'877'}],next_tasks:[]}),/non-negative integer/);
 });
 
 test('planner parses only explicit failed-history dispositions', () => {
@@ -309,10 +309,10 @@ test('planner persistence delegates reverse unblock registration to durable stor
   const store=new InMemoryStore({...job([]),state:'DRAFT'});
   const seen=[];
   store.registerBlockerDependent=async (jobId, dependent)=>{ seen.push({jobId,dependent}); };
-  const planner={plan:async()=>({objective_status:'satisfied',assessment:'work plus a blocked relation',unblocks:[{repository:'org/app',prNumber:42,jobId:'dependent',taskId:'consume',resolutionMode:'merge'}],next_tasks:[spec('unblock-work')]})};
+  const planner={plan:async()=>({objective_status:'satisfied',assessment:'work plus a blocked relation',unblocks:[{repository:'app',prNumber:0,jobId:'588',taskId:'877',resolutionMode:'merge'}],next_tasks:[spec('unblock-work')]})};
   const reconciler=managedReconciler(store,{owner:'test',adapters:[{name:'codex',id:'planner-worker',capabilities:['model']}],maxConcurrent:0,planner});
   await reconciler.planJob('auto');
-  assert.deepEqual(seen,[{jobId:'auto',dependent:{repository:'org/app',prNumber:42,jobId:'dependent',taskId:'consume',resolutionMode:'merge'}}]);
+  assert.deepEqual(seen,[{jobId:'auto',dependent:{repository:'app',prNumber:0,jobId:'588',taskId:'877',resolutionMode:'merge'}}]);
 });
 
 test('planner rejects command-like shell tasks and requires output', () => {

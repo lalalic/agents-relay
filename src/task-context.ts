@@ -12,7 +12,7 @@ export function taskExecutionContext(job: Job, taskId: string, executionId: stri
     ? job.tasks.filter(item => item.id === task.parentTaskId)
     : isFinalReviewAgent(task.agentName) ? task.dependencies.map(id => job.tasks.find(item => item.id === id)).filter((item): item is NonNullable<typeof item> => Boolean(item)) : [];
   return { job: { id: job.id, repository: job.repository, title: job.title, objective: job.objective,
-    projectPath: job.projectPath, state: job.state }, task, currentState: task.state, resolution: task.resolution ?? null, escalation: task.escalation ?? null,
+    state: job.state }, task, currentState: task.state, resolution: task.resolution ?? null, escalation: task.escalation ?? null,
     comments: task.comments ?? [], relevantTasks: relevant.map(item => ({ id: item.id, title: item.title, state: item.state, attempt: item.attempt, executionId: item.executionId, resolution: item.resolution ?? null, escalation: item.escalation ?? null, comments: item.comments ?? [], result: item.result, error: item.error, failureReason: item.failureReason })),
     dependencies: task.dependencies.map(id => job.tasks.find(item => item.id === id) ?? { id, missing: true }),
     plan: job.plans?.find(plan => plan.id === task.planningDecisionId) ?? null };

@@ -145,7 +145,7 @@ test('ProjectedDurableStore reconciles from durable PR facts while GitHub reads 
   assert.deepEqual(await local.listAgents(), []);
   remote.listAgents = async () => { throw new Error('GitHub agent registry read should not run'); };
   const reconcilerStore = new Proxy(local, { get(target, property, receiver) { if (property === 'pullRequestHead') return undefined; if (property === 'headSha') return target.headSha.bind(target); return Reflect.get(target, property, receiver); } });
-  const reconciler = managedReconciler(reconcilerStore, { owner: 'test', adapters: [], maxConcurrent: 1, projectPathForJob: () => process.cwd() });
+  const reconciler = managedReconciler(reconcilerStore, { owner: 'test', adapters: [], maxConcurrent: 1, cwdForJob: () => process.cwd() });
 
   const reconciled = await reconciler.reconcile('job-1');
   assert.equal(reconciled.tasks.find(task => task.id === 'dependent').state, 'QUEUED');

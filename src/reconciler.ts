@@ -31,7 +31,7 @@ export class Reconciler extends ReconcilerReviewBase {
     ));
     this.workflowEffects.register(new CallbackWorkflowEffectHandler(
       'effect.cleanupJobWorktree',
-      async context => cleanupMergedJobWorktree(await this.store.load(context.jobId), this.options.projectPathForJob),
+      async context => cleanupMergedJobWorktree(await this.store.load(context.jobId), this.options.cwdForJob),
       context => `effect.cleanupJobWorktree:${context.jobId}`,
     ));
   }
@@ -87,7 +87,7 @@ export class Reconciler extends ReconcilerReviewBase {
       await this.invalidateStaleReview(job, headSha);
       const now = (this.options.now ?? new Date()).getTime();
       if (job.pause) { cancelPausedGenerations(job, (taskId, executionId) => this.cancelExecutionGeneration(job.id, taskId, executionId), planId => { const live = this.plannerLive.get(planId); if (live) { clearTimeout(live.timer); live.controller.abort(); this.plannerLive.delete(planId); } }); return job; }
-      if (job.state !== 'ACTIVE' && job.projectionRecovery?.status !== 'repairing') return job;
+      if (job.state !== 'ACTIVE') return job;
       await recoverExpiredExecutions(job, now, this.executionRecoveryPorts(job));
       await repairLegacyOrchestrators(jobId, now, { store: this.store, owner: this.options.owner, emit: event => this.emit(event) });
       await recoverInteractiveDecisions(this.store, jobId);
@@ -161,7 +161,7 @@ export class Reconciler extends ReconcilerReviewBase {
         scheduled = refreshTaskDependencies(await this.store.load(jobId));
       }
       scheduled = refreshTaskDependencies(await this.maybeCreatePlanner(scheduled));
-      scheduled = refreshTaskDependencies(await reconcileDAGSchedule({store:this.store,jobId,job:scheduled,projectPathForTask:async(j,t)=>this.options.projectPathForJob ? this.options.projectPathForJob(j,t) : t.routing?.cwd ?? process.cwd(),roots:this.options.executionContextRoots}));
+      scheduled = refreshTaskDependencies(await reconcileDAGSchedule({store:this.store,jobId,job:scheduled,cwdForTask:async(j,t)=>this.options.cwdForJob ? this.options.cwdForJob(j,t) : t.routing?.cwd ?? process.cwd(),roots:this.options.executionContextRoots}));
       if (scheduled.state !== previousState || scheduled.updatedAt !== job.updatedAt) await this.store.saveJob(scheduled);
       scheduled = await this.dispatchExecutableTasks(jobId);
       let finalState = refreshTaskDependencies(await this.store.load(jobId));
@@ -170,7 +170,7 @@ export class Reconciler extends ReconcilerReviewBase {
       await this.dispatchExecutableTasks(jobId);
       finalState = await this.store.load(jobId);
       const localMergeCompleted = await reconcileLocalGitCompletion(this.store, finalState, headSha,
-        this.options.noGitHub === true, this.options.projectPathForJob, event => this.emit(event),
+        this.options.noGitHub === true, this.options.cwdForJob, event => this.emit(event),
         this.options.localMergeEffect ?? this.options.localMergeDelivery,
         () => (this.options.now ?? new Date()).getTime());
       await drainProductionWorkflowOutbox(this.store, this.options);
@@ -382,7 +382,7 @@ export class Reconciler extends ReconcilerReviewBase {
     try {
       const role: ExecutionRole = isFinalReviewAgent(task.agentName) ? 'reviewer' : task.agentName === 'troubleshooter' ? 'troubleshooter' : task.parentTaskId ? 'nested-worker' : 'worker';
       const graphChild = Boolean(task.dagNode) || job.tasks.some(parent => parent.id === task.parentTaskId && Boolean(parent.dagNode));
-      const projectPath = this.options.projectPathForJob ? await this.options.projectPathForJob(job, task) : task.routing?.cwd ?? process.cwd();
+      const projectPath = this.options.cwdForJob ? await this.options.cwdForJob(job, task) : task.routing?.cwd ?? process.cwd();
       executionContext = await this.resolvedContext(job, task, role, projectPath);
     } catch (error) {
       await this.failLaunch(job.id, task.id, task.executionId, `Execution context unavailable: ${error instanceof Error ? error.message : String(error)}`);

@@ -183,7 +183,7 @@ test('blocker ensure rejects changed intent, different owners, stale tasks, and 
   );
   await assert.rejects(
     ensureBlockerRecovery(input(directory, { requestId: 'cross-repo-unsafe-path', projectPath: '../gateway' })),
-    /repository-relative path/,
+    /projectPath is removed/,
   );
 
   const dependent = openLocalManagedStore('consumer', 0, { directory, jobId: '589', noGitHub: true });

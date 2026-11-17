@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmod, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { SQLiteRelayStore } from '../../dist/relay-store.js';
 import { AgentObjectivePlanner, buildPlannerCodexArgs } from '../../dist/planner.js';
@@ -28,6 +28,9 @@ test('Planner Codex launcher enables network only inside its workspace-write san
 async function setup() {
   const env = createIsolatedEnvironment('relay-planner-contract-');
   const timestamp = new Date().toISOString();
+  const projectRoot = join(env.root, 'isolated');
+  await mkdir(projectRoot);
+  assert.equal(spawnSync('git', ['init', '-q', projectRoot]).status, 0);
   const plan = {
     jobId, id: planId, round: 1, source: 'model-planner', previousPlanId: null,
     trigger: { source: 'initial' }, status: 'PLANNING', assessment: 'Planning in progress.',
@@ -37,7 +40,7 @@ async function setup() {
   };
   const job = {
     id: jobId, title: 'Planner receipt contract', objective: 'Create one verified Task',
-    repository: 'isolated', prNumber: 0, state: 'ACTIVE', autoMerge: false, reviewEnabled: false, createdAt: timestamp, updatedAt: timestamp,
+    repository: 'isolated', projectRoot, prNumber: 0, state: 'ACTIVE', autoMerge: false, reviewEnabled: false, createdAt: timestamp, updatedAt: timestamp,
     plans: [plan], tasks: [],
   };
   const store = new SQLiteRelayStore(join(env.root, 'relay.sqlite'), jobId);
@@ -71,8 +74,8 @@ async function runPlanner(fixture, message = receipt) {
 }
 
 function applyPlan(fixture) {
-  return spawnSync(process.execPath, [join(process.cwd(), 'dist', 'cli.js'), 'plan', 'apply', '--no-github',
-    '--repo', fixture.job.repository, '--pr', '0', '--id', jobId, '--plan-id', planId,
+  return spawnSync(process.execPath, [join(process.cwd(), 'dist', 'cli.js'), 'plan', 'apply',
+    '--repo', fixture.job.repository, '--id', jobId, '--plan-id', planId,
     '--execution-id', executionId, '--store-dir', fixture.env.storeDir, '--file', fixture.proposalFile],
     { encoding: 'utf8', env: fixture.env });
 }

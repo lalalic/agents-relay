@@ -14,7 +14,6 @@ import { GitHubProjectionWriter } from './projected-store.js';
 import { LocalAuthorityDurableStore } from './local-authority-store.js';
 import { discoverLocalRelayStoreSnapshots, SQLiteRelayStore } from './relay-store.js';
 import { createJobIdRegistryResolver } from './local-job-registry.js';
-import { projectAuthoritativeLocalMerge } from './local-merge-projection.js';
 import { archiveDisplayPullRequest } from './github-pr-archive.js';
 import { orderGitHubBindingCandidates } from './github-binding-order.js';
 import { githubAuthContext } from './github-auth.js';
@@ -32,7 +31,7 @@ import { applyJobActivateAction } from './job-actions.js';
 import { managedTaskUpdateHandler } from './task-update.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
-import { discoverWorkspaceRepositories, ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath, resolveWorkspaceRoot, taskRequiresManagedWorktree } from './workspace.js';
+import { ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveWorkspaceRoot, taskRequiresManagedWorktree } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { createRuntimeStatusPublisher } from './runtime-status-events.js';
@@ -93,23 +92,22 @@ Usage:
   npx agents-relayd [options]
 
 Options:
-  --no-github             Local-only mode: no GitHub auth, transport, PR, merge, or fetch
-  --repo LOCAL_ROOT_NAME       Watch local Git root identity
-  --workspace-root PATH  Workspace Root (default: AGENTS_RELAY_WORKSPACE_ROOT, shared Neo config, or ~/Workspace)
-  --workspace PATH       Legacy alias for --workspace-root
+  --repo LOCAL_ROOT_NAME       Optional local Git identity; Job inventory comes from SQLite
+  --workspace-root PATH        Optional worktree/execution placement; never scans for repositories
+  --workspace PATH             Legacy alias for --workspace-root (not needed for normal daemon)
   --port PORT             Dashboard port (default: 8787)
   --concurrency N         Maximum concurrent workers (default: 4)
   --interval MS           Recovery interval
-  --projection-ms MS      GitHub projection flush interval (default: 1000)
   --execution-router-rules PATH
                          Router Rules file (default: ~/.agents-relay/execution-router-rules.md)
   --events nats            Require NATS event wakeups (otherwise auto-detect reachable NATS)
 
-Legacy single-job mode also accepts --repo LOCAL_ROOT_NAME --pr NUMBER --id JOB_ID.
-
 Examples:
+  npx agents-relayd
   npx agents-relayd --repo LOCAL_ROOT_NAME
-  npx agents-relayd --workspace-root ~/Workspace`;
+
+No recursive Workspace search: persisted Job projectRoot in SQLite
+are authoritative. Changing Workspace directory layout does not select Jobs.`;
 export function firstStageChoices(decisionInput: Record<string, unknown> | undefined): string[] {
   const stages = decisionInput?.stages;
   if (!Array.isArray(stages) || stages.length === 0) return [];
@@ -119,15 +117,14 @@ export function firstStageChoices(decisionInput: Record<string, unknown> | undef
 
 export function value(args: readonly string[], name: string, fallback = ''): string { const index = args.indexOf(name); return index >= 0 ? args[index + 1] ?? fallback : fallback; }
 export function normalizeDaemonArguments(argv: readonly string[]): DaemonArguments {
+  const obsolete = ['--github-repo','--pr','--no-github','--dependent-pr','--head','--base','--body','--github-app-id','--github-app-installation-id','--github-app-private-key-file','--github-webhook-secret','--github-webhook-secret-file','--github-token','--github-token-file','--projection-ms','--id'].find(flag => argv.some(arg => arg === flag || arg.startsWith(flag + '=')));
+  if (obsolete) throw new Error(`Unsupported option ${obsolete}: daemon Jobs use local Git identity and SQLite lifecycle state`);
   const repository = value(argv, '--repo') || null;
+  if (repository && argv.includes('--workspace')) throw new Error('--repo and --workspace are mutually exclusive');
   if (argv.includes('--workspace-root') && argv.includes('--workspace')) throw new Error('--workspace-root and --workspace cannot both be supplied');
   const workspaceRootValue = value(argv, '--workspace-root') || value(argv, '--workspace') || process.env.AGENTS_RELAY_WORKSPACE_ROOT;
   const workspaceRoot = workspaceRootValue ? resolve(workspaceRootValue) : null;
-  const prValue = value(argv, '--pr'); const id = value(argv, '--id');
-  if ((prValue && !id) || (!prValue && id)) throw new Error('--pr and --id must be supplied together for legacy single-job mode');
-  if ((prValue || id) && !repository) throw new Error('--repo is required for legacy single-job mode');
-  if (repository && argv.includes('--workspace')) throw new Error('--repo and --workspace are mutually exclusive');
-  const pullRequest = prValue ? Number(prValue) : null; if (pullRequest !== null && (!Number.isInteger(pullRequest) || pullRequest <= 0)) throw new Error('--pr must be positive');
+  const pullRequest = null; const id = null;
   return { repository, workspaceRoot, pullRequest, jobId: id || null, serviceArguments: [...argv] };
 }
 

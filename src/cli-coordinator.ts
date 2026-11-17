@@ -2,9 +2,8 @@ import { parseAgentGraph } from './agent-graph.js';
 import { tryTransitionTaskEvent } from './task-transitions.js';
 import { dispatchJobLifecycleSync } from './workflow/lifecycle.js';
 import { noGitHubMode } from './no-github.js';
-import { resolveJobProjectRoot,resolveRepositoryProjectPath,resolveWorkspaceRoot } from './workspace.js';
+import { resolveJobProjectRoot,resolveWorkspaceRoot } from './workspace.js';
 import { arg,hasArg,publishWake,storeFor,textOption,withEventBus } from './cli-support.js';
-import { isAbsolute, resolve } from 'node:path';
 import type { DurableStore } from './store.js';
 
 /** Starts an ordinary DRAFT Job. DAG execution, review and recovery are
@@ -25,13 +24,8 @@ export async function runCoordinatorJobCommand(args:string[],id:string, foregrou
  if(!graph)throw Error('job run requires a durable Agent Graph Task');
  parseAgentGraph(graph);
  const workspaceRoot=await resolveWorkspaceRoot(arg(args,'--workspace-root')||undefined);
- const checkout=await resolveJobProjectRoot(job);
- const projectPath=resolveRepositoryProjectPath(checkout,job.projectPath);
- if(hasArg(args,'--project-path')){
-   const supplied=arg(args,'--project-path');
-   const bound=isAbsolute(supplied)?resolve(supplied):resolveRepositoryProjectPath(checkout,supplied);
-   if(bound!==projectPath)throw Error('--project-path cannot change the immutable Job project binding');
- }
+ const projectRoot=await resolveJobProjectRoot(job);
+ if(hasArg(args,'--project-path')) throw Error('Job --project-path is removed; use the independent Git repository root');
  if(hasArg(args,'--foreground')&&['COMPLETED','CANCELLED'].includes(job.state)){
    await foreground!(loaded.store,id,taskId);
    return;
@@ -50,9 +44,9 @@ export async function runCoordinatorJobCommand(args:string[],id:string, foregrou
      const transition=tryTransitionTaskEvent(root,'queue',{dependenciesSatisfied:true});
      if(!transition.accepted||transition.target!=='QUEUED')throw Error('Coordinator Task queue denied');
    }
-   const ctx={projectPath,workspaceRoot,...(sharedRoot?{sharedRoot}:{}),...(globalRoot?{globalRoot}:{}),noGitHub:noGitHubMode(args)};
+   const ctx={projectRoot,workspaceRoot,...(sharedRoot?{sharedRoot}:{}),...(globalRoot?{globalRoot}:{}),noGitHub:noGitHubMode(args)};
    const existing=current.graphStartContext;
-   if(existing&&(['projectPath','workspaceRoot','sharedRoot','globalRoot','noGitHub'] as const).some(k=>existing[k]!==ctx[k]))
+   if(existing&&(['projectRoot','workspaceRoot','sharedRoot','globalRoot','noGitHub'] as const).some(k=>existing[k]!==ctx[k]))
      throw Error('Coordinator start context differs from original binding');
    if(!existing)current.graphStartContext=ctx;
    if(current.state==='DRAFT'){

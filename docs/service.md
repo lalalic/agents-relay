@@ -1,6 +1,6 @@
 # Running the service
 
-`agents-relayd` starts the repository worker pool, event-driven reconciler, periodic recovery watchdog, and dashboard. With no `--pr`/`--id`, it discovers Git repositories under `~/Workspace` (or `--workspace PATH`) by unique Git-root directory name and watches their SQLite Jobs. GitHub origin is optional metadata and never defines local repository identity. It listens on `127.0.0.1:8787` by default. Dashboard reads and recovery use the local SQLite inventory.
+`agents-relayd` starts the repository worker pool, event-driven reconciler, periodic recovery watchdog, and dashboard. It loads Job inventory solely from SQLite (`job.repository` and canonical `job.projectRoot`), with no recursive Workspace repository scan or current-directory identity guessing. After the local Job is `COMPLETED`, the optional delivery Graph skips an absent `origin` or missing `origin/main`; it pushes only a non-force fast-forward to an inspected remote whose fetch and push destinations match. An unreachable, mismatched or divergent remote is an independent bounded SQLite retry, not a new Job/Task. It listens on `127.0.0.1:8787` by default. Dashboard reads and recovery use the local SQLite inventory.
 
 The dashboard reads a bounded window (one day by default, or `--usage-window-days`) of local Codex JSONL session telemetry at `/api/usage`. Requests recorded with GLM models are shown as Z.ai runtime usage; account quota and remaining balance are marked unavailable unless a supported source is added.
 
@@ -13,7 +13,7 @@ Dashboard consumers use these request parameters:
 | Parameter | Contract |
 | --- | --- |
 | `q` | Case-insensitive substring match on durable Job title or ID. |
-| `status` | Repeat the parameter for an inclusive OR across lifecycle states: `DRAFT`, `ACTIVE`, `COMPLETED`, and `CANCELLED`. Comma-separated `statuses` remains a compatibility alias. When every status selection is empty, the API defaults to `DRAFT`, `ACTIVE`, and `COMPLETED`; `CANCELLED` is returned only when explicitly selected. A `DRAFT` selection matches durable `DRAFT` Jobs and Jobs whose GitHub PR is a draft. |
+| `status` | Repeat the parameter for an inclusive OR across lifecycle states: `DRAFT`, `ACTIVE`, `COMPLETED`, and `CANCELLED`. Comma-separated `statuses` remains a compatibility alias. When every status selection is empty, the API defaults to `DRAFT`, `ACTIVE`, and `COMPLETED`; `CANCELLED` is returned only when explicitly selected. A `DRAFT` selection matches durable `DRAFT` Jobs. |
 | `repo` | Repeat the parameter for an inclusive OR across exact local repository identities. An empty selection matches every repository. |
 | `page` | One-based page number; invalid or missing values resolve to `1`, and values beyond the last page resolve to the last page. |
 | `pageSize` | Positive integer capped at `20`; invalid or missing values use `20`. |
@@ -23,20 +23,22 @@ Status and repository selections are OR operations within each filter; combining
 
 Runtime decisions are additionally recorded as one structured observability stream (`src/observability.ts`): wake, graph decision, transition/effect, store commit, and projection outcome share a repository/PR/job/task/execution correlation envelope. The stream is diagnostic only and never a second durable store; failures are classified as deterministic `conflict` vs `transient` retry vs `terminal`, and secrets/prompts/large payloads are redacted. Set `AGENTS_RELAY_OBSERVABILITY` (`silent`|`debug`|`info`|`warn`|`error`, default `info`) to control it. See [structured-observability.md](structured-observability.md).
 
-The Event Bus is the shared transport for worker lifecycle facts and orchestration signals. Runtime events enter the local Reconciler and update durable SQLite state; the event transport is not lifecycle truth. Optional GitHub webhooks can record external facts but never own local Job transitions.
+The Event Bus is the shared transport for worker lifecycle facts and orchestration signals. Runtime events enter the local Reconciler and update durable SQLite state; the event transport is not lifecycle truth. Historical webhook handlers remain available to compatibility code but do not drive Job execution.
 
 
 ```sh
 npx agents-relayd --repo LOCAL_ROOT_NAME
 ```
 
-Workspace mode (the default):
+SQLite-driven ordinary daemon (default):
 
 ```sh
-npx agents-relayd --workspace ~/Workspace
+npx agents-relayd
 ```
 
-Use `--repo LOCAL_ROOT_NAME` to retain the single local Git repository worker pool. Legacy single-job daemon mode remains available with `--repo LOCAL_ROOT_NAME --pr NUMBER --id JOB_ID`.
+Use `--repo LOCAL_ROOT_NAME` only for an explicit local repository identity. Normal daemon startup needs neither `--repo` nor `--workspace`. `--workspace-root PATH` is an optional worktree placement override (legacy `--workspace` alias), not a discovery or Job identity input. PR-bound daemon mode is retired; obsolete PR flags are rejected.
+
+For Neo Master, CLI and daemon both use `npx --yes --package agents-relay@latest agents-relay|agents-relayd`; Neo's `package.published` watcher detects the package-backed PM2 service and restarts it only after the registry latest tag matches the publication. Do not build or restart a daemon from the concurrently edited developer checkout on `rust2`. Use `node skills/agents-relay/bin/services.mjs doctor` to verify **both PM2 liveness and registered command configuration**. A process can remain `online` with stale `--workspace` or GitHub flags even after `services.mjs` is edited. `doctor` reports `configuration: drift` and exits nonzero in that case; `setup` intentionally refuses to claim an already registered service was updated. Re-registering an existing PM2 definition and restarting its process requires an explicit service change, operational ownership and a matched local CLI/daemon build; do not assume editing service definitions or invoking PM2 restart changes stored argv.
 
 By default, Relay probes the configured NATS endpoint (`--nats-url`, then `EVENTS_BUS_NATS_URL`, then `nats://127.0.0.1:4222`). When the broker is reachable, the CLI and daemon automatically use NATS even when `--events` is omitted. Pass `--events nats` to require NATS explicitly; pass an explicit non-NATS value such as `--events none` to disable auto-detection. If NATS is unavailable, commands that require authoritative model-task lifecycle events fail clearly instead of pretending the transport exists.
 
@@ -64,7 +66,7 @@ npx --package agents-relay --package pm2 pm2 start agents-relayd --name agents-r
 
 PM2 forwards `SIGINT` and `SIGTERM`. The service clears its watchdog, unsubscribes from wake events, closes the local dashboard server, and exits only after cleanup.
 
-GitHub App installation authentication and the webhook/cache consumption model are documented in [github-app-rate-limit.md](github-app-rate-limit.md).
+GitHub App authentication is not used for Job execution; see [v2-local-lifecycle-authority.md](v2-local-lifecycle-authority.md) for lifecycle authority.
 
 ## Fact-only GitHub webhooks
 

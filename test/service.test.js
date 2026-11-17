@@ -40,13 +40,15 @@ test('dashboard discovery overlays GitHub snapshots with local operational Job t
   assert.equal(result[0].job.tasks[0].state, 'RUNNING');
 });
 
-test('daemon arguments require and normalize durable identifiers', () => {
-  const argv = ['--repo', 'OWNER/REPO', '--pr', '1', '--id', 'JOB_ID', '--port', '9000'];
+test('daemon arguments use local root identity and reject obsolete PR/single-Job bindings', () => {
+  const argv = ['--repo', 'repo', '--port', '9000'];
   const normalized = normalizeDaemonArguments(argv);
-  assert.equal(normalized.repository, 'OWNER/REPO');
-  assert.equal(normalized.pullRequest, 1);
-  assert.equal(normalized.jobId, 'JOB_ID');
+  assert.equal(normalized.repository, 'repo');
+  assert.equal(normalized.pullRequest, null);
+  assert.equal(normalized.jobId, null);
   assert.deepEqual(normalized.serviceArguments, argv);
+  for (const flag of ['--pr', '--github-repo', '--id'])
+    assert.throws(() => normalizeDaemonArguments([...argv, flag, '123']), /Unsupported option/);
 });
 
 test('all service runtimes use the resource-aware reviewer policy', async () => {
@@ -176,7 +178,6 @@ test('all non-demo CLI durable mutations enter the relayd service boundary', asy
   const support = await readFile(new URL('../src/cli-support.ts', import.meta.url), 'utf8');
   const blocker = await readFile(new URL('../src/cli-blocker.ts', import.meta.url), 'utf8');
   const review = await readFile(new URL('../src/cli-review.ts', import.meta.url), 'utf8');
-  const projection = await readFile(new URL('../src/cli-projection.ts', import.meta.url), 'utf8');
   assert.match(cli, /const managed = !arg\(args, '--file'\) && Boolean\(arg\(args, '--repo'\) && arg\(args, '--id'\)\)/);
   assert.doesNotMatch(cli, /const managed = !noGitHubMode/);
   assert.match(support, /\/api\/control/);
@@ -187,11 +188,10 @@ test('all non-demo CLI durable mutations enter the relayd service boundary', asy
   assert.match(relaydControl, /command === 'job\.unblock'/);
   assert.match(relaydControl, /command === 'review\.request'/);
   assert.match(relaydControl, /command === 'blocker\.add'/);
-  assert.match(relaydControl, /command === 'projection\.resolve'/);
   assert.match(relaydControl, /command === 'job\.plan'/);
   assert.match(relaydControl, /command === 'record'/);
   assert.match(relaydControl, /command === 'agent\.register'/);
-  for (const source of [blocker, review, projection]) {
+  for (const source of [blocker, review]) {
     assert.doesNotMatch(source, /openLocalManagedStore|SQLiteRelayStore|relayStorePath/);
   }
 });
@@ -204,16 +204,13 @@ test('workspace daemon restores SQLite RelayStore jobs before dashboard and best
   const server = source.indexOf('const server = serveDashboard', watch);
   const recover = source.indexOf('await pool.reconcileKnown(cachedOverviews)', server);
   const timers = source.indexOf('interval=setInterval', recover);
-  const projectionTimer = source.indexOf('projectionInterval=setInterval', timers);
-  const remote = source.indexOf('void refreshAll(true)', projectionTimer);
   assert.ok(discover >= 0);
   assert.ok(initial > discover);
   assert.ok(watch > initial);
   assert.ok(server > watch);
   assert.ok(recover > server);
   assert.ok(timers > recover);
-  assert.ok(projectionTimer > timers);
-  assert.ok(remote > projectionTimer);
+  assert.ok(source.indexOf('void refreshAll(true)', timers) > timers);
 });
 
 test('workspace daemon has no persistent dashboard job JSON cache', async () => {
@@ -223,12 +220,11 @@ test('workspace daemon has no persistent dashboard job JSON cache', async () => 
   assert.match(source, /discoverLocalRelayStoreSnapshots/);
 });
 
-test('daemon arguments support repository pool mode and validate legacy pairing', () => {
-  const pooled = normalizeDaemonArguments(['--repo','OWNER/REPO','--port','8787']);
+test('daemon repository pool mode has no public PR binding or single-Job lifecycle', () => {
+  const pooled = normalizeDaemonArguments(['--repo','repo','--port','8787']);
   assert.equal(pooled.pullRequest, null); assert.equal(pooled.jobId, null);
-  assert.throws(() => normalizeDaemonArguments(['--pr','1','--id','job']), /--repo is required/);
-  assert.throws(() => normalizeDaemonArguments(['--repo','OWNER/REPO','--pr','0','--id','job']), /--pr must be positive/);
-  assert.throws(() => normalizeDaemonArguments(['--repo','OWNER/REPO','--pr','1']), /supplied together/);
+  for (const argv of [['--pr','1'], ['--repo','repo','--pr','0'], ['--repo','repo','--pr','1']])
+    assert.throws(() => normalizeDaemonArguments(argv), /Unsupported option --pr/);
 });
 
 test('daemon arguments default to workspace mode without changing --repo mode', () => {
@@ -251,7 +247,7 @@ test('daemon package bin uses an unconditional launcher that remains PM2-loadabl
 
 test('service defaults and package bins use stable package entrypoints', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-  assert.deepEqual(pkg.bin, { 'agents-relay': 'dist/cli.js', 'agents-relayd': 'dist/relayd-main.js' });
+  assert.deepEqual(pkg.bin, { 'agents-relay': 'dist/cli.js', 'agents-relayd': 'dist/relayd-main.js', 'agents-relay-migrate-task-ids': 'bin/migrate-task-ids.mjs' });
   assert.equal(SERVICE_DEFAULTS.port, 8787);
   assert.equal(SERVICE_DEFAULTS.watchdogMs, 300000);
   assert.equal(SERVICE_DEFAULTS.webhookWatchdogMs, 300000);
@@ -278,22 +274,20 @@ test('release version selection honors an explicit newer major baseline then inc
 test('CLI and daemon help are successful and do not require job storage', () => {
   for (const [entry, args, expected] of [
     ['dist/cli.js', ['--help'], 'npx agents-relay <command>'],
-    ['dist/cli.js', ['job', '--help'], 'npx agents-relay job <create|update|show|list|run|merge|unblock|cancel|pause|resume>'],
+    ['dist/cli.js', ['job', '--help'], 'npx agents-relay job <create|update|show|list|run|unblock|cancel|pause|resume>'],
     ['dist/cli.js', ['job', 'create', '--help'], 'Create a SQLite-authoritative Job'],
     ['dist/cli.js', ['job', 'update', '--help'], 'Partially update mutable metadata'],
     ['dist/cli.js', ['job', 'show', '--help'], 'Show one durable Job'],
     ['dist/cli.js', ['job', 'run', '--help'], 'Activate a DRAFT Job with a durable Coordinator Agent Graph Task'],
     ['dist/cli.js', ['job', '--help'], 'Coordinator/DAG creation and activation'],
     ['dist/cli.js', ['job', 'list', '--help'], 'List managed Jobs'],
-    ['dist/cli.js', ['job', 'merge', '--help'], 'Legacy entry point; external GitHub PR merges are not initiated by this CLI.'],
     ['dist/cli.js', ['job', 'unblock', '--help'], 'Authoritatively unblock'],
     ['dist/cli.js', ['job', 'cancel', '--help'], 'Cancel a durable Job and its unfinished Tasks'],
     ['dist/cli.js', ['task', '--help'], 'npx agents-relay task <create|update|show|events|list|revise|retry|unblock|cancel>'],
     ['dist/cli.js', ['task', 'update', '--help'], 'Update mutable durable Task fields'],
-    ['dist/cli.js', ['projection', '--help'], 'projection conflicts --repo OWNER/REPO --id JOB_ID'],
     ['dist/cli.js', ['context', '--help'], 'npx agents-relay context resolve'],
     ['dist/cli.js', ['context', 'resolve', '--help'], 'Resolve shared execution context'],
-    ['dist/cli.js', ['init', '--help'], 'Initialize a new job'],
+    ['dist/cli.js', ['init', '--help'], 'Initialize a local Job'],
     ['dist/cli.js', ['task', 'create', '--help'], 'Create one durable Task'],
     ['dist/cli.js', ['task', 'show', '--help'], 'Show one durable Task'],
     ['dist/cli.js', ['task', 'list', '--help'], 'List durable Tasks'],
@@ -327,15 +321,15 @@ test('job create help supports initial planner bootstrap and rejects task execut
   assert.match(help.stdout, /atomically[\s\S]*one Coordinator Task/);
   assert.match(help.stdout, /Without a Coordinator, create-only DRAFT Jobs/);
 
-  const noAutoMerge = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'owner/repo', '--objective', 'Test create validation', '--head', 'feat/demo', '--no-auto-merge'], { encoding: 'utf8' });
+  const noAutoMerge = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'repo', '--objective', 'Test create validation', '--head', 'feat/demo', '--no-auto-merge'], { encoding: 'utf8' });
   assert.notEqual(noAutoMerge.status, 0);
-  assert.match(noAutoMerge.stderr, /does not accept --head/);
+  assert.match(noAutoMerge.stderr, /Unsupported option --head/);
 
-  const invalid = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'owner/repo', '--id', 'job-cli', '--head', 'feat/demo', '--start'], { encoding: 'utf8' });
+  const invalid = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'repo', '--id', '123', '--start'], { encoding: 'utf8' });
   assert.notEqual(invalid.status, 0);
   assert.match(invalid.stderr, /does not accept task execution option --start/);
 
-  const taskFlag = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'owner/repo', '--id', 'job-cli', '--head', 'feat/demo', '--model', 'gpt-test'], { encoding: 'utf8' });
+  const taskFlag = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'repo', '--id', '123', '--model', 'gpt-test'], { encoding: 'utf8' });
   assert.notEqual(taskFlag.status, 0);
   assert.match(taskFlag.stderr, /does not accept task execution option --model/);
 });
@@ -405,11 +399,11 @@ test('long-form Job and Task content prefers file inputs and avoids shell quotin
   await writeFile(objectiveFile, '```mermaid\nflowchart TD\n  A --> B\n```\n\n# Goal\n\nStandalone context.\n');
   await writeFile(taskFile, '# Work\n\nUse `code`, $variables, "quotes", and Mermaid without shell escaping.\n');
 
-  const missingObjective = spawnSync(process.execPath, ['dist/cli.js','job','create','--repo','owner/repo','--id','job-file','--head','feat/file'], { encoding:'utf8' });
+  const missingObjective = spawnSync(process.execPath, ['dist/cli.js','job','create','--repo','repo'], { encoding:'utf8' });
   assert.notEqual(missingObjective.status, 0);
   assert.match(missingObjective.stderr, /requires --objective-file PATH\|- or --objective MARKDOWN/);
 
-  const conflictingObjective = spawnSync(process.execPath, ['dist/cli.js','job','create','--repo','owner/repo','--id','job-file','--head','feat/file','--objective','short','--objective-file',objectiveFile], { encoding:'utf8' });
+  const conflictingObjective = spawnSync(process.execPath, ['dist/cli.js','job','create','--repo','repo','--objective','short','--objective-file',objectiveFile], { encoding:'utf8' });
   assert.notEqual(conflictingObjective.status, 0);
   assert.match(conflictingObjective.stderr, /--objective and --objective-file are mutually exclusive/);
 
@@ -417,18 +411,22 @@ test('long-form Job and Task content prefers file inputs and avoids shell quotin
   const localJob = join(directory, 'job.json');
   await writeFile(localJob, JSON.stringify({ id:'local-file-job', title:'local', priority:'P2', autoMerge:false, reviewEnabled:false, prNumber:1, repository:'owner/repo', state:'DRAFT', continuation:null, createdAt:now, updatedAt:now, tasks:[] }));
 
-  const created = spawnSync(process.execPath, ['dist/cli.js','task','create','--file',localJob,'--task-id','file-task','--adapter','codex','--output','task-pr','--draft','--input-file',taskFile], { encoding:'utf8' });
+  const created = spawnSync(process.execPath, ['dist/cli.js','task','create','--file',localJob,'--adapter','codex','--output','local-git','--draft','--input-file',taskFile], { encoding:'utf8' });
   assert.equal(created.status, 0, created.stderr);
   let saved = JSON.parse(await readFile(localJob, 'utf8'));
   assert.equal(saved.tasks[0].input, await readFile(taskFile, 'utf8'));
+  // Standalone --file fixtures are legacy JSON, not canonical SQLite Jobs.
+  // Verify the generated ID round-trips without assuming a SQLite ID registry.
+  assert.match(saved.tasks[0].id,/^[1-9][0-9]*$/,'new local demo Tasks use the same numeric ID allocator');
+  const allocatedTaskId = saved.tasks[0].id;
 
   const stdinText = '# Updated work\n\n```mermaid\nflowchart LR\n  X --> Y\n```\n';
-  const updated = spawnSync(process.execPath, ['dist/cli.js','task','update','--file',localJob,'--task-id','file-task','--input-file','-'], { encoding:'utf8', input:stdinText });
+  const updated = spawnSync(process.execPath, ['dist/cli.js','task','update','--file',localJob,'--task-id',allocatedTaskId,'--input-file','-'], { encoding:'utf8', input:stdinText });
   assert.equal(updated.status, 0, updated.stderr);
   saved = JSON.parse(await readFile(localJob, 'utf8'));
   assert.equal(saved.tasks[0].input, stdinText);
 
-  const conflictingInput = spawnSync(process.execPath, ['dist/cli.js','task','update','--file',localJob,'--task-id','file-task','--input','short','--input-file',taskFile], { encoding:'utf8' });
+  const conflictingInput = spawnSync(process.execPath, ['dist/cli.js','task','update','--file',localJob,'--task-id',allocatedTaskId,'--input','short','--input-file',taskFile], { encoding:'utf8' });
   assert.notEqual(conflictingInput.status, 0);
   assert.match(conflictingInput.stderr, /--input and --input-file are mutually exclusive/);
   await rm(directory, { recursive:true, force:true });
@@ -466,8 +464,8 @@ test('GitHub rate limit cannot gate locally authoritative lifecycle operations',
   const daemon = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   const pool = await readFile(new URL('../src/pool.ts', import.meta.url), 'utf8');
   assert.match(daemon, /new LocalAuthorityDurableStore/);
-  assert.match(daemon, /const auth = noGitHub \? null : await githubAuthContext\(argv, undefined, false\)/);
-  assert.match(daemon, /const client = noGitHub \? new DisabledGitHubClient\(\) : auth!\.client/);
+  assert.match(daemon, /const auth = null/);
+  assert.match(daemon, /const client = new DisabledGitHubClient\(\)/);
   assert.match(daemon, /existingInventory = await discoverLocalRelayStoreSnapshots/);
   assert.match(pool, /async reconcileLocalJob\(jobId/);
   assert.match(pool, /this\.localTarget\(jobId\)/);
@@ -510,10 +508,11 @@ test('lifecycle daemon never reads GitHub PR snapshots for coordinator or dashbo
 });
 
 
-test('daemon source uses shared GitHub auth context and exposes auth status', async () => {
+test('daemon requires no GitHub authentication for SQLite-authoritative lifecycle', async () => {
   const source=await readFile(new URL('../src/relayd.ts',import.meta.url),'utf8');
-  assert.match(source,/githubAuthContext\(argv, undefined, false\)/);
+  assert.match(source,/const noGitHub = true/);
+  assert.match(source,/const client = new DisabledGitHubClient\(\)/);
+  assert.doesNotMatch(source,/githubAuthContext\(argv, undefined, false\)/);
   assert.match(source,/githubAuthenticated/);
   assert.match(source,/githubAuthError/);
-  assert.match(source,/githubAuthenticated !== true/);
 });

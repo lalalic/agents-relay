@@ -34,11 +34,15 @@ for(const [label,config,decisions] of [
  for(const [node,status] of decisions){
   try{
    await until(async()=>{
-    await f.reconciler.reconcile(f.id);
+    // Reconciler.watch and the external Script Review helper already own running
+    // transitions. Avoid repeated overlapping writes while a Review handoff
+    // mutates the same SQLite Job; only reconcile before the Task is running.
     const j=await f.load();const current=j.tasks.find(t=>t.dagNode?.nodeId===node);
     if(current?.state==='FAILED'||current?.state==='BLOCKED')
       throw Error('Review Task failed: '+JSON.stringify({id:current.id,adapter:current.adapter,error:current.error,failureReason:current.failureReason}));
-    return current?.state==='AWAITING_DECISION';
+    if(current?.state==='AWAITING_DECISION') return true;
+    if(!current || current.state==='QUEUED') await f.reconciler.reconcile(f.id);
+    return false;
    },'review '+node,20000);
   }catch(error){
    const j=await f.load();
@@ -174,10 +178,10 @@ test('L3-U14: duplicate normal Job start is idempotent and rejects changed trust
  await f.startCLI();
  const job=await f.load();
  assert.equal(job.tasks.length,1,'activation is not a second DAG executor');
- assert.ok(job.graphStartContext?.projectPath);
+ assert.ok(job.graphStartContext?.projectRoot);
  const cli=fileURLToPath(new URL('../../dist/cli.js',import.meta.url));
  const result=spawnSync(process.execPath,[cli,'job','run','--id',f.id,'--task-id',f.coordinatorId,
-   '--no-github','--store-dir',join(f.root,'stores'),'--project-path',f.project,
+   '--store-dir',join(f.root,'stores'),
    '--workspace-root',f.root,'--shared-root',join(f.root,'other-agents')],
    {encoding:'utf8',timeout:15000,env:{...process.env,AGENTS_RELAY_STORE_DIR:f.root}});
  assert.notEqual(result.status,0);
@@ -191,8 +195,8 @@ test('L3-U14: duplicate normal Job start is idempotent and rejects changed trust
 // Live regression: DAG completion resolves the immutable local projectRoot for every Job.
 test('L3-U15: DAG terminal validation uses bound Coordinator checkout',async t=>{
  const f=await fixture(t);
- await f.store.mutateJob(f.id,j=>{j.graphStartContext={projectPath:'/ignored/legacy-path',workspaceRoot:f.root,noGitHub:true};return j});
- f.reconciler.options.projectPathForJob=async job=>job.projectRoot;
+ await f.store.mutateJob(f.id,j=>{j.graphStartContext={projectRoot:'/ignored/legacy-path',workspaceRoot:f.root,noGitHub:true};return j});
+ f.reconciler.options.cwdForJob=async job=>job.projectRoot;
  await f.activate();await f.reconciler.reconcile(f.id);
  const done=await until(async()=>{const j=await f.load();return j.tasks[0]?.state==='SUCCEEDED'?j:null},'DAG completion from projectRoot despite legacy graph start path',7500);
  assert.deepEqual(done.tasks.filter(t=>t.dagNode).map(t=>t.state),['SUCCEEDED','SUCCEEDED','SUCCEEDED']);
@@ -200,8 +204,8 @@ test('L3-U15: DAG terminal validation uses bound Coordinator checkout',async t=>
 
 test('L3-U16: DAG Troubleshooter inherits bound Coordinator checkout',async t=>{
  const f=await fixture(t);
- await f.store.mutateJob(f.id,j=>{j.graphStartContext={projectPath:'/ignored/legacy-path',workspaceRoot:f.root,noGitHub:true};return j});
- f.reconciler.options.projectPathForJob=async job=>job.projectRoot;
+ await f.store.mutateJob(f.id,j=>{j.graphStartContext={projectRoot:'/ignored/legacy-path',workspaceRoot:f.root,noGitHub:true};return j});
+ f.reconciler.options.cwdForJob=async job=>job.projectRoot;
  await f.activate();
  await until(async()=>{await f.reconciler.reconcile(f.id);const j=await f.load();return j.tasks.find(t=>t.dagNode?.nodeId==='A')?.state==='SUCCEEDED'},'first Graph Task',7500);
  let parentTaskId;
@@ -222,8 +226,8 @@ test('L3-U17: foreground CLI immediately executes all DAG stages and prints live
  const cli=fileURLToPath(new URL('../../dist/cli.js',import.meta.url));
  await mkdir(join(f.root,'stores'),{recursive:true});
  const result=spawnSync(process.execPath,[cli,'job','run','--id',f.id,'--task-id',f.coordinatorId,
-   '--no-github','--events','none','--foreground','--store-dir',join(f.root,'stores'),
-   '--project-path',f.project,'--workspace-root',f.root,'--concurrency','3'],
+   '--events','none','--foreground','--store-dir',join(f.root,'stores'),
+   '--workspace-root',f.root,'--concurrency','3'],
    {encoding:'utf8',timeout:25000,env:{...process.env,AGENTS_RELAY_STORE_DIR:f.root}});
  assert.equal(result.status,0,`stdout=${result.stdout}\nstderr=${result.stderr}`);
  assert.match(result.stdout,/foreground execution/);
@@ -234,8 +238,8 @@ test('L3-U17: foreground CLI immediately executes all DAG stages and prints live
  assert.equal(finished.state,'COMPLETED');
  assert.deepEqual(finished.tasks.filter(task=>task.dagNode).map(task=>task.state),['SUCCEEDED','SUCCEEDED','SUCCEEDED']);
  const second=spawnSync(process.execPath,[cli,'job','run','--id',f.id,'--task-id',f.coordinatorId,
-   '--no-github','--events','none','--foreground','--store-dir',join(f.root,'stores'),
-   '--project-path',f.project,'--workspace-root',f.root],
+   '--events','none','--foreground','--store-dir',join(f.root,'stores'),
+   '--workspace-root',f.root],
    {encoding:'utf8',timeout:10000,env:{...process.env,AGENTS_RELAY_STORE_DIR:f.root}});
  assert.equal(second.status,0,second.stderr);
  assert.match(second.stdout,/Job 19002: COMPLETED/);

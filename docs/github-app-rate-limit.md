@@ -1,3 +1,5 @@
+> **Historical GitHub App research, not current Relay daemon instructions.** The active local-Git-only daemon has no Workspace repository scan, does not need `--workspace`, and rejects all public GitHub/PR flags. Use `agents-relayd` and the SQLite inventory; see `docs/service.md`.
+
 # GitHub App Authentication and API Consumption
 
 Agents Relay can authenticate GitHub API traffic with a GitHub App installation instead of consuming the interactive user account quota. This document also records the API-consumption changes that make webhook-driven reconciliation the normal path.

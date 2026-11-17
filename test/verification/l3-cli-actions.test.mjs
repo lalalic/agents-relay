@@ -66,7 +66,7 @@ for (const scenario of [{action:'task.cancel',initial:'DRAFT',expected:'CANCELLE
   process.env.AGENTS_RELAY_NO_GITHUB='1';
   const server=createServer();await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const port=server.address().port;await new Promise(resolve=>server.close(resolve));
-  service=await createService(['--no-github','--events','none','--repo','isolated','--id','cli-action-job','--port',String(port),'--interval','600000','--refresh-ms','600000']);
+  service=await createService(['--events','none','--repo','isolated','--id','cli-action-job','--port',String(port),'--interval','600000','--refresh-ms','600000']);
   if (scenario.action==='task.cancel') {
    for(const body of [{command:'task.unblock',jobId:'other-job',taskId:'task-1',reason:'foreign'}, {command:'job.update',jobId:'cli-action-job',patch:{title:'forbidden'}}]) {
     const reply=await fetch(`http://127.0.0.1:${port}/api/control`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
@@ -74,7 +74,7 @@ for (const scenario of [{action:'task.cancel',initial:'DRAFT',expected:'CANCELLE
    }
    assert.equal((await sqlite.loadJob('cli-action-job')).tasks[0].state,'DRAFT','rejected requests never persist transitions');
   }
-  const result=await execFileAsync(process.execPath,[cli,'workflow','action','--action',scenario.action,...(scenario.args??[]),'--repo','isolated','--id','cli-action-job','--task-id','task-1','--host','127.0.0.1','--port',String(port),'--events','none','--no-github'],{cwd:root,timeout:12000,env:{...process.env,AGENTS_RELAY_STORE_DIR:stores,AGENTS_RELAY_NO_GITHUB:'1'}});
+  const result=await execFileAsync(process.execPath,[cli,'workflow','action','--action',scenario.action,...(scenario.args??[]),'--repo','isolated','--id','cli-action-job','--task-id','task-1','--host','127.0.0.1','--port',String(port),'--events','none'],{cwd:root,timeout:12000,env:{...process.env,AGENTS_RELAY_STORE_DIR:stores,AGENTS_RELAY_NO_GITHUB:'1'}});
   const output=JSON.parse(result.stdout);
   assert.equal((output.task??output).state,scenario.expected);
   const persisted=(await sqlite.loadJob('cli-action-job')).tasks[0];
@@ -84,7 +84,7 @@ for (const scenario of [{action:'task.cancel',initial:'DRAFT',expected:'CANCELLE
    assert.equal(persisted.unblock?.reason,'manual blocker resolution');
   }
   if (scenario.action==='task.cancel') {
-   await assert.rejects(execFileAsync(process.execPath,[cli,'workflow','action','--action','task.cancel','--repo','isolated','--id','cli-action-job','--task-id','task-1','--host','127.0.0.1','--port',String(port),'--events','none','--no-github'],{cwd:root,timeout:12000,env:{...process.env,AGENTS_RELAY_STORE_DIR:stores,AGENTS_RELAY_NO_GITHUB:'1'}}),/not cancellable|not cancel|CANCELLED|No enabled workflow transition/);
+   await assert.rejects(execFileAsync(process.execPath,[cli,'workflow','action','--action','task.cancel','--repo','isolated','--id','cli-action-job','--task-id','task-1','--host','127.0.0.1','--port',String(port),'--events','none'],{cwd:root,timeout:12000,env:{...process.env,AGENTS_RELAY_STORE_DIR:stores,AGENTS_RELAY_NO_GITHUB:'1'}}),/not cancellable|not cancel|CANCELLED|No enabled workflow transition/);
    assert.equal((await sqlite.loadJob('cli-action-job')).tasks[0].state,'CANCELLED');
   }
  } finally {
@@ -113,9 +113,9 @@ test('L3 CLI task.escalate and task.resume-troubleshooter preserve authoritative
  try {
   await sqlite.saveJob(job);process.env.AGENTS_RELAY_STORE_DIR=stores;process.env.AGENTS_RELAY_NO_GITHUB='1';
   const probe=createServer();await new Promise(resolve=>probe.listen(0,'127.0.0.1',resolve));const port=probe.address().port;await new Promise(resolve=>probe.close(resolve));
-  service=await createService(['--no-github','--events','none','--repo','isolated','--id',job.id,'--port',String(port),'--interval','600000','--refresh-ms','600000']);
+  service=await createService(['--events','none','--repo','isolated','--id',job.id,'--port',String(port),'--interval','600000','--refresh-ms','600000']);
   const execAction=async(action,extra)=>{
-   const result=await execFileAsync(process.execPath,[cli,'workflow','action','--action',action,'--repo','isolated','--id',job.id,'--task-id',recovery.id,...extra,'--host','127.0.0.1','--port',String(port),'--events','none','--no-github'],{cwd:root,timeout:12000,env:{...process.env,AGENTS_RELAY_STORE_DIR:stores,AGENTS_RELAY_NO_GITHUB:'1'}});
+   const result=await execFileAsync(process.execPath,[cli,'workflow','action','--action',action,'--repo','isolated','--id',job.id,'--task-id',recovery.id,...extra,'--host','127.0.0.1','--port',String(port),'--events','none'],{cwd:root,timeout:12000,env:{...process.env,AGENTS_RELAY_STORE_DIR:stores,AGENTS_RELAY_NO_GITHUB:'1'}});
    return JSON.parse(result.stdout);
   };
   await execAction('task.escalate',['--required-action','Complete SSO','--resolution-condition','Login valid','--context','Provider challenge']);
@@ -158,8 +158,8 @@ test('L3 CLI task.recover requires active Troubleshooter and persists original G
  try {
   await sqlite.saveJob(job);process.env.AGENTS_RELAY_STORE_DIR=stores;process.env.AGENTS_RELAY_NO_GITHUB='1';
   const probe=createServer();await new Promise(resolve=>probe.listen(0,'127.0.0.1',resolve));const port=probe.address().port;await new Promise(resolve=>probe.close(resolve));
-  service=await createService(['--no-github','--events','none','--repo','isolated','--id',job.id,'--port',String(port),'--interval','600000','--refresh-ms','600000']);
-  const result=await execFileAsync(process.execPath,[cli,'workflow','action','--action','task.recover','--repo','isolated','--id',job.id,'--task-id',original.id,'--recovery-task-id',recovery.id,'--host','127.0.0.1','--port',String(port),'--events','none','--no-github'],{cwd:root,timeout:12000,env:{...process.env,AGENTS_RELAY_STORE_DIR:stores,AGENTS_RELAY_NO_GITHUB:'1'}});
+  service=await createService(['--events','none','--repo','isolated','--id',job.id,'--port',String(port),'--interval','600000','--refresh-ms','600000']);
+  const result=await execFileAsync(process.execPath,[cli,'workflow','action','--action','task.recover','--repo','isolated','--id',job.id,'--task-id',original.id,'--recovery-task-id',recovery.id,'--host','127.0.0.1','--port',String(port),'--events','none'],{cwd:root,timeout:12000,env:{...process.env,AGENTS_RELAY_STORE_DIR:stores,AGENTS_RELAY_NO_GITHUB:'1'}});
   const output=JSON.parse(result.stdout);
   assert.notEqual(output.state,'FAILED','Graph recovery request must change original state');
   const after=await sqlite.loadJob(job.id);

@@ -10,8 +10,8 @@ import { runReviewCommand } from '../dist/cli-review.js';
 
 test('review CLI exposes job and run, not request', () => {
   assert.match(helpText('root'), /review job\s+Request graph-owned review/);
-  assert.match(helpText('review'), /review job --repo OWNER\/REPO/);
-  assert.match(helpText('review job'), /Required: --repo OWNER\/REPO/);
+  assert.match(helpText('review'), /review job --repo LOCAL_ROOT_NAME/);
+  assert.match(helpText('review job'), /Required: --repo LOCAL_ROOT_NAME/);
   assert.match(helpText('review run'), /--prompt TEXT/);
   assert.doesNotMatch(helpText('root'), /review request\s/);
 });
@@ -28,10 +28,10 @@ test('built CLI help and dispatch follow the renamed command', () => {
     const run = args => spawnSync(process.execPath, [resolve('dist/cli.js'), ...args], { env, encoding: 'utf8' });
     const help = run(['review', '--help']);
     assert.equal(help.status, 0, help.stderr);
-    assert.match(help.stdout, /review job --repo OWNER\/REPO/);
+    assert.match(help.stdout, /review job --repo LOCAL_ROOT_NAME/);
     const jobHelp = run(['review', 'job', '--help']);
     assert.equal(jobHelp.status, 0, jobHelp.stderr);
-    assert.match(jobHelp.stdout, /review job --repo OWNER\/REPO/);
+    assert.match(jobHelp.stdout, /review job --repo LOCAL_ROOT_NAME/);
     const newCommand = run(['review', 'job']);
     assert.notEqual(newCommand.status, 0);
     assert.match(newCommand.stderr, /review job requires --repo and --id/);

@@ -8,5 +8,6 @@ export class DisabledGitHubClient extends GhApiClient {
   override async currentLogin(): Promise<never> { throw new Error('GitHub disabled by --no-github'); }
 }
 export function noGitHubMode(args: readonly string[] = process.argv.slice(2)): boolean {
-  return args.includes('--no-github') || process.argv.includes('--no-github') || process.env.AGENTS_RELAY_NO_GITHUB === '1';
+  void args;
+  return true;
 }

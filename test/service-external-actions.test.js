@@ -34,7 +34,7 @@ test('single-job service flusher delivers queued external merge and graph-comple
   assert.equal(await relay.pendingProjectionCount(),1);
   const reconciler = managedReconciler(store,{
     owner:'service-flush-test',adapters:[],maxConcurrent:0,
-    projectPathForJob:()=>process.cwd(),
+    cwdForJob:()=>process.cwd(),
   });
   assert.equal(await flushServiceExternalActions(store,reconciler,'service-job'),1);
   assert.equal(merges,1);

@@ -10,6 +10,7 @@ import { managedWorkerInput } from '../dist/managed-worker-input.js';
 import { resolveExecutionContext } from '../dist/execution-context.js';
 import { ChatGptAdapter } from '../dist/adapters.js';
 import { zBootstrap,zTaskBrief } from '../dist/z-adapter.js';
+import { localGitProject } from './local-git-project.js';
 const exec=promisify(execFile);
 const digest=x=>createHash('sha256').update(x).digest('hex');
 const executionId='123e4567-e89b-12d3-a456-426614174000';
@@ -17,13 +18,15 @@ const executionId='123e4567-e89b-12d3-a456-426614174000';
 for(const adapter of ['codex','chatgpt','z'])test(`Graph Action and prompt CLI are identical for ${adapter} Task 476`,async()=>{
   const root=await mkdtemp(join(tmpdir(),'relay-prompt-action-parity-'));
   try{
-    const project=resolve('.'),task={id:'476',jobId:'537',title:'Work',state:'QUEUED',agentName:'implementation',kind:'work',adapter,
+    const project=localGitProject(root,'repo');
+    await writeFile(join(project,'AGENTS.md'),'# Independent test project\n');
+    const task={id:'476',jobId:'537',title:'Work',state:'QUEUED',agentName:'implementation',kind:'work',adapter,
       executionId,input:'SECRET_LONG_TASK_DESCRIPTION',output:{kind:'file',path:'runs/expected.txt'},attempt:1,maxAttempts:3,dependencies:[]};
-    const job={id:'537',repository:'lalalic/neo',title:'Example',objective:'PRIVATE JOB OBJECTIVE',state:'ACTIVE',tasks:[task],plans:[],prNumber:0,projectPath:project};
+    const job={id:'537',repository:'repo',title:'Example',objective:'PRIVATE JOB OBJECTIVE',state:'ACTIVE',tasks:[task],plans:[],prNumber:0,projectRoot:project};
     const file=join(root,'job.json');await writeFile(file,JSON.stringify(job));
     const cx=await resolveExecutionContext(project,'worker');
     const actual=await managedWorkerInput(job,task,cx);
-    const {stdout}=await exec(process.execPath,['dist/cli.js','prompt','--file',file,'--id','537','--task-id','476','--adapter',adapter,'--project-path',project],{cwd:project,timeout:20_000});
+    const {stdout}=await exec(process.execPath,['dist/cli.js','prompt','--file',file,'--id','537','--task-id','476','--adapter',adapter],{cwd:resolve('.'),timeout:20_000});
     assert.equal(stdout.trimEnd(),actual);
     assert.match(actual,/^# Role/);assert.match(actual,/## Contracts\n/);
     assert.match(actual,/## Contexts\n/);assert.match(actual,/## Task\n/);
@@ -60,15 +63,16 @@ for(const adapter of ['codex','chatgpt','z'])test(`Graph Action and prompt CLI a
 test('Planner context CLI accepts only the active persisted Plan execution',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'relay-plan-context-'));
   try{
-    const project=resolve('.');
+    const project=localGitProject(dir,'repo');
+    await writeFile(join(project,'AGENTS.md'),'# Independent planner project\n');
     const plan={id:'plan-2',jobId:'537',status:'PLANNING',executionId,round:2,source:'model-planner',previousPlanId:'plan-1',trigger:{source:'manual'},assessment:'Pending',generatedTaskIds:[],createdAt:'2026-10-31T17:00:00Z',updatedAt:'2026-10-31T17:00:00Z'};
-    const job={id:'537',repository:'lalalic/neo',title:'Objective',objective:'Plan the tasks',state:'ACTIVE',projectPath:project,tasks:[],plans:[plan],prNumber:0};
+    const job={id:'537',repository:'repo',title:'Objective',objective:'Plan the tasks',state:'ACTIVE',projectRoot:project,tasks:[],plans:[plan],prNumber:0};
     const file=join(dir,'job.json');await writeFile(file,JSON.stringify(job));
-    const args=['dist/cli.js','plan','context','--file',file,'--repo','lalalic/neo','--id','537','--plan-id','plan-2','--execution-id',executionId,'--project-path',project];
-    const result=await exec(process.execPath,args,{cwd:project,timeout:20_000});
+    const args=['dist/cli.js','plan','context','--file',file,'--repo','repo','--id','537','--plan-id','plan-2','--execution-id',executionId];
+    const result=await exec(process.execPath,args,{cwd:resolve('.'),timeout:20_000});
     const content=JSON.parse(result.stdout);
     assert.equal(content.plan_execution.planId,'plan-2');
     assert.match(content.apply_cli,/--id 537 --plan-id plan-2 --execution-id/);
-    await assert.rejects(exec(process.execPath,[...args.slice(0,-3),'stale-identity','--project-path',project],{cwd:project,timeout:20_000}),/Stale Plan execution/);
+    await assert.rejects(exec(process.execPath,args.map((arg,index)=>args[index-1]==='--execution-id'?'stale-identity':arg),{cwd:resolve('.'),timeout:20_000}),/Stale Plan execution/);
   }finally{await rm(dir,{recursive:true,force:true});}
 });

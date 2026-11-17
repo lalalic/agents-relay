@@ -127,9 +127,6 @@ test('read-only Task show/comments support explicit local --file input',async()=
       [['--id','job1','--task-id','other'],/--task-id may not be repeated/],
       [['--id','job1','--repo','example/repo','--repo','other/repo'],/--repo may not be repeated/],
       [['--id','job1','--file',fixture],/--file may not be repeated/],
-      [['--id','job1','--pr'],/--pr requires a value/],
-      [['--id','job1','--pr','0'],/--pr must be a positive integer/],
-      [['--id','job1','--pr','1'],/Local --file PR binding mismatch/],
       [['--id','job1','--store-dir'],/--store-dir requires a value/],
     ]) {
       await assert.rejects(run(process.execPath,[...local,...extra],
@@ -195,10 +192,8 @@ test('read-only Task show/comments/events resolve a real isolated Job by ID with
       {cwd:process.cwd(),env,timeout:10000}),/--repo requires a value/);
     await assert.rejects(run(process.execPath,[...args,'show','--id','job-id-only','--id','other','--task-id','t1'],
       {cwd:process.cwd(),env,timeout:10000}),/--id may not be repeated/);
-    await assert.rejects(run(process.execPath,[...args,'show','--id','job-id-only','--task-id','t1','--pr','1'],
-      {cwd:process.cwd(),env,timeout:10000}),/Local Job\/PR binding mismatch/);
     await assert.rejects(run(process.execPath,
-      [...args,'show','--id','job-id-only','--task-id','t1','--repo','other/repo'],
+      [...args,'show','--id','job-id-only','--task-id','t1','--repo','other'],
       {cwd:process.cwd(),env,timeout:10000}),/Immutable local Job not found/);
   }finally{
     store.close();
