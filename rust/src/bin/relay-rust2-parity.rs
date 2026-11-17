@@ -357,6 +357,84 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "wave4LocalMerge" => {
+            let repo = std::path::Path::new(request["repo"].as_str().ok_or("repo missing")?);
+            let receipt = agents_relay_rust2::local_git_merge::deliver_local_merge(
+                repo,
+                &request["receipt"],
+            )?;
+            Ok(json!({"sourceSha":receipt.source_sha,
+                "mergedCommitSha":receipt.merged_commit_sha})
+            .to_string())
+        }
+        "wave4Continuation" => {
+            use agents_relay_rust2::continuation::{
+                continue_with_owned_process, Continuation, DeliveryProcessOptions,
+            };
+            let kind = request["kind"].as_str().unwrap_or("");
+            let target = request["target"].as_str().unwrap_or("");
+            let input = request["input"].as_str().unwrap_or("");
+            let continuation = match request["continuationKind"].as_str().unwrap_or(kind) {
+                "codex-thread" => Continuation::CodexThread { target },
+                "command" => Continuation::Command { target },
+                "webhook" => Continuation::Webhook { target },
+                _ => return Err("Unsupported fixture continuation kind".into()),
+            };
+            let mut owned = agents_relay_rust2::owned_process::OwnedProcessManager::default();
+            continue_with_owned_process(
+                kind,
+                input,
+                continuation,
+                request["commandOverride"].as_str(),
+                &mut owned,
+                DeliveryProcessOptions {
+                    timeout: Some(std::time::Duration::from_secs(4)),
+                    ..Default::default()
+                },
+            )?;
+            Ok("null".into())
+        }
+        "wave4DagOwned" => {
+            let mut owned = agents_relay_rust2::owned_process::OwnedProcessManager::default();
+            let outcome = agents_relay_rust2::dag_result_contract::dag_completion_error_owned(
+                &request["task"],
+                request["projectPath"].as_str().map(std::path::Path::new),
+                request["interpreter"].as_str().unwrap_or("node"),
+                &mut owned,
+                agents_relay_rust2::continuation::DeliveryProcessOptions {
+                    timeout: Some(std::time::Duration::from_secs(4)),
+                    ..Default::default()
+                },
+            );
+            Ok(json!(outcome).to_string())
+        }
+        "wave4RouteJsonl" => {
+            use agents_relay_rust2::route_outcome_recording as audit;
+            let path = std::path::Path::new(request["path"].as_str().ok_or("path required")?);
+            let task = &request["task"];
+            let execution_id = request["executionId"].as_str();
+            let outcome = match request["kind"].as_str().unwrap_or("terminal") {
+                "terminal" => audit::record_terminal_route_outcome_jsonl(
+                    path,
+                    task,
+                    &request["event"],
+                    execution_id,
+                ),
+                "launch" => audit::record_launch_route_outcome_jsonl(
+                    path,
+                    task,
+                    request["message"].as_str().unwrap_or(""),
+                    request["phase"].as_str().unwrap_or("launch"),
+                    execution_id,
+                    request["unknownOutcome"] == true,
+                ),
+                "watchdog" => {
+                    audit::record_watchdog_route_outcome_jsonl(path, task, &request["watchdog"])
+                }
+                _ => return Err("Unsupported fixture route kind".into()),
+            };
+            Ok(json!(outcome.is_some()).to_string())
+        }
         "deliveryWave2" => {
             Ok(agents_relay_rust2::delivery_parity_harness::delivery_wave2(request)?.to_string())
         }
