@@ -166,6 +166,39 @@ fn workflow_engine_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "withLocalMergeLock" => {
+            let dir =
+                std::path::Path::new(request["commonDir"].as_str().ok_or("commonDir required")?);
+            let target = request["targetRef"].as_str().ok_or("targetRef required")?;
+            let timeout =
+                std::time::Duration::from_millis(request["timeoutMs"].as_u64().unwrap_or(15000));
+            let result = agents_relay_rust2::local_merge_lock::with_local_merge_lock(
+                dir,
+                target,
+                || {
+                    let path = agents_relay_rust2::local_merge_lock::lock_directory(dir, target);
+                    let owner =
+                        std::fs::read(path.join("owner.json")).map_err(|err| err.to_string())?;
+                    let owner =
+                        serde_json::from_slice::<Value>(&owner).map_err(|err| err.to_string())?;
+                    let evidence = json!({"ownerValid":owner["pid"].as_u64().is_some(),
+                    "ownerTarget":owner["targetRef"],"locked":path.is_dir(),"ownerHostValid":owner["host"].as_str().is_some()});
+                    if let Some(delay) = request["holdMs"].as_u64() {
+                        std::thread::sleep(std::time::Duration::from_millis(delay));
+                    }
+                    if request["mutateOwner"] == true {
+                        std::fs::write(path.join("owner.json"), "{\"pid\":1}")
+                            .map_err(|err| err.to_string())?;
+                    }
+                    if let Some(message) = request["failure"].as_str() {
+                        return Err(message.to_string());
+                    }
+                    Ok(evidence)
+                },
+                timeout,
+            );
+            Ok(result?.to_string())
+        }
         "routingPolicyPath" => Ok(json!(agents_relay_rust2::routing_policy::policy_path(
             request["explicit"].as_str(),
             request["env"].as_str(),

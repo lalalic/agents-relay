@@ -12,6 +12,7 @@ pub mod github_branch_projection;
 pub mod job_execution_slot;
 pub mod js_text;
 pub mod local_job_path;
+pub mod local_merge_lock;
 pub mod planned_review_head;
 pub mod planner_agent_roles;
 pub mod planner_history_cleanup;

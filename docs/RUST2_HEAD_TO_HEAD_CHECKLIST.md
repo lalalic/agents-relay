@@ -111,7 +111,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/local-job-registry.ts` | `rust/src/local_job_registry.rs` | PENDING | — |
 | `src/local-managed-store.ts` | `rust/src/local_managed_store.rs` | PENDING | — |
 | `src/local-merge-delivery.ts` | `rust/src/local_merge_delivery.rs` | PENDING | — |
-| `src/local-merge-lock.ts` | `rust/src/local_merge_lock.rs` | PENDING | — |
+| `src/local-merge-lock.ts` | `rust/src/local_merge_lock.rs` | PASS | Direct hotfix: real Node↔Rust cross-process directory locking, stale/foreign/live PID and owner recovery, timeout/error/panic-safe release (rust/tests/head_to_head_local_merge_lock.mjs; rust/tests/native_local_merge_lock.rs) |
 | `src/local-merge-projection.ts` | `rust/src/local_merge_projection.rs` | PENDING | — |
 | `src/managed-worker-input.ts` | `rust/src/managed_worker_input.rs` | PENDING | — |
 | `src/manual-plan.ts` | `rust/src/manual_plan.rs` | PENDING | — |
@@ -390,3 +390,10 @@ Production Node.js Relay was not restarted or replaced; no canonical SQLite stor
 - [x] Existing partial `src/cli-artifact.ts` remains **PENDING** because the Rust schema validator does not fully implement Node Ajv and must not be marked complete from basic schema fixtures.
 
 These tests verify isolated protocol behavior but do not count as a production daemon cutover or an actual WebHelm deployment.
+
+### Direct Rust2 hotfix — cross-process local Git merge lock (2026-11-16)
+
+- [x] `src/local-merge-lock.ts` → `rust/src/local_merge_lock.rs`: atomic owner.json creation with mode 0600, PID/host/UTC timestamp, stable SHA-256 ref identity, 50-ms retry, 3-second stale grace, quarantined stale recovery lock, ownership-aware release.
+- [x] `rust/tests/head_to_head_local_merge_lock.mjs`: real isolated filesystem head-to-head tests for uncontended/failing actions, both Node-holds-Rust-waits and Rust-holds-Node-waits processes, stale/crashed/malformed owner, active PID, foreign host and recent incomplete owner fencing.
+- [x] `rust/tests/native_local_merge_lock.rs`: Rust panic-unwind release, different refs without contention, successor-owner preservation and SHA-256 lock naming.
+- [x] No production Git lock directories or real Relay worktrees used; fixtures are disposable temporary directories.
