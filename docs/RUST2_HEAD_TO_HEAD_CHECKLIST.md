@@ -125,7 +125,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/planned-review-head.ts` | `rust/src/planned_review_head.rs` | PASS | 626 shared differential fixtures across 14 ports; head binding, exact prompt append, duplicate suppression, errors, and save count compared (`rust/tests/head_to_head.mjs`) |
 | `src/planner-agent-roles.ts` | `rust/src/planner_agent_roles.rs` | PASS | 587 shared differential fixtures across 7 ports; Rust native tests 8/8; Node focused regression 18/18; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/planner-child-recovery.ts` | `rust/src/planner_child_recovery.rs` | PENDING | — |
-| `src/planner-child.ts` | `rust/src/planner_child.rs` | PENDING | — |
+| `src/planner-child.ts` | `rust/src/planner_child.rs` | PASS | 355+ Node/Rust direct differential cases: field-by-field equality, absent/null, defaults, nested arrays/objects, Unicode, unrelated metadata; Rust native test (`rust/tests/head_to_head_planner_child.mjs`, `rust/src/planner_child.rs`) |
 | `src/planner-history-cleanup.ts` | `rust/src/planner_history_cleanup.rs` | PASS | 626 shared differential fixtures across 14 ports; valid, missing, malformed, duplicate, and target-required payloads compared (`rust/tests/head_to_head.mjs`) |
 | `src/planner-recovery.ts` | `rust/src/planner_recovery.rs` | PENDING | — |
 | `src/planner-runtime.ts` | `rust/src/planner_runtime.rs` | PENDING | — |

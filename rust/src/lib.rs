@@ -51,3 +51,6 @@ pub mod agent_content_resolver;
 
 // Direct offline SQLite migration port of Node src/task-id-migration.ts.
 pub mod task_id_migration;
+
+// Direct Node src/planner-child.ts field-projection equality port.
+pub mod planner_child;
