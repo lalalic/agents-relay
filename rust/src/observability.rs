@@ -15,7 +15,7 @@ pub const OBSERVABILITY_MAX_ITEMS: usize = 20;
 pub const OBSERVABILITY_MAX_DEPTH: usize = 4;
 pub const OBSERVABILITY_REDACTED: &str = "[redacted]";
 
-fn js_string(value: &Value) -> String {
+pub(crate) fn js_string(value: &Value) -> String {
     match value {
         Value::Null => "null".into(),
         Value::Bool(value) => value.to_string(),

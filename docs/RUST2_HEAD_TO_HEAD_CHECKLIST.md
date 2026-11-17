@@ -225,7 +225,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/workflow/dispatcher.ts` | `rust/src/workflow/dispatcher.rs` | PENDING | — |
 | `src/workflow/durable-publication.ts` | `rust/src/workflow/durable_publication.rs` | PENDING | — |
 | `src/workflow/durable-transition.ts` | `rust/src/workflow/durable_transition.rs` | PENDING | — |
-| `src/workflow/effects.ts` | `rust/src/workflow/effects.rs` | PENDING | — |
+| `src/workflow/effects.ts` | `rust/src/workflow/effects.rs` | PASS | Direct hotfix: 762 stateful Node/Rust handler/receipt/onOutcome/observation fixtures; 8 Rust-native effect tests and 5 original Node regressions (rust/tests/head_to_head_workflow_effects.mjs; rust/tests/native_workflow_effects.rs) |
 | `src/workflow/entity-creation.ts` | `rust/src/workflow/entity_creation.rs` | PENDING | — |
 | `src/workflow/escalation.ts` | `rust/src/workflow/escalation.rs` | PENDING | — |
 | `src/workflow/force-restate-validation-v2.ts` | `rust/src/workflow/force_restate_validation_v2.rs` | PENDING | — |
@@ -460,3 +460,13 @@ This is only the Job JEL graph projection; Dashboard HTTP routing, additional ta
 - [x] `rust/tests/native_observability.rs`: **6** Rust-native regressions for error precedence, recursive redaction, UTF-16 JSON boundary, panic restoration, async-local interleaving and no-op/filtered sinks.
 - [x] Original Node `test/observability.test.js`: **12/12 PASS** with isolated SQLite and projected-store fixtures; full Rust2 differential **36/36 PASS**, 0 skipped, Cargo tests and Clippy clean.
 - [x] No live Relay daemon, Job, event stream, production secret, durable database or external log service was modified during this port.
+
+### Direct Rust2 hotfix — Workflow Effect Executor (2026-11-16)
+
+- [x] `src/workflow/effects.ts` → `rust/src/workflow/effects.rs`: implements an injectable, asynchronous native `WorkflowEffectReceiptStore`, `MemoryWorkflowEffectReceiptStore`, `WorkflowEffectHandler`, `CallbackWorkflowEffectHandler` equivalent and `WorkflowEffectExecutor` keyed dispatch. Effect registration checks duplicate handlers; keys encode Job/Task/transition identity with optional explicit override.
+- [x] Ordered Effect execution is idempotent through durable receipt callbacks: receipts are written only after success, failures may retry, and already completed keys produce deduplicated outcomes. Missing handlers and receipt-read errors fail closed; receipt-write/callback errors become failed effects, with verified `onOutcome` error semantics matching the Node reference.
+- [x] Structured `workflow.effect` and `workflow.effect.failed` observations retain correlated execution IDs, exact idempotency keys, outcome statuses and classification via the previously ported `observability.rs`; an Effect observation never directly mutates lifecycle state.
+- [x] `rust/tests/head_to_head_workflow_effects.mjs`: **762** stateful Node/Rust cases across multiple steps, real async handlers, explicit key reuse across different effects, error classification, injected read/write receipt failures, deduplication, exception propagation and `onOutcome` rejection.
+- [x] `rust/tests/native_workflow_effects.rs`: **8** Rust-native tests for callback ordering, missing/duplicate handlers, idempotency, transient failures, completion-then-callback-error semantics and receipt recovery. The native tests filter by their own Job identity to remain independent under Cargo parallel test execution.
+- [x] Original Node `test/workflow-effects.test.js`: **5/5 PASS** using isolated test store; full differential suite **38/38 PASS**, 0 skipped, cargo fmt/native tests/clippy clean.
+- [x] No live Workflow Effect, Job/Task, SQLite database, PR, Git remote or running Relay process was used or modified.

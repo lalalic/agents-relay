@@ -32,6 +32,7 @@ pub mod worker_rejection;
 pub mod workflow {
     pub mod conditions;
     pub mod contracts;
+    pub mod effects;
     pub mod mermaid;
 }
 pub mod cli_artifact;

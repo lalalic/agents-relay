@@ -163,9 +163,202 @@ fn workflow_engine_scenario(request: &Value) -> Result<Value, String> {
     Ok(json!({"result":result,"trace":trace}))
 }
 
+// Adapter-only fixture: drive the actual native Workflow Effect executor with
+// disposable in-memory receipts and callbacks, never against a live Job.
+fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
+    use agents_relay_rust2::observability::{
+        collect_observations, set_observability, RelayObservability,
+    };
+    use agents_relay_rust2::workflow::effects::{
+        EffectCallback, KeyCallback, MemoryWorkflowEffectReceiptStore, OutcomeCallback,
+        ReceiptFuture, WorkflowEffectError, WorkflowEffectExecutor, WorkflowEffectHandler,
+        WorkflowEffectReceiptStore,
+    };
+    use std::{
+        collections::HashSet,
+        future::Future,
+        pin::pin,
+        sync::{Arc, Mutex},
+        task::{Context, Poll, Waker},
+    };
+    fn drive<F: Future>(future: F) -> F::Output {
+        let mut future = pin!(future);
+        let mut context = Context::from_waker(Waker::noop());
+        loop {
+            if let Poll::Ready(result) = future.as_mut().poll(&mut context) {
+                return result;
+            }
+            std::thread::yield_now();
+        }
+    }
+    fn fixture_error(value: &Value) -> WorkflowEffectError {
+        if value.is_null() {
+            return WorkflowEffectError::new("fixture rejected");
+        }
+        WorkflowEffectError {
+            value: value.clone(),
+            is_error: value.is_object(),
+        }
+    }
+    struct FixtureReceipts {
+        inner: Arc<MemoryWorkflowEffectReceiptStore>,
+        has_fail: HashSet<String>,
+        mark_fail: HashSet<String>,
+    }
+    impl WorkflowEffectReceiptStore for FixtureReceipts {
+        fn has<'a>(&'a self, key: &'a str) -> ReceiptFuture<'a, bool> {
+            Box::pin(async move {
+                if self.has_fail.contains(key) {
+                    return Err(WorkflowEffectError::new("has receipt failed"));
+                }
+                self.inner.has(key).await
+            })
+        }
+        fn mark_completed<'a>(&'a self, key: &'a str) -> ReceiptFuture<'a, ()> {
+            Box::pin(async move {
+                if self.mark_fail.contains(key) {
+                    return Err(WorkflowEffectError::new("mark receipt failed"));
+                }
+                self.inner.mark_completed(key).await
+            })
+        }
+    }
+    let trace = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let records = Arc::new(Mutex::new(Vec::<Value>::new()));
+    set_observability(RelayObservability::new(
+        collect_observations(Arc::clone(&records)),
+        "debug",
+    ));
+    let mut handlers = Vec::new();
+    for value in request["handlers"].as_array().into_iter().flatten() {
+        let name = value["name"].as_str().unwrap_or("").to_string();
+        let descriptor = value.clone();
+        let call_name = name.clone();
+        let call_trace = Arc::clone(&trace);
+        let counter = Arc::new(Mutex::new(0u64));
+        let callback: EffectCallback = Arc::new(move |context| {
+            let mut count = counter.lock().expect("fixture attempts mutex");
+            *count += 1;
+            let nth = *count;
+            let behavior = descriptor["behavior"].as_str().unwrap_or("ok");
+            let should_fail = behavior == "fail" || (behavior == "failOnce" && nth == 1);
+            let mut error = fixture_error(&descriptor["error"]);
+            if descriptor["errorIsError"] == false && !descriptor["error"].is_null() {
+                error.is_error = false;
+            }
+            call_trace
+                .lock()
+                .expect("effect trace mutex")
+                .push(json!({"execute":call_name,"jobId":context["jobId"],"attempt":nth}));
+            Box::pin(async move {
+                if should_fail {
+                    Err(error)
+                } else {
+                    Ok(())
+                }
+            })
+        });
+        let key: Option<KeyCallback> = match value["keyMode"].as_str() {
+            Some("fixed") => {
+                let result = value["key"].as_str().map(str::to_string);
+                Some(Arc::new(move |_| result.clone()))
+            }
+            Some("job") => Some(Arc::new(|context| {
+                context["jobId"]
+                    .as_str()
+                    .map(|value| format!("job:{value}"))
+            })),
+            Some("empty") => Some(Arc::new(|_| Some(String::new()))),
+            _ => None,
+        };
+        handlers.push(if let Some(key) = key {
+            WorkflowEffectHandler::with_key(&name, callback, key)
+        } else {
+            WorkflowEffectHandler::new(&name, callback)
+        });
+    }
+    let receipts = Arc::new(MemoryWorkflowEffectReceiptStore::new());
+    for item in request["initialReceipts"].as_array().into_iter().flatten() {
+        if let Some(key) = item.as_str() {
+            receipts.mark_preexisting(key);
+        }
+    }
+    let has_fail = request["hasFailKeys"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect::<HashSet<_>>();
+    let mark_fail = request["markFailKeys"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect::<HashSet<_>>();
+    let store = Arc::new(FixtureReceipts {
+        inner: Arc::clone(&receipts),
+        has_fail,
+        mark_fail,
+    });
+    let executor = WorkflowEffectExecutor::new(handlers, store)?;
+    let on_mode = request["onOutcomeFail"].as_str().map(str::to_string);
+    let on_once = request["onOutcomeFailOnce"] == true;
+    let on_attempts = Arc::new(Mutex::new(0u64));
+    let out_trace = Arc::clone(&trace);
+    let on_outcome: OutcomeCallback = Arc::new(move |outcome| {
+        out_trace
+            .lock()
+            .expect("outcome trace mutex")
+            .push(json!({"onOutcome":outcome["status"],"effect":outcome["effect"]}));
+        let fail = on_mode
+            .as_ref()
+            .is_some_and(|mode| mode == outcome["status"].as_str().unwrap_or(""));
+        let mut attempts = on_attempts.lock().expect("outcome attempts mutex");
+        if fail {
+            *attempts += 1;
+        }
+        let failure = fail && (!on_once || *attempts == 1);
+        Box::pin(async move {
+            if failure {
+                Err(WorkflowEffectError::new("onOutcome rejected"))
+            } else {
+                Ok(())
+            }
+        })
+    });
+    let mut rounds = Vec::new();
+    for turn in request["steps"].as_array().into_iter().flatten() {
+        let effects = turn
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let result = drive(executor.execute(&effects, &request["context"], Some(&on_outcome)));
+        match result {
+            Ok(value) => rounds.push(json!({"ok":true,"value":value})),
+            Err(error) => rounds.push(json!({"ok":false,"error":error.display()})),
+        }
+    }
+    set_observability(RelayObservability::silent());
+    let mut records = records.lock().expect("observability capture mutex").clone();
+    for record in &mut records {
+        record["ts"] = json!("NORMALIZED");
+    }
+    let trace = trace.lock().expect("effect fixture trace mutex").clone();
+    Ok(
+        json!({"rounds":rounds,"trace":trace,"records":records,"receipts":receipts.completed_keys()}),
+    )
+}
+
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "workflowEffectsScenario" => Ok(workflow_effects_scenario(request)?.to_string()),
+
         "samePlannerChildDefinition" => Ok(json!(
             agents_relay_rust2::planner_child::same_planner_child_definition(
                 &request["left"],
