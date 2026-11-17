@@ -36,7 +36,7 @@ test('Coordinator Job and Agent Graph Task are created atomically in SQLite, wit
  const local=openLocalManagedStore('project',0,{directory:f.storeDirectory,jobId:created.job.id,noGitHub:true});
  try{const stored=await local.relay.loadJob(created.job.id);
   assert.equal(stored.tasks.length,1);assert.equal(stored.tasks[0].id,task.id);
-  assert.equal(stored.graphStartContext.projectPath,f.project);
+  assert.equal(stored.graphStartContext.projectRoot,f.project);
  }finally{local.relay.close()}
  await assert.rejects(()=>ensureManagedGitHubJob({},'project',new Set(),
    {...options,coordinator:{...f.coordinator,graph:'flowchart TD\nX[agent:wrong]'}}),/different Graph or Run/);

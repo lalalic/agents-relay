@@ -13,7 +13,7 @@ Goal: reliably create, inspect, resume, review, and merge a local Git Job, with 
 
 - Create: bind one Job ID to a validated canonical local Git root; optionally create the first Plan or a Coordinator DAG.
 - Inspect and resume: use the version-matched CLI and SQLite-backed Job/Task history.
-- Daemon: `agents-relayd` loads existing Jobs from SQLite, never a recursive Workspace scan; ordinary launch needs no `--workspace`. Repository paths come from immutable `job.projectRoot`/`job.projectPath`.
+- Daemon: `agents-relayd` loads existing Jobs from SQLite, never a recursive Workspace scan; ordinary launch needs no `--workspace`. Repository paths come from immutable `job.projectRoot` only.
 - Review and merge: review the local Git head, then merge through the normal Job gate.
 - Deliver: only after `COMPLETED`, the daemon may non-force-push verified `main` when `origin/main` exists and fetch/push destinations match; otherwise skip or retry independently. Remote results never change Job lifecycle or create PRs.
 
@@ -33,7 +33,7 @@ npx agents-relay job show --id JOB_ID
 npx agents-relay task list --repo LOCAL_ROOT_NAME --id JOB_ID
 ```
 
-`job.repository` is the local Git root directory name and `job.projectRoot` is its immutable canonical path. `job.projectPath` may select a nested directory such as `vlog`. Remote owner/repository metadata is not part of Job identity. Use returned Job IDs. Omit `--initial-plan` for DRAFT-only or Coordinator Graph work. Local Git is the source of truth for review and merge; GitHub authentication and PRs are not part of Job execution.
+`job.repository` is the local Git root directory name and `job.projectRoot` is its immutable canonical path. Every Neo Project (`vlog`, `toyalive-3d`, etc.) has an independent Git root; no `job.projectPath` field exists. Remote owner/repository metadata is not part of Job identity. Use returned Job IDs. Omit `--initial-plan` for DRAFT-only or Coordinator Graph work. Local Git is the source of truth for review and merge; GitHub authentication and PRs are not part of Job execution.
 
 Read `contracts/task-job-contract.md` before authoring or changing Jobs or Tasks and `contracts/orchestrator-workflows.md` when handling initial planning, P0/self Jobs, or merge/delivery boundaries. For content work, load the active Neo Project rules, its Agent Graph if present, and the relevant stage contracts—not a presumed universal production sequence.
 

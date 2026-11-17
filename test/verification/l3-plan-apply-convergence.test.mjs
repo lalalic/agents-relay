@@ -46,7 +46,7 @@ async function fixture(forceRestate = true, includeFailed = true) {
 
 function runtime(store, overrides = {}) {
   return new Reconciler(store, { owner: 'planner-test', adapters: [{ name: 'codex', id: 'codex-worker', capabilities: [] }],
-    maxConcurrent: 0, noGitHub: true, projectPathForJob: () => process.cwd(), planner: { plan: async () => { throw new Error('not launched'); } }, ...overrides });
+    maxConcurrent: 0, noGitHub: true, cwdForJob: () => process.cwd(), planner: { plan: async () => { throw new Error('not launched'); } }, ...overrides });
 }
 
 const cleanup = [
@@ -253,7 +253,7 @@ test('L3 invalid schema and missing real worker route reject without SQLite writ
     }), error => error.code === 'PLAN_APPLY_VALIDATION_FAILED' && error.phase === 'candidate');
     assert.equal(JSON.stringify(await f.sqlite.loadJob(f.job.id)), before);
     const noAdapter = new Reconciler(f.store, { owner: 'planner-test', adapters: [], maxConcurrent: 0, noGitHub: true,
-      projectPathForJob: () => process.cwd(), planner: { plan: async () => { throw new Error('not launched'); } } });
+      cwdForJob: () => process.cwd(), planner: { plan: async () => { throw new Error('not launched'); } } });
     try {
       await assert.rejects(noAdapter.applyPlannerTree(f.job.id, f.plan.id, 'planner-execution-1', {
         objective_status: 'in_progress', assessment: 'No eligible worker is registered.',

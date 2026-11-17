@@ -69,7 +69,7 @@ export async function runReplay(scenario) {
    return scenario.plannerScript.results?.[Math.min(plannerCalls - (scenario.plannerScript.failures??0) - 1, scenario.plannerScript.results.length - 1)] ?? scenario.plannerScript.result;
  }} : {plan:async()=>({objective_status:'satisfied',assessment:'All durable implementation tasks verified in isolated L3 replay.',next_tasks:[]})};
  const runtimeOptions={owner:'l3-replay',adapters:[{name:'codex',id:'l3-replay-worker',capabilities:['model']}],eventBus:bus,maxConcurrent:0,noGitHub:true,
-   planner,projectPathForJob:()=>env.root,...(simulatedGitEffect?{localMergeEffect:simulatedGitEffect,projectPathForJob:()=>env.root}:{}),...(scenario.reviewEnabled?{reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'l3-external-provider-fixture',decidedAt:stamp}}}:{})};
+   planner,cwdForJob:()=>env.root,...(simulatedGitEffect?{localMergeEffect:simulatedGitEffect,cwdForJob:()=>env.root}:{}),...(scenario.reviewEnabled?{reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'l3-external-provider-fixture',decidedAt:stamp}}}:{})};
  let runtime=new Reconciler(store,runtimeOptions);
  const trace=[];let stop;
  try {

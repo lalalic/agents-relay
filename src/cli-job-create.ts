@@ -9,7 +9,6 @@ import { isAbsolute, resolve } from 'node:path';
 import { normalizeThreadId } from './reviewer-thread.js';
 import { discoverLocalRelayStoreSnapshots, relayStoreDirectory } from './relay-store.js';
 import { validateProjectRoot } from './workspace.js';
-import { resolveRepositoryProjectPath } from './workspace.js';
 
 /** Create a local SQLite-authoritative Job; external PR metadata is optional compatibility data. */
 export async function ensureManagedGitHubJob(
@@ -17,7 +16,7 @@ export async function ensureManagedGitHubJob(
   repositoryName: string,
   _trustedAuthors: ReadonlySet<string>,
   options: {
-    id?: string; idempotencyKey?: string; title?: string; objective?: string; projectRoot?: string; projectPath?: string;
+    id?: string; idempotencyKey?: string; title?: string; objective?: string; projectRoot?: string;
     priority?: Priority;
     tag?: Job['tag']; reviewEnabled?: boolean; autoMerge?: boolean; continuation?: Job['continuation'];
     coordinator?: { graph: string; input: string; outputPath: string; projectRoot: string; workspaceRoot: string; sharedRoot?: string; globalRoot?: string };
@@ -38,7 +37,6 @@ export async function ensureManagedGitHubJob(
   }
   const directory = options.storeDirectory ?? relayStoreDirectory();
   const projectRoot = await validateProjectRoot(resolve(options.projectRoot ?? options.coordinator?.projectRoot ?? process.cwd()), repositoryName);
-  if (options.projectPath) resolveRepositoryProjectPath(projectRoot, options.projectPath);
   const knownJobs = (await discoverLocalRelayStoreSnapshots(directory)).flatMap(snapshot => snapshot.jobs);
   const identityCollision = knownJobs.find(job => job.repository === repositoryName && job.projectRoot && job.projectRoot !== projectRoot);
   if (identityCollision) throw new Error(`Local repository identity collision ${repositoryName}: Job ${identityCollision.id} binds ${identityCollision.projectRoot}, requested ${projectRoot}`);
@@ -53,11 +51,11 @@ export async function ensureManagedGitHubJob(
     const existing = alreadyKnown[0];
     if (existing.repository !== repositoryName || existing.projectRoot !== projectRoot || (options.prNumber !== undefined && existing.prNumber !== requestedNumber)) throw new Error('Immutable Job ID is already bound to a different local repository, project root, or external PR');
     if (!options.id && !options.idempotencyKey) throw new Error('Automatically allocated Job ID unexpectedly belongs to an existing Job');
-    if (options.idempotencyKey && ((options.objective && options.objective !== existing.objective) || (options.projectPath && options.projectPath !== existing.projectPath) || (options.title && options.title !== existing.title))) throw new Error('Job idempotency key reused for a different Job definition');
+    if (options.idempotencyKey && ((options.objective && options.objective !== existing.objective) || (options.title && options.title !== existing.title))) throw new Error('Job idempotency key reused for a different Job definition');
     if(options.coordinator){const task=existing.tasks.find(task=>task.title==='Coordinator' && Boolean(task.agentGraph));
       if(!task||task.agentGraph!==options.coordinator.graph||task.input!==options.coordinator.input||
          task.output?.kind!=='file'||task.output.path!==options.coordinator.outputPath||
-         existing.graphStartContext?.projectPath!==options.coordinator.projectRoot)
+         existing.graphStartContext?.projectRoot!==options.coordinator.projectRoot)
         throw Error('Coordinator idempotency key reused for a different Graph or Run');
     }
     return { job: existing, pr: { ...placeholder, number: existing.prNumber } };
@@ -79,7 +77,6 @@ export async function ensureManagedGitHubJob(
       id,
       title: options.title || pr.title || 'Agents Relay job',
       objective: options.objective || pr.body || undefined,
-      projectPath: options.projectPath,
       projectRoot,
       description: pr.body || undefined,
       priority: options.priority ?? 'P2',
@@ -102,7 +99,7 @@ export async function ensureManagedGitHubJob(
       createdAt: now,
       updatedAt: now,
       tasks: [],
-      ...(options.coordinator ? {graphStartContext:{projectPath:options.coordinator.projectRoot,
+      ...(options.coordinator ? {graphStartContext:{projectRoot:options.coordinator.projectRoot,
         workspaceRoot:options.coordinator.workspaceRoot,
         ...(options.coordinator.sharedRoot?{sharedRoot:options.coordinator.sharedRoot}:{}),
         ...(options.coordinator.globalRoot?{globalRoot:options.coordinator.globalRoot}:{}),

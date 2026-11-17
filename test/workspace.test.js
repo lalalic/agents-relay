@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import test from './test-runtime.js';
 import { marker, JOB_MARKER } from '../dist/markers.js';
 import { aggregateManagedGitHubJobs } from '../dist/pool.js';
-import { discoverGitRepositories, discoverWorkspaceRepositories, githubRepositoryFromRemote, isProjectRunPath, prepareManagedExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath, resolveWorkspaceRepositoryPath, taskUsesCanonicalProjectRun } from '../dist/workspace.js';
+import { discoverGitRepositories, discoverWorkspaceRepositories, githubRepositoryFromRemote, isProjectRunPath, prepareManagedExecutionWorktree, resolveManagedProjectPath, resolveWorkspaceRepositoryPath, taskUsesCanonicalProjectRun } from '../dist/workspace.js';
 
 const exec = promisify(execFile);
 const now = () => new Date().toISOString();
@@ -43,14 +43,6 @@ test('repository path resolution uses managed repository identity instead of lau
 });
 
 
-
-test('job project paths are repository-relative and cannot escape the repository', () => {
-  assert.equal(resolveRepositoryProjectPath('/tmp/repo', undefined), '/tmp/repo');
-  assert.equal(resolveRepositoryProjectPath('/tmp/repo', 'repo'), '/tmp/repo');
-  assert.equal(resolveRepositoryProjectPath('/tmp/repo', 'neo-build-log'), '/tmp/repo/neo-build-log');
-  assert.throws(() => resolveRepositoryProjectPath('/tmp/repo', '/etc'), /repository-relative/);
-  assert.throws(() => resolveRepositoryProjectPath('/tmp/repo', '../outside'), /escapes repository root/);
-});
 
 test('runs artifacts use the canonical project runtime across nested Tasks', () => {
   const base = {

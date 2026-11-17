@@ -235,7 +235,7 @@ test('explicit optional GitHub projection cannot complete local Job even after r
 
   const reconciler = managedReconciler(store, {
     owner: 'test', maxConcurrent: 0, adapters: [],
-    projectPathForJob: () => process.cwd(),
+    cwdForJob: () => process.cwd(),
   });
   const settled = await reconciler.reconcile('local');
   assert.equal(settled.state, 'ACTIVE');
@@ -277,7 +277,7 @@ test('offline Graph reconciliation creates and persists a troubleshooter without
     head: { ref: 'feature', sha: 'offline-head' }, observedAt: at });
   const reconciler = managedReconciler(store, {
     owner: 'offline-test', adapters: [], maxConcurrent: 0,
-    projectPathForJob: () => process.cwd(),
+    cwdForJob: () => process.cwd(),
   });
   await reconciler.reconcile('local');
   const current = await store.load('local');
@@ -397,7 +397,7 @@ test('offline Graph automatically creates exactly one final-review Task', async 
       capabilities: ['model', 'codex'] }], maxConcurrent: 0,
     reviewer: { adapter: 'chatgpt',
       routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'test', decidedAt: at } },
-    projectPathForJob: () => process.cwd(),
+    cwdForJob: () => process.cwd(),
   });
   await reconciler.reconcile('local');
   await reconciler.reconcile('local');
@@ -420,7 +420,7 @@ test('final Review proceeds despite a stale or unavailable projected PR head', a
     tasks: [{ ...task('SUCCEEDED'), id: 'work', adapter: 'codex', result: { summary: 'done' } }] });
   const reconciler = managedReconciler(store, { owner:'projected-head-independent', adapters:[], maxConcurrent:0,
     reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:at}},
-    projectPathForJob:()=>process.cwd() });
+    cwdForJob:()=>process.cwd() });
   await reconciler.reconcile('local');
   const saved = await store.load('local');
   assert.equal(saved.tasks.filter(item=>item.agentName==='job-acceptance-reviewer').length,1);
@@ -476,7 +476,7 @@ test('UNKNOWN PR proceeds through local worker scheduling without GitHub reads',
   assert.equal(await local.pullRequestState(), 'UNKNOWN');
   const reconciler = managedReconciler(local, {
     owner: 'unknown-pr-test', adapters: [], maxConcurrent: 2,
-    projectPathForJob: () => process.cwd(),
+    cwdForJob: () => process.cwd(),
   });
   await reconciler.reconcile('local');
   assert.equal((await local.load('local')).tasks[0].state, 'FAILED'); // reached dispatch; model worker requires EventBus
@@ -496,7 +496,7 @@ test('UNKNOWN PR still reconciles local failed-work recovery without launching P
   assert.equal(await local.pullRequestState(), 'UNKNOWN');
   const reconciler = managedReconciler(local, {
     owner: 'unknown-recovery-test', adapters: [], maxConcurrent: 0,
-    projectPathForJob: () => process.cwd(),
+    cwdForJob: () => process.cwd(),
   });
   await reconciler.reconcile('local');
   const saved = await local.load('local');
@@ -518,7 +518,7 @@ test('UNKNOWN PR still creates a local final Review without requesting Merge', a
     tasks:[{ ...task('SUCCEEDED'), id: 'done', updatedAt: new Date().toISOString() }] });
   const reconciler = managedReconciler(local, { owner:'offline-review-reconcile', adapters:[], maxConcurrent:0,
     reviewer: { adapter:'chatgpt', routing:{provider:'chatgpt', model:'account-defaults', decidedBy:'test', decidedAt: new Date().toISOString()} },
-    projectPathForJob: () => process.cwd() });
+    cwdForJob: () => process.cwd() });
   await reconciler.reconcile('local');
   const saved = await local.load('local');
   assert.equal(saved.tasks.filter(t => t.agentName === 'job-acceptance-reviewer').length, 1);

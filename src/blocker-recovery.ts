@@ -17,7 +17,6 @@ export type BlockerRecoveryInput = {
   reason: string;
   title: string;
   objective: string;
-  projectPath?: string;
   resolutionMode: BlockerResolutionMode;
   origin: 'planner' | 'troubleshooter';
   authorized: boolean;
@@ -41,7 +40,7 @@ function normalizedIntent(value: string): string {
   return value.trim().replace(/\s+/g, ' ');
 }
 
-function intentFingerprint(input: Pick<BlockerRecoveryInput, 'targetRepository' | 'dependentRepository' | 'dependentJobId' | 'dependentTaskId' | 'reason' | 'title' | 'objective' | 'projectPath' | 'resolutionMode'>, blockedAttempt: number): string {
+function intentFingerprint(input: Pick<BlockerRecoveryInput, 'targetRepository' | 'dependentRepository' | 'dependentJobId' | 'dependentTaskId' | 'reason' | 'title' | 'objective' | 'resolutionMode'>, blockedAttempt: number): string {
   const stable = {
     targetRepository: normalizeRepository(input.targetRepository),
     dependentRepository: normalizeRepository(input.dependentRepository),
@@ -51,7 +50,6 @@ function intentFingerprint(input: Pick<BlockerRecoveryInput, 'targetRepository' 
     reason: normalizedIntent(input.reason),
     title: normalizedIntent(input.title),
     objective: normalizedIntent(input.objective),
-    projectPath: input.projectPath ?? null,
     resolutionMode: input.resolutionMode,
   };
   return createHash('sha256').update(JSON.stringify(stable)).digest('hex');
@@ -73,10 +71,6 @@ function validateInput(input: BlockerRecoveryInput): void {
   if (input.resolutionMode !== 'merge' && input.resolutionMode !== 'verified') throw new Error('Blocker recovery resolutionMode must be merge or verified');
   if (!normalizedObjective.includes(targetRepository)) throw new Error(`Blocker recovery objective must identify target repository ${targetRepository}`);
   if (!normalizedObjective.includes(input.dependentTaskId)) throw new Error(`Blocker recovery objective must identify dependent Task ${input.dependentTaskId}`);
-  if (input.projectPath && (input.projectPath.startsWith('/') || input.projectPath.includes('\\')
-    || input.projectPath.split('/').some(segment => segment === '' || segment === '.' || segment === '..'))) {
-    throw new Error('Blocker recovery projectPath must be a normalized repository-relative path');
-  }
   if (targetRepository === dependentRepository) throw new Error('Blocker recovery requires a distinct target repository');
   if (!input.targetProjectRoot) throw new Error('Blocker recovery requires an explicit targetProjectRoot');
 }
@@ -115,7 +109,6 @@ function makeRequest(input: BlockerRecoveryInput, now: string, blockedAttempt: n
     blockedAttempt,
     title: input.title.trim(),
     objective: input.objective.trim(),
-    projectPath: input.projectPath,
     resolutionMode: input.resolutionMode,
     origin: input.origin,
     authorized: input.authorized,
@@ -240,7 +233,6 @@ export async function ensureBlockerRecovery(input: BlockerRecoveryInput): Promis
           idempotencyKey: `blocker-recovery:${request.requestId}`,
           title: request.title,
           objective: request.objective,
-          projectPath: request.projectPath,
           projectRoot: input.targetProjectRoot,
           noGitHub: true,
           storeDirectory: directory,

@@ -55,6 +55,7 @@ test('L3 real CLI create persists explicit local Git merge refs without any PR b
     const job=JSON.parse(shown.stdout);
     assert.equal(job.repository,'sample');
     assert.equal(job.projectRoot,realpathSync(repo));
+    assert.equal(Object.hasOwn(job,'projectPath'),false,'Job has no nested subproject path');
     assert.equal(job.state,'DRAFT');
     assert.equal(job.prNumber,0);
     assert.deepEqual(job.localMerge,{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending'});
@@ -72,6 +73,12 @@ test('L3 real CLI create persists explicit local Git merge refs without any PR b
       '--local-merge-source','refs/heads/feature']);
     assert.notEqual(missing.status,0);
     assert.match(missing.stderr,/Supply both --local-merge-source and --local-merge-target/);
+    const nested=run(['create','--repo','sample','--project-root',repo,'--project-path','nested','--objective','obsolete nested job']);
+    assert.notEqual(nested.status,0);
+    assert.match(nested.stderr,/Job --project-path is removed/);
+    const nestedUpdate=run(['update','--repo','sample','--id',String(id),'--project-path','nested']);
+    assert.notEqual(nestedUpdate.status,0);
+    assert.match(nestedUpdate.stderr,/Job --project-path is removed/);
     const rejected=run(['create','--repo','owner/sample','--objective','remote alias']);
     assert.notEqual(rejected.status,0);
     assert.match(rejected.stderr,/local Git root basename/);

@@ -35,9 +35,9 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     if (this.options.noGitHub && this.options.localMergeEffect) return job.headSha ?? job.review?.headSha ?? null;
     if (this.options.headShaProvider) return this.options.headShaProvider(job);
     // GitHub PR head facts are audit-only. Source identity is local Git.
-    if (!this.options.projectPathForJob) return job.headSha ?? job.review?.headSha ?? null;
+    if (!this.options.cwdForJob) return job.headSha ?? job.review?.headSha ?? null;
     try {
-      const project = await this.options.projectPathForJob(job);
+      const project = await this.options.cwdForJob(job);
       if (job.localMerge?.sourceRef) return localSourceHead(project, job.localMerge.sourceRef);
       return localWorkingHead(project);
     } catch {

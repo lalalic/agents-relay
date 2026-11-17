@@ -85,7 +85,7 @@ production restart belong to an explicit later deployment step after review.
 
 ## Local repository identity and local-only execution
 
-Every Job binds `repository` to the local Git root directory name and immutable `projectRoot` to its validated canonical absolute path. `projectPath` is an optional nested path within that root; `githubRepo` is optional remote metadata. No `local/...` aliases or GitHub owner/repository identity belongs in `repository`. Worktrees are execution checkouts and never become Job roots. Local Git is the source of truth for JEL, final review, and merge; GitHub is optional publishing only.
+Every Job binds `repository` to the local Git root directory name and immutable `projectRoot` to its validated canonical absolute path. Each Project is a standalone Git repository; `githubRepo` is optional remote metadata. No `local/...` aliases or GitHub owner/repository identity belongs in `repository`. Worktrees are execution checkouts and never become Job roots. Local Git is the source of truth for JEL, final review, and merge; GitHub is optional publishing only.
 
 A code Job must configure a source branch and an integration branch explicitly. Both are local full Git refs (`refs/heads/...`). An example from inside the intended Git repository:
 

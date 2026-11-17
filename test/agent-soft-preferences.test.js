@@ -33,10 +33,10 @@ test('agent frontmatter is advisory in worker prompt and model routing, includin
     assert.match(prompt, /Suggested skills \(optional, use only when relevant and available\): shotcraft, markcut/);
     assert.doesNotMatch(prompt, /Prefer model: openai\/gpt-6|Prefer reasoning: high/);
     assert.doesNotMatch(prompt, /private task input/);
-    const preference = await agentModelPreferenceForJob({ projectPathForJob: () => { throw new Error('execution path must not run'); }, agentPreferenceContextPathForJob: () => project, executionContextRoots: roots }, job, 'vlog-editor', task);
+    const preference = await agentModelPreferenceForJob({ cwdForJob: () => { throw new Error('execution path must not run'); }, agentPreferenceRootForJob: () => project, executionContextRoots: roots }, job, 'vlog-editor', task);
     assert.deepEqual(preference, { model: 'openai/gpt-6', reasoning: 'high' });
 
-    const noPreference = await agentModelPreferenceForJob({ agentPreferenceContextPathForJob: () => project, executionContextRoots: roots }, job, 'missing-agent', task);
+    const noPreference = await agentModelPreferenceForJob({ agentPreferenceRootForJob: () => project, executionContextRoots: roots }, job, 'missing-agent', task);
     assert.equal(noPreference, undefined, 'missing advisory Agent must not block the router');
     assert.equal(await agentModelPreferenceForJob({}, job, undefined, task), undefined);
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -121,8 +121,8 @@ test('reconciler forwards the selected task Agent preference to the real unified
     const reconciler = managedReconciler(store, { owner: 'test', adapters: [
       { name: 'codex', id: 'codex', capabilities: ['model'] },
     ], decisionEngine: engine, decisionMode: 'active', maxConcurrent: 0,
-    projectPathForJob: () => { throw new Error('route must not start or prepare the Task worktree'); },
-    agentPreferenceContextPathForJob: () => project,
+    cwdForJob: () => { throw new Error('route must not start or prepare the Task worktree'); },
+    agentPreferenceRootForJob: () => project,
     executionContextRoots: { workspaceRoot: root, globalRoot: home },
     });
     // Explicit rules remain the Router's authoritative candidate source.

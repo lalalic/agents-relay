@@ -114,7 +114,7 @@ Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job r
   'job create': `Create a SQLite-authoritative Job (objective-only).
 
 Required: --repo LOCAL_ROOT_NAME and a standalone Job objective. Job ID defaults to an auto-incrementing store-global number; --id may only reference an existing numeric Job.
-Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --initial-plan, --review|--no-review, --auto-merge|--no-auto-merge, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
+Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-root ABSOLUTE_GIT_ROOT, --priority P0|P1|P2|P3, --initial-plan, --review|--no-review, --auto-merge|--no-auto-merge, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
 Optional local Git branch binding: --local-merge-source refs/heads/FEATURE --local-merge-target refs/heads/main (both required together). For ordinary code tasks Relay can also bind its isolated local source branch automatically; no remote service or PR is required.
 Creation enables auto-merge and Final Review by default. For plan-free DAG
 jobs, pass --coordinator-graph-file GRAPH --coordinator-input-file INPUT
@@ -127,10 +127,10 @@ The --no-review and --no-auto-merge policies are separate; creation is
 idempotent and does not rewrite an existing Job.
 
 Example:
-  npx agents-relay job create --repo LOCAL_ROOT_NAME --project-path vlog --title "Episode" --objective-file episode.md --initial-plan`,
+  npx agents-relay job create --repo vlog --project-root /absolute/path/to/vlog --title "Episode" --objective-file episode.md --initial-plan`,
   'job run': `Activate a DRAFT Job with a durable Coordinator Agent Graph Task. No Planner or execution mode is required.
 
-Usage: agents-relay job run --id NUMERIC_JOB_ID --task-id NUMERIC_TASK_ID [--repo LOCAL_ROOT_NAME] [--project-path DIR] [--foreground]
+Usage: agents-relay job run --id NUMERIC_JOB_ID --task-id NUMERIC_TASK_ID [--repo LOCAL_ROOT_NAME] [--foreground]
 
 The command activates ordinary Job lifecycle and emits a wake-up. It returns
 ACTIVE without blocking for all Agent Tasks. The same Job Reconciler creates
@@ -143,7 +143,7 @@ There is no Shortcut execution mode.`,
   'job update': `Partially update mutable metadata on a healthy existing Job.
 
 Required: --id JOB_ID. Optional: --repo LOCAL_ROOT_NAME verifies the stored Job identity.
-Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --project-path RELATIVE_PATH, --priority, --tag JSON, --auto-merge|--no-auto-merge, --review|--no-review, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID, and continuation options. The objective updates local SQLite.
+Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --project-root ABSOLUTE_GIT_ROOT, --priority, --tag JSON, --auto-merge|--no-auto-merge, --review|--no-review, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID, and continuation options. The objective updates local SQLite.
 Unspecified fields are preserved. Local Job identity mismatch is rejected.
 
 Example:

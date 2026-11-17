@@ -64,7 +64,7 @@ test('L3 local Job completes through SQLite worker, final review and actual loca
     },
   };
   const reconciler = new Reconciler(store, { owner: 'l3-local-jel', adapters: [adapter], eventBus: bus, noGitHub: true,
-    projectPathForJob: async current => current.projectRoot,
+    cwdForJob: async current => current.projectRoot,
     localMergeDelivery: (path, receipt) => deliverLocalMerge(path, receipt),
     reviewer: { adapter: 'codex', workerId: 'local-l3-worker', routing: { provider: 'fixture', model: 'local', decidedBy: 'fixture', decidedAt: now }, maxAttempts: 1 },
   });

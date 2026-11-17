@@ -51,12 +51,12 @@ test('job bootstrap can omit id and retry same submission key', async () => {
   const dir=join(root,'stores');
   try {
     const client={request:async()=>{throw new Error('no GitHub')},graphql:async()=>{throw new Error('no GitHub')}};
-    const options={title:'Test Vlog',objective:'Create a private video',projectPath:'vlog',storeDirectory:dir,idempotencyKey:'vlog-submission-123'};
+    const options={title:'Test Vlog',objective:'Create a private video',storeDirectory:dir,idempotencyKey:'vlog-submission-123'};
     const first=await ensureManagedGitHubJob(client,'lalalic/neo',new Set(),options);
     const second=await ensureManagedGitHubJob(client,'lalalic/neo',new Set(),options);
     assert.equal(first.job.id,'1');
     assert.equal(first.job.id,second.job.id);
-    assert.equal(first.job.projectPath,'vlog');
+    assert.equal(Object.hasOwn(first.job, 'projectPath'), false);
     await assert.rejects(ensureManagedGitHubJob(client,'lalalic/neo',new Set(),{...options,objective:'Different objective'}),/idempotency key reused/);
     const third=await ensureManagedGitHubJob(client,'lalalic/neo',new Set(),{...options,idempotencyKey:'vlog-submission-124'});
     assert.equal(third.job.id,'2');

@@ -529,7 +529,7 @@ test('relay owner change does not reclaim an unexpired durable execution lease',
   running.leaseExpiresAt='2026-09-25T17:00:00.000Z';
   const store=new InMemoryStore(job([running]));
   const adapter=new FakeAdapter();
-  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[adapter],eventBus:new MemoryEventBus(),projectPathForJob:()=>process.cwd()});
+  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[adapter],eventBus:new MemoryEventBus(),cwdForJob:()=>process.cwd()});
   await reconciler.reconcile('j');
   const saved=(await store.load('j')).tasks.find(item=>item.id==='owner-still-live');
   assert.equal(saved.state,'RUNNING');
@@ -548,7 +548,7 @@ test('expired durable execution lease is reclaimable after relay owner change', 
   running.leaseExpiresAt='2026-09-25T16:30:00.000Z';
   const store=new InMemoryStore(job([running]));
   const adapter=new FakeAdapter();
-  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[adapter],projectPathForJob:()=>process.cwd()});
+  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[adapter],cwdForJob:()=>process.cwd()});
   await reconciler.reconcile('j');
   const saved=(await store.load('j')).tasks.find(item=>item.id==='expired-owner');
   assert.equal(saved.state,'FAILED');
@@ -563,7 +563,7 @@ test('startup recovery fails closed for an old-owner Codex execution with unknow
   const running=task('restart-codex','RUNNING');
   running.attempt=1; running.maxAttempts=3; running.executionId='old-execution'; running.leaseOwner='relayd-old'; running.leaseExpiresAt='2099-09-25T17:00:00.000Z';
   const store=new InMemoryStore(job([running])); const adapter=new FakeAdapter();
-  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[adapter],eventBus:new MemoryEventBus(),projectPathForJob:()=>process.cwd()});
+  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[adapter],eventBus:new MemoryEventBus(),cwdForJob:()=>process.cwd()});
   await reconciler.recoverStartupOrphans('j');
   const saved=(await store.load('j')).tasks[0];
   assert.equal(saved.state,'FAILED'); assert.equal(saved.failureReason,'worker_outcome_unknown'); assert.equal(saved.attempt,1); assert.equal(saved.leaseOwner,null); assert.equal(saved.executionId,null); assert.equal(adapter.launches,0);
@@ -572,7 +572,7 @@ test('startup recovery fails closed for a claimed QUEUED execution owned by a pr
   const queued=task('orphan-queued','QUEUED');
   queued.attempt=1; queued.maxAttempts=3; queued.executionId='old-queued-execution'; queued.leaseOwner='relayd-old'; queued.leaseExpiresAt='2099-09-25T17:00:00.000Z';
   const store=new InMemoryStore(job([queued]));
-  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),projectPathForJob:()=>process.cwd()});
+  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),cwdForJob:()=>process.cwd()});
   await reconciler.recoverStartupOrphans('j');
   const saved=(await store.load('j')).tasks[0];
   assert.equal(saved.state,'FAILED');
@@ -585,7 +585,7 @@ test('startup recovery leaves current-owner Codex and ChatGPT async executions u
   const current=task('current-codex','RUNNING'); current.attempt=1; current.executionId='current'; current.leaseOwner='relayd-new'; current.leaseExpiresAt='2099-09-25T17:00:00.000Z';
   const chat=task('chat-async','RUNNING'); chat.adapter='chatgpt'; chat.attempt=1; chat.executionId='chat'; chat.leaseOwner='relayd-old'; chat.leaseExpiresAt='2099-09-25T17:00:00.000Z';
   const store=new InMemoryStore(job([current,chat]));
-  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),projectPathForJob:()=>process.cwd()});
+  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),cwdForJob:()=>process.cwd()});
   await reconciler.recoverStartupOrphans('j');
   const saved=await store.load('j');
   assert.deepEqual(saved.tasks.map(item=>({state:item.state,attempt:item.attempt,executionId:item.executionId,leaseOwner:item.leaseOwner})),[
@@ -597,7 +597,7 @@ test('startup recovery graph terminalizes an exhausted orphan without a new gene
   const exhausted=task('exhausted-codex','RUNNING'); exhausted.attempt=3; exhausted.maxAttempts=3; exhausted.executionId='exhausted'; exhausted.leaseOwner='relayd-old'; exhausted.leaseExpiresAt='2099-09-25T17:00:00.000Z';
   const root=job([exhausted]); root.reviewEnabled=false; root.autoMerge=false;
   const store=new InMemoryStore(root);
-  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),projectPathForJob:()=>process.cwd()});
+  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),cwdForJob:()=>process.cwd()});
   await reconciler.recoverStartupOrphans('j');
   const saved=(await store.load('j')).tasks[0];
   assert.equal(saved.state,'FAILED'); assert.equal(saved.attempt,3); assert.match(saved.error,/outcome is unknown/); assert.equal(saved.failureReason,'worker_outcome_unknown'); assert.equal(saved.executionId,null);
@@ -881,7 +881,7 @@ test('selected agent contract loading failure terminalizes before the inactivity
   const t = task('missing-agent-contract'); t.agentName = 'not-visible';
   const store = new InMemoryStore(job([t])); const bus = new MemoryEventBus(); const adapter = new FakeAdapter();
   const reconciler = managedReconciler(store, {
-    owner: 'test', adapters: [adapter], eventBus: bus, projectPathForJob: async () => process.cwd(),
+    owner: 'test', adapters: [adapter], eventBus: bus, cwdForJob: async () => process.cwd(),
     executionContextRoots: { workspaceRoot: process.cwd(), globalRoot: process.cwd() },
   });
   await reconciler.reconcile('j');

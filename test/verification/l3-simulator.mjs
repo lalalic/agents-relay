@@ -107,7 +107,7 @@ export async function runFullPath(scenario) {
   const mergeReceipts = [];
   let runtime = new Reconciler(store, {
     owner: 'l3-simulator', adapters: [fakeAdapter(bus, outcomes, verdicts, heads, startedWaiters, labelForTask)], eventBus: bus,
-    maxConcurrent: scenario.maxConcurrent ?? 4, noGitHub: true, projectPathForJob: async () => env.root,
+    maxConcurrent: scenario.maxConcurrent ?? 4, noGitHub: true, cwdForJob: async () => env.root,
     headShaProvider: () => heads.current,
     localMergeDelivery: (_path, receipt) => {
       if (mergeReceipts.length > 0 && mergeOutcomes.length === 0) return mergeReceipts.at(-1);
@@ -150,7 +150,7 @@ export async function runFullPath(scenario) {
         await stop?.(); await runtime.close(); sqlite.close();
         sqlite = new SQLiteRelayStore(join(env.storeDir, 'relay.sqlite'), jobId);
         store = new LocalAuthorityDurableStore(sqlite, new InMemoryStore(), undefined, true);
-        runtime = new Reconciler(store, { owner: 'l3-simulator-restarted', adapters: [fakeAdapter(bus, outcomes, verdicts, heads, startedWaiters, labelForTask)], eventBus: bus, maxConcurrent: scenario.maxConcurrent ?? 4, noGitHub: true, projectPathForJob: async () => env.root, headShaProvider: () => heads.current, localMergeDelivery: (_path, receipt) => { if (mergeReceipts.length > 0 && mergeOutcomes.length === 0) return mergeReceipts.at(-1); const outcome = scenario.persistMergeFailure ? 'failed' : (mergeOutcomes.shift() ?? 'succeeded'); if (outcome === 'failed') throw new Error(scenario.mergeFailureReason ?? 'simulated dirty target worktree'); const mergedCommitSha = `merge-${mergeReceipts.length + 1}`; mergeReceipts.push({ sourceSha: receipt.sourceSha, mergedCommitSha }); return { sourceSha: receipt.sourceSha ?? heads.current, mergedCommitSha }; }, reviewer: { adapter: 'codex', workerId: 'l3-worker', routing: route, maxAttempts: 3 }, planner: { plan: async () => ({ objective_status: 'satisfied', assessment: 'Durable worker evidence verified.', next_tasks: [] }) } });
+        runtime = new Reconciler(store, { owner: 'l3-simulator-restarted', adapters: [fakeAdapter(bus, outcomes, verdicts, heads, startedWaiters, labelForTask)], eventBus: bus, maxConcurrent: scenario.maxConcurrent ?? 4, noGitHub: true, cwdForJob: async () => env.root, headShaProvider: () => heads.current, localMergeDelivery: (_path, receipt) => { if (mergeReceipts.length > 0 && mergeOutcomes.length === 0) return mergeReceipts.at(-1); const outcome = scenario.persistMergeFailure ? 'failed' : (mergeOutcomes.shift() ?? 'succeeded'); if (outcome === 'failed') throw new Error(scenario.mergeFailureReason ?? 'simulated dirty target worktree'); const mergedCommitSha = `merge-${mergeReceipts.length + 1}`; mergeReceipts.push({ sourceSha: receipt.sourceSha, mergedCommitSha }); return { sourceSha: receipt.sourceSha ?? heads.current, mergedCommitSha }; }, reviewer: { adapter: 'codex', workerId: 'l3-worker', routing: route, maxAttempts: 3 }, planner: { plan: async () => ({ objective_status: 'satisfied', assessment: 'Durable worker evidence verified.', next_tasks: [] }) } });
         stop = await runtime.watch(jobId);
         await runtime.reconcile(jobId);
       } else if (action.type === 'advance-head') {

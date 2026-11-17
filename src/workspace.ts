@@ -1,5 +1,5 @@
 import { lstat, mkdir, readFile, readdir, realpath, stat } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import type { Job, Task } from './types.js';
@@ -96,7 +96,7 @@ export async function discoverWorkspaceRepositories(root: string): Promise<Disco
 
 export async function resolveWorkspaceRepositoryPath(repository: string, root = defaultWorkspaceRoot()): Promise<string> {
   const match = (await discoverWorkspaceRepositories(root)).find(item => item.repository === repository);
-  if (!match) throw new Error(`Repository ${repository} not found under workspace ${resolve(root)}; pass --project-path explicitly`);
+  if (!match) throw new Error(`Repository ${repository} not found under workspace ${resolve(root)}; provide the canonical Git root explicitly`);
   return match.path;
 }
 
@@ -108,16 +108,6 @@ export async function resolveManagedProjectPath(repository: string | undefined, 
 export async function resolveJobProjectRoot(job: Job): Promise<string> {
   if (!job.projectRoot) throw new Error(`Job ${job.id} is missing its immutable local projectRoot`);
   return validateProjectRoot(job.projectRoot, job.repository);
-}
-
-export function resolveRepositoryProjectPath(repositoryRoot: string, projectPath?: string): string {
-  const root = resolve(repositoryRoot);
-  if (!projectPath) return root;
-  if (isAbsolute(projectPath)) throw new Error('Job projectPath must be repository-relative');
-  const target = resolve(root, projectPath);
-  const rel = relative(root, target);
-  if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new Error('Job projectPath escapes repository root');
-  return target;
 }
 
 export function isProjectRunPath(path: string | undefined): boolean {
@@ -246,16 +236,13 @@ export async function ensureLocalJobSourceBranch(projectPath: string, job: Job):
 }
 
 export async function prepareLocalJobExecutionWorktree(projectPath: string, job: Job, workspaceRoot = defaultWorkspaceRoot()): Promise<string> {
-  if (!job.localMerge?.sourceRef) return resolveRepositoryProjectPath(projectPath, job.projectPath);
+  if (!job.localMerge?.sourceRef) return resolveJobProjectRoot(job);
   const sourceRef = job.localMerge.sourceRef;
   if (!/^refs\/heads\/[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(sourceRef) || sourceRef.includes('..') || sourceRef.endsWith('.lock'))
     throw new Error('Local Job execution requires a valid refs/heads sourceRef');
   const primary = await git(projectPath, ['rev-parse', '--show-toplevel']);
   if (await realpath(primary) !== await realpath(job.projectRoot) || basename(primary) !== job.repository) throw new Error(`Job ${job.id} projectRoot identity mismatch`);
-  const projectRelative = (await git(projectPath, ['rev-parse', '--show-prefix'])).replace(/\/$/, '');
-  const effectiveProject = (checkoutRoot: string): string => job.projectPath
-    ? resolveRepositoryProjectPath(checkoutRoot, job.projectPath)
-    : (projectRelative ? join(checkoutRoot, projectRelative) : checkoutRoot);
+  // Every Job is bound directly to its own canonical Git root.
   const sourceSha = await git(primary, ['rev-parse', '--verify', sourceRef]);
   // If the canonical checkout already owns this exact source branch, Git
   // cannot create a second worktree for it. Reuse the canonical checkout
@@ -265,7 +252,7 @@ export async function prepareLocalJobExecutionWorktree(projectPath: string, job:
   if (primaryBranch === sourceRef) {
     const primaryHead = await git(primary, ['rev-parse', 'HEAD']);
     if (primaryHead !== sourceSha) throw new Error(`Canonical source branch ${sourceRef} changed while preparing execution checkout`);
-    return effectiveProject(primary);
+    return primary;
   }
 
   const worktree = managedLocalJobWorktreePath(job.repository, job.id, workspaceRoot);
@@ -282,11 +269,11 @@ export async function prepareLocalJobExecutionWorktree(projectPath: string, job:
       if (!ancestor) throw new Error(`Local Job worktree has non-fast-forward history; preserve commits: ${worktree}`);
       await git(worktree, ['merge', '--ff-only', sourceSha]);
     }
-    return effectiveProject(worktree);
+    return worktree;
   } catch (error) {
     try { await stat(worktree); } catch {
       await git(primary, ['worktree', 'add', worktree, sourceRef.slice('refs/heads/'.length)]);
-      return effectiveProject(worktree);
+      return worktree;
     }
     throw error;
   }

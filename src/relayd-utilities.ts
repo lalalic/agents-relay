@@ -31,7 +31,7 @@ import { applyJobActivateAction } from './job-actions.js';
 import { managedTaskUpdateHandler } from './task-update.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
-import { ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath, resolveWorkspaceRoot, taskRequiresManagedWorktree } from './workspace.js';
+import { ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveWorkspaceRoot, taskRequiresManagedWorktree } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { createRuntimeStatusPublisher } from './runtime-status-events.js';
@@ -106,7 +106,7 @@ Examples:
   npx agents-relayd
   npx agents-relayd --repo LOCAL_ROOT_NAME
 
-No recursive Workspace search: persisted Job projectRoot/projectPath in SQLite
+No recursive Workspace search: persisted Job projectRoot in SQLite
 are authoritative. Changing Workspace directory layout does not select Jobs.`;
 export function firstStageChoices(decisionInput: Record<string, unknown> | undefined): string[] {
   const stages = decisionInput?.stages;

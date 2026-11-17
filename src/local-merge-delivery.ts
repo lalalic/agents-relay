@@ -26,7 +26,7 @@ export async function reconcileLocalGitCompletion(
   finalState: Job,
   headSha: string | null,
   noGitHub: boolean,
-  projectPathForJob?: (job: Job) => string | Promise<string>,
+  cwdForJob?: (job: Job) => string | Promise<string>,
   emit?: (event: EventRecord) => Promise<void>,
   mergeEffect: LocalMergeEffect = deliverLocalMerge,
   now: () => number = Date.now,
@@ -53,8 +53,8 @@ export async function reconcileLocalGitCompletion(
               finalState.updatedAt = new Date().toISOString();
               await store.saveJob(finalState);
             }
-            if (!projectPathForJob) throw new Error('Local Git merge requires an explicit project path');
-            const repoPath = await projectPathForJob(finalState);
+            if (!cwdForJob) throw new Error('Local Git merge requires an explicit project path');
+            const repoPath = await cwdForJob(finalState);
             const delivered = mergeEffect(repoPath, { ...activeReceipt, sourceSha: activeReceipt.sourceSha ?? headSha ?? undefined,
               correlationJobId: finalState.id, displayPrNumber: finalState.prNumber > 0 ? finalState.prNumber : undefined });
             finalState.localMerge = { ...activeReceipt, ...delivered, status: 'succeeded', projectionStrategy: 'target_ref_push',
