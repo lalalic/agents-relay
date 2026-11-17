@@ -22,7 +22,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 
 | Node.js source (authoritative) | Intended Rust module | Status | Evidence / reason |
 |---|---|---|---|
-| `src/adapters.ts` | `rust/src/adapters.rs` | PENDING | — |
+| `src/adapters.ts` | `rust/src/adapters.rs` | PORTING | Phase1 serial native Worker adapter/Repository Pool draft; not compiled/tested, Stage2 parity/wiring pending. |
 | `src/agent-content-resolver.ts` | `rust/src/agent_content_resolver.rs` | PASS | Direct hotfix: 500 Node/Rust source-layer fixtures, 252 isolated Agent files/section inheritance cases, 120 multi-layer snapshots; 5 native tests, 18 focused Node regressions (rust/tests/head_to_head_agent_content_resolver.mjs; rust/tests/native_agent_content_resolver.rs) |
 | `src/agent-graph.ts` | `rust/src/agent_graph.rs` | PASS | Eight-module Graph/Outbox batch: 1,050 DAG syntax/wave parses, 690 visibility policy cases, actual resolved Agent-contract prompt parity; `rust/tests/head_to_head_graph_*.mjs`, `rust/tests/head_to_head_agent_graph.mjs`, `rust/tests/head_to_head_workflow_*.mjs`, `rust/tests/native_graph_outbox_batch.rs` |
 | `src/agent-prompt-builder.ts` | `rust/src/agent_prompt_builder.rs` | PASS | Direct hotfix: 1,100 pure prompt/render fixtures; 220 reference-first fixtures; 150 exact execution prompts; isolated immutable SHA-256 snapshots and filesystem/error semantics; 5 Rust-native tests, 19 Node regressions (rust/tests/head_to_head_agent_prompt_builder.mjs; rust/tests/native_agent_prompt_builder.rs) |
@@ -133,7 +133,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/planner-task-ids.ts` | `rust/src/planner_task_ids.rs` | PASS | Wave2 C: direct randomized Node/Rust planner Task ID allocation, aliases and repeat idempotency; native global SQLite allocator (`head_to_head_wave2_delivery.mjs`) |
 | `src/planner-task-title.ts` | `rust/src/planner_task_title.rs` | PASS | 327 shared differential fixtures across 4 ports; Rust native tests 5/5; Node focused regression 4/4; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/planner.ts` | `rust/src/planner.rs` | PORTING | Phase1 serial native Planner protocol and Graph-owned execution runtime source port; uncompiled/unverified, Stage2 API and differential closure pending. |
-| `src/pool.ts` | `rust/src/pool.rs` | PENDING | — |
+| `src/pool.ts` | `rust/src/pool.rs` | PORTING | Phase1 serial native Worker adapter/Repository Pool draft; not compiled/tested, Stage2 parity/wiring pending. |
 | `src/process-identity.ts` | `rust/src/process_identity.rs` | PASS | Direct hotfix: real Node/Rust OS ps identity, isolated detached PGID leaders, lease owner inspection, stale generation fences and two actual disposable child-process terminations (rust/tests/head_to_head_process_identity.mjs; rust/tests/native_process_identity.rs) |
 | `src/projected-store.ts` | `rust/src/projected_store.rs` | PORTING | Serial Phase1 Rust GitHub marker Store and retryable SQLite projection transport; UNCOMPILED/UNTESTED; Graph/production API parity Phase2. |
 | `src/projection-failure-dedupe.ts` | `rust/src/projection_failure_dedupe.rs` | PASS | 626 shared differential fixtures across 14 ports; sequential duplicate/change/classification/reset vectors compared (`rust/tests/head_to_head.mjs`) |
