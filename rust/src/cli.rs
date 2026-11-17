@@ -320,7 +320,7 @@ pub fn task_update_request(
     let deps=list(&candidate,"dependencies").iter().filter_map(Value::as_str)
         .map(str::to_owned).collect::<Vec<_>>();
     if has_arg(args,"--dependency-validity"){
-        candidate["dependencyValidity"]=dependency_validity_from_args(args,&deps)?;
+        candidate["dependencyValidity"]=dependency_validity_from_args(args,&deps)?.unwrap_or(Value::Null);
     }
     if has_arg(args,"--timeout"){
         candidate["timeoutMs"]=json!(integer_arg(args,"--timeout",900_000)?);
@@ -377,8 +377,8 @@ pub fn run_task_command<P:CliRuntimePort>(
     }
     if action=="create"{
         let options=json!({"idempotencyKey":arg(args,"--idempotency-key","")});
-        let task=worker_task_from_args(&job,args,&iso8601_now(),
-            Path::new("workflows"),Path::new(".agents-relay"),stdin)?;
+        let task=worker_task_from_args(Path::new("workflows"),
+            &job,args,&iso8601_now(),Path::new(".agents-relay"),stdin)?;
         let result=port.task_command(args,&json!({"jobId":id,
             "action":"create","task":task,
             "idempotencyKey":options["idempotencyKey"]}))?;

@@ -286,7 +286,7 @@ pub fn prepare_browser_request(task:&Value,route:&Value)
         if !repository.is_empty()&&!field(delivery,"executionId").is_empty(){
             prompt=task_reference_prompt(repository,
                 field(delivery,"jobId"),field(task,"id"),
-                field(delivery,"executionId"),input);
+                field(delivery,"executionId"),Some(input))?;
         }
     }
     let mut files=task.get("attachments").and_then(Value::as_array)

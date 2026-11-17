@@ -199,7 +199,7 @@ pub fn reconcile_durable_job(
         project,roots,adapters,registered,usage)?;
     let job=if result.changed{
         (ports.persist)(job_id,&snapshot,&result.job)?
-    }else{snapshot};
+    }else{snapshot.clone()};
     for event in &result.events{
         // External transports are telemetry; a publish outage must never
         // reverse a successfully committed authoritative snapshot.

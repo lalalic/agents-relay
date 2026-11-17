@@ -172,16 +172,17 @@ impl SQLiteRelayStore {
             .map_err(sql)?;
         result
     }
-    fn workflow_operation<F,R>(&self,work:F)->Result<R,String>
-    where F:FnOnce(&mut SQLiteWorkflowOperations<
-        '_,impl FnMut(&Value,&str)->Result<(),String>,
-        impl FnMut(&Value,&str)->Result<(),String>>) ->Result<R,String>{
+    fn workflow_operation<'a,F,R>(&'a self,work:F)->Result<R,String>
+    where F:FnOnce(&mut SQLiteWorkflowOperations<'a,
+        Box<dyn FnMut(&Value,&str)->Result<(),String>+'a>,
+        Box<dyn FnMut(&Value,&str)->Result<(),String>+'a>>)->Result<R,String>{
         let scope=self.scope_job_id.as_deref();
         let db=&self.db;
-        let write=|job:&Value,at:&str|write_snapshot(db,scope,job,at);
-        let enqueue=|request:&Value,at:&str|{
-            ProjectionOutbox::new(db,scope).enqueue(request,at).map(|_|())
-        };
+        let write:Box<dyn FnMut(&Value,&str)->Result<(),String>+'_>=
+            Box::new(move |job,at|write_snapshot(db,scope,job,at));
+        let enqueue:Box<dyn FnMut(&Value,&str)->Result<(),String>+'_>=
+            Box::new(move |request,at|ProjectionOutbox::new(db,scope)
+                .enqueue(request,at).map(|_|()));
         let mut operations=SQLiteWorkflowOperations{
             db,write,enqueue:Some(enqueue),
         };
@@ -211,7 +212,9 @@ impl SQLiteRelayStore {
     pub fn reserve_workflow_launch(&self,identity:&Value)
         ->Result<bool,String>{
         self.scope(field(identity,"jobId"))?;
-        self.workflow_operation(|op|op.reserve_workflow_launch(identity))
+        let directory=std::env::var("AGENTS_RELAY_WORKFLOW_DIR")
+            .map(PathBuf::from).unwrap_or_else(|_|PathBuf::from("workflow"));
+        self.workflow_operation(|op|op.reserve_workflow_launch(&directory,identity))
     }
     pub fn verify_workflow_launch(
         &self,job_id:&str,task_id:&str,execution_id:&str,
@@ -223,7 +226,15 @@ impl SQLiteRelayStore {
         &self,publish:Publish
     )->Result<usize,String>
     where Publish:FnMut(Value)->Fut,Fut:std::future::Future<Output=Result<(),String>>{
-        self.workflow_operation(|op|op.drain_workflow_events(publish)).await
+        let db=&self.db;
+        let scope=self.scope_job_id.as_deref();
+        let write:Box<dyn FnMut(&Value,&str)->Result<(),String>+'_>=
+            Box::new(move |job,at|write_snapshot(db,scope,job,at));
+        let enqueue:Box<dyn FnMut(&Value,&str)->Result<(),String>+'_>=
+            Box::new(move |request,at|ProjectionOutbox::new(db,scope)
+                .enqueue(request,at).map(|_|()));
+        let operations=SQLiteWorkflowOperations{db,write,enqueue:Some(enqueue)};
+        operations.drain_workflow_events_async(publish).await
     }
     pub fn create_job_if_absent(&mut self,job:&Value)->Result<Value,String>{
         self.scope(field(job,"id"))?;
@@ -242,7 +253,7 @@ impl SQLiteRelayStore {
         let result=(||{
             let local=load_relay_job(&self.db,field(job,"id"))?;
             let merged=if let Some(local)=local{
-                merge_inbound_job_snapshot(&local,job)?
+                merge_inbound_job_snapshot(&local,job)
             }else{job.clone()};
             write_snapshot(&self.db,self.scope_job_id.as_deref(),
                 &merged,&iso8601_now())?;
@@ -459,14 +470,14 @@ impl SQLiteRelayStore {
     }
     pub fn load_pull_request_facts(&self)->Result<Option<Value>,String>{
         let scope=self.scope_job_id.as_deref();
-        let sql=if scope.is_some(){
+        let query_sql=if scope.is_some(){
             "SELECT state,head_ref,head_sha,observed_at FROM pull_request_facts
              WHERE scope_job_id=? AND id=1"
         }else{
             "SELECT state,head_ref,head_sha,observed_at
              FROM pull_request_facts WHERE id=1"
         };
-        let mut stmt=self.db.prepare(sql).map_err(sql)?;
+        let mut stmt=self.db.prepare(query_sql).map_err(sql)?;
         let row=|row:&rusqlite::Row<'_>|{
             Ok(json!({
                 "state":row.get::<_,String>(0)?,
@@ -589,8 +600,10 @@ impl SQLiteRelayStore {
     }
 }
 pub fn relay_store_directory()->PathBuf{
-    crate::local_job_path::relay_store_directory()
+    crate::local_job_path::relay_store_directory(
+        std::env::var("AGENTS_RELAY_STORE_DIR").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref()).into()
 }
 pub fn relay_unified_store_path()->PathBuf{
-    crate::relay_store_discovery::relay_unified_store_path()
+    crate::relay_store_discovery::relay_unified_store_path(&relay_store_directory())
 }

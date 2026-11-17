@@ -141,7 +141,7 @@ impl GhApiClient {
         access_token:Option<&str>,rate_limited:bool,include_headers:bool,
     )->Result<Value,String>{
         if rate_limited{self.assert_available()?;}
-        let command:Vec<String>=if include_headers{
+        let mut command:Vec<String>=if include_headers{
             let mut args=args.to_vec();
             args.insert(1,"--include".into());
             args

@@ -204,7 +204,7 @@ pub fn managed_job_worktree_path(
         return Err("Invalid managed Job checkout identity".into());
     }
     Ok(workspace.join(".worktrees").join("agents-relay").join(
-        format!("{}-pr-{pr_number}",repository.replace('/','-'))).join("job"))
+        format!("{}-pr-{pr_number}",repository.replace('/',"-"))).join("job"))
 }
 pub fn managed_local_job_worktree_path(
     repository:&str,job_id:&str,workspace:&Path,

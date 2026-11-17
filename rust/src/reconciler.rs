@@ -187,7 +187,7 @@ impl Reconciler{
             result.events.push(event_for(field(&result.job,"id"),recovery,
                 Some(original),"recovery.exhausted","failed",
                 &format!("Recovery exhausted for {original}: {reason}"),
-                Some("user"),Some(entry),None));
+                Some("user"),Some(entry.clone()),None));
         }
         Ok(())
     }

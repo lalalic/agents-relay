@@ -414,7 +414,7 @@ impl<B:DashboardBackend> DashboardServer<B>{
         reader.read_line(&mut line).map_err(|e|e.to_string())?;
         if line.len()>8192{return Err("Request line too long".into());}
         let pieces=line.trim_end().split_ascii_whitespace()
-            .collect::<Vec<_>>();
+            .map(str::to_owned).collect::<Vec<_>>();
         if pieces.len()!=3{return Err("Malformed HTTP request".into());}
         let mut headers=HashMap::new();
         loop{
@@ -435,7 +435,7 @@ impl<B:DashboardBackend> DashboardServer<B>{
         if length>MAX_HTTP_BODY{return Err("Request body too large".into());}
         let mut body=vec![0u8;length];
         reader.read_exact(&mut body).map_err(|e|e.to_string())?;
-        Ok(HttpRequest{method:pieces[0].into(),url:pieces[1].into(),
+        Ok(HttpRequest{method:pieces[0].clone(),url:pieces[1].clone(),
             headers,body})
     }
     /// Caller-owned stop signal. No serve() call is made during Phase1.

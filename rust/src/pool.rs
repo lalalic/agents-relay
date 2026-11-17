@@ -239,7 +239,7 @@ impl RepositoryWorkerPool{
             if capacity==0{break;}
             let id=field(&job,"id").to_owned();
             if !self.in_reconcile.insert(id.clone()){continue;}
-            let run=(||{
+            let run:Result<Option<(Value,usize)>,String>=(||{
                 let local=resolve(&id)?.ok_or_else(||
                     format!("Local Job {id} not found"))?;
                 if !needs_lifecycle_reconciliation(&self.graph_directory,
@@ -337,7 +337,7 @@ impl RepositoryWorkerPool{
                     "deliveryId":delivery,"repository":repo,
                     "prNumber":job.get("prNumber"),"package":package,
                     "version":version,"registry":published.get("registry"),
-                    "sha":published.get("sha")}),Some(source.clone()));
+                    "sha":published.get("sha")})),Some(source.clone()));
             event["event_id"]=json!(format!(
                 "github:{job_id}:{delivery}:package.published"));
             emitted.push(event);
@@ -361,7 +361,7 @@ impl RepositoryWorkerPool{
             Some("orchestrator"),Some(json!({
                 "deliveryId":delivery,"event":wake.get("event"),
                 "action":wake.get("action"),"repository":repo,
-                "prNumber":job.get("prNumber")}),Some(source)));
+                "prNumber":job.get("prNumber")})),Some(source)));
         emitted
     }
 }

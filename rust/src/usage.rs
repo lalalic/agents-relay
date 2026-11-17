@@ -195,8 +195,8 @@ pub fn browser_workspace_usage(command:&Path,timeout_ms:u64)->Value{
             900_000,done.code),
         Err(reason)=>unavailable_browser_workspace(
             &if reason.contains("timed out"){
-                "Browser Workspace capacity probe timed out.".into()
-            }else{"Browser Workspace capacity probe could not be started.".into()},
+                "Browser Workspace capacity probe timed out."
+            }else{"Browser Workspace capacity probe could not be started."},
             &observed)
     }
 }
@@ -220,7 +220,7 @@ pub fn account_usage_from_zai(payload:&Value)->Value{
             else{json!("Z.ai returned no usable 5-hour and weekly Coding Plan quota windows.")}})
 }
 fn api_get(url:&str,token:&str)->Result<(u16,Value),String>{
-    let mut response=ureq::Agent::new().get(url)
+    let mut response=ureq::Agent::new_with_defaults().get(url)
         .header("Authorization",&format!("Bearer {token}"))
         .header("Accept","application/json").call()
         .map_err(|e|e.to_string())?;

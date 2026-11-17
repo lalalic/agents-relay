@@ -151,7 +151,7 @@ fn http(args:&[String],path:&str,method:&str,params:&[(&str,String)],
     body:Option<&Value>,description:&str)->Result<Value,String>{
     let url=url_for(args,path,params)?;
     let (host,port)=endpoint(args)?;
-    let client=ureq::Agent::new();
+    let client=ureq::Agent::new_with_defaults();
     let response=if method=="POST"{
         let request=client.post(url.as_str());
         if let Some(body)=body{request.send_json(body)}

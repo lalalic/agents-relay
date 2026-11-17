@@ -330,7 +330,7 @@ where
         return Ok(());
     }
     let finished=decide_projection_delivery(directory,"push","delivery.pushed",&json!({}))?;
-    if selected_action(&finished)!="delivery.recordDelivered"{
+    if selected_action(&finished)?!="delivery.recordDelivered"{
         return Err("Delivery push had no graph transition".into());
     }
     persist_owned(job_id,&sha,&token,"succeeded",None,None,&mut mutate)?;

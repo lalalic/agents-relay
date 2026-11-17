@@ -122,9 +122,9 @@ pub fn planner_trigger(
                 let ids=unblocked.iter().filter_map(|t|t.get("id"))
                     .cloned().collect::<Vec<_>>();
                 let mut reasons=HashSet::new();
-                let mut joined=Vec::new();
+                let mut joined:Vec<String>=Vec::new();
                 let mut heads=HashSet::new();
-                let mut baseline=Vec::new();
+                let mut baseline:Vec<String>=Vec::new();
                 let mut facts=HashSet::new();
                 let mut all_facts=Vec::new();
                 for rec in &records{
@@ -249,7 +249,7 @@ pub fn parse_planner_result(value:&Value)->Result<Value,String>{
         else{return Err("Planner assessment must be a string".into());};
     let Some(specs)=value.get("next_tasks").and_then(Value::as_array)
         else{return Err("Planner next_tasks must be an array".into());};
-    let mut ids=HashSet::new();
+    let mut ids:HashSet<String>=HashSet::new();
     let mut next=Vec::new();
     for (i,task) in specs.iter().enumerate(){
         if !task.is_object(){

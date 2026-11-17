@@ -113,7 +113,7 @@ where
                     .map(str::to_owned).unwrap_or_else(||format!("Planning round {} ended {}",
                         field(&round,"id"),field(saved,"status"))));
             }
-            return Ok((completed,saved.clone()));
+            return Ok((completed.clone(),saved.clone()));
         }
         std::thread::sleep(Duration::from_millis(25));
     }

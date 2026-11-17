@@ -241,7 +241,7 @@ pub fn select_dag_review_executors(job:&Value)->Result<Value,String>{
             ||field(task,"state")!="QUEUED"
             ||task.get("executionId").is_some_and(|v|!v.is_null()){continue;}
         let status=task.pointer("/interactiveInvocation/status")
-            .and_then(Value::as_str).unwrap_or("");
+            .and_then(Value::as_str).unwrap_or("").to_owned();
         let desired=if status=="changes_requested"{"codex"}else{"script"};
         if field(task,"adapter")==desired{continue;}
         task["adapter"]=json!(desired);

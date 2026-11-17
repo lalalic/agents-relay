@@ -293,7 +293,7 @@ pub fn ensure_final_review(
     result.job["review"]=json!({"outcome":outcome,"headSha":head,
         "taskId":id,"evidence":null,"updatedAt":now});
     result.job["updatedAt"]=json!(now);
-    result.job=refresh_task_dependencies(&result.job,directory)?;
+    refresh_task_dependencies(directory,&mut result.job,&now)?;
     result.events.push(event_for(field(job,"id"),&id,None,
         "review.created","queued",
         &format!("Final review Task {id} created for {head} using worker-router"),

@@ -38,14 +38,14 @@ where
         return Err("Coordinator Graph changed after creation".into());
     }
     let state = current["tasks"][index].get("state")
-        .and_then(Value::as_str).unwrap_or("");
-    let current_state = current.get("state").and_then(Value::as_str).unwrap_or("");
-    if !matches!(state, "DRAFT" | "QUEUED" | "RUNNING")
+        .and_then(Value::as_str).unwrap_or("").to_owned();
+    let current_state = current.get("state").and_then(Value::as_str).unwrap_or("").to_owned();
+    if !matches!(state.as_str(), "DRAFT" | "QUEUED" | "RUNNING")
         && !(foreground && current_state == "ACTIVE" && !existing.is_empty()) {
         return Err("Coordinator Task is not startable".into());
     }
     if existing.is_empty() {
-        if !matches!(state, "DRAFT" | "QUEUED") {
+        if !matches!(state.as_str(), "DRAFT" | "QUEUED") {
             return Err("Graph cannot change after execution started".into());
         }
         current["tasks"][index]["agentGraph"] = json!(agent_graph);

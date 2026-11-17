@@ -242,7 +242,7 @@ impl PooledWebHelmState {
         let observation=parse_envelope(&current.to_string())?;
         if let Some(url)=observation.get("url").and_then(Value::as_str){
             let normalize=|s:&str|s.split('?').next().unwrap_or("")
-                .trim_end_matches('/');
+                .trim_end_matches('/').to_owned();
             if normalize(url)!=normalize(thread_url){return Ok(());}
         }
         let fingerprint=observer_fingerprint(&observation);

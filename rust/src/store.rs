@@ -76,7 +76,7 @@ pub fn load_managed_github_pull_request_snapshot_graphql(
         .and_then(Value::as_str).is_some_and(|name|
             trusted_authors.contains(name)||matches!(name,"github-actions[bot]"|"github-actions")))
         .filter_map(|row|crate::github_webhook::parse_package_publication_marker(
-            field(row,"body")))
+            &json!(field(row,"body"))))
         .last();
     let plans:Vec<Value>=trusted.iter().filter_map(|row|{
         let mut plan=parse_plan(field(row,"body"))?;

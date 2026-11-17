@@ -132,7 +132,7 @@ where
         }
         if optional(options,"idempotencyKey").is_some()
             && (optional(options,"objective").is_some_and(|v|v!=field(existing,"objective"))
-                || optional(options,"title").is_some_and(|v|v!=field(existing,"title")))){
+                || optional(options,"title").is_some_and(|v|v!=field(existing,"title"))){
             return Err("Job idempotency key reused for a different Job definition".into());
         }
         if options.get("coordinator").is_some_and(|v|!v.is_null())

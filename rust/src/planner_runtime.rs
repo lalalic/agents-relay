@@ -11,7 +11,7 @@ use crate::{
     },
     planner_task_ids::assign_planner_task_ids,
     workflow::{
-        planner_orchestration_v2::decide_planner_orchestration,
+        policy_graph::choose_policy,
         task_resolution::attach_resolution_ownership,
     },
 };
@@ -44,7 +44,7 @@ fn graph_action(
     directory:&Path,state:&str,event:&str,facts:&Value,
     expected:&str,
 )->Result<Value,String>{
-    let decision=decide_planner_orchestration(directory,state,event,facts)?;
+    let decision=choose_policy(directory,"planner-orchestration",state,event,facts,14,|s|s.starts_with("check_"))?;
     if decision.get("accepted")!=Some(&Value::Bool(true))
         ||!actions(&decision).iter().any(|action|action==expected){
         return Err(format!(
@@ -163,7 +163,8 @@ pub fn settlement_result(
     changed["executionId"]=Value::Null;
     changed["updatedAt"]=json!(now);
     candidate["updatedAt"]=json!(now);
-    Ok(json!({"job":candidate,"plan":changed,
+    let saved_plan=candidate["plans"][idx].clone();
+    Ok(json!({"job":candidate,"plan":saved_plan,
         "children":appended,"result":normalized}))
 }
 pub fn fail_plan_execution(
@@ -178,11 +179,11 @@ pub fn fail_plan_execution(
     let plan=&candidate["plans"][idx];
     let attempts=plan.get("attempt").and_then(Value::as_u64).unwrap_or(0);
     let max=plan.get("maxAttempts").and_then(Value::as_u64).unwrap_or(3);
-    let decision=decide_planner_orchestration(directory,"PLANNING",
+    let decision=choose_policy(directory,"planner-orchestration","PLANNING",
         "planner.failed",&json!({
             "executionCurrent":true,"retryAvailable":attempts<max,
             "maxAttempts":max,"attempts":attempts,
-        }))?;
+        }),14,|s|s.starts_with("check_"))?;
     if decision.get("accepted")!=Some(&Value::Bool(true)){
         return Err("Planner Graph did not accept failed execution".into());
     }
@@ -283,9 +284,9 @@ pub fn planner_reconciler_step(
             if expiration.is_none_or(|t|t>current){continue;}
             let attempt=plan.get("attempt").and_then(Value::as_u64).unwrap_or(0);
             let max=plan.get("maxAttempts").and_then(Value::as_u64).unwrap_or(3);
-            let decision=decide_planner_orchestration(directory,"PLANNING",
+            let decision=choose_policy(directory,"planner-orchestration","PLANNING",
                 "planner.lease_expired",&json!({"retryAvailable":attempt<max,
-                    "executionCurrent":true}))?;
+                    "executionCurrent":true}),14,|s|s.starts_with("check_"))?;
             if decision.get("accepted")!=Some(&Value::Bool(true)){continue;}
             if field(&decision,"target")=="FAILED"{
                 plan["status"]=json!("FAILED");

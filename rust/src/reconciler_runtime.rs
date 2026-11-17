@@ -293,7 +293,7 @@ impl ReconcilerRuntime{
         if let Some(old)=event_execution.filter(|id|id!=&prev){
             result.cancel_generations.push(old);
         }
-        if !prev.is_empty(){result.cancel_generations.push(prev);}
+        if !prev.is_empty(){result.cancel_generations.push(prev.clone());}
         let now=iso8601_now();
         candidate["leaseOwner"]=Value::Null;
         candidate["leaseExpiresAt"]=Value::Null;
@@ -356,7 +356,8 @@ impl ReconcilerRuntime{
             "task.completed"=>{
                 if let Some(task)=current(job,field(event,"task_id")){
                     if task.get("dagNode").is_some_and(|v|!v.is_null()){
-                        if let Some(error)=dag_completion_error(task,None){
+                        if let Some(error)=dag_completion_error(task,None,"node",|_,_|
+                            Err("DAG Stage validation requires an execution project".into())){
                             let mut failed=event.clone();
                             failed["type"]=json!("task.failed");
                             failed["message"]=json!(error);
@@ -370,7 +371,8 @@ impl ReconcilerRuntime{
                         // normalization prior to the graph verdict.
                         let candidate=crate::review_terminal_normalization::
                             normalize_reviewer_terminal_event(event);
-                        if let Some(normalized)=candidate{
+                        if !candidate.is_null(){
+                        let normalized=candidate;
                             if field(&normalized,"type")!="task.failed"{
                                 let review=apply_review_event(directory,job,
                                     &normalized,verified_head)?;
