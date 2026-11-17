@@ -59,9 +59,9 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/dag-result-contract.ts` | `rust/src/dag_result_contract.rs` | PORTING | Wave4 C: 42 direct Node/Rust actual isolated stage verifier subprocess cases plus prior 105 file/rejection cases; native timeout/cancel. Abnormal signal/large output and Graph terminal caller binding remain unverified (head_to_head_wave4_delivery.mjs; native_wave4_delivery.rs). |
 | `src/dag-stage-contract.ts` | `rust/src/dag_stage_contract.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; isolated temp project fixtures, symlink/run escape checks, malformed/failing validator outputs, and checked execution args (`rust/tests/head_to_head.mjs`) |
 | `src/dag-task-runtime.ts` | `rust/src/dag_task_runtime.rs` | PENDING | — |
-| `src/dashboard-actions.ts` | `rust/src/dashboard_actions.rs` | PENDING | — |
+| `src/dashboard-actions.ts` | `rust/src/dashboard_actions.rs` | PORTING | Phase1 serial Rust SERVER-only source draft; uncompiled/unverified; preserve original Dashboard client HTML/CSS/JS. |
 | `src/dashboard-data.ts` | `rust/src/dashboard_data.rs` | PASS | 1,077 shared randomized Node/Rust feedback/events/dashboard cases, ordering/pagination/filters and focused Node dashboard regressions; rust/tests/head_to_head_worker_c.mjs |
-| `src/dashboard-html.ts` | `rust/src/dashboard_html.rs` | PENDING | — |
+| `src/dashboard-html.ts` | `rust/src/dashboard_html.rs` | PENDING | Dashboard CLIENT HTML/JS intentionally frozen at user request. Native server must serve original unchanged asset; no rewrite of browser/client-side code. |
 | `src/dashboard-jel.ts` | `rust/src/dashboard_jel.rs` | PASS | Direct hotfix: 1,429 exact fixed-clock Node/Rust dynamic DAG/Plan/Review/Retry/Merge Mermaid diagrams, native unit tests and Unicode surrogate JSON-wire fidelity (rust/tests/head_to_head_dashboard_jel.mjs; rust/tests/native_dashboard_jel.rs) |
 | `src/dashboard-style.ts` | `rust/src/dashboard_style.rs` | PASS | Direct hotfix: exact 25,275 byte runtime dashboard CSS literal, SHA-256 676e173854d712a21bf4cf0a3dfaa59bf015a458ce9a2b54d8e632a082a56c34 (rust/tests/head_to_head_dashboard_style.mjs) |
 | `src/dashboard-workflow-inspection.ts` | `rust/src/dashboard_workflow_inspection.rs` | PASS | Batch 6: Node/Rust differential fixtures cover valid exact Event/Action graph symbols, source/test references, malformed identifiers and traversal rejection (`rust/tests/head_to_head_batch6.mjs`); native path-safety test. |
@@ -160,7 +160,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/relayd-control.ts` | `rust/src/relayd_control.rs` | PENDING | — |
 | `src/relayd-dashboard-actions.ts` | `rust/src/relayd_dashboard_actions.rs` | PENDING | — |
 | `src/relayd-main.ts` | `rust/src/relayd_main.rs` | PORTING | Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure. |
-| `src/relayd-utilities.ts` | `rust/src/relayd_utilities.rs` | PENDING | — |
+| `src/relayd-utilities.ts` | `rust/src/relayd_utilities.rs` | PORTING | Phase1 serial Rust SERVER-only source draft; uncompiled/unverified; preserve original Dashboard client HTML/CSS/JS. |
 | `src/relayd.ts` | `rust/src/relayd.rs` | PENDING | — |
 | `src/review-chair.ts` | `rust/src/review_chair.rs` | PASS | Wave2 B: all seven public runtime functions and 3,042 review-suite fixtures, invalid findings/panels, synthesis and attribution; 6 focused original Node Chair tests (`head_to_head_wave2_review.mjs`) |
 | `src/review-evidence.ts` | `rust/src/review_evidence.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; head precedence/fallback, finding aliases, malformed/null findings, trimming, Unicode and missing evidence (`rust/tests/head_to_head.mjs`) |
