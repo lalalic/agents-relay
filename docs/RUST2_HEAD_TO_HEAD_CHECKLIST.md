@@ -135,7 +135,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/planner.ts` | `rust/src/planner.rs` | PENDING | — |
 | `src/pool.ts` | `rust/src/pool.rs` | PENDING | — |
 | `src/process-identity.ts` | `rust/src/process_identity.rs` | PASS | Direct hotfix: real Node/Rust OS ps identity, isolated detached PGID leaders, lease owner inspection, stale generation fences and two actual disposable child-process terminations (rust/tests/head_to_head_process_identity.mjs; rust/tests/native_process_identity.rs) |
-| `src/projected-store.ts` | `rust/src/projected_store.rs` | PENDING | — |
+| `src/projected-store.ts` | `rust/src/projected_store.rs` | PORTING | Serial Phase1 Rust GitHub marker Store and retryable SQLite projection transport; UNCOMPILED/UNTESTED; Graph/production API parity Phase2. |
 | `src/projection-failure-dedupe.ts` | `rust/src/projection_failure_dedupe.rs` | PASS | 626 shared differential fixtures across 14 ports; sequential duplicate/change/classification/reset vectors compared (`rust/tests/head_to_head.mjs`) |
 | `src/projection-failure-recovery.ts` | `rust/src/projection_failure_recovery.rs` | PASS | Wave2 C: 12 Node/Rust optional remote projection failure/dedupe/error cases plus native no-Job-transition test (`head_to_head_wave2_delivery.mjs`) |
 | `src/projection-outbox.ts` | `rust/src/projection_outbox.rs` | PASS | In-memory Node/Rust SQLite 52 seeded histories / 3,673 observations and 5 strict 39-operation rollback/ordering/idempotency/upgrade cases; rust/tests/head_to_head_worker_c_outbox.mjs, head_to_head_projection_outbox_strict.mjs |
@@ -185,7 +185,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/service-external-actions.ts` | `rust/src/service_external_actions.rs` | PORTING | Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure. |
 | `src/service-publication.ts` | `rust/src/service_publication.rs` | PASS | Wave2 C: exact SQLite commit/event receipt, dedupe and failed delivery paths with native failure test (`head_to_head_wave2_delivery.mjs`) |
 | `src/single-job-task-control.ts` | `rust/src/single_job_task_control.rs` | PORTING | Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure. |
-| `src/store-github.ts` | `rust/src/store_github.rs` | PENDING | — |
+| `src/store-github.ts` | `rust/src/store_github.rs` | PORTING | Serial Phase1 Rust GitHub marker Store and retryable SQLite projection transport; UNCOMPILED/UNTESTED; Graph/production API parity Phase2. |
 | `src/store-task-definition.ts` | `rust/src/store_task_definition.rs` | PASS | Eight-file hotfix: Immutable Task and Plan definitions, divergence and identity: 6,300 Node/Rust cases, native identity checks; `rust/tests/head_to_head_eight_batch_*.mjs`, `rust/tests/native_eight_batch_*.rs` |
 | `src/store.ts` | `rust/src/store.rs` | PORTING | Phase1 serial native Store/SQLite authoritative facade over existing transaction/outbox primitives; UNCOMPILED UNTESTED, API parity Phase2. |
 | `src/task-actions.ts` | `rust/src/task_actions.rs` | PORTING | Phase1 serial Rust native Task Graph/SQLite snapshot draft; compile and head-to-head differential deferred to Phase2. |

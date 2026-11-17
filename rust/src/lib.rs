@@ -331,3 +331,5 @@ pub mod browser_worker_runtime;
 pub mod store;
 pub mod relay_store;
 pub mod local_authority_store;
+pub mod projected_store;
+pub mod store_github;
