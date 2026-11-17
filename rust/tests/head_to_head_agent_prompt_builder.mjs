@@ -14,7 +14,17 @@ import {
 } from '../../dist/agent-prompt-builder.js';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
 const bin=resolve(root,'rust/target/debug/relay-rust2-parity');
-function rust(req){const out=spawnSync(bin,[],{input:JSON.stringify(req)+'\n',encoding:'utf8',timeout:10000,maxBuffer:6*1024*1024});assert.equal(out.status,0,`${out.error}: ${out.stderr}`);return JSON.parse(out.stdout.trim())}
+let compiled=false;
+function rust(req){
+ if(!compiled){
+  // Independent differential suites may run before another suite has built
+  // rust/target/debug/relay-rust2-parity. Never rely on a stale worktree binary.
+  const build=spawnSync('cargo',['build','--offline','--manifest-path','rust/Cargo.toml'],{cwd:root,encoding:'utf8',timeout:90000});
+  assert.equal(build.status,0,`Rust parity build failed: ${build.stderr}`);compiled=true;
+ }
+ const out=spawnSync(bin,[],{input:JSON.stringify(req)+'\n',encoding:'utf8',timeout:10000,maxBuffer:6*1024*1024});
+ assert.equal(out.status,0,`${out.error}: ${out.stderr}`);return JSON.parse(out.stdout.trim());
+}
 function expected(ref){try{return {ok:true,value:ref()}}catch(e){return {ok:false,error:e.message}}}
 function normalize(value){return JSON.parse(JSON.stringify(value))}
 let seed=0x733a9229;
