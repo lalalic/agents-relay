@@ -7,6 +7,10 @@ if [ "$(git branch --show-current)" != rust2 ]; then
   echo 'Refusing rust2 verification outside branch rust2' >&2
   exit 2
 fi
+# Differential fixtures load Node dist/*.js, not src/*.ts. Always rebuild the
+# authoritative current Node baseline before comparing its behavior to Rust;
+# a stale dist can give false PASS or ERR_MODULE_NOT_FOUND after new modules.
+npm run build
 node scripts/rust2-checklist-verify.mjs
 cargo fmt --check --manifest-path rust/Cargo.toml
 cargo test --offline --manifest-path rust/Cargo.toml
