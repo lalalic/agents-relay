@@ -622,6 +622,493 @@ fn invoke(request: &Value) -> Result<String, String> {
         )
         .to_string()),
 
+        "wave2Coordinator" => {
+            use agents_relay_rust2::reconcile_coordinator::ReconcileCoordinator;
+            use std::sync::{Arc, Mutex};
+            let batches = Arc::new(Mutex::new(Vec::<Value>::new()));
+            let failures = Arc::new(Mutex::new(Vec::<Value>::new()));
+            let log = Arc::clone(&batches);
+            let errors = Arc::clone(&failures);
+            let coordinator = ReconcileCoordinator::new(
+                move |job, signals| {
+                    log.lock()
+                        .map_err(|e| e.to_string())?
+                        .push(json!({"jobId":job,"signals":signals}));
+                    if signals.iter().any(|s| s["fail"] == true) {
+                        Err("fixture consumer failed".into())
+                    } else {
+                        Ok(())
+                    }
+                },
+                Some(Arc::new(move |err, signal| {
+                    errors
+                        .lock()
+                        .expect("fixture errors")
+                        .push(json!({"error":err,"signal":signal}));
+                })),
+            );
+            let mut outcomes = Vec::new();
+            for signal in request["signals"].as_array().into_iter().flatten() {
+                let method = signal["method"].as_str().unwrap_or("accept");
+                let input = signal["signal"].clone();
+                let receiver = match method {
+                    "accept" => coordinator.accept(input),
+                    "acceptTransport" => coordinator.accept_transport(input),
+                    "acceptObserved" => coordinator.accept_observed(input),
+                    _ => return Err(format!("Unknown coordinator method {method}")),
+                };
+                let resolved = receiver
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .map_err(|e| format!("Coordinator acceptance timeout: {e}"))?;
+                outcomes.push(match resolved {
+                    Ok(()) => json!({"ok":true}),
+                    Err(error) => json!({"ok":false,"error":error}),
+                });
+                coordinator.settle();
+            }
+            Ok(json!({"outcomes":outcomes,
+                "batches":batches.lock().map_err(|e|e.to_string())?.clone(),
+                "failures":failures.lock().map_err(|e|e.to_string())?.clone(),
+                "idle":coordinator.is_idle()})
+            .to_string())
+        }
+        "wave2Decision" => {
+            use agents_relay_rust2::decision::{
+                self, JevDecisionEngine, JevDecisionOptions, LayaCliDecisionEngine, LayaCliOptions,
+            };
+            let action = request["action"].as_str().unwrap_or("");
+            let output: Value = match action {
+                "validate" => {
+                    decision::validate_decision_request(&request["request"], &request["contract"])?;
+                    json!(null)
+                }
+                "parse" => decision::parse_choice_decision(&request["raw"], &request["contract"])?,
+                "mode" => json!(decision::decision_mode()),
+                "layaArgs" => json!(decision::laya_args_from_env(request["env"].as_str())?),
+                "jevBody" => JevDecisionEngine::request_body(
+                    &request["request"],
+                    &request["contract"],
+                    request["model"].as_str().unwrap_or("typesafe/jev-1.13"),
+                )?,
+                "jevResponse" => {
+                    JevDecisionEngine::parse_response(&request["raw"], &request["contract"], 0)?
+                }
+                "jevDecide" => {
+                    let engine = JevDecisionEngine::new(JevDecisionOptions {
+                        api_key: request["apiKey"].as_str().map(str::to_owned),
+                        endpoint: Some("http://127.0.0.1:1".into()),
+                        model: None,
+                        timeout_ms: Some(99),
+                    });
+                    engine.decide_with_fetcher(
+                        &request["request"],
+                        &request["contract"],
+                        |_, _, body, _| {
+                            if body["questions"]["decision"]["criteria"].is_null() {
+                                return Err("bad Jev criteria".into());
+                            }
+                            Ok((
+                                request["httpStatus"].as_u64().unwrap_or(200) as u16,
+                                request["raw"].clone(),
+                            ))
+                        },
+                    )?
+                }
+                "choose" => {
+                    let engine = if request["hasEngine"] == true {
+                        Some("mock-engine")
+                    } else {
+                        None
+                    };
+                    let raw = request["raw"].clone();
+                    let err = request["engineError"].as_str().map(str::to_owned);
+                    let f = decision::choose_with_decision(
+                        engine,
+                        move |_, _| {
+                            let result = if let Some(ref err) = err {
+                                Err(err.clone())
+                            } else {
+                                Ok(raw.clone())
+                            };
+                            async move { result }
+                        },
+                        request["mode"].as_str().unwrap_or("active"),
+                        &request["request"],
+                        &request["contract"],
+                        || request["fallback"].as_str().unwrap_or("").to_string(),
+                    );
+                    use std::{
+                        future::Future,
+                        pin::pin,
+                        task::{Context, Poll, Waker},
+                    };
+                    let mut pin = pin!(f);
+                    let mut context = Context::from_waker(Waker::noop());
+                    match pin.as_mut().poll(&mut context) {
+                        Poll::Ready(done) => done?,
+                        Poll::Pending => return Err("Unexpected deferred mock decision".into()),
+                    }
+                }
+                "layaRunner" => {
+                    let options = LayaCliOptions {
+                        command: "laya".into(),
+                        args: vec!["predict".into()],
+                        timeout_ms: 2000,
+                    };
+                    let engine = LayaCliDecisionEngine::new(options);
+                    engine.decide_with_owned_runner(
+                        &request["request"],
+                        &request["contract"],
+                        |_, argv, _| {
+                            let state_path =
+                                std::path::Path::new(argv.get(2).map(String::as_str).unwrap_or(""));
+                            let questions_path =
+                                std::path::Path::new(argv.get(4).map(String::as_str).unwrap_or(""));
+                            if !state_path.is_file() || !questions_path.is_file() {
+                                return Err("Laya file contract missing".into());
+                            }
+                            let actual: Value = serde_json::from_slice(
+                                &std::fs::read(state_path).map_err(|e| e.to_string())?,
+                            )
+                            .map_err(|e| e.to_string())?;
+                            if actual != request["request"]["facts"] {
+                                return Err("Laya state mismatch".into());
+                            }
+                            Ok(request["output"].as_str().unwrap_or("").to_string())
+                        },
+                    )?
+                }
+                _ => return Err("unknown wave2 decision action".into()),
+            };
+            Ok(output.to_string())
+        }
+        "wave2Operations" => {
+            use agents_relay_rust2::{
+                relay_workflow_operations::SQLiteWorkflowOperations,
+                workflow::durable_publication::DurableWorkflowPublication,
+            };
+            use rusqlite::{params, Connection, OptionalExtension};
+            let db = Connection::open_in_memory().map_err(|e| e.to_string())?;
+            db.execute_batch("CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT)")
+                .map_err(|e| e.to_string())?;
+            let job_id = request["jobId"].as_str().unwrap_or("123");
+            if !request["job"].is_null() {
+                db.execute(
+                    "INSERT INTO job_snapshot VALUES (?1,?2)",
+                    params![job_id, request["job"].to_string()],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            let action = request["action"].as_str().unwrap_or("");
+            let result: Result<Value, String> = (|| {
+                if action == "drainWorkflowEvents" {
+                    let publication = DurableWorkflowPublication::new(&db)?;
+                    for item in request["events"].as_array().into_iter().flatten() {
+                        publication.enqueue(
+                            item["key"].as_str().unwrap_or(""),
+                            item["eventId"].as_str().unwrap_or(""),
+                            &item["payload"],
+                        )?;
+                    }
+                }
+                let write = |job: &Value, _now: &str| -> Result<(), String> {
+                    db.execute(
+                        "INSERT OR REPLACE INTO job_snapshot VALUES (?1,?2)",
+                        params![job_id, job.to_string()],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    Ok(())
+                };
+                let mut ops = SQLiteWorkflowOperations {
+                    db: &db,
+                    write,
+                    enqueue: None::<fn(&Value, &str) -> Result<(), String>>,
+                };
+                match action {
+                    "mutateJob" => {
+                        ops.mutate_job(job_id, |_| Ok(request["newJob"].clone()))?;
+                        Ok(json!(null))
+                    }
+                    "commitWorkflowMutationAndEvents" => {
+                        ops.commit_workflow_mutation_and_events(
+                            job_id,
+                            |_| Ok(request["newJob"].clone()),
+                            request["events"]
+                                .as_array()
+                                .map(Vec::as_slice)
+                                .unwrap_or(&[]),
+                        )?;
+                        Ok(json!(null))
+                    }
+                    "commitWorkflowMutationWithEvents" => {
+                        ops.commit_workflow_mutation_with_events(job_id, |_| {
+                            Ok((
+                                request["newJob"].clone(),
+                                request["events"].as_array().cloned().unwrap_or_default(),
+                            ))
+                        })?;
+                        Ok(json!(null))
+                    }
+                    "reserveWorkflowLaunch" => Ok(json!(ops.reserve_workflow_launch(
+                        std::path::Path::new(request["directory"].as_str().unwrap_or("workflow")),
+                        &request["identity"]
+                    )?)),
+                    "verifyWorkflowLaunch" => Ok(json!(ops.verify_workflow_launch(
+                        job_id,
+                        request["taskId"].as_str().unwrap_or(""),
+                        request["executionId"].as_str().unwrap_or("")
+                    )?)),
+                    "drainWorkflowEvents" => {
+                        let mut published = Vec::<Value>::new();
+                        let count = ops.drain_workflow_events(|event| {
+                            if request["failPublish"] == true {
+                                return Err("fixture publisher failed".into());
+                            }
+                            published.push(event.clone());
+                            Ok(())
+                        })?;
+                        Ok(json!({"count":count,"published":published}))
+                    }
+                    _ => Err("unknown wave2Operations action".into()),
+                }
+            })();
+            let outbox = if let Ok(publication) = DurableWorkflowPublication::new(&db) {
+                publication
+                    .pending()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|p| p.as_value())
+                    .collect::<Vec<_>>()
+            } else {
+                vec![]
+            };
+            let snapshot: Option<String> = db
+                .query_row(
+                    "SELECT json FROM job_snapshot WHERE job_id=?",
+                    params![job_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            Ok(json!({"result":match result{Ok(value)=>json!({"ok":true,"value":value}),Err(error)=>json!({"ok":false,"error":error})},
+                "job":snapshot.map(|raw|serde_json::from_str::<Value>(&raw).unwrap_or(Value::Null)),"pending":outbox}).to_string())
+        }
+        "wave2Graph" => {
+            use agents_relay_rust2::{
+                task_transitions,
+                workflow::{
+                    authoritative_conditions, planner_orchestration_v2, task_reconcile,
+                    task_resolution,
+                },
+            };
+            let action = request["action"].as_str().unwrap_or("");
+            let directory =
+                std::path::Path::new(request["directory"].as_str().unwrap_or("workflow"));
+            let result: Value = match action {
+                "dependencyReady" => {
+                    let mut map = std::collections::HashMap::new();
+                    for row in request["tasks"].as_array().into_iter().flatten() {
+                        map.insert(row["id"].as_str().unwrap_or("").to_string(), row.clone());
+                    }
+                    json!(task_reconcile::dependency_ready(&request["task"], &map))
+                }
+                "detectCycles" => {
+                    task_reconcile::detect_cycles(
+                        request["tasks"]
+                            .as_array()
+                            .map(Vec::as_slice)
+                            .unwrap_or(&[]),
+                    )?;
+                    json!(null)
+                }
+                "revisionRequestReady" => json!(task_reconcile::revision_request_ready(
+                    &request["job"],
+                    &request["task"]
+                )),
+                "reconcileTaskDependencies" => {
+                    let mut job = request["job"].clone();
+                    task_reconcile::reconcile_task_dependencies(
+                        directory,
+                        &mut job,
+                        "2026-11-17T10:00:00.000Z",
+                    )?;
+                    json!(job["tasks"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|t| t["state"].clone())
+                        .collect::<Vec<_>>())
+                }
+                "plannerFacts" => planner_orchestration_v2::planner_orchestration_facts(
+                    &request["job"],
+                    request["recoverable"] == true,
+                ),
+                "plannerDecision" => planner_orchestration_v2::decide_planner_orchestration(
+                    directory,
+                    &request["facts"],
+                )?,
+                "plannerDispatch" => planner_orchestration_v2::dispatch_planner_orchestration(
+                    directory,
+                    &request["facts"],
+                    |_| Ok(json!({})),
+                )?,
+                "transitionTaskTry" | "transitionTask" => {
+                    let mut task = request["task"].clone();
+                    let event = request["event"].as_str().unwrap_or("");
+                    let decision = if action == "transitionTask" {
+                        task_transitions::transition_task_event(
+                            directory,
+                            &mut task,
+                            event,
+                            &request["facts"],
+                            "2026-11-17T10:00:00.000Z",
+                        )?
+                    } else {
+                        task_transitions::try_transition_task_event(
+                            directory,
+                            &mut task,
+                            event,
+                            &request["facts"],
+                            "2026-11-17T10:00:00.000Z",
+                        )?
+                    };
+                    json!({"decision":decision,"task":task})
+                }
+                "transitionJob" => {
+                    let mut job = request["job"].clone();
+                    let decision = task_transitions::transition_job_event(
+                        directory,
+                        &mut job,
+                        request["event"].as_str().unwrap_or(""),
+                        &request["facts"],
+                        "2026-11-17T10:00:00.000Z",
+                    )?;
+                    json!({"decision":decision,"job":job})
+                }
+                "completionGateSatisfied" => {
+                    json!(task_transitions::completion_gate_satisfied(&request["job"]))
+                }
+                "extendRetryBudget" => json!(task_transitions::extend_retry_budget(
+                    request["attempt"].as_f64().unwrap_or(0.0),
+                    request["maxAttempts"].as_f64().unwrap_or(0.0),
+                    request
+                        .get("windowSize")
+                        .and_then(Value::as_f64)
+                        .unwrap_or(3.0)
+                )?),
+                "refreshTaskDependencies" => {
+                    let mut job = request["job"].clone();
+                    task_transitions::refresh_task_dependencies(
+                        directory,
+                        &mut job,
+                        "2026-11-17T10:00:00.000Z",
+                    )?;
+                    json!(job["tasks"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|t| t["state"].clone())
+                        .collect::<Vec<_>>())
+                }
+                "resolutionValidate" => {
+                    task_resolution::validate_resolution_proposal(
+                        &request["job"],
+                        &request["task"],
+                        &request["proposal"],
+                    )?;
+                    json!(null)
+                }
+                "resolutionFacts" => task_resolution::resolution_facts(
+                    &request["task"],
+                    &request["proposal"],
+                    &request["owner"],
+                ),
+                "resolutionDecision" => task_resolution::decide_task_resolution(
+                    directory,
+                    &request["task"],
+                    &request["proposal"],
+                    &request["owner"],
+                )?,
+                "resolutionMaterialize" => task_resolution::materialize_resolution(
+                    &request["proposal"],
+                    &request["owner"],
+                    "2026-11-17T10:00:00.000Z",
+                ),
+                "resolutionClassification" => {
+                    let mut task = request["task"].clone();
+                    let applied = task_resolution::classify_task_resolution(
+                        directory,
+                        &mut task,
+                        &request["classification"],
+                        "2026-11-17T10:00:00.000Z",
+                    )?;
+                    json!({"applied":applied,"task":task})
+                }
+                "resolutionClaim" => {
+                    let mut task = request["task"].clone();
+                    task_resolution::claim_exact_original_recovery(
+                        &mut task,
+                        &request["recovery"],
+                        "2026-11-17T10:00:00.000Z",
+                    )?;
+                    task
+                }
+                "resolutionAttach" => {
+                    let mut job = request["job"].clone();
+                    task_resolution::attach_resolution_ownership(
+                        directory,
+                        &mut job,
+                        &request["child"],
+                        &request["proposal"],
+                        &request["owner"],
+                        "2026-11-17T10:00:00.000Z",
+                    )?;
+                    job
+                }
+                "authoritative" => {
+                    let db = rusqlite::Connection::open_in_memory().map_err(|e| e.to_string())?;
+                    db.execute_batch(
+                        "CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT);",
+                    )
+                    .map_err(|e| e.to_string())?;
+                    if !request["job"].is_null() {
+                        db.execute(
+                            "INSERT INTO job_snapshot VALUES (?1,?2)",
+                            rusqlite::params![
+                                request["jobId"].as_str().unwrap_or(""),
+                                request["job"].to_string()
+                            ],
+                        )
+                        .map_err(|e| e.to_string())?;
+                    }
+                    if request["createProcessTable"] == true {
+                        db.execute_batch("CREATE TABLE execution_process(job_id TEXT,task_id TEXT,execution_id TEXT,ended_at TEXT);").map_err(|e|e.to_string())?;
+                        for row in request["processes"].as_array().into_iter().flatten() {
+                            db.execute(
+                                "INSERT INTO execution_process VALUES (?1,?2,?3,?4)",
+                                rusqlite::params![
+                                    row["jobId"].as_str().unwrap_or(""),
+                                    row["taskId"].as_str().unwrap_or(""),
+                                    row["executionId"].as_str().unwrap_or(""),
+                                    row["endedAt"].as_str()
+                                ],
+                            )
+                            .map_err(|e| e.to_string())?;
+                        }
+                    }
+                    json!(authoritative_conditions::verify_authoritative_condition(
+                        &db,
+                        request["jobId"].as_str().unwrap_or(""),
+                        request["predicate"].as_str().unwrap_or(""),
+                        request["taskId"].as_str(),
+                        request["executionId"].as_str()
+                    )?)
+                }
+                _ => return Err(format!("Unknown wave2 graph action {action}")),
+            };
+            Ok(result.to_string())
+        }
+
         "runArtifactCommand" => {
             let args = request["args"]
                 .as_array()

@@ -14,9 +14,11 @@ pub mod cli_local_merge_config;
 pub mod cli_shutdown;
 pub mod cli_workflow_action;
 pub mod dag_stage_contract;
+pub mod decision;
 pub mod dependency_validity;
 pub mod execution_boundary;
 pub mod final_review_role;
+pub mod force_restate;
 pub mod github_binding_order;
 pub mod github_branch_projection;
 pub mod job_execution_slot;
@@ -30,7 +32,9 @@ pub mod planner_task_context;
 pub mod planner_task_title;
 pub mod process_identity;
 pub mod projection_failure_dedupe;
+pub mod reconcile_coordinator;
 pub mod registry;
+pub mod relay_workflow_operations;
 pub mod review_evidence;
 pub mod review_revision_merge;
 pub mod review_revision_policy;
@@ -38,6 +42,7 @@ pub mod review_terminal_normalization;
 pub mod router_rules;
 pub mod routing_policy;
 pub mod task_tag;
+pub mod task_transitions;
 pub mod worker_rejection;
 pub mod workflow {
     pub mod conditions;
@@ -67,7 +72,11 @@ pub mod workflow {
     // Shared loader for Graph-driven v2 workflow wrappers.
     pub mod definitions_v2;
     // Direct Node workflow/lifecycle.ts Graph façade for Job/Task transitions.
+    pub mod authoritative_conditions;
     pub mod lifecycle;
+    pub mod planner_orchestration_v2;
+    pub mod task_reconcile;
+    pub mod task_resolution;
     // Direct Node Review, Job reconciliation and related Task Graph policies.
     pub mod job_reconcile_v2;
     pub mod policy_graph;
