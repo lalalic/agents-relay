@@ -71,7 +71,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/dependency-revision-execution.ts` | `rust/src/dependency_revision_execution.rs` | PENDING | — |
 | `src/dependency-validity.ts` | `rust/src/dependency_validity.rs` | PASS | 327 shared differential fixtures across 4 ports; Rust native tests 5/5; Node focused regression 4/4; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/escalation-notifier.ts` | `rust/src/escalation_notifier.rs` | PENDING | — |
-| `src/events-bus-runtime.ts` | `rust/src/events_bus_runtime.rs` | PENDING | — |
+| `src/events-bus-runtime.ts` | `rust/src/events_bus_runtime.rs` | PASS | Direct port: native TLS/HTTP client, 662 Node/Rust config fixtures and 200 real localhost HTTP page/timeout/denial cases; 5 native regressions, 6 original Node tests (`rust/tests/head_to_head_events_bus_runtime.mjs`, `rust/tests/native_events_bus_runtime.rs`) |
 | `src/events.ts` | `rust/src/events.rs` | PENDING | — |
 | `src/execution-boundary.ts` | `rust/src/execution_boundary.rs` | PASS | Batch 5: controlled Node ordering/error release plus native Rust same-key serialization, different-key concurrency, panic release and reacquisition (`rust/tests/head_to_head_batch5.mjs`, `rust/tests/native_batch5.rs`) |
 | `src/execution-context.ts` | `rust/src/execution_context.rs` | PENDING | — |

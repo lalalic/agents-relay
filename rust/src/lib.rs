@@ -68,3 +68,6 @@ pub mod github_runtime_usage;
 pub mod execution_event_identity;
 // Direct Node src/local-commit-events.ts post-SQLite pub/sub port.
 pub mod local_commit_events;
+
+// Direct Node src/events-bus-runtime.ts configured HTTP history transport port.
+pub mod events_bus_runtime;

@@ -357,6 +357,32 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "eventsBusConfigPath" => Ok(json!(
+            agents_relay_rust2::events_bus_runtime::events_bus_config_path(&request["env"])
+        )
+        .to_string()),
+        "resolveEventsBusRuntime" => Ok(
+            agents_relay_rust2::events_bus_runtime::resolve_events_bus_runtime(&request["env"])?
+                .to_string(),
+        ),
+        "eventsBusHistoryPage" => Ok(
+            agents_relay_rust2::events_bus_runtime::events_bus_history_page(
+                request["jobId"].as_str().unwrap_or(""),
+                request["taskId"].as_str(),
+                &request["limit"],
+                &request["options"],
+                &request["env"],
+            )?
+            .to_string(),
+        ),
+        "eventsBusHistory" => Ok(agents_relay_rust2::events_bus_runtime::events_bus_history(
+            request["jobId"].as_str().unwrap_or(""),
+            request["taskId"].as_str(),
+            &request["limit"],
+            &request["env"],
+        )?
+        .to_string()),
+
         "executionEventSource" => Ok(json!(
             agents_relay_rust2::execution_event_identity::execution_event_source(
                 request["jobId"].as_str().unwrap_or(""),
