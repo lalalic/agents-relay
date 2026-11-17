@@ -340,3 +340,7 @@ pub mod pool;
 pub mod dashboard;
 pub mod reconciler_review;
 pub mod reconciler_runtime;
+pub mod reconciler;
+pub mod relayd_control;
+pub mod relayd;
+pub mod cli;
