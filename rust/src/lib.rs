@@ -313,3 +313,5 @@ pub mod local_merge_delivery;
 pub mod local_merge_projection;
 pub mod types;
 pub mod worker_routing;
+pub mod model_routing;
+pub mod execution_routing;
