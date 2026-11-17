@@ -89,6 +89,24 @@ test('planner recovery: source SQLite sequence, generated Task fields, safe idem
      const actual=rust('createFailedPlanRecovery',{root,storeDir:rustStore,job,plan});
      assert.equal(actual.ok,true,actual.error);
      assert.deepEqual(normalize(actual.value),normalize(expected),'case '+i);
+     // Retry the same durable idempotency key, then allocate a second distinct Plan ID.
+     const secondNode=createFailedPlanRecovery(clone(job),plan);
+     const secondRust=rust('createFailedPlanRecovery',{root,storeDir:rustStore,job,plan});
+     assert.equal(secondRust.ok,true,secondRust.error);
+     assert.deepEqual(normalize(secondNode),normalize(expected),'idempotent Node '+i);
+     assert.deepEqual(normalize(secondRust.value),normalize(expected),'idempotent Rust '+i);
+     const nextPlan={id:'plan2',status:'FAILED',error:'different failure'};
+     const nextNode=createFailedPlanRecovery(clone(job),nextPlan);
+     const nextRust=rust('createFailedPlanRecovery',{root,storeDir:rustStore,job,plan:nextPlan});
+     assert.equal(nextRust.ok,true,nextRust.error);
+     assert.notEqual(nextNode.id,expected.id,'distinct Plan allocates a distinct Task ID');
+     assert.deepEqual(normalize(nextRust.value),normalize(nextNode),'second Plan '+i);
+     // An existing completed allocation must be returned untouched, without another write.
+     const existingJob={...job,tasks:[expected]};
+     assert.deepEqual(normalize(rust('createFailedPlanRecovery',{root,storeDir:rustStore,job:existingJob,plan}).value),normalize(expected),'existing recovery '+i);
+     assert.throws(()=>createFailedPlanRecovery(clone(job),{...plan,status:'PLANNING'}),/terminal FAILED Plan/);
+     assert.deepEqual(rust('createFailedPlanRecovery',{root,storeDir:rustStore,job,plan:{...plan,status:'PLANNING'}}),
+       {ok:false,error:'Plan recovery requires a terminal FAILED Plan'});
    }
  }finally{if(old===undefined)delete process.env.AGENTS_RELAY_STORE_DIR;else process.env.AGENTS_RELAY_STORE_DIR=old;rmSync(base,{recursive:true,force:true})}
 });
