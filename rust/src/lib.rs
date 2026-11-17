@@ -42,3 +42,6 @@ pub mod task_title;
 pub mod terminal_event_recovery;
 pub mod troubleshooter_qa_api;
 pub mod webhelm_daemon_client;
+
+// Direct Node src/agent-prompt-builder.ts implementation.
+pub mod agent_prompt_builder;

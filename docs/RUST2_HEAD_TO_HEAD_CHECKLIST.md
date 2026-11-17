@@ -25,7 +25,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/adapters.ts` | `rust/src/adapters.rs` | PENDING | — |
 | `src/agent-content-resolver.ts` | `rust/src/agent_content_resolver.rs` | PENDING | — |
 | `src/agent-graph.ts` | `rust/src/agent_graph.rs` | PENDING | — |
-| `src/agent-prompt-builder.ts` | `rust/src/agent_prompt_builder.rs` | PENDING | — |
+| `src/agent-prompt-builder.ts` | `rust/src/agent_prompt_builder.rs` | PASS | Direct hotfix: 1,100 pure prompt/render fixtures; 220 reference-first fixtures; 150 exact execution prompts; isolated immutable SHA-256 snapshots and filesystem/error semantics; 5 Rust-native tests, 19 Node regressions (rust/tests/head_to_head_agent_prompt_builder.mjs; rust/tests/native_agent_prompt_builder.rs) |
 | `src/agent-script-discovery.ts` | `rust/src/agent_script_discovery.rs` | PENDING | — |
 | `src/audit-tail.ts` | `rust/src/audit_tail.rs` | PASS | Batch 5: isolated temp-file differential covers absent path, newest-first records, multiline JSON strings, malformed trailing line and a record spanning the 64 KiB reverse-read boundary (`rust/tests/head_to_head_batch5.mjs`) |
 | `src/blocker-recovery.ts` | `rust/src/blocker_recovery.rs` | PENDING | — |
@@ -422,3 +422,12 @@ Only isolated, specifically created process groups were terminated in verificati
 - [x] `node --import ./test/test-store-env.mjs --test test/dashboard-jel.test.js test/dashboard.test.js`: **114/114** focused Node regressions passed with isolated SQLite store and ephemeral dashboard HTTP fixture.
 
 This is only the Job JEL graph projection; Dashboard HTTP routing, additional tabs and live browser parity remain separate PENDING items.
+
+### Direct Rust2 hotfix — execution-bound Agent Prompt Builder (2026-11-16)
+
+- [x] `src/agent-prompt-builder.ts` → `rust/src/agent_prompt_builder.rs`: implement **all seven exported functions** natively: `isPromptReferenceAccessible`, `buildAgentPrompt`, `promptFileReference`, `renderAgentPrompt`, `snapshotAgentInstructions`, `buildReferenceFirstPrompt`, and `buildRelayWorkPrompt`.
+- [x] New Rust source begins with the Node provenance and rationale. Hash exact raw bytes using SHA-256; preserve source role vs user/Task data boundary, immutable snapshot path, reference-first strict vs fallback policy, project context ordering, contracts, execution-bound event source, Planner vs Task instructions, and independent worker self-review requirements.
+- [x] `rust/tests/head_to_head_agent_prompt_builder.mjs`: **1,100** deterministic pure Node/Rust prompt/render cases, **220** reference-first cases, **150** full execution Prompt cases, and real isolated file/symlink/access/permission/error/digest-mismatch scenarios. Node-compatible `fs.access(path)` default is **F_OK**, not R_OK; this was corrected by differential testing.
+- [x] `rust/tests/native_agent_prompt_builder.rs`: **5** native tests for immutable snapshot/permissions, trusted vs untrusted roles, strict fail-closed hash check, job/task/execution binding, and invalid arguments.
+- [x] Original Node tests `test/agent-prompt-builder.test.js`, `test/agent-prompt-model-only.test.js`, `test/managed-prompt-assembly.test.js`, and `test/prompt-action-parity.test.js`: **19/19 PASS** with an isolated SQLite store.
+- [x] Filesystem fixtures are disposable temporary directories. No production Agent prompt snapshots, process services, or Relay Jobs were modified.
