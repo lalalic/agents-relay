@@ -16,6 +16,7 @@ use agents_relay_rust2::{
     planner_task_title::required_planner_task_title,
     projection_failure_dedupe::ProjectionFailureDeduplicator,
     review_revision_merge::preserve_review_revision_history,
+    router_rules::{append_agent_model_preference, append_routing_instruction, parse_router_rules},
     task_title::{derive_task_title, json_string_from_utf16},
     terminal_event_recovery::{
         terminal_recovery_eligible, terminal_recovery_prompt, TerminalRecoveryFacts,
@@ -24,9 +25,201 @@ use agents_relay_rust2::{
 use serde_json::{json, Value};
 use std::io::{self, BufRead};
 
+// Integration fixture adapter: expose Rust Graph parser and runtime for Node-vs-Rust
+// differential testing without creating or changing durable Relay jobs.
+fn workflow_engine_scenario(request: &Value) -> Result<Value, String> {
+    use agents_relay_rust2::workflow::mermaid::{WorkflowAction, WorkflowEngine, WorkflowGuard};
+    use std::collections::HashMap;
+    use std::future::Future;
+    use std::pin::pin;
+    use std::sync::{Arc, Mutex};
+    use std::task::{Context, Poll, Waker};
+
+    fn drive<T>(future: impl Future<Output = T>) -> T {
+        let mut context = Context::from_waker(Waker::noop());
+        let mut pinned = pin!(future);
+        loop {
+            if let Poll::Ready(value) = pinned.as_mut().poll(&mut context) {
+                return value;
+            }
+            std::thread::yield_now();
+        }
+    }
+    let source = request["source"].as_str().unwrap_or("");
+    let graph = agents_relay_rust2::workflow::mermaid::parse_executable_mermaid(source)?;
+    let mut guards = HashMap::new();
+    if let Some(bindings) = request["guards"].as_object() {
+        for (name, descriptor) in bindings {
+            let descriptor = descriptor.clone();
+            let is_async = descriptor["async"] == true;
+            let decide = move |ctx: &Value| -> Result<bool, String> {
+                if let Some(error) = descriptor.get("error").and_then(Value::as_str) {
+                    return Err(error.to_string());
+                }
+                Ok(
+                    if let Some(field) = descriptor.get("field").and_then(Value::as_str) {
+                        ctx[field].as_bool().unwrap_or(false)
+                    } else if descriptor.is_boolean() {
+                        descriptor.as_bool().unwrap_or(false)
+                    } else {
+                        descriptor["result"].as_bool().unwrap_or(false)
+                    },
+                )
+            };
+            if is_async {
+                guards.insert(
+                    name.clone(),
+                    WorkflowGuard::Async(Arc::new(move |ctx| {
+                        let outcome = decide(ctx);
+                        Box::pin(async move { outcome })
+                    })),
+                );
+            } else {
+                guards.insert(name.clone(), WorkflowGuard::Sync(Arc::new(decide)));
+            }
+        }
+    }
+    let log = Arc::new(Mutex::new(Vec::<String>::new()));
+    let mut actions = HashMap::new();
+    if let Some(bindings) = request["actions"].as_object() {
+        for (name, descriptor) in bindings {
+            if descriptor["declarative"] == true {
+                actions.insert(name.clone(), WorkflowAction::Declarative);
+            } else if descriptor["async"] == true {
+                let name = name.clone();
+                let log = Arc::clone(&log);
+                let descriptor_error = descriptor
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                actions.insert(
+                    name.clone(),
+                    WorkflowAction::Async(Arc::new(move |_, _| {
+                        let log = Arc::clone(&log);
+                        let name = name.clone();
+                        let error = descriptor_error.as_ref().cloned();
+                        Box::pin(async move {
+                            log.lock().expect("fixture mutex").push(name);
+                            if let Some(error) = error {
+                                return Err(error);
+                            }
+                            Ok(())
+                        })
+                    })),
+                );
+            } else {
+                let name = name.clone();
+                let log = Arc::clone(&log);
+                let descriptor_error = descriptor
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                actions.insert(
+                    name.clone(),
+                    WorkflowAction::Sync(Arc::new(move |_, _| {
+                        log.lock().expect("fixture mutex").push(name.clone());
+                        if let Some(error) = &descriptor_error {
+                            return Err(error.clone());
+                        }
+                        Ok(())
+                    })),
+                );
+            }
+        }
+    }
+    let engine = WorkflowEngine::new(graph, guards, actions)?;
+    let from = request["from"].as_str().unwrap_or("");
+    let to = request["to"].as_str().unwrap_or("");
+    let event = request["event"].as_str().unwrap_or("");
+    let ctx = &request["context"];
+    let result = match request["method"].as_str().unwrap_or("transitionSync") {
+        "transitionsFrom" => json!(engine
+            .transitions_from(from)?
+            .iter()
+            .map(|t| t.json())
+            .collect::<Vec<_>>()),
+        "assertStateTransition" => {
+            engine.assert_state_transition(
+                from,
+                to,
+                request["kind"].as_str().unwrap_or("workflow"),
+            )?;
+            Value::Null
+        }
+        "enabledSync" => json!(engine
+            .enabled_sync(from, event, ctx)?
+            .iter()
+            .map(|t| t.json())
+            .collect::<Vec<_>>()),
+        "transitionSync" => json!(engine.transition_sync(from, event, ctx)?),
+        "enabled" => json!(drive(engine.enabled(from, event, ctx))?
+            .iter()
+            .map(|t| t.json())
+            .collect::<Vec<_>>()),
+        "transition" => json!(drive(engine.transition(from, event, ctx))?),
+        other => return Err(format!("Unsupported Graph operation {other}")),
+    };
+    let trace = log.lock().expect("fixture mutex").clone();
+    Ok(json!({"result":result,"trace":trace}))
+}
+
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "workflowEngineScenario" => Ok(workflow_engine_scenario(request)?.to_string()),
+        "parseExecutableMermaid" => Ok(
+            agents_relay_rust2::workflow::mermaid::parse_executable_mermaid(
+                request["source"].as_str().unwrap_or(""),
+            )?
+            .json()
+            .to_string(),
+        ),
+        "parseRouterRules" => {
+            Ok(parse_router_rules(request["text"].as_str().unwrap_or("")).to_string())
+        }
+        "appendRoutingInstruction" => Ok(json!(append_routing_instruction(
+            request["question"].as_str().unwrap_or(""),
+            request["instruction"].as_str().unwrap_or("")
+        ))
+        .to_string()),
+        "appendAgentModelPreference" => Ok(json!(append_agent_model_preference(
+            request["question"].as_str().unwrap_or(""),
+            request.get("preference")
+        ))
+        .to_string()),
+        "workflowEffectPolicies" => {
+            Ok(agents_relay_rust2::workflow::contracts::workflow_effect_policies().to_string())
+        }
+        "workflowContractsInventories" => Ok(json!({
+            "events":agents_relay_rust2::workflow::contracts::WORKFLOW_EVENT_NAMES,
+            "facts":agents_relay_rust2::workflow::contracts::WORKFLOW_FACT_NAMES,
+            "mutations":agents_relay_rust2::workflow::contracts::WORKFLOW_MUTATION_NAMES,
+            "effects":agents_relay_rust2::workflow::contracts::WORKFLOW_EFFECT_NAMES,
+        })
+        .to_string()),
+        "workflowEffectFailureEvent" => Ok(json!(
+            agents_relay_rust2::workflow::contracts::workflow_effect_failure_event(
+                request["effect"].as_str().unwrap_or("")
+            )?
+        )
+        .to_string()),
+        "classifyWorkflowActions" => Ok(
+            agents_relay_rust2::workflow::contracts::classify_workflow_actions(
+                &request["actions"]
+                    .as_array()
+                    .ok_or("actions must be an array")?
+                    .iter()
+                    .map(|action| action.as_str().unwrap_or("").to_owned())
+                    .collect::<Vec<_>>(),
+            )?
+            .to_string(),
+        ),
+        "emptyWorkflowDecision" => Ok(
+            agents_relay_rust2::workflow::contracts::empty_workflow_decision(
+                request["reason"].as_str().unwrap_or(""),
+            )
+            .to_string(),
+        ),
         "relayStoreDirectory" => Ok(json!(relay_store_directory(
             request["env"].as_str(),
             request["home"].as_str()

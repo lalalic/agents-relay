@@ -175,7 +175,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/reviewer-thread.ts` | `rust/src/reviewer_thread.rs` | PENDING | — |
 | `src/route-outcome-recording.ts` | `rust/src/route_outcome_recording.rs` | PENDING | — |
 | `src/router-evals.ts` | `rust/src/router_evals.rs` | PENDING | — |
-| `src/router-rules.ts` | `rust/src/router_rules.rs` | PENDING | — |
+| `src/router-rules.ts` | `rust/src/router_rules.rs` | PASS | Direct hotfix: 2,178 Node/Rust choices, routing-instruction byte preservation, Unicode whitespace, headers, duplicate routes, append helpers (rust/tests/head_to_head_direct_hotfix.mjs) |
 | `src/routing-policy.ts` | `rust/src/routing_policy.rs` | PENDING | — |
 | `src/runtime-status-events.ts` | `rust/src/runtime_status_events.rs` | PENDING | — |
 | `src/runtime-status.ts` | `rust/src/runtime_status.rs` | PENDING | — |
@@ -219,7 +219,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/workflow/blocker-recovery.ts` | `rust/src/workflow/blocker_recovery.rs` | PENDING | — |
 | `src/workflow/blocker-resolution-v2.ts` | `rust/src/workflow/blocker_resolution_v2.rs` | PENDING | — |
 | `src/workflow/conditions.ts` | `rust/src/workflow/conditions.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; tri-state guards, duplicate/unknown errors, sorted discovery, verification and safe-retry predicate (`rust/tests/head_to_head.mjs`) |
-| `src/workflow/contracts.ts` | `rust/src/workflow/contracts.rs` | PENDING | — |
+| `src/workflow/contracts.ts` | `rust/src/workflow/contracts.rs` | PASS | Direct hotfix: 2,178 shared Node/Rust event/fact/action inventories, ordered effect policies, classification, errors and empty decisions (rust/tests/head_to_head_direct_hotfix.mjs) |
 | `src/workflow/definitions-v2.ts` | `rust/src/workflow/definitions_v2.rs` | PENDING | — |
 | `src/workflow/dependency-revision-v2.ts` | `rust/src/workflow/dependency_revision_v2.rs` | PENDING | — |
 | `src/workflow/dispatcher.ts` | `rust/src/workflow/dispatcher.rs` | PENDING | — |
@@ -232,7 +232,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/workflow/graph-v2.ts` | `rust/src/workflow/graph_v2.rs` | PENDING | — |
 | `src/workflow/job-reconcile-v2.ts` | `rust/src/workflow/job_reconcile_v2.rs` | PENDING | — |
 | `src/workflow/lifecycle.ts` | `rust/src/workflow/lifecycle.rs` | PENDING | — |
-| `src/workflow/mermaid.ts` | `rust/src/workflow/mermaid.rs` | PENDING | — |
+| `src/workflow/mermaid.ts` | `rust/src/workflow/mermaid.rs` | PASS | Direct hotfix: 924 Mermaid parser + 663 sync/async WorkflowEngine Node/Rust comparisons, real native callback/transition tests (rust/tests/head_to_head_mermaid.mjs; rust/tests/native_direct_hotfix.rs) |
 | `src/workflow/orchestrator-rescue.ts` | `rust/src/workflow/orchestrator_rescue.rs` | PENDING | — |
 | `src/workflow/planner-orchestration-v2.ts` | `rust/src/workflow/planner_orchestration_v2.rs` | PENDING | — |
 | `src/workflow/planner-trigger-v2.ts` | `rust/src/workflow/planner_trigger_v2.rs` | PENDING | — |
@@ -359,3 +359,15 @@ Current verified source modules: **28 / 227**; remaining: **199**. The parity CL
 - `node --test rust/tests/head_to_head_batch6.mjs`: 2 differential tests passed; 1 Unix socket test skipped due sandbox `EPERM`.
 - Focused Node regressions: artifact validation **1/1**; graph symbol inspection/source references **2/2**. The entire `test/dashboard.test.js` invocation was attempted: **90/108 passed**, with 18 HTTP listener tests blocked by sandbox `listen EPERM`; graph inspection tests passed.
 - `cargo test --offline --manifest-path rust/Cargo.toml`: **25/25** native tests pass (including Batch 6).
+
+### Direct Rust2 hotfix — router, canonical workflow contracts and Mermaid Engine (2026-11-16)
+
+- [x] `src/router-rules.ts` → `rust/src/router_rules.rs`: explicit route parsing and deduplication; verbatim instruction body (CRLF, blank lines and Unicode separators); appended advisory preferences.
+- [x] `src/workflow/contracts.ts` → `rust/src/workflow/contracts.rs`: all runtime event/fact/action inventories, effect policies, action classifications and decision factory.
+- [x] `src/workflow/mermaid.ts` → `rust/src/workflow/mermaid.rs`: executable diagram parser; duplicate/ambiguous transition rejection; callback binding validation; synchronous and asynchronous guards/actions; same error messages and transition decisions.
+- [x] `rust/tests/head_to_head_direct_hotfix.mjs`: **2,178** Node/Rust differential fixtures, including adversarial Unicode/line-terminator and negative/error cases.
+- [x] `rust/tests/head_to_head_mermaid.mjs`: **924** parser and **663** WorkflowEngine Node/Rust cases; no durable store or production execution used.
+- [x] `rust/tests/native_direct_hotfix.rs`: five Rust-native callback, error propagation, ordering and parser regression cases.
+- [x] Reviewed and corrected JavaScript vs Rust regex Unicode whitespace differences before marking PASS.
+
+The three module ports verify standalone executable mechanics; they do not establish that all CLI, Graph orchestration, Scheduler, Dashboard and live E2E features have reached production parity.
