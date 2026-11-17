@@ -151,7 +151,7 @@ limitOwnerResolution --> changes
 prepareRereview --> stale
 changes -->|on: head.changed| cancelChanges
 cancelChanges --> stale
-%% Only a Review-finding-driven Plan with settled revision Tasks opens re-review.
+%% Only a new committed Git head with settled work/planning opens re-review.
 reviewChangesReady["guard: reviewPlanReady"]
 reviewChangesSettled["guard: reviewWorkSettled"]
 reviewChangesInactive["guard: noActiveReviewTask"]

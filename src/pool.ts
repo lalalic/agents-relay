@@ -40,7 +40,7 @@ export function needsLifecycleReconciliation(job: Job, now = Date.now()): boolea
     const current = job.review?.taskId ? job.tasks.find(task => task.id === job.review?.taskId) : undefined;
     const review = decideReviewLifecycle(job.review?.outcome, 'reconcile', {
       reviewEnabled: true, jobActive: true, headAvailable: true,
-      reviewWorkSettled: reviewWorkSettled(job), reviewPlanReady: reviewPlanReady(job),
+      reviewWorkSettled: reviewWorkSettled(job), reviewPlanReady: reviewPlanReady(job, job.headSha),
       noActiveReviewTask: !reviewTasks.some(task => ['DRAFT','QUEUED','RUNNING'].includes(task.state)),
       noApprovedCurrentReview: !reviewTasks.some(task => task.state === 'SUCCEEDED' && job.review?.headSha === job.headSha && job.review?.outcome === 'approved'),
       currentReviewCancelled: current?.reviewHeadSha === job.headSha && current.state === 'CANCELLED',

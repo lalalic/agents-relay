@@ -8,7 +8,7 @@ import { completionGateSatisfied } from '../dist/task-transitions.js';
 
 function job(outcome = 'SUCCEEDED') {
   return {
-    id:'jel', repository:'lalalic/agents-relay', state:'ACTIVE', priority:'P2', reviewEnabled:true,
+    id:'jel', repository:'lalalic/agents-relay', state:'ACTIVE', priority:'P2', reviewEnabled:true, headSha:'sha1',
     tasks:[{ id:'work',kind:'work',agentName:'implementation',state:outcome,
       planningDecisionId:'plan-1',createdAt:'2026-11-10T10:00:00Z',dependencies:[] }],
     plans:[{ id:'plan-1',round:1,status:'SUCCEEDED',trigger:{source:'initial'},
@@ -17,7 +17,7 @@ function job(outcome = 'SUCCEEDED') {
 }
 function reviewFacts(j) {
   return {reviewEnabled:true,jobActive:true,reviewWorkSettled:reviewWorkSettled(j),
-    headAvailable:true,reviewPlanReady:reviewPlanReady(j),noActiveReviewTask:true,noApprovedCurrentReview:true};
+    headAvailable:true,reviewPlanReady:reviewPlanReady(j,j.headSha),noActiveReviewTask:true,noApprovedCurrentReview:true};
 }
 test('JEL starts Final Review directly after any terminal Task outcome, never automatic Plan 2', () => {
   for (const state of ['SUCCEEDED','FAILED','CANCELLED']) {
@@ -61,7 +61,9 @@ test('CHANGES_REQUIRED -> exactly one finding-bound Plan -> revision Task -> fre
   assert.equal(reviewWorkSettled(j),false);
   assert.equal(decideReviewLifecycle('changes_required','reconcile',reviewFacts(j)).target,'CHANGES_REQUIRED');
   j.tasks.at(-1).state='SUCCEEDED';
-  assert.equal(reviewPlanReady(j),true);
+  assert.equal(reviewPlanReady(j),false,'repair success without a new commit cannot re-review the same SHA');
+  j.headSha='sha2';
+  assert.equal(reviewPlanReady(j),true,'a changed committed SHA releases the re-review gate');
   const renewed=decideReviewLifecycle('changes_required','reconcile',reviewFacts(j));
   assert.equal(renewed.target,'PENDING');
   assert.deepEqual(renewed.actions.map(action=>action.id),['review.create']);
@@ -91,15 +93,43 @@ test('a stale changes-required review still provides the original findings to Pl
 
 test('a no-op review Plan cannot spin Final Review without a real fix', () => {
   const j=job();
+  j.headSha='SHA';
   j.review={outcome:'changes_required',taskId:'review1',headSha:'SHA',revisionDisposition:'needs-ownership'};
   j.tasks.push({id:'review1',kind:'work',agentName:'job-acceptance-reviewer',state:'SUCCEEDED'});
   j.plans.push({id:'plan-2',round:2,status:'SUCCEEDED',trigger:{source:'review',reviewTaskId:'review1'},
     objectiveStatus:'satisfied',generatedTaskIds:[]});
   assert.equal(reviewNeedsReplan(j),false,'the review finding was already assigned one planning round');
-  assert.equal(reviewPlanReady(j),false,'no-op plan does not satisfy finding-driven re-review gate');
+  assert.equal(reviewPlanReady(j),false,'same reviewed SHA cannot spin another Final Review');
   const decision=decideReviewLifecycle('changes_required','reconcile',reviewFacts(j));
   assert.equal(decision.target,'CHANGES_REQUIRED');
   assert.deepEqual(decision.actions.map(action=>action.id),[]);
+  j.headSha='new-SHA';
+  assert.equal(reviewPlanReady(j),true,'new immutable head, not a plan-created task, unlocks re-review');
+});
+
+test('Job 658: initial Plan repair plus empty review Plan re-reviews only on new committed SHA', () => {
+  const j=job();j.id='658';j.headSha='e2828b1';
+  j.tasks.push({id:'1945',kind:'work',agentName:'job-acceptance-reviewer',state:'SUCCEEDED'});
+  j.tasks.push({id:'1946',kind:'work',agentName:'implementation',state:'SUCCEEDED',planningDecisionId:'plan-1'});
+  j.plans[0].generatedTaskIds.push('1946');
+  j.plans.push({id:'plan-2',status:'SUCCEEDED',trigger:{source:'review',reviewTaskId:'1945'},
+    objectiveStatus:'satisfied',generatedTaskIds:[]});
+  j.review={outcome:'changes_required',headSha:'e2828b1',taskId:'1945',revisionDisposition:'needs-ownership'};
+  assert.equal(reviewWorkSettled(j),true);
+  assert.equal(reviewNeedsReplan(j),false);
+  assert.equal(reviewPlanReady(j),false,'uncommitted work cannot authorize a second review');
+  assert.equal(decideReviewLifecycle('changes_required','reconcile',reviewFacts(j)).target,'CHANGES_REQUIRED');
+  assert.equal(reviewPlanReady(j,null),false,'a missing source HEAD never qualifies');
+  j.headSha='d4e5f6a';
+  assert.equal(reviewPlanReady(j),true,'source HEAD change qualifies despite plan-2 generating no Tasks');
+  assert.deepEqual(decideReviewLifecycle('changes_required','reconcile',reviewFacts(j)).actions.map(a=>a.id),['review.create']);
+  j.review={...j.review,outcome:'stale'};
+  j.reviewRevisionRounds=[{reviewTaskId:'1945',headSha:'e2828b1',status:'changes_required'}];
+  assert.equal(reviewPlanReady(j),true,'the old finding stays in audit after SHA invalidation');
+  j.plans[1].status='PLANNING';
+  assert.equal(reviewPlanReady(j),false,'active Planner still blocks premature review');
+  j.plans[1].status='SUCCEEDED';j.tasks.at(-1).state='RUNNING';
+  assert.equal(reviewWorkSettled(j),false,'an active repair still blocks Review');
 });
 
 test('failed review-triggered Plan is retried only after verified Planner recovery', () => {
