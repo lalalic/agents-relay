@@ -8,16 +8,21 @@ use std::{
     io::{Read, Write},
     net::TcpListener,
     path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 fn temp() -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let unique = NEXT.fetch_add(1, Ordering::Relaxed);
     let id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path =
-        std::env::temp_dir().join(format!("rust2-events-native-{}-{id}", std::process::id()));
+    let path = std::env::temp_dir().join(format!(
+        "rust2-events-native-{}-{id}-{unique}",
+        std::process::id()
+    ));
     fs::create_dir_all(&path).unwrap();
     path
 }
