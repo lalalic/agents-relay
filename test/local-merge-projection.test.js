@@ -12,7 +12,11 @@ const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { encodi
 function fixture({ origin = 'seeded' } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'relay-local-delivery-'));
   const remote = join(root, 'remote.git'), repo = join(root, 'repo'), db = join(root, 'relay.sqlite');
-  execFileSync('git', ['init', '--bare', remote]); execFileSync('git', ['init', repo]);
+  execFileSync('git', ['init', '--bare', remote]);
+  // Bare repositories can default to master in CI even when the Job uses main.
+  // Set the remote HEAD explicitly so a subsequent clone checks out main.
+  git(remote, 'symbolic-ref', 'HEAD', 'refs/heads/main');
+  execFileSync('git', ['init', repo]);
   git(repo, 'config', 'user.name', 'Relay Tests'); git(repo, 'config', 'user.email', 'relay@example.test');
   git(repo, 'checkout', '-b', 'main'); writeFileSync(join(repo, 'base'), 'base'); git(repo, 'add', 'base'); git(repo, 'commit', '-m', 'base');
   if (origin !== 'missing') {
