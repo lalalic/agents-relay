@@ -357,6 +357,57 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "unifiedRelaySchemaScenario" => {
+            use rusqlite::Connection;
+            let db = Connection::open_in_memory().map_err(|error| error.to_string())?;
+            // node:sqlite enables FK constraints by default, unlike rusqlite.
+            db.execute_batch("PRAGMA foreign_keys=ON")
+                .map_err(|error| error.to_string())?;
+            let mut outcomes = Vec::new();
+            let count = request["migrateCount"].as_u64().unwrap_or(1).min(3);
+            for _ in 0..count {
+                outcomes.push(
+                    match agents_relay_rust2::unified_relay_schema::migrate_unified_relay_schema(
+                        &db,
+                    ) {
+                        Ok(()) => json!({"ok":true}),
+                        Err(error) => json!({"ok":false,"error":error}),
+                    },
+                );
+            }
+            for sql in request["statements"].as_array().into_iter().flatten() {
+                let result = db.execute_batch(sql.as_str().unwrap_or(""));
+                outcomes.push(match result {
+                    Ok(()) => json!({"ok":true}),
+                    Err(error) => json!({"ok":false,"error":error.to_string()}),
+                });
+            }
+            let mut stmt = db
+                .prepare("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name")
+                .map_err(|error| error.to_string())?;
+            let objects = stmt
+                .query_map([], |row| {
+                    Ok(
+                        json!({"type":row.get::<_,String>(0)?,"name":row.get::<_,String>(1)?,
+                "tbl_name":row.get::<_,String>(2)?,"sql":row.get::<_,Option<String>>(3)?}),
+                    )
+                })
+                .map_err(|error| error.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?;
+            let mut query = db
+                .prepare("SELECT key,value FROM migration_metadata ORDER BY key")
+                .map_err(|error| error.to_string())?;
+            let metadata = query
+                .query_map([], |row| {
+                    Ok(json!({"key":row.get::<_,String>(0)?,"value":row.get::<_,String>(1)?}))
+                })
+                .map_err(|error| error.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?;
+            Ok(json!({"outcomes":outcomes,"objects":objects,"metadata":metadata}).to_string())
+        }
+
         "normalizeLegacyTaskLifecycle" => Ok(
             agents_relay_rust2::legacy_blocked_task_migration::normalize_legacy_task_lifecycle(
                 &request["task"],

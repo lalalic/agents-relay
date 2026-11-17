@@ -87,3 +87,6 @@ pub mod unified_job_registry;
 pub mod legacy_blocked_task_migration;
 // Direct Node src/job-pr-number-migration.ts historical PR-number and Task-title migration.
 pub mod job_pr_number_migration;
+
+// Direct Node src/unified-relay-schema.ts authoritative SQLite DDL port.
+pub mod unified_relay_schema;

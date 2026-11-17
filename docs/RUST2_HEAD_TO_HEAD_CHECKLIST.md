@@ -205,7 +205,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/unblock.ts` | `rust/src/unblock.rs` | PENDING | — |
 | `src/unified-job-registry.ts` | `rust/src/unified_job_registry.rs` | PASS | Direct hotfix: 455 Node/Rust atomic SQLite registry/Job creation histories, 5 native immutable-repository and rollback tests (`rust/tests/head_to_head_unified_job_registry.mjs`, `rust/tests/native_unified_job_registry.rs`) |
 | `src/unified-pr-facts.ts` | `rust/src/unified_pr_facts.rs` | PASS | Direct hotfix: 364 in-memory SQLite Node/Rust state-monotonic PR observations and Job scope scenarios; 3 Rust-native tests (`rust/tests/head_to_head_unified_pr_facts.mjs`, `rust/tests/native_unified_pr_facts.rs`) |
-| `src/unified-relay-schema.ts` | `rust/src/unified_relay_schema.rs` | PENDING | — |
+| `src/unified-relay-schema.ts` | `rust/src/unified_relay_schema.rs` | PASS | Direct Node SQL template, including hostInvocationTablesSql; 258 in-memory SQLite schema/index/FK/constraint comparisons, 4 native tests (`rust/tests/head_to_head_unified_relay_schema.mjs`, `rust/tests/native_unified_relay_schema.rs`) |
 | `src/usage.ts` | `rust/src/usage.rs` | PENDING | — |
 | `src/webhelm-daemon-client.ts` | `rust/src/webhelm_daemon_client.rs` | PASS | Direct hotfix: 15 real AF_UNIX Node/Rust socket response/timeout/abort/large-UTF8 fixtures, 1 malformed frame rejection, native cancellation/framing regression (rust/tests/head_to_head_ipc_hotfix.mjs; rust/tests/native_ipc_hotfix.rs) |
 | `src/worker-failure-recovery.ts` | `rust/src/worker_failure_recovery.rs` | PENDING | — |
@@ -496,3 +496,11 @@ This is only the Job JEL graph projection; Dashboard HTTP routing, additional ta
 - [x] `rust/tests/head_to_head_legacy_migrations.mjs`: **2,401** pure Node/Rust Task lifecycle/PR/title fixtures plus **190** separate in-memory SQLite migration histories, comparing every durable snapshot and changed-row trigger (unchanged records must not be updated).
 - [x] `rust/tests/native_legacy_blocked_task_migration.rs` (**4**) and `rust/tests/native_job_pr_number_migration.rs` (**5**) verify worker recovery, interactive waits, immutable event history, legacy field cleanup, title fallback, and exact UTF-16 JSON wire.
 - [x] No production SQLite database, running Task, or external PR altered; isolated in-memory fixtures only.
+
+### Direct Rust2 hotfix — authoritative unified Relay SQLite schema (2026-11-16)
+
+- [x] `src/unified-relay-schema.ts` → `rust/src/unified_relay_schema.rs`: embed the exact original Node `db.exec` SQL template and expand the existing `hostInvocationTablesSql` literal from `src/host-invocation-store.ts` verbatim. No Node runtime dependency remains in the native schema creation path.
+- [x] `rust/tests/head_to_head_unified_relay_schema.mjs`: **258** in-memory SQLite scenarios with Node and Rust independently executing the source schema and then constraint operations; compares every `sqlite_master` table/index SQL definition, default migration metadata and failure outcomes including duplicate reinitialization.
+- [x] Node `DatabaseSync` defaults `PRAGMA foreign_keys=ON`; the differential adapter explicitly configures native `Connection` to the same default. Production DB connection configuration remains caller-owned.
+- [x] `rust/tests/native_unified_relay_schema.rs`: **4** native tests for Job/Task/PR/HostInvocation/Projection schemas, checks and foreign keys, uniqueness, and the existing second-boot metadata conflict semantics.
+- [x] All tests run on transient in-memory SQLite databases. No live database migration or daemon restart occurred.
