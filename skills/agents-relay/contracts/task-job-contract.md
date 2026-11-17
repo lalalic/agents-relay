@@ -8,7 +8,7 @@ Job objectives and Task inputs are **Markdown** and are durable execution contex
 
 Create, update, and read Job objectives and Task inputs only through the version-matched Relay CLI. Do not parse or edit PR bodies, comments, hidden markers, or private files to obtain or alter Relay state.
 
-Every Job has one immutable local repository identity: `repository` is the canonical Git root directory name and `projectRoot` is the validated absolute canonical Git root. Each Neo Project must have its own Git repository; there is no `job.projectPath` subdirectory. `githubRepo` is optional GitHub remote metadata used only for explicit external publishing effects. Never use a GitHub owner/repository string or a `local/...` alias as `repository`, and never infer project ownership from `graphStartContext.projectRoot`. Jobs for separate Git worktrees must bind to the canonical root, not a worktree. Local Git remains authoritative for final review and merge.
+Every Job has one immutable local repository identity: `repository` is the canonical Git root directory name and `projectRoot` is the validated absolute canonical Git root. Each Neo Project must have its own Git repository; there is no `job.projectPath` subdirectory. A Git remote is not part of Job identity: optional post-completion delivery inspects the existing local `origin` and verified `origin/main` without CLI GitHub/PR options. Never use a GitHub owner/repository string or a `local/...` alias as `repository`, and never infer project ownership from `graphStartContext.projectRoot`. Jobs for separate Git worktrees must bind to the canonical root, not a worktree. Local Git remains authoritative for final review and merge.
 
 For long-form content, use files instead of shell-quoted arguments:
 
@@ -216,7 +216,7 @@ review delivery itself to create commits or tags.
 
 This is a strong execution boundary:
 
-- tracked source/code work may use a managed PR worktree;
+- tracked source/code work may use a managed local Git worktree;
 - Neo Project runtime work under `runs/` uses the canonical project directory;
 - continuations, reviews, QA, render, and publication Tasks beneath a `runs/` owner reuse that same canonical runtime directory;
 - `runs/` remains ignored/private and must not be committed merely to move evidence between Tasks;

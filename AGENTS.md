@@ -11,7 +11,7 @@ architecture-sensitive work.
 
 - SQLite is the sole authoritative Job/Plan/Task/Review/Execution/Lease/Recovery state. A Job is identified by its immutable canonical local project root and local Git basename; events are wake-ups/observability, never standalone durable truth. Optional origin delivery happens only after COMPLETED and cannot affect lifecycle.
 - Reconcile desired durable state into ephemeral worker executions.
-- One top-level objective maps to one local Job (which may reference one external PR); child Tasks/Plans/Review state remain in local SQLite.
+- One top-level objective maps to one local Git-backed Job; child Tasks/Plans/Review state remain in local SQLite. New Jobs never create or bind external PRs; optional verified origin delivery happens only after local Job completion.
 - `job create` without `--initial-plan` is create-only. For a normal executable Job, prefer `job create --initial-plan`; this creates the first durable Planner round and hands subsequent execution to Relay. A zero-task Job created without `--initial-plan` remains idle.
 - Agents may submit child tasks; task lineage is explicit.
 - Any component that creates or manages jobs/tasks must follow `skills/agents-relay/contracts/task-job-contract.md`; task producers choose `storySize`, not raw timeout milliseconds.
