@@ -436,6 +436,170 @@ fn validate(
         }
     }
 }
+
+/// Match the Ajv compile-time errors that the original Node API raises
+/// before validating data. Unsupported dialect features remain PARTIAL.
+fn compile_schema(schema: &Value) -> Result<(), String> {
+    fn walk(
+        node: &Value,
+        root: &Value,
+        path: &str,
+        errors: &mut Vec<String>,
+    ) -> Result<(), String> {
+        let Some(obj) = node.as_object() else {
+            return Ok(());
+        };
+        if let Some(reference) = obj.get("$ref").and_then(Value::as_str) {
+            if schema_target(root, reference).is_none() {
+                return Err(format!("can't resolve reference {reference} from id #"));
+            }
+        }
+        const TYPES: &[&str] = &[
+            "array", "object", "string", "number", "integer", "boolean", "null",
+        ];
+        if let Some(ty) = obj.get("type") {
+            if let Some(t) = ty.as_str() {
+                if !TYPES.contains(&t) {
+                    errors.push(format!(
+                        "data{path}/type must be equal to one of the allowed values"
+                    ));
+                    errors.push(format!("data{path}/type must be array"));
+                    errors.push(format!("data{path}/type must match a schema in anyOf"));
+                }
+            } else if let Some(a) = ty.as_array() {
+                let bad = a
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, v)| !v.as_str().is_some_and(|t| TYPES.contains(&t)))
+                    .collect::<Vec<_>>();
+                let mut seen = std::collections::HashMap::new();
+                let dupe = a
+                    .iter()
+                    .enumerate()
+                    .find_map(|(i, v)| seen.insert(v.to_string(), i).map(|j| (j, i)));
+                if !bad.is_empty() || dupe.is_some() || a.is_empty() {
+                    errors.push(format!(
+                        "data{path}/type must be equal to one of the allowed values"
+                    ));
+                    if a.is_empty() {
+                        errors.push(format!("data{path}/type must NOT have fewer than 1 items"));
+                    }
+                    for (i, _) in bad {
+                        errors.push(format!(
+                            "data{path}/type/{i} must be equal to one of the allowed values"
+                        ));
+                    }
+                    if let Some((j, i)) = dupe {
+                        errors.push(format!("data{path}/type must NOT have duplicate items (items ## {j} and {i} are identical)"));
+                    }
+                    errors.push(format!("data{path}/type must match a schema in anyOf"));
+                }
+            } else {
+                errors.push(format!(
+                    "data{path}/type must be equal to one of the allowed values"
+                ));
+                errors.push(format!("data{path}/type must be array"));
+                errors.push(format!("data{path}/type must match a schema in anyOf"));
+            }
+        }
+        for k in [
+            "minLength",
+            "maxLength",
+            "minItems",
+            "maxItems",
+            "minProperties",
+            "maxProperties",
+        ] {
+            if let Some(v) = obj.get(k) {
+                if !v.is_u64() {
+                    let m = if v.as_f64().is_some_and(|f| f < 0.) {
+                        "must be >= 0"
+                    } else {
+                        "must be integer"
+                    };
+                    errors.push(format!("data{path}/{k} {m}"));
+                }
+            }
+        }
+        for k in ["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"] {
+            if obj.get(k).is_some_and(|v| !v.is_number()) {
+                errors.push(format!("data{path}/{k} must be number"));
+            }
+        }
+        if let Some(v) = obj.get("multipleOf") {
+            if !v.is_number() {
+                errors.push(format!("data{path}/multipleOf must be number"));
+            } else if v.as_f64().is_some_and(|f| f <= 0.) {
+                errors.push(format!("data{path}/multipleOf must be > 0"));
+            }
+        }
+        if let Some(v) = obj.get("required") {
+            if let Some(a) = v.as_array() {
+                for (i, val) in a.iter().enumerate() {
+                    if !val.is_string() {
+                        errors.push(format!("data{path}/required/{i} must be string"));
+                    }
+                }
+            } else {
+                errors.push(format!("data{path}/required must be array"));
+            }
+        }
+        if let Some(v) = obj.get("enum") {
+            if let Some(a) = v.as_array() {
+                if a.is_empty() {
+                    errors.push(format!("data{path}/enum must NOT have fewer than 1 items"));
+                }
+            } else {
+                errors.push(format!("data{path}/enum must be array"));
+            }
+        }
+        for key in ["properties", "patternProperties", "definitions", "$defs"] {
+            if let Some(m) = obj.get(key).and_then(Value::as_object) {
+                for (name, child) in m {
+                    let escaped = name.replace('~', "~0").replace('/', "~1");
+                    walk(child, root, &format!("{path}/{key}/{escaped}"), errors)?;
+                }
+            }
+        }
+        for key in [
+            "items",
+            "additionalItems",
+            "additionalProperties",
+            "contains",
+            "not",
+            "if",
+            "then",
+            "else",
+            "propertyNames",
+        ] {
+            if let Some(value) = obj.get(key) {
+                if let Some(a) = value.as_array() {
+                    for (i, child) in a.iter().enumerate() {
+                        walk(child, root, &format!("{path}/{key}/{i}"), errors)?;
+                    }
+                } else {
+                    walk(value, root, &format!("{path}/{key}"), errors)?;
+                }
+            }
+        }
+        for key in ["allOf", "anyOf", "oneOf"] {
+            if let Some(a) = obj.get(key).and_then(Value::as_array) {
+                for (i, child) in a.iter().enumerate() {
+                    walk(child, root, &format!("{path}/{key}/{i}"), errors)?;
+                }
+            }
+        }
+        Ok(())
+    }
+    let mut errors = vec![];
+    walk(schema, schema, "", &mut errors)?;
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("schema is invalid: {}", errors.join(", ")))
+    }
+}
+
 pub fn validate_artifact(
     artifact_path: &str,
     schema_path: &str,
@@ -453,6 +617,7 @@ pub fn validate_artifact(
     if schema.get("$async").is_some() {
         return Err("Async schemas are not supported".into());
     }
+    compile_schema(&schema)?;
     let mut errors = vec![];
     validate(&artifact, &schema, &schema, "", &mut errors, 0);
     Ok(ArtifactValidationResult {

@@ -224,3 +224,192 @@ mod tests {
         );
     }
 }
+
+/// The public runOutcomeReview effect: parse arguments, invoke reviewers in
+/// order, atomically stop on failures, write the optional JSON result before
+/// publishing stdout, and surface the exact process exit code to a CLI caller.
+///
+/// No model/provider executable is selected here: the caller injects an
+/// authorized reviewer-definition resolver and an owned subprocess runner.
+/// In particular, verification never invokes a Codex CLI.
+pub fn run_outcome_review_with_runner<Definition, Spawn, Publish>(
+    args: &[String],
+    cwd: &Path,
+    resolve_definition: Definition,
+    spawn: Spawn,
+    mut publish: Publish,
+) -> Result<i32, String>
+where
+    Definition: FnMut(&str, &Path) -> Result<String, String>,
+    Spawn: FnMut(&str, &str, &Path) -> Result<Value, String>,
+    Publish: FnMut(&str) -> Result<(), String>,
+{
+    let options = parse_outcome_review_args(args, cwd)?;
+    let result = evaluate_outcome_with_runner(&options, resolve_definition, spawn)?;
+    let text = serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?;
+    // Node writes an optional artifact first. If this write fails, it must
+    // not print a successful verdict or set an exit code.
+    if let Some(output) = options["output"].as_str() {
+        fs::write(output, format!("{text}\n")).map_err(|e| format!("{}: {e}", output))?;
+    }
+    publish(&format!("{text}\n"))?;
+    Ok(outcome_review_exit_code(&result))
+}
+
+#[cfg(test)]
+mod wave4_runtime_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn private_dir() -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "rust2-wave4-outcome-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&path).expect("private test directory");
+        path
+    }
+
+    #[test]
+    fn exported_run_writes_before_stdout_and_returns_terminal_exit_code() {
+        let dir = private_dir();
+        let mut order = Vec::new();
+        let mut published = Vec::new();
+        let args = [
+            "--prompt",
+            "inspect",
+            "--agents",
+            "security,security,architecture",
+            "--project-path",
+            ".",
+            "--output",
+            "review.json",
+        ]
+        .map(str::to_string);
+        let exit = run_outcome_review_with_runner(
+            &args,
+            &dir,
+            |reviewer, project| {
+                assert!(project.is_absolute());
+                order.push(reviewer.to_string());
+                Ok(format!("role {reviewer}"))
+            },
+            |reviewer, prompt, project| {
+                assert!(project.is_absolute());
+                assert!(prompt.contains(&format!("Reviewer: {reviewer}")));
+                assert!(prompt.contains("Review request:\ninspect"));
+                let verdict = if reviewer == "security" {
+                    "CHANGE_REQUIRED"
+                } else {
+                    "PASS"
+                };
+                Ok(json!({"status":0,"stdout":json!({"verdict":verdict,"findings":[],"evidence":[]}).to_string()}))
+            },
+            |text| {
+                let artifact = fs::read_to_string(dir.join("review.json"))
+                    .expect("file must precede stdout");
+                assert_eq!(artifact, text);
+                published.push(text.to_string());
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(exit, 10);
+        assert_eq!(order, ["reviewer", "security", "architecture"]);
+        assert_eq!(published.len(), 1);
+        let json: Value = serde_json::from_str(&published[0]).unwrap();
+        assert_eq!(json["reviews"].as_array().unwrap().len(), 3);
+        assert_eq!(json["verdict"], "CHANGE_REQUIRED");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn exported_run_stops_on_failure_before_filesystem_or_terminal_publication() {
+        let dir = private_dir();
+        let args = [
+            "--prompt",
+            "inspect",
+            "--project-path",
+            ".",
+            "--output",
+            "output.json",
+        ]
+        .map(str::to_string);
+        let mut emitted = false;
+        let result = run_outcome_review_with_runner(
+            &args,
+            &dir,
+            |_, _| Ok("role".into()),
+            |_, _, _| Ok(json!({"status":1,"stderr":"read-only reviewer failed"})),
+            |_| {
+                emitted = true;
+                Ok(())
+            },
+        );
+        assert_eq!(
+            result.unwrap_err(),
+            "reviewer execution failed: read-only reviewer failed"
+        );
+        assert!(!dir.join("output.json").exists());
+        assert!(!emitted);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn exported_run_failure_to_write_aborts_without_stdout() {
+        let dir = private_dir();
+        let args = [
+            "--prompt",
+            "inspect",
+            "--project-path",
+            ".",
+            "--output",
+            "missing/output.json",
+        ]
+        .map(str::to_string);
+        let mut emitted = false;
+        let result = run_outcome_review_with_runner(
+            &args,
+            &dir,
+            |_, _| Ok("role".into()),
+            |_, _, _| {
+                Ok(
+                    json!({"status":0,"stdout":"{\"verdict\":\"BLOCKED\",\"findings\":[],\"evidence\":[]}"}),
+                )
+            },
+            |_| {
+                emitted = true;
+                Ok(())
+            },
+        );
+        assert!(result.unwrap_err().contains("No such file or directory"));
+        assert!(!emitted);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn exported_run_blocked_is_exit_twenty_without_output_file() {
+        let dir = private_dir();
+        let args = ["--prompt", "inspect", "--project-path", "."].map(str::to_string);
+        let mut stdout = String::new();
+        let exit = run_outcome_review_with_runner(
+            &args,
+            &dir,
+            |_, _| Ok("role".into()),
+            |_, _, _| Ok(json!({"status":0,"stdout":"{\"verdict\":\"BLOCKED\",\"findings\":[],\"evidence\":[]}"})),
+            |text| {
+                stdout.push_str(text);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(exit, 20);
+        assert_eq!(
+            serde_json::from_str::<Value>(&stdout).unwrap()["verdict"],
+            "BLOCKED"
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+}

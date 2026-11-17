@@ -116,7 +116,6 @@ pub fn prepare_reviewer_thread_delivery(
             task["reviewHeadSha"]
                 .as_str()
                 .or_else(|| job["headSha"].as_str())
-                .filter(|s| !s.is_empty())
                 .unwrap_or("review")
         ))
     };
@@ -289,6 +288,53 @@ where
     Ok(recorded)
 }
 
+/// Node's legacy DurableStore branch for callers without mutateJob.
+/// This uses the caller's actual load/saveTask effects; it never fabricates a
+/// delivery receipt, and a failed save is propagated rather than acknowledged.
+/// Modern callers use the SQLite transaction in record_thread_delivery.
+pub fn record_thread_delivery_without_atomic_store<Load, Save>(
+    job_id: &str,
+    task_id: &str,
+    execution_id: &str,
+    worker_task: &Value,
+    mut load: Load,
+    mut save_task: Save,
+) -> Result<bool, String>
+where
+    Load: FnMut(&str) -> Result<Value, String>,
+    Save: FnMut(&Value) -> Result<(), String>,
+{
+    let delivery = &worker_task["chatgptThreadDelivery"];
+    if delivery.is_null()
+        || js_truthy(&delivery["deliveredAt"])
+        || delivery
+            .get("executionId")
+            .is_some_and(|v| v != execution_id)
+    {
+        return Ok(false);
+    }
+    let job = load(job_id)?;
+    let Some(current) = job["tasks"]
+        .as_array()
+        .and_then(|items| items.iter().find(|task| task["id"] == task_id))
+    else {
+        return Ok(false);
+    };
+    if current["executionId"] != execution_id
+        || current["state"] != "RUNNING"
+        || current["chatgptThreadDelivery"].is_null()
+        || current["chatgptThreadDelivery"]["requestId"] != delivery["requestId"]
+        || js_truthy(&current["chatgptThreadDelivery"]["deliveredAt"])
+    {
+        return Ok(false);
+    }
+    let mut task = current.clone();
+    task["chatgptThreadDelivery"]["executionId"] = json!(execution_id);
+    task["chatgptThreadDelivery"]["deliveredAt"] = json!(crate::local_merge_lock::iso8601_now());
+    save_task(&task)?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,5 +350,71 @@ mod tests {
             resolve_reviewer_thread_destination(&j, None).unwrap()["threadId"],
             "a"
         );
+    }
+}
+
+#[cfg(test)]
+mod wave4_legacy_store_tests {
+    use super::*;
+    #[test]
+    fn fallback_reads_and_saves_only_current_correlated_delivery() {
+        let job = json!({"tasks":[{"id":"11","executionId":"e1","state":"RUNNING",
+            "chatgptThreadDelivery":{"threadId":"t","requestId":"r1","deliveredAt":null}}]});
+        let worker = json!({"chatgptThreadDelivery":{"requestId":"r1"}});
+        let mut saved: Vec<Value> = vec![];
+        assert!(record_thread_delivery_without_atomic_store(
+            "j",
+            "11",
+            "e1",
+            &worker,
+            |_| Ok(job.clone()),
+            |task| {
+                saved.push(task.clone());
+                Ok(())
+            }
+        )
+        .unwrap());
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0]["chatgptThreadDelivery"]["executionId"], "e1");
+        assert!(saved[0]["chatgptThreadDelivery"]["deliveredAt"].is_string());
+        let mut reads = 0;
+        assert!(!record_thread_delivery_without_atomic_store(
+            "j",
+            "11",
+            "e0",
+            &json!({
+            "chatgptThreadDelivery":{"requestId":"r1","executionId":"e1"}}),
+            |_| {
+                reads += 1;
+                Ok(job.clone())
+            },
+            |_| panic!("must not save mismatched execution")
+        )
+        .unwrap());
+        assert_eq!(reads, 0);
+        assert!(!record_thread_delivery_without_atomic_store(
+            "j",
+            "11",
+            "e2",
+            &worker,
+            |_| Ok(job.clone()),
+            |_| panic!("must not save stale execution")
+        )
+        .unwrap());
+    }
+    #[test]
+    fn legacy_store_failed_save_does_not_report_delivery() {
+        let job = json!({"tasks":[{"id":"11","executionId":"e1","state":"RUNNING",
+            "chatgptThreadDelivery":{"requestId":"r1","deliveredAt":null}}]});
+        let err = record_thread_delivery_without_atomic_store(
+            "j",
+            "11",
+            "e1",
+            &json!({"chatgptThreadDelivery":{"requestId":"r1"}}),
+            |_| Ok(job.clone()),
+            |_| Err("disk write rejected".into()),
+        )
+        .unwrap_err();
+        assert_eq!(err, "disk write rejected");
     }
 }
