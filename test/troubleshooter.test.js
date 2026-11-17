@@ -68,7 +68,7 @@ function job(tasks) {
 test('troubleshooter recovery is P0, evidence-rich, local-capable, and idempotent per failed attempt', () => {
   const failed = failedReview();
   const [recovery] = pendingTroubleshooterTasks(job([failed]));
-  assert.equal(recovery.id, troubleshooterTaskId(failed));
+  assert.equal(recovery.id, troubleshooterTaskId(failed, job([failed]).repository));
   assert.equal(recovery.agentName, 'troubleshooter');
   assert.equal(recovery.parentTaskId, failed.id);
   assert.equal(recovery.priority, 'P0');
@@ -102,7 +102,7 @@ test('active recovery suppresses a new troubleshooter when the root attempt incr
     error: 'same deterministic delivery failure after retry',
     updatedAt: now(),
   };
-  assert.equal(troubleshooterTaskId(retriedFailure), recovery.id);
+  assert.equal(troubleshooterTaskId(retriedFailure, job([retriedFailure, recovery]).repository), recovery.id);
   assert.deepEqual(pendingTroubleshooterTasks(job([retriedFailure, recovery])), []);
 });
 

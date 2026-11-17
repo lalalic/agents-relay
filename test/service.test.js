@@ -321,15 +321,15 @@ test('job create help supports initial planner bootstrap and rejects task execut
   assert.match(help.stdout, /atomically[\s\S]*one Coordinator Task/);
   assert.match(help.stdout, /Without a Coordinator, create-only DRAFT Jobs/);
 
-  const noAutoMerge = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'owner/repo', '--objective', 'Test create validation', '--head', 'feat/demo', '--no-auto-merge'], { encoding: 'utf8' });
+  const noAutoMerge = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'repo', '--objective', 'Test create validation', '--head', 'feat/demo', '--no-auto-merge'], { encoding: 'utf8' });
   assert.notEqual(noAutoMerge.status, 0);
   assert.match(noAutoMerge.stderr, /Unsupported option --head/);
 
-  const invalid = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'owner/repo', '--id', '123', '--start'], { encoding: 'utf8' });
+  const invalid = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'repo', '--id', '123', '--start'], { encoding: 'utf8' });
   assert.notEqual(invalid.status, 0);
   assert.match(invalid.stderr, /does not accept task execution option --start/);
 
-  const taskFlag = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'owner/repo', '--id', '123', '--model', 'gpt-test'], { encoding: 'utf8' });
+  const taskFlag = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'repo', '--id', '123', '--model', 'gpt-test'], { encoding: 'utf8' });
   assert.notEqual(taskFlag.status, 0);
   assert.match(taskFlag.stderr, /does not accept task execution option --model/);
 });

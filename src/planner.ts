@@ -243,8 +243,8 @@ export function parsePlannerResult(value: unknown): PlannerResult {
     if (!repository || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(repository) || repository.includes('..')) throw new Error(`Planner unblocks[${index}].repository must be a local Git root identity`);
     if (!jobId) throw new Error(`Planner unblocks[${index}].jobId is required`);
     if (!taskId) throw new Error(`Planner unblocks[${index}].taskId is required`);
-    const prNumber = unblock.prNumber;
-    if (!Number.isInteger(prNumber) || Number(prNumber) <= 0) throw new Error(`Planner unblocks[${index}].prNumber must be a positive integer`);
+    const prNumber = unblock.prNumber ?? 0; // Historical PR metadata is optional for local Git unblock relations.
+    if (!Number.isInteger(prNumber) || Number(prNumber) < 0) throw new Error(`Planner unblocks[${index}].prNumber must be a non-negative integer`);
     const resolutionMode = unblock.resolutionMode === undefined ? undefined : String(unblock.resolutionMode);
     if (resolutionMode !== undefined && resolutionMode !== 'merge' && resolutionMode !== 'verified') throw new Error(`Planner unblocks[${index}].resolutionMode must be merge or verified`);
     const key = `${repository}#${prNumber}:${jobId}:${taskId}`;

@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import { allocateEntityId } from '../dist/job-task-id-sequence.js';
+import { localGitProject } from './local-git-project.js';
 import { ensureManagedGitHubJob } from '../dist/cli-job-create.js';
 import { SQLiteRelayStore } from '../dist/relay-store.js';
 // Offline migration fixture paths only; live Relay has no per-PR database mode.
@@ -17,20 +18,20 @@ test('Job and Task IDs each use a global increasing sequence and remain idempote
   const root=await mkdtemp(join(tmpdir(),'relay-ids-'));
   const dir=join(root,'stores');
   try {
-    const jobs=await Promise.all(Array.from({length:16},()=>Promise.resolve().then(()=>allocateEntityId(dir,'lalalic/neo','job'))));
+    const jobs=await Promise.all(Array.from({length:16},()=>Promise.resolve().then(()=>allocateEntityId(dir,'neo','job'))));
     assert.equal(new Set(jobs).size,16);
     assert.equal(jobs[0],'1');
     assert.equal(jobs[15],'16');
-    assert.equal(allocateEntityId(dir,'lalalic/neo','task'),'1');
-    assert.equal(allocateEntityId(dir,'other/repo','task'),'2');
-    const neoTask=allocateEntityId(dir,'lalalic/neo','task','same-key');
-    const otherTask=allocateEntityId(dir,'other/repo','task','same-key');
+    assert.equal(allocateEntityId(dir,'neo','task'),'1');
+    assert.equal(allocateEntityId(dir,'repo','task'),'2');
+    const neoTask=allocateEntityId(dir,'neo','task','same-key');
+    const otherTask=allocateEntityId(dir,'repo','task','same-key');
     assert.notEqual(neoTask,otherTask);
-    assert.equal(allocateEntityId(dir,'lalalic/agents-relay','job'),'17');
-    const a=allocateEntityId(dir,'lalalic/neo','job','batch-123');
-    assert.equal(a,allocateEntityId(dir,'lalalic/neo','job','batch-123'));
-    assert.equal(allocateEntityId(dir,'lalalic/neo','job'),'19');
-    assert.equal(allocateEntityId(dir,'lalalic/neo','job',undefined,new Set(['20'])), '21');
+    assert.equal(allocateEntityId(dir,'agents-relay','job'),'17');
+    const a=allocateEntityId(dir,'neo','job','batch-123');
+    assert.equal(a,allocateEntityId(dir,'neo','job','batch-123'));
+    assert.equal(allocateEntityId(dir,'neo','job'),'19');
+    assert.equal(allocateEntityId(dir,'neo','job',undefined,new Set(['20'])), '21');
   } finally { await rm(root,{recursive:true,force:true}); }
 });
 
@@ -39,7 +40,7 @@ test('numeric Job IDs are globally unique across repositories, reserve historic 
   const dir=join(root,'stores');
   try {
     assert.equal(allocateEntityId(dir,'first/repo','job','key'), '1');
-    assert.equal(allocateEntityId(dir,'other/repo','job','key'), '2');
+    assert.equal(allocateEntityId(dir,'repo','job','key'), '2');
     assert.equal(allocateEntityId(dir,'first/repo','job','key'), '1');
     assert.equal(allocateEntityId(dir,'third/repo','job',undefined,new Set(['3','4'])), '5');
     assert.equal(allocateEntityId(dir,'first/repo','job'), '6');
@@ -51,14 +52,15 @@ test('job bootstrap can omit id and retry same submission key', async () => {
   const dir=join(root,'stores');
   try {
     const client={request:async()=>{throw new Error('no GitHub')},graphql:async()=>{throw new Error('no GitHub')}};
-    const options={title:'Test Vlog',objective:'Create a private video',storeDirectory:dir,idempotencyKey:'vlog-submission-123'};
-    const first=await ensureManagedGitHubJob(client,'lalalic/neo',new Set(),options);
-    const second=await ensureManagedGitHubJob(client,'lalalic/neo',new Set(),options);
+    const projectRoot=localGitProject(root,'neo');
+    const options={title:'Test Vlog',objective:'Create a private video',projectRoot,storeDirectory:dir,idempotencyKey:'vlog-submission-123'};
+    const first=await ensureManagedGitHubJob(client,'neo',new Set(),options);
+    const second=await ensureManagedGitHubJob(client,'neo',new Set(),options);
     assert.equal(first.job.id,'1');
     assert.equal(first.job.id,second.job.id);
     assert.equal(Object.hasOwn(first.job, 'projectPath'), false);
-    await assert.rejects(ensureManagedGitHubJob(client,'lalalic/neo',new Set(),{...options,objective:'Different objective'}),/idempotency key reused/);
-    const third=await ensureManagedGitHubJob(client,'lalalic/neo',new Set(),{...options,idempotencyKey:'vlog-submission-124'});
+    await assert.rejects(ensureManagedGitHubJob(client,'neo',new Set(),{...options,objective:'Different objective'}),/idempotency key reused/);
+    const third=await ensureManagedGitHubJob(client,'neo',new Set(),{...options,idempotencyKey:'vlog-submission-124'});
     assert.equal(third.job.id,'2');
   } finally { await rm(root,{recursive:true,force:true}); }
 });
@@ -72,14 +74,14 @@ test('planner Task aliases resolve to durable repository IDs without losing DAG 
       {title: 'Implement and verify durable task outputs', id:'story',input:'produce story',output:{kind:'task_pr'},dependencies:[]},
       {title: 'Implement and verify durable task outputs', id:'direction',input:'direct',output:{kind:'task_pr'},parentTaskId:'story',dependencies:['story','external-task'],dependencyValidity:{story:'rerun','external-task':'revalidate'}},
     ]};
-    const result=assignPlannerTaskIds(raw,'lalalic/neo','episode-1','plan-1',dir);
+    const result=assignPlannerTaskIds(raw,'neo','episode-1','plan-1',dir);
     const [story,direction]=result.next_tasks;
     assert.equal(story.id,'1');
     assert.equal(direction.id,'2');
     assert.equal(direction.parentTaskId,story.id);
     assert.deepEqual(direction.dependencies,[story.id,'external-task']);
     assert.deepEqual(direction.dependencyValidity,{[story.id]:'rerun','external-task':'revalidate'});
-    assert.deepEqual(assignPlannerTaskIds(raw,'lalalic/neo','episode-1','plan-1',dir),result);
+    assert.deepEqual(assignPlannerTaskIds(raw,'neo','episode-1','plan-1',dir),result);
     assert.equal(raw.next_tasks[0].id,'story');
   } finally { await rm(root,{recursive:true,force:true}); }
 });
@@ -90,7 +92,7 @@ test('daemon allocates Task IDs, returns the created ID, and does not duplicate 
   const root=await mkdtemp(join(tmpdir(),'relay-daemon-task-ids-'));
   const dir=join(root,'stores');
   try {
-    const job={id:'episode-1', repository:'lalalic/neo',prNumber:0, title:'Vlog Episode', objective:'Private content', state:'ACTIVE', tasks:[],plans:[],createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+    const job={id:'episode-1', repository:'neo',prNumber:0, title:'Vlog Episode', objective:'Private content', state:'ACTIVE', tasks:[],plans:[],createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
     const store=new InMemoryStore(job);
     let wakes=0;
     const actions=createDashboardActions({
@@ -108,7 +110,7 @@ test('daemon allocates Task IDs, returns the created ID, and does not duplicate 
     assert.equal(repeated.tasks.length,1);
     assert.equal(wakes,1);
     await assert.rejects(actions.workspaceTaskCreate(job.id,{...structuredClone(task),input:'Different Task'},'batch-123'),/different definition/);
-    await assert.rejects(actions.workspaceTaskCreate(job.id,{...structuredClone(task),id:'99'}),/Reserved auto-generated Task ID/);
+    await assert.rejects(actions.workspaceTaskCreate(job.id,{...structuredClone(task),id:'99'}),/Task IDs are allocated by Relay and cannot be supplied/);
     const second=await actions.workspaceTaskCreate(job.id,structuredClone(task),'batch-124');
     assert.equal(second.createdTaskId,'2');
     assert.equal(second.tasks.length,2);
@@ -120,11 +122,12 @@ test('new Job creation refuses nonnumeric explicitly supplied IDs', async () => 
   const dir=join(root,'stores');
   try {
     const client={request:async()=>{throw new Error('unexpected GitHub')},graphql:async()=>{throw new Error('unexpected GitHub')}};
-    await assert.rejects(ensureManagedGitHubJob(client,'owner/repo',new Set(),{id:'legacy-slug',objective:'invalid',storeDirectory:dir}),/positive decimal integer/);
-    const created=await ensureManagedGitHubJob(client,'owner/repo',new Set(),{objective:'valid',storeDirectory:dir});
+    const projectRoot=localGitProject(root,'repo');
+    await assert.rejects(ensureManagedGitHubJob(client,'repo',new Set(),{id:'legacy-slug',objective:'invalid',projectRoot,storeDirectory:dir}),/positive decimal integer/);
+    const created=await ensureManagedGitHubJob(client,'repo',new Set(),{objective:'valid',projectRoot,storeDirectory:dir});
     assert.equal(created.job.id,'1');
-    assert.equal((await ensureManagedGitHubJob(client,'owner/repo',new Set(),{id:created.job.id,storeDirectory:dir})).job.id,'1');
-    assert.equal(allocateEntityId(dir,'other/repo','job'),'2');
+    assert.equal((await ensureManagedGitHubJob(client,'repo',new Set(),{id:created.job.id,projectRoot,storeDirectory:dir})).job.id,'1');
+    assert.equal(allocateEntityId(dir,'repo','job'),'2');
   } finally {await rm(root,{recursive:true,force:true});}
 });
 
@@ -138,7 +141,7 @@ test('one-time offline migration rewrites Job snapshots and file identities, pre
     const a=new SQLiteRelayStore(relayStorePath(dir,'owner/repo',7));
     await a.saveJob(job('old-repo-seven',7,'owner/repo'));a.close();
     const b=new SQLiteRelayStore(relayJobStorePath(dir,'old-local-job'));
-    await b.saveJob(job('old-local-job',0,'other/repo'));b.close();
+    await b.saveJob(job('old-local-job',0,'repo'));b.close();
     const legacySequences = new DatabaseSync(join(dir, 'entity-id-sequences.sqlite'));
     legacySequences.exec('CREATE TABLE sequences (repository TEXT NOT NULL,kind TEXT NOT NULL,value INTEGER NOT NULL,PRIMARY KEY(repository,kind)); CREATE TABLE idempotency (repository TEXT NOT NULL,kind TEXT NOT NULL,request_key TEXT NOT NULL,entity_id TEXT NOT NULL,PRIMARY KEY(repository,kind,request_key))');
     legacySequences.prepare('INSERT INTO sequences VALUES (?,?,?)').run('*','task',1);

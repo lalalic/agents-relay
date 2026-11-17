@@ -56,6 +56,8 @@ function intentFingerprint(input: Pick<BlockerRecoveryInput, 'targetRepository' 
 }
 
 function validateInput(input: BlockerRecoveryInput): void {
+  // A removed nested-Job path must never be silently accepted from untyped callers.
+  if (Object.hasOwn(input, 'projectPath')) throw new Error('Blocker recovery projectPath is removed; use targetProjectRoot');
   const requestId = input.requestId.trim();
   const title = input.title.trim();
   const objective = input.objective.trim();

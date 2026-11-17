@@ -1,4 +1,5 @@
 import test from './test-runtime.js';
+import { localGitProject } from './local-git-project.js';
 import assert from 'node:assert/strict';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -272,69 +273,6 @@ class ManagedGitHubClient {
     throw new Error('Unhandled fake GitHub request: ' + method + ' ' + path);
   }
 }
-
-test('managed no-GitHub Job creation is GitHub-independent and idempotent by immutable jobId', async () => {
-  const { ensureManagedGitHubJob } = await import('../dist/cli.js');
-  const root = await mkdtemp(join(tmpdir(), 'relay-local-job-create-'));
-  const directory = join(root, 'stores');
-  try {
-    let apiCalls=0;
-    const client={request:async()=>{apiCalls++;throw Error('GitHub REST forbidden');},
-      graphql:async()=>{apiCalls++;throw Error('GitHub GraphQL forbidden');}};
-    const options={idempotencyKey:'managed',title:'Managed work',head:'feat/managed',base:'main',
-      body:'body', reviewerThreadId:'reviewer-thread',creatorThreadId:'creator-thread',
-      storeDirectory:directory,noGitHub:true};
-    const first=await ensureManagedGitHubJob(client,'owner/repo',new Set(),options);
-    const second=await ensureManagedGitHubJob(client,'owner/repo',new Set(),options);
-    assert.equal(first.pr.number,0);
-    assert.equal(first.job.prNumber,0);
-    assert.equal(first.job.objective,'body');
-    assert.equal(second.job.id,first.job.id);
-    assert.equal(first.job.autoMerge,true);
-    assert.equal(first.job.reviewerThreadId,'reviewer-thread');
-    assert.equal(first.job.creatorThreadId,'creator-thread');
-    assert.equal(apiCalls,0);
-    const sqlite=new SQLiteRelayStore(relayUnifiedStorePath(directory), first.job.id);
-    assert.equal((await sqlite.loadJob(first.job.id)).title,'Managed work');
-    assert.equal((await sqlite.listJobs()).length,1);
-    assert.equal(await sqlite.pendingProjectionCount(),0);
-    sqlite.close();
-    await assert.rejects(ensureManagedGitHubJob(client,'someone/other',new Set(),{...options,id:first.job.id}),
-      /different repository/);
-  } finally {await rm(root,{recursive:true,force:true});}
-});
-
-test('managed head Job bootstrap is GitHub-independent and derives local merge refs', async () => {
-  const { ensureManagedGitHubJob } = await import('../dist/cli.js');
-  const root = await mkdtemp(join(tmpdir(), 'relay-head-job-create-'));
-  const directory = join(root, 'stores');
-  try {
-    let apiCalls = 0;
-    const client = {
-      request: async () => { apiCalls++; throw new Error('GitHub REST forbidden'); },
-      graphql: async () => { apiCalls++; throw new Error('GitHub GraphQL forbidden'); },
-    };
-    const options = {
-      idempotencyKey: 'head-managed', title: 'Head managed work', objective: 'body',
-      head: 'feat/head-managed', base: 'main', body: 'body', storeDirectory: directory,
-    };
-    const first = await ensureManagedGitHubJob(client, 'owner/repo', new Set(['bot']), options);
-    const second = await ensureManagedGitHubJob(client, 'owner/repo', new Set(['bot']), options);
-    assert.equal(first.pr.number, 0);
-    assert.equal(first.job.prNumber, 0);
-    assert.equal(apiCalls, 0);
-    assert.deepEqual(first.job.localMerge, {
-      sourceRef: 'refs/heads/feat/head-managed', targetRef: 'refs/heads/main', status: 'pending',
-    });
-    assert.equal(second.job.id, first.job.id);
-    const sqlite = new SQLiteRelayStore(relayUnifiedStorePath(directory), first.job.id);
-    assert.equal((await sqlite.loadJob(first.job.id)).prNumber, 0);
-    sqlite.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
 test('dashboard keeps every unfinished job and only the latest ten completed jobs', () => {
   const overview = (id, state, completedAt) => ({ job: { ...job(id), state, prNumber: Number(id.replace('job-', '')) }, githubState: completedAt ? 'MERGED' : 'OPEN', draft: id === 'job-99', mergedAt: completedAt, closedAt: null });
   const unfinished = [overview('job-1', 'OPEN', null), overview('job-2', 'FAILED', null)];
@@ -364,30 +302,6 @@ test('dashboard terminal history uses latest durable activity for discovery orde
   items.push(overview('job-44', '2026-02-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'));
   assert.deepEqual(dashboardManagedJobs(items).slice(0, 1).map(item => item.job.id), ['job-44']);
 });
-
-test('legacy PR-bound Job remains readable entirely offline with zero GitHub reads', async () => {
-  const { ensureManagedGitHubJob } = await import('../dist/cli.js');
-  const root = await mkdtemp(join(tmpdir(), 'relay-offline-legacy-pr-'));
-  const directory = join(root, 'stores');
-  try {
-    const client = {
-      request: async () => { throw new Error('GitHub disconnected'); },
-      graphql: async () => { throw new Error('GitHub disconnected'); },
-    };
-    const result = await ensureManagedGitHubJob(client, 'owner/repo', new Set(), {
-      idempotencyKey: 'legacy-pr', prNumber: 6, storeDirectory: directory,
-    });
-    assert.equal(result.pr.number, 6);
-    assert.match(result.job.id, /^[1-9][0-9]*$/);
-    const sqlite = new SQLiteRelayStore(relayUnifiedStorePath(directory), result.job.id);
-    assert.equal((await sqlite.loadJob(result.job.id)).state, 'DRAFT');
-    assert.equal(await sqlite.pendingProjectionCount(), 0);
-    sqlite.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
 test('saveJob migrates a legacy Job comment into the PR body without touching Task comments', async () => {
   const { renderJobComment } = await import('../dist/markers.js');
   const legacyJob = { ...job('legacy-body'), objective: '# Goal\n\nKeep this objective once.' };
@@ -446,31 +360,6 @@ test('job update validation rejects duplicate markers instead of repairing them'
   await assert.rejects(() => store.validateJobBinding('repair'), /JOB_MARKER_DUPLICATED/);
   assert.equal((client.comments.get(6) ?? []).filter(item => parseJob(item.body)?.id === 'repair').length, 2);
 });
-
-test('managed Task creation is gated on the local SQLite Job, never PR markers', async () => {
-  const { ensureManagedGitHubJob } = await import('../dist/cli.js');
-  const root = await mkdtemp(join(tmpdir(), 'relay-task-gate-'));
-  const directory = join(root, 'stores');
-  try {
-    const client = {
-      request: async () => { throw new Error('GitHub disconnected'); },
-      graphql: async () => { throw new Error('GitHub disconnected'); },
-    };
-    const { store, relay } = openLocalManagedStore('owner/repo', 6, { directory, client, jobId: '1' });
-    await assert.rejects(store.appendTask(task('1', 'child')), /Local authoritative Job 1 not found/);
-    const created = await ensureManagedGitHubJob(client, 'owner/repo', new Set(), {
-      idempotencyKey: 'gated', prNumber: 6, storeDirectory: directory,
-    });
-    await store.appendTask(task(created.job.id, 'child'));
-    const durable = await store.load(created.job.id);
-    assert.deepEqual(durable.tasks.map(item => item.id), ['child']);
-    assert.equal(await relay.pendingProjectionCount(), 0);
-    relay.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
 test('agent registrations persist through trusted stores and ignore forged markers', async () => {
   const agent = { id:'researcher', name:'Researcher', responsibility:'public research', role:'researcher', capabilities:['research'], boundaries:['no credentials'], endpoint:{kind:'adapter',target:'codex'}, runtime:{adapter:'codex'}, availability:'available', routing:{trustDomains:['public']}, evidence:{evaluations:[],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:null}, registeredAt:now(), updatedAt:now() };
   const comments = [githubComment(marker(JOB_MARKER, job('job-a'))), githubComment(marker(AGENT_MARKER, agent)), githubComment(marker(AGENT_MARKER, {...agent, id:'forged'}), 'attacker', 1001)];
@@ -545,31 +434,6 @@ test('saveTask collapses duplicate durable markers for one job and task id', asy
   assert.equal((client.comments.get(6) ?? []).filter(item => parseTask(item.body)?.id === 'child').length, 1);
   assert.equal((await store.load('dedupe')).tasks[0].state, 'RUNNING');
 });
-
-test('managed Job creation never bootstraps a GitHub branch and retains local merge refs', async () => {
-  const { ensureManagedGitHubJob } = await import('../dist/cli.js');
-  const root=await mkdtemp(join(tmpdir(),'relay-local-merge-source-'));
-  const directory=join(root,'stores');
-  try {
-    let apiCalls=0;
-    const client={
-      request:async()=>{apiCalls++;throw Error('GitHub API forbidden');},
-      graphql:async()=>{apiCalls++;throw Error('GitHub API forbidden');},
-    };
-    const result=await ensureManagedGitHubJob(client,'owner/repo',new Set(),{
-      idempotencyKey:'empty-job',title:'Local source job',head:'feat/empty',base:'main',
-      localMergeSource:'refs/heads/feature',localMergeTarget:'refs/heads/main',
-      body:'body',storeDirectory:directory,noGitHub:true,
-    });
-    assert.equal(result.pr.number,0);
-    assert.equal(apiCalls,0);
-    assert.equal(result.job.headSha,undefined);
-    assert.deepEqual(result.job.localMerge,{
-      sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending',
-    });
-  } finally {await rm(root,{recursive:true,force:true});}
-});
-
 test('GitHubStore closes its backing pull request explicitly', async () => {
   let seenPath = null; let seenInit = null;
   const client = { request: async (path, init) => { seenPath = path; seenInit = init; return {}; } };
@@ -798,11 +662,12 @@ test('default managed store honors AGENTS_RELAY_STORE_DIR isolation', async () =
   };
   try {
     const { ensureManagedGitHubJob } = await import('../dist/cli.js');
-    const result = await ensureManagedGitHubJob(client, 'owner/repo', new Set(), {
-      idempotencyKey: 'fixture-isolation-regression', title: 'fixture isolation regression',
+    const projectRoot=localGitProject(root,'repo');
+    const result = await ensureManagedGitHubJob(client, 'repo', new Set(), {
+      projectRoot,idempotencyKey: 'fixture-isolation-regression', title: 'fixture isolation regression',
       objective: 'fixture isolation regression', head: 'feat/fixture-isolation', noGitHub: true,
     });
-    assert.equal(result.job.repository, 'owner/repo');
+    assert.equal(result.job.repository, 'repo');
     const { readdir } = await import('node:fs/promises');
     assert.ok((await readdir(root)).includes('relay.sqlite'));
   } finally {

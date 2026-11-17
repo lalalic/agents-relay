@@ -34,11 +34,15 @@ for(const [label,config,decisions] of [
  for(const [node,status] of decisions){
   try{
    await until(async()=>{
-    await f.reconciler.reconcile(f.id);
+    // Reconciler.watch and the external Script Review helper already own running
+    // transitions. Avoid repeated overlapping writes while a Review handoff
+    // mutates the same SQLite Job; only reconcile before the Task is running.
     const j=await f.load();const current=j.tasks.find(t=>t.dagNode?.nodeId===node);
     if(current?.state==='FAILED'||current?.state==='BLOCKED')
       throw Error('Review Task failed: '+JSON.stringify({id:current.id,adapter:current.adapter,error:current.error,failureReason:current.failureReason}));
-    return current?.state==='AWAITING_DECISION';
+    if(current?.state==='AWAITING_DECISION') return true;
+    if(!current || current.state==='QUEUED') await f.reconciler.reconcile(f.id);
+    return false;
    },'review '+node,20000);
   }catch(error){
    const j=await f.load();

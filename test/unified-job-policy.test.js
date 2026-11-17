@@ -1,11 +1,12 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
-import {join} from 'node:path';
+import {join,basename} from 'node:path';
 import {tmpdir} from 'node:os';
 import {ensureManagedGitHubJob} from '../dist/cli-job-create.js';
 import {createWorkspaceControl} from '../dist/relayd-control.js';
 import {deriveJobRuntimeStatus} from '../dist/runtime-status.js';
+import {localGitProject} from './local-git-project.js';
 
 const localJob=(more={})=>({id:'10',repository:'owner/demo',state:'ACTIVE',autoMerge:false,
   contentOnly:true,reviewEnabled:false,prNumber:0,createdAt:'2026-11-11T10:00:00Z',updatedAt:'2026-11-11T10:00:00Z',
@@ -14,8 +15,8 @@ const localJob=(more={})=>({id:'10',repository:'owner/demo',state:'ACTIVE',autoM
 test('plan-free Coordinator Job retains normal Review and Merge defaults',async()=>{
  const dir=await mkdtemp(join(process.env.AGENTS_RELAY_STORE_DIR??tmpdir(),'relay-coordinator-policy-'));
  try{
-  const {job}=await ensureManagedGitHubJob({},'owner/unified',new Set(),
-   {objective:'Plan-free Coordinator',storeDirectory:dir,noGitHub:true});
+  const {job}=await ensureManagedGitHubJob({},basename(dir),new Set(),
+   {objective:'Plan-free Coordinator',projectRoot:localGitProject(dir,basename(dir)),storeDirectory:dir,noGitHub:true});
   assert.equal(job.state,'DRAFT');
   assert.equal(job.executionMode,undefined);
   assert.equal(Object.hasOwn(job,'executionMode'),false);
@@ -29,8 +30,8 @@ test('plan-free Coordinator Job retains normal Review and Merge defaults',async(
 test('ordinary create-only Jobs retain independent review/merge defaults',async()=>{
  const dir=await mkdtemp(join(process.env.AGENTS_RELAY_STORE_DIR??tmpdir(),'relay-unified-defaults-'));
  try{
-  const {job}=await ensureManagedGitHubJob({},'owner/unified',new Set(),
-   {objective:'Plan-free but review required',storeDirectory:dir,noGitHub:true});
+  const {job}=await ensureManagedGitHubJob({},basename(dir),new Set(),
+   {objective:'Plan-free but review required',projectRoot:localGitProject(dir,basename(dir)),storeDirectory:dir,noGitHub:true});
   assert.equal(job.executionMode,undefined);
   assert.equal(job.autoMerge,true);
   assert.equal(job.reviewEnabled,true);
@@ -42,8 +43,8 @@ test('ordinary create-only Jobs retain independent review/merge defaults',async(
 test('review can be disabled while normal Merge stays enabled',async()=>{
  const dir=await mkdtemp(join(process.env.AGENTS_RELAY_STORE_DIR??tmpdir(),'relay-independent-review-'));
  try{
-  const {job}=await ensureManagedGitHubJob({},'owner/unified',new Set(),
-   {objective:'No Final Review, normal Merge',reviewEnabled:false,storeDirectory:dir,noGitHub:true});
+  const {job}=await ensureManagedGitHubJob({},basename(dir),new Set(),
+   {objective:'No Final Review, normal Merge',reviewEnabled:false,projectRoot:localGitProject(dir,basename(dir)),storeDirectory:dir,noGitHub:true});
   assert.equal(job.reviewEnabled,false);
   assert.equal(job.autoMerge,true);
   assert.equal(job.contentOnly,undefined);
@@ -53,8 +54,8 @@ test('review can be disabled while normal Merge stays enabled',async()=>{
 test('Merge can be disabled without disabling ordinary Final Review',async()=>{
  const dir=await mkdtemp(join(process.env.AGENTS_RELAY_STORE_DIR??tmpdir(),'relay-independent-merge-'));
  try{
-  const {job}=await ensureManagedGitHubJob({},'owner/unified',new Set(),
-   {objective:'Review but manual Merge',autoMerge:false,storeDirectory:dir,noGitHub:true});
+  const {job}=await ensureManagedGitHubJob({},basename(dir),new Set(),
+   {objective:'Review but manual Merge',autoMerge:false,projectRoot:localGitProject(dir,basename(dir)),storeDirectory:dir,noGitHub:true});
   assert.equal(job.reviewEnabled,true);
   assert.equal(job.autoMerge,false);
   assert.equal(job.contentOnly,undefined);

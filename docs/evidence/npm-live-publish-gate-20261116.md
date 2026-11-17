@@ -1,5 +1,13 @@
 # Neo Master npm-latest Relay live release gate (2026-11-16/17)
 
+## Gate-cleared update — 2026-11-16 23:17 EST
+
+**Publish gate is GREEN on audited local `main` candidate.** Full `npm run test:publish` passed **1,214/1,214**, 0 failed or skipped. Independent `test:verification:l1` passed 58/58; L2 passed 11 with 1 intentional skip; L3 passed 90 with 1 intentional skip. `npm pack --dry-run --json` includes CLI, daemon and Relay Skill. Evidence logs on Neo Master: `/tmp/relay-publish-gate-full-third-20261116.log`, `/tmp/relay-publish-gate-l1-20261116.log`, `...-l2-...`, `...-l3-...`.
+
+Cleanup removed retired Workspace recursive/GitHub PR-discovery test file and obsolete PR-only assertions, **not** the current Git/SQLite/review/retry gates. Modern tests now require standalone canonical Git roots and numeric Job/Task IDs. Replaced obsolete PR worktree cleanup cases with local Job dirty/unique-commit/active-lease protections. Fixed repository-scoped Task idempotency allocation and made Troubleshooter compare the same repository namespace; added strict blocker `projectPath` rejection; preserved historical SQLite compatibility fixtures; extracted `relay-job-merge.ts` without semantic changes; prevented the L3 Review test from overlapping its own SQLite writes with external helper transitions.
+
+**Deployment status remains separate from green source tests.** GitHub Actions OIDC publish and npm `latest` must be confirmed, then PM2 must be re-registered from the published package and Neo Project Run switched to the npx launcher. This update supersedes the historical 54-failure count below; it records the pre-fix baseline, not current failures.
+
 ## Intended deployment
 
 - Production Relay daemon is `npx --yes --package agents-relay@latest agents-relayd`; CLI is `npx --yes --package agents-relay@latest agents-relay`.

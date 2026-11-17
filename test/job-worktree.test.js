@@ -15,7 +15,7 @@ test('only code Tasks request managed Git worktrees', () => {
   assert.equal(jobRequiresManagedWorktree(base), false);
   assert.equal(jobRequiresManagedWorktree({ ...base, tasks: [{ output: { kind: 'file', path: 'runs/result.md' } }] }), false);
   assert.equal(jobRequiresManagedWorktree({ ...base, tasks: [{ output: { kind: 'task_pr' } }] }), true);
-  assert.equal(jobRequiresManagedWorktree({ ...base, prNumber: 7, tasks: [{ output: { kind: 'task_pr' } }] }), false);
+  assert.equal(jobRequiresManagedWorktree({ ...base, prNumber: 7, tasks: [{ output: { kind: 'task_pr' } }] }), true);
   assert.equal(jobRequiresManagedWorktree({ ...base, localMerge: { sourceRef: 'refs/heads/legacy', targetRef: 'refs/heads/main', status: 'pending' } }), true);
   assert.equal(jobRequiresManagedWorktree({ ...base, schedule: { cron: '* * * * *' } }), false);
 });
@@ -61,31 +61,6 @@ test('one stable worktree is reused by every execution ID', async t => {
   assert.equal(git(f.path,'rev-parse','HEAD'), f.head.sha);
 });
 
-test('dirty Job worktree survives retry and blocks cleanup', async t => {
-  const f = await fixture(t);
-  await prepareManagedExecutionWorktree(f.repo, f.job.repository, f.job.prNumber, f.head, 'first', f.root);
-  await writeFile(join(f.path, 'scratch.txt'), 'do not delete');
-  assert.equal(await prepareManagedExecutionWorktree(f.repo, f.job.repository, f.job.prNumber, f.head, 'retry', f.root), f.path);
-  assert.deepEqual(await cleanupCompletedJobWorktree(f.repo, f.job, f.root), { status:'blocked', reason:'Worktree has uncommitted or untracked changes' });
-  await unlink(join(f.path, 'scratch.txt'));
-  assert.deepEqual(await cleanupCompletedJobWorktree(f.repo, f.job, f.root), { status:'removed' });
-  assert.deepEqual(await cleanupCompletedJobWorktree(f.repo, f.job, f.root), { status:'absent' });
-});
-
-test('unique commits and active leases prevent deletion', async t => {
-  const f = await fixture(t);
-  await prepareManagedExecutionWorktree(f.repo, f.job.repository, f.job.prNumber, f.head, 'first', f.root);
-  f.job.tasks = [{ executionId: 'running', leaseOwner:'relay', state:'RUNNING' }];
-  assert.equal((await cleanupCompletedJobWorktree(f.repo, f.job, f.root)).status, 'blocked');
-  f.job.tasks=[];
-  git(f.path, 'config', 'user.name', 'Relay Test');
-  git(f.path, 'config', 'user.email', 'relay-test@example.com');
-  await writeFile(join(f.path,'file.txt'),'second\n');
-  git(f.path,'add','file.txt');
-  git(f.path,'commit','-m','unpublished local work');
-  assert.equal((await cleanupCompletedJobWorktree(f.repo, f.job, f.root)).reason, 'Worktree contains unique or stale commits');
-});
-
 test('stable Worktree advances only through clean fast forward', async t => {
   const f=await fixture(t);
   await prepareManagedExecutionWorktree(f.repo,f.job.repository,f.job.prNumber,f.head,'first',f.root);
@@ -126,7 +101,7 @@ test('local Job gets one stable source-ref worktree and cleanup removes it', asy
   const f = await fixture(t);
   git(f.repo, 'branch', 'local-job-source', f.head.sha);
   const job = {
-    id:'local-job-1', state:'ACTIVE', repository:'example/isolated', prNumber:0,
+    id:'281', projectRoot:await realpath(f.repo), state:'ACTIVE', repository:'repository', prNumber:0,
     tasks:[], plans:[], localMerge:{sourceRef:'refs/heads/local-job-source',targetRef:'refs/heads/main',status:'pending'}
   };
   const expected = managedLocalJobWorktreePath(job.repository, job.id, f.root);
@@ -149,7 +124,7 @@ test('local Job reuses canonical checkout when it already owns the source branch
   git(f.repo,'checkout','-b','repair-in-place');
   await writeFile(join(f.repo,'scratch.txt'),'preserve me\n');
   const job={
-    id:'repair-in-place-job',state:'ACTIVE',repository:'example/isolated',prNumber:0,
+    id:'282',projectRoot:await realpath(f.repo),state:'ACTIVE',repository:'repository',prNumber:0,
     tasks:[],plans:[],localMerge:{sourceRef:'refs/heads/repair-in-place',targetRef:'refs/heads/main',status:'pending'}
   };
   const checkout=await prepareLocalJobExecutionWorktree(f.repo,job,f.root);
@@ -163,7 +138,7 @@ test('local Job reuses canonical checkout when it already owns the source branch
 
 test('ordinary SQLite Job creates and reuses isolated source branch without touching main', async t => {
   const f=await fixture(t);
-  const job={id:'plain-local-job',repository:f.job.repository,prNumber:0,state:'ACTIVE',tasks:[],plans:[]};
+  const job={id:'283',projectRoot:await realpath(f.repo),repository:'repository',prNumber:0,state:'ACTIVE',tasks:[],plans:[]};
   const main=git(f.repo,'rev-parse','main');
   const sourceRef=await ensureLocalJobSourceBranch(f.repo,job);
   assert.match(sourceRef,/^refs\/heads\/relay\/job-/);
@@ -185,4 +160,30 @@ test('independent-repository Job worktree resolves to its canonical Git root onl
   const checkout=await prepareLocalJobExecutionWorktree(f.repo,job,f.root);
   assert.equal(await realpath(checkout),await realpath(managedLocalJobWorktreePath(job.repository,job.id,f.root)));
   assert.equal(await realpath(git(checkout,'rev-parse','--show-toplevel')),await realpath(checkout));
+});
+
+// The same negative cleanup properties on the current independent local Git Job model.
+test('dirty local Job checkout and active Task lease block completed cleanup',async t=>{
+ const f=await fixture(t);git(f.repo,'branch','local-safe-cleanup');
+ const job={id:'291',projectRoot:await realpath(f.repo),repository:'repository',prNumber:0,state:'ACTIVE',tasks:[],plans:[],
+  localMerge:{sourceRef:'refs/heads/local-safe-cleanup',targetRef:'refs/heads/main',status:'pending'}};
+ const checkout=await prepareLocalJobExecutionWorktree(f.repo,job,f.root);
+ job.state='COMPLETED';job.localMerge={...job.localMerge,sourceSha:f.head.sha,status:'succeeded'};
+ await writeFile(join(checkout,'scratch.txt'),'do not delete');
+ assert.deepEqual(await cleanupCompletedJobWorktree(f.repo,job,f.root),{status:'blocked',reason:'Worktree has uncommitted or untracked changes'});
+ await unlink(join(checkout,'scratch.txt'));
+ job.tasks=[{executionId:'active',leaseOwner:'relay',state:'RUNNING'}];
+ assert.equal((await cleanupCompletedJobWorktree(f.repo,job,f.root)).reason,'Task still owns an execution or lease');
+ job.tasks=[];
+ assert.deepEqual(await cleanupCompletedJobWorktree(f.repo,job,f.root),{status:'removed'});
+ assert.deepEqual(await cleanupCompletedJobWorktree(f.repo,job,f.root),{status:'absent'});
+});
+test('unique unmerged commit prevents local Job worktree cleanup',async t=>{
+ const f=await fixture(t);git(f.repo,'branch','local-unique-cleanup');
+ const job={id:'292',projectRoot:await realpath(f.repo),repository:'repository',prNumber:0,state:'COMPLETED',tasks:[],plans:[],
+  localMerge:{sourceRef:'refs/heads/local-unique-cleanup',targetRef:'refs/heads/main',sourceSha:f.head.sha,status:'succeeded'}};
+ const checkout=await prepareLocalJobExecutionWorktree(f.repo,job,f.root);
+ git(checkout,'config','user.name','Relay Test');git(checkout,'config','user.email','relay-test@example.com');
+ await writeFile(join(checkout,'file.txt'),'unique commit\n');git(checkout,'add','file.txt');git(checkout,'commit','-m','unmerged work');
+ assert.equal((await cleanupCompletedJobWorktree(f.repo,job,f.root)).reason,'Worktree contains unique or stale commits');
 });

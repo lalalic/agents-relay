@@ -6,9 +6,11 @@ import { WorkflowActionLedger } from './workflow/action-ledger.js';
 import { ConditionRegistry, booleanCondition } from './workflow/conditions.js';
 import { DurableWorkflowPublication } from './workflow/durable-publication.js';
 import type { EventRecord } from './types.js';
-import { preserveTaskComments } from './task-comments.js'; import { preserveReviewRevisionHistory } from './review-revision-merge.js'; import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync } from 'node:sqlite';
+import { mergeInboundJobSnapshot } from './relay-job-merge.js';
+export { mergeInboundJobSnapshot } from './relay-job-merge.js';
 import { migrateLegacyBlockedTasks } from './legacy-blocked-task-migration.js';
-import { dirname } from 'node:path'; import { mkdirSync } from 'node:fs'; import { normalizeLegacyTaskLifecycle, type AgentRegistration, type Job, type Plan, type Task } from './types.js';
+import { dirname } from 'node:path'; import { mkdirSync } from 'node:fs'; import { normalizeLegacyTaskLifecycle, type AgentRegistration, type Job } from './types.js';
 import type { PullRequestState } from './store.js';
 import type { PackagePublication, PackagePublishFailure } from './github-webhook.js';
 import { recordPublicationInDatabase, loadPublicationFromDatabase, type PublicationState, type PublicationEvent, listPublicationEventsFromDatabase } from './publication-store.js';
@@ -90,29 +92,6 @@ export interface RelayStore {
   terminalProjectionCount(): Promise<number>;
   recordProjectionReceipt?(operationKey: string, status: 'succeeded' | 'failed', attempts: number, detail: unknown): Promise<void>;
   close(): void;
-}
-function newerRecord<T extends { updatedAt: string }>(local: T | undefined, remote: T): T {
-  if (!local) return structuredClone(remote);
-  return remote.updatedAt > local.updatedAt ? structuredClone(remote) : structuredClone(local);
-}
-function mergeRecords<T extends { id: string; updatedAt: string }>(local: readonly T[], remote: readonly T[]): T[] {
-  const remoteById = new Map(remote.map(item => [item.id, item]));
-  const merged = local.map(item => newerRecord(item, remoteById.get(item.id) ?? item));
-  const localIds = new Set(local.map(item => item.id));
-  for (const item of remote) if (!localIds.has(item.id)) merged.push(structuredClone(item));
-  return merged;
-}
-export function mergeInboundJobSnapshot(local: Job, remote: Job): Job {
-  const base = remote.updatedAt > local.updatedAt ? structuredClone(remote) : structuredClone(local);
-  base.tasks = preserveTaskComments(local.tasks, mergeRecords<Task>(local.tasks, remote.tasks)); preserveReviewRevisionHistory(local, base);
-  const localPlans = local.plans ?? [];
-  const remotePlans = remote.plans ?? [];
-  if (localPlans.length > 0 || remotePlans.length > 0) {
-    base.plans = mergeRecords<Plan>(localPlans, remotePlans).sort((a, b) => a.round - b.round);
-  } else {
-    delete base.plans;
-  }
-  return base;
 }
 function monotonicJobTimestamp(previous: string, candidate = new Date().toISOString()): string {
   const prior = Date.parse(previous), next = Date.parse(candidate);

@@ -7,6 +7,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ensureManagedGitHubJob } from '../dist/cli-job-create.js';
+import { localGitProject } from './local-git-project.js';
 
 const execAsync = promisify(execFile);
 const root = new URL('../', import.meta.url).pathname;
@@ -16,7 +17,7 @@ const execute = (args, env = {}) => execAsync(process.execPath, [cli, 'job', ...
 });
 
 test('existing Job CLI uses --id without --repo, preserves repository validation, and lists across repositories', async () => {
-  const job = { id: '1771', title: 'fixture', repository: 'team/relay', state: 'ACTIVE',
+  const job = { id: '1771', title: 'fixture', repository: 'relay', state: 'ACTIVE',
     prNumber: 0, priority: 'P2', tasks: [], continuation: null, autoMerge: false,
     reviewEnabled: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
   const calls = [];
@@ -26,7 +27,7 @@ test('existing Job CLI uses --id without --repo, preserves repository validation
     const send = (status, payload) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(payload)); };
     calls.push({ method: req.method, path: url.pathname, repository: providedRepo });
     if (url.pathname === '/api/jobs') {
-      send(200, { jobs: [job, { ...job, id: '1772', repository: 'team/other' }] }); return;
+      send(200, { jobs: [job, { ...job, id: '1772', repository: 'other' }] }); return;
     }
     if (url.pathname === '/api/job' || url.pathname === '/api/job-state') {
       if (url.searchParams.get('id') !== job.id || (providedRepo && providedRepo !== job.repository)) {
@@ -52,20 +53,20 @@ test('existing Job CLI uses --id without --repo, preserves repository validation
   try {
     const list = JSON.parse((await execute(['list', ...flags])).stdout);
     assert.deepEqual(list.map(x => x.id), ['1771','1772']);
-    const filtered = JSON.parse((await execute(['list', '--repo','team/relay', ...flags])).stdout);
+    const filtered = JSON.parse((await execute(['list', '--repo','relay', ...flags])).stdout);
     assert.deepEqual(filtered.map(x => x.id), [job.id]);
     assert.equal(JSON.parse((await execute(['show','--id',job.id,...flags])).stdout).repository, job.repository);
     assert.equal(JSON.parse((await execute(['show','--id',job.id,'--repo',job.repository,...flags])).stdout).id, job.id);
-    await assert.rejects(execute(['show','--id',job.id,'--repo','team/other',...flags]), /Unknown immutable Job binding/);
+    await assert.rejects(execute(['show','--id',job.id,'--repo','other',...flags]), /Unknown immutable Job binding/);
     assert.equal(JSON.parse((await execute(['update','--id',job.id,'--priority','P0',...flags])).stdout).priority, 'P0');
     assert.equal(JSON.parse((await execute(['unblock','--id',job.id,'--reason','resolved',...flags])).stdout).id, job.id);
-    await assert.rejects(execute(['merge','--id',job.id,...flags]), /GitHub is audit-only/);
+    await assert.rejects(execute(['merge','--id',job.id,...flags]), /job merge|Unknown command|Usage|Unsupported/i);
     assert.equal(JSON.parse((await execute(['cancel','--id',job.id,...flags])).stdout).state, 'CANCELLED');
     assert.ok(calls.some(c => c.command === 'job.update'));
     assert.ok(calls.some(c => c.command === 'job.unblock'));
     assert.ok(calls.some(c => c.path === '/api/job-state' && c.repository === null));
     const before = calls.length;
-    await assert.rejects(execute(['cancel','--id',job.id,'--repo','team/other',...flags]), /Unknown immutable Job binding/);
+    await assert.rejects(execute(['cancel','--id',job.id,'--repo','other',...flags]), /Unknown immutable Job binding/);
     assert.equal(calls.length, before + 1);
     assert.equal(calls.at(-1).path, '/api/job');
   } finally { await new Promise(resolve => server.close(resolve)); }
@@ -76,31 +77,33 @@ test('local SQLite Job pause/resume and Coordinator CLI resolve --id without rep
   const stores = join(dir, 'stores');
   await mkdir(stores);
   const env = { AGENTS_RELAY_STORE_DIR: stores, AGENTS_RELAY_NO_GITHUB: '1' };
+  const relayRoot=localGitProject(dir,'relay');
+  const shortcutRoot=localGitProject(dir,'shortcuts');
   const isolatedFlags = ['--store-dir', stores, '--events', 'none'];
   try {
-    const { job } = await ensureManagedGitHubJob({}, 'team/relay', new Set(), {
-      objective: 'Existing managed job', storeDirectory: stores,
+    const { job } = await ensureManagedGitHubJob({}, 'relay', new Set(), {
+      objective: 'Existing managed job', projectRoot:relayRoot, storeDirectory: stores,
     });
     const id = job.id;
     const paused = JSON.parse((await execute(['pause','--id',id,...isolatedFlags],env)).stdout);
     assert.equal(paused.state, 'DRAFT');
     assert.ok(paused.pause);
-    await assert.rejects(execute(['resume','--id',id,'--repo','team/other',...isolatedFlags],env),
+    await assert.rejects(execute(['resume','--id',id,'--repo','other',...isolatedFlags],env),
       /not found for repository/);
     const resumed = JSON.parse((await execute(['resume','--id',id,...isolatedFlags],env)).stdout);
     assert.equal(resumed.pause, undefined);
-    assert.equal(resumed.repository, 'team/relay');
+    assert.equal(resumed.repository, 'relay');
 
-    const { job: shortcut } = await ensureManagedGitHubJob({}, 'team/shortcuts', new Set(), {
-      objective: 'External start', storeDirectory: stores,
+    const { job: shortcut } = await ensureManagedGitHubJob({}, 'shortcuts', new Set(), {
+      objective: 'External start', projectRoot:shortcutRoot, storeDirectory: stores,
     });
     const run = ['run','--id',shortcut.id,'--task-id','unknown',...isolatedFlags];
     await assert.rejects(execute(run,env), /Task unknown not found/);
-    assert.equal(shortcut.id, (await ensureManagedGitHubJob({},'team/shortcuts',new Set(),{id:shortcut.id,storeDirectory:stores})).job.id);
-    assert.equal((await ensureManagedGitHubJob({},'team/shortcuts',new Set(),{id:shortcut.id,storeDirectory:stores})).job.executionMode,undefined);
+    assert.equal(shortcut.id, (await ensureManagedGitHubJob({},'shortcuts',new Set(),{id:shortcut.id,projectRoot:shortcutRoot,storeDirectory:stores})).job.id);
+    assert.equal((await ensureManagedGitHubJob({},'shortcuts',new Set(),{id:shortcut.id,projectRoot:shortcutRoot,storeDirectory:stores})).job.executionMode,undefined);
 
     await assert.rejects(execute(['run','--id',shortcut.id,
-      '--task-id','unknown','--repo','team/other',...isolatedFlags],env), /not found for repository/);
+      '--task-id','unknown','--repo','other',...isolatedFlags],env), /not found for repository/);
     await assert.rejects(execute(['run','--legacy-shortcut-runtime','--id',shortcut.id,
       '--task-id','unknown',...isolatedFlags],env), /Legacy Shortcut runners and execution modes are removed/);
   } finally { await rm(dir, { recursive: true, force: true }); }
@@ -111,5 +114,5 @@ test('Job creation continues to require repository identification without local-
     cwd: root, encoding: 'utf8', timeout: 5000,
   });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /--repo is required/);
+  assert.match(result.stderr, /--repo must name the local Git root directory/);
 });

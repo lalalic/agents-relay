@@ -2,7 +2,7 @@ import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { execFileSync, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SQLiteRelayStore } from '../dist/relay-store.js';
@@ -24,7 +24,7 @@ test('authenticated task revise CLI persists idempotent owner findings via real 
   git(repo, 'commit', '--allow-empty', '-m', 'fixture');
   git(repo, 'remote', 'add', 'origin', 'https://github.com/isolated/review-cli.git');
   const sha = git(repo, 'rev-parse', 'HEAD');
-  const jobId = 'targeted-cli-fixture';
+  const jobId = '9001';
   const base = (id, state, name) => ({
     id, jobId, title: id, kind: 'work', agentName: name, adapter: 'codex',
     parentTaskId: null, dependencies: [], capabilities: [], input: 'isolated task',
@@ -36,17 +36,17 @@ test('authenticated task revise CLI persists idempotent owner findings via real 
     threadId: null, result: state === 'SUCCEEDED' ? { summary: 'immutable original' } : null,
     error: null, timeoutMs: 3_600_000, createdAt: now(), updatedAt: now(),
   });
-  const owner = base('original', 'SUCCEEDED', 'implementation');
+  const owner = base('9101', 'SUCCEEDED', 'implementation');
   const reviewer = {
-    ...base('final-review', 'RUNNING', 'job-acceptance-reviewer'),
-    reviewHeadSha: sha, dependencies: ['original'],
+    ...base('9102', 'RUNNING', 'job-acceptance-reviewer'),
+    reviewHeadSha: sha, dependencies: ['9101'],
   };
   const sqlite = new SQLiteRelayStore(join(dir, 'relay.sqlite'), jobId);
   const job = {
-    id: jobId, title: 'Targeted CLI fixture', repository: 'isolated/review-cli',
+    id: jobId, title: 'Targeted CLI fixture', repository: 'review-cli',projectRoot:realpathSync(repo),
     prNumber: 0, state: 'ACTIVE', reviewEnabled: true, autoMerge: false,
     headSha: sha, continuation: null, createdAt: now(), updatedAt: now(),
-    review: { outcome: 'started', headSha: sha, taskId: 'final-review', evidence: null, updatedAt: now() },
+    review: { outcome: 'started', headSha: sha, taskId: '9102', evidence: null, updatedAt: now() },
     tasks: [owner, reviewer],
   };
   const previous = Object.fromEntries(['HOME', 'AGENTS_RELAY_STORE_DIR', 'AGENTS_RELAY_NO_GITHUB']
