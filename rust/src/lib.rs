@@ -319,3 +319,5 @@ pub mod decision_audit;
 pub mod cli_job_create;
 pub mod script_task_adapter;
 pub mod cli_prompt;
+pub mod dag_task_runtime;
+pub mod troubleshooter;
