@@ -23,7 +23,7 @@ function git(cwd: string, ...args: string[]): Promise<string> {
   });
 }
 
-async function inspectRemoteMain(repoPath: string, mergedCommitSha: string): Promise<{remoteContainsMain: boolean; inspectedMainSha: string}> {
+async function inspectRemoteMain(repoPath: string, mergedCommitSha: string): Promise<{remoteMainPresent: boolean; remoteContainsMain: boolean; inspectedMainSha: string}> {
   // Do not publish a moved/reset main that omits the Job's merged evidence.
   const expected = await git(repoPath, 'rev-parse', '--verify', mergedCommitSha);
   if (expected !== mergedCommitSha) throw new Error('Completed Job merged commit no longer resolves');
@@ -32,15 +32,15 @@ async function inspectRemoteMain(repoPath: string, mergedCommitSha: string): Pro
   catch { throw new Error('Local main no longer contains completed Job merged commit'); }
   const lines = (await git(repoPath, 'ls-remote', '--heads', 'origin', 'refs/heads/main')).split(/\s+/);
   const remoteHead = lines[0] || '';
-  if (!remoteHead) return { remoteContainsMain: false, inspectedMainSha };
+  if (!remoteHead) return { remoteMainPresent: false, remoteContainsMain: false, inspectedMainSha };
   await git(repoPath, 'fetch', '--no-tags', 'origin', '+refs/heads/main:refs/remotes/origin/main');
   try {
     await git(repoPath, 'merge-base', '--is-ancestor', inspectedMainSha, 'refs/remotes/origin/main');
-    return { remoteContainsMain: true, inspectedMainSha };
+    return { remoteMainPresent: true, remoteContainsMain: true, inspectedMainSha };
   } catch {
     try {
       await git(repoPath, 'merge-base', '--is-ancestor', 'refs/remotes/origin/main', inspectedMainSha);
-      return { remoteContainsMain: false, inspectedMainSha };
+      return { remoteMainPresent: true, remoteContainsMain: false, inspectedMainSha };
     } catch {
       throw new Error(`origin/main diverged from local main (${remoteHead}); refusing non-fast-forward push`);
     }
@@ -132,6 +132,7 @@ export async function reconcileCompletedLocalDelivery(
   };
 
   let originUsable = false;
+  let remoteMainPresent = false;
   let inspected = false;
   let inspectedMainSha: string | undefined;
   try {
@@ -142,8 +143,13 @@ export async function reconcileCompletedLocalDelivery(
     if (originUsable) {
       // Do not read or persist a GitHub repository binding. The actual local
       // Git origin is resolved only after authoritative COMPLETED.
-      await git(repoPath, 'remote', 'get-url', 'origin');
+      const fetchUrl = await git(repoPath, 'remote', 'get-url', 'origin');
+      const pushUrl = await git(repoPath, 'remote', 'get-url', '--push', '--all', 'origin');
+      // We inspect origin/main before writing. An alternate pushURL (including
+      // multiple push targets) must not send data to an unverified endpoint.
+      if (fetchUrl !== pushUrl) throw new Error('Origin push URL differs from verified fetch URL');
       const result = await inspectRemoteMain(repoPath, sha);
+      remoteMainPresent = result.remoteMainPresent;
       inspected = result.remoteContainsMain;
       inspectedMainSha = result.inspectedMainSha;
     }
@@ -153,7 +159,7 @@ export async function reconcileCompletedLocalDelivery(
   }
 
   let pushSucceeded = false;
-  const inspectedDecision = await run('inspect', 'inspect.completed', { originUsable, remoteContainsMain: inspected }, async actionId => {
+  const inspectedDecision = await run('inspect', 'inspect.completed', { originUsable, remoteMainPresent, remoteContainsMain: inspected }, async actionId => {
     if (actionId === 'delivery.skip') {
       await updateOwned('skipped');
       return { ok: true };

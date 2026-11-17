@@ -37,12 +37,37 @@ test('missing origin is graph-selected skip and leaves completed Job and Tasks u
   finally { f.close(); }
 });
 
-test('empty origin and normal origin both receive the completed local main fast-forward', async () => {
-  for (const origin of ['empty', 'seeded']) {
+test('an empty origin is skipped without creating main; a seeded origin receives only fast-forward delivery', async () => {
+  for (const [origin, expected] of [['empty', 'skipped'], ['seeded', 'succeeded']]) {
     const f = fixture({ origin });
-    try { await reconcile(f); const job = await current(f); assert.equal(job.remoteDelivery.status, 'succeeded'); assert.equal(git(f.remote, 'rev-parse', 'refs/heads/main'), job.localMerge.mergedCommitSha); assert.equal(job.state, 'COMPLETED'); assert.deepEqual(job.tasks, []); }
-    finally { f.close(); }
+    try {
+      await reconcile(f);
+      const job = await current(f);
+      assert.equal(job.remoteDelivery.status, expected);
+      const remoteMain = git(f.repo, 'ls-remote', 'origin', 'refs/heads/main');
+      if (origin === 'empty') assert.equal(remoteMain, '', 'no automatic creation of origin/main');
+      else assert.equal(remoteMain.split(/\s+/)[0], job.localMerge.mergedCommitSha);
+      assert.equal(job.state, 'COMPLETED');
+      assert.deepEqual(job.tasks, []);
+    } finally { f.close(); }
   }
+});
+
+test('different configured push URL is a bounded independent failure and cannot write unverified main', async () => {
+  const f = fixture({origin:'seeded'});
+  try {
+    const unverified=join(f.root,'unverified.git');
+    execFileSync('git',['init','--bare',unverified]);
+    git(f.repo,'remote','set-url','--push','origin',unverified);
+    await reconcile(f);
+    const job=await current(f);
+    assert.equal(job.state,'COMPLETED');
+    assert.deepEqual(job.tasks,[]);
+    assert.equal(job.remoteDelivery.status,'failed');
+    assert.match(job.remoteDelivery.error,/push URL differs/);
+    assert.equal(git(f.repo,'ls-remote',unverified,'refs/heads/main'),'');
+    assert.notEqual(git(f.repo,'ls-remote',f.remote,'refs/heads/main').split(/\s+/)[0], job.localMerge.mergedCommitSha);
+  } finally { f.close(); }
 });
 
 test('remote ahead containing local main records delivery without a push', async () => {

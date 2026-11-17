@@ -26,11 +26,17 @@ test('completed local Git delivery graph selects inspection, skip-if-current, or
   assert.deepEqual(inspect.actions.map(action => action.id), ['delivery.claimInspection']);
   assert.equal(inspect.target, 'inspect');
 
-  const alreadyCurrent = await decide('inspect', 'inspect.completed', { originUsable: true, remoteContainsMain: true });
+  const missingRemoteMain = await decide('inspect', 'inspect.completed', {
+    originUsable: true, remoteMainPresent: false, remoteContainsMain: false,
+  });
+  assert.equal(missingRemoteMain.target, 'skipped', 'an existing empty origin cannot have main created as a side effect');
+  assert.deepEqual(missingRemoteMain.actions.map(action => action.id), ['delivery.skip']);
+
+  const alreadyCurrent = await decide('inspect', 'inspect.completed', { originUsable: true, remoteMainPresent: true, remoteContainsMain: true });
   assert.equal(alreadyCurrent.target, 'delivered');
   assert.deepEqual(alreadyCurrent.actions.map(action => action.id), ['delivery.recordDelivered']);
 
-  const needsPush = await decide('inspect', 'inspect.completed', { originUsable: true, remoteContainsMain: false });
+  const needsPush = await decide('inspect', 'inspect.completed', { originUsable: true, remoteMainPresent: true, remoteContainsMain: false });
   assert.equal(needsPush.target, 'push');
   assert.deepEqual(needsPush.actions.map(action => action.id), ['delivery.pushMain']);
 });

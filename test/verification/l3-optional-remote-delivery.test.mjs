@@ -29,7 +29,12 @@ function fixture(root, name, mode, id) {
       execFileSync('git', ['init', '--bare', '-q', remote]);
       git(remote, 'symbolic-ref', 'HEAD', 'refs/heads/main');
       git(repo, 'remote', 'add', 'origin', remote);
-      git(repo, 'push', '-q', 'origin', 'main');
+      if (mode !== 'emptyorigin') git(repo, 'push', '-q', 'origin', 'main');
+      if (mode === 'pushredirect') {
+        const alternate=join(root, name+'-unverified.git');
+        execFileSync('git',['init','--bare','-q',alternate]);
+        git(repo,'remote','set-url','--push','origin',alternate);
+      }
     } else git(repo, 'remote', 'add', 'origin', join(root, 'nonexistent.git'));
   }
   git(repo, 'checkout', '-qb', 'feature');
@@ -120,6 +125,8 @@ test('L3 real daemon: optional origin push, failure/retry, divergent remote, res
       fixture(root, 'noorigin', 'noorigin', '910103'),
       fixture(root, 'diverged', 'diverged', '910104'),
       fixture(root, 'legacy', 'legacy', '910105'),
+      fixture(root, 'emptyorigin', 'emptyorigin', '910106'),
+      fixture(root, 'pushredirect', 'pushredirect', '910107'),
     ];
     for (const f of fixtures) {
       const store = new SQLiteRelayStore(dbPath, f.id);
@@ -130,13 +137,19 @@ test('L3 real daemon: optional origin push, failure/retry, divergent remote, res
     let daemon = launch(root, storeDir, port);
     t.after(async () => { await stop(daemon); rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
     const view = id => storedJob(dbPath, id);
-    await until(() => ['succeeded', 'failed', 'skipped', 'failed'].every((expected, i) =>
+    await until(() => ['succeeded', 'failed', 'skipped', 'failed', null, 'skipped', 'failed'].every((expected, i) =>
+      expected === null ||
       view(fixtures[i].id)?.remoteDelivery?.status === expected),
     () => JSON.stringify(fixtures.map(f => ({ id: f.id, state: view(f.id)?.state,
       status: view(f.id)?.remoteDelivery, daemon: daemon.output() }))), 45000);
-    const [success, offline, noorigin, diverged, legacy] = fixtures;
+    const [success, offline, noorigin, diverged, legacy, emptyorigin, pushredirect] = fixtures;
     assert.equal(git(success.root, 'ls-remote', 'origin', 'refs/heads/main').split(/\s+/)[0], success.mergedCommitSha);
     assert.notEqual(git(diverged.root, 'ls-remote', 'origin', 'refs/heads/main').split(/\s+/)[0], diverged.mergedCommitSha);
+    assert.equal(git(emptyorigin.root,'ls-remote','origin','refs/heads/main'),'','empty configured origin cannot acquire a new main ref');
+    assert.equal(view(emptyorigin.id).remoteDelivery.status,'skipped');
+    assert.equal(git(pushredirect.root,'ls-remote','origin','refs/heads/main').split(/\s+/)[0],pushredirect.base,'verified fetch origin must not be modified');
+    assert.equal(git(pushredirect.root,'ls-remote',join(root,'pushredirect-unverified.git'),'refs/heads/main'),'','redirected push origin remains untouched');
+    assert.match(view(pushredirect.id).remoteDelivery.error,/push URL differs/);
     assert.equal(git(legacy.root, 'ls-remote', 'origin', 'refs/heads/main').split(/\s+/)[0], legacy.base,
       'pre-upgrade COMPLETED records must not unexpectedly push on daemon launch');
     for (const f of fixtures) {

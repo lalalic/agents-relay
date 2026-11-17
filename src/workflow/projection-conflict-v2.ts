@@ -9,6 +9,7 @@ const boolGuard = (name: string) => (facts: { readonly durableFacts: Readonly<Re
 const guards = {
   'delivery.originUsable': boolGuard('originUsable'),
   'delivery.claimAvailable': boolGuard('claimAvailable'),
+  'delivery.remoteMainPresent': boolGuard('remoteMainPresent'),
   'delivery.remoteContainsMain': boolGuard('remoteContainsMain'),
   'delivery.retryDue': boolGuard('retryDue'),
   'delivery.retryAvailable': (facts: { readonly durableFacts: Readonly<Record<string, unknown>> }) =>
