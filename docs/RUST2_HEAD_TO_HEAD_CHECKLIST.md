@@ -41,7 +41,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/cli-coordinator.ts` | `rust/src/cli_coordinator.rs` | PENDING | — |
 | `src/cli-escalation.ts` | `rust/src/cli_escalation.rs` | PENDING | — |
 | `src/cli-foreground.ts` | `rust/src/cli_foreground.rs` | PENDING | — |
-| `src/cli-help.ts` | `rust/src/cli_help.rs` | PENDING | — |
+| `src/cli-help.ts` | `rust/src/cli_help.rs` | PASS | Direct static port: 49 original help keys, 2,381 exact Node/Rust usage/command/action/fallback fixtures; 2 native tests (`rust/tests/head_to_head_cli_help.mjs`, `rust/tests/native_cli_help.rs`) |
 | `src/cli-job-create.ts` | `rust/src/cli_job_create.rs` | PENDING | — |
 | `src/cli-local-merge-config.ts` | `rust/src/cli_local_merge_config.rs` | PASS | 626 shared differential fixtures across 14 ports; merge success and validation errors compared (`rust/tests/head_to_head.mjs`) |
 | `src/cli-projection.ts` | `rust/src/cli_projection.rs` | PASS | Direct hotfix: 507 Node/Rust help/validation cases, 250 actual localhost HTTP controls/errors, 5 native tests (`rust/tests/head_to_head_cli_projection.mjs`, `rust/tests/native_cli_projection.rs`) |
@@ -87,7 +87,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/github-binding-order.ts` | `rust/src/github_binding_order.rs` | PASS | 626 shared differential fixtures across 14 ports; stable ordering and priority groups compared (`rust/tests/head_to_head.mjs`) |
 | `src/github-branch-projection.ts` | `rust/src/github_branch_projection.rs` | PASS | 626 shared differential fixtures across 14 ports; normal and force-with-lease argv compared (`rust/tests/head_to_head.mjs`) |
 | `src/github-client.ts` | `rust/src/github_client.rs` | PENDING | — |
-| `src/github-pr-archive.ts` | `rust/src/github_pr_archive.rs` | PENDING | — |
+| `src/github-pr-archive.ts` | `rust/src/github_pr_archive.rs` | PASS | Direct callback port: 1,156 Node/Rust fake GitHubClient display-only PR scenarios, 4 native tests and original Node PR archive regression (`rust/tests/head_to_head_github_pr_archive.mjs`, `rust/tests/native_github_pr_archive.rs`) |
 | `src/github-runtime-usage.ts` | `rust/src/github_runtime_usage.rs` | PASS | Direct port: 1,793 Node/Rust rate/header/Unicode/datetime fixtures, 5 native tests, 8 original Node runtime-rate regressions (`rust/tests/head_to_head_github_runtime_usage.mjs`, `rust/tests/native_github_runtime_usage.rs`) |
 | `src/github-webhook.ts` | `rust/src/github_webhook.rs` | PENDING | — |
 | `src/graph-runtime.ts` | `rust/src/graph_runtime.rs` | PENDING | — |
@@ -520,3 +520,11 @@ This is only the Job JEL graph projection; Dashboard HTTP routing, additional ta
 - [x] `src/cli-projection.ts` → `rust/src/cli_projection.rs`: all public help/command semantics, first-value CLI flag parsing, strict nonnegative integer projection IDs, action canonicalization, optional notes, and real POST to caller-selected `http://host:port/api/control` using native Rust HTTP.
 - [x] `rust/tests/head_to_head_cli_projection.mjs`: **507** help and invalid CLI cases and **250** real localhost HTTP control-command and status-response cases; exact JSON bodies and terminal output checked against Node. Five Rust native tests ensure help text, valid/invalid fields and real local HTTP.
 - [x] All tests use isolated fixtures; no production Dashboard, live Job, remote GitHub service, or Task was modified.
+
+### Direct Rust2 hotfix — production CLI Help and display-only GitHub PR archive (2026-11-16)
+
+- [x] `src/cli-help.ts` → `rust/src/cli_help.rs`: all **49** original Node help keys and exact `usage` string statically compiled into Rust, including action-specific `job`, `task`, `blocker` and `context` help and default fallback. No Node runtime or additional files required for production help lookup.
+- [x] `rust/tests/head_to_head_cli_help.mjs` compares **2,381** Node/Rust CLI usage/help cases against the original compiled `helpText`; 2 native tests ensure every source help entry is nonempty and action dispatch is consistent.
+- [x] `src/github-pr-archive.ts` → `rust/src/github_pr_archive.rs`: injectable asynchronous GitHub request callback; PRs are display-only records after local Git completion. Skip non-OPEN PRs, check existing local-completion marker before adding exactly one comment, then close the PR with PATCH; never invoke remote PR merge.
+- [x] `rust/tests/head_to_head_github_pr_archive.mjs`: **1,156** independent Node/Rust archive policy and injected failure scenarios using fake GitHub clients, no network. 4 native tests verify comment idempotency, callback order, no merge, fail-closed invalid history and never closing after rejected publication.
+- [x] Original Node `test/github-pr-archive.test.js` passes with disposable fixtures. No live GitHub access or running Relay Job modified.

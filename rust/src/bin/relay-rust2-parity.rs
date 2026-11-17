@@ -357,6 +357,75 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "cliUsage" => Ok(json!(agents_relay_rust2::cli_help::CLI_USAGE).to_string()),
+        "helpText" => Ok(json!(agents_relay_rust2::cli_help::help_text(
+            request["command"].as_str(),
+            request["action"].as_str()
+        ))
+        .to_string()),
+        "archiveDisplayPullRequestScenario" => {
+            use agents_relay_rust2::github_pr_archive::{
+                archive_display_pull_request, GitHubRequestCallback, GitHubRequestFuture,
+            };
+            use std::{
+                future::Future,
+                pin::pin,
+                sync::{Arc, Mutex},
+                task::{Context, Poll, Waker},
+            };
+            let trace = Arc::new(Mutex::new(Vec::<Value>::new()));
+            let out = Arc::clone(&trace);
+            let comments = request["comments"].clone();
+            let fail_at = request["failAt"].as_str().map(str::to_string);
+            let error = request["error"]
+                .as_str()
+                .unwrap_or("injected GitHub failure")
+                .to_string();
+            let mut client = move |path: String, options: Option<Value>| -> GitHubRequestFuture {
+                let method = options
+                    .as_ref()
+                    .and_then(|value| value.get("method"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("GET")
+                    .to_string();
+                out.lock()
+                    .expect("archive trace mutex")
+                    .push(json!({"path":path,"options":options}));
+                let fails = fail_at.as_deref()
+                    == Some(match method.as_str() {
+                        "POST" => "post",
+                        "PATCH" => "patch",
+                        _ => "list",
+                    });
+                let error = error.clone();
+                let result = if fails {
+                    Err(error)
+                } else if method == "GET" {
+                    Ok(comments.clone())
+                } else {
+                    Ok(json!({"status":"ok"}))
+                };
+                Box::pin(async move { result })
+            };
+            let work = archive_display_pull_request(
+                &mut client as &mut GitHubRequestCallback,
+                request["repository"].as_str().unwrap_or(""),
+                request["number"].as_i64().unwrap_or(0),
+                request["jobId"].as_str().unwrap_or(""),
+                request["publishedSha"].as_str().unwrap_or(""),
+                request["state"].as_str().unwrap_or(""),
+            );
+            let mut work = pin!(work);
+            let mut cx = Context::from_waker(Waker::noop());
+            let result = loop {
+                if let Poll::Ready(value) = work.as_mut().poll(&mut cx) {
+                    break value;
+                }
+            };
+            let trace = trace.lock().expect("archive trace mutex").clone();
+            Ok(json!({"result":match result {Ok(outcome)=>json!({"ok":true,"value":outcome}),Err(error)=>json!({"ok":false,"error":error})},"trace":trace}).to_string())
+        }
+
         "appendTaskComment" => {
             let mut job = request["job"].clone();
             let result = agents_relay_rust2::task_comments::append_task_comment(
