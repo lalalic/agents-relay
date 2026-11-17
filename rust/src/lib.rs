@@ -323,3 +323,5 @@ pub mod dag_task_runtime;
 pub mod troubleshooter;
 pub mod interactive_invocation;
 pub mod execution_context;
+pub mod cli_support;
+pub mod workspace;
