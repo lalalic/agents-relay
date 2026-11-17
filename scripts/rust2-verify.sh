@@ -3,10 +3,21 @@
 set -eu
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo"
-if [ "$(git branch --show-current)" != rust2 ]; then
-  echo 'Refusing rust2 verification outside branch rust2' >&2
-  exit 2
-fi
+branch=$(git branch --show-current)
+case "$branch" in
+  rust2) ;;
+  hotfix/rust2-*)
+    # Integration runs before a single ff-only merge; do not verify stale branches.
+    if ! git merge-base --is-ancestor rust2 HEAD; then
+      echo 'Refusing rust2 verification: integration branch does not contain rust2 HEAD' >&2
+      exit 2
+    fi
+    ;;
+  *)
+    echo 'Refusing rust2 verification outside rust2 or a descendant integration branch' >&2
+    exit 2
+    ;;
+esac
 # Differential fixtures load Node dist/*.js, not src/*.ts. Always rebuild the
 # authoritative current Node baseline before comparing its behavior to Rust;
 # a stale dist can give false PASS or ERR_MODULE_NOT_FOUND after new modules.

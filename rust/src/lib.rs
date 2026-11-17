@@ -184,3 +184,42 @@ pub mod graph_runtime;
 
 // Direct Node src/agent-graph.ts production Agent DAG parsing and prompt text.
 pub mod agent_graph;
+
+// Direct CLI ports owned by the isolated rust2 CLI Core batch.
+pub mod agent_script_discovery;
+pub mod cli_blocker;
+pub mod cli_context;
+pub mod cli_core_support;
+pub mod cli_revision;
+pub mod cli_workflow;
+
+// Direct Node src/browser-worker-pool-graph.ts resource policy binding.
+pub mod browser_worker_pool_graph;
+
+// Direct Node src/browser-worker-pool.ts SQLite pool/lease operations.
+pub mod browser_worker_pool;
+
+// Direct Node src/task-inactivity-watchdog.ts source-bound timeouts.
+pub mod task_inactivity_watchdog;
+
+// Direct Node src/worker-start-ack.ts execution-correlated start receipts.
+pub mod worker_start_ack;
+
+// Direct Node src/reconciler-cancellation.ts Graph-authorized cancellation effects.
+pub mod reconciler_cancellation;
+
+// Direct Node src/owned-process.ts isolated process group lifecycle.
+pub mod owned_process;
+
+// Isolated process/browser ports differential fixture adapter.
+pub mod process_worker_parity_harness;
+
+// Direct Node src/projection-outbox.ts SQLite outbox port.
+pub mod projection_outbox;
+
+// Direct Node src/dashboard-data.ts readonly projections.
+pub mod dashboard_data;
+pub mod events; // Direct Node src/events.ts memory and NATS event transports.
+
+// Direct Node src/feedback.ts attachment and marker port.
+pub mod feedback;

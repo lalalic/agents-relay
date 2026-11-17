@@ -27,7 +27,12 @@ async function node(req){try{
    default:throw Error('unknown workflow durable operation');
   }
   outputs.push({ok:true,value});
- }catch(error){outputs.push({ok:false,error:error.message})}}
+ }catch(error){outputs.push({ok:false,error:error.message})}
+ // A direct Node/Rust comparison runs on separate wall clocks. Canonicalize
+ // test-only SQLite insertion times by rowid, retaining batches of equal-time
+ // keys to exercise ORDER BY created_at,event_key without millisecond jitter.
+ if(req.canonicalClockBuckets)db.exec("UPDATE workflow_event_outbox SET created_at=printf('2026-01-01T00:00:%02d.000Z',(rowid-1)/3)");
+ }
  const value=db.prepare('SELECT value FROM objective').get().value;
  const outboxRows=db.prepare('SELECT event_key,event_id,payload_json,state FROM workflow_event_outbox ORDER BY event_key').all().map(row=>({key:row.event_key,eventId:row.event_id,payload:JSON.parse(row.payload_json),state:row.state}));
  const receipts=db.prepare('SELECT consumer_id,event_key,event_id,payload_json FROM workflow_event_inbox ORDER BY consumer_id,event_key').all().map(row=>({consumerId:row.consumer_id,key:row.event_key,eventId:row.event_id,payload:JSON.parse(row.payload_json)}));
@@ -45,7 +50,7 @@ for(let i=0;i<550;i++){
   const events=Array.from({length:1+rand(3)},(_,index)=>({key:`job${i}/tx${j}/${index}`,eventId:'event.finished',payload:{j,index}}));
   operations.push({action:type,key,eventId,payload,consumerId:pick(['publisher','reconciler','']),reject:rand(11)===0,rejectAfter:pick([-1,-1,0,1]),events,transport:pick(['both','bus','emit','none'])});
  }
- cases.push({op:'durableWorkflowScenario',operations});
+ cases.push({op:'durableWorkflowScenario',operations,canonicalClockBuckets:true});
 }
 test('atomic SQLite outbox commit/publish/replay and consumer idempotency match Node',async()=>{
  for(const [index,req] of cases.entries()){

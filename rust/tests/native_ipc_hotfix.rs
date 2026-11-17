@@ -82,7 +82,11 @@ fn webhelm_native_request_handles_live_cancelled_unix_stream() {
     );
     cancel_thread.join().unwrap();
     server.join().unwrap();
-    fs::remove_dir_all(dir).unwrap();
+    // The cancellation assertion is complete; parallel temp cleanup may have
+    // removed this test-only socket directory already. Do not fail on ENOENT.
+    if let Err(error) = fs::remove_dir_all(dir) {
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound, "{error}");
+    }
 }
 
 #[test]

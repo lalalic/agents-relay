@@ -357,6 +357,104 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "runArtifactCommand" => {
+            let args = request["args"]
+                .as_array()
+                .ok_or("args required")?
+                .iter()
+                .map(|v| v.as_str().unwrap_or("").to_string())
+                .collect::<Vec<_>>();
+            let mut outputs = Vec::<String>::new();
+            let result = agents_relay_rust2::cli_artifact::run_artifact_command(
+                request["action"].as_str().unwrap_or(""),
+                &args,
+                |line| outputs.push(line),
+            );
+            Ok(json!({"stdout":outputs,"error":result.err()}).to_string())
+        }
+        "parseRevisionFindings" => Ok(agents_relay_rust2::cli_revision::parse_revision_findings(
+            request["source"].as_str().unwrap_or(""),
+        )?
+        .to_string()),
+        "revisionRequest" => {
+            let args = request["args"]
+                .as_array()
+                .ok_or("args required")?
+                .iter()
+                .map(|v| v.as_str().unwrap_or("").to_string())
+                .collect::<Vec<_>>();
+            Ok(agents_relay_rust2::cli_revision::revision_request(&args)?.to_string())
+        }
+        "revisionReceipt" => Ok(agents_relay_rust2::cli_revision::validate_revision_receipt(
+            &request["request"],
+            request["response"].clone(),
+        )?
+        .to_string()),
+        "blockerEffect" => {
+            let args = request["args"]
+                .as_array()
+                .ok_or("args required")?
+                .iter()
+                .map(|v| v.as_str().unwrap_or("").to_string())
+                .collect::<Vec<_>>();
+            let effect = agents_relay_rust2::cli_blocker::blocker_effect(
+                request["action"].as_str().unwrap_or(""),
+                &args,
+                request["stdin"].as_str(),
+            )?;
+            use agents_relay_rust2::cli_blocker::BlockerEffect;
+            Ok(match effect {
+                BlockerEffect::Control(body) => json!({"type":"control","body":body}),
+                BlockerEffect::Job(id) => json!({"type":"job","jobId":id}),
+                BlockerEffect::Resolve(id) => json!({"type":"resolve","jobId":id}),
+            }
+            .to_string())
+        }
+        "workflowCliResult" => {
+            let args = request["args"]
+                .as_array()
+                .ok_or("args required")?
+                .iter()
+                .map(|v| v.as_str().unwrap_or("").to_string())
+                .collect::<Vec<_>>();
+            Ok(agents_relay_rust2::cli_workflow::workflow_cli_result(&args)?.to_string())
+        }
+        "runContextCommand" => {
+            let args = request["args"]
+                .as_array()
+                .ok_or("args required")?
+                .iter()
+                .map(|v| v.as_str().unwrap_or("").to_string())
+                .collect::<Vec<_>>();
+            Ok(agents_relay_rust2::cli_context::run_context_command(
+                request["action"].as_str().unwrap_or(""),
+                &args,
+            )?
+            .to_string())
+        }
+        "discoverScriptAgent" => Ok(json!(
+            agents_relay_rust2::agent_script_discovery::discover_script_agent(
+                request["agent"].as_str().unwrap_or(""),
+                request["projectPath"].as_str().unwrap_or(""),
+                request["sharedRoot"].as_str(),
+                request["workspaceRoot"].as_str(),
+                request["globalRoot"].as_str()
+            )?
+        )
+        .to_string()),
+        "missingScriptAgents" => Ok(json!(
+            agents_relay_rust2::agent_script_discovery::missing_script_agents(
+                request["graph"].as_str().unwrap_or(""),
+                request["projectPath"].as_str().unwrap_or(""),
+                request["sharedRoot"].as_str(),
+                request["workspaceRoot"].as_str(),
+                request["globalRoot"].as_str()
+            )?
+        )
+        .to_string()),
+        "processWorkerScenario" => {
+            Ok(agents_relay_rust2::process_worker_parity_harness::scenario(request)?.to_string())
+        }
         "lifecycleBatchScenario" => Ok(
             agents_relay_rust2::workflow::lifecycle_parity_harness::scenario(request)?.to_string(),
         ),
@@ -762,6 +860,12 @@ fn invoke(request: &Value) -> Result<String, String> {
                     Ok(value) => json!({"ok":true,"value":value}),
                     Err(error) => json!({"ok":false,"error":error}),
                 });
+                // Fixture-only canonical wall clock; actual runtime uses SystemTime.
+                // Bucket 3 rowids per timestamp to preserve equal-time key ordering tests.
+                if request["canonicalClockBuckets"] == true {
+                    db.execute_batch("UPDATE workflow_event_outbox SET created_at=printf('2026-01-01T00:00:%02d.000Z',(rowid-1)/3)")
+                        .map_err(|error| error.to_string())?;
+                }
             }
             let value: i64 = db
                 .query_row("SELECT value FROM objective", [], |row| row.get(0))
