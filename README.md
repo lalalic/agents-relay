@@ -2,7 +2,7 @@
 
 Agents Relay is a TypeScript runtime for durable asynchronous agent Jobs driven locally by SQLite and canonical workflow Graphs. The EventBus wakes reconciliation; an EventBus message or GitHub PR comment is never the lifecycle authority. Job, Plan, Task, Review, Execution, Lease and Recovery state survive daemon restarts in SQLite.
 
-Every Job is keyed by an immutable local Git identity: `repository` is the Git root directory name and `projectRoot` is its validated canonical path. `projectPath` can select a nested directory; worktrees never become Job roots. SQLite owns the durable Job/Task/Review state. Local Git is the source of truth for review and merge. After completion, Relay may push local `main` to the repository’s configured `origin` using a fast-forward-only push; this optional delivery never changes Job state.
+Every Job is keyed by an immutable local Git identity: `repository` is the Git root directory name and `projectRoot` is its validated canonical path. `projectPath` can select a nested directory; worktrees never become Job roots. SQLite owns the durable Job/Task/Review state. Local Git is the source of truth for review and merge. Only after completion, Relay may fast-forward-push verified local `main` if `origin/main` already exists and the effective fetch and push URLs match. No `origin` or no remote `main` means skip; unreachable, mismatched or divergent destinations are retried separately, never changing Job state.
 
 
 Agent frontmatter hints (`skills`, `model`, `reasoning`) are described in [Agent Definition Contract](skills/agents-relay/contracts/agent-contract.md). They are advisory only and do not alter Skill resolution or Router constraints.

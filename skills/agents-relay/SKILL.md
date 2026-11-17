@@ -14,7 +14,7 @@ Goal: reliably create, inspect, resume, review, and merge a local Git Job, with 
 - Create: bind one Job ID to a validated canonical local Git root; optionally create the first Plan or a Coordinator DAG.
 - Inspect and resume: use the version-matched CLI and SQLite-backed Job/Task history.
 - Review and merge: review the local Git head, then merge through the normal Job gate.
-- Deliver: after successful local completion, the daemon may fast-forward-push main to the configured origin. This is optional and cannot change Job lifecycle.
+- Deliver: only after `COMPLETED`, the daemon may non-force-push verified `main` when `origin/main` exists and fetch/push destinations match; otherwise skip or retry independently. Remote results never change Job lifecycle or create PRs.
 
 ## Job Execution Lifecycle (JEL)
 

@@ -1,6 +1,6 @@
 # Running the service
 
-`agents-relayd` starts the repository worker pool, event-driven reconciler, periodic recovery watchdog, and dashboard. It discovers Git repositories under `~/Workspace` (or `--workspace PATH`) by unique Git-root directory name and watches their SQLite Jobs. A configured Git origin is used only for optional delivery after the local Job is completed. It listens on `127.0.0.1:8787` by default. Dashboard reads and recovery use the local SQLite inventory.
+`agents-relayd` starts the repository worker pool, event-driven reconciler, periodic recovery watchdog, and dashboard. It discovers Git repositories under `~/Workspace` (or `--workspace PATH`) by unique Git-root directory name and watches their SQLite Jobs. After the local Job is `COMPLETED`, the optional delivery Graph skips an absent `origin` or missing `origin/main`; it pushes only a non-force fast-forward to an inspected remote whose fetch and push destinations match. An unreachable, mismatched or divergent remote is an independent bounded SQLite retry, not a new Job/Task. It listens on `127.0.0.1:8787` by default. Dashboard reads and recovery use the local SQLite inventory.
 
 The dashboard reads a bounded window (one day by default, or `--usage-window-days`) of local Codex JSONL session telemetry at `/api/usage`. Requests recorded with GLM models are shown as Z.ai runtime usage; account quota and remaining balance are marked unavailable unless a supported source is added.
 
