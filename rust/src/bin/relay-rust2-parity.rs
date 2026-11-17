@@ -357,6 +357,271 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "settlementFacts" => Ok(
+            agents_relay_rust2::review_revision_settlement::settlement_facts(
+                &request["job"],
+                request["taskId"].as_str().unwrap_or(""),
+                request["maxRounds"].as_u64().unwrap_or(5),
+                request["maxNoProgressRounds"].as_u64().unwrap_or(1),
+            )
+            .to_string(),
+        ),
+        "settleReviewRevisionRound" => {
+            let mut job = request["job"].clone();
+            let changed =
+                agents_relay_rust2::review_revision_settlement::settle_review_revision_round(
+                    &std::path::Path::new(request["root"].as_str().ok_or("root required")?)
+                        .join("workflow"),
+                    &mut job,
+                    request["maxRounds"].as_u64().unwrap_or(5),
+                    request["maxNoProgressRounds"].as_u64().unwrap_or(1),
+                )?;
+            Ok(json!({"changed":changed,"job":job}).to_string())
+        }
+        "staleReviewRevisions" => {
+            let mut job = request["job"].clone();
+            let cancelled = agents_relay_rust2::review_revision_stale::stale_review_revisions(
+                &std::path::Path::new(request["root"].as_str().ok_or("root required")?)
+                    .join("workflow"),
+                &mut job,
+                request["reviewTaskId"].as_str().unwrap_or(""),
+                request["headSha"].as_str().unwrap_or(""),
+                request["activeExecutionId"].as_str(),
+            )?;
+            Ok(json!({"job":job,"cancelled":cancelled}).to_string())
+        }
+        "createFailedPlanRecovery" => Ok(
+            agents_relay_rust2::planner_recovery::create_failed_plan_recovery(
+                &std::path::Path::new(request["root"].as_str().ok_or("root required")?)
+                    .join("workflow"),
+                std::path::Path::new(request["storeDir"].as_str().ok_or("storeDir required")?),
+                &request["job"],
+                &request["plan"],
+            )?
+            .to_string(),
+        ),
+        "fallbackFailedTroubleshooters" => {
+            let mut job = request["job"].clone();
+            let queued =
+                agents_relay_rust2::troubleshooter_fallback::fallback_failed_troubleshooters(
+                    &std::path::Path::new(request["root"].as_str().ok_or("root required")?)
+                        .join("workflow"),
+                    &mut job,
+                )?;
+            Ok(json!({"job":job,"queued":queued}).to_string())
+        }
+
+        // Worker B: source-level deterministic differential adapters. Never touch durable stores.
+        "parseReviewFinding" => Ok(agents_relay_rust2::review_chair::parse_review_finding(
+            &request["value"],
+            request["index"].as_u64().unwrap_or(0) as usize,
+        )?
+        .to_string()),
+        "parseSpecialistReview" => Ok(agents_relay_rust2::review_chair::parse_specialist_review(
+            &request["value"],
+        )?
+        .to_string()),
+        "selectReviewPanel" => Ok(json!(agents_relay_rust2::review_chair::select_review_panel(
+            request["candidates"]
+                .as_array()
+                .ok_or("candidates required")?,
+            request["dimensions"]
+                .as_array()
+                .ok_or("dimensions required")?,
+            agents_relay_rust2::review_chair::panel_max(request.get("max"))?
+        )?)
+        .to_string()),
+        "specialistReviewTaskMetadata" => Ok(
+            agents_relay_rust2::review_chair::specialist_review_task_metadata(
+                &request["target"],
+                &request["member"],
+                request["round"].as_u64().unwrap_or(1),
+            )
+            .to_string(),
+        ),
+        "createSpecialistReviewTasks" => Ok(json!(
+            agents_relay_rust2::review_chair::create_specialist_review_tasks(
+                request["tasks"].as_array().ok_or("tasks required")?,
+                &request["target"],
+                request["panel"].as_array().ok_or("panel required")?,
+                request["round"].as_u64().unwrap_or(1)
+            )
+        )
+        .to_string()),
+        "createReviewChairExecutionPlan" => Ok(
+            agents_relay_rust2::review_chair::create_review_chair_execution_plan(
+                request["agents"].as_array().ok_or("agents required")?,
+                &request["target"],
+                agents_relay_rust2::review_chair::panel_max(request.get("max"))?,
+            )?
+            .to_string(),
+        ),
+        "synthesizeReview" => Ok(agents_relay_rust2::review_chair::synthesize_review(
+            &request["target"],
+            request["panel"].as_array().ok_or("panel required")?,
+            request["reviews"].as_array().ok_or("reviews required")?,
+        )?
+        .to_string()),
+        "reviewNeedsReplan" => Ok(
+            json!(agents_relay_rust2::review_replan::review_needs_replan(
+                &request["job"]
+            ))
+            .to_string(),
+        ),
+        "reviewPlanReady" => Ok(json!(agents_relay_rust2::review_replan::review_plan_ready(
+            &request["job"]
+        ))
+        .to_string()),
+        "revisionRequestReady" => Ok(json!(
+            agents_relay_rust2::review_revision_execution::revision_request_ready(
+                &request["job"],
+                &request["task"]
+            )
+        )
+        .to_string()),
+        "reconcileReviewRevisionFacts" => {
+            let mut job = request["job"].clone();
+            let changed =
+                agents_relay_rust2::review_revision_execution::reconcile_review_revision_facts(
+                    &std::path::Path::new(request["root"].as_str().ok_or("root required")?)
+                        .join("workflow"),
+                    &mut job,
+                )?;
+            if changed {
+                job["updatedAt"] = json!("NORMALIZED");
+            }
+            Ok(json!({"changed":changed,"job":job}).to_string())
+        }
+        "targetedRequestsForReview" => Ok(json!(
+            agents_relay_rust2::review_revision_model::targeted_requests_for_review(
+                &request["job"],
+                &request["task"],
+                request["headSha"].as_str().unwrap_or("")
+            )
+        )
+        .to_string()),
+        "targetedRequestsCoverReview" => Ok(json!(
+            agents_relay_rust2::review_revision_model::targeted_requests_cover_review(
+                &request["job"],
+                &request["task"],
+                request["headSha"].as_str().unwrap_or(""),
+                request["issues"].as_array().ok_or("issues required")?
+            )
+        )
+        .to_string()),
+        "dependencyValidityReview" => Ok(json!(
+            agents_relay_rust2::review_revision_model::dependency_validity(
+                &request["task"],
+                request["id"].as_str().unwrap_or("")
+            )?
+        )
+        .to_string()),
+        "dependencyRevisionVectorReview" => Ok(
+            agents_relay_rust2::review_revision_model::dependency_revision_vector(
+                &request["job"],
+                &request["task"],
+            )?
+            .to_string(),
+        ),
+        "sameDependencyRevisionVectorReview" => Ok(json!(
+            agents_relay_rust2::review_revision_model::same_dependency_revision_vector(
+                &request["a"],
+                &request["b"]
+            )
+        )
+        .to_string()),
+        "normalizeThreadId" => Ok(
+            json!(agents_relay_rust2::reviewer_thread::normalize_thread_id(
+                &request["value"],
+                request["label"].as_str().unwrap_or("thread ID")
+            )?)
+            .to_string(),
+        ),
+        "resolveImplementationThreadDestination" => Ok(
+            agents_relay_rust2::reviewer_thread::resolve_implementation_thread_destination(
+                &request["job"],
+            )?
+            .to_string(),
+        ),
+        "resolveImplementationTaskThreadDestination" => Ok(
+            agents_relay_rust2::reviewer_thread::resolve_implementation_task_thread_destination(
+                &request["job"],
+                &request["task"],
+            )?
+            .to_string(),
+        ),
+        "resolveReviewerThreadDestination" => Ok(
+            agents_relay_rust2::reviewer_thread::resolve_reviewer_thread_destination(
+                &request["job"],
+                request.get("override"),
+            )?
+            .to_string(),
+        ),
+        "prepareReviewerThreadDelivery" => Ok(
+            agents_relay_rust2::reviewer_thread::prepare_reviewer_thread_delivery(
+                &request["job"],
+                &request["task"],
+                request.get("override"),
+            )?
+            .to_string(),
+        ),
+        "chatgptThreadRequirements" => Ok(
+            agents_relay_rust2::reviewer_thread::chatgpt_thread_requirements(
+                &request["configured"],
+            )
+            .to_string(),
+        ),
+        "runtimeReviewer" => Ok(agents_relay_rust2::reviewer_thread::runtime_reviewer(
+            &request["args"]
+                .as_array()
+                .ok_or("args required")?
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>(),
+        )?
+        .to_string()),
+        "prepareRevisionThreadDelivery" => {
+            let mut child = request["child"].clone();
+            let delivery = agents_relay_rust2::reviewer_thread::prepare_revision_thread_delivery(
+                &request["job"],
+                &mut child,
+            )?;
+            if !child["revision"]["threadContinuation"].is_null() {
+                child["revision"]["threadContinuation"]["decidedAt"] = json!("NORMALIZED");
+            }
+            Ok(json!({"child":child,"delivery":delivery}).to_string())
+        }
+        "parseOutcomeReviewArgs" => Ok(
+            agents_relay_rust2::outcome_review::parse_outcome_review_args(
+                &request["args"]
+                    .as_array()
+                    .ok_or("args required")?
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>(),
+                std::path::Path::new(request["cwd"].as_str().ok_or("cwd required")?),
+            )?
+            .to_string(),
+        ),
+        "reviewerContract" => Ok(json!(agents_relay_rust2::outcome_review::reviewer_contract(
+            request["name"].as_str().unwrap_or(""),
+            std::path::Path::new(
+                request["projectPath"]
+                    .as_str()
+                    .ok_or("projectPath required")?
+            ),
+            request["sharedRoot"].as_str().map(std::path::Path::new),
+            std::path::Path::new(request["root"].as_str().ok_or("root required")?)
+        )?
+        .to_string_lossy())
+        .to_string()),
+        "combineOutcomeReviews" => Ok(agents_relay_rust2::outcome_review::combine_outcome_reviews(
+            request["reviews"].as_array().ok_or("reviews required")?,
+        )
+        .to_string()),
+
         "runArtifactCommand" => {
             let args = request["args"]
                 .as_array()

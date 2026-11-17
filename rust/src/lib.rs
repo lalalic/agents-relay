@@ -1,3 +1,13 @@
+pub mod outcome_review;
+pub mod planner_recovery;
+pub mod review_chair;
+pub mod review_replan;
+pub mod review_revision_execution;
+pub mod review_revision_model;
+pub mod review_revision_settlement;
+pub mod review_revision_stale;
+pub mod reviewer_thread;
+pub mod troubleshooter_fallback;
 // New rust2 library: routes one-to-one ports of Node src modules without importing the retired Rust rewrite.
 pub mod audit_tail;
 pub mod cli_local_merge_config;
