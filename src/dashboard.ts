@@ -17,6 +17,17 @@ import { GitHubRuntimeRateUsage } from './github-runtime-usage.js';
 import type { DecisionAuditRecord } from './decision-audit.js';
 import { dashboardWorkflowGraphs, effectiveGitHubUsage, eventHistory, listDashboardJobInventory, searchDashboardJobs } from './dashboard-data.js';
 export { dashboardWorkflowGraphs, githubPrUrl, searchDashboardJobs } from './dashboard-data.js';
+/** Exact public asset allowlist; no path interpolation from request URLs. */
+const dashboardStaticAssets: Readonly<Record<string, [string, string]>> = {
+  '/dashboard.css': ['dashboard.css', 'text/css; charset=utf-8'],
+  '/dashboard.js': ['dashboard.js', 'text/javascript; charset=utf-8'],
+  '/pwa.js': ['pwa.js', 'text/javascript; charset=utf-8'],
+  '/service-worker.js': ['service-worker.js', 'text/javascript; charset=utf-8'],
+  '/manifest.webmanifest': ['manifest.webmanifest', 'application/manifest+json; charset=utf-8'],
+  '/icons/icon-180.png': ['icons/icon-180.png', 'image/png'],
+  '/icons/icon-192.png': ['icons/icon-192.png', 'image/png'],
+  '/icons/icon-512.png': ['icons/icon-512.png', 'image/png'],
+};
 const SSE_HEARTBEAT_MS = 15000;
 type DashboardTarget = { repository?: string; prNumber?: number };
 type DashboardActions = { control?: (body: Record<string, unknown>) => Promise<unknown>; start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState, target?: DashboardTarget) => Promise<Job>; taskCreate?: (jobId: string, task: Task, idempotencyKey?: string) => Promise<Job>; taskUpdate?: (jobId: string, taskId: string, task: Task, expectedUpdatedAt: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState, target?: DashboardTarget) => Promise<Job> };
@@ -28,7 +39,7 @@ function isTaskId(candidate: string): boolean {
 
 
 export { dashboardHtml, dashboardVersion, dashboardSourceRevision } from './dashboard-html.js';
-import { dashboardHtml, dashboardVersion } from './dashboard-html.js';
+import { dashboardIndexHtml, dashboardConfigScript, dashboardVersion } from './dashboard-html.js';
 
 export function serveDashboard(
   store: DurableStore,
@@ -137,9 +148,26 @@ export function serveDashboard(
   };
 
   const server = createServer(async (req, res) => {
-    if (req.url === '/') {
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      res.end(dashboardHtml);
+    if (req.method === 'GET' && req.url === '/') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+      res.end(dashboardIndexHtml);
+      return;
+    }
+    if (req.method === 'GET' && req.url === '/dashboard-config.js') {
+      res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+      res.end(dashboardConfigScript());
+      return;
+    }
+    const asset = req.method === 'GET' ? dashboardStaticAssets[req.url ?? ''] : undefined;
+    if (asset) {
+      try {
+        const content = await readFile(new URL('../dashboard/' + asset[0], import.meta.url));
+        res.writeHead(200, { 'content-type': asset[1], 'cache-control': 'no-cache', 'x-content-type-options': 'nosniff' });
+        res.end(content);
+      } catch {
+        res.writeHead(404);
+        res.end('Not found');
+      }
       return;
     }
     if (req.url === '/api/version') {
