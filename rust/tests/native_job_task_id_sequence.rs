@@ -51,6 +51,11 @@ fn uses_global_job_and_task_high_water_and_distinct_idempotency_domains() {
     );
     assert_eq!(
         allocate_entity_id(&jobs, "repo-b", "task", Some("key"), &occupied).unwrap(),
+        "2"
+    );
+    // Same repository key still dedupes without consuming an extra global ID.
+    assert_eq!(
+        allocate_entity_id(&jobs, "repo-a", "task", Some("key"), &occupied).unwrap(),
         "1"
     );
     assert_eq!(

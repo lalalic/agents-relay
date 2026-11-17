@@ -22,12 +22,11 @@ impl DisabledGitHubClient {
     }
 }
 
+/// The latest Node local-Git-only CLI permanently disables GitHub-backed modes.
 pub fn no_github_mode(
-    args: &[String],
-    process_args: &[String],
-    env_no_github: Option<&str>,
+    _args: &[String],
+    _process_args: &[String],
+    _env_no_github: Option<&str>,
 ) -> bool {
-    args.iter().any(|arg| arg == "--no-github")
-        || process_args.iter().any(|arg| arg == "--no-github")
-        || env_no_github == Some("1")
+    true
 }

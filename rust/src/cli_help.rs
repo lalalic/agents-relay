@@ -1,22 +1,19 @@
-// Direct port of Node src/cli-help.ts: all public static command help strings and original command resolution policy.
-// Extracted from the original Node helpText() export; no Node dependency at runtime.
-#[allow(non_upper_case_globals)] // Exact Node export `usage` is part of the head-to-head public API.
-pub const usage: &str = r##########"agents-relay <job|task|review|artifact|plan|prompt|blocker|projection|escalation|context|init|record|agent-register|agent-discover|status|reconcile|serve|migrate-local-repositories> [options]"##########;
-
+// Direct port of Node src/cli-help.ts: evaluated current local-Git-only help text, preserving JS escape semantics.
+#[allow(non_upper_case_globals)] // Public Node export name intentionally preserved.
+pub const usage: &str = r##########"agents-relay <job|task|review|artifact|plan|prompt|blocker|escalation|context|init|record|agent-register|agent-discover|status|reconcile|serve|migrate-local-repositories> [options]"##########;
 pub const CLI_USAGE: &str = usage;
-
 pub const CLI_HELP_ENTRIES: &[(&str, &str)] = &[
     (
         r##########"root"##########,
         r##########"Agents Relay coordinates durable asynchronous agent jobs through local SQLite and workflow graphs.
 
 Usage:
-  npx agents-relay <command> [options] [--no-github]
+  npx agents-relay <command> [options]
 
---no-github: SQLite/Graph-only mode. GitHub auth/API, PR creation, merge and fetch are disabled. Local completion is Graph-owned.
+Jobs use local Git identity and SQLite lifecycle state. After completion, Relay may push main to configured origin with fast-forward-only semantics.
 
 Commands:
-  job create|update|show|list|run|merge|unblock|cancel|pause|resume  Manage SQLite-authoritative jobs with optional GitHub PRs
+  job create|update|show|list|run|unblock|cancel|pause|resume  Manage SQLite-authoritative local Jobs
   task create|update|show|list|revise|classify|complete|retry|unblock|cancel  Manage durable tasks
   review job               Request graph-owned review (optional thread override)
   review interactive       Bind, wait, ready, fail or abort a host-owned human review
@@ -26,10 +23,9 @@ Commands:
   plan context             Read execution-bound Planner context from SQLite
   prompt                   Print raw Planner/Worker prompt from the production Builder
   blocker add|resolve|show  Manage cross-Job blocker dependencies
-  projection conflicts|resolve  Inspect and repair deterministic GitHub projection conflicts
   escalation               Run the canonical escalation graph with a configured external executor
   context resolve          Resolve shared project instructions, skills, agents, and runtimes
-  init                     Create a local demo job or initialize a GitHub job
+  init                     Create a local demo Job
   record                   Backfill a completed task into durable history
   agent-register           Register an agent role and its capabilities
   agent-discover           Find registered agents matching hard filters
@@ -46,7 +42,7 @@ Use 'node dist/cli.js' only for explicit local development/demo mode."##########
         r##########"Manage SQLite-authoritative durable jobs.
 
 Usage:
-  npx agents-relay job <create|update|show|list|run|merge|unblock|cancel|pause|resume> [options]
+  npx agents-relay job <create|update|show|list|run|unblock|cancel|pause|resume> [options]
 
 Actions:
   create  Atomically create a durable Job, optionally with its Coordinator DAG Task
@@ -54,14 +50,13 @@ Actions:
   show    Show one durable Job
   run     Activate a Coordinator Graph Job; --foreground runs immediately and streams console events
   list    List managed Jobs in a repository
-  merge   Legacy entry point; local Git merge is Graph-owned (no CLI PR merge)
   unblock Authoritatively invalidate current BLOCKED decisions and trigger replanning/resume
-  cancel  Cancel the Job through the SQLite/Graph lifecycle (no PR required)
+  cancel  Cancel the Job through the SQLite/Graph lifecycle
   pause   Persistently stop dispatch and interrupt active generations; lifecycle state remains unchanged
   resume  Clear pause metadata and requeue interrupted work
 
 Common options:
-  --repo LOCAL_ROOT_NAME       Local Git root directory name; optional Job identity check otherwise
+  --repo LOCAL_ROOT_NAME       Local Git root directory name; required local Job identity
   --id JOB_ID             Durable job identifier
 
 Coordinator/DAG creation and activation (no initial Planner required):
@@ -145,7 +140,8 @@ Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job r
         r##########"Create a SQLite-authoritative Job (objective-only).
 
 Required: --repo LOCAL_ROOT_NAME and a standalone Job objective. Job ID defaults to an auto-incrementing store-global number; --id may only reference an existing numeric Job.
-Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --initial-plan, --review|--no-review, --auto-merge|--no-auto-merge, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
+Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-root ABSOLUTE_GIT_ROOT, --priority P0|P1|P2|P3, --initial-plan, --review|--no-review, --auto-merge|--no-auto-merge, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
+Optional local Git branch binding: --local-merge-source refs/heads/FEATURE --local-merge-target refs/heads/main (both required together). For ordinary code tasks Relay can also bind its isolated local source branch automatically; no remote service or PR is required.
 Creation enables auto-merge and Final Review by default. For plan-free DAG
 jobs, pass --coordinator-graph-file GRAPH --coordinator-input-file INPUT
 --coordinator-output-path ABS --coordinator-project-root ABS
@@ -157,13 +153,13 @@ The --no-review and --no-auto-merge policies are separate; creation is
 idempotent and does not rewrite an existing Job.
 
 Example:
-  npx agents-relay job create --repo LOCAL_ROOT_NAME --project-path vlog --title "Episode" --objective-file episode.md --initial-plan"##########,
+  npx agents-relay job create --repo vlog --project-root /absolute/path/to/vlog --title "Episode" --objective-file episode.md --initial-plan"##########,
     ),
     (
         r##########"job run"##########,
         r##########"Activate a DRAFT Job with a durable Coordinator Agent Graph Task. No Planner or execution mode is required.
 
-Usage: agents-relay job run --id JOB --task-id TASK [--project-path DIR] [--no-github]
+Usage: agents-relay job run --id NUMERIC_JOB_ID --task-id NUMERIC_TASK_ID [--repo LOCAL_ROOT_NAME] [--foreground]
 
 The command activates ordinary Job lifecycle and emits a wake-up. It returns
 ACTIVE without blocking for all Agent Tasks. The same Job Reconciler creates
@@ -179,8 +175,8 @@ There is no Shortcut execution mode."##########,
         r##########"Partially update mutable metadata on a healthy existing Job.
 
 Required: --id JOB_ID. Optional: --repo LOCAL_ROOT_NAME verifies the stored Job identity.
-Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --project-path RELATIVE_PATH, --priority, --tag JSON, --auto-merge|--no-auto-merge, --review|--no-review, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID, and continuation options. The objective updates local SQLite; PR body changes are independent external actions.
-Unspecified fields are preserved. Local Job/PR identity mismatch is rejected.
+Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --project-root ABSOLUTE_GIT_ROOT, --priority, --tag JSON, --auto-merge|--no-auto-merge, --review|--no-review, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID, and continuation options. The objective updates local SQLite.
+Unspecified fields are preserved. Local Job identity mismatch is rejected.
 
 Example:
   npx agents-relay job update --id 101 --priority P0 --no-auto-merge"##########,
@@ -204,12 +200,6 @@ Example:
   npx agents-relay job list"##########,
     ),
     (
-        r##########"job merge"##########,
-        r##########"Legacy entry point; external GitHub PR merges are not initiated by this CLI.
-
-Jobs use local Git for review and merge; optional GitHub publishing uses job.githubRepo. Identify a Job with --id JOB_ID; --repo LOCAL_ROOT_NAME is optional."##########,
-    ),
-    (
         r##########"job unblock"##########,
         r##########"Authoritatively unblock BLOCKED Troubleshooter Tasks in one Job.
 
@@ -219,7 +209,7 @@ Required: --id JOB_ID --reason TEXT. Optional: --repo LOCAL_ROOT_NAME. Each unbl
         r##########"job cancel"##########,
         r##########"Cancel a durable Job and its unfinished Tasks through the authoritative Relay Graph.
 
-Required: --id JOB_ID. Optional: --repo LOCAL_ROOT_NAME checks identity. No PR number is required."##########,
+Required: --id JOB_ID. Optional: --repo LOCAL_ROOT_NAME checks local identity."##########,
     ),
     (
         r##########"job pause"##########,
@@ -270,13 +260,14 @@ Actions:
         r##########"task create"##########,
         r##########"Create one durable Task under an existing Job.
 
-Required: normal Job storage options plus --input-file PATH|- (preferred) or --input MARKDOWN, and --output task-pr|file. --input and --input-file are mutually exclusive.
-Common: --title TITLE (optional; otherwise derived from the first non-empty input line), --idempotency-key KEY, --priority P0|P1|P2|P3, --story-size S|M|L, --agent NAME, --agent-graph-file PATH|-, --deps a,b, --dependency-validity JSON, --parent ID, --draft. Relay allocates the store-global increasing numeric Task ID and rejects caller-supplied IDs. The JSON maps declared dependency Task IDs to order-only, revalidate, or rerun. Normal model-backed Tasks omit adapter/provider/model so Relay runs one Execution Router decision over complete worker+model routes. New Tasks are worker-routed; legacy adapter=orchestrator records are recovery-only and cannot be created or manually executed.
+Required: --repo LOCAL_ROOT_NAME --id NUMERIC_JOB_ID, --input-file PATH|- (preferred) or --input MARKDOWN, and --output local-git|file. --input and --input-file are mutually exclusive.
+--output local-git marks code changes for local Git merge; --output file also requires --output-path PATH. Neither creates a remote request.
+Common: --title TITLE (optional; otherwise derived from the first non-empty input line), --idempotency-key KEY, --priority P0|P1|P2|P3, --story-size S|M|L, --agent NAME, --agent-graph-file PATH|-, --deps 201,202, --dependency-validity JSON, --parent ID, --draft. Relay allocates the store-global increasing numeric Task ID and rejects caller-supplied IDs. The JSON maps declared dependency Task IDs to order-only, revalidate, or rerun. Normal model-backed Tasks omit adapter/provider/model so Relay runs one Execution Router decision over complete worker+model routes. New Tasks are worker-routed; legacy adapter=orchestrator records are recovery-only and cannot be created or manually executed.
 Tasks with dependencies start DRAFT; tasks without dependencies start QUEUED unless --draft is given.
 Directly-created Tasks are not wrapped in a synthetic Plan. Planner-generated Tasks are created internally by Relay from planner output.
 
 Example:
-  npx agents-relay task create --repo LOCAL_ROOT_NAME --id j-5-owner-repo-1 --output file --output-path story.md --input-file task.md"##########,
+  npx agents-relay task create --repo LOCAL_ROOT_NAME --id 101 --output file --output-path story.md --input-file task.md"##########,
     ),
     (
         r##########"task update"##########,
@@ -288,7 +279,7 @@ Accepted task.started and newer current-execution task.progress events reset --t
 Use --clear-routing to remove routing metadata.
 
 Example:
-  npx agents-relay task update --repo LOCAL_ROOT_NAME --id 101 --task-id build --adapter chatgpt --provider chatgpt --model gpt-5.6-sol --reasoning high"##########,
+  npx agents-relay task update --repo LOCAL_ROOT_NAME --id 101 --task-id 202 --adapter chatgpt --provider chatgpt --model gpt-5.6-sol --reasoning high"##########,
     ),
     (
         r##########"task revise"##########,
@@ -386,14 +377,14 @@ Example:
 Usage:
   npx agents-relay blocker <add|resolve|show> [options]
 
-The blocker Job owns reverse `unblocks` references. `add` registers a failed/blocked dependent task. `resolve` is the explicit verified-resolution path; merge-mode blockers also resolve automatically after the blocker PR is observed merged."##########,
+The blocker Job owns reverse `unblocks` references. `add` registers a failed/blocked dependent task. `resolve` is the explicit verified-resolution path; merge-mode blockers resolve against the blocker Job’s authoritative local merge."##########,
     ),
     (
         r##########"blocker add"##########,
         r##########"Register a dependent failed/blocked Task on a blocker Job.
 
 Blocker: --repo LOCAL_ROOT_NAME --id JOB_ID.
-Dependent: --dependent-repo LOCAL_ROOT_NAME --dependent-pr NUMBER --dependent-job JOB_ID --dependent-task TASK_ID.
+Dependent: --dependent-repo LOCAL_ROOT_NAME --dependent-job JOB_ID --dependent-task TASK_ID.
 Common: --resolution merge|verified (default merge)."##########,
     ),
     (
@@ -452,19 +443,19 @@ Example:
 
 Required: --file PATH for local demo mode, or --repo LOCAL_ROOT_NAME --id JOB_ID.
 
-Managed GitHub jobs are reconciled by agents-relayd. The CLI publishes a job.wake request and does not launch workers; NATS is auto-detected when reachable; use --events nats to require it explicitly. Local/runtime invocations may use --thread-id ID to override the durable reviewer/creator thread for ChatGPT review delivery.
+SQLite-backed local Git Jobs are reconciled by agents-relayd. The CLI publishes a job.wake request and does not launch workers; NATS is auto-detected when reachable; use --events nats to require it explicitly. Local/runtime invocations may use --thread-id ID to override the durable reviewer/creator thread for ChatGPT review delivery.
 
 Example:
   npx agents-relay reconcile --repo LOCAL_ROOT_NAME --id 101"##########,
     ),
     (
         r##########"init"##########,
-        r##########"Initialize a new job. GitHub mode requires --repo and --pr; Durable Jobs require --project-root and a local --repo identity.
+        r##########"Initialize a local Job using the local Git root identity.
 
 Common: --id ID, --title TEXT, --objective TEXT, --priority P0|P1|P2|P3. All Jobs replan to an explicit satisfied objective; execution modes and schedules are unsupported.
 
 Example:
-  npx agents-relay init --repo LOCAL_ROOT_NAME --pr 12 --id 101 --title "Objective""##########,
+  npx agents-relay init --repo LOCAL_ROOT_NAME --id 101 --title "Objective""##########,
     ),
     (
         r##########"serve"##########,
@@ -485,20 +476,6 @@ Common: --capabilities a,b, --runtime shell|codex|chatgpt, --provider NAME, --mo
 
 Example:
   npx agents-relay agent-register --file .agents-relay.json --name builder --responsibility "Build code" --role engineer --endpoint shell"##########,
-    ),
-    (
-        r##########"projection"##########,
-        r##########"Inspect and explicitly repair deterministic V2 GitHub projection conflicts.
-
-Usage:
-  npx agents-relay projection conflicts --repo LOCAL_ROOT_NAME --id JOB_ID
-  npx agents-relay projection resolve --repo LOCAL_ROOT_NAME --id JOB_ID --projection-id ID --action requeue|discard-local
-
-A deterministic same-id/different-definition append conflict is classified once, stops
-consuming retry budget, and retains structured diagnostic evidence. It is never
-auto-overwritten: an operator resolves it after reconciling the divergent definition.
-  requeue        Re-arm the recorded projection after the divergent side is reconciled
-  discard-local  Drop the blocked local mutation so a fresh one can be enqueued"##########,
     ),
     (
         r##########"agent-discover"##########,
@@ -528,9 +505,6 @@ pub fn help_text(command: Option<&str>, action: Option<&str>) -> &'static str {
             .and_then(stored)
             .or_else(|| stored(command))
             .expect("built-in help entry");
-    }
-    if command == "projection" {
-        return stored("projection").expect("projection help");
     }
     stored(command).unwrap_or_else(|| stored("root").expect("root help"))
 }

@@ -1,6 +1,6 @@
 # Rust2: Node.js → Rust head-to-head port checklist
 
-> Migration contract: Node source at baseline commit `234a8151fe0fe616c39c0109b4b014326044e17e` is the behavioral reference. The existing Rust rewrite is deliberately retired; **no legacy Rust implementation is reused**. No parity is claimed until independent differential verification passes.
+> Migration contract: the historical 227-file inventory at `234a8151fe0fe616c39c0109b4b014326044e17e` is retained for provenance. The authoritative current Node source is `main` at `ba22e4cbdfa68cdd4ccb08dc7e02df49b57e7a90` (225 active source files: 3 removed, 1 added). The existing Rust rewrite is deliberately retired; **no legacy Rust implementation is reused**. No parity is claimed until independent differential verification passes.
 
 ## Rules and exit criteria
 
@@ -41,10 +41,10 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/cli-coordinator.ts` | `rust/src/cli_coordinator.rs` | PENDING | — |
 | `src/cli-escalation.ts` | `rust/src/cli_escalation.rs` | PENDING | — |
 | `src/cli-foreground.ts` | `rust/src/cli_foreground.rs` | PENDING | — |
-| `src/cli-help.ts` | `rust/src/cli_help.rs` | PASS | Direct static port: 49 original help keys, 2,381 exact Node/Rust usage/command/action/fallback fixtures; 2 native tests (`rust/tests/head_to_head_cli_help.mjs`, `rust/tests/native_cli_help.rs`) |
+| `src/cli-help.ts` | `rust/src/cli_help.rs` | PASS | Rebased to current main: all 47 CLI help keys, obsolete PR/projection/merge commands removed; direct Node/Rust byte-level CLI help and fallback differential (`rust/tests/head_to_head_cli_help.mjs`, `rust/tests/native_cli_help.rs`) |
 | `src/cli-job-create.ts` | `rust/src/cli_job_create.rs` | PENDING | — |
 | `src/cli-local-merge-config.ts` | `rust/src/cli_local_merge_config.rs` | PASS | 626 shared differential fixtures across 14 ports; merge success and validation errors compared (`rust/tests/head_to_head.mjs`) |
-| `src/cli-projection.ts` | `rust/src/cli_projection.rs` | PASS | Direct hotfix: 507 Node/Rust help/validation cases, 250 actual localhost HTTP controls/errors, 5 native tests (`rust/tests/head_to_head_cli_projection.mjs`, `rust/tests/native_cli_projection.rs`) |
+| `src/cli-projection.ts` | `rust/src/cli_projection.rs` | EXCLUDED | Removed by main local-Git-only CLI lifecycle; PR projection commands and their Rust mirror/differential tests are retired, no longer an executable public CLI surface. |
 | `src/cli-prompt.ts` | `rust/src/cli_prompt.rs` | PENDING | — |
 | `src/cli-review.ts` | `rust/src/cli_review.rs` | PENDING | — |
 | `src/cli-revision.ts` | `rust/src/cli_revision.rs` | PENDING | — |
@@ -100,7 +100,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/job-local-repository-migration.ts` | `rust/src/job_local_repository_migration.rs` | PENDING | — |
 | `src/job-pause.ts` | `rust/src/job_pause.rs` | PENDING | — |
 | `src/job-pr-number-migration.ts` | `rust/src/job_pr_number_migration.rs` | PASS | Direct hotfix: 2,401 combined Node/Rust Task/Job normalization fixtures, 190 in-memory SQLite migration histories, five native tests including JavaScript lone-surrogate escape fidelity (`rust/tests/head_to_head_legacy_migrations.mjs`, `rust/tests/native_job_pr_number_migration.rs`) |
-| `src/job-task-id-sequence.ts` | `rust/src/job_task_id_sequence.rs` | PASS | Direct hotfix: 240 Node/Rust ID grammar fixtures, 170 complete independent SQLite allocation histories, 5 native tests including 32 concurrent allocations (`rust/tests/head_to_head_job_task_id_sequence.mjs`, `rust/tests/native_job_task_id_sequence.rs`) |
+| `src/job-task-id-sequence.ts` | `rust/src/job_task_id_sequence.rs` | PASS | Main repo-scoped Task and Job idempotency, 170 independent SQLite allocation histories, 240 grammar fixtures, 5 native tests plus cross-process concurrency (`rust/tests/head_to_head_job_task_id_sequence.mjs`, `rust/tests/native_job_task_id_sequence.rs`) |
 | `src/job-worktree-cleanup.ts` | `rust/src/job_worktree_cleanup.rs` | PENDING | — |
 | `src/legacy-blocked-task-migration.ts` | `rust/src/legacy_blocked_task_migration.rs` | PASS | Direct hotfix: task lifecycle Node/Rust normalization, 190 in-memory SQLite update histories, four native tests (`rust/tests/head_to_head_legacy_migrations.mjs`, `rust/tests/native_legacy_blocked_task_migration.rs`) |
 | `src/legacy-orchestrator-repair.ts` | `rust/src/legacy_orchestrator_repair.rs` | PENDING | — |
@@ -118,7 +118,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/markers.ts` | `rust/src/markers.rs` | PENDING | — |
 | `src/model-redecision.ts` | `rust/src/model_redecision.rs` | PENDING | — |
 | `src/model-routing.ts` | `rust/src/model_routing.rs` | PENDING | — |
-| `src/no-github.ts` | `rust/src/no_github.rs` | PASS | Direct port: 900 Node/Rust --no-github switch fixtures, four disabled transport methods, 2 native tests and original Node disabled-API regression (`rust/tests/head_to_head_no_github.mjs`, `rust/tests/native_no_github.rs`) |
+| `src/no-github.ts` | `rust/src/no_github.rs` | PASS | Main local-Git-only always-disabled mode with all four fail-closed GitHub transports, 900 Node/Rust flag fixtures and native tests (`rust/tests/head_to_head_no_github.mjs`, `rust/tests/native_no_github.rs`) |
 | `src/observability.ts` | `rust/src/observability.rs` | PASS | Direct hotfix: 8,744 exact Node/Rust classification/redaction/correlation/environment fixtures; 6 Rust-native tests including interleaved Futures; 12 original Node regressions (rust/tests/head_to_head_observability.mjs; rust/tests/native_observability.rs) |
 | `src/outcome-review.ts` | `rust/src/outcome_review.rs` | PENDING | — |
 | `src/owned-process.ts` | `rust/src/owned_process.rs` | PENDING | — |
@@ -139,8 +139,8 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/projection-failure-dedupe.ts` | `rust/src/projection_failure_dedupe.rs` | PASS | 626 shared differential fixtures across 14 ports; sequential duplicate/change/classification/reset vectors compared (`rust/tests/head_to_head.mjs`) |
 | `src/projection-failure-recovery.ts` | `rust/src/projection_failure_recovery.rs` | PENDING | — |
 | `src/projection-outbox.ts` | `rust/src/projection_outbox.rs` | PENDING | — |
-| `src/projection-recovery-runtime.ts` | `rust/src/projection_recovery_runtime.rs` | PENDING | — |
-| `src/projection-recovery.ts` | `rust/src/projection_recovery.rs` | PENDING | — |
+| `src/projection-recovery-runtime.ts` | `rust/src/projection_recovery_runtime.rs` | EXCLUDED | Deleted in main; the old GitHub projection-recovery runtime is not part of the local-Git-only lifecycle. |
+| `src/projection-recovery.ts` | `rust/src/projection_recovery.rs` | EXCLUDED | Deleted in main; retired GitHub PR projection repair does not own Job completion. |
 | `src/publication-store.ts` | `rust/src/publication_store.rs` | PENDING | — |
 | `src/reconcile-coordinator.ts` | `rust/src/reconcile_coordinator.rs` | PENDING | — |
 | `src/reconciler-cancellation.ts` | `rust/src/reconciler_cancellation.rs` | PENDING | — |
@@ -152,6 +152,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/reconciler.ts` | `rust/src/reconciler.rs` | PENDING | — |
 | `src/registry.ts` | `rust/src/registry.rs` | PASS | Batch 4: 700 shared differential cases across 21 source ports; filtering, trust domains, labels, task-kind evidence, exploratory ordering and reliability ranking (`rust/tests/head_to_head.mjs`) |
 | `src/relay-create.ts` | `rust/src/relay_create.rs` | PENDING | — |
+| `src/relay-job-merge.ts` | `rust/src/relay_job_merge.rs` | PENDING | — |
 | `src/relay-job-snapshot-reads.ts` | `rust/src/relay_job_snapshot_reads.rs` | PASS | Direct port: 400 Job metadata, 1,200 legacy Job normalization and 240 SQLite load/list Node/Rust fixtures; 4 native tests (`rust/tests/head_to_head_relay_job_snapshot_reads.mjs`, `rust/tests/native_relay_job_snapshot_reads.rs`) |
 | `src/relay-store-discovery.ts` | `rust/src/relay_store_discovery.rs` | PENDING | — |
 | `src/relay-store.ts` | `rust/src/relay_store.rs` | PENDING | — |
@@ -163,7 +164,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/relayd.ts` | `rust/src/relayd.rs` | PENDING | — |
 | `src/review-chair.ts` | `rust/src/review_chair.rs` | PENDING | — |
 | `src/review-evidence.ts` | `rust/src/review_evidence.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; head precedence/fallback, finding aliases, malformed/null findings, trimming, Unicode and missing evidence (`rust/tests/head_to_head.mjs`) |
-| `src/review-generation-fence.ts` | `rust/src/review_generation_fence.rs` | PASS | Direct hotfix: 1,950 randomized Node/Rust immutable Review generations, stale-Head and competing reviewer scenarios; 4 Rust-native tests (`rust/tests/head_to_head_review_generation_fence.mjs`, `rust/tests/native_review_generation_fence.rs`) |
+| `src/review-generation-fence.ts` | `rust/src/review_generation_fence.rs` | PASS | Main-only ACTIVE Job review fence, no projectionRecovery bypass; 1,950 randomized Node/Rust immutable review generations, 4 native regressions (`rust/tests/head_to_head_review_generation_fence.mjs`, `rust/tests/native_review_generation_fence.rs`) |
 | `src/review-replan.ts` | `rust/src/review_replan.rs` | PENDING | — |
 | `src/review-revision-execution.ts` | `rust/src/review_revision_execution.rs` | PENDING | — |
 | `src/review-revision-merge.ts` | `rust/src/review_revision_merge.rs` | PASS | 626 shared differential fixtures across 14 ports; local history copy/delete and null handling compared (`rust/tests/head_to_head.mjs`) |
@@ -535,3 +536,10 @@ This is only the Job JEL graph projection; Dashboard HTTP routing, additional ta
 - [x] `src/runtime-summary.ts` → `rust/src/runtime_summary.rs`: count only real, unexpired leased Task executions in ACTIVE Jobs, respect adapter selection, ignore ghost RUNNING flags, count models and preserve running order. 700 Node/Rust fixtures + 3 native tests.
 - [x] `src/runtime-status-events.ts` → `rust/src/runtime_status_events.rs`: process-local status change observation with repository-qualified Job identity; first observation establishes baseline without event, repeated status dedupes; random UUIDv4 event + ISO timestamp and fail-closed callback. 430 Node/Rust histories + 2 native tests.
 - [x] All ports/fixtures run in an isolated worktree without live process or production SQLite mutations. Full Rust2 checklist and combined Node/Rust gate execute once per batch after fast-forward merge.
+
+### Rebase against main local-Git-only lifecycle (2026-11-17)
+
+- [x] Merge main commit `ba22e4c` into an isolated rust2 integration worktree, preserving all five dirty files in the active Rust2 checkout.
+- [x] Retire `cli-projection`, `projection-recovery`, and `projection-recovery-runtime` from the executable Rust2 target; retain their history as `EXCLUDED` rather than falsely counting them PASS.
+- [x] Add newly-introduced `relay-job-merge.ts` as `PENDING`, with one-to-one future Rust path; 228 tracked historical+new files = 225 active current Node modules plus 3 excluded.
+- [x] Refresh `cli-help`, repository-scoped global numeric Task idempotency, unconditional local-only GitHub mode, and ACTIVE-only review generation fencing from current main.

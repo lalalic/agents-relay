@@ -98,8 +98,6 @@ pub mod no_github;
 
 // Direct Node src/task-comments.ts immutable comment history and reconciliation.
 pub mod task_comments;
-// Direct Node src/cli-projection.ts projection CLI validation and HTTP control.
-pub mod cli_projection;
 
 // Direct Node src/cli-help.ts production static CLI usage/help strings.
 pub mod cli_help;

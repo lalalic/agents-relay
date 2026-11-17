@@ -8,13 +8,14 @@ const repo = resolve(import.meta.dirname, '..');
 const checklist = readFileSync(join(repo,'docs/RUST2_HEAD_TO_HEAD_CHECKLIST.md'),'utf8');
 const pattern = /^\| `(src\/[^`]+\.(?:ts|js))` \| `(rust\/src\/[^`]+\.rs)` \| (PENDING|PORTING|PASS|EXCLUDED) \| ([^\n]+) \|$/gm;
 const rows=[...checklist.matchAll(pattern)].map(([,source,target,status,evidence])=>({source,target,status,evidence}));
-assert.equal(rows.length,227,'Unexpected Node baseline inventory: stop rather than silently skip files');
+assert.equal(rows.length,228,'Unexpected combined main+historical Node inventory: stop rather than silently skip files');
 const bySource=new Map(rows.map(row=>[row.source,row]));
 // A separate thread may be changing the authoritative Node baseline. Never
 // select those uncommitted paths for automated porting until their owner commits.
 const dirtyNodeSources = new Set(execFileSync('git',['diff','--name-only','HEAD','--','src'],{cwd:repo,encoding:'utf8'})
  .split('\n').filter(Boolean));
 for(const row of rows){
+ if(row.status==='EXCLUDED'){row.lines=0;row.dependsOn=[];row.unportedDependencies=0;continue;}
  const text=readFileSync(join(repo,row.source),'utf8');
  row.lines=text.split('\n').length;
  row.dependsOn = [];
@@ -27,7 +28,7 @@ for(const row of rows){
 }
 const limitIndex=process.argv.indexOf('--limit');
 const limit=limitIndex<0?12:Number(process.argv[limitIndex+1]);
-assert(Number.isSafeInteger(limit)&&limit>0&&limit<=227,'--limit must be 1–227');
+assert(Number.isSafeInteger(limit)&&limit>0&&limit<=228,'--limit must be 1–228');
 const pending=rows.filter(row=>row.status==='PENDING'&&!dirtyNodeSources.has(row.source)).sort((a,b)=>
  a.unportedDependencies-b.unportedDependencies || a.lines-b.lines || a.source.localeCompare(b.source));
 if(process.argv.includes('--json')){

@@ -19,14 +19,14 @@ fn strings(list: &[&str]) -> Vec<String> {
 }
 #[test]
 fn argv_and_environment_flags_are_exact_and_boolean_independent() {
-    assert!(!no_github_mode(&[], &[], None));
+    assert!(no_github_mode(&[], &[], None));
     assert!(no_github_mode(&strings(&["--no-github"]), &[], None));
     assert!(no_github_mode(&[], &strings(&["--no-github"]), None));
     assert!(no_github_mode(&[], &[], Some("1")));
     for value in ["0", "yes", "true", "false", ""] {
-        assert!(!no_github_mode(&[], &[], Some(value)));
+        assert!(no_github_mode(&[], &[], Some(value)));
     }
-    assert!(!no_github_mode(&strings(&["--no-github=true"]), &[], None));
+    assert!(no_github_mode(&strings(&["--no-github=true"]), &[], None));
 }
 #[test]
 fn disabled_adapter_cannot_escape_by_using_any_of_four_network_operations() {

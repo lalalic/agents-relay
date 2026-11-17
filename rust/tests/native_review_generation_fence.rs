@@ -24,8 +24,9 @@ fn current_generation_rejects_old_head_old_execution_and_inactive_job() {
     assert!(!review_generation_matches(
         &current, &original, &task, "newsha"
     ));
+    // A historical repairing projection must never bypass current ACTIVE state.
     current["projectionRecovery"] = json!({"status":"repairing"});
-    assert!(review_generation_matches(
+    assert!(!review_generation_matches(
         &current, &original, &task, "newsha"
     ));
     current["headSha"] = json!("oldsha");

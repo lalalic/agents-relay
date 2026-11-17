@@ -6,8 +6,12 @@ import { resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
 const baseline = '234a8151fe0fe616c39c0109b4b014326044e17e';
-const sources = execFileSync('git', ['ls-tree', '-r', '--name-only', baseline, 'src'], {cwd: root, encoding: 'utf8'})
+const mainBaseline = 'ba22e4cbdfa68cdd4ccb08dc7e02df49b57e7a90';
+const inventory = ref => execFileSync('git', ['ls-tree', '-r', '--name-only', ref, 'src'], {cwd: root, encoding: 'utf8'})
   .split('\n').filter(x => /\.(?:ts|js)$/.test(x));
+const historicalSources = inventory(baseline);
+const currentSources = inventory(mainBaseline);
+const sources = [...new Set([...historicalSources,...currentSources])];
 const doc = readFileSync(resolve(root, 'docs/RUST2_HEAD_TO_HEAD_CHECKLIST.md'), 'utf8');
 const rows = [...doc.matchAll(/^\| `(src\/[^`]+\.(?:ts|js))` \| `(rust\/src\/[^`]+\.rs)` \| (PENDING|PORTING|PASS|EXCLUDED) \| ([^\n]+) \|$/gm)]
   .map(([,source,target,status,evidence])=>({source,target,status,evidence}));
@@ -19,6 +23,14 @@ for(const row of rows){
  seen.add(row.source);
  const expectTarget = 'rust/src/' + row.source.slice(4).replace(/\.(ts|js)$/,'.rs').replaceAll('-','_');
  assert.equal(row.target,expectTarget,`Incorrect target path for ${row.source}`);
+ if (row.status==='EXCLUDED') {
+  assert(!currentSources.includes(row.source),`EXCLUDED file remains active in main: ${row.source}`);
+  assert(!existsSync(resolve(root,row.source)),`EXCLUDED file still on disk: ${row.source}`);
+  assert(!/^\s*(?:—|-)\s*$/.test(row.evidence),`EXCLUDED without removal evidence: ${row.source}`);
+  continue;
+ }
+ assert(currentSources.includes(row.source),`Active Node file absent from pinned main: ${row.source}`);
+ assert(existsSync(resolve(root,row.source)),`Tracked active source is absent: ${row.source}`);
  if(row.status==='PASS') {
   const file=resolve(root,row.target);
   assert(existsSync(file),`PASS source has no Rust target: ${row.target}`);

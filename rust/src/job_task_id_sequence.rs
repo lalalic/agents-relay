@@ -108,13 +108,8 @@ pub fn allocate_entity_id(
     let tx = db
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| error.to_string())?;
-    let scoped = request_key.map(|key| {
-        if kind == "task" {
-            key.to_string()
-        } else {
-            format!("{repository}:{key}")
-        }
-    });
+    // Current Node scopes idempotency by repository for both global Job and Task IDs.
+    let scoped = request_key.map(|key| format!("{repository}:{key}"));
     if let Some(key) = scoped.as_deref() {
         let existing: Option<String> = tx
             .query_row(

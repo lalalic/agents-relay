@@ -31,11 +31,7 @@ pub fn review_generation_matches(
         return false;
     };
     if fresh.get("reviewHeadSha").and_then(Value::as_str) != Some(head_sha)
-        || (current.get("state").and_then(Value::as_str) != Some("ACTIVE")
-            && current
-                .pointer("/projectionRecovery/status")
-                .and_then(Value::as_str)
-                != Some("repairing"))
+        || current.get("state").and_then(Value::as_str) != Some("ACTIVE")
         || (exists_truthy(current.get("headSha"))
             && current.get("headSha").and_then(Value::as_str) != Some(head_sha))
         || !strict_equal(fresh.get("executionId"), task.get("executionId"))
