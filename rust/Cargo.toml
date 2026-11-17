@@ -9,6 +9,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 libc = "0.2" # POSIX locale collation for Node localeCompare parity on macOS.
 regex = "1.13" # Port Node worker rejection regex semantics, including mixed separators.
 sha2 = "0.10"
+chrono = { version = "0.4.45", default-features = false, features = ["std"] } # Node Date.parse and ISO timestamps for dashboard JEL parity.
 
 [[bin]]
 name = "relay-rust2-parity"

@@ -62,7 +62,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/dashboard-actions.ts` | `rust/src/dashboard_actions.rs` | PENDING | — |
 | `src/dashboard-data.ts` | `rust/src/dashboard_data.rs` | PENDING | — |
 | `src/dashboard-html.ts` | `rust/src/dashboard_html.rs` | PENDING | — |
-| `src/dashboard-jel.ts` | `rust/src/dashboard_jel.rs` | PENDING | — |
+| `src/dashboard-jel.ts` | `rust/src/dashboard_jel.rs` | PASS | Direct hotfix: 1,429 exact fixed-clock Node/Rust dynamic DAG/Plan/Review/Retry/Merge Mermaid diagrams, native unit tests and Unicode surrogate JSON-wire fidelity (rust/tests/head_to_head_dashboard_jel.mjs; rust/tests/native_dashboard_jel.rs) |
 | `src/dashboard-style.ts` | `rust/src/dashboard_style.rs` | PASS | Direct hotfix: exact 25,275 byte runtime dashboard CSS literal, SHA-256 676e173854d712a21bf4cf0a3dfaa59bf015a458ce9a2b54d8e632a082a56c34 (rust/tests/head_to_head_dashboard_style.mjs) |
 | `src/dashboard-workflow-inspection.ts` | `rust/src/dashboard_workflow_inspection.rs` | PASS | Batch 6: Node/Rust differential fixtures cover valid exact Event/Action graph symbols, source/test references, malformed identifiers and traversal rejection (`rust/tests/head_to_head_batch6.mjs`); native path-safety test. |
 | `src/dashboard.ts` | `rust/src/dashboard.rs` | PENDING | — |
@@ -412,3 +412,13 @@ Only isolated, specifically created process groups were terminated in verificati
 - [x] `src/dashboard-style.ts` → `rust/src/dashboard_style.rs`: copy the actual compiled Node template-string contents as a Rust native static `&str`, not as a runtime dependency on JavaScript or a placeholder.
 - [x] `rust/tests/head_to_head_dashboard_style.mjs`: assert every one of the **25,275** output bytes matches Node's runtime value, with SHA-256 `676e173854d712a21bf4cf0a3dfaa59bf015a458ce9a2b54d8e632a082a56c34`.
 - [x] This verifies only the static stylesheet; Dashboard dynamic HTML, JEL, tabs, server APIs and live browser E2E are separately pending.
+
+### Direct Rust2 hotfix — dynamic Dashboard JEL graph (2026-11-16)
+
+- [x] `src/dashboard-jel.ts` → `rust/src/dashboard_jel.rs`: Node-authored Plan/Execute/Review/Merge/Job graph and Stage-DAG dependencies, worker execution duration, retry/failure/troubleshooter diagnostics, review revision rounds and safe Mermaid labels.
+- [x] `rust/tests/head_to_head_dashboard_jel.mjs`: **1,429** fixed-clock Node/Rust comparisons, including adversarial Unicode/URL sanitization, ISO dates with and without timezone, future/invalid dates, mixed integer/float attempts and zero/missing Plan rounds.
+- [x] For JavaScript `slice(0, 80)` boundaries that split an astral letter, Rust JSON-wire projection emits the exact lone UTF-16 surrogate escape; native display safely renders such data as a replacement glyph.
+- [x] `rust/tests/native_dashboard_jel.rs`: basic graph lifecycle, task parent/dependency edges, retry/failed classes, duration, safe labels and UTF-16 wire behavior.
+- [x] `node --import ./test/test-store-env.mjs --test test/dashboard-jel.test.js test/dashboard.test.js`: **114/114** focused Node regressions passed with isolated SQLite store and ephemeral dashboard HTTP fixture.
+
+This is only the Job JEL graph projection; Dashboard HTTP routing, additional tabs and live browser parity remain separate PENDING items.

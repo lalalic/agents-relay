@@ -166,6 +166,12 @@ fn workflow_engine_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "jobJelDiagram" => Ok(
+            agents_relay_rust2::dashboard_jel::job_jel_diagram_json_wire_at(
+                &request["job"],
+                request["nowMs"].as_i64().unwrap_or(0),
+            ),
+        ),
         "dashboardStyles" => {
             Ok(json!(agents_relay_rust2::dashboard_style::dashboard_styles).to_string())
         }

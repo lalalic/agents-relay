@@ -3,14 +3,20 @@ use agents_relay_rust2::local_merge_lock::{lock_directory, with_local_merge_lock
 use std::{
     fs,
     panic::{catch_unwind, AssertUnwindSafe},
+    sync::atomic::{AtomicU64, Ordering},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 fn temp() -> std::path::PathBuf {
+    // Concurrent Rust test workers must never share the same root on macOS,
+    // where SystemTime may have coarser effective resolution than nanoseconds.
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let unique = NEXT.fetch_add(1, Ordering::Relaxed);
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    std::path::PathBuf::from("/tmp").join(format!("r2-lock-{}-{stamp}", std::process::id()))
+    std::path::PathBuf::from("/tmp")
+        .join(format!("r2-lock-{}-{stamp}-{unique}", std::process::id()))
 }
 
 #[test]
