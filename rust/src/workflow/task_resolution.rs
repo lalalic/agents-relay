@@ -305,6 +305,17 @@ pub fn attach_resolution_ownership(
         ));
     }
     let mut updated = original;
+    // Node calls `original.dependencies.includes(child.id)` inside the selected
+    // action. A malformed persisted Task must fail here, not invent an empty
+    // dependency list and silently accept an invalid ownership mutation.
+    match updated.get("dependencies") {
+        None => return Err("Cannot read properties of undefined (reading 'includes')".into()),
+        Some(Value::Null) => {
+            return Err("Cannot read properties of null (reading 'includes')".into())
+        }
+        Some(Value::Array(_)) => (),
+        Some(_) => return Err("original.dependencies.includes is not a function".into()),
+    }
     if !updated["dependencies"]
         .as_array()
         .is_some_and(|v| v.contains(&child["id"]))

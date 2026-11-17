@@ -8,10 +8,7 @@ use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     path::Path,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::{Arc, Condvar, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -137,15 +134,28 @@ pub fn arm_deadline(
     }
     Some((inactivity_deadline(task, execution_id, post_exit_grace_ms, now) - now).max(1))
 }
-/// Timers use generation-specific cancellation flags; a superseded timer may never expire a new execution.
+/// A cancelled Node timer is cleared immediately. Use a notified wait rather
+/// than a sleeping detached thread, so repeated re-arms do not retain a backlog
+/// of obsolete threads until an hours-long worker timeout elapses.
+#[derive(Default)]
+struct TimerCancellation {
+    cancelled: Mutex<bool>,
+    wake: Condvar,
+}
+impl TimerCancellation {
+    fn cancel(&self) {
+        *self.cancelled.lock().expect("watchdog cancellation") = true;
+        self.wake.notify_all();
+    }
+}
 #[derive(Default)]
 pub struct WatchdogTimers {
-    timers: HashMap<String, Arc<AtomicBool>>,
+    timers: HashMap<String, Arc<TimerCancellation>>,
 }
 impl WatchdogTimers {
     pub fn cancel(&mut self, task_id: &str) {
         if let Some(flag) = self.timers.remove(task_id) {
-            flag.store(true, Ordering::Release);
+            flag.cancel();
         }
     }
     pub fn arm(
@@ -158,11 +168,21 @@ impl WatchdogTimers {
         let task_id = string(task, "id")?.to_string();
         self.cancel(&task_id);
         let delay = arm_deadline(task, execution_id, post_exit_grace_ms, now_ms())?;
-        let cancelled = Arc::new(AtomicBool::new(false));
-        self.timers.insert(task_id, Arc::clone(&cancelled));
+        let cancellation = Arc::new(TimerCancellation::default());
+        self.timers.insert(task_id, Arc::clone(&cancellation));
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(delay as u64));
-            if !cancelled.load(Ordering::Acquire) {
+            let lock = cancellation
+                .cancelled
+                .lock()
+                .expect("watchdog cancellation");
+            let (cancelled, expiry) = cancellation
+                .wake
+                .wait_timeout_while(lock, Duration::from_millis(delay as u64), |cancelled| {
+                    !*cancelled
+                })
+                .expect("watchdog timer wait");
+            if !*cancelled && expiry.timed_out() {
+                drop(cancelled);
                 on_expire();
             }
         });
@@ -172,7 +192,7 @@ impl WatchdogTimers {
 impl Drop for WatchdogTimers {
     fn drop(&mut self) {
         for flag in self.timers.values() {
-            flag.store(true, Ordering::Release);
+            flag.cancel();
         }
     }
 }

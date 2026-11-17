@@ -5,6 +5,37 @@ use super::policy_graph::{choose_policy, execute_policy, load_policy_graph};
 use serde_json::{json, Value};
 use std::{collections::HashSet, future::Future, path::Path};
 
+/// The public `plannerOrchestrationV2` GraphRuntime export, rather than a
+/// facts-only shim. Its declared registry remains available for introspection.
+/// The canonical Mermaid source retains sole ownership of transition policy.
+pub fn planner_orchestration_v2(directory: &Path) -> Result<super::graph_v2::GraphRuntime, String> {
+    let mut runtime = load_policy_graph(directory, "planner-orchestration")?;
+    runtime.registry.states.extend(
+        [
+            "idle",
+            "check_legacy_pending",
+            "check_recover",
+            "check_plan_failure",
+            "check_plan_recovery",
+            "check_plan_recovery_exists",
+            "check_seed",
+            "check_planner_opt_in",
+            "check_planner",
+            "check_resolution_ownership",
+            "check_blocked",
+            "check_work",
+            "check_materialized",
+            "check_review",
+            "wait",
+            "recovered",
+            "created",
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    );
+    Ok(runtime)
+}
+
 fn s<'a>(v: &'a Value, key: &str) -> &'a str {
     v.get(key).and_then(Value::as_str).unwrap_or("")
 }
@@ -238,12 +269,25 @@ where
     let runtime = load_policy_graph(directory, "planner-orchestration")?;
     let mut options = DispatchOptions::event("idle", "planner.reconcile", facts, 14);
     options.graph_name = Some("planner-orchestration".into());
+    let mut effect = effect;
     dispatch_workflow_graph(
         &runtime,
         &options,
         transient,
         |_, _| async { Ok(()) },
-        effect,
+        |action| {
+            let callback = effect(action);
+            async move {
+                // Node's public dispatchPlannerOrchestration routes through
+                // dispatchWorkflowGraph, which treats `{ok:false}` as a
+                // rejected action rather than a Graph failure event.
+                let receipt = callback.await?;
+                if receipt.get("ok") == Some(&Value::Bool(false)) {
+                    return Err("action returned failure receipt: reconciliation required".into());
+                }
+                Ok(receipt)
+            }
+        },
         |_, _| async { Ok(()) },
     )
     .await

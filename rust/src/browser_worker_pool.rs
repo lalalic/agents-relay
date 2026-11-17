@@ -2,7 +2,7 @@
 // resource authority; the canonical browser-worker-pool Graph selects effects.
 // No HTTP receipt is interpreted as Task completion.
 use crate::browser_worker_pool_graph::require_pool_decision;
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, ErrorCode, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -199,7 +199,13 @@ impl BrowserWorkerPoolManager {
         }
         let db = Connection::open(path)?;
         db.busy_timeout(Duration::from_millis(5000))?;
-        db.execute_batch("PRAGMA journal_mode=WAL;
+        // Two daemon processes may initialize the same fresh pool DB at the
+        // same instant. SQLite's WAL-mode switch can return SQLITE_BUSY even
+        // with busy_timeout set; retry only that transient initialization lock.
+        // No admission/lease policy is decided here.
+        const INIT_ATTEMPTS: usize = 20;
+        for attempt in 0..INIT_ATTEMPTS {
+            match db.execute_batch("PRAGMA journal_mode=WAL;
           CREATE TABLE IF NOT EXISTS browser_slots (
             provider TEXT NOT NULL, slot INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'IDLE',
             execution_id TEXT, generation INTEGER NOT NULL DEFAULT 0, session_id TEXT, thread_url TEXT,
@@ -211,7 +217,17 @@ impl BrowserWorkerPoolManager {
           CREATE INDEX IF NOT EXISTS browser_queue_order ON browser_queue(provider,queued_at,execution_id);
           CREATE TABLE IF NOT EXISTS browser_provider_health (
             provider TEXT PRIMARY KEY, failures INTEGER NOT NULL DEFAULT 0, unavailable_until INTEGER NOT NULL DEFAULT 0
-          );")?;
+          );") {
+                Ok(()) => break,
+                Err(rusqlite::Error::SqliteFailure(code, _))
+                    if attempt + 1 < INIT_ATTEMPTS
+                        && matches!(code.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) =>
+                {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
         if !(1..=32).contains(&options.capacity) {
             return Err(BrowserPoolError::new("Invalid pool capacity"));
         }
