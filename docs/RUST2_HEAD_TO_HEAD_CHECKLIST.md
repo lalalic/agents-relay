@@ -44,7 +44,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/cli-help.ts` | `rust/src/cli_help.rs` | PENDING | — |
 | `src/cli-job-create.ts` | `rust/src/cli_job_create.rs` | PENDING | — |
 | `src/cli-local-merge-config.ts` | `rust/src/cli_local_merge_config.rs` | PASS | 626 shared differential fixtures across 14 ports; merge success and validation errors compared (`rust/tests/head_to_head.mjs`) |
-| `src/cli-projection.ts` | `rust/src/cli_projection.rs` | PENDING | — |
+| `src/cli-projection.ts` | `rust/src/cli_projection.rs` | PASS | Direct hotfix: 507 Node/Rust help/validation cases, 250 actual localhost HTTP controls/errors, 5 native tests (`rust/tests/head_to_head_cli_projection.mjs`, `rust/tests/native_cli_projection.rs`) |
 | `src/cli-prompt.ts` | `rust/src/cli_prompt.rs` | PENDING | — |
 | `src/cli-review.ts` | `rust/src/cli_review.rs` | PENDING | — |
 | `src/cli-revision.ts` | `rust/src/cli_revision.rs` | PENDING | — |
@@ -188,7 +188,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/store-task-definition.ts` | `rust/src/store_task_definition.rs` | PENDING | — |
 | `src/store.ts` | `rust/src/store.rs` | PENDING | — |
 | `src/task-actions.ts` | `rust/src/task_actions.rs` | PENDING | — |
-| `src/task-comments.ts` | `rust/src/task_comments.rs` | PENDING | — |
+| `src/task-comments.ts` | `rust/src/task_comments.rs` | PASS | Direct hotfix: 2,620 Node/Rust comment append, context and stale snapshot fixtures; 5 native tests, original Node comment regressions (`rust/tests/head_to_head_task_comments.mjs`, `rust/tests/native_task_comments.rs`) |
 | `src/task-context.ts` | `rust/src/task_context.rs` | PENDING | — |
 | `src/task-id-migration.ts` | `rust/src/task_id_migration.rs` | PASS | Direct hotfix: 7 cloned SQLite Node/Rust migrations, 3 preflight refusals, verified constraint rollback + immutable backup, 4 native tests, 3 original Node regressions (rust/tests/head_to_head_task_id_migration.mjs; rust/tests/native_task_id_migration.rs) |
 | `src/task-inactivity-watchdog.ts` | `rust/src/task_inactivity_watchdog.rs` | PENDING | — |
@@ -512,3 +512,11 @@ This is only the Job JEL graph projection; Dashboard HTTP routing, additional ta
 - [x] `src/no-github.ts` → `rust/src/no_github.rs`: exact public `DisabledGitHubClient` with four fail-closed transport methods and `noGitHubMode` across explicit arguments, process argv and strict `AGENTS_RELAY_NO_GITHUB=1` setting.
 - [x] `rust/tests/head_to_head_no_github.mjs`: **900** disable-mode Node/Rust cases plus all four API methods, with no real network calls. Two Rust native tests and original Node disabled GitHub transport regression verify the fail-closed boundary.
 - [x] No production Job SQLite, GitHub API, or Relay process touched. All test data lives in memory.
+
+### Direct Rust2 hotfix — append-only Task comments and Projection CLI (2026-11-16)
+
+- [x] `src/task-comments.ts` → `rust/src/task_comments.rs`: all three exports `appendTaskComment`, `taskCommentContext`, and `preserveTaskComments`. Generate OS-entropy RFC4122 UUID v4 for new comments; preserve immutable Task input/execution; idempotent retries return the exact existing comment; stale inbound comments are unioned by stable comment ID with authoritative comments first.
+- [x] `rust/tests/head_to_head_task_comments.mjs`: **2,620** Node/Rust comment validation/append, source context formatting and stale snapshot merger fixtures; only nondeterministic new UUID/time fields are normalized for differential comparisons. Five native tests verify real UUID v4, UTC timestamp, exact append ordering, idempotency, and stale recovery.
+- [x] `src/cli-projection.ts` → `rust/src/cli_projection.rs`: all public help/command semantics, first-value CLI flag parsing, strict nonnegative integer projection IDs, action canonicalization, optional notes, and real POST to caller-selected `http://host:port/api/control` using native Rust HTTP.
+- [x] `rust/tests/head_to_head_cli_projection.mjs`: **507** help and invalid CLI cases and **250** real localhost HTTP control-command and status-response cases; exact JSON bodies and terminal output checked against Node. Five Rust native tests ensure help text, valid/invalid fields and real local HTTP.
+- [x] All tests use isolated fixtures; no production Dashboard, live Job, remote GitHub service, or Task was modified.

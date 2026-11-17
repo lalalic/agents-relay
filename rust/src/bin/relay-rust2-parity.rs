@@ -357,6 +357,68 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "appendTaskComment" => {
+            let mut job = request["job"].clone();
+            let result = agents_relay_rust2::task_comments::append_task_comment(
+                &mut job,
+                request["taskId"].as_str().unwrap_or(""),
+                request["message"].as_str().unwrap_or(""),
+                request.get("options").unwrap_or(&json!("cli")),
+            )?;
+            Ok(agents_relay_rust2::observability::json_wire(
+                &json!({"comment":result,"job":job}),
+            ))
+        }
+        "taskCommentContext" => Ok(
+            json!(agents_relay_rust2::task_comments::task_comment_context(
+                &request["task"]
+            ))
+            .to_string(),
+        ),
+        "preserveTaskComments" => {
+            let previous = request["previous"].as_array().cloned().unwrap_or_default();
+            let incoming = request["incoming"].as_array().cloned().unwrap_or_default();
+            Ok(agents_relay_rust2::observability::json_wire(&json!(
+                agents_relay_rust2::task_comments::preserve_task_comments(&previous, &incoming)
+            )))
+        }
+        "projectionHelp" => Ok(json!(agents_relay_rust2::cli_projection::projection_help(
+            request["action"].as_str()
+        ))
+        .to_string()),
+        "projectionControlCommand" => {
+            let args = request["args"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            Ok(
+                agents_relay_rust2::cli_projection::projection_control_command(
+                    request["action"].as_str().unwrap_or(""),
+                    &args,
+                )?
+                .to_string(),
+            )
+        }
+        "runProjectionCommand" => {
+            let args = request["args"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            Ok(
+                json!(agents_relay_rust2::cli_projection::run_projection_command(
+                    request["action"].as_str().unwrap_or(""),
+                    &args
+                )?)
+                .to_string(),
+            )
+        }
+
         "currentJobMetadata" => Ok(agents_relay_rust2::observability::json_wire(
             &agents_relay_rust2::relay_job_snapshot_reads::current_job_metadata(&request["job"]),
         )),

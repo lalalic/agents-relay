@@ -95,3 +95,8 @@ pub mod unified_relay_schema;
 pub mod relay_job_snapshot_reads;
 // Direct Node src/no-github.ts fail-closed transport guard.
 pub mod no_github;
+
+// Direct Node src/task-comments.ts immutable comment history and reconciliation.
+pub mod task_comments;
+// Direct Node src/cli-projection.ts projection CLI validation and HTTP control.
+pub mod cli_projection;
