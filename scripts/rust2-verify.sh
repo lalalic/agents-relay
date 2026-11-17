@@ -16,4 +16,8 @@ set -- rust/tests/head_to_head*.mjs
 for file in "$@";do
   if [ ! -f "$file" ];then echo "Missing differential test: $file" >&2;exit 3;fi
 done
-node --test "$@"
+# Individual suites invoke Cargo and share one binary output path. Running them
+# concurrently can observe a short re-link gap (spawnSync ENOENT) even though
+# every individual differential comparison is valid. Serialize the suites;
+# within each suite, Rust and Node still exercise their normal execution logic.
+node --test --test-concurrency=1 "$@"
