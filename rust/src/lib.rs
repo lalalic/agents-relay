@@ -327,3 +327,4 @@ pub mod cli_support;
 pub mod workspace;
 pub mod github_client;
 pub mod usage;
+pub mod browser_worker_runtime;
