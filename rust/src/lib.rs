@@ -71,3 +71,8 @@ pub mod local_commit_events;
 
 // Direct Node src/events-bus-runtime.ts configured HTTP history transport port.
 pub mod events_bus_runtime;
+
+// Direct Node src/review-generation-fence.ts immutable Review generation fence.
+pub mod review_generation_fence;
+// Direct Node src/unified-pr-facts.ts job-scoped monotonic SQLite facts.
+pub mod unified_pr_facts;

@@ -357,6 +357,55 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "reviewGenerationMatches" => Ok(json!(
+            agents_relay_rust2::review_generation_fence::review_generation_matches(
+                &request["current"],
+                &request["original"],
+                &request["task"],
+                request["headSha"].as_str().unwrap_or("")
+            )
+        )
+        .to_string()),
+        "unifiedPullRequestFactsScenario" => {
+            use rusqlite::Connection;
+            let db = Connection::open_in_memory().map_err(|error| error.to_string())?;
+            db.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE source_registry(job_id TEXT PRIMARY KEY);                 CREATE TABLE pull_request_facts(scope_job_id TEXT NOT NULL REFERENCES source_registry(job_id),                 id INTEGER NOT NULL CHECK(id=1), state TEXT NOT NULL CHECK(state IN ('OPEN','MERGED','CLOSED')),                 head_ref TEXT,head_sha TEXT,observed_at TEXT NOT NULL,PRIMARY KEY(scope_job_id,id));")
+                .map_err(|error|error.to_string())?;
+            for job in request["jobs"].as_array().into_iter().flatten() {
+                if let Some(job) = job.as_str() {
+                    db.execute("INSERT INTO source_registry VALUES(?)", [job])
+                        .map_err(|error| error.to_string())?;
+                }
+            }
+            let mut operations = Vec::new();
+            for op in request["operations"].as_array().into_iter().flatten() {
+                let job_id = op["jobId"].as_str().unwrap_or("");
+                let result = agents_relay_rust2::unified_pr_facts::save_unified_pull_request_facts(
+                    &db,
+                    job_id,
+                    &op["facts"],
+                );
+                operations.push(match result {
+                    Ok(()) => json!({"ok":true}),
+                    Err(error) => json!({"ok":false,"error":error}),
+                });
+            }
+            let mut stmt=db.prepare("SELECT scope_job_id,id,state,head_ref,head_sha,observed_at FROM pull_request_facts ORDER BY scope_job_id,id")
+                .map_err(|error|error.to_string())?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok(
+                        json!({"scope_job_id":row.get::<_,String>(0)?,"id":row.get::<_,i64>(1)?,
+                "state":row.get::<_,String>(2)?,"head_ref":row.get::<_,Option<String>>(3)?,
+                "head_sha":row.get::<_,Option<String>>(4)?,"observed_at":row.get::<_,String>(5)?}),
+                    )
+                })
+                .map_err(|error| error.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?;
+            Ok(json!({"operations":operations,"rows":rows}).to_string())
+        }
+
         "eventsBusConfigPath" => Ok(json!(
             agents_relay_rust2::events_bus_runtime::events_bus_config_path(&request["env"])
         )

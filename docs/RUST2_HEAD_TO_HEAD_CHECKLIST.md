@@ -163,7 +163,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/relayd.ts` | `rust/src/relayd.rs` | PENDING | — |
 | `src/review-chair.ts` | `rust/src/review_chair.rs` | PENDING | — |
 | `src/review-evidence.ts` | `rust/src/review_evidence.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; head precedence/fallback, finding aliases, malformed/null findings, trimming, Unicode and missing evidence (`rust/tests/head_to_head.mjs`) |
-| `src/review-generation-fence.ts` | `rust/src/review_generation_fence.rs` | PENDING | — |
+| `src/review-generation-fence.ts` | `rust/src/review_generation_fence.rs` | PASS | Direct hotfix: 1,950 randomized Node/Rust immutable Review generations, stale-Head and competing reviewer scenarios; 4 Rust-native tests (`rust/tests/head_to_head_review_generation_fence.mjs`, `rust/tests/native_review_generation_fence.rs`) |
 | `src/review-replan.ts` | `rust/src/review_replan.rs` | PENDING | — |
 | `src/review-revision-execution.ts` | `rust/src/review_revision_execution.rs` | PENDING | — |
 | `src/review-revision-merge.ts` | `rust/src/review_revision_merge.rs` | PASS | 626 shared differential fixtures across 14 ports; local history copy/delete and null handling compared (`rust/tests/head_to_head.mjs`) |
@@ -204,7 +204,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/types.ts` | `rust/src/types.rs` | PENDING | — |
 | `src/unblock.ts` | `rust/src/unblock.rs` | PENDING | — |
 | `src/unified-job-registry.ts` | `rust/src/unified_job_registry.rs` | PENDING | — |
-| `src/unified-pr-facts.ts` | `rust/src/unified_pr_facts.rs` | PENDING | — |
+| `src/unified-pr-facts.ts` | `rust/src/unified_pr_facts.rs` | PASS | Direct hotfix: 364 in-memory SQLite Node/Rust state-monotonic PR observations and Job scope scenarios; 3 Rust-native tests (`rust/tests/head_to_head_unified_pr_facts.mjs`, `rust/tests/native_unified_pr_facts.rs`) |
 | `src/unified-relay-schema.ts` | `rust/src/unified_relay_schema.rs` | PENDING | — |
 | `src/usage.ts` | `rust/src/usage.rs` | PENDING | — |
 | `src/webhelm-daemon-client.ts` | `rust/src/webhelm_daemon_client.rs` | PASS | Direct hotfix: 15 real AF_UNIX Node/Rust socket response/timeout/abort/large-UTF8 fixtures, 1 malformed frame rejection, native cancellation/framing regression (rust/tests/head_to_head_ipc_hotfix.mjs; rust/tests/native_ipc_hotfix.rs) |
@@ -470,3 +470,11 @@ This is only the Job JEL graph projection; Dashboard HTTP routing, additional ta
 - [x] `rust/tests/native_workflow_effects.rs`: **8** Rust-native tests for callback ordering, missing/duplicate handlers, idempotency, transient failures, completion-then-callback-error semantics and receipt recovery. The native tests filter by their own Job identity to remain independent under Cargo parallel test execution.
 - [x] Original Node `test/workflow-effects.test.js`: **5/5 PASS** using isolated test store; full differential suite **38/38 PASS**, 0 skipped, cargo fmt/native tests/clippy clean.
 - [x] No live Workflow Effect, Job/Task, SQLite database, PR, Git remote or running Relay process was used or modified.
+
+### Direct Rust2 hotfix — Review Generation Fence and monotonic PR facts (2026-11-16)
+
+- [x] `src/review-generation-fence.ts` → `rust/src/review_generation_fence.rs`: pure durable snapshot read against **latest** Job/Task head, execution ID, state and recovery status; competing new-Head reviewers may displace stale reviews only when they are the latest eligible reviewer; null vs undefined execution IDs remain distinct.
+- [x] `rust/tests/head_to_head_review_generation_fence.mjs` compares **1,950** independent Node/Rust Review predicate fixtures across stale/new heads, competing reviewer order, cancellation, original/current review outcome and Planning Decision presence; four Rust-native focused tests.
+- [x] `src/unified-pr-facts.ts` → `rust/src/unified_pr_facts.rs`: port SQL INSERT ON CONFLICT with non-regressing timestamps and irreversible MERGED state. All PR records are scoped by Job ID and remain observational, not local Git lifecycle truth.
+- [x] `rust/tests/head_to_head_unified_pr_facts.mjs`: **364** multi-operation in-memory SQLite scenarios executed separately on Node and Rust, checking all stored rows and SQL constraint errors. Three native tests cover state monotonicity, equal-timestamp updates, cross-Job scoping and invalid states.
+- [x] No running Relay process, authoritative Job SQLite DB or GitHub service touched; test stores are isolated in-memory.
