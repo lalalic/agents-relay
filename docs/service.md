@@ -30,13 +30,15 @@ The Event Bus is the shared transport for worker lifecycle facts and orchestrati
 npx agents-relayd --repo LOCAL_ROOT_NAME
 ```
 
-Workspace mode (the default):
+SQLite-driven ordinary daemon (default):
 
 ```sh
 npx agents-relayd
 ```
 
 Use `--repo LOCAL_ROOT_NAME` only for an explicit local repository identity. Normal daemon startup needs neither `--repo` nor `--workspace`. `--workspace-root PATH` is an optional worktree placement override (legacy `--workspace` alias), not a discovery or Job identity input. PR-bound daemon mode is retired; obsolete PR flags are rejected.
+
+For Neo Master’s local source-pinned service, use `node skills/agents-relay/bin/services.mjs doctor` to verify **both PM2 liveness and registered command configuration**. A process can remain `online` with stale `--workspace` or GitHub flags even after `services.mjs` is edited. `doctor` reports `configuration: drift` and exits nonzero in that case; `setup` intentionally refuses to claim an already registered service was updated. Re-registering an existing PM2 definition and restarting its process requires an explicit service change, operational ownership and a matched local CLI/daemon build; do not assume editing service definitions or invoking PM2 restart changes stored argv.
 
 By default, Relay probes the configured NATS endpoint (`--nats-url`, then `EVENTS_BUS_NATS_URL`, then `nats://127.0.0.1:4222`). When the broker is reachable, the CLI and daemon automatically use NATS even when `--events` is omitted. Pass `--events nats` to require NATS explicitly; pass an explicit non-NATS value such as `--events none` to disable auto-detection. If NATS is unavailable, commands that require authoritative model-task lifecycle events fail clearly instead of pretending the transport exists.
 
