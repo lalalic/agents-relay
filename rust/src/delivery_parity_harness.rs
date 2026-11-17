@@ -74,6 +74,52 @@ pub fn delivery_wave2(request: &Value) -> Result<Value, String> {
             )
             .unwrap_or(Value::Null))
         }
+        "githubAuthContext" => {
+            use std::collections::HashMap;
+            let args = request["args"]
+                .as_array()
+                .ok_or("args required")?
+                .iter()
+                .map(|v| v.as_str().unwrap_or("").to_string())
+                .collect::<Vec<_>>();
+            let env = request["env"]
+                .as_object()
+                .ok_or("env required")?
+                .iter()
+                .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_owned())))
+                .collect::<HashMap<_, _>>();
+            let calls = std::cell::RefCell::new(Vec::<String>::new());
+            let login = request["login"].as_str().unwrap_or("").to_owned();
+            let local = request["localLogin"].as_str().map(str::to_owned);
+            let probe = request["probeLogin"] != false;
+            let (client, context) = crate::github_auth::github_auth_context(
+                &args,
+                &env,
+                probe,
+                |options| {
+                    calls.borrow_mut().push("make_client".into());
+                    Ok(options.is_some())
+                },
+                |_| {
+                    calls.borrow_mut().push("current_login".into());
+                    if request["loginError"] == true {
+                        return Err("fixture current login failed".into());
+                    }
+                    Ok(login.clone())
+                },
+                |_| {
+                    calls.borrow_mut().push("local_login".into());
+                    if request["localError"] == true {
+                        return Err("fixture local login failed".into());
+                    }
+                    Ok(local.clone())
+                },
+            )?;
+            let mut authors = context.trusted_authors.into_iter().collect::<Vec<_>>();
+            authors.sort();
+            Ok(json!({"clientAppAuth":client,"appAuth":context.app_auth,
+                "trustedAuthors":authors,"calls":calls.into_inner()}))
+        }
         "githubAppConfig" => {
             let args = request["args"]
                 .as_array()
@@ -94,6 +140,34 @@ pub fn delivery_wave2(request: &Value) -> Result<Value, String> {
                     "privateKeyFile":cfg.private_key_file}),
             })
         }
+        "cleanupNative" => crate::job_worktree_cleanup::cleanup_completed_job_worktree(
+            Path::new(
+                request["projectPath"]
+                    .as_str()
+                    .ok_or("projectPath required")?,
+            ),
+            &request["job"],
+            Path::new(
+                request["workspaceRoot"]
+                    .as_str()
+                    .ok_or("workspaceRoot required")?,
+            ),
+        ),
+        "managedLocalWorktreePath" => Ok(json!(
+            crate::job_worktree_cleanup::managed_local_job_worktree_path(
+                Path::new(
+                    request["workspaceRoot"]
+                        .as_str()
+                        .ok_or("workspaceRoot required")?
+                ),
+                request["repository"]
+                    .as_str()
+                    .ok_or("repository required")?,
+                request["jobId"].as_str().ok_or("jobId required")?,
+            )?
+            .to_string_lossy()
+            .to_string()
+        )),
         "cleanupMergedJobWorktree" => {
             let resolver_present = request["resolverPresent"] != false;
             let cwd = request["cwd"].as_str().unwrap_or("/tmp/fixture").to_owned();
@@ -115,6 +189,21 @@ pub fn delivery_wave2(request: &Value) -> Result<Value, String> {
                 Ok(()) => json!({"ok":true}),
                 Err(message) => json!({"ok":false,"error":message}),
             })
+        }
+        "managedWorkerInputResolved" => {
+            let package_root = request["packageRoot"]
+                .as_str()
+                .ok_or("packageRoot required")?;
+            Ok(Value::String(
+                crate::managed_worker_input::managed_worker_input_resolved(
+                    &request["job"],
+                    &request["task"],
+                    request.get("context").filter(|v| !v.is_null()),
+                    request["mode"].as_str().unwrap_or("production"),
+                    Path::new(package_root),
+                    request["referenceDirectory"].as_str(),
+                )?,
+            ))
         }
         "managedWorkerInput" => {
             let context = request.get("context").filter(|v| !v.is_null());
@@ -160,6 +249,11 @@ pub fn delivery_wave2(request: &Value) -> Result<Value, String> {
             request["sourceSha"].as_str().unwrap_or("")
         ))),
         "requiresLocalGitMerge" => Ok(json!(merge::requires_local_git_merge(&request["job"]))),
+        "localMergeFactsBound" => Ok(merge::local_merge_facts_bound(
+            &request["job"],
+            request["headSha"].as_str(),
+            request["nowMs"].as_i64().unwrap_or(0),
+        )),
         "localMergeFacts" => Ok(merge::local_merge_facts(
             &request["job"],
             request["headSha"].as_str(),
