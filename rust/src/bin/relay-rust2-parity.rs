@@ -357,6 +357,71 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "runtimeStatusPublisherScenario" => {
+            use std::{cell::RefCell, rc::Rc};
+            let events = Rc::new(RefCell::new(Vec::<Value>::new()));
+            let sink = Rc::clone(&events);
+            let mut publisher =
+                agents_relay_rust2::runtime_status_events::create_runtime_status_publisher(
+                    move |event| {
+                        sink.borrow_mut().push(event);
+                        Ok(())
+                    },
+                );
+            for job in request["jobs"].as_array().into_iter().flatten() {
+                publisher.publish(job);
+            }
+            let output = events.borrow().clone();
+            Ok(json!(output).to_string())
+        }
+
+        "summarizeRuntime" => Ok(agents_relay_rust2::runtime_summary::summarize_runtime(
+            &request["jobs"].as_array().cloned().unwrap_or_default(),
+            request["now"].as_i64().unwrap_or(0),
+        )
+        .to_string()),
+        "runtimeHasLiveExecution" => Ok(json!(
+            agents_relay_rust2::runtime_summary::has_live_execution(
+                &request["job"],
+                &request["task"],
+                request["now"].as_i64().unwrap_or(0)
+            )
+        )
+        .to_string()),
+        "runtimeRunningWorker" => Ok(json!(agents_relay_rust2::runtime_summary::running_worker(
+            &request["task"]
+        ))
+        .to_string()),
+
+        "runtimeStatusIsSuperseded" => {
+            let mut map = std::collections::HashMap::<String, Value>::new();
+            for task in request["tasks"].as_array().into_iter().flatten() {
+                if let Some(id) = task["id"].as_str() {
+                    map.insert(id.to_string(), task.clone());
+                }
+            }
+            Ok(json!(agents_relay_rust2::runtime_status::is_superseded(
+                &request["task"],
+                &map
+            ))
+            .to_string())
+        }
+        "runtimeImplementationTasks" => Ok(json!(
+            agents_relay_rust2::runtime_status::implementation_tasks(&request["job"])
+        )
+        .to_string()),
+        "runtimeImplementationComplete" => Ok(json!(
+            agents_relay_rust2::runtime_status::implementation_complete(&request["job"])
+        )
+        .to_string()),
+        "deriveJobRuntimeStatus" => Ok(json!(
+            agents_relay_rust2::runtime_status::derive_job_runtime_status(
+                &request["job"],
+                request["prState"].as_str().unwrap_or("OPEN")
+            )
+        )
+        .to_string()),
+
         "cliUsage" => Ok(json!(agents_relay_rust2::cli_help::CLI_USAGE).to_string()),
         "helpText" => Ok(json!(agents_relay_rust2::cli_help::help_text(
             request["command"].as_str(),

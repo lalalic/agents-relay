@@ -177,9 +177,9 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/router-evals.ts` | `rust/src/router_evals.rs` | PENDING | — |
 | `src/router-rules.ts` | `rust/src/router_rules.rs` | PASS | Direct hotfix: 2,178 Node/Rust choices, routing-instruction byte preservation, Unicode whitespace, headers, duplicate routes, append helpers (rust/tests/head_to_head_direct_hotfix.mjs) |
 | `src/routing-policy.ts` | `rust/src/routing_policy.rs` | PASS | Direct hotfix: 2,418 Node/Rust route eligibility/ranking/path fixtures; 20 isolated policy/rules file round-trips, SHA-256, sanitizer, missing/invalid files (rust/tests/head_to_head_routing_policy.mjs; rust/tests/native_routing_policy.rs) |
-| `src/runtime-status-events.ts` | `rust/src/runtime_status_events.rs` | PENDING | — |
-| `src/runtime-status.ts` | `rust/src/runtime_status.rs` | PENDING | — |
-| `src/runtime-summary.ts` | `rust/src/runtime_summary.rs` | PENDING | — |
+| `src/runtime-status-events.ts` | `rust/src/runtime_status_events.rs` | PASS | Direct port: 430 Node/Rust process-local change-event histories, original UUIDv4 and timestamp shape, two native tests (`rust/tests/head_to_head_runtime_status_events.mjs`, `rust/tests/native_runtime_status_events.rs`) |
+| `src/runtime-status.ts` | `rust/src/runtime_status.rs` | PASS | Direct port: 4,500 Node/Rust status/implementation/supersession fixtures and four native regressions (`rust/tests/head_to_head_runtime_status.mjs`, `rust/tests/native_runtime_status.rs`) |
+| `src/runtime-summary.ts` | `rust/src/runtime_summary.rs` | PASS | Direct port: 700 Node/Rust lease-fenced worker/model aggregation fixtures and three native regressions (`rust/tests/head_to_head_runtime_summary.mjs`, `rust/tests/native_runtime_summary.rs`) |
 | `src/script-task-adapter.ts` | `rust/src/script_task_adapter.rs` | PENDING | — |
 | `src/service-external-actions.ts` | `rust/src/service_external_actions.rs` | PENDING | — |
 | `src/service-publication.ts` | `rust/src/service_publication.rs` | PENDING | — |
@@ -528,3 +528,10 @@ This is only the Job JEL graph projection; Dashboard HTTP routing, additional ta
 - [x] `src/github-pr-archive.ts` → `rust/src/github_pr_archive.rs`: injectable asynchronous GitHub request callback; PRs are display-only records after local Git completion. Skip non-OPEN PRs, check existing local-completion marker before adding exactly one comment, then close the PR with PATCH; never invoke remote PR merge.
 - [x] `rust/tests/head_to_head_github_pr_archive.mjs`: **1,156** independent Node/Rust archive policy and injected failure scenarios using fake GitHub clients, no network. 4 native tests verify comment idempotency, callback order, no merge, fail-closed invalid history and never closing after rejected publication.
 - [x] Original Node `test/github-pr-archive.test.js` passes with disposable fixtures. No live GitHub access or running Relay Job modified.
+
+### Direct Rust2 runtime status batch (2026-11-17)
+
+- [x] `src/runtime-status.ts` → `rust/src/runtime_status.rs`: preserve exact priority for human `AWAITING_DECISION` vs genuinely leased running execution, active implementation vs reviewer, planner failure, stale revision exclusions, `FAILED` vs `implementationComplete` and PR-independent Job status. 4,500 independent Node/Rust cases + 4 native tests.
+- [x] `src/runtime-summary.ts` → `rust/src/runtime_summary.rs`: count only real, unexpired leased Task executions in ACTIVE Jobs, respect adapter selection, ignore ghost RUNNING flags, count models and preserve running order. 700 Node/Rust fixtures + 3 native tests.
+- [x] `src/runtime-status-events.ts` → `rust/src/runtime_status_events.rs`: process-local status change observation with repository-qualified Job identity; first observation establishes baseline without event, repeated status dedupes; random UUIDv4 event + ISO timestamp and fail-closed callback. 430 Node/Rust histories + 2 native tests.
+- [x] All ports/fixtures run in an isolated worktree without live process or production SQLite mutations. Full Rust2 checklist and combined Node/Rust gate execute once per batch after fast-forward merge.

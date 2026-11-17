@@ -105,3 +105,12 @@ pub mod cli_projection;
 pub mod cli_help;
 // Direct Node src/github-pr-archive.ts optional display-only GitHub PR archival policy.
 pub mod github_pr_archive;
+
+// Direct Node src/runtime-status.ts computed Job and implementation lifecycle.
+pub mod runtime_status;
+
+// Direct Node src/runtime-summary.ts lease-fenced worker/model runtime summary.
+pub mod runtime_summary;
+
+// Direct Node src/runtime-status-events.ts process-local status transition notifications.
+pub mod runtime_status_events;
