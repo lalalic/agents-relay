@@ -264,3 +264,22 @@ pub mod job_worktree_cleanup;
 
 pub mod continuation;
 pub mod managed_worker_input;
+
+// Serial phase-1 direct Node module ports; parity gates intentionally deferred.
+pub mod browser_worker_routing;
+pub mod cli_foreground;
+pub mod local_job_registry;
+pub mod model_redecision;
+pub mod reconciler_context;
+pub mod relay_store_discovery;
+pub mod relayd_main;
+pub mod service_external_actions;
+pub mod single_job_task_control;
+pub mod workflow_effect_failures;
+pub mod cli_escalation;
+pub mod cli_coordinator;
+pub mod execution_process_tracker;
+pub mod execution_recovery;
+pub mod job_pause;
+pub mod local_managed_store;
+pub mod router_evals;
