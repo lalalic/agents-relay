@@ -51,7 +51,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/cli-shutdown.ts` | `rust/src/cli_shutdown.rs` | PASS | Batch 5: exit status precedence, serving mode, delayed default/custom grace and injected force-exit callback verified without terminating the test process (`rust/tests/native_batch5.rs`, `rust/tests/head_to_head_batch5.mjs`). |
 | `src/cli-support.ts` | `rust/src/cli_support.rs` | PENDING | — |
 | `src/cli-unblock.ts` | `rust/src/cli_unblock.rs` | PORTING | Phase1 serial native Rust draft; uncompiled, untested and not production-wired; parity pending. |
-| `src/cli-worker-task.ts` | `rust/src/cli_worker_task.rs` | PENDING | — |
+| `src/cli-worker-task.ts` | `rust/src/cli_worker_task.rs` | PORTING | Phase1 serial native Rust draft; uncompiled and untested, production API/binding and differential to close in Phase2. |
 | `src/cli-workflow-action.ts` | `rust/src/cli_workflow_action.rs` | PASS | Batch 5: direct Node/Rust mapping and unsupported/missing argument errors; Rust exposes async delegated effect (`rust/tests/head_to_head_batch5.mjs`) |
 | `src/cli-workflow.ts` | `rust/src/cli_workflow.rs` | PASS | Read-only Graph workflow commands, predicate error paths and isolated SQLite trace/verify in 98-case CLI Node/Rust suite; rust/tests/head_to_head_cli_core.mjs |
 | `src/cli.ts` | `rust/src/cli.rs` | PENDING | — |
@@ -114,7 +114,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/local-merge-lock.ts` | `rust/src/local_merge_lock.rs` | PASS | Direct hotfix: real Node↔Rust cross-process directory locking, stale/foreign/live PID and owner recovery, timeout/error/panic-safe release (rust/tests/head_to_head_local_merge_lock.mjs; rust/tests/native_local_merge_lock.rs) |
 | `src/local-merge-projection.ts` | `rust/src/local_merge_projection.rs` | PENDING | — |
 | `src/managed-worker-input.ts` | `rust/src/managed_worker_input.rs` | PORTING | Wave3 C native layered Agent resolver and 75 original Node prompt comparisons pass; daemon execution-context entrypoint integration unverified (head_to_head_wave3_delivery.mjs). |
-| `src/manual-plan.ts` | `rust/src/manual_plan.rs` | PENDING | — |
+| `src/manual-plan.ts` | `rust/src/manual_plan.rs` | PORTING | Phase1 serial native Rust draft; uncompiled and untested, production API/binding and differential to close in Phase2. |
 | `src/markers.ts` | `rust/src/markers.rs` | PASS | Eight-file hotfix: 5,160 Node/Rust Job/Task/Plan/Agent HTML-comment render/parse cases, native round-trip/security tests; `rust/tests/head_to_head_eight_batch_*.mjs`, `rust/tests/native_eight_batch_*.rs` |
 | `src/model-redecision.ts` | `rust/src/model_redecision.rs` | PORTING | Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure. |
 | `src/model-routing.ts` | `rust/src/model_routing.rs` | PENDING | — |
@@ -193,7 +193,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/task-context.ts` | `rust/src/task_context.rs` | PASS | Eight-file hotfix: Execution-bound read context, reviewer/troubleshooter history and exact reference prompt: 2,090 Node/Rust cases plus native stale-execution checks; `rust/tests/head_to_head_eight_batch_*.mjs`, `rust/tests/native_eight_batch_*.rs` |
 | `src/task-id-migration.ts` | `rust/src/task_id_migration.rs` | PASS | Direct hotfix: 7 cloned SQLite Node/Rust migrations, 3 preflight refusals, verified constraint rollback + immutable backup, 4 native tests, 3 original Node regressions (rust/tests/head_to_head_task_id_migration.mjs; rust/tests/native_task_id_migration.rs) |
 | `src/task-inactivity-watchdog.ts` | `rust/src/task_inactivity_watchdog.rs` | PORTING | Wave4 A: 500 randomized direct Node/Rust classification/deadline cases, native cancellation/re-arm/old-generation timers; Wave3 250 SQLite progress/idempotency cases. Full production timer/caller and transition wiring remain unverified (head_to_head_wave4_watchdog.mjs; native_wave4_graph.rs). |
-| `src/task-recovery.ts` | `rust/src/task_recovery.rs` | PENDING | — |
+| `src/task-recovery.ts` | `rust/src/task_recovery.rs` | PORTING | Phase1 serial native Rust draft; uncompiled and untested, production API/binding and differential to close in Phase2. |
 | `src/task-tag.ts` | `rust/src/task_tag.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; parse errors/limits, Unicode, allowed-tag filtering, data removal, and worker prompt (`rust/tests/head_to_head.mjs`) |
 | `src/task-title.ts` | `rust/src/task_title.rs` | PASS | 327 shared differential fixtures across 4 ports; Rust native tests 5/5; Node focused regression 4/4; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/task-transitions.ts` | `rust/src/task_transitions.rs` | PORTING | Wave3 A async Task/Job Graph effect callback ordering and 180 Node/Rust cases pass; public durable transition runtime/production dispatcher binding unproven (head_to_head_wave3_graph.mjs). |
@@ -209,7 +209,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/unified-relay-schema.ts` | `rust/src/unified_relay_schema.rs` | PASS | Direct Node SQL template, including hostInvocationTablesSql; 258 in-memory SQLite schema/index/FK/constraint comparisons, 4 native tests (`rust/tests/head_to_head_unified_relay_schema.mjs`, `rust/tests/native_unified_relay_schema.rs`) |
 | `src/usage.ts` | `rust/src/usage.rs` | PENDING | — |
 | `src/webhelm-daemon-client.ts` | `rust/src/webhelm_daemon_client.rs` | PASS | Direct hotfix: 15 real AF_UNIX Node/Rust socket response/timeout/abort/large-UTF8 fixtures, 1 malformed frame rejection, native cancellation/framing regression (rust/tests/head_to_head_ipc_hotfix.mjs; rust/tests/native_ipc_hotfix.rs) |
-| `src/worker-failure-recovery.ts` | `rust/src/worker_failure_recovery.rs` | PENDING | — |
+| `src/worker-failure-recovery.ts` | `rust/src/worker_failure_recovery.rs` | PORTING | Phase1 serial native Rust draft; uncompiled and untested, production API/binding and differential to close in Phase2. |
 | `src/worker-rejection.ts` | `rust/src/worker_rejection.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; rejection classes, all platform phases, typed pre-submit evidence and unsafe/ambiguous failures (`rust/tests/head_to_head.mjs`) |
 | `src/worker-routing.ts` | `rust/src/worker_routing.rs` | PENDING | — |
 | `src/worker-start-ack.ts` | `rust/src/worker_start_ack.rs` | PASS | Node/Rust exact job/task/source acknowledgment, spoof rejection, timeout, cancellation, unsubscribe ordering; rust/tests/head_to_head_process_browser_worker.mjs |

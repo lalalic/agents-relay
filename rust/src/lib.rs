@@ -297,3 +297,7 @@ pub mod force_restate_validation;
 pub mod legacy_orchestrator_repair;
 pub mod job_actions;
 pub mod dependency_revision_execution;
+pub mod manual_plan;
+pub mod task_recovery;
+pub mod worker_failure_recovery;
+pub mod cli_worker_task;
