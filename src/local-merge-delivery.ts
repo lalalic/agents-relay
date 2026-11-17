@@ -9,6 +9,17 @@ import { decideJobLifecycle } from './workflow/lifecycle.js';
 
 
 export type LocalMergeEffect = (repoPath: string, receipt: LocalMergeReceipt) => { sourceSha: string; mergedCommitSha: string };
+
+/** A completed local merge records an optional, durable post-terminal effect.
+ * Existing completed Jobs without this marker are historical audit records,
+ * never silently published during a daemon upgrade. */
+function recordPendingRemoteDelivery(job: Job): void {
+  const sha = job.localMerge?.mergedCommitSha;
+  if (job.state !== 'COMPLETED' || job.localMerge?.status !== 'succeeded' || !sha) return;
+  if (job.remoteDelivery?.mergedCommitSha === sha) return;
+  job.remoteDelivery = { mergedCommitSha: sha, status: 'pending', attempts: 0, updatedAt: new Date().toISOString() };
+}
+
 /** Graph-selected durable local merge and completion; no checked-out worktree is ever changed. */
 export async function reconcileLocalGitCompletion(
   store: DurableStore,
@@ -23,6 +34,7 @@ export async function reconcileLocalGitCompletion(
   const facts = localMergeFacts(finalState, headSha, now);
   if (decideJobLifecycle(finalState, 'local.completed', facts).target === 'COMPLETED') {
     await transitionJobEvent(finalState, 'local.completed', facts);
+    recordPendingRemoteDelivery(finalState);
     await store.saveJob(finalState);
     return true;
   }
@@ -92,6 +104,7 @@ export async function reconcileLocalGitCompletion(
         if (finalState.localMerge?.status === 'succeeded') {
           const completionFacts = localMergeFacts(finalState, headSha, now);
           await transitionJobEvent(finalState, 'local.completed', completionFacts);
+          recordPendingRemoteDelivery(finalState);
           await store.saveJob(finalState);
             return true;
         }

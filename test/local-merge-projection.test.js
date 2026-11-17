@@ -1,75 +1,177 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
-import {execFileSync} from 'node:child_process';
-import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
-import {join} from 'node:path';
-import {tmpdir} from 'node:os';
-import {deliverLocalMerge} from '../dist/local-git-merge.js';
-import {projectAuthoritativeLocalMerge} from '../dist/local-merge-projection.js';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, rmSync, chmodSync, renameSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { deliverLocalMerge } from '../dist/local-git-merge.js';
+import { reconcileCompletedLocalDelivery } from '../dist/local-merge-projection.js';
+import { SQLiteRelayStore } from '../dist/relay-store.js';
 
-const git=(cwd,...args)=>execFileSync('git',['-C',cwd,...args],{encoding:'utf8'}).trim();
-function fixture(){
- const root=mkdtempSync(join(tmpdir(),'relay-local-projection-'));
- const remote=join(root,'remote.git'); const repo=join(root,'repo'); const other=join(root,'other');
- execFileSync('git',['init','--bare',remote]); execFileSync('git',['clone',remote,repo]);
- git(repo,'config','user.name','Relay Tests'); git(repo,'config','user.email','relay@example.test');
- git(repo,'checkout','-b','main'); writeFileSync(join(repo,'base'),'base'); git(repo,'add','base'); git(repo,'commit','-m','base'); git(repo,'push','-u','origin','main');
- git(repo,'checkout','-b','feature'); writeFileSync(join(repo,'feature'),'feature'); git(repo,'add','feature'); git(repo,'commit','-m','feature');
- const sourceSha=git(repo,'rev-parse','HEAD'); git(repo,'checkout','main');
- return {root,remote,repo,other,sourceSha,close:()=>rmSync(root,{recursive:true,force:true})};
+const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+function fixture({ origin = 'seeded' } = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'relay-local-delivery-'));
+  const remote = join(root, 'remote.git'), repo = join(root, 'repo'), db = join(root, 'relay.sqlite');
+  execFileSync('git', ['init', '--bare', remote]); execFileSync('git', ['init', repo]);
+  git(repo, 'config', 'user.name', 'Relay Tests'); git(repo, 'config', 'user.email', 'relay@example.test');
+  git(repo, 'checkout', '-b', 'main'); writeFileSync(join(repo, 'base'), 'base'); git(repo, 'add', 'base'); git(repo, 'commit', '-m', 'base');
+  if (origin !== 'missing') {
+    git(repo, 'remote', 'add', 'origin', remote);
+    if (origin === 'seeded') git(repo, 'push', '-u', 'origin', 'main');
+  }
+  git(repo, 'checkout', '-b', 'feature'); writeFileSync(join(repo, 'feature'), 'feature'); git(repo, 'add', 'feature'); git(repo, 'commit', '-m', 'feature');
+  const sourceSha = git(repo, 'rev-parse', 'HEAD'); git(repo, 'checkout', 'main');
+  const merged = deliverLocalMerge(repo, { sourceRef: 'refs/heads/feature', targetRef: 'refs/heads/main', status: 'pending', sourceSha });
+  const at = new Date().toISOString();
+  const job = { id: '100', title: 'job', repository: 'repo', projectRoot: repo, projectPath: undefined, prNumber: 0, state: 'COMPLETED', continuation: null, createdAt: at, updatedAt: at, tasks: [], localMerge: { sourceRef: 'refs/heads/feature', targetRef: 'refs/heads/main', status: 'succeeded', ...merged }, remoteDelivery: { mergedCommitSha: merged.mergedCommitSha, status: 'pending', attempts: 0, updatedAt: at } };
+  let store = new SQLiteRelayStore(db, job.id);
+  store.saveJob(job);
+  return { root, remote, repo, db, job, get store() { return store; }, reopen() { store.close(); store = new SQLiteRelayStore(db, job.id); }, close() { store.close(); rmSync(root, { recursive: true, force: true }); } };
 }
-function completedJob(delivered){return {id:'job',title:'job',repository:'owner/repo',prNumber:27,state:'COMPLETED',continuation:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),tasks:[],localMerge:{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'succeeded',...delivered}};}
+const reconcile = async (f, now = Date.now) => reconcileCompletedLocalDelivery(f.store, await f.store.loadJob(f.job.id), f.repo, now);
+async function current(f) { return (await f.store.loadJob(f.job.id)); }
 
-test('local main is pushed to origin without a second merge and repeated delivery is idempotent',()=>{
- const f=fixture(); try{
-  const delivered=deliverLocalMerge(f.repo,{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending',sourceSha:f.sourceSha});
-  const main=git(f.repo,'rev-parse','main');
-  const first=projectAuthoritativeLocalMerge(f.repo,completedJob(delivered));
-  assert.equal(first.status,'projected');
-  git(f.repo,'fetch','origin','main');
-  assert.equal(git(f.repo,'rev-parse','origin/main'),main);
-  assert.equal(first.projectedCommitSha,main);
-  assert.equal(projectAuthoritativeLocalMerge(f.repo,completedJob(delivered)).status,'already_projected');
- } finally {f.close();}
+test('missing origin is graph-selected skip and leaves completed Job and Tasks unchanged', async () => {
+  const f = fixture({ origin: 'missing' });
+  try { await reconcile(f); const job = await current(f); assert.equal(job.remoteDelivery.status, 'skipped'); assert.equal(job.state, 'COMPLETED'); assert.deepEqual(job.tasks, []); }
+  finally { f.close(); }
 });
 
-test('remote divergence is rejected rather than synthesizing a second merge',()=>{
- const f=fixture(); try{
-  const delivered=deliverLocalMerge(f.repo,{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending',sourceSha:f.sourceSha});
-  execFileSync('git',['clone',f.remote,f.other]); git(f.other,'config','user.name','Other'); git(f.other,'config','user.email','other@example.test'); git(f.other,'checkout','main');
-  writeFileSync(join(f.other,'remote-only'),'remote'); git(f.other,'add','.'); git(f.other,'commit','-m','remote drift'); git(f.other,'push','origin','main');
-  const remote=git(f.other,'rev-parse','HEAD');
-  assert.throws(()=>projectAuthoritativeLocalMerge(f.repo,completedJob(delivered)),/diverged/);
-  git(f.repo,'fetch','origin','main');assert.equal(git(f.repo,'rev-parse','origin/main'),remote);
- } finally {f.close();}
+test('empty origin and normal origin both receive the completed local main fast-forward', async () => {
+  for (const origin of ['empty', 'seeded']) {
+    const f = fixture({ origin });
+    try { await reconcile(f); const job = await current(f); assert.equal(job.remoteDelivery.status, 'succeeded'); assert.equal(git(f.remote, 'rev-parse', 'refs/heads/main'), job.localMerge.mergedCommitSha); assert.equal(job.state, 'COMPLETED'); assert.deepEqual(job.tasks, []); }
+    finally { f.close(); }
+  }
 });
 
-test('projection refuses target branches other than main',()=>{
- const f=fixture();try{
-  const delivered=deliverLocalMerge(f.repo,{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending',sourceSha:f.sourceSha});
-  assert.throws(()=>projectAuthoritativeLocalMerge(f.repo,completedJob({...delivered,targetRef:'refs/heads/develop'})),/must always be/);
- }finally{f.close();}
+test('remote ahead containing local main records delivery without a push', async () => {
+  const f = fixture();
+  try {
+    git(f.repo, 'push', 'origin', 'main');
+    const ahead = join(f.root, 'ahead'); execFileSync('git', ['clone', f.remote, ahead]);
+    git(ahead, 'config', 'user.name', 'Ahead'); git(ahead, 'config', 'user.email', 'ahead@example.test');
+    writeFileSync(join(ahead, 'ahead'), 'ahead'); git(ahead, 'add', '.'); git(ahead, 'commit', '-m', 'remote ahead'); git(ahead, 'push', 'origin', 'main');
+    const remoteBefore = git(ahead, 'rev-parse', 'HEAD'); await reconcile(f); const job = await current(f);
+    assert.equal(job.remoteDelivery.status, 'succeeded'); assert.equal(git(ahead, 'rev-parse', 'main'), remoteBefore); assert.equal(job.state, 'COMPLETED');
+  } finally { f.close(); }
 });
 
-test('projection publishes later local main commits without resetting to an old receipt',()=>{
- const f=fixture(); try{
-  const delivered=deliverLocalMerge(f.repo,{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending',sourceSha:f.sourceSha});
-  writeFileSync(join(f.repo,'after'),'after'); git(f.repo,'add','after'); git(f.repo,'commit','-m','move target');
-  const newer=git(f.repo,'rev-parse','main');
-  const result=projectAuthoritativeLocalMerge(f.repo,completedJob(delivered));
-  assert.equal(result.projectedCommitSha,newer);
-  git(f.repo,'fetch','origin','main');
-  assert.equal(git(f.repo,'rev-parse','origin/main'),newer);
- } finally {f.close();}
+test('divergence and unavailable configured origin persist a bounded separate retry', async () => {
+  const f = fixture();
+  try {
+    const other = join(f.root, 'other'); execFileSync('git', ['clone', f.remote, other]);
+    git(other, 'config', 'user.name', 'Other'); git(other, 'config', 'user.email', 'other@example.test');
+    writeFileSync(join(other, 'remote-only'), 'remote'); git(other, 'add', '.'); git(other, 'commit', '-m', 'remote drift'); git(other, 'push', 'origin', 'main');
+    await reconcile(f); let job = await current(f);
+    assert.equal(job.remoteDelivery.status, 'failed'); assert.equal(job.remoteDelivery.attempts, 1); assert.ok(job.remoteDelivery.nextRetryAt); assert.equal(job.state, 'COMPLETED'); assert.deepEqual(job.tasks, []);
+    git(f.repo, 'remote', 'set-url', 'origin', join(f.root, 'missing.git'));
+    await reconcile(f, () => Date.now() + 60_000); job = await current(f);
+    assert.equal(job.remoteDelivery.status, 'failed'); assert.equal(job.remoteDelivery.attempts, 2); assert.equal(job.state, 'COMPLETED');
+  } finally { f.close(); }
 });
 
-test('local merge commit embeds durable Job publication correlation metadata',()=>{
- const f=fixture(); try{
-  const delivered=deliverLocalMerge(f.repo,{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending',sourceSha:f.sourceSha,correlationJobId:'job-publish-1',displayPrNumber:88});
-  const message=git(f.repo,'show','-s','--format=%B',delivered.mergedCommitSha);
-  assert.match(message,/^Agents Relay local merge/);
-  assert.match(message,new RegExp(`Agents-Relay-Source-SHA: ${f.sourceSha}`));
-  assert.match(message,/Agents-Relay-Job: job-publish-1/);
-  assert.match(message,/Agents-Relay-Display-PR: 88/);
- } finally {f.close();}
+test('expired delivery lease recovers after SQLite restart; concurrent daemons push once', async () => {
+  const f = fixture();
+  try {
+    await f.store.mutateJob(f.job.id, job => ({ ...job, remoteDelivery: { ...job.remoteDelivery, status: 'processing', attempts: 1, leaseToken: 'crashed-owner', leaseUntil: new Date(0).toISOString() } }));
+    f.reopen(); const first = f.store, second = new SQLiteRelayStore(f.db, f.job.id);
+    await Promise.all([reconcileCompletedLocalDelivery(first, f.job, f.repo), reconcileCompletedLocalDelivery(second, f.job, f.repo)]);
+    second.close(); f.reopen(); const job = await current(f);
+    assert.equal(job.remoteDelivery.status, 'succeeded'); assert.equal(job.state, 'COMPLETED'); assert.deepEqual(job.tasks, []);
+    assert.equal(git(f.repo, 'ls-remote', 'origin', 'refs/heads/main').split(/\s+/)[0], job.localMerge.mergedCommitSha);
+  } finally { f.close(); }
+});
+
+
+test('retry deadline prevents all Git inspection and keeps SQLite attempts unchanged', async () => {
+  const f = fixture();
+  try {
+    const deadline = Date.now() + 60_000;
+    await f.store.mutateJob(f.job.id, job => ({ ...job, remoteDelivery: {
+      ...job.remoteDelivery, status: 'failed', attempts: 2, error: 'previous network failure', nextRetryAt: new Date(deadline).toISOString(),
+    } }));
+    // A missing working directory would make *any* premature git invocation fail.
+    const inaccessible = f.repo + '-temporarily-unavailable';
+    const { renameSync } = await import('node:fs');
+    renameSync(f.repo, inaccessible);
+    try {
+      await reconcile(f, () => deadline - 1000);
+      const job = await current(f);
+      assert.equal(job.remoteDelivery.status, 'failed');
+      assert.equal(job.remoteDelivery.attempts, 2);
+      assert.equal(job.remoteDelivery.error, 'previous network failure');
+      assert.equal(job.state, 'COMPLETED');
+    } finally { renameSync(inaccessible, f.repo); }
+    await reconcile(f, () => deadline + 1000);
+    assert.equal((await current(f)).remoteDelivery.status, 'succeeded');
+  } finally { f.close(); }
+});
+
+test('a moved local main must not publish an old merged SHA', async () => {
+  const f = fixture();
+  try {
+    git(f.repo, 'reset', '--hard', git(f.repo, 'rev-list', '--max-parents=0', 'main'));
+    await reconcile(f);
+    const job = await current(f);
+    assert.equal(job.remoteDelivery.status, 'failed');
+    assert.match(job.remoteDelivery.error, /no longer contains completed Job merged commit/);
+    assert.equal(job.state, 'COMPLETED');
+    assert.notEqual(git(f.repo, 'ls-remote', 'origin', 'refs/heads/main').split(/\s+/)[0], job.localMerge.mergedCommitSha);
+  } finally { f.close(); }
+});
+
+
+test('remote push pins the previously verified main commit despite a concurrent local branch move', async () => {
+  const f = fixture();
+  try {
+    const previous = git(f.repo, 'rev-list', '--max-parents=0', 'main');
+    const hook = join(f.repo, '.git', 'hooks', 'pre-push');
+    writeFileSync(hook, `#!/bin/sh\ngit update-ref refs/heads/main ${previous}\n`);
+    chmodSync(hook, 0o755);
+    await reconcile(f);
+    const job = await current(f);
+    assert.equal(job.remoteDelivery.status, 'succeeded');
+    assert.equal(git(f.repo, 'rev-parse', 'main'), previous, 'simulated concurrent actor moved local main');
+    assert.equal(git(f.repo, 'ls-remote', 'origin', 'refs/heads/main').split(/\s+/)[0], job.localMerge.mergedCommitSha,
+      'only the pre-inspected main SHA, including completed Job commit, may be pushed');
+    assert.equal(job.state, 'COMPLETED');
+  } finally { f.close(); }
+});
+
+test('inaccessible immutable projectRoot is a durable retry, not an uncaught daemon scan error', async () => {
+  const f = fixture();
+  try {
+    const moved = f.repo + '-moved';
+    renameSync(f.repo, moved);
+    try {
+      await reconcile(f);
+      const job = await current(f);
+      assert.equal(job.remoteDelivery.status, 'failed');
+      assert.equal(job.remoteDelivery.attempts, 1);
+      assert.ok(job.remoteDelivery.nextRetryAt);
+      assert.equal(job.state, 'COMPLETED');
+    } finally { renameSync(moved, f.repo); }
+  } finally { f.close(); }
+});
+
+test('offline origin exhausts retry budget after fifth claim, without a sixth attempt or Job mutation', async () => {
+  const f = fixture();
+  try {
+    git(f.repo, 'remote', 'set-url', 'origin', join(f.root, 'nonexistent.git'));
+    await f.store.mutateJob(f.job.id, job => ({ ...job, remoteDelivery: { ...job.remoteDelivery,
+      status: 'failed', attempts: 4, nextRetryAt: new Date(0).toISOString(), error: 'prior offline retries',
+    } }));
+    await reconcile(f);
+    let job = await current(f);
+    assert.equal(job.remoteDelivery.status, 'exhausted');
+    assert.equal(job.remoteDelivery.attempts, 5);
+    assert.equal(job.remoteDelivery.nextRetryAt, undefined);
+    assert.equal(job.state, 'COMPLETED');
+    await reconcile(f, () => Date.now() + 300000);
+    job = await current(f);
+    assert.equal(job.remoteDelivery.status, 'exhausted');
+    assert.equal(job.remoteDelivery.attempts, 5);
+    assert.deepEqual(job.tasks, []);
+  } finally { f.close(); }
 });

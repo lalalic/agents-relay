@@ -177,7 +177,7 @@ test('L3-U14: duplicate normal Job start is idempotent and rejects changed trust
  assert.ok(job.graphStartContext?.projectPath);
  const cli=fileURLToPath(new URL('../../dist/cli.js',import.meta.url));
  const result=spawnSync(process.execPath,[cli,'job','run','--id',f.id,'--task-id',f.coordinatorId,
-   '--no-github','--store-dir',join(f.root,'stores'),'--project-path',f.project,
+   '--store-dir',join(f.root,'stores'),'--project-path',f.project,
    '--workspace-root',f.root,'--shared-root',join(f.root,'other-agents')],
    {encoding:'utf8',timeout:15000,env:{...process.env,AGENTS_RELAY_STORE_DIR:f.root}});
  assert.notEqual(result.status,0);
@@ -222,7 +222,7 @@ test('L3-U17: foreground CLI immediately executes all DAG stages and prints live
  const cli=fileURLToPath(new URL('../../dist/cli.js',import.meta.url));
  await mkdir(join(f.root,'stores'),{recursive:true});
  const result=spawnSync(process.execPath,[cli,'job','run','--id',f.id,'--task-id',f.coordinatorId,
-   '--no-github','--events','none','--foreground','--store-dir',join(f.root,'stores'),
+   '--events','none','--foreground','--store-dir',join(f.root,'stores'),
    '--project-path',f.project,'--workspace-root',f.root,'--concurrency','3'],
    {encoding:'utf8',timeout:25000,env:{...process.env,AGENTS_RELAY_STORE_DIR:f.root}});
  assert.equal(result.status,0,`stdout=${result.stdout}\nstderr=${result.stderr}`);
@@ -234,7 +234,7 @@ test('L3-U17: foreground CLI immediately executes all DAG stages and prints live
  assert.equal(finished.state,'COMPLETED');
  assert.deepEqual(finished.tasks.filter(task=>task.dagNode).map(task=>task.state),['SUCCEEDED','SUCCEEDED','SUCCEEDED']);
  const second=spawnSync(process.execPath,[cli,'job','run','--id',f.id,'--task-id',f.coordinatorId,
-   '--no-github','--events','none','--foreground','--store-dir',join(f.root,'stores'),
+   '--events','none','--foreground','--store-dir',join(f.root,'stores'),
    '--project-path',f.project,'--workspace-root',f.root],
    {encoding:'utf8',timeout:10000,env:{...process.env,AGENTS_RELAY_STORE_DIR:f.root}});
  assert.equal(second.status,0,second.stderr);

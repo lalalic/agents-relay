@@ -5,7 +5,8 @@ import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createIsolatedEnvironment} from './harness.mjs';
-import {SQLiteRelayStore} from '../../dist/relay-store.js';
+import {SQLiteRelayStore,relayStoreDirectory} from '../../dist/relay-store.js';
+import {allocateEntityId} from '../../dist/job-task-id-sequence.js';
 import {LocalAuthorityDurableStore} from '../../dist/local-authority-store.js';
 import {InMemoryStore} from '../../dist/store.js';
 import {MemoryEventBus,eventFor} from '../../dist/events.js';
@@ -17,12 +18,37 @@ import {createPlanRound} from '../../dist/planner.js';
 import {recordTargetedRevisionRequest} from '../../dist/review-revision-model.js';
 import {decideRevisionLifecycle} from '../../dist/workflow/revision-v2.js';
 const stamp='2026-10-17T12:00:00.000Z';
-const jobId='l3-replay';
-const task=(id,deps=[],initialState)=>{const state=initialState??(deps.length?'DRAFT':'RUNNING');const running=state==='RUNNING';return {jobId,id,kind:'work',agentName:'implementation',adapter:'chatgpt',input:'mock agent',output:{kind:'task_pr'},parentTaskId:null,dependencies:deps,capabilities:[],state,attempt:state==='QUEUED'||deps.length?0:1,maxAttempts:3,leaseOwner:running?'mock':null,leaseExpiresAt:running?'2099-01-01T00:00:00.000Z':null,executionId:running?'exec-a':null,executionHistory:running?[{id:'exec-a',attempt:1,startedAt:stamp}]:[],threadId:null,result:null,error:null,timeoutMs:900000,createdAt:stamp,updatedAt:stamp};};
+const task=(jobId,id,deps=[],initialState)=>{const state=initialState??(deps.length?'DRAFT':'RUNNING');const running=state==='RUNNING';return {jobId,id,kind:'work',agentName:'implementation',adapter:'chatgpt',input:'mock agent',output:{kind:'task_pr'},parentTaskId:null,dependencies:deps,capabilities:[],state,attempt:state==='QUEUED'||deps.length?0:1,maxAttempts:3,leaseOwner:running?'mock':null,leaseExpiresAt:running?'2099-01-01T00:00:00.000Z':null,executionId:running?'exec-a':null,executionHistory:running?[{id:'exec-a',attempt:1,startedAt:stamp}]:[],threadId:null,result:null,error:null,timeoutMs:900000,createdAt:stamp,updatedAt:stamp};};
 const fingerprint=value=>JSON.stringify({job:value.state,merge:value.localMerge?.status??null,tasks:value.tasks.map(({id,state,attempt,executionId,result,error,escalation})=>({id,state,attempt,executionId,result:result??null,error:error??null,escalation:escalation?{id:escalation.id,status:escalation.status,notification:escalation.notification?.status??null}:null}))});
 export async function runReplay(scenario) {
  if(!scenario || !/^[a-z0-9-]+$/.test(scenario.id??'') || !Array.isArray(scenario.steps) || scenario.steps.length>200) throw Error('invalid scenario');
  const env=createIsolatedEnvironment('relay-l3-replay-');
+ // Scenario aliases never enter the authoritative SQLite Job/Task identity.
+ // Reserve IDs through the same store-global allocator that production uses.
+ const jobId=allocateEntityId(relayStoreDirectory(),env.repository,'job',`l3:${scenario.id}`);
+ const aliases=new Map();
+ const names=new Map();
+ const configuredTasks=scenario.tasks??[{id:'a'},{id:'b',dependencies:['a']}];
+ for(const item of configuredTasks){
+   const id=allocateEntityId(relayStoreDirectory(),env.repository,'task',`l3:${scenario.id}:${item.id}`);
+   aliases.set(item.id,id);names.set(id,item.id);
+ }
+ const displayId=(id,current)=>{
+   if(names.has(id))return names.get(id);
+   const candidate=current.tasks.find(t=>t.id===id);
+   if(candidate?.revision?.kind==='targeted')return `revision-${id}`;
+   if(candidate?.agentName==='troubleshooter'){
+     if(candidate.recoveryPlanId)return `recover-${candidate.recoveryPlanId}`;
+     const parent=current.tasks.find(t=>t.id===candidate.parentTaskId);
+     if(parent)return `troubleshoot-${displayId(parent.id,current)}`;
+   }
+   if(candidate?.reviewHeadSha&&['job-acceptance-reviewer','reviewer'].includes(candidate.agentName)){
+     const siblings=current.tasks.filter(t=>t.reviewHeadSha===candidate.reviewHeadSha&&['job-acceptance-reviewer','reviewer'].includes(t.agentName));
+     const ordinal=siblings.findIndex(t=>t.id===id);
+     return `final-review-${candidate.reviewHeadSha}${ordinal>0?`-${ordinal+1}`:''}`;
+   }
+   return id;
+ };
  let sqlite=new SQLiteRelayStore(join(env.storeDir,'relay.sqlite'),jobId);
  let store=new LocalAuthorityDurableStore(sqlite,new InMemoryStore(),undefined,true);
  const bus=new MemoryEventBus();
@@ -47,7 +73,7 @@ export async function runReplay(scenario) {
  let runtime=new Reconciler(store,runtimeOptions);
  const trace=[];let stop;
  try {
-  const tasks=(scenario.tasks??[{id:'a'},{id:'b',dependencies:['a']}]).map(item=>task(item.id,item.dependencies??[],item.state));
+  const tasks=configuredTasks.map(item=>task(jobId,aliases.get(item.id),(item.dependencies??[]).map(id=>aliases.get(id)??id),item.state));
   if(new Set(tasks.map(item=>item.id)).size!==tasks.length || tasks.some(item=>item.dependencies.some(dep=>!tasks.some(other=>other.id===dep)))) throw Error('invalid task dependencies');
   const initialJob={id:jobId,title:scenario.id,objective:scenario.plannerScript?'Verify complete multi-stage objective':undefined,repository:env.repository,projectRoot:env.root,prNumber:0,state:'ACTIVE',autoMerge:scenario.autoMerge===true,reviewEnabled:scenario.reviewEnabled===true,
    ...(scenario.headSha?{headSha:scenario.headSha}:{}),
@@ -61,12 +87,21 @@ export async function runReplay(scenario) {
   for(let index=0;index<scenario.steps.length;index++) {
    const step=scenario.steps[index];
    const resolveTaskId=async(value)=>{
-     if(value==='@planned')return (await snapshot()).plans?.findLast(p=>p.status==='SUCCEEDED')?.generatedTaskIds?.[0]??'__planned_unavailable__';
-     if(value==='@troubleshoot-planned')return 'troubleshoot-'+((await snapshot()).plans?.findLast(p=>p.status==='SUCCEEDED')?.generatedTaskIds?.[0]??'__planned_unavailable__');
-     if(value==='@review')return (await snapshot()).review?.taskId??'__review_unavailable__';
-     if(value==='revision-head-1')return (await snapshot()).tasks.find(t=>t.revision?.kind==='targeted')?.id??'__revision_unavailable__';
-     if(value==='@revision')return (await snapshot()).tasks.find(t=>t.revision?.kind==='targeted')?.id??'__revision_unavailable__';
-     return value??'a';
+     const current=await snapshot();
+     if(value==='@planned')return current.plans?.findLast(p=>p.status==='SUCCEEDED')?.generatedTaskIds?.[0]??'__planned_unavailable__';
+     if(value==='@troubleshoot-planned'){
+       const original=current.plans?.findLast(p=>p.status==='SUCCEEDED')?.generatedTaskIds?.[0];
+       return current.tasks.find(t=>t.agentName==='troubleshooter'&&t.parentTaskId===original)?.id??'__recovery_unavailable__';
+     }
+     if(value==='@review')return current.review?.taskId??'__review_unavailable__';
+     if(value==='revision-head-1'||value==='@revision')return current.tasks.find(t=>t.revision?.kind==='targeted')?.id??'__revision_unavailable__';
+     if(typeof value==='string'&&value.startsWith('recover-plan-'))return current.tasks.find(t=>t.agentName==='troubleshooter'&&t.recoveryPlanId===value.slice('recover-'.length))?.id??'__plan_recovery_unavailable__';
+     if(typeof value==='string'&&value.startsWith('final-review-'))return current.tasks.find(t=>['job-acceptance-reviewer','reviewer'].includes(t.agentName)&&t.reviewHeadSha===value.slice('final-review-'.length))?.id??'__review_unavailable__';
+     if(typeof value==='string'&&value.startsWith('troubleshoot-')){
+       const originalId=await resolveTaskId(value.slice('troubleshoot-'.length));
+       return current.tasks.find(t=>t.agentName==='troubleshooter'&&t.parentTaskId===originalId)?.id??'__recovery_unavailable__';
+     }
+     return aliases.get(value)??value??aliases.get('a');
    };
    if(!['task.completed','task.failed','task.started','mock.revision.request','mock.revision.materialize','review.started','review.approved','review.changes_required','job.merge.failed','job.merge.succeeded','job.head.changed','mock.clock.advance','mock.claim','planner.settle','planner.await-success','task.recover','task.escalate','mock.notification.delivered','human.unblock','reconcile','restart'].includes(step.type)) throw Error(`unsupported event: ${step.type}`);
    if(step.type==='reconcile') await runtime.reconcile(jobId);
@@ -87,12 +122,12 @@ export async function runReplay(scenario) {
    }
    else if(step.type==='task.recover') {
     const resolvedTaskId=await resolveTaskId(step.taskId);
-    const recoveryTaskId=step.recoveryTaskId?await resolveTaskId(step.recoveryTaskId):`troubleshoot-${resolvedTaskId}`;
+    const recoveryTaskId=await resolveTaskId(step.recoveryTaskId??`troubleshoot-${step.taskId??'a'}`);
     const result=await dispatchTaskAction(store,{id:TASK_RECOVER_ACTION,jobId,taskId:resolvedTaskId,recoveryTaskId,recoveryDiagnosis:{failureKind:'task_failure',reason:step.reason??'L3 controlled recovery',evidence:'canonical event failure',reroute:false,excludeCurrentRoute:false}});
     if(result.task.state!=='QUEUED')throw Error('recover action did not requeue original Task');
    }
    else if(step.type==='task.escalate') {
-     const recoveryId=step.recoveryTaskId??`troubleshoot-${step.taskId??'a'}`;
+     const recoveryId=await resolveTaskId(step.recoveryTaskId??`troubleshoot-${step.taskId??'a'}`);
      const outcome=await requestTroubleshooterEscalation(store,jobId,recoveryId,{
        requiredAction:step.requiredAction??'Human must authorize the provider prompt',
        resolutionCondition:step.resolutionCondition??'Provider prompt is approved',
@@ -102,7 +137,7 @@ export async function runReplay(scenario) {
      await runtime.reconcile(jobId);
    }
    else if(step.type==='mock.notification.delivered') {
-     const recoveryId=step.recoveryTaskId??`troubleshoot-${step.taskId??'a'}`;
+     const recoveryId=await resolveTaskId(step.recoveryTaskId??`troubleshoot-${step.taskId??'a'}`);
      if(!observedEvents.some(e=>e.event==='escalation.requested' && e.taskId===recoveryId))throw Error('cannot deliver unrequested escalation');
      const recovery=(await snapshot()).tasks.find(t=>t.id===recoveryId);
      if(!recovery?.escalation?.id)throw Error('notification has no durable escalation ID');
@@ -111,7 +146,7 @@ export async function runReplay(scenario) {
      });
    }
    else if(step.type==='human.unblock') {
-     const recoveryId=step.recoveryTaskId??`troubleshoot-${step.taskId??'a'}`;
+     const recoveryId=await resolveTaskId(step.recoveryTaskId??`troubleshoot-${step.taskId??'a'}`);
      const recovery=(await snapshot()).tasks.find(t=>t.id===recoveryId);
      if(recovery?.escalation?.notification?.status!=='delivered')throw Error('test requires actual notifier receipt before human response');
      const result=await resumeTroubleshooter(store,jobId,recoveryId,step.response??'Provider authorization completed');
@@ -122,9 +157,11 @@ export async function runReplay(scenario) {
     // Its reducer and canonical Revision Graph are production code.
     const reviewerId=await resolveTaskId(step.reviewTaskId??'@review');
     const originalId=await resolveTaskId(step.originalTaskId??(scenario.plannerScript?'@planned':'a'));
+    const allocatedTaskId=allocateEntityId(relayStoreDirectory(),env.repository,'task',`revision:${scenario.id}:${reviewerId}:${originalId}`);
     await store.mutateJob(jobId,current=>{
       const reviewer=current.tasks.find(t=>t.id===reviewerId);
       recordTargetedRevisionRequest(current,{
+        allocatedTaskId,
         requestId:'l3/'+reviewerId+'/'+reviewer.executionId,
         reviewTaskId:reviewerId,reviewExecutionId:reviewer.executionId,
         headSha:step.headSha??current.headSha,originalTaskId:originalId,
@@ -223,13 +260,13 @@ export async function runReplay(scenario) {
    const actionTable=sqliteReader.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='workflow_action_trace'").get();
    const actionAttempts=actionTable ? sqliteReader.prepare('SELECT attempt_key,execution_id,action_id,outcome FROM workflow_action_trace ORDER BY attempt_key').all() : [];
    sqliteReader.close();
-   trace.push({actionAttempts,planStatuses:(observed.plans??[]).map(p=>({id:p.id,status:p.status,attempt:p.attempt,generatedTaskIds:p.generatedTaskIds})),taskResolutions:observed.tasks.filter(t=>t.resolution).map(t=>({taskId:t.id,path:t.resolution.path,state:t.resolution.state,recoveryExecutionId:t.resolution.recoveryExecutionId})),index,event:step.type,source:step.executionId??'exec-a',before:prior.tasks.map(t=>({id:t.id,state:t.state,executionId:t.executionId})),after:observed.tasks.map(t=>({id:t.id,state:t.state,executionId:t.executionId})),jobState:observed.state,mergeStatus:observed.localMerge?.status??null,escalations:observed.tasks.filter(t=>t.escalation).map(t=>({taskId:t.id,status:t.escalation.status,notificationStatus:t.escalation.notification?.status??null})),progress:fingerprint(prior)!==fingerprint(observed)});
+   trace.push({actionAttempts,planStatuses:(observed.plans??[]).map(p=>({id:p.id,status:p.status,attempt:p.attempt,generatedTaskIds:p.generatedTaskIds})),taskResolutions:observed.tasks.filter(t=>t.resolution).map(t=>({taskId:displayId(t.id,observed),path:t.resolution.path,state:t.resolution.state,recoveryExecutionId:t.resolution.recoveryExecutionId})),index,event:step.type,source:step.executionId??'exec-a',before:prior.tasks.map(t=>({id:displayId(t.id,prior),state:t.state,executionId:t.executionId})),after:observed.tasks.map(t=>({id:displayId(t.id,observed),state:t.state,executionId:t.executionId})),jobState:observed.state,mergeStatus:observed.localMerge?.status??null,escalations:observed.tasks.filter(t=>t.escalation).map(t=>({taskId:displayId(t.id,observed),status:t.escalation.status,notificationStatus:t.escalation.notification?.status??null})),progress:fingerprint(prior)!==fingerprint(observed)});
    prior=observed;
   }
-  const actual={jobState:prior.state,tasks:Object.fromEntries(prior.tasks.map(t=>[t.id,t.state])),plans:(prior.plans??[]).map(p=>({id:p.id,status:p.status,attempt:p.attempt,objectiveStatus:p.objectiveStatus})),localMerge:prior.localMerge??null};
+  const actual={jobState:prior.state,tasks:Object.fromEntries(prior.tasks.map(t=>[displayId(t.id,prior),t.state])),plans:(prior.plans??[]).map(p=>({id:p.id,status:p.status,attempt:p.attempt,objectiveStatus:p.objectiveStatus})),localMerge:prior.localMerge??null};
   const errors=[];
   if(scenario.expected?.jobState && scenario.expected.jobState!==actual.jobState) errors.push(`job expected ${scenario.expected.jobState}, got ${actual.jobState}`);
-  for(const [id,state] of Object.entries(scenario.expected?.tasks??{})) { const resolvedId=id==='revision-head-1' ? prior.tasks.find(t=>t.revision?.kind==='targeted')?.id??id : id; if(actual.tasks[resolvedId]!==state)errors.push(`${id} expected ${state}, got ${actual.tasks[resolvedId]??'missing'}`); }
+  for(const [id,state] of Object.entries(scenario.expected?.tasks??{})) { const resolvedId=id==='revision-head-1' ? displayId(prior.tasks.find(t=>t.revision?.kind==='targeted')?.id??id,prior) : id; if(actual.tasks[resolvedId]!==state)errors.push(`${id} expected ${state}, got ${actual.tasks[resolvedId]??'missing'}`); }
   for(const [id,state] of Object.entries(scenario.expected?.plans??{})) if(!actual.plans.some(p=>p.id===id&&p.status===state))errors.push(`Plan ${id} expected ${state}`);
   if(scenario.expected?.localMergeStatus && actual.localMerge?.status!==scenario.expected.localMergeStatus) errors.push(`merge expected ${scenario.expected.localMergeStatus}, got ${actual.localMerge?.status??'none'}`);
   for(const assertion of scenario.assertions??[]){
@@ -248,7 +285,7 @@ export async function runReplay(scenario) {
     catch{return [];}
     finally{auditDb.close();}
   })();
-  return {schemaVersion:2,scenarioId:scenario.id,category:scenario.category??'L3',outcome:errors.length?'FAIL':'PASS',actual,trace,errors,observedEvents,plannerCalls,externalGitAttempts:mergeAttempt,actionTraces,authority:'isolated SQLite via production event bus and reconciler'};
+  return {schemaVersion:2,persistedTaskIds:prior.tasks.map(t=>t.id),scenarioId:scenario.id,category:scenario.category??'L3',outcome:errors.length?'FAIL':'PASS',actual,trace,errors,observedEvents,plannerCalls,externalGitAttempts:mergeAttempt,actionTraces,authority:'isolated SQLite via production event bus and reconciler'};
  }finally{await stop?.();await stopObserving();await runtime.close();sqlite.close();env.cleanup();}
 }
 export async function replayFile(path,outputDir){

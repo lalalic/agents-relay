@@ -121,7 +121,7 @@ export async function run({input,runCommand}){
   const cli=fileURLToPath(new URL('../../dist/cli.js',import.meta.url));
   await mkdir(join(root,'stores'),{recursive:true});
   const result=spawnSync(process.execPath,[cli,'job','run','--id',id,'--task-id',coordinatorId,
-   '--no-github','--store-dir',join(root,'stores'),'--project-path',project,'--workspace-root',root],
+   '--store-dir',join(root,'stores'),'--project-path',project,'--workspace-root',root],
    {encoding:'utf8',timeout:15000,env:{...process.env,AGENTS_RELAY_STORE_DIR:root}});
   assert.equal(result.status,0,result.stderr);
   const receipt=JSON.parse(result.stdout);

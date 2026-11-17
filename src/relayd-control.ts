@@ -21,7 +21,6 @@ import { discoverLocalRelayStoreSnapshots, SQLiteRelayStore } from './relay-stor
 import { openLocalManagedStore } from './local-managed-store.js';
 import { relayStoreDirectory } from './relay-store.js';
 import { createJobIdRegistryResolver } from './local-job-registry.js';
-import { projectAuthoritativeLocalMerge } from './local-merge-projection.js';
 import { archiveDisplayPullRequest } from './github-pr-archive.js';
 import { orderGitHubBindingCandidates } from './github-binding-order.js';
 import { githubAuthContext } from './github-auth.js';
@@ -75,7 +74,6 @@ export function createWorkspaceControl(deps: any) {
         title: typeof options.title === 'string' ? options.title : undefined,
         objective: typeof options.objective === 'string' ? options.objective : undefined,
         projectRoot: typeof options.projectRoot === 'string' ? options.projectRoot : undefined,
-        githubRepo: typeof options.githubRepo === 'string' ? options.githubRepo : undefined,
         projectPath: typeof options.projectPath === 'string' ? options.projectPath : undefined,
         priority: options.priority as import('./types.js').Priority | undefined,
                 tag: options.tag as import('./types.js').Job['tag'] | undefined,
@@ -94,7 +92,7 @@ export function createWorkspaceControl(deps: any) {
       if (body.initialPlan === true) {
         const current = result.job;
         const existingPlan = current.plans?.at(-1);
-        if (existingPlan) return { repository, pr: result.pr.number, job: current.id, state: current.state, initialPlan: existingPlan.id, reused: true };
+        if (existingPlan) return { repository, job: current.id, state: current.state, initialPlan: existingPlan.id, reused: true };
         const unpublished = new InMemoryStore(current);
         const reconciler = makeReconciler(unpublished, concurrency);
         try {
@@ -110,8 +108,8 @@ export function createWorkspaceControl(deps: any) {
           return { repository, pr: committed.prNumber, job: committed.id, state: committed.state, initialPlan: committed.plans?.at(-1)?.id };
         } finally { await reconciler.close(); }
       }
-      if(options.coordinator)return {repository,pr:result.pr.number,job:result.job.id,state:result.job.state,taskId:result.job?.tasks?.find((task: import('./types.js').Task)=>task.title==='Coordinator'&&task.agentGraph)?.id??result.taskId};
-      return { repository, pr: result.pr.number, job: result.job.id, state: result.job.state };
+      if(options.coordinator)return {repository,job:result.job.id,state:result.job.state,taskId:result.job?.tasks?.find((task: import('./types.js').Task)=>task.title==='Coordinator'&&task.agentGraph)?.id??result.taskId};
+      return { repository, job: result.job.id, state: result.job.state };
     }
 
     if (!jobId) throw new Error(command + ' requires jobId');
@@ -372,16 +370,9 @@ export function createWorkspaceControl(deps: any) {
       for (const target of summary.unblocked) await pool.reconcileLocalJob(target.jobId, 'control.blocker.resolve');
       await refreshAll(); return summary;
     }
-    if (command === 'projection.conflicts') return await binding.relay.listProjectionConflicts();
     if (command === 'job.reconcile') { await pool.reconcileLocalJob(jobId, 'control.job.reconcile'); return await store.load(jobId); }
     if (command === 'agent.discover') {
       return discoverAgents(await store.listAgents(), (body.requirements && typeof body.requirements === 'object' ? body.requirements : {}) as Parameters<typeof discoverAgents>[1]);
-    }
-    if (command === 'projection.resolve') {
-      const id = Number(body.projectionId); const action = body.action === 'discard_local' ? 'discard_local' : 'requeue';
-      if (!Number.isInteger(id) || id <= 0) throw new Error('projection resolve requires projectionId');
-      const resolved = await binding.relay.resolveProjectionConflict(id, { action, ...(typeof body.note === 'string' && body.note ? { note: body.note } : {}) });
-      if (!resolved) throw new Error(`Projection ${id} is not in a resolvable conflict state`); return { resolved: id, action };
     }
     if (command === 'record') {
       const task = body.task as import('./types.js').Task | undefined; if (!task || task.jobId !== jobId) throw new Error('record requires a task for this Job');

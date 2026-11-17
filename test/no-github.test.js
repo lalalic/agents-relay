@@ -8,7 +8,7 @@ import { GitHubStore, InMemoryStore } from '../dist/store.js';
 import { eventFor } from '../dist/events.js';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { deliverLocalMerge, localSourceHead } from '../dist/local-git-merge.js';
@@ -235,9 +235,9 @@ test('durable CLI requires relay service while explicit --file demo remains loca
   const cli=fileURLToPath(new URL('../dist/cli.js',import.meta.url));
   const env={...process.env,HOME:home};
   try {
-    assert.throws(()=>execFileSync(process.execPath,[cli,'--no-github','job','create','--id','e2e-cli','--title','Offline Job','--objective','Local merge','--host','127.0.0.1','--port','1'],{cwd:repo.path,env,encoding:'utf8',timeout:5000}),/service unavailable|ECONNREFUSED/);
+    assert.throws(()=>execFileSync(process.execPath,[cli,'--no-github','job','create','--repo',basename(repo.path),'--id','e2e-cli','--title','Offline Job','--objective','Local merge'],{cwd:repo.path,env,encoding:'utf8',timeout:5000}),/Unsupported option --no-github/);
     const file=join(home,'demo.json');
-    execFileSync(process.execPath,[cli,'--no-github','init','--file',file,'--id','demo','--title','Demo'],{cwd:repo.path,env,encoding:'utf8',timeout:5000});
+    execFileSync(process.execPath,[cli,'init','--file',file,'--id','demo','--title','Demo'],{cwd:repo.path,env,encoding:'utf8',timeout:5000});
     assert.equal(JSON.parse(readFileSync(file,'utf8')).id,'demo');
   } finally { repo.close();rmSync(home,{recursive:true,force:true}); }
 });
@@ -556,6 +556,9 @@ test('local merge failure records reason and retry, then emits a successful reco
     assert.equal(recovered,true,JSON.stringify((await store.load('local-job')).localMerge));
     await store.drainWorkflowEvents(emit);
     assert.equal(events[1].type,'job.merge.succeeded');
-    assert.equal((await store.load('local-job')).state,'COMPLETED');
+    const completedJob=await store.load('local-job');
+    assert.equal(completedJob.state,'COMPLETED');
+    assert.equal(completedJob.remoteDelivery?.status,'pending','remote delivery is queued only after real local Graph completion');
+    assert.equal(completedJob.remoteDelivery?.mergedCommitSha,completedJob.localMerge?.mergedCommitSha);
   } finally {db.close();repo.close()}
 });

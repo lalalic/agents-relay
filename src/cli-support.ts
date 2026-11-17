@@ -47,7 +47,7 @@ export async function textOption(args: string[], inlineFlag: string, fileFlag: s
   return arg(args, inlineFlag);
 }
 export function integerArg(args: string[], name: string, fallback: number): number { if (!hasArg(args, name)) return fallback; const value = Number(arg(args, name)); if (!Number.isInteger(value) || value < 0) throw new Error(`${name} must be a non-negative integer`); return value; }
-export function repository(args: string[]): string { const value = arg(args, '--repo'); if (!value && noGitHubMode(args)) return basename(process.cwd()); if (!value) throw new Error('--repo must name the local Git root directory'); return value; }
+export function repository(args: string[]): string { const value = arg(args, '--repo'); if (!value) throw new Error('--repo must name the local Git root directory'); return value; }
 export function pullRequest(args: string[]): number { const value = Number(arg(args, '--pr')); if (!Number.isInteger(value) || value <= 0) throw new Error('--pr is required for GitHub-backed operation'); return value; }
 async function localStore(file: string): Promise<{ store: InMemoryStore; job: Job }> { const parsed = JSON.parse(await readFile(file, 'utf8')) as Job; const store = new InMemoryStore(parsed); return { store, job: await store.load(parsed.id) }; }
 /** The public read-only commands must fail closed on ambiguous Job bindings. */
@@ -240,7 +240,7 @@ export async function publishTaskUnblocked(bus: EventBus | undefined, job: Job, 
 export async function publishTaskBlocked(bus: EventBus | undefined, job: Job, taskId: string, reason: string, data?: Record<string, unknown>): Promise<void> { if (!bus) return; try { await bus.publish(eventFor(job.id, taskId, null, 'task.blocked', 'blocked', `Task ${taskId} blocked: ${reason}`, 'orchestrator', { repository: job.repository, prNumber: job.prNumber, reason, ...data })); } catch (error) { process.stderr.write(`warning: block event unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } }
 export async function publishDependentUnblocked(bus: EventBus | undefined, targets: readonly { repository: string; prNumber: number; jobId: string; taskId: string }[], reason: string): Promise<void> { if (!bus) return; for (const target of targets) { try { await bus.publish(eventFor(target.jobId, target.taskId, null, 'task.unblocked', 'unblocked', `Task ${target.taskId} unblocked: ${reason}`, 'orchestrator', { repository: target.repository, prNumber: target.prNumber, reason })); } catch (error) { process.stderr.write(`warning: dependent unblock event unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } } }
 export async function requestManagedReconciliation(bus: EventBus | undefined, job: Job): Promise<void> {
-  if (!bus) throw new Error('Managed GitHub reconciliation requires a reachable NATS event bus (auto-detected when available, or explicit with --events nats)');
+  if (!bus) throw new Error('Managed local Job reconciliation requires a reachable NATS event bus (auto-detected when available, or explicit with --events nats)');
   try {
     await bus.publish(eventFor(job.id, 'reconcile', null, 'job.wake', 'queued', `Reconcile requested for ${job.id}`, 'orchestrator', { repository: job.repository, prNumber: job.prNumber }));
   } catch (error) {
@@ -260,4 +260,9 @@ export function continuation(args: string[]): Job['continuation'] { const kind =
 export function rejectRemovedJobOptions(args: string[]): void {
   const obsolete = ['--mode','--execution-mode','--schedule','--schedule-next-run','--schedule-timezone','--missed-run-policy','--schedule-concurrency','--cron','--schedule-cron'].find(option => hasArg(args, option));
   if (obsolete) throw new Error(`Unsupported Job option ${obsolete}: every Job replans to objective satisfaction and scheduling is unavailable`);
+}
+export function rejectRemoteLifecycleOptions(args: readonly string[]): void {
+  const obsolete = ['--github-repo','--pr','--no-github','--dependent-pr','--head','--base','--body','--github-app-id','--github-app-installation-id','--github-app-private-key-file','--github-webhook-secret','--github-webhook-secret-file','--github-token','--github-token-file','--projection-ms'];
+  const found = obsolete.find(option => args.some(arg => arg === option || arg.startsWith(option + '=')));
+  if (found) throw new Error(`Unsupported option ${found}: Jobs use local Git identity and SQLite lifecycle state`);
 }

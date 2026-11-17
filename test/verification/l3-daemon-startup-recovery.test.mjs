@@ -133,7 +133,7 @@ test('real daemon restart fences parent-shutdown and claims the same Troubleshoo
     const daemonPath = join(process.cwd(), 'dist', 'relayd-main.js');
     const startDaemon = async () => {
       daemonLog = '';
-      const processHandle = spawn(process.execPath, [daemonPath, '--no-github', '--events', 'nats', '--nats-url', `nats://127.0.0.1:${nats.port}`, '--project-path', env.root,
+      const processHandle = spawn(process.execPath, [daemonPath,  '--events', 'nats', '--nats-url', `nats://127.0.0.1:${nats.port}`, '--project-path', env.root,
         '--port', String(port), '--concurrency', '1', '--interval', '600000', '--codex', fakeCodex], {
         cwd: env.root, env: { ...env.env, RELAY_TEST_LAUNCH_LOG: launchLog }, stdio: ['ignore', 'pipe', 'pipe'],
       });

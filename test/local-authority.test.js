@@ -408,6 +408,26 @@ test('offline Graph automatically creates exactly one final-review Task', async 
   sqlite.close();
 });
 
+test('final Review proceeds despite a stale or unavailable projected PR head', async () => {
+  const sqlite = new SQLiteRelayStore(':memory:');
+  const remote = new InMemoryStore();
+  remote.pullRequestHead = async () => { throw new Error('projected head unavailable'); };
+  const store = new LocalAuthorityDurableStore(sqlite, remote);
+  const head = 'cafebabedeadbeefcafebabedeadbeef00112233';
+  await store.saveJob({ ...job(), prNumber: 77, reviewEnabled: true, autoMerge: false, headSha: head,
+    localMerge: { sourceRef: 'refs/heads/feature', targetRef: 'refs/heads/main', status: 'pending' },
+    plans:[{id:'plan-1',round:1,status:'SUCCEEDED',trigger:{source:'initial'},objectiveStatus:'satisfied',plannerResult:{objective_status:'satisfied',next_tasks:[]}}],
+    tasks: [{ ...task('SUCCEEDED'), id: 'work', adapter: 'codex', result: { summary: 'done' } }] });
+  const reconciler = managedReconciler(store, { owner:'projected-head-independent', adapters:[], maxConcurrent:0,
+    reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:at}},
+    projectPathForJob:()=>process.cwd() });
+  await reconciler.reconcile('local');
+  const saved = await store.load('local');
+  assert.equal(saved.tasks.filter(item=>item.agentName==='job-acceptance-reviewer').length,1);
+  assert.equal(saved.review?.headSha,head);
+  sqlite.close();
+});
+
 test('out-of-order synchronize webhook timestamps cannot regress the durable PR head', async () => {
   const sqlite = new SQLiteRelayStore(':memory:');
   const local = new LocalAuthorityDurableStore(sqlite, new InMemoryStore());

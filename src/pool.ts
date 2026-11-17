@@ -18,7 +18,7 @@ import { isFinalReviewAgent } from './final-review-role.js';
 const RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 type HydratableStore = DurableStore & { hydrate?: (job: Job) => Promise<void> };
 export function compareJobPriority(a: Job, b: Job): number { return RANK[a.priority ?? 'P2'] - RANK[b.priority ?? 'P2'] || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
-export function runnableManagedJobs(items: ManagedJobOverview[]): Job[] { return items.filter(item => item.job.state === 'ACTIVE' || item.job.projectionRecovery?.status === 'repairing').map(item => item.job).sort(compareJobPriority); }
+export function runnableManagedJobs(items: ManagedJobOverview[]): Job[] { return items.filter(item => item.job.state === 'ACTIVE').map(item => item.job).sort(compareJobPriority); }
 export function needsLifecycleReconciliation(job: Job, now = Date.now()): boolean {
   if (job.pause) return job.tasks.some(task => Boolean(task.pausedExecution)) || Boolean(job.plans?.some(plan => Boolean(plan.pausedExecutionId)));
   // DRAFT create-only Jobs stay dormant until a caller explicitly creates work.
@@ -75,7 +75,7 @@ export function activeWorkerSlots(job:Job):number {
 function remainingWorkerSlots(concurrency:number, jobs:readonly Job[]):number {
   const unique=new Map(jobs.map(job=>[job.id,job]));
   return Math.max(0,concurrency-[...unique.values()].reduce((used,job)=>
-    used+(job.state==='ACTIVE'||job.projectionRecovery?.status==='repairing'?activeWorkerSlots(job):0),0));
+    used+(job.state==='ACTIVE'?activeWorkerSlots(job):0),0));
 }
 export class RepositoryWorkerPool {
   private running = false;

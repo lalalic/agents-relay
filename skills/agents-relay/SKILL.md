@@ -9,12 +9,12 @@ Relay owns durable Jobs and Tasks. Use its CLI—not private storage or GitHub p
 
 ## Capability tree
 
-Goal: reliably create, inspect, resume, review, and merge a local Git Job, with optional GitHub publishing.
+Goal: reliably create, inspect, resume, review, and merge a local Git Job, with optional post-completion origin delivery.
 
 - Create: bind one Job ID to a validated canonical local Git root; optionally create the first Plan or a Coordinator DAG.
 - Inspect and resume: use the version-matched CLI and SQLite-backed Job/Task history.
 - Review and merge: review the local Git head, then merge through the normal Job gate.
-- Publish: use an explicitly configured GitHub remote for external PR effects; publishing is never required for local completion.
+- Deliver: after successful local completion, the daemon may fast-forward-push main to the configured origin. This is optional and cannot change Job lifecycle.
 
 ## Job Execution Lifecycle (JEL)
 
@@ -32,7 +32,7 @@ npx agents-relay job show --id JOB_ID
 npx agents-relay task list --repo LOCAL_ROOT_NAME --id JOB_ID
 ```
 
-`job.repository` is the local Git root directory name and `job.projectRoot` is its immutable canonical path. `job.projectPath` may select a nested directory such as `vlog`. `job.githubRepo` is optional remote metadata for explicit publishing effects. Use returned Job IDs. Omit `--initial-plan` for DRAFT-only or Coordinator Graph work. Local Git is the source of truth for review and merge; no GitHub login is needed for the default workflow.
+`job.repository` is the local Git root directory name and `job.projectRoot` is its immutable canonical path. `job.projectPath` may select a nested directory such as `vlog`. Remote owner/repository metadata is not part of Job identity. Use returned Job IDs. Omit `--initial-plan` for DRAFT-only or Coordinator Graph work. Local Git is the source of truth for review and merge; GitHub authentication and PRs are not part of Job execution.
 
 Read `contracts/task-job-contract.md` before authoring or changing Jobs or Tasks and `contracts/orchestrator-workflows.md` when handling initial planning, P0/self Jobs, or merge/delivery boundaries. For content work, load the active Neo Project rules, its Agent Graph if present, and the relevant stage contracts—not a presumed universal production sequence.
 

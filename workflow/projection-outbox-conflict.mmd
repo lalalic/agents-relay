@@ -8,6 +8,7 @@ guards:
   - deterministicDefinitionConflict
 ---
 flowchart LR
+%% relay: initial classify
 %% Only historical external outbox receipts use this graph. It never mutates a Job.
 classify["state: classify"]
 conflict["state: conflict"]

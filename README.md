@@ -2,7 +2,7 @@
 
 Agents Relay is a TypeScript runtime for durable asynchronous agent Jobs driven locally by SQLite and canonical workflow Graphs. The EventBus wakes reconciliation; an EventBus message or GitHub PR comment is never the lifecycle authority. Job, Plan, Task, Review, Execution, Lease and Recovery state survive daemon restarts in SQLite.
 
-Every Job is keyed by an immutable local Git identity: `repository` is the Git root directory name and `projectRoot` is its validated canonical path. `projectPath` can select a nested directory; worktrees never become Job roots. SQLite owns the durable Job/Task/Review state. Local Git is the source of truth for review and merge. `githubRepo` is optional explicit publishing metadata; GitHub authentication and a PR are unnecessary for the default local workflow.
+Every Job is keyed by an immutable local Git identity: `repository` is the Git root directory name and `projectRoot` is its validated canonical path. `projectPath` can select a nested directory; worktrees never become Job roots. SQLite owns the durable Job/Task/Review state. Local Git is the source of truth for review and merge. After completion, Relay may push local `main` to the repository’s configured `origin` using a fast-forward-only push; this optional delivery never changes Job state.
 
 
 Agent frontmatter hints (`skills`, `model`, `reasoning`) are described in [Agent Definition Contract](skills/agents-relay/contracts/agent-contract.md). They are advisory only and do not alter Skill resolution or Router constraints.
@@ -61,16 +61,12 @@ flowchart LR
     Graphs --> Effects[Stateless actions / effects]
     Effects --> Store
     Store --> Views[Dashboard / Recovery]
-    Effects --> Outbox[Durable external-action outbox]
-    Outbox --> GH[GitHub Commit / PR / Review / Merge API]
-    GH --> Facts[Confirmed external facts]
-    Facts --> Store
+    Effects --> Merge[Local Git merge]
+    Store --> Delivery[Optional post-completion origin delivery]
 \`\`\`
 
 SQLite holds the sole lifecycle authority; the Graph Engine selects every transition.
-GitHub operations are explicitly requested and confirmed by adapters, never used to
-discover or reconstruct Job/Task state. EventBus delivery wakes reconciliation;
-it cannot replace the durable SQLite record.
+Job execution does not make GitHub API calls. Optional origin delivery runs only after durable local completion; delivery errors never change the SQLite lifecycle. EventBus delivery wakes reconciliation; it cannot replace the durable SQLite record.
 
 ### Workflow graph navigation
 
@@ -91,11 +87,11 @@ These paths always represent the current canonical graphs. Historical graph defi
 
 ### Structured runtime observability
 
-`src/observability.ts` is the single structured logging/event boundary that records why a lifecycle or projection decision happened. One correlated record chain (`wake -> graph -> transition -> store commit -> projection outcome`) lets an operator reconstruct a representative task lifecycle without ad-hoc stderr parsing. Records are observational only, never a second durable store; they correlate by repository/PR/job/task/execution, classify failures as deterministic `conflict` vs `transient` retry vs `terminal`, redact secrets/prompts, bound large payloads, and keep routine idle/no-op cycles quiet at the default level. See [`docs/structured-observability.md`](docs/structured-observability.md) for the record contract, fields, noise policy, and redaction rules.
+`src/observability.ts` is the single structured logging/event boundary that records why a lifecycle or projection decision happened. One correlated record chain (`wake -> graph -> transition -> store commit -> projection outcome`) lets an operator reconstruct a representative task lifecycle without ad-hoc stderr parsing. Records are observational only, never a second durable store; they correlate by repository/job/task/execution, classify failures as deterministic `conflict` vs `transient` retry vs `terminal`, redact secrets/prompts, bound large payloads, and keep routine idle/no-op cycles quiet at the default level. See [`docs/structured-observability.md`](docs/structured-observability.md) for the record contract, fields, noise policy, and redaction rules.
 
 ## Quick start
 
-For new work, create a local Job through Agents Relay. GitHub publication requires an explicit `--github-repo OWNER/REPO`; local execution, review, and merge do not depend on GitHub. Tasks are validated against the SQLite Job, not GitHub markers.
+For new work, create a local Job through Agents Relay. Local execution, review, and merge do not depend on GitHub. Optional post-completion delivery detects `origin` from the canonical local project root. Tasks are validated against the SQLite Job, not GitHub markers.
 
 ~~~sh
 cat > job.md <<'EOF'
@@ -149,7 +145,7 @@ Lifecycle transition authority lives in the directly renderable canonical flowch
 
 The canonical Mermaid Graph Engine is the authoritative durable workflow decision path. Job/Task lifecycle transitions plus Review, Planner, Blocker/Unblock, and Troubleshooter orchestration branches are defined by the canonical workflow graphs and executed through the shared graph runtime. TypeScript supplies facts and primitive action/effect implementations; it must not duplicate those workflow branches as a second procedural state machine.
 
-Job objectives and Task inputs are Markdown. Prefer `--objective-file` / `--input-file` (use `-` for stdin) for durable long-form context; inline `--objective` / `--input` remain for short/simple text and are mutually exclusive with the file variants. When a diagram materially clarifies the work, put Mermaid first and then Markdown detail. A newly created Job must capture enough context to finish independently of the originating chat. SQLite owns Job metadata and objectives. Any display PR or historical PR marker is a compatibility/audit projection, not the source of lifecycle truth.
+Job objectives and Task inputs are Markdown. Prefer `--objective-file` / `--input-file` (use `-` for stdin) for durable long-form context; inline `--objective` / `--input` remain for short/simple text and are mutually exclusive with the file variants. When a diagram materially clarifies the work, put Mermaid first and then Markdown detail. A newly created Job must capture enough context to finish independently of the originating chat. SQLite owns Job metadata and objectives. Historical PR markers are compatibility/audit evidence, not the source of lifecycle truth.
 
 Every Job is objective-driven. By default, `job create` persists only a DRAFT
 Job; `--initial-plan` also initializes the first real Planner round and its
@@ -183,7 +179,7 @@ All task producers use the same story-size contract: `S`≈5 minutes, `M`≈15 m
 
 There is no Job scheduling or cron support. Reconciliation resumes objective planning from durable state, including after a missed wake-up or restart. See [objective-driven Jobs](docs/objective-driven-jobs.md).
 
-GitHub publication is optional and requires an explicit `--github-repo OWNER/REPO`; it is never inferred from the local Git remote. Job creation is create-only by default. A Coordinator may be included atomically by supplying its Graph, input and absolute execution paths. Task execution options belong to `task create`, and the orchestrator may create zero, one, or multiple initial Tasks according to user intent.
+Remote delivery is optional and uses the configured `origin` URL found at delivery time; no remote owner/repository identity is part of a Job. Job creation is create-only by default. A Coordinator may be included atomically by supplying its Graph, input and absolute execution paths. Task execution options belong to `task create`, and the orchestrator may create zero, one, or multiple initial Tasks according to user intent.
 
 Use `job update` for partial mutable metadata changes on an already healthy Job marker/binding:
 
@@ -200,21 +196,18 @@ review orchestration; it is not a delivery receipt.
 Review destinations are durable Job facts. `job create` and `job update` accept
 `--reviewer-thread-id` and `--creator-thread-id`; a reviewer ID takes precedence
 over the creator/origin ID. A local runtime invocation may pass
-`--thread-id` as an explicit one-run review override. When a destination exists,
-final-review routing requires a ChatGPT/webhelm worker and submits the
-review request as a verified `new-turn` to that existing thread with the Job ID,
-PR number, and immutable review head SHA. Failure still follows the ordinary
+`--thread-id` as an explicit one-run review override. When a destination exists, final-review routing requires a ChatGPT/webhelm worker and submits the review request as a verified `new-turn` to that existing thread with the Job ID and immutable local review head SHA. Failure still follows the ordinary
 review task retry/recovery path; a transport failure is never treated as
 review delivery.
 
-`job update` validates the trusted Job marker first. Missing, malformed, duplicated, mismatched, or conflicting bindings fail with a precise diagnostic and are not repaired implicitly. The orchestrator handles exceptional repair explicitly according to the Job contract, then retries the update. `job show` reads one Job and `job list` lists managed Jobs in a repository.
+`job update` validates the trusted Job marker first. Missing, malformed, duplicated, mismatched, or conflicting bindings fail with a precise diagnostic and are not repaired implicitly. The orchestrator handles exceptional repair explicitly according to the Job contract, then retries the update. `job show` reads one Job and `job list` lists local Jobs in a repository.
 
-Managed GitHub task create/update/show/list/retry/cancel and reconcile/serve commands also require a durable Job marker. Orchestrators do not need raw GitHub commands for normal Job creation or metadata updates: Agents Relay uses its authenticated GitHub client internally.
+Task and Job commands address durable SQLite Jobs by local repository identity and numeric ID.
 
 The init command creates a local demo Job from the current Git root:
 
 ~~~sh
-npx agents-relay init --repo LOCAL_ROOT_NAME --pr 1 --id JOB_ID --title "Objective"
+npx agents-relay init --repo LOCAL_ROOT_NAME --id JOB_ID --title "Objective"
 ~~~
 
 ## npm publishing
@@ -252,9 +245,9 @@ This small live suite covers two Temporary Chat submission gates: a normal text
 prompt and a prompt with an attachment. It does not exercise worker lifecycle
 events, durable-thread reuse, resume, or retry behavior.
 
-Open the dashboard on localhost port 8787. The marker format is intentionally public and append-friendly. Daemon/workspace operation uses `ProjectedDurableStore` over SQLite RelayStore plus the authenticated GitHub projection adapter; GitHubStore is not the daemon operational state database.
+Open the dashboard on localhost port 8787. The marker format is intentionally public and append-friendly. Daemon/workspace operation reads the SQLite RelayStore inventory; historical GitHub audit evidence is not refreshed during Job execution.
 
-Deterministic projection conflicts are safe and observable. A same-id/different-definition `append_task`/`append_plan` is classified once into a durable `conflict` state, stops consuming retry budget, keeps structured divergence evidence, and is never auto-overwritten. Inspect with `agents-relay projection conflicts --repo LOCAL_ROOT_NAME --pr NUMBER` and repair explicitly with `agents-relay projection resolve --repo LOCAL_ROOT_NAME --pr NUMBER --projection-id ID --action requeue|discard-local`. See [docs/architecture-v2.md](docs/architecture-v2.md).
+Deterministic projection conflicts are safe and observable. A same-id/different-definition `append_task`/`append_plan` is classified once into a durable `conflict` state, stops consuming retry budget, keeps structured divergence evidence, and is never auto-overwritten. Historical projection conflict rows remain in SQLite for audit; the PR projection CLI is retired.
 
 External product feedback uses the reusable `src/feedback.ts` contract. See [docs/feedback-intake.md](docs/feedback-intake.md) for the schema, attachment limits, privacy rules, materialization path, and provenance envelope for later Jobs/Tasks/PRs.
 
@@ -262,9 +255,9 @@ reconcile leases and launches ready tasks without waiting inside the runtime sch
 
 Router Rules are stored at `~/.agents-relay/execution-router-rules.md` by default and use `[choices]` plus `[routing-instruction]` sections (see the Execution Router doc). `agents-relayd --execution-router-rules PATH` selects a different file for that daemon process; the explicit CLI path takes precedence over `AGENTS_RELAY_EXECUTION_ROUTER_RULES`, which remains supported for compatibility.
 
-`agents-relayd` without `--pr`/`--id` runs in workspace mode by default: it discovers nested Git repositories under `~/Workspace`, identifies each Git root by its unique directory name, and aggregates its local Jobs into one dashboard and worker pool. Pass `--workspace PATH` to use another root. `--repo LOCAL_ROOT_NAME` selects one local repository identity.
+`agents-relayd` runs in workspace mode by default: it discovers nested Git repositories under `~/Workspace`, identifies each Git root by its unique directory name, and aggregates its local Jobs into one dashboard and worker pool. Pass `--workspace PATH` to use another root. `--repo LOCAL_ROOT_NAME` selects one local repository identity.
 
-For automation, Agents Relay can use GitHub App installation authentication via `AGENTS_RELAY_GITHUB_APP_ID`, `AGENTS_RELAY_GITHUB_APP_INSTALLATION_ID`, and `AGENTS_RELAY_GITHUB_APP_PRIVATE_KEY_FILE` (or matching CLI flags). Webhook mode is local-first: targeted webhook reconciliation is primary, dashboard auto-refresh reads the disposable in-process view restored from SQLite RelayStore state, and the broad watchdog drops to a 30-minute fallback. No separate persisted dashboard Job cache is maintained. See [docs/github-app-rate-limit.md](docs/github-app-rate-limit.md).
+Job execution does not use GitHub App authentication or GitHub webhooks. Legacy webhook and PR evidence remains readable for historical audit; it cannot drive local lifecycle decisions.
 
 Run one logical reconciliation authority per Job. `ReconcileCoordinator` serializes in-process work; use a distributed atomic lease before multiple independent reconcilers own the same Job. Do not put secrets, credentials, private prompts, or large private payloads in the PR-body Job marker or PR-comment Task markers; store only summaries and artifact references.
 
@@ -278,15 +271,15 @@ npx agents-relay context resolve --project-path ~/Workspace/agents-relay --role 
 
 The command resolves concrete paths only for the current execution. Use `--skills` / `--agents` for explicit selections; no resolved absolute path is written into durable task state.
 
-The minimal agent-network surface is machine-driven registration and discovery. `agent-register` persists an agent identity, responsibility boundary, claimed capabilities, endpoint/runtime, availability, and routing metadata in a trusted PR marker; `agent-discover` applies hard filters and returns evidence-backed candidates. Adapters remain runtimes, not agent identities. See [docs/architecture.md](docs/architecture.md) for the constrained future remote submission contract.
+The minimal agent-network surface is machine-driven registration and discovery. `agent-register` persists an agent identity, responsibility boundary, claimed capabilities, endpoint/runtime, availability, and routing metadata in SQLite; `agent-discover` applies hard filters and returns evidence-backed candidates. Adapters remain runtimes, not agent identities. See [docs/architecture.md](docs/architecture.md) for the constrained future remote submission contract.
 
 ### Agent worker lifecycle
 
 Managed tasks are descriptive work for agents, not shell commands. Use `codex` or `chatgpt` for worker tasks. Commands such as tests, build tools, Markad Vision, ffmpeg, and other CLIs are invoked by the orchestrator or by an executing agent; they are not worker adapters.
 
-Every model-backed task declares a durable output with `--output task-pr` or `--output file --output-path PATH`. Agents Relay bootstraps workers with the managed PR URL, durable task-comment URL, job/task identity, project, output contract, and mandatory terminal-event contract; workers retrieve the task intent from GitHub rather than receiving a duplicate copy of the stored task prompt.
+Every model-backed task declares a durable output with `--output task-pr` or `--output file --output-path PATH`. Agents Relay bootstraps workers with the Job/Task identity, project, output contract, and mandatory terminal-event contract; workers retrieve task intent through the Relay CLI from SQLite.
 
-For Codex and ChatGPT, **correlated worker events are authoritative lifecycle inputs**, not a separate durable store. Event publication uses the configured `events-bus` surface (`publish` for sandboxed/hosted workers, or its local CLI helper with `EVENTS_BUS_EVENT_SOURCE` set); Agents Relay subscribes, validates correlation, applies graph transitions, persists results in RelayStore, and projects them to GitHub. Relay publishes `task.process.launched` only after successful adapter launch; `task.started` is worker-owned and must be a new, correlated start acknowledgement. Codex publishes `task.process.exited` when its synchronous runtime exits, while ChatGPT publishes `task.process.async_exited` after its one-shot submission runtime exits; neither substitutes for `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled`. The executing agent must publish exactly one correlated terminal event. Relay persists the matching durable state only from that terminal event. Model-backed tasks require an event bus and time out explicitly if no terminal event arrives.
+For Codex and ChatGPT, **correlated worker events are authoritative lifecycle inputs**, not a separate durable store. Event publication uses the configured `events-bus` surface (`publish` for sandboxed/hosted workers, or its local CLI helper with `EVENTS_BUS_EVENT_SOURCE` set); Agents Relay subscribes, validates correlation, applies graph transitions, persists results in RelayStore. Relay publishes `task.process.launched` only after successful adapter launch; `task.started` is worker-owned and must be a new, correlated start acknowledgement. Codex publishes `task.process.exited` when its synchronous runtime exits, while ChatGPT publishes `task.process.async_exited` after its one-shot submission runtime exits; neither substitutes for `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled`. The executing agent must publish exactly one correlated terminal event. Relay persists the matching durable state only from that terminal event. Model-backed tasks require an event bus and time out explicitly if no terminal event arrives.
 
 External execution uses the single global `webhelm` executable installed by the
 WebHelm Skill. Before starting Relay, install that Skill through the agent's
@@ -299,7 +292,7 @@ Relay does not discover Skill directories or invoke a separate runtime.
 The ChatGPT adapter uses Relay's `agents/chatgpt-worker.agent.md` lifecycle contract. A new worker uses `webhelm platform run chatgpt new-thread --session-id SESSION_ID --config <file>` in a caller-owned Session. This is a regular persistent ChatGPT thread, which supports the connected Neo MCP in the verified account. Relay closes the Session after submission, but the ChatGPT thread remains in history. Existing-thread review and handoff continue through `new-turn`. File paths are included in the worker message for Neo MCP reading; they are not uploaded as browser attachments. Submission receipts retain `status: submitted`; the event bus owns task completion.
 
 ~~~sh
-npx agents-relay task create --repo LOCAL_ROOT_NAME --pr 5 --id JOB_ID \
+npx agents-relay task create --repo LOCAL_ROOT_NAME --id JOB_ID \
   --task-id research-ui --adapter chatgpt \
   --capabilities model,chatgpt,browser-harness \
   --provider openai --model MODEL \
@@ -308,9 +301,7 @@ npx agents-relay task create --repo LOCAL_ROOT_NAME --pr 5 --id JOB_ID \
 ~~~
 
 SQLite and the canonical Graphs are authoritative for terminal lifecycle.
-A remote PR merge/close is audit metadata, not completion evidence. Final
-Review PASS authorizes local Git merge; confirmed local-merge evidence gates
-`COMPLETED`. The dashboard distinguishes durable Job lifecycle from derived
+Remote PR state is not part of Job lifecycle. Final Review PASS authorizes local Git merge; confirmed local-merge evidence gates `COMPLETED`. Optional origin delivery runs only afterward. The dashboard distinguishes durable Job lifecycle from derived
 runtime status. `/api/runtime-summary` counts only RUNNING Tasks of ACTIVE
 Jobs with a valid current Worker execution and lease. The Coordinator itself
 has no Worker lease, and every Script/Model DAG node is an ordinary Task.
@@ -327,7 +318,7 @@ Relay has no orchestrator worker adapter for new work. Orchestrators are externa
 
 Historical stores may still contain `adapter: orchestrator`. Reconciliation treats that value only as legacy migration evidence: QUEUED work that never started can be converted in place to normal worker requirements; RUNNING work with an unknown outcome is quarantined as BLOCKED instead of replayed; only explicit durable `externalCompletionVerified` evidence can complete legacy work without execution. New Task creation and Task update reject that adapter.
 
-For managed Jobs, SQLite is the canonical collaboration and lifecycle record; an optional GitHub display PR carries audit information only.
+For managed Jobs, SQLite is the canonical lifecycle record. Existing PR evidence may remain in historical Job snapshots for audit.
 
 ### Automatic task troubleshooting
 

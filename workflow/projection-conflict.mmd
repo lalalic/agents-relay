@@ -6,12 +6,14 @@ authority: SQLite delivery state and completed Job snapshot
 trigger: job.completed or delivery.retry_due
 idempotency: job-id plus local main SHA
 actions:
+  - delivery.claimInspection
   - delivery.skip
   - delivery.pushMain
   - delivery.recordDelivered
   - delivery.scheduleRetry
   - delivery.recordExhausted
 guards:
+  - delivery.claimAvailable
   - delivery.originUsable
   - delivery.remoteContainsMain
   - delivery.retryAvailable
@@ -28,6 +30,8 @@ skipped["state: skipped"]
 exhausted["state: exhausted"]
 
 originUsable["guard: delivery.originUsable"]
+claimAvailable["guard: delivery.claimAvailable"]
+claimInspection["action: delivery.claimInspection"]
 remoteContains["guard: delivery.remoteContainsMain"]
 retryAvailable["guard: delivery.retryAvailable"]
 retryDue["guard: delivery.retryDue"]
@@ -37,10 +41,14 @@ recordDelivered["action: delivery.recordDelivered"]
 scheduleRetry["action: delivery.scheduleRetry"]
 recordExhausted["action: delivery.recordExhausted"]
 
-classify -->|on: job.completed| originUsable
+classify -->|on: job.completed| claimAvailable
+claimAvailable -->|true| claimInspection
+claimAvailable -->|false| recordExhausted
+claimInspection --> inspect
+inspect -->|on: inspect.completed| originUsable
 originUsable -->|false| skip
-originUsable -->|true| inspect
-inspect -->|on: inspect.completed| remoteContains
+originUsable -->|true| remoteContains
+inspect -->|on: delivery.failed| retryAvailable
 remoteContains -->|true| recordDelivered
 remoteContains -->|false| pushMain
 pushMain --> push
@@ -50,7 +58,7 @@ retryAvailable -->|true| scheduleRetry
 retryAvailable -->|false| recordExhausted
 scheduleRetry --> waiting
 waiting -->|on: delivery.retry_due| retryDue
-retryDue -->|true| pushMain
+retryDue -->|true| claimAvailable
 retryDue -->|false| waiting
 recordDelivered --> delivered
 skip --> skipped

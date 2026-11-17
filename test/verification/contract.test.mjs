@@ -44,10 +44,10 @@ test('managed agent production prompts pin the canonical contracts without inlin
   const { taskReferencePrompt } = await import('../../dist/task-context.js');
   const legacy = taskReferencePrompt('lalalic/agents-relay','481','46','exec',
     '[Required event contracts]\nExecution source: job/481/task/46/execution/exec');
-  assert.match(legacy,/Read and follow both contracts before execution/);
+  assert.match(legacy,/Read those pinned contracts before execution/);
   const source=read('src/managed-worker-input.ts');
   assert.match(source,/buildRelayWorkPrompt/);
-  assert.match(source,/skills\/events-bus\/references\/protocol\.md/);
+  assert.match(source,/eventSkill \? join\(dirname\(eventSkill\.path\), .references\/protocol\.md.\)/);
   assert.match(source,/skills\/agents-relay\/contracts\/task-job-contract\.md/);
   assert.match(source,/skills\/agents-relay\/contracts\/event-contract\.md/);
   assert.match(source,/skillPath:join\(packageRoot/);

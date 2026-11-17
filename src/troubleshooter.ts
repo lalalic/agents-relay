@@ -12,7 +12,7 @@ function failureInput(job: Job, task: Task): string {
   return `Recover the failed/blocked task below and make it move again if technically safe.
 
 Original repository: ${job.repository}
-Original PR: #${job.prNumber}
+Local Git root: ${job.projectRoot}
 Original job: ${job.id}
 Original task: ${task.id}
 Original task URL: ${task.taskUrl ?? 'unknown'}

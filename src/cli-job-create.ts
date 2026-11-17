@@ -17,7 +17,7 @@ export async function ensureManagedGitHubJob(
   repositoryName: string,
   _trustedAuthors: ReadonlySet<string>,
   options: {
-    id?: string; idempotencyKey?: string; title?: string; objective?: string; projectRoot?: string; projectPath?: string; githubRepo?: string;
+    id?: string; idempotencyKey?: string; title?: string; objective?: string; projectRoot?: string; projectPath?: string;
     priority?: Priority;
     tag?: Job['tag']; reviewEnabled?: boolean; autoMerge?: boolean; continuation?: Job['continuation'];
     coordinator?: { graph: string; input: string; outputPath: string; projectRoot: string; workspaceRoot: string; sharedRoot?: string; globalRoot?: string };
@@ -39,8 +39,6 @@ export async function ensureManagedGitHubJob(
   const directory = options.storeDirectory ?? relayStoreDirectory();
   const projectRoot = await validateProjectRoot(resolve(options.projectRoot ?? options.coordinator?.projectRoot ?? process.cwd()), repositoryName);
   if (options.projectPath) resolveRepositoryProjectPath(projectRoot, options.projectPath);
-  const githubRepo = options.githubRepo;
-  if (githubRepo && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(githubRepo)) throw new Error('githubRepo must be OWNER/REPO');
   const knownJobs = (await discoverLocalRelayStoreSnapshots(directory)).flatMap(snapshot => snapshot.jobs);
   const identityCollision = knownJobs.find(job => job.repository === repositoryName && job.projectRoot && job.projectRoot !== projectRoot);
   if (identityCollision) throw new Error(`Local repository identity collision ${repositoryName}: Job ${identityCollision.id} binds ${identityCollision.projectRoot}, requested ${projectRoot}`);
@@ -83,7 +81,6 @@ export async function ensureManagedGitHubJob(
       objective: options.objective || pr.body || undefined,
       projectPath: options.projectPath,
       projectRoot,
-      ...(githubRepo ? { githubRepo } : {}),
       description: pr.body || undefined,
       priority: options.priority ?? 'P2',
       tag: options.tag,
