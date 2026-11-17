@@ -311,3 +311,5 @@ pub mod task_actions;
 pub mod blockers;
 pub mod local_merge_delivery;
 pub mod local_merge_projection;
+pub mod types;
+pub mod worker_routing;
