@@ -28,5 +28,9 @@ pub mod worker_rejection;
 pub mod workflow {
     pub mod conditions;
 }
+pub mod cli_artifact;
+pub mod dashboard_workflow_inspection;
 pub mod task_title;
 pub mod terminal_event_recovery;
+pub mod troubleshooter_qa_api;
+pub mod webhelm_daemon_client;

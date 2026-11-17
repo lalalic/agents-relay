@@ -8,6 +8,7 @@ edition = "2021"
 serde_json = { version = "1", features = ["preserve_order"] }
 libc = "0.2" # POSIX locale collation for Node localeCompare parity on macOS.
 regex = "1.13" # Port Node worker rejection regex semantics, including mixed separators.
+sha2 = "0.10"
 
 [[bin]]
 name = "relay-rust2-parity"

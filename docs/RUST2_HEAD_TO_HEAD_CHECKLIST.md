@@ -64,7 +64,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/dashboard-html.ts` | `rust/src/dashboard_html.rs` | PENDING | — |
 | `src/dashboard-jel.ts` | `rust/src/dashboard_jel.rs` | PENDING | — |
 | `src/dashboard-style.ts` | `rust/src/dashboard_style.rs` | PENDING | — |
-| `src/dashboard-workflow-inspection.ts` | `rust/src/dashboard_workflow_inspection.rs` | PENDING | — |
+| `src/dashboard-workflow-inspection.ts` | `rust/src/dashboard_workflow_inspection.rs` | PASS | Batch 6: Node/Rust differential fixtures cover valid exact Event/Action graph symbols, source/test references, malformed identifiers and traversal rejection (`rust/tests/head_to_head_batch6.mjs`); native path-safety test. |
 | `src/dashboard.ts` | `rust/src/dashboard.rs` | PENDING | — |
 | `src/decision-audit.ts` | `rust/src/decision_audit.rs` | PENDING | — |
 | `src/decision.ts` | `rust/src/decision.rs` | PENDING | — |
@@ -349,3 +349,13 @@ Reproduce from the repository root: `cargo fmt --manifest-path rust/Cargo.toml`;
 - [x] `npm run build --silent` — passed before focused Batch 5 comparison.
 
 Current verified source modules: **28 / 227**; remaining: **199**. The parity CLI remains a test-only differential entry point, not the Relay runtime or service.
+
+### Batch 6 — artifact validation, QA API, WebHelm IPC and graph inspection (2026-11-16)
+
+- `src/cli-artifact.ts` → `rust/src/cli_artifact.rs`: filesystem-backed JSON and a partial JSON Schema validator. **PENDING** because Ajv keyword/format/reference parity is incomplete; supported basic object/property/required/type/minLength/enum cases were differential-tested.
+- `src/troubleshooter-qa-api.ts` → `rust/src/troubleshooter_qa_api.rs`: filesystem-backed GET/PUT request/response semantics, SHA-256 ETag/hash, size/content-type/conflict/status behavior. **PENDING** pending Node differential coverage of the handler response contract.
+- `src/webhelm-daemon-client.ts` → `rust/src/webhelm_daemon_client.rs`: configured socket resolution and newline-delimited JSON Unix socket IPC, errors and timeout handling. Native parser/timeout contract tests pass. **PENDING** because sandbox denies fixture socket listeners (`EPERM`), so transport behavior could not be differentially exercised.
+- `src/dashboard-workflow-inspection.ts` → `rust/src/dashboard_workflow_inspection.rs`: read-only graph token inspection and path-confined source/test references. **PASS**: Node/Rust differential fixture and native traversal test pass.
+- `node --test rust/tests/head_to_head_batch6.mjs`: 2 differential tests passed; 1 Unix socket test skipped due sandbox `EPERM`.
+- Focused Node regressions: artifact validation **1/1**; graph symbol inspection/source references **2/2**. The entire `test/dashboard.test.js` invocation was attempted: **90/108 passed**, with 18 HTTP listener tests blocked by sandbox `listen EPERM`; graph inspection tests passed.
+- `cargo test --offline --manifest-path rust/Cargo.toml`: **25/25** native tests pass (including Batch 6).

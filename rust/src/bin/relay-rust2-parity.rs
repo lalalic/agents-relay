@@ -260,6 +260,39 @@ fn invoke(request: &Value) -> Result<String, String> {
             )? == "Verified"
         )
         .to_string()),
+        "validateArtifact" => {
+            let r = agents_relay_rust2::cli_artifact::validate_artifact(
+                request["artifactPath"]
+                    .as_str()
+                    .ok_or("artifactPath required")?,
+                request["schemaPath"]
+                    .as_str()
+                    .ok_or("schemaPath required")?,
+            )?;
+            Ok(agents_relay_rust2::cli_artifact::result_json(&r).to_string())
+        }
+        "inspectWorkflowSymbol" => Ok(
+            agents_relay_rust2::dashboard_workflow_inspection::inspect_workflow_symbol(
+                std::path::Path::new(request["root"].as_str().ok_or("root required")?),
+                request["graph"].as_str().unwrap_or(""),
+                request["kind"].as_str().unwrap_or(""),
+                request["name"].as_str().unwrap_or(""),
+            )
+            .unwrap_or(Value::Null)
+            .to_string(),
+        ),
+        "webHelmRequest" => {
+            let req = agents_relay_rust2::webhelm_daemon_client::DaemonRequest {
+                op: request["payload"]["op"].as_str().unwrap_or("").into(),
+                fields: request["payload"].as_object().cloned().unwrap_or_default(),
+            };
+            Ok(agents_relay_rust2::webhelm_daemon_client::request(
+                request["socket"].as_str().ok_or("socket required")?,
+                &req,
+                std::time::Duration::from_millis(request["timeoutMs"].as_u64().unwrap_or(45000)),
+            )?
+            .to_string())
+        }
         "discoverAgents" => Ok(json!(agents_relay_rust2::registry::discover_agents(
             request["agents"]
                 .as_array()
