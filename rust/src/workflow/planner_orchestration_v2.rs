@@ -182,6 +182,18 @@ pub fn planner_orchestration_facts(job: &Value, recoverable_pending_plan: bool) 
                 &&!tasks.iter().any(|task|task["kind"]=="planner"&&task["state"]=="SUCCEEDED"))
     })
 }
+/// Node's plannerOrchestrationFacts sorts `job.plans` *in place* before
+/// deriving facts. This mutable entrypoint preserves that observable side
+/// effect; the existing borrowed entrypoint remains suitable for read-only use.
+pub fn planner_orchestration_facts_in_place(
+    job: &mut Value,
+    recoverable_pending_plan: bool,
+) -> Value {
+    if let Some(plans) = job.get_mut("plans").and_then(Value::as_array_mut) {
+        plans.sort_by(plan_order);
+    }
+    planner_orchestration_facts(job, recoverable_pending_plan)
+}
 fn transient(state: &str) -> bool {
     state.starts_with("check_")
 }

@@ -23,11 +23,48 @@ struct Mailbox {
 #[derive(Debug, Default)]
 struct State {
     mailboxes: HashMap<String, Mailbox>,
+    /// Explicit Rust caller turn boundary, equivalent to a single Node stack
+    /// before its queueMicrotask checkpoint.
+    turn_depth: usize,
 }
 #[derive(Debug, Default)]
 struct Shared {
     state: Mutex<State>,
     idle: Condvar,
+}
+enum WaitMode {
+    Processing,
+    Detached,
+    Observed,
+}
+
+/// A turn batches synchronous accept calls before dispatch; drop it before
+/// receiving the processing reply. Nested turns release at the outer boundary.
+pub struct ReconcileTurn {
+    owner: ReconcileCoordinator,
+}
+impl Drop for ReconcileTurn {
+    fn drop(&mut self) {
+        let jobs = {
+            let mut state = self.owner.shared.state.lock().expect("mailboxes");
+            state.turn_depth = state.turn_depth.saturating_sub(1);
+            if state.turn_depth > 0 {
+                return;
+            }
+            let mut jobs = Vec::new();
+            for (job, mailbox) in &mut state.mailboxes {
+                if !mailbox.running && !mailbox.scheduled && !mailbox.pending.is_empty() {
+                    mailbox.scheduled = true;
+                    jobs.push(job.clone());
+                }
+            }
+            jobs
+        };
+        for job in jobs {
+            let worker = self.owner.clone();
+            thread::spawn(move || worker.drain(&job));
+        }
+    }
 }
 #[derive(Clone)]
 pub struct ReconcileCoordinator {
@@ -46,26 +83,20 @@ impl ReconcileCoordinator {
             report_error,
         }
     }
+    pub fn begin_turn(&self) -> ReconcileTurn {
+        self.shared.state.lock().expect("mailboxes").turn_depth += 1;
+        ReconcileTurn {
+            owner: self.clone(),
+        }
+    }
     pub fn accept(&self, signal: Value) -> mpsc::Receiver<Result<(), String>> {
-        self.enqueue(signal, true)
+        self.enqueue(signal, WaitMode::Processing)
     }
     pub fn accept_transport(&self, signal: Value) -> mpsc::Receiver<Result<(), String>> {
-        self.enqueue(signal, false)
+        self.enqueue(signal, WaitMode::Detached)
     }
     pub fn accept_observed(&self, signal: Value) -> mpsc::Receiver<Result<(), String>> {
-        let job = signal
-            .get("jobId")
-            .and_then(Value::as_str)
-            .unwrap_or("undefined");
-        let running = self
-            .shared
-            .state
-            .lock()
-            .expect("mailboxes")
-            .mailboxes
-            .get(job)
-            .is_some_and(|m| m.running);
-        self.enqueue(signal, !running)
+        self.enqueue(signal, WaitMode::Observed)
     }
     pub fn is_idle(&self) -> bool {
         self.shared
@@ -86,7 +117,7 @@ impl ReconcileCoordinator {
             lock = self.shared.idle.wait(lock).expect("mailboxes");
         }
     }
-    fn enqueue(&self, signal: Value, wait: bool) -> mpsc::Receiver<Result<(), String>> {
+    fn enqueue(&self, signal: Value, mode: WaitMode) -> mpsc::Receiver<Result<(), String>> {
         let job = signal
             .get("jobId")
             .and_then(Value::as_str)
@@ -96,18 +127,24 @@ impl ReconcileCoordinator {
         let mut should_schedule = false;
         {
             let mut state = self.shared.state.lock().expect("mailboxes");
+            let in_turn = state.turn_depth > 0;
             let mailbox = state.mailboxes.entry(job.clone()).or_default();
+            let wait = match mode {
+                WaitMode::Processing => true,
+                WaitMode::Detached => false,
+                WaitMode::Observed => !mailbox.running,
+            };
             mailbox.pending.push(PendingSignal {
                 signal,
                 response: if wait { Some(sender.clone()) } else { None },
             });
-            if !mailbox.running && !mailbox.scheduled {
+            if !wait {
+                let _ = sender.send(Ok(()));
+            }
+            if !mailbox.running && !mailbox.scheduled && !in_turn {
                 mailbox.scheduled = true;
                 should_schedule = true;
             }
-        }
-        if !wait {
-            let _ = sender.send(Ok(()));
         }
         if should_schedule {
             let worker = self.clone();

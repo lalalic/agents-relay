@@ -7,6 +7,25 @@ use super::policy_graph::load_policy_graph;
 use serde_json::{json, Value};
 use std::{future::Future, path::Path};
 
+/// Public equivalent of the exported Node `taskResolutionV2` GraphRuntime:
+/// it loads the canonical Mermaid file and its strict durable-fact guards.
+pub fn task_resolution_v2(directory: &Path) -> Result<super::graph_v2::GraphRuntime, String> {
+    let mut runtime = load_policy_graph(directory, "task-resolution")?;
+    // Node registers two reserved classification states and one fallback
+    // action even though none is selected by the current canonical graph.
+    // Preserve the exported GraphRuntime registry without authoring policy.
+    runtime
+        .registry
+        .states
+        .insert("check_classification".into());
+    runtime.registry.states.insert("classificationKind".into());
+    runtime.registry.actions.insert(
+        "resolution.activateShortcutWorkerFallback".into(),
+        (None, None),
+    );
+    Ok(runtime)
+}
+
 pub const TASK_RESOLUTION_PATHS: &[&str] = &[
     "exact_original_retry",
     "same_job_dependency",

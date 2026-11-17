@@ -58,6 +58,51 @@ impl BrowserPoolError {
         }
     }
 }
+/// Equivalent to Node BrowserPoolAdmissionError (a distinct, safe-to-retry
+/// *pre-submission* failure), not an arbitrary operational SQLite error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowserPoolAdmissionError {
+    pub code: &'static str,
+    pub message: String,
+    pub submitted: bool,
+}
+impl std::fmt::Display for BrowserPoolAdmissionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+impl std::error::Error for BrowserPoolAdmissionError {}
+
+/// Public discriminated error, so callers cannot mistake a genuine
+/// SQLite/lease/submission failure for an admission rejection.
+#[derive(Debug)]
+pub enum BrowserPoolFailure {
+    Admission(BrowserPoolAdmissionError),
+    Operational(BrowserPoolError),
+}
+impl std::fmt::Display for BrowserPoolFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Admission(error) => error.fmt(formatter),
+            Self::Operational(error) => error.fmt(formatter),
+        }
+    }
+}
+impl std::error::Error for BrowserPoolFailure {}
+impl From<BrowserPoolError> for BrowserPoolFailure {
+    fn from(error: BrowserPoolError) -> Self {
+        match error.code {
+            Some(code @ ("PROVIDER_UNAVAILABLE" | "POOL_CAPACITY_FULL" | "POOL_WAIT_EXPIRED")) => {
+                Self::Admission(BrowserPoolAdmissionError {
+                    code,
+                    message: error.message,
+                    submitted: false,
+                })
+            }
+            _ => Self::Operational(error),
+        }
+    }
+}
 impl std::fmt::Display for BrowserPoolError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.message)
@@ -190,6 +235,18 @@ impl BrowserWorkerPoolManager {
             poll_ms: options.poll_ms,
             now: Box::new(now),
         })
+    }
+    /// Typed public Node-compatible admission API. The original acquire()
+    /// remains available for existing Rust2 integrations; both use the same
+    /// transactional SQLite/Graph implementation and return the same lease.
+    pub fn acquire_typed(
+        &mut self,
+        provider: &str,
+        execution_id: &str,
+        abort: Option<&AtomicBool>,
+    ) -> Result<BrowserSlot, BrowserPoolFailure> {
+        self.acquire(provider, execution_id, abort)
+            .map_err(Into::into)
     }
     pub fn snapshot(&self, provider: &str) -> PoolResult<BrowserPoolSnapshot> {
         check_provider(provider)?;

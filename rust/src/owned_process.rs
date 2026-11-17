@@ -102,6 +102,14 @@ impl OwnedProcess {
     pub fn finished(&self) -> bool {
         self.inner.finished.load(Ordering::Acquire)
     }
+    /// Transfer a private stdout/stderr pipe to the owning decision adapter.
+    /// No external process can acquire the child handle or its process group.
+    pub fn take_stdout(&self) -> Option<std::process::ChildStdout> {
+        self.inner.child.lock().expect("child mutex").stdout.take()
+    }
+    pub fn take_stderr(&self) -> Option<std::process::ChildStderr> {
+        self.inner.child.lock().expect("child mutex").stderr.take()
+    }
     pub fn terminate(&self, reason: TerminationReason, grace_ms: Option<u64>) {
         if self.inner.terminating.swap(true, Ordering::AcqRel) {
             return;
@@ -116,6 +124,14 @@ impl OwnedProcess {
             // is not proof of cleanup. Force only the originally recorded group.
             let _ = signal_record(&record, libc::SIGKILL);
         });
+    }
+    pub fn exit_status(&self) -> Result<Option<std::process::ExitStatus>, String> {
+        self.inner
+            .child
+            .lock()
+            .map_err(|e| e.to_string())?
+            .try_wait()
+            .map_err(|e| e.to_string())
     }
     pub fn wait_for_leader(&self, timeout: Duration) -> bool {
         let started = Instant::now();
@@ -179,6 +195,36 @@ impl OwnedProcessManager {
         args: &[&str],
         options: OwnedProcessOptions,
     ) -> Result<OwnedProcess, String> {
+        self.spawn_configured(command, args, options, false, None)
+    }
+
+    /// Spawn exactly the same owned process group, but preserve private pipe
+    /// handles for the caller's JSON stdout/error boundary.
+    pub fn spawn_owned_process_piped(
+        &mut self,
+        command: &str,
+        args: &[&str],
+        options: OwnedProcessOptions,
+    ) -> Result<OwnedProcess, String> {
+        self.spawn_configured(command, args, options, true, None)
+    }
+    pub fn spawn_owned_process_piped_with_env(
+        &mut self,
+        command: &str,
+        args: &[&str],
+        options: OwnedProcessOptions,
+        env: &HashMap<String, String>,
+    ) -> Result<OwnedProcess, String> {
+        self.spawn_configured(command, args, options, true, Some(env))
+    }
+    fn spawn_configured(
+        &mut self,
+        command: &str,
+        args: &[&str],
+        options: OwnedProcessOptions,
+        piped: bool,
+        env: Option<&HashMap<String, String>>,
+    ) -> Result<OwnedProcess, String> {
         // A POSIX bootstrap shell immediately stops itself before exec. This
         // gives the supervisor time to prove parent/leader ownership even
         // when the requested executable exits in less than one millisecond.
@@ -191,10 +237,17 @@ impl OwnedProcessManager {
         };
         #[cfg(not(unix))]
         let mut cmd = Command::new(command);
-        cmd.args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+        cmd.args(args).stdin(Stdio::null());
+        if piped {
+            cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        } else {
+            cmd.stdout(Stdio::null()).stderr(Stdio::null());
+        }
+        if let Some(env) = env {
+            // Node child_process spawn({env}) replaces, rather than merges,
+            // the inherited environment.
+            cmd.env_clear().envs(env);
+        }
         if let Some(cwd) = &options.cwd {
             cmd.current_dir(cwd);
         }
@@ -216,6 +269,19 @@ impl OwnedProcessManager {
             if pgid >= 0 && pgid != pid as i32 {
                 let _ = child.kill();
                 return Err("Spawned child lacks isolated process group".into());
+            }
+        }
+        #[cfg(unix)]
+        {
+            // A SIGCONT sent before the bootstrap shell executes STOP is lost.
+            // Wait for kernel-confirmed STOP before starting the supervisor;
+            // this closes the race observed with a clean custom spawn.env.
+            let mut status: libc::c_int = 0;
+            let observed = unsafe { libc::waitpid(pid as i32, &mut status, libc::WUNTRACED) };
+            if observed != pid as i32 || !libc::WIFSTOPPED(status) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("Owned child did not attest bootstrap STOP".into());
             }
         }
         let record = Arc::new(Record {

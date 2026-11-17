@@ -3,9 +3,11 @@
 // Durable Graph transition/persistence is owned by the caller, not this clock adapter.
 use crate::execution_event_identity::{event_source_id, execution_event_source};
 use chrono::{DateTime, NaiveDate, NaiveDateTime};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
+    path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -201,4 +203,91 @@ pub fn task_progress_mutation(task: &Value, event: &Value, now: i64) -> Option<V
     next["lastProgressEventAt"] = event["timestamp"].clone();
     next["updatedAt"] = json!(received);
     Some(next)
+}
+
+/// Apply a correlated progress event to fresh SQLite state and commit it atomically.
+/// The canonical Graph selects the legal RUNNING self-loop; no receipt can revive
+/// a cancelled or superseded execution. No live-store defaults are used.
+pub fn accept_task_progress_sqlite(
+    db: &mut Connection,
+    graph_dir: &Path,
+    event: &Value,
+    received_at: i64,
+) -> Result<Option<Value>, String> {
+    use crate::task_transitions::try_transition_task_event;
+    let Some(job_id) = string(event, "job_id") else {
+        return Ok(None);
+    };
+    let Some(task_id) = string(event, "task_id") else {
+        return Ok(None);
+    };
+    let tx = db
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| error.to_string())?;
+    let raw: Option<String> = tx
+        .query_row(
+            "SELECT json FROM job_snapshot WHERE job_id=?",
+            [job_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some(raw) = raw else { return Ok(None) };
+    let mut job: Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+    let Some(tasks) = job.get_mut("tasks").and_then(Value::as_array_mut) else {
+        return Ok(None);
+    };
+    let Some(task) = tasks
+        .iter_mut()
+        .find(|task| string(task, "id") == Some(task_id))
+    else {
+        return Ok(None);
+    };
+    let Some(mut updated) = task_progress_mutation(task, event, received_at) else {
+        return Ok(None);
+    };
+    let timestamp = DateTime::<chrono::Utc>::from_timestamp_millis(received_at)
+        .ok_or("invalid progress receipt clock")?
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let decision = try_transition_task_event(
+        graph_dir,
+        &mut updated,
+        "task.progress",
+        &json!({}),
+        &timestamp,
+    )?;
+    if decision["accepted"] != true || decision["target"].is_null() {
+        return Ok(None);
+    }
+    // DurableTaskTransitionRuntime increments the version on a same-millisecond
+    // self-loop even when the wall clock has moved backwards.
+    if let Some(old) = string(task, "updatedAt").and_then(parse_ms) {
+        if string(&updated, "updatedAt")
+            .and_then(parse_ms)
+            .is_none_or(|t| t <= old)
+        {
+            updated["updatedAt"] = json!(DateTime::<chrono::Utc>::from_timestamp_millis(
+                old.saturating_add(1)
+            )
+            .ok_or("invalid durable Task clock")?
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
+        }
+    }
+    *task = updated.clone();
+    let changed = tx
+        .execute(
+            "UPDATE job_snapshot SET json=?,updated_at=? WHERE job_id=? AND json=?",
+            params![
+                job.to_string(),
+                updated["updatedAt"].as_str().unwrap_or(&timestamp),
+                job_id,
+                raw
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+    if changed != 1 {
+        return Err("Stale durable Job snapshot during progress receipt".into());
+    }
+    tx.commit().map_err(|error| error.to_string())?;
+    Ok(Some(updated))
 }

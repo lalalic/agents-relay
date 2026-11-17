@@ -327,6 +327,78 @@ impl LayaCliDecisionEngine {
     pub fn new(options: LayaCliOptions) -> Self {
         Self { options }
     }
+    /// Production-compatible transport: uses the existing native
+    /// OwnedProcessManager (isolated group + parent-death supervisor) rather
+    /// than launching an untracked subprocess or a second process lifecycle.
+    pub fn decide(&self, request: &Value, contract: &Value) -> Result<Value, String> {
+        self.decide_with_env(request, contract, None)
+    }
+    /// Node's optional `spawn.env` replaces the inherited environment.
+    pub fn decide_with_env(
+        &self,
+        request: &Value,
+        contract: &Value,
+        env: Option<&std::collections::HashMap<String, String>>,
+    ) -> Result<Value, String> {
+        use crate::owned_process::{OwnedProcessManager, OwnedProcessOptions, TerminationReason};
+        use std::{io::Read as _, thread, time::Duration};
+        self.decide_with_owned_runner(request, contract, |command, args, timeout| {
+            let mut manager = OwnedProcessManager::default();
+            let options = OwnedProcessOptions {
+                invocation: "decision.laya".into(),
+                timeout_ms: Some(timeout),
+                grace_ms: 750,
+                ..OwnedProcessOptions::default()
+            };
+            let borrowed = args.iter().map(String::as_str).collect::<Vec<_>>();
+            let child = if let Some(env) = env {
+                manager.spawn_owned_process_piped_with_env(command, &borrowed, options, env)
+            } else {
+                manager.spawn_owned_process_piped(command, &borrowed, options)
+            }?;
+            let mut stdout = child.take_stdout().ok_or("Laya stdout pipe unavailable")?;
+            let mut stderr = child.take_stderr().ok_or("Laya stderr pipe unavailable")?;
+            // Drain both pipes concurrently. A child writing a full stderr
+            // pipe may never block progress or prevent timeout cleanup.
+            let out = thread::spawn(move || {
+                let mut bytes = Vec::new();
+                stdout.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+                Ok::<_, String>(bytes)
+            });
+            let err = thread::spawn(move || {
+                let mut bytes = Vec::new();
+                stderr.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+                Ok::<_, String>(bytes)
+            });
+            if !child.wait_for_leader(Duration::from_millis(timeout.saturating_add(2000))) {
+                child.terminate(TerminationReason::Timeout, Some(0));
+                return Err(format!("Laya CLI timed out after {timeout}ms"));
+            }
+            if child.termination_reason() == Some(TerminationReason::Timeout) {
+                return Err(format!("Laya CLI timed out after {timeout}ms"));
+            }
+            let status = child
+                .exit_status()?
+                .ok_or("Laya CLI leader exited without wait status")?;
+            // No future can join forever on inherited descendant stdio:
+            // OwnedProcess terminates the entire group on leader exit.
+            let stdout = out.join().map_err(|_| "Laya stdout reader panicked")??;
+            let stderr = err.join().map_err(|_| "Laya stderr reader panicked")??;
+            if !status.success() {
+                let code = status.code().map_or("null".into(), |v| v.to_string());
+                let detail = String::from_utf8_lossy(&stderr).trim().to_string();
+                return Err(format!(
+                    "Laya CLI exited {code}{}",
+                    if detail.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {detail}")
+                    }
+                ));
+            }
+            Ok(String::from_utf8_lossy(&stdout).trim().to_string())
+        })
+    }
     /// Caller's shared OwnedProcess adapter MUST own the subprocess and
     /// provide stdout; this helper exclusively implements Laya's file contract.
     pub fn decide_with_owned_runner(
