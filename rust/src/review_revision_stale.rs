@@ -7,6 +7,43 @@ use crate::workflow::{
 };
 use serde_json::{json, Value};
 use std::path::Path;
+/// Commit request+child cancellation atomically, then notify only exact old
+/// execution IDs. A transaction failure MUST NOT dispatch any cancellation.
+pub fn stale_review_revisions_atomic<W, E, C>(
+    store: &mut crate::relay_workflow_operations::SQLiteWorkflowOperations<'_, W, E>,
+    graph_dir: &Path,
+    job_id: &str,
+    review_task_id: &str,
+    head_sha: &str,
+    active_execution_id: Option<&str>,
+    mut cancel: C,
+) -> Result<Vec<Value>, String>
+where
+    W: FnMut(&Value, &str) -> Result<(), String>,
+    E: FnMut(&Value, &str) -> Result<(), String>,
+    C: FnMut(&str, &str),
+{
+    let mut cancelled = Vec::new();
+    store.mutate_job(job_id, |mut job| {
+        cancelled = stale_review_revisions(
+            graph_dir,
+            &mut job,
+            review_task_id,
+            head_sha,
+            active_execution_id,
+        )?;
+        Ok(job)
+    })?;
+    for item in &cancelled {
+        if let (Some(task), Some(execution)) =
+            (item["taskId"].as_str(), item["executionId"].as_str())
+        {
+            cancel(task, execution);
+        }
+    }
+    Ok(cancelled)
+}
+
 pub fn stale_review_revisions(
     root: &Path,
     job: &mut Value,

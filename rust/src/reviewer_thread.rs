@@ -1,5 +1,6 @@
 // Direct port of src/reviewer-thread.ts pure destination/provenance predicates.
-// Atomic recordThreadDelivery store mutation is intentionally not reimplemented here.
+// Delivery receipts are fenced by the current authoritative Task execution and
+// committed through the shared SQLite mutateJob transaction, never inferred as approval.
 use crate::final_review_role::is_final_review_agent;
 use serde_json::{json, Value};
 fn js_truthy(v: &Value) -> bool {
@@ -235,6 +236,59 @@ pub fn prepare_revision_thread_delivery(job: &Value, child: &mut Value) -> Resul
     }
     Ok(d)
 }
+
+/// Node recordThreadDelivery: never mark an uncorrelated send, and never record
+/// delivery on a Task that is no longer RUNNING in the exact execution.
+/// The receipt is committed by the canonical store transaction.
+pub fn record_thread_delivery<W, E>(
+    store: &mut crate::relay_workflow_operations::SQLiteWorkflowOperations<'_, W, E>,
+    job_id: &str,
+    task_id: &str,
+    execution_id: &str,
+    worker_task: &Value,
+) -> Result<bool, String>
+where
+    W: FnMut(&Value, &str) -> Result<(), String>,
+    E: FnMut(&Value, &str) -> Result<(), String>,
+{
+    let Some(delivery) = worker_task
+        .get("chatgptThreadDelivery")
+        .filter(|v| !v.is_null())
+    else {
+        return Ok(false);
+    };
+    if js_truthy(&delivery["deliveredAt"])
+        || delivery
+            .get("executionId")
+            .is_some_and(|v| v != execution_id)
+    {
+        return Ok(false);
+    }
+    let mut recorded = false;
+    store.mutate_job(job_id, |mut job| {
+        if let Some(task) = job["tasks"]
+            .as_array_mut()
+            .and_then(|tasks| tasks.iter_mut().find(|task| task["id"] == task_id))
+        {
+            if task["executionId"] == execution_id
+                && task["state"] == "RUNNING"
+                && task
+                    .get("chatgptThreadDelivery")
+                    .is_some_and(|v| !v.is_null())
+                && task["chatgptThreadDelivery"]["requestId"] == delivery["requestId"]
+                && !js_truthy(&task["chatgptThreadDelivery"]["deliveredAt"])
+            {
+                task["chatgptThreadDelivery"]["executionId"] = json!(execution_id);
+                task["chatgptThreadDelivery"]["deliveredAt"] =
+                    json!(crate::local_merge_lock::iso8601_now());
+                recorded = true;
+            }
+        }
+        Ok(job)
+    })?;
+    Ok(recorded)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

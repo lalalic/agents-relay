@@ -1,7 +1,7 @@
 // Node provenance: src/cli-artifact.ts. Native subset of Ajv JSON Schema
 // validation, never a hidden lifecycle gate. No Node subprocess or write I/O.
-// INCOMPLETE: Ajv schema compilation, custom formats, if/then/else, contains,
-// dependencies, propertyNames, and nonlocal $ref are not yet parity-complete.
+// INCOMPLETE: Ajv schema compilation, custom formats, nonlocal $ref,
+// and full dialect-specific edge cases are not yet parity-complete.
 // Keep this module PARTIAL even when the recorded common-keyword fixtures pass.
 use crate::cli_core_support::read_file_utf8;
 use regex::Regex;
@@ -91,7 +91,8 @@ fn validate(
         };
         if !labels.is_empty() && !labels.iter().any(|ty| type_match(value, ty)) {
             error(errors, path, format!("must be {}", labels.join(",")));
-            return;
+            // With Ajv allErrors, numeric/string/array/object keywords
+            // independently apply to their matching instance type.
         }
     }
     if let Some(constant) = map.get("const") {
@@ -151,6 +152,22 @@ fn validate(
     if let Some(sets) = map.get("allOf").and_then(Value::as_array) {
         for child in sets {
             validate(value, child, root, path, errors, depth + 1);
+        }
+    }
+    if let Some(condition) = map.get("if") {
+        let mut probe = Vec::new();
+        validate(value, condition, root, path, &mut probe, depth + 1);
+        let (branch, name) = if probe.is_empty() {
+            (map.get("then"), "then")
+        } else {
+            (map.get("else"), "else")
+        };
+        if let Some(branch) = branch {
+            let before = errors.len();
+            validate(value, branch, root, path, errors, depth + 1);
+            if errors.len() != before {
+                error(errors, path, format!("must match \"{name}\" schema"));
+            }
         }
     }
     if let Some(number) = value.as_f64() {
@@ -222,6 +239,32 @@ fn validate(
                     path,
                     format!("must NOT have fewer than {min} items"),
                 );
+            }
+        }
+        if let Some(contains) = map.get("contains") {
+            let mut failed = Vec::new();
+            let mut matching = 0;
+            for (i, item) in list.iter().enumerate() {
+                let mut candidate_errors = Vec::new();
+                validate(
+                    item,
+                    contains,
+                    root,
+                    &path_child(path, &i.to_string()),
+                    &mut candidate_errors,
+                    depth + 1,
+                );
+                if candidate_errors.is_empty() {
+                    matching += 1;
+                } else {
+                    failed.extend(candidate_errors);
+                }
+            }
+            // Ajv's default draft-07 contains only requires one match. The
+            // minContains/maxContains 2019 keywords are ignored by this Ajv.
+            if matching == 0 {
+                errors.extend(failed);
+                error(errors, path, "must contain at least 1 valid item(s)");
             }
         }
         if map.get("uniqueItems") == Some(&Value::Bool(true)) {
@@ -310,6 +353,23 @@ fn validate(
                 }
             }
         }
+        if let Some(property_names) = map.get("propertyNames") {
+            for name in object.keys() {
+                let mut probe = Vec::new();
+                validate(
+                    &Value::String(name.clone()),
+                    property_names,
+                    root,
+                    path,
+                    &mut probe,
+                    depth + 1,
+                );
+                if !probe.is_empty() {
+                    errors.extend(probe);
+                    error(errors, path, "property name must be valid");
+                }
+            }
+        }
         let properties = map.get("properties").and_then(Value::as_object);
         let patterns = map.get("patternProperties").and_then(Value::as_object);
         if let Some(additional) = map.get("additionalProperties") {
@@ -331,6 +391,28 @@ fn validate(
                             depth + 1,
                         );
                     }
+                }
+            }
+        }
+        if let Some(dependencies) = map.get("dependencies").and_then(Value::as_object) {
+            for (property, dependency) in dependencies {
+                if !object.contains_key(property) {
+                    continue;
+                }
+                if let Some(names) = dependency.as_array() {
+                    for name in names.iter().filter_map(Value::as_str) {
+                        if !object.contains_key(name) {
+                            error(
+                                errors,
+                                path,
+                                format!(
+                                    "must have property {name} when property {property} is present"
+                                ),
+                            );
+                        }
+                    }
+                } else {
+                    validate(value, dependency, root, path, errors, depth + 1);
                 }
             }
         }

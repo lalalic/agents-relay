@@ -79,6 +79,70 @@ pub fn fallback_failed_troubleshooters(
     }
     Ok(queued)
 }
+/// Commit retry marker, Graph Task transition and fallback routing as one
+/// authoritative Job mutation. A failed persistence operation cannot leave a
+/// retried Task visible or report a Task as queued.
+pub fn fallback_failed_troubleshooters_atomic<W, E>(
+    store: &mut crate::relay_workflow_operations::SQLiteWorkflowOperations<'_, W, E>,
+    graph_dir: &Path,
+    job_id: &str,
+) -> Result<Vec<String>, String>
+where
+    W: FnMut(&Value, &str) -> Result<(), String>,
+    E: FnMut(&Value, &str) -> Result<(), String>,
+{
+    let mut queued = Vec::new();
+    store.mutate_job(job_id, |mut job| {
+        queued = fallback_failed_troubleshooters(graph_dir, &mut job)?;
+        Ok(job)
+    })?;
+    Ok(queued)
+}
+
+/// Durable human action-gate candidates. The Core must still submit these
+/// through the authoritative task-recovery escalation API; merely identifying
+/// a candidate is not an escalation nor an authorized human response.
+pub fn exhausted_troubleshooter_escalations(job: &Value) -> Vec<Value> {
+    let tasks = job["tasks"].as_array().cloned().unwrap_or_default();
+    let plans = job["plans"].as_array().cloned().unwrap_or_default();
+    tasks.iter().filter_map(|recovery| {
+        if recovery["agentName"] != "troubleshooter" || recovery["state"] != "FAILED"
+            || recovery["attempt"].as_i64().unwrap_or(0)
+                < recovery["maxAttempts"].as_i64().unwrap_or(i64::MAX)
+            || recovery.get("escalation").is_some_and(|v| !v.is_null())
+        { return None; }
+        let original = tasks.iter().find(|task| task["id"] == recovery["parentTaskId"]);
+        let plan = plans.iter().find(|plan| plan["id"] == recovery["recoveryPlanId"]);
+        if !original.is_some_and(|task| task["state"] == "FAILED")
+            && !plan.is_some_and(|plan| plan["status"] == "FAILED")
+        { return None; }
+        if original.is_some_and(|task| {
+            task["resolution"]["path"] == "same_job_dependency"
+                && matches!(task["resolution"]["state"].as_str(), Some("waiting" | "active"))
+        }) { return None; }
+        let subject = if let Some(original) = original {
+            format!("Task {}", original["id"].as_str().unwrap_or("undefined"))
+        } else {
+            format!("Plan {}", plan?["id"].as_str().unwrap_or("undefined"))
+        };
+        let failure = original.and_then(|original| original["error"].as_str()
+            .or_else(|| original["failureReason"].as_str()))
+            .or_else(|| plan.and_then(|plan| plan["error"].as_str()))
+            .unwrap_or("unknown");
+        let last = recovery["error"].as_str()
+            .or_else(|| recovery["failureReason"].as_str())
+            .unwrap_or("unknown");
+        let recovery_id = recovery["id"].as_str().unwrap_or("undefined");
+        Some(json!({
+            "taskId": recovery["id"],
+            "requiredAction":format!("Inspect {subject} and Troubleshooter {recovery_id}; correct provider/runtime or supply a concrete recovery decision and supporting evidence."),
+            "resolutionCondition":format!("User supplies a corrective action or verified recovery instructions for {subject}."),
+            "context":format!("Automatic Troubleshooter {recovery_id} could not produce a verified resolution after {} attempts. Last failure: {last}. Original {subject}: {failure}.",
+                recovery["attempt"]),
+        }))
+    }).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

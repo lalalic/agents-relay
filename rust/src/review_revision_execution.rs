@@ -206,6 +206,27 @@ pub fn reconcile_review_revision_facts(graph_dir: &Path, job: &mut Value) -> Res
     }
     Ok(changed)
 }
+
+/// Public Node reconcileReviewRevisions store wrapper. The Job is read and
+/// updated only under the SQLite BEGIN IMMEDIATE transaction, never from
+/// externally supplied Task events or cached snapshots.
+pub fn reconcile_review_revisions<W, E>(
+    store: &mut crate::relay_workflow_operations::SQLiteWorkflowOperations<'_, W, E>,
+    graph_dir: &Path,
+    job_id: &str,
+) -> Result<bool, String>
+where
+    W: FnMut(&Value, &str) -> Result<(), String>,
+    E: FnMut(&Value, &str) -> Result<(), String>,
+{
+    let mut changed = false;
+    store.mutate_job(job_id, |mut job| {
+        changed = reconcile_review_revision_facts(graph_dir, &mut job)?;
+        Ok(job)
+    })?;
+    Ok(changed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

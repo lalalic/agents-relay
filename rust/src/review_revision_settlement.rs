@@ -85,6 +85,59 @@ pub fn settle_review_revision_round(
     }
     Ok(true)
 }
+
+/// Node settleReviewRevisionRound preflights the graph against the supplied
+/// snapshot, then fences the immutable review head and facts inside mutateJob.
+/// A concurrent generation or fact update cannot authorize a stale verdict.
+pub fn settle_review_revision_round_atomic<W, E>(
+    store: &mut crate::relay_workflow_operations::SQLiteWorkflowOperations<'_, W, E>,
+    graph_dir: &Path,
+    job_id: &str,
+    snapshot: &Value,
+    max_rounds: u64,
+    max_no_progress_rounds: u64,
+) -> Result<Value, String>
+where
+    W: FnMut(&Value, &str) -> Result<(), String>,
+    E: FnMut(&Value, &str) -> Result<(), String>,
+{
+    let review = &snapshot["review"];
+    let Some(task_id) = review["taskId"].as_str().filter(|s| !s.is_empty()) else {
+        return Ok(snapshot.clone());
+    };
+    if review["outcome"] != "changes_required" || review["revisionDisposition"] != "targeted" {
+        return Ok(snapshot.clone());
+    }
+    let facts = settlement_facts(snapshot, task_id, max_rounds, max_no_progress_rounds);
+    let decision = decide_review_lifecycle(
+        graph_dir,
+        Some("changes_required"),
+        "revision.settled",
+        &facts,
+    )?;
+    let actions = decision["actions"].as_array();
+    let prepare = decision["target"] == "STALE"
+        && actions.is_some_and(|a| a.iter().any(|v| v["id"] == "review.prepareRereview"));
+    let exhausted = decision["target"] == "CHANGES_REQUIRED"
+        && actions.is_some_and(|a| a.iter().any(|v| v["id"] == "review.requireOwnerResolution"));
+    if decision["accepted"] != true || (!prepare && !exhausted) {
+        return Ok(snapshot.clone());
+    }
+    store.mutate_job(job_id, |mut current| {
+        let live = &current["review"];
+        if live["outcome"] != "changes_required"
+            || live["revisionDisposition"] != "targeted"
+            || live["taskId"] != review["taskId"]
+            || live["headSha"] != review["headSha"]
+            || settlement_facts(&current, task_id, max_rounds, max_no_progress_rounds) != facts
+        {
+            return Ok(current);
+        }
+        settle_review_revision_round(graph_dir, &mut current, max_rounds, max_no_progress_rounds)?;
+        Ok(current)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
