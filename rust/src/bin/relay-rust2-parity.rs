@@ -1130,6 +1130,58 @@ fn invoke(request: &Value) -> Result<String, String> {
                     },"entity":*entity,"trace":trace})
                     .to_string())
                 }
+                "plannerAsyncEffects" => {
+                    use std::future::Future;
+                    use std::sync::{Arc, Mutex};
+                    use std::{
+                        pin::pin,
+                        task::{Context, Poll, Waker},
+                    };
+                    let trace = Arc::new(Mutex::new(Vec::<String>::new()));
+                    let recorded = Arc::clone(&trace);
+                    let fail = request["effectError"].as_str().map(str::to_owned);
+                    let receipt = request.get("receipt").cloned().unwrap_or_else(|| json!({}));
+                    let future = agents_relay_rust2::workflow::planner_orchestration_v2::
+                        dispatch_planner_orchestration_async(directory, &request["facts"], move |action| {
+                            let recorded = Arc::clone(&recorded);
+                            let fail = fail.clone();
+                            let receipt = receipt.clone();
+                            async move {
+                                recorded.lock().expect("trace").push(action);
+                                if let Some(error) = fail { return Err(error); }
+                                Ok(receipt)
+                            }
+                        });
+                    let mut future = pin!(future);
+                    let mut context = Context::from_waker(Waker::noop());
+                    let outcome = match future.as_mut().poll(&mut context) {
+                        Poll::Ready(Ok(decision)) => json!({"ok":true,"decision":decision}),
+                        Poll::Ready(Err(error)) => json!({"ok":false,"error":error}),
+                        Poll::Pending => {
+                            return Err("native async fixture unexpectedly pending".into())
+                        }
+                    };
+                    let trace = trace.lock().expect("trace").clone();
+                    Ok(json!({"outcome":outcome,"trace":trace}).to_string())
+                }
+                "plannerRuntime" => {
+                    let runtime =
+                        agents_relay_rust2::workflow::planner_orchestration_v2::planner_orchestration_v2(
+                            directory,
+                        )?;
+                    let mut states = runtime.registry.states.iter().cloned().collect::<Vec<_>>();
+                    let mut guards = runtime.registry.guards.keys().cloned().collect::<Vec<_>>();
+                    let mut actions = runtime.registry.actions.keys().cloned().collect::<Vec<_>>();
+                    let mut events = runtime.registry.events.keys().cloned().collect::<Vec<_>>();
+                    states.sort();
+                    guards.sort();
+                    actions.sort();
+                    events.sort();
+                    Ok(
+                        json!({"states":states,"guards":guards,"actions":actions,"events":events})
+                            .to_string(),
+                    )
+                }
                 "resolutionRuntime" => {
                     let runtime =
                         agents_relay_rust2::workflow::task_resolution::task_resolution_v2(
@@ -1143,6 +1195,93 @@ fn invoke(request: &Value) -> Result<String, String> {
                 }
                 action => Err(format!("unknown wave3 Graph action: {action}")),
             }
+        }
+        "wave4ResolutionEffects" => {
+            use agents_relay_rust2::workflow::task_resolution;
+            use std::{
+                future::Future,
+                pin::pin,
+                sync::{Arc, Mutex},
+                task::{Context, Poll, Waker},
+            };
+            let graph = std::path::Path::new(request["directory"].as_str().unwrap_or("workflow"));
+            let trace = Arc::new(Mutex::new(Vec::<String>::new()));
+            let error = request["effectError"].as_str().map(str::to_owned);
+            let absent = request["effectMissing"] == true;
+            let result = if request["async"] == true {
+                let observed = Arc::clone(&trace);
+                let future = task_resolution::dispatch_task_resolution(
+                    graph,
+                    &request["task"],
+                    &request["proposal"],
+                    &request["owner"],
+                    move |action| {
+                        let observed = Arc::clone(&observed);
+                        let error = error.clone();
+                        async move {
+                            if absent {
+                                return Err(format!(
+                                    "Task resolution effect {action} is unavailable"
+                                ));
+                            }
+                            observed.lock().expect("trace").push(action);
+                            if let Some(error) = error {
+                                return Err(error);
+                            }
+                            Ok(())
+                        }
+                    },
+                );
+                let mut future = pin!(future);
+                let mut context = Context::from_waker(Waker::noop());
+                match future.as_mut().poll(&mut context) {
+                    Poll::Ready(done) => done,
+                    Poll::Pending => return Err("unhandled native asynchronous callback".into()),
+                }
+            } else {
+                task_resolution::dispatch_task_resolution_sync(
+                    graph,
+                    &request["task"],
+                    &request["proposal"],
+                    &request["owner"],
+                    |action| {
+                        if absent {
+                            return Err(format!("Task resolution effect {action} is unavailable"));
+                        }
+                        trace.lock().expect("trace").push(action.to_owned());
+                        if let Some(error) = &error {
+                            return Err(error.clone());
+                        }
+                        Ok(())
+                    },
+                )
+            };
+            let outcome = match result {
+                Ok(value) => json!({"ok":true,"value":value}),
+                Err(error) => json!({"ok":false,"error":error}),
+            };
+            let trace = trace.lock().expect("trace").clone();
+            Ok(json!({"outcome":outcome,"trace":trace}).to_string())
+        }
+        "wave4Watchdog" => {
+            use agents_relay_rust2::task_inactivity_watchdog as watchdog;
+            let task = &request["task"];
+            let result = match request["action"].as_str().unwrap_or("") {
+                "requires" => json!(watchdog::requires_worker_inactivity_watchdog(task)),
+                "recoverable" => json!(watchdog::is_recoverable_watchdog_failure(task)),
+                "correlated" => json!(watchdog::is_correlated_worker_event(
+                    task,
+                    &request["event"]
+                )),
+                "deadline" => json!(watchdog::inactivity_deadline(
+                    task,
+                    request["executionId"].as_str().unwrap_or(""),
+                    request["graceMs"].as_i64().unwrap_or(0),
+                    request["now"].as_i64().unwrap_or(0),
+                )),
+                action => return Err(format!("unknown wave4 watchdog action {action}")),
+            };
+            Ok(result.to_string())
         }
         "wave2Graph" => {
             use agents_relay_rust2::{
