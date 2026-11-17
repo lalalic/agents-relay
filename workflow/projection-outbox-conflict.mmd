@@ -1,0 +1,19 @@
+---
+title: Historical Projection Outbox Conflict
+description: Classify a legacy SQLite outbox delivery failure without creating Job Tasks or changing the completed Job lifecycle.
+name: projection-outbox-conflict
+authority: SQLite projection outbox row
+trigger: projection.failed
+guards:
+  - deterministicDefinitionConflict
+---
+flowchart LR
+%% Only historical external outbox receipts use this graph. It never mutates a Job.
+classify["state: classify"]
+conflict["state: conflict"]
+retry["state: retry"]
+deterministic["guard: deterministicDefinitionConflict"]
+
+classify -->|on: projection.failed| deterministic
+deterministic -->|true| conflict
+deterministic -->|false| retry
