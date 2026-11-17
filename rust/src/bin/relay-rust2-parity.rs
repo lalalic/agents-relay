@@ -173,6 +173,72 @@ fn invoke(request: &Value) -> Result<String, String> {
             )
         )
         .to_string()),
+        "errorMessage" => Ok(json!(agents_relay_rust2::observability::error_message(
+            &request["error"],
+            request["asError"] == true
+        ))
+        .to_string()),
+        "classifyFailure" => Ok(agents_relay_rust2::observability::classify_failure(
+            &request["error"],
+            request["asError"] == true,
+        )
+        .to_string()),
+        "sanitizeObservationValue" => Ok(agents_relay_rust2::observability::json_wire(
+            &agents_relay_rust2::observability::sanitize_observation_value(
+                &request["value"],
+                request["depth"].as_u64().unwrap_or(0) as usize,
+            ),
+        )),
+        "sanitizeObservationData" => Ok(agents_relay_rust2::observability::json_wire(
+            &agents_relay_rust2::observability::sanitize_observation_data(request.get("data"))
+                .unwrap_or(Value::Null),
+        )),
+        "observabilityEnvironment" => {
+            let observer = agents_relay_rust2::observability::RelayObservability::from_environment(
+                &request["env"],
+            );
+            let enabled = ["debug", "info", "warn", "error", "unknown"]
+                .iter()
+                .map(|name| json!({"level":name,"enabled":observer.is_enabled(name)}))
+                .collect::<Vec<_>>();
+            Ok(json!({"minimumLevel":observer.minimum_level,"enabled":enabled}).to_string())
+        }
+        "observabilityScenario" => {
+            use agents_relay_rust2::observability::{
+                collect_observations, current_observability_correlation,
+                with_observability_correlation, RelayObservability,
+            };
+            let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let sink = collect_observations(std::sync::Arc::clone(&output));
+            let observer =
+                RelayObservability::new(sink, request["minimumLevel"].as_str().unwrap_or("info"));
+            let time = request["timestamp"]
+                .as_str()
+                .unwrap_or("2026-11-16T15:00:00.000Z");
+            let previous = current_observability_correlation();
+            let nested = with_observability_correlation(&request["outer"], || {
+                let before = current_observability_correlation();
+                for item in request["before"].as_array().into_iter().flatten() {
+                    observer.record_at(item, time);
+                }
+                let inside = with_observability_correlation(&request["inner"], || {
+                    let inside = current_observability_correlation();
+                    for item in request["during"].as_array().into_iter().flatten() {
+                        observer.record_at(item, time);
+                    }
+                    inside
+                });
+                for item in request["after"].as_array().into_iter().flatten() {
+                    observer.record_at(item, time);
+                }
+                json!({"before":before,"inside":inside,"after":current_observability_correlation()})
+            });
+            let values = output.lock().expect("fixture sink mutex").clone();
+            Ok(agents_relay_rust2::observability::json_wire(
+                &json!({"records":values,"nested":nested,"previous":previous,"final":current_observability_correlation()}),
+            ))
+        }
+
         "migrateTaskIds" => Ok(agents_relay_rust2::task_id_migration::migrate_task_ids(
             request["databasePath"]
                 .as_str()

@@ -54,3 +54,5 @@ pub mod task_id_migration;
 
 // Direct Node src/planner-child.ts field-projection equality port.
 pub mod planner_child;
+// Direct Node src/observability.ts implementation; observational only.
+pub mod observability;

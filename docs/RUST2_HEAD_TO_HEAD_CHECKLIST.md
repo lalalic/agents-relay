@@ -119,7 +119,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/model-redecision.ts` | `rust/src/model_redecision.rs` | PENDING | — |
 | `src/model-routing.ts` | `rust/src/model_routing.rs` | PENDING | — |
 | `src/no-github.ts` | `rust/src/no_github.rs` | PENDING | — |
-| `src/observability.ts` | `rust/src/observability.rs` | PENDING | — |
+| `src/observability.ts` | `rust/src/observability.rs` | PASS | Direct hotfix: 8,744 exact Node/Rust classification/redaction/correlation/environment fixtures; 6 Rust-native tests including interleaved Futures; 12 original Node regressions (rust/tests/head_to_head_observability.mjs; rust/tests/native_observability.rs) |
 | `src/outcome-review.ts` | `rust/src/outcome_review.rs` | PENDING | — |
 | `src/owned-process.ts` | `rust/src/owned_process.rs` | PENDING | — |
 | `src/planned-review-head.ts` | `rust/src/planned_review_head.rs` | PASS | 626 shared differential fixtures across 14 ports; head binding, exact prompt append, duplicate suppression, errors, and save count compared (`rust/tests/head_to_head.mjs`) |
@@ -450,3 +450,13 @@ This is only the Job JEL graph projection; Dashboard HTTP routing, additional ta
 - [x] `rust/tests/head_to_head_task_id_migration.mjs`: **7** complete migrations of independently cloned disposable SQLite databases (including duplicate IDs, cross-Job collisions, Unicode IDs, outbox, JSON, sequence), **3** fail-closed preflights, and late CHECK-constraint rollback compared against the original Node implementation; compare every SQLite table and backup snapshot.
 - [x] `rust/tests/native_task_id_migration.rs`: **4** native tests for verified pre-write backup and one-time execution, ACTIVE preflight, collision-free relational renaming, and full atomic rollback.
 - [x] Original Node `test/task-id-migration.test.js` **3/3 PASS** with isolated SQLite fixtures. No production SQLite files or live Relay writers accessed, stopped, or migrated.
+
+### Direct Rust2 hotfix — observational-only lifecycle logging (2026-11-16)
+
+- [x] `src/observability.ts` → `rust/src/observability.rs`: all public runtime behaviors exported as native Rust equivalents: `errorMessage`, `classifyFailure`, `sanitizeObservationValue`, `sanitizeObservationData`, synchronous `withObservabilityCorrelation`, `currentObservabilityCorrelation`, `RelayObservability`, `observability`, `setObservability`, `collectObservations` and documented constants.
+- [x] Redact sensitive/credential/Prompt key names before recursing; preserve object depth, 512-unit JavaScript string bound, 20-item arrays, bulk-key omission, structured error retry classification and level-based noise suppression. A single high UTF-16 surrogate produced by JS `slice(0, 512)` is emitted as an exact JSON `\uD83D` escape; native scalar rendering safely uses the replacement glyph.
+- [x] The Rust `CorrelationFuture` wrapper captures merged Job/Task context and restores the prior scope on *each* async poll, including when concurrent futures yield/interleave on the same thread; no process-global mutable correlation is leaked across tasks. Structured records remain observational only, never update SQLite or the workflow.
+- [x] `rust/tests/head_to_head_observability.mjs`: **8,744** identical Node/Rust JSON-wire fixtures for exception/retry taxonomy, headers, payloads, nested secrets, bulk/Unicode string limits, environment levels, parent/child correlation and record filtering.
+- [x] `rust/tests/native_observability.rs`: **6** Rust-native regressions for error precedence, recursive redaction, UTF-16 JSON boundary, panic restoration, async-local interleaving and no-op/filtered sinks.
+- [x] Original Node `test/observability.test.js`: **12/12 PASS** with isolated SQLite and projected-store fixtures; full Rust2 differential **36/36 PASS**, 0 skipped, Cargo tests and Clippy clean.
+- [x] No live Relay daemon, Job, event stream, production secret, durable database or external log service was modified during this port.
