@@ -1,6 +1,6 @@
 # Running the service
 
-`agents-relayd` starts the repository worker pool, event-driven reconciler, periodic recovery watchdog, and dashboard. It discovers Git repositories under `~/Workspace` (or `--workspace PATH`) by unique Git-root directory name and watches their SQLite Jobs. After the local Job is `COMPLETED`, the optional delivery Graph skips an absent `origin` or missing `origin/main`; it pushes only a non-force fast-forward to an inspected remote whose fetch and push destinations match. An unreachable, mismatched or divergent remote is an independent bounded SQLite retry, not a new Job/Task. It listens on `127.0.0.1:8787` by default. Dashboard reads and recovery use the local SQLite inventory.
+`agents-relayd` starts the repository worker pool, event-driven reconciler, periodic recovery watchdog, and dashboard. It loads Job inventory solely from SQLite (`job.repository`, canonical `job.projectRoot` and optional `job.projectPath`), with no recursive Workspace repository scan or current-directory identity guessing. After the local Job is `COMPLETED`, the optional delivery Graph skips an absent `origin` or missing `origin/main`; it pushes only a non-force fast-forward to an inspected remote whose fetch and push destinations match. An unreachable, mismatched or divergent remote is an independent bounded SQLite retry, not a new Job/Task. It listens on `127.0.0.1:8787` by default. Dashboard reads and recovery use the local SQLite inventory.
 
 The dashboard reads a bounded window (one day by default, or `--usage-window-days`) of local Codex JSONL session telemetry at `/api/usage`. Requests recorded with GLM models are shown as Z.ai runtime usage; account quota and remaining balance are marked unavailable unless a supported source is added.
 
@@ -33,10 +33,10 @@ npx agents-relayd --repo LOCAL_ROOT_NAME
 Workspace mode (the default):
 
 ```sh
-npx agents-relayd --workspace ~/Workspace
+npx agents-relayd
 ```
 
-Use `--repo LOCAL_ROOT_NAME` to retain the single local Git repository worker pool. PR-bound daemon mode is retired; obsolete PR flags are rejected.
+Use `--repo LOCAL_ROOT_NAME` only for an explicit local repository identity. Normal daemon startup needs neither `--repo` nor `--workspace`. `--workspace-root PATH` is an optional worktree placement override (legacy `--workspace` alias), not a discovery or Job identity input. PR-bound daemon mode is retired; obsolete PR flags are rejected.
 
 By default, Relay probes the configured NATS endpoint (`--nats-url`, then `EVENTS_BUS_NATS_URL`, then `nats://127.0.0.1:4222`). When the broker is reachable, the CLI and daemon automatically use NATS even when `--events` is omitted. Pass `--events nats` to require NATS explicitly; pass an explicit non-NATS value such as `--events none` to disable auto-detection. If NATS is unavailable, commands that require authoritative model-task lifecycle events fail clearly instead of pretending the transport exists.
 

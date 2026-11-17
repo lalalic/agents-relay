@@ -35,7 +35,7 @@ import { applyJobActivateAction } from './job-actions.js';
 import { managedTaskUpdateHandler } from './task-update.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
-import { defaultWorkspaceRoot, discoverWorkspaceRepositories, ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
+import { defaultWorkspaceRoot, ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { createRuntimeStatusPublisher } from './runtime-status-events.js';

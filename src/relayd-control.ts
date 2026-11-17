@@ -40,7 +40,7 @@ import { applyJobActivateAction } from './job-actions.js';
 import { managedTaskUpdateHandler } from './task-update.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
-import { defaultWorkspaceRoot, discoverWorkspaceRepositories, ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveJobProjectRoot, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
+import { defaultWorkspaceRoot, ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveJobProjectRoot, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { createRuntimeStatusPublisher } from './runtime-status-events.js';
@@ -83,11 +83,14 @@ export function createWorkspaceControl(deps: any) {
         reviewerThreadId: typeof options.reviewerThreadId === 'string' ? options.reviewerThreadId : undefined,
         creatorThreadId: typeof options.creatorThreadId === 'string' ? options.creatorThreadId : undefined,
         implementationThreadId: typeof options.implementationThreadId === 'string' ? options.implementationThreadId : undefined,
+        localMergeSource: typeof options.localMergeSource === 'string' ? options.localMergeSource : undefined,
+        localMergeTarget: typeof options.localMergeTarget === 'string' ? options.localMergeTarget : undefined,
         noGitHub: noGitHub || options.noGitHub === true,
         coordinator: options.coordinator as {graph:string;input:string;outputPath:string;projectRoot:string;workspaceRoot:string;sharedRoot?:string;globalRoot?:string}|undefined,
         persist: body.initialPlan !== true,
       });
       if (!repositories.includes(repository)) repositories.push(repository);
+      if (result.job.projectRoot) repositoryPaths.set(repository, result.job.projectRoot);
       await refreshAll();
       if (body.initialPlan === true) {
         const current = result.job;

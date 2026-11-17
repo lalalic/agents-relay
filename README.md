@@ -103,6 +103,10 @@ EOF
 npx agents-relay job create --repo LOCAL_ROOT_NAME --project-root "$PWD" \
   --title "Objective" --objective-file job.md --initial-plan
 
+# Optional explicit local code branch binding at Job creation:
+#   --local-merge-source refs/heads/FEATURE --local-merge-target refs/heads/main
+# Otherwise Relay binds a source branch when code execution first requires it.
+
 # Create-only example: the orchestrator explicitly adds these Tasks.
 # For normal autonomous execution, instead pass --initial-plan at creation
 # and let the Planner choose the minimal Tasks; do not also create these manually.
@@ -112,10 +116,11 @@ cat > task.md <<'EOF'
 Implement this phase using the Job objective as context.
 EOF
 npx agents-relay task create --repo LOCAL_ROOT_NAME --id JOB_ID \
-  --task-id initial --output task-pr --input-file task.md
+  --output local-git --input-file task.md
 
+# Use the actual numeric Task ID returned by the previous create command.
 npx agents-relay task create --repo LOCAL_ROOT_NAME --id JOB_ID \
-  --task-id child --output task-pr \
+  --output local-git --deps NUMERIC_TASK_ID_FROM_PREVIOUS_CREATE \
   --input "Implement the described child task and publish a terminal event."
 
 npx agents-relay reconcile --repo LOCAL_ROOT_NAME --id JOB_ID
@@ -127,12 +132,12 @@ Task readiness is explicit: `DRAFT` means the durable task exists but is not exe
 Mutable draft/queued/retryable task fields can be changed in place without replacing the durable task identity. `task update` rejects `RUNNING`, `SUCCEEDED`, and `CANCELLED` tasks so active execution and terminal history cannot be rewritten. For example:
 
 ~~~sh
-npx agents-relay task update --repo LOCAL_ROOT_NAME --id JOB_ID --task-id child \
+npx agents-relay task update --repo LOCAL_ROOT_NAME --id JOB_ID --task-id NUMERIC_TASK_ID \
   --adapter chatgpt --provider chatgpt --model gpt-5.6-sol --reasoning high \
   --capabilities model,chatgpt,browser-harness
 
 # Explicitly release a held DRAFT task
-npx agents-relay task update --repo LOCAL_ROOT_NAME --id JOB_ID --task-id child --queue
+npx agents-relay task update --repo LOCAL_ROOT_NAME --id JOB_ID --task-id NUMERIC_TASK_ID --queue
 ~~~
 
 Jobs separate durable lifecycle from derived runtime status. Durable lifecycle is `DRAFT | ACTIVE | COMPLETED | CANCELLED`: a newly created Job is DRAFT, and creating executable work or starting the Planner activates it. Runtime status (`IDLE`, `WAITING`, `QUEUED`, `RUNNING`, `BLOCKED`, `FAILED`, `REVIEWING`, `MERGE_PENDING`, `MERGED`, or `CANCELLED`) is computed from Tasks, Review, and locally confirmed merge facts and is never persisted as lifecycle truth.
@@ -226,7 +231,7 @@ For explicit local demo/test mode:
 npm install
 npm run build
 node dist/cli.js init --file .agents-relay.json --title "Dogfood" --id demo
-node dist/cli.js task create --file .agents-relay.json --task-id hello --output task-pr --input "Complete the described task"
+node dist/cli.js task create --file .agents-relay.json --output local-git --input "Complete the described task"
 node dist/cli.js reconcile --file .agents-relay.json
 npx agents-relay serve --file .agents-relay.json
 ~~~
@@ -255,7 +260,7 @@ reconcile leases and launches ready tasks without waiting inside the runtime sch
 
 Router Rules are stored at `~/.agents-relay/execution-router-rules.md` by default and use `[choices]` plus `[routing-instruction]` sections (see the Execution Router doc). `agents-relayd --execution-router-rules PATH` selects a different file for that daemon process; the explicit CLI path takes precedence over `AGENTS_RELAY_EXECUTION_ROUTER_RULES`, which remains supported for compatibility.
 
-`agents-relayd` runs in workspace mode by default: it discovers nested Git repositories under `~/Workspace`, identifies each Git root by its unique directory name, and aggregates its local Jobs into one dashboard and worker pool. Pass `--workspace PATH` to use another root. `--repo LOCAL_ROOT_NAME` selects one local repository identity.
+`agents-relayd` discovers Jobs **only from local SQLite**; it does not recursively search Workspace or infer repository identities from the daemon’s current directory. Each Job carries its immutable, canonical `projectRoot` and optional relative `projectPath`. Run `npx agents-relayd` without `--workspace` or `--repo` for the ordinary daemon. `--repo LOCAL_ROOT_NAME` remains an optional local identity selector; `--workspace-root PATH` (legacy alias `--workspace`) is for execution/worktree placement only and never changes Job discovery. Workspace directory layout changes cannot silently rebind a Job.
 
 Job execution does not use GitHub App authentication or GitHub webhooks. Legacy webhook and PR evidence remains readable for historical audit; it cannot drive local lifecycle decisions.
 
@@ -277,7 +282,7 @@ The minimal agent-network surface is machine-driven registration and discovery. 
 
 Managed tasks are descriptive work for agents, not shell commands. Use `codex` or `chatgpt` for worker tasks. Commands such as tests, build tools, Markad Vision, ffmpeg, and other CLIs are invoked by the orchestrator or by an executing agent; they are not worker adapters.
 
-Every model-backed task declares a durable output with `--output task-pr` or `--output file --output-path PATH`. Agents Relay bootstraps workers with the Job/Task identity, project, output contract, and mandatory terminal-event contract; workers retrieve task intent through the Relay CLI from SQLite.
+Every model-backed task declares a durable output with `--output local-git` (code changes reviewed and merged through local Git) or `--output file --output-path PATH`. The historical internal `task_pr` record kind remains readable, but the public CLI no longer exposes PR output. Agents Relay bootstraps workers with the Job/Task identity, project, output contract, and mandatory terminal-event contract; workers retrieve task intent through the Relay CLI from SQLite.
 
 For Codex and ChatGPT, **correlated worker events are authoritative lifecycle inputs**, not a separate durable store. Event publication uses the configured `events-bus` surface (`publish` for sandboxed/hosted workers, or its local CLI helper with `EVENTS_BUS_EVENT_SOURCE` set); Agents Relay subscribes, validates correlation, applies graph transitions, persists results in RelayStore. Relay publishes `task.process.launched` only after successful adapter launch; `task.started` is worker-owned and must be a new, correlated start acknowledgement. Codex publishes `task.process.exited` when its synchronous runtime exits, while ChatGPT publishes `task.process.async_exited` after its one-shot submission runtime exits; neither substitutes for `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled`. The executing agent must publish exactly one correlated terminal event. Relay persists the matching durable state only from that terminal event. Model-backed tasks require an event bus and time out explicitly if no terminal event arrives.
 

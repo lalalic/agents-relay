@@ -2,7 +2,7 @@
 import {escalationNotifierFromEnvironment} from './escalation-notifier.js';
 import { once } from 'node:events';
 import { homedir } from 'node:os';
-import { join, basename } from 'node:path';
+import { join } from 'node:path';
 import { ChatGptAdapter, CodexAdapter, ensureChatGptWebHelmReady } from './adapters.js';
 import { ZAdapter } from './z-adapter.js';
 import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
@@ -26,7 +26,7 @@ import { applyJobActivateAction } from './job-actions.js';
 import { managedTaskUpdateHandler } from './task-update.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
-import { discoverWorkspaceRepositories, ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveJobProjectRoot, resolveManagedProjectPath, resolveRepositoryProjectPath, resolveWorkspaceRoot, taskRequiresManagedWorktree } from './workspace.js';
+import { defaultWorkspaceRoot, ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveJobProjectRoot, resolveRepositoryProjectPath, taskRequiresManagedWorktree } from './workspace.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { createRuntimeStatusPublisher } from './runtime-status-events.js';
 import { subscribeLocalCommits } from './local-commit-events.js';
@@ -63,14 +63,12 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const bus = eventResolution.bus;
   const stopRuntimeStatusEvents = bus ? subscribeLocalCommits(createRuntimeStatusPublisher(bus)) : () => {};
   process.stderr.write(`${eventBusResolutionMessage(eventResolution)}\n`);
-  const workspaceRoot = await resolveWorkspaceRoot(normalized.workspaceRoot ?? undefined);
-  const explicitProjectPath = value(argv,'--project-path');
-  const localProjectPath = noGitHub && !explicitProjectPath && !argv.includes('--workspace') && !argv.includes('--workspace-root') && !process.env.AGENTS_RELAY_WORKSPACE_ROOT
-    ? process.cwd() : explicitProjectPath || workspaceRoot;
-  const discoveredRepositories = normalized.repository || noGitHub ? [] : await discoverWorkspaceRepositories(workspaceRoot).catch(() => []);
-  const repositories = normalized.repository ? [normalized.repository] : noGitHub ? [basename(localProjectPath)] : discoveredRepositories.map(item => item.repository);
-  const repositoryPaths = new Map(discoveredRepositories.map(item => [item.repository, item.path]));
-  if (noGitHub) for (const repo of repositories) repositoryPaths.set(repo, localProjectPath);
+  // Workspace is an optional execution/worktree placement hint, never a Job
+  // discovery source. Do not stat, recursively scan, or infer a repository from
+  // cwd / Workspace at daemon startup: only durable SQLite bindings select Jobs.
+  const workspaceRoot = normalized.workspaceRoot ?? defaultWorkspaceRoot();
+  const repositories = normalized.repository ? [normalized.repository] : [];
+  const repositoryPaths = new Map<string, string>();
   const usageRegistry = codexAndZaiUsageRegistry();
   const decisionAuditStore = new JsonlDecisionAuditStore(process.env.AGENTS_RELAY_DECISION_AUDIT_PATH ?? join(homedir(), '.agents-relay', 'decision-audit.jsonl'));
   let cachedOverviews: ManagedJobOverview[] = [];
@@ -93,8 +91,11 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const existingInventory = await discoverLocalRelayStoreSnapshots(relayStoreDirectory());
   for (const snapshot of existingInventory) for (const job of snapshot.jobs) {
     if (!repositories.includes(job.repository)) repositories.push(job.repository);
+    // Blocker recovery needs a path for an existing repository: use the saved
+    // immutable projectRoot, never a guessed Workspace-relative directory.
+    if (job.projectRoot && !repositoryPaths.has(job.repository))
+      repositoryPaths.set(job.repository, job.projectRoot);
   }
-  if (repositories.length === 0) repositories.push(basename(workspaceRoot));
   const inventoryFromLocal = async (limitHistory = true): Promise<ManagedJobOverview[]> => {
     const snapshots = await discoverLocalRelayStoreSnapshots(relayStoreDirectory());
     const known = new Set(repositories);

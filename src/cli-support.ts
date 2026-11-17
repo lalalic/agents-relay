@@ -47,7 +47,18 @@ export async function textOption(args: string[], inlineFlag: string, fileFlag: s
   return arg(args, inlineFlag);
 }
 export function integerArg(args: string[], name: string, fallback: number): number { if (!hasArg(args, name)) return fallback; const value = Number(arg(args, name)); if (!Number.isInteger(value) || value < 0) throw new Error(`${name} must be a non-negative integer`); return value; }
-export function repository(args: string[]): string { const value = arg(args, '--repo'); if (!value) throw new Error('--repo must name the local Git root directory'); return value; }
+export function repository(args: string[]): string {
+  const value = arg(args, '--repo');
+  if (!value) throw new Error('--repo must name the local Git root directory');
+  return value;
+}
+/** Strict for NEW public Jobs; historical store lookups may carry owner/repo metadata. */
+export function newLocalRepository(args: string[]): string {
+  const value = repository(args);
+  if (!/^[A-Za-z0-9_.-]+$/.test(value) || value === '.' || value === '..')
+    throw new Error('--repo must be a local Git root basename, not a path or remote owner/repo');
+  return value;
+}
 export function pullRequest(args: string[]): number { const value = Number(arg(args, '--pr')); if (!Number.isInteger(value) || value <= 0) throw new Error('--pr is required for GitHub-backed operation'); return value; }
 async function localStore(file: string): Promise<{ store: InMemoryStore; job: Job }> { const parsed = JSON.parse(await readFile(file, 'utf8')) as Job; const store = new InMemoryStore(parsed); return { store, job: await store.load(parsed.id) }; }
 /** The public read-only commands must fail closed on ambiguous Job bindings. */

@@ -32,7 +32,7 @@ export async function workerTaskFromArgs(job: Job, args: string[], now: string):
   if (agentGraph) parseAgentGraph(agentGraph);
   if (!input.trim()) throw new Error('task create requires --input-file PATH|- or --input MARKDOWN');
   if (!['codex', 'chatgpt', 'z'].includes(adapter)) throw new Error('task create --adapter must be codex, chatgpt, or z; orchestrator is reserved for legacy recovery only');
-  if (outputKind !== 'task-pr' && outputKind !== 'file') throw new Error('task create requires --output task-pr|file'); if (outputKind === 'file' && !outputPath) throw new Error('--output file requires --output-path');
+  if (outputKind !== 'local-git' && outputKind !== 'file') throw new Error('task create requires --output local-git|file'); if (outputKind === 'file' && !outputPath) throw new Error('--output file requires --output-path');
   if (['--provider','--profile','--reasoning','--cwd','--chatgpt-project'].some(flag => hasArg(args, flag)) && !model) throw new Error('task create explicit routing requires --model');
   const routing: RoutingDecision | undefined = !model ? undefined : { provider: arg(args, '--provider', 'openai'), model, profile: arg(args, '--profile') || undefined, reasoning: arg(args, '--reasoning') || undefined, cwd: arg(args, '--cwd') || undefined, projectId: arg(args, '--chatgpt-project') || undefined, decidedBy: 'cli', decidedAt: now };
   const workerRequirements = routing ? undefined : { capabilities: [], runtime: adapterValue ? adapter : undefined };
@@ -61,6 +61,7 @@ export async function workerTaskFromArgs(job: Job, args: string[], now: string):
     chatgptTabClosePolicy: closePolicy,
     input: input || 'true',
     attachments: arg(args, '--attachments').split(',').filter(Boolean),
+    // Preserve the historical SQLite output enum while exposing a PR-free CLI spelling.
     output: outputKind === 'file' ? { kind: 'file', path: outputPath } : { kind: 'task_pr' },
     routing,
     continuation: continuation(args),

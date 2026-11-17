@@ -13,6 +13,7 @@ Goal: reliably create, inspect, resume, review, and merge a local Git Job, with 
 
 - Create: bind one Job ID to a validated canonical local Git root; optionally create the first Plan or a Coordinator DAG.
 - Inspect and resume: use the version-matched CLI and SQLite-backed Job/Task history.
+- Daemon: `agents-relayd` loads existing Jobs from SQLite, never a recursive Workspace scan; ordinary launch needs no `--workspace`. Repository paths come from immutable `job.projectRoot`/`job.projectPath`.
 - Review and merge: review the local Git head, then merge through the normal Job gate.
 - Deliver: only after `COMPLETED`, the daemon may non-force-push verified `main` when `origin/main` exists and fetch/push destinations match; otherwise skip or retry independently. Remote results never change Job lifecycle or create PRs.
 
@@ -38,7 +39,7 @@ Read `contracts/task-job-contract.md` before authoring or changing Jobs or Tasks
 
 ## 2. Plan and execute
 
-Usually let `job create --initial-plan` establish the first Planner round; use `plan` for an existing create-only Job. Direct `task create` is for deliberately orchestrator-authored work. Tasks describe verifiable outcomes, **not shell commands**. Declare exactly one durable result (`task_pr` or `file`), meaningful dependencies, and `storySize`; Relay chooses worker/model routes unless the task truly needs a specific capability.
+Usually let `job create --initial-plan` establish the first Planner round; use `plan` for an existing create-only Job. Direct `task create` is for deliberately orchestrator-authored work. Tasks describe verifiable outcomes, **not shell commands**. Declare exactly one durable result with public CLI `--output local-git` or `--output file --output-path PATH`; stored Planner/SQLite output kinds remain `task_pr` (local code-merge work, not a GitHub PR) or `file` for history compatibility. Include meaningful dependencies and `storySize`; Relay chooses worker/model routes unless the task truly needs a specific capability.
 
 Agent `skills` suggests Worker skills; `model`/`reasoning` suggest Router preferences. Neither is mandatory (see `contracts/agent-contract.md`).
 

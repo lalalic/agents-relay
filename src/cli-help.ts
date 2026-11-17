@@ -43,7 +43,7 @@ Actions:
   run     Activate a Coordinator Graph Job; --foreground runs immediately and streams console events
   list    List managed Jobs in a repository
   unblock Authoritatively invalidate current BLOCKED decisions and trigger replanning/resume
-  cancel  Cancel the Job through the SQLite/Graph lifecycle (no PR required)
+  cancel  Cancel the Job through the SQLite/Graph lifecycle
   pause   Persistently stop dispatch and interrupt active generations; lifecycle state remains unchanged
   resume  Clear pause metadata and requeue interrupted work
 
@@ -115,6 +115,7 @@ Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job r
 
 Required: --repo LOCAL_ROOT_NAME and a standalone Job objective. Job ID defaults to an auto-incrementing store-global number; --id may only reference an existing numeric Job.
 Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --initial-plan, --review|--no-review, --auto-merge|--no-auto-merge, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
+Optional local Git branch binding: --local-merge-source refs/heads/FEATURE --local-merge-target refs/heads/main (both required together). For ordinary code tasks Relay can also bind its isolated local source branch automatically; no remote service or PR is required.
 Creation enables auto-merge and Final Review by default. For plan-free DAG
 jobs, pass --coordinator-graph-file GRAPH --coordinator-input-file INPUT
 --coordinator-output-path ABS --coordinator-project-root ABS
@@ -129,7 +130,7 @@ Example:
   npx agents-relay job create --repo LOCAL_ROOT_NAME --project-path vlog --title "Episode" --objective-file episode.md --initial-plan`,
   'job run': `Activate a DRAFT Job with a durable Coordinator Agent Graph Task. No Planner or execution mode is required.
 
-Usage: agents-relay job run --id JOB --task-id TASK [--project-path DIR]
+Usage: agents-relay job run --id NUMERIC_JOB_ID --task-id NUMERIC_TASK_ID [--repo LOCAL_ROOT_NAME] [--project-path DIR] [--foreground]
 
 The command activates ordinary Job lifecycle and emits a wake-up. It returns
 ACTIVE without blocking for all Agent Tasks. The same Job Reconciler creates
@@ -162,7 +163,7 @@ Example:
   'job unblock': `Authoritatively unblock BLOCKED Troubleshooter Tasks in one Job.\n\nRequired: --id JOB_ID --reason TEXT. Optional: --repo LOCAL_ROOT_NAME. Each unblocked Troubleshooter is queued as the same Task and must rerun, verify the condition, and issue a fresh resolution before retrying an original failed Task.`,
   'job cancel': `Cancel a durable Job and its unfinished Tasks through the authoritative Relay Graph.
 
-Required: --id JOB_ID. Optional: --repo LOCAL_ROOT_NAME checks identity. No PR number is required.`,
+Required: --id JOB_ID. Optional: --repo LOCAL_ROOT_NAME checks local identity.`,
   'job pause': `Pause a durable Job without inventing a PAUSED lifecycle state.
 
 Required: --id JOB_ID. Optional: --repo LOCAL_ROOT_NAME. Running worker and Planner generations are interrupted durably and resume as uncompleted work.`,
@@ -193,12 +194,13 @@ Actions:
   cancel  Cancel a Task`,
   'task create': `Create one durable Task under an existing Job.
 
-Required: normal Job storage options plus --input-file PATH|- (preferred) or --input MARKDOWN, and --output task-pr|file. --input and --input-file are mutually exclusive.
-Common: --title TITLE (optional; otherwise derived from the first non-empty input line), --idempotency-key KEY, --priority P0|P1|P2|P3, --story-size S|M|L, --agent NAME, --agent-graph-file PATH|-, --deps a,b, --dependency-validity JSON, --parent ID, --draft. Relay allocates the store-global increasing numeric Task ID and rejects caller-supplied IDs. The JSON maps declared dependency Task IDs to order-only, revalidate, or rerun. Normal model-backed Tasks omit adapter/provider/model so Relay runs one Execution Router decision over complete worker+model routes. New Tasks are worker-routed; legacy adapter=orchestrator records are recovery-only and cannot be created or manually executed.\nTasks with dependencies start DRAFT; tasks without dependencies start QUEUED unless --draft is given.
+Required: --repo LOCAL_ROOT_NAME --id NUMERIC_JOB_ID, --input-file PATH|- (preferred) or --input MARKDOWN, and --output local-git|file. --input and --input-file are mutually exclusive.
+--output local-git marks code changes for local Git merge; --output file also requires --output-path PATH. Neither creates a remote request.
+Common: --title TITLE (optional; otherwise derived from the first non-empty input line), --idempotency-key KEY, --priority P0|P1|P2|P3, --story-size S|M|L, --agent NAME, --agent-graph-file PATH|-, --deps 201,202, --dependency-validity JSON, --parent ID, --draft. Relay allocates the store-global increasing numeric Task ID and rejects caller-supplied IDs. The JSON maps declared dependency Task IDs to order-only, revalidate, or rerun. Normal model-backed Tasks omit adapter/provider/model so Relay runs one Execution Router decision over complete worker+model routes. New Tasks are worker-routed; legacy adapter=orchestrator records are recovery-only and cannot be created or manually executed.\nTasks with dependencies start DRAFT; tasks without dependencies start QUEUED unless --draft is given.
 Directly-created Tasks are not wrapped in a synthetic Plan. Planner-generated Tasks are created internally by Relay from planner output.
 
 Example:
-  npx agents-relay task create --repo LOCAL_ROOT_NAME --id j-5-owner-repo-1 --output file --output-path story.md --input-file task.md`,
+  npx agents-relay task create --repo LOCAL_ROOT_NAME --id 101 --output file --output-path story.md --input-file task.md`,
   'task update': `Update mutable durable Task fields in place.
 
 Required: --id JOB_ID --task-id ID. Optional --repo LOCAL_ROOT_NAME fences the Job identity.
@@ -207,7 +209,7 @@ Accepted task.started and newer current-execution task.progress events reset --t
 Use --clear-routing to remove routing metadata.
 
 Example:
-  npx agents-relay task update --repo LOCAL_ROOT_NAME --id 101 --task-id build --adapter chatgpt --provider chatgpt --model gpt-5.6-sol --reasoning high`,
+  npx agents-relay task update --repo LOCAL_ROOT_NAME --id 101 --task-id 202 --adapter chatgpt --provider chatgpt --model gpt-5.6-sol --reasoning high`,
   'task revise': `Authenticated immutable-head targeted revision request from the active Final Reviewer.
 
 Required: --repo LOCAL_ROOT_NAME --id JOB --task-id ORIGINAL --review-task-id FINAL_REVIEW --execution-id CURRENT_REVIEW_EXECUTION --head-sha EXACT_SHA --request-id STABLE_ID --findings-file PATH. The findings file contains a nonempty JSON array [{"id":"F-1","summary":"...","evidence":"..."}].
@@ -259,7 +261,7 @@ Example:
 Usage:
   npx agents-relay blocker <add|resolve|show> [options]
 
-The blocker Job owns reverse \`unblocks\` references. \`add\` registers a failed/blocked dependent task. \`resolve\` is the explicit verified-resolution path; merge-mode blockers resolve against the blocker Job’s authoritative local merge, not any remote PR.`,
+The blocker Job owns reverse \`unblocks\` references. \`add\` registers a failed/blocked dependent task. \`resolve\` is the explicit verified-resolution path; merge-mode blockers resolve against the blocker Job’s authoritative local merge.`,
   'blocker add': `Register a dependent failed/blocked Task on a blocker Job.
 
 Blocker: --repo LOCAL_ROOT_NAME --id JOB_ID.

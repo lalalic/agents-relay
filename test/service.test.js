@@ -411,14 +411,13 @@ test('long-form Job and Task content prefers file inputs and avoids shell quotin
   const localJob = join(directory, 'job.json');
   await writeFile(localJob, JSON.stringify({ id:'local-file-job', title:'local', priority:'P2', autoMerge:false, reviewEnabled:false, prNumber:1, repository:'owner/repo', state:'DRAFT', continuation:null, createdAt:now, updatedAt:now, tasks:[] }));
 
-  const created = spawnSync(process.execPath, ['dist/cli.js','task','create','--file',localJob,'--adapter','codex','--output','task-pr','--draft','--input-file',taskFile], { encoding:'utf8' });
+  const created = spawnSync(process.execPath, ['dist/cli.js','task','create','--file',localJob,'--adapter','codex','--output','local-git','--draft','--input-file',taskFile], { encoding:'utf8' });
   assert.equal(created.status, 0, created.stderr);
   let saved = JSON.parse(await readFile(localJob, 'utf8'));
   assert.equal(saved.tasks[0].input, await readFile(taskFile, 'utf8'));
   // Standalone --file fixtures are legacy JSON, not canonical SQLite Jobs.
   // Verify the generated ID round-trips without assuming a SQLite ID registry.
-  assert.equal(typeof saved.tasks[0].id, 'string');
-  assert.ok(saved.tasks[0].id);
+  assert.match(saved.tasks[0].id,/^[1-9][0-9]*$/,'new local demo Tasks use the same numeric ID allocator');
   const allocatedTaskId = saved.tasks[0].id;
 
   const stdinText = '# Updated work\n\n```mermaid\nflowchart LR\n  X --> Y\n```\n';

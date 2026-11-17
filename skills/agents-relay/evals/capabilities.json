@@ -75,10 +75,15 @@
         "decision": "create",
         "command": "job create",
         "flags": [
-          "--no-github"
+          "--repo",
+          "--project-root",
+          "--objective-file"
         ]
       },
       "forbidden": [
+        "--no-github",
+        "--github-repo",
+        "--pr",
         "GitHub authentication required"
       ]
     },

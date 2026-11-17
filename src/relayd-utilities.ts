@@ -31,7 +31,7 @@ import { applyJobActivateAction } from './job-actions.js';
 import { managedTaskUpdateHandler } from './task-update.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
-import { discoverWorkspaceRepositories, ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath, resolveWorkspaceRoot, taskRequiresManagedWorktree } from './workspace.js';
+import { ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath, resolveWorkspaceRoot, taskRequiresManagedWorktree } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { createRuntimeStatusPublisher } from './runtime-status-events.js';
@@ -92,9 +92,9 @@ Usage:
   npx agents-relayd [options]
 
 Options:
-  --repo LOCAL_ROOT_NAME       Watch local Git root identity
-  --workspace-root PATH  Workspace Root (default: AGENTS_RELAY_WORKSPACE_ROOT, shared Neo config, or ~/Workspace)
-  --workspace PATH       Legacy alias for --workspace-root
+  --repo LOCAL_ROOT_NAME       Optional local Git identity; Job inventory comes from SQLite
+  --workspace-root PATH        Optional worktree/execution placement; never scans for repositories
+  --workspace PATH             Legacy alias for --workspace-root (not needed for normal daemon)
   --port PORT             Dashboard port (default: 8787)
   --concurrency N         Maximum concurrent workers (default: 4)
   --interval MS           Recovery interval
@@ -103,8 +103,11 @@ Options:
   --events nats            Require NATS event wakeups (otherwise auto-detect reachable NATS)
 
 Examples:
+  npx agents-relayd
   npx agents-relayd --repo LOCAL_ROOT_NAME
-  npx agents-relayd --workspace-root ~/Workspace`;
+
+No recursive Workspace search: persisted Job projectRoot/projectPath in SQLite
+are authoritative. Changing Workspace directory layout does not select Jobs.`;
 export function firstStageChoices(decisionInput: Record<string, unknown> | undefined): string[] {
   const stages = decisionInput?.stages;
   if (!Array.isArray(stages) || stages.length === 0) return [];

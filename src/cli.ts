@@ -5,7 +5,7 @@ import { AgentRegistration, Priority } from './types.js'; import { discoverAgent
 import { transitionJobEvent } from './task-transitions.js'; import { applyTaskHoldAction, applyTaskQueueAction, dispatchTaskAction } from './task-actions.js';
 import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js'; import { classifyFailedTask } from './task-actions.js'; import { handleServicePublication } from './service-publication.js';
 import { ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveJobProjectRoot, resolveManagedProjectPath, resolveRepositoryProjectPath, resolveWorkspaceRoot, taskRequiresManagedWorktree } from './workspace.js';
-import { runPromptCommand, runPlanContextCommand, runTaskContextCommand, runTaskEventsCommand, runTaskReadCommand } from './cli-prompt.js'; import { runBlockerCommand } from './cli-blocker.js'; import { runEscalationCommand } from './cli-escalation.js'; import { helpText, usage } from './cli-help.js'; import { parseAgentGraph } from './agent-graph.js'; import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js'; import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js'; import { runCliEntrypoint } from './cli-shutdown.js'; import { shutdownOwnedProcesses } from './owned-process.js'; export { helpText } from './cli-help.js'; import { runReviewCommand } from './cli-review.js'; import { normalizeThreadId, runtimeReviewer } from './reviewer-thread.js'; export { runtimeReviewer } from './reviewer-thread.js'; import { SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest, storeFor, saveLocal, eventBus, publishWake, publishDependentUnblocked, priority, storySize, chatGptTabClosePolicy, continuation, rejectRemovedJobOptions, rejectRemoteLifecycleOptions, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayControlCommand, relayJobList, optionalLegacyPr, relayJobStateCommand, relayTaskCommand, withEventBus } from './cli-support.js'; export { SERVICE_DEFAULTS, eventBus, chatGptTabClosePolicy } from './cli-support.js';
+import { runPromptCommand, runPlanContextCommand, runTaskContextCommand, runTaskEventsCommand, runTaskReadCommand } from './cli-prompt.js'; import { runBlockerCommand } from './cli-blocker.js'; import { runEscalationCommand } from './cli-escalation.js'; import { helpText, usage } from './cli-help.js'; import { parseAgentGraph } from './agent-graph.js'; import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js'; import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js'; import { runCliEntrypoint } from './cli-shutdown.js'; import { shutdownOwnedProcesses } from './owned-process.js'; export { helpText } from './cli-help.js'; import { runReviewCommand } from './cli-review.js'; import { normalizeThreadId, runtimeReviewer } from './reviewer-thread.js'; export { runtimeReviewer } from './reviewer-thread.js'; import { SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, newLocalRepository, pullRequest, storeFor, saveLocal, eventBus, publishWake, publishDependentUnblocked, priority, storySize, chatGptTabClosePolicy, continuation, rejectRemovedJobOptions, rejectRemoteLifecycleOptions, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayControlCommand, relayJobList, optionalLegacyPr, relayJobStateCommand, relayTaskCommand, withEventBus } from './cli-support.js'; export { SERVICE_DEFAULTS, eventBus, chatGptTabClosePolicy } from './cli-support.js';
 import { dependencyValidityFromArgs, recoveryDiagnosisFromArgs, workerTaskFromArgs } from './cli-worker-task.js'; import { taskExecutionContext } from './task-context.js'; import { requestTroubleshooterEscalation, resumeTroubleshooter } from './task-recovery.js';
 import { ensureManagedGitHubJob } from './cli-job-create.js';
 import { pauseJob, resumeJob } from './job-pause.js';
@@ -69,13 +69,14 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   const loaded = await storeFor(args); const { store, localFile } = loaded;
   const job = loaded.job;
   if (action === 'list') { console.log(JSON.stringify(job.tasks, null, 2)); return; }
-  const id = arg(args, '--task-id', action === 'create' ? randomUUID() : '');
-  if (!id) throw new Error(`task ${action} requires --task-id`);
+  const id = action === 'create' ? '' : arg(args, '--task-id');
+  if (!id && action !== 'create') throw new Error(`task ${action} requires --task-id`);
   if (action === 'create') {
     if (['COMPLETED', 'CANCELLED'].includes(job.state)) throw new Error(`Cannot create task on terminal job ${job.id} (${job.state})`);
     const now = new Date().toISOString();
+    // WorkerTaskFromArgs allocates the global numeric ID; do not overwrite it
+    // with a local UUID (or a caller-supplied legacy string).
     const task = await workerTaskFromArgs(job, args, now);
-    task.id = id;
     await store.appendTask(task);
     const refreshed = await store.load(job.id);
     if (refreshed.state === 'DRAFT') { await applyJobActivateAction(refreshed); await store.saveJob(refreshed); }
@@ -183,8 +184,9 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   if(hasArg(args,'--shortcut-local'))throw Error('Legacy Shortcut local binding is removed');
   const obsolete=['--content-only','--no-content-only','--shortcut-execution'].find(flag=>hasArg(args,flag));
   if (obsolete && ['create','update'].includes(action)) throw new Error(`${obsolete} is obsolete; configure normal --review/--no-review and --auto-merge/--no-auto-merge independently`);
-  if (!['create', 'update', 'show', 'list', 'merge', 'unblock', 'cancel', 'pause', 'resume', 'run'].includes(action)) throw new Error(usage);
-  const repo = action === 'create' ? repository(args) : arg(args, '--repo');
+  if (action === 'merge') throw new Error('Unsupported command job merge: remote PR merges are retired; local Git merge is Graph-owned.');
+  if (!['create', 'update', 'show', 'list', 'unblock', 'cancel', 'pause', 'resume', 'run'].includes(action)) throw new Error(usage);
+  const repo = action === 'create' ? newLocalRepository(args) : arg(args, '--repo');
   if (action !== 'create') optionalLegacyPr(args);
   let createObjective: string | undefined;
   if (action === 'create') {
@@ -227,6 +229,8 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     const result = await relayControlCommand(args, { command: 'job.create', repository: repo, initialPlan: hasArg(args, '--initial-plan'), options: {
       id: id || undefined, idempotencyKey: arg(args, '--idempotency-key') || undefined, title: arg(args, '--title') || undefined, objective: objective || undefined, projectRoot: coordinator?.projectRoot ?? (arg(args, '--project-root') || process.cwd()), projectPath: arg(args, '--project-path') || undefined, // Remote delivery is discovered from the canonical local Git origin after completion.
       priority: priority(args), tag: jobTagFromArgs(args), reviewEnabled: !hasArg(args, '--no-review'), autoMerge: !hasArg(args,'--no-auto-merge'), continuation: continuation(args),
+      localMergeSource: hasArg(args, '--local-merge-source') ? arg(args, '--local-merge-source') : undefined,
+      localMergeTarget: hasArg(args, '--local-merge-target') ? arg(args, '--local-merge-target') : undefined,
       coordinator,
       reviewerThreadId: hasArg(args, '--reviewer-thread-id') ? arg(args, '--reviewer-thread-id') : undefined, creatorThreadId: hasArg(args, '--creator-thread-id') ? arg(args, '--creator-thread-id') : undefined, implementationThreadId: hasArg(args, '--implementation-thread-id') ? arg(args, '--implementation-thread-id') : undefined,
     }}); console.log(JSON.stringify(result, null, 2)); return;
@@ -244,9 +248,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (repo && job.repository !== repo) {
     throw new Error('Local Job/PR binding mismatch');
   }
-  if (action === 'merge') {
-    throw new Error('Unsupported command job merge: GitHub PR merge is retired; local merge follows the Job lifecycle graph.');
-  }
+
   if (action === 'cancel') {
     const updated = await relayJobStateCommand(args, job.id, 'CANCELLED');
     console.log(JSON.stringify(updated, null, 2)); return;
@@ -426,10 +428,11 @@ async function main(): Promise<void> {
   if (command === 'escalation') { await runEscalationCommand(args); return; }
   if (command === 'init') {
     const file = arg(args, '--file');
-    rejectRemovedJobOptions(args); const now = new Date().toISOString(); const id = arg(args, '--id', randomUUID());
+    rejectRemovedJobOptions(args); const now = new Date().toISOString();
+    const id = arg(args, '--id', file ? randomUUID() : '');
     if (!file) {
-      const repo = repository(args);
-      const result = await relayControlCommand(args, { command: 'job.create', repository: repo, options: { id, title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), reviewEnabled: !hasArg(args, '--no-review'), continuation: continuation(args) } });
+      const repo = newLocalRepository(args);
+      const result = await relayControlCommand(args, { command: 'job.create', repository: repo, options: { id: id || undefined, projectRoot: arg(args, '--project-root') || process.cwd(), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), reviewEnabled: !hasArg(args, '--no-review'), continuation: continuation(args) } });
       console.log(JSON.stringify(result, null, 2)); return;
     }
     const localRoot = resolve(process.cwd());

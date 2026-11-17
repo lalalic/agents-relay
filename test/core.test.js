@@ -314,13 +314,14 @@ test('CLI task create stores optional project and agent metadata with parent', a
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-task-metadata-'));
   const file = join(directory, 'job.json');
   await writeFile(file, JSON.stringify(job([])));
-  const result = spawn(process.execPath, [join('dist', 'cli.js'), 'task','create', '--file', file, '--task-id', 'child', '--parent', 'orchestrator', '--project', 'Agents Relay', '--agent', 'codex', '--provider','openai','--model','gpt-test','--output','task-pr','--input', 'build metadata'], { cwd: process.cwd() });
+  const result = spawn(process.execPath, [join('dist', 'cli.js'), 'task','create', '--file', file, '--parent', 'orchestrator', '--project', 'Agents Relay', '--agent', 'codex', '--provider','openai','--model','gpt-test','--output','local-git','--input', 'build metadata'], { cwd: process.cwd() });
   const [code] = await once(result, 'exit');
   assert.equal(code, 0);
   const saved = JSON.parse(await readFile(file, 'utf8'));
   assert.equal(saved.tasks[0].projectName, 'Agents Relay');
   assert.equal(saved.tasks[0].agentName, 'codex');
   assert.equal(saved.tasks[0].parentTaskId, 'orchestrator');
+  assert.match(saved.tasks[0].id,/^[1-9][0-9]*$/);
   assert.equal(saved.tasks[0].planningDecisionId, undefined);
   assert.equal(saved.tasks[0].planningSource, undefined);
   assert.equal(saved.tasks.length, 1);
@@ -330,10 +331,11 @@ test('CLI direct task creation can omit routing and reconciler selects one compl
   const file = join(directory, 'job.json');
   const root = { ...job([]), state: 'ACTIVE', reviewEnabled: false, autoMerge: false };
   await writeFile(file, JSON.stringify(root));
-  const child = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--task-id','auto-route','--output','task-pr','--input','route this task'], {cwd:process.cwd()});
+  const child = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--output','local-git','--input','route this task'], {cwd:process.cwd()});
   assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
   const createdJob = JSON.parse(await readFile(file,'utf8'));
-  const created = createdJob.tasks.find(item=>item.id==='auto-route');
+  const created = createdJob.tasks[0];
+  assert.match(created.id,/^[1-9][0-9]*$/);
   assert.equal(created.routing,undefined);
   assert.equal(created.workerSelection,undefined);
   assert.deepEqual(created.workerRequirements,{capabilities:[]});
@@ -343,7 +345,7 @@ test('CLI direct task creation can omit routing and reconciler selects one compl
   const events = [];
   const reconciler = managedReconciler(store,{owner:'test',adapters:[new FakeChatGptAdapter()],maxConcurrent:1,eventBus:new MemoryEventBus(),emit:event=>events.push(event)});
   await reconciler.reconcile('j');
-  const routed = (await store.load('j')).tasks.find(item=>item.id==='auto-route');
+  const routed = (await store.load('j')).tasks.find(item=>item.id===created.id);
   assert.equal(routed.adapter,'chatgpt');
   assert.equal(routed.workerSelection?.adapter,'chatgpt');
   assert.equal(routed.routing?.provider,'chatgpt');
@@ -360,9 +362,10 @@ test('CLI explicit worker/model routing remains a supported compatibility constr
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-direct-explicit-route-'));
   const file = join(directory, 'job.json');
   await writeFile(file, JSON.stringify(job([])));
-  const child = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--task-id','explicit','--adapter','codex','--provider','openai','--model','gpt-test','--output','task-pr','--input','explicit route'], {cwd:process.cwd()});
+  const child = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--adapter','codex','--provider','openai','--model','gpt-test','--output','local-git','--input','explicit route'], {cwd:process.cwd()});
   assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
-  const created = JSON.parse(await readFile(file,'utf8')).tasks.find(item=>item.id==='explicit');
+  const created = JSON.parse(await readFile(file,'utf8')).tasks[0];
+  assert.match(created.id,/^[1-9][0-9]*$/);
   assert.equal(created.workerRequirements,undefined);
   assert.equal(created.routing?.provider,'openai');
   assert.equal(created.routing?.model,'gpt-test');
@@ -377,7 +380,7 @@ test('CLI task create persists Mermaid Agent Graph from file', async () => {
   const graph = 'flowchart TD\nreviewer --> planner\n';
   await writeFile(file, JSON.stringify(job([])));
   await writeFile(graphFile, graph);
-  const result = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--task-id','graph-task','--provider','openai','--model','gpt-test','--output','task-pr','--input','execute graph','--agent-graph-file',graphFile], {cwd:process.cwd()});
+  const result = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--provider','openai','--model','gpt-test','--output','local-git','--input','execute graph','--agent-graph-file',graphFile], {cwd:process.cwd()});
   const [code] = await once(result,'exit');
   assert.equal(code,0);
   const saved=JSON.parse(await readFile(file,'utf8'));
@@ -389,7 +392,7 @@ test('CLI task create rejects new Relay-internal orchestrator work', async () =>
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-orchestrator-create-'));
   const file = join(directory, 'job.json');
   await writeFile(file, JSON.stringify(job([])));
-  const result = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--task-id','self','--adapter','orchestrator','--output','task-pr','--input','handle this in the top-level orchestrator'], {cwd:process.cwd()});
+  const result = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--adapter','orchestrator','--output','local-git','--input','handle this in the top-level orchestrator'], {cwd:process.cwd()});
   const [code] = await once(result, 'exit');
   assert.equal(code, 1);
   const saved = JSON.parse(await readFile(file, 'utf8'));
@@ -2703,7 +2706,7 @@ test('CLI task create rejects malformed Agent Graph before persistence', async (
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-agent-graph-invalid-create-'));
   const file = join(directory, 'job.json');
   await writeFile(file, JSON.stringify(job([])));
-  const child = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--task-id','bad-graph','--output','task-pr','--input','execute graph','--agent-graph','graph LR\na --> b'], {cwd:process.cwd()});
+  const child = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--output','local-git','--input','execute graph','--agent-graph','graph LR\na --> b'], {cwd:process.cwd()});
   assert.notEqual(await new Promise(resolve=>child.on('close',resolve)),0);
   const saved=JSON.parse(await readFile(file,'utf8'));
   assert.equal(saved.tasks.length,0);
