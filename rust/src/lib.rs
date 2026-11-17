@@ -82,3 +82,8 @@ pub mod job_task_id_sequence;
 
 // Direct Node src/unified-job-registry.ts immutable local Job identity and transactions.
 pub mod unified_job_registry;
+
+// Direct Node src/legacy-blocked-task-migration.ts historical Task state migration.
+pub mod legacy_blocked_task_migration;
+// Direct Node src/job-pr-number-migration.ts historical PR-number and Task-title migration.
+pub mod job_pr_number_migration;

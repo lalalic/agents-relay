@@ -357,6 +357,58 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "normalizeLegacyTaskLifecycle" => Ok(
+            agents_relay_rust2::legacy_blocked_task_migration::normalize_legacy_task_lifecycle(
+                &request["task"],
+            )
+            .to_string(),
+        ),
+        "normalizeLegacyJobPrNumber" => Ok(agents_relay_rust2::observability::json_wire(
+            &agents_relay_rust2::job_pr_number_migration::normalize_legacy_job_pr_number(
+                &request["job"],
+            ),
+        )),
+        "legacyMigrationsScenario" => {
+            use rusqlite::{params, Connection};
+            let db = Connection::open_in_memory().map_err(|error| error.to_string())?;
+            db.execute_batch("CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL); CREATE TABLE changed_rows(job_id TEXT); CREATE TRIGGER job_updates AFTER UPDATE ON job_snapshot BEGIN INSERT INTO changed_rows VALUES(new.job_id); END;")
+                .map_err(|error|error.to_string())?;
+            for job in request["jobs"].as_array().into_iter().flatten() {
+                let Some(id) = job["id"].as_str() else {
+                    continue;
+                };
+                db.execute(
+                    "INSERT INTO job_snapshot VALUES(?,?,?)",
+                    params![id, job.to_string(), "ORIGINAL"],
+                )
+                .map_err(|error| error.to_string())?;
+            }
+            let migration = request["migration"].as_str().unwrap_or("blocked");
+            let status = if migration == "blocked" {
+                agents_relay_rust2::legacy_blocked_task_migration::migrate_legacy_blocked_tasks(&db)
+            } else {
+                agents_relay_rust2::job_pr_number_migration::migrate_legacy_job_pr_numbers(&db)
+            };
+            let mut query = db
+                .prepare("SELECT job_id,json,updated_at FROM job_snapshot ORDER BY job_id")
+                .map_err(|error| error.to_string())?;
+            let rows=query.query_map([],|row|Ok(json!({"job_id":row.get::<_,String>(0)?,
+                "json":agents_relay_rust2::job_pr_number_migration::parse_js_json(&row.get::<_,String>(1)?).unwrap_or(Value::Null),
+                "updated_at":row.get::<_,String>(2)?})))
+                .map_err(|error|error.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())?;
+            let mut query = db
+                .prepare("SELECT job_id FROM changed_rows ORDER BY job_id")
+                .map_err(|error| error.to_string())?;
+            let changed = query
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|error| error.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?;
+            Ok(agents_relay_rust2::observability::json_wire(
+                &json!({"status":match status{Ok(())=>json!({"ok":true}),Err(error)=>json!({"ok":false,"error":error})},"rows":rows,"changed":changed}),
+            ))
+        }
+
         "unifiedJobRegistryScenario" => {
             use rusqlite::{params, Connection};
             let mut db = Connection::open_in_memory().map_err(|error| error.to_string())?;
