@@ -308,3 +308,6 @@ pub mod relayd_dashboard_actions;
 pub mod unblock;
 pub mod z_adapter;
 pub mod task_actions;
+pub mod blockers;
+pub mod local_merge_delivery;
+pub mod local_merge_projection;

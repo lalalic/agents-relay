@@ -29,7 +29,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/agent-script-discovery.ts` | `rust/src/agent_script_discovery.rs` | PASS | CLI Core 98 shared Node/Rust filesystem/Graph fixtures including layered Script Agent discovery and symlink confinement; rust/tests/head_to_head_cli_core.mjs |
 | `src/audit-tail.ts` | `rust/src/audit_tail.rs` | PASS | Batch 5: isolated temp-file differential covers absent path, newest-first records, multiline JSON strings, malformed trailing line and a record spanning the 64 KiB reverse-read boundary (`rust/tests/head_to_head_batch5.mjs`) |
 | `src/blocker-recovery.ts` | `rust/src/blocker_recovery.rs` | PENDING | — |
-| `src/blockers.ts` | `rust/src/blockers.rs` | PENDING | — |
+| `src/blockers.ts` | `rust/src/blockers.rs` | PORTING | Serial Phase1 native Rust port for authoritative Graph/SQLite and guarded Git side effects. UNCOMPILED/UNTESTED, finish production bindings in Phase2. |
 | `src/browser-worker-pool-graph.ts` | `rust/src/browser_worker_pool_graph.rs` | PASS | 7 integrated B Node/Rust scenario groups including all 15 resource Graph branches; rust/tests/head_to_head_process_browser_worker.mjs |
 | `src/browser-worker-pool.ts` | `rust/src/browser_worker_pool.rs` | PORTING | Wave4 A: 48 concurrent disposable SQLite manager initializations with bounded SQLITE_BUSY/LOCKED retry; prior real FIFO/lease/quarantine and Graph branch tests pass. Production acquire/session/error mapping remains unverified (native_wave4_graph.rs; head_to_head_process_browser_worker.mjs). |
 | `src/browser-worker-routing.ts` | `rust/src/browser_worker_routing.rs` | PORTING | Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure. |
@@ -110,9 +110,9 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/local-job-path.ts` | `rust/src/local_job_path.rs` | PASS | Batch 5: configured, empty and absent store-directory override compared directly with Node including default home path (`rust/tests/head_to_head_batch5.mjs`) |
 | `src/local-job-registry.ts` | `rust/src/local_job_registry.rs` | PORTING | Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure. |
 | `src/local-managed-store.ts` | `rust/src/local_managed_store.rs` | PORTING | Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure. |
-| `src/local-merge-delivery.ts` | `rust/src/local_merge_delivery.rs` | PENDING | — |
+| `src/local-merge-delivery.ts` | `rust/src/local_merge_delivery.rs` | PORTING | Serial Phase1 native Rust port for authoritative Graph/SQLite and guarded Git side effects. UNCOMPILED/UNTESTED, finish production bindings in Phase2. |
 | `src/local-merge-lock.ts` | `rust/src/local_merge_lock.rs` | PASS | Direct hotfix: real Node↔Rust cross-process directory locking, stale/foreign/live PID and owner recovery, timeout/error/panic-safe release (rust/tests/head_to_head_local_merge_lock.mjs; rust/tests/native_local_merge_lock.rs) |
-| `src/local-merge-projection.ts` | `rust/src/local_merge_projection.rs` | PENDING | — |
+| `src/local-merge-projection.ts` | `rust/src/local_merge_projection.rs` | PORTING | Serial Phase1 native Rust port for authoritative Graph/SQLite and guarded Git side effects. UNCOMPILED/UNTESTED, finish production bindings in Phase2. |
 | `src/managed-worker-input.ts` | `rust/src/managed_worker_input.rs` | PORTING | Wave3 C native layered Agent resolver and 75 original Node prompt comparisons pass; daemon execution-context entrypoint integration unverified (head_to_head_wave3_delivery.mjs). |
 | `src/manual-plan.ts` | `rust/src/manual_plan.rs` | PORTING | Phase1 serial native Rust draft; uncompiled and untested, production API/binding and differential to close in Phase2. |
 | `src/markers.ts` | `rust/src/markers.rs` | PASS | Eight-file hotfix: 5,160 Node/Rust Job/Task/Plan/Agent HTML-comment render/parse cases, native round-trip/security tests; `rust/tests/head_to_head_eight_batch_*.mjs`, `rust/tests/native_eight_batch_*.rs` |
