@@ -465,6 +465,25 @@ fn invoke(request: &Value) -> Result<String, String> {
             request["reviews"].as_array().ok_or("reviews required")?,
         )?
         .to_string()),
+        "reviewWorkSettled" => Ok(
+            json!(agents_relay_rust2::review_replan::review_work_settled(
+                &std::path::Path::new(request["root"].as_str().ok_or("root required")?)
+                    .join("workflow"),
+                &request["job"],
+            )?)
+            .to_string(),
+        ),
+        "recordTargetedRevisionRequest" => {
+            let mut job = request["job"].clone();
+            let result =
+                agents_relay_rust2::review_revision_model::record_targeted_revision_request(
+                    &std::path::Path::new(request["root"].as_str().ok_or("root required")?)
+                        .join("workflow"),
+                    &mut job,
+                    &request["input"],
+                )?;
+            Ok(json!({"result":result,"job":job}).to_string())
+        }
         "reviewNeedsReplan" => Ok(
             json!(agents_relay_rust2::review_replan::review_needs_replan(
                 &request["job"]
