@@ -1,0 +1,461 @@
+// Node provenance: src/dashboard.ts server-side business routes. This tests
+// the serial Rust API backend grafted into the already-merged PWA transport,
+// using disposable service callbacks and a real loopback HTTP listener.
+// No production Job store, WebHelm session, or external GitHub calls are used.
+use agents_relay_rust2::{
+    dashboard::{serve_dashboard, DashboardBackend, DashboardRequest, DashboardResponse},
+    dashboard_api::{DashboardApiOptions, DashboardApiServices, NativeDashboardApi},
+};
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::{HashMap, HashSet},
+    io::{Read, Write},
+    net::{TcpListener, TcpStream},
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver},
+        Arc, Mutex,
+    },
+    thread,
+    time::Duration,
+};
+#[derive(Default)]
+struct FixtureServices {
+    calls: Arc<Mutex<Vec<Value>>>,
+    fail_refresh: Arc<AtomicBool>,
+    fail_webhook: Arc<AtomicBool>,
+}
+impl FixtureServices {
+    fn log(&self, method: &str, value: Value) -> Value {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(json!({"method":method,"value":value}));
+        value
+    }
+}
+fn jobs() -> Vec<Value> {
+    vec![
+        json!({"id":"101","repository":"toy/repo","title":"Alpha",
+            "state":"ACTIVE","priority":"P2","prNumber":17,
+            "createdAt":"2026-11-15T00:00:00.000Z",
+            "updatedAt":"2026-11-17T00:00:00.000Z","tasks":[],"plans":[]}),
+        json!({"id":"102","repository":"toy/repo","title":"Bravo",
+            "state":"COMPLETED","priority":"P1","prNumber":18,
+            "createdAt":"2026-11-14T00:00:00.000Z",
+            "updatedAt":"2026-11-16T00:00:00.000Z","tasks":[],"plans":[]}),
+        json!({"id":"103","repository":"other/repo","title":"Charlie",
+            "state":"CANCELLED","priority":"P2","prNumber":19,
+            "createdAt":"2026-11-13T00:00:00.000Z",
+            "updatedAt":"2026-11-15T00:00:00.000Z","tasks":[],"plans":[]}),
+    ]
+}
+impl DashboardApiServices for FixtureServices {
+    fn discovered_jobs(&mut self, force: bool) -> Result<Vec<Value>, String> {
+        self.log("discovered", json!({"force":force}));
+        if force && self.fail_refresh.load(Ordering::Acquire) {
+            return Err("authoritative sqlite unavailable".into());
+        }
+        Ok(jobs())
+    }
+    fn exact_job(
+        &mut self,
+        id: &str,
+        repo: Option<&str>,
+        pr: Option<u64>,
+    ) -> Result<Option<Value>, String> {
+        self.log("exact", json!({"id":id,"repository":repo,"pr":pr}));
+        Ok(jobs().into_iter().find(|job| {
+            job["id"] == id
+                && repo.is_none_or(|r| job["repository"] == r)
+                && pr.is_none_or(|p| job["prNumber"] == p)
+        }))
+    }
+    fn control(&mut self, body: &Value) -> Result<Value, String> {
+        Ok(self.log("control", body.clone()))
+    }
+    fn job_action(&mut self, id: &str, action: &str) -> Result<Value, String> {
+        Ok(self.log("job_action", json!({"id":id,"action":action})))
+    }
+    fn task_command(&mut self, body: &Value) -> Result<Value, String> {
+        Ok(self.log("task_command", body.clone()))
+    }
+    fn task_action(&mut self, id: &str, task: &str, action: &str) -> Result<Value, String> {
+        Ok(self.log("task_action", json!({"id":id,"task":task,"action":action})))
+    }
+    fn job_set_state(&mut self, id: &str, state: &str, target: &Value) -> Result<Value, String> {
+        Ok(self.log("job_state", json!({"id":id,"state":state,"target":target})))
+    }
+    fn task_set_state(
+        &mut self,
+        id: &str,
+        task: &str,
+        state: &str,
+        target: &Value,
+    ) -> Result<Value, String> {
+        Ok(self.log(
+            "task_state",
+            json!({"id":id,"task":task,
+            "state":state,"target":target}),
+        ))
+    }
+    fn events(&mut self, id: &str, task: Option<&str>, limit: i64) -> Result<Vec<Value>, String> {
+        Ok(vec![
+            self.log("events", json!({"id":id,"task":task,"limit":limit}))
+        ])
+    }
+    fn github_webhook(&mut self, event: &Value) -> Result<(), String> {
+        self.log("github_webhook", event.clone());
+        if self.fail_webhook.swap(false, Ordering::AcqRel) {
+            return Err("simulated SQLite wake rollback".into());
+        }
+        Ok(())
+    }
+    fn router_test(&mut self, id: &str, task: &str) -> Result<Value, String> {
+        Ok(self.log("router_test", json!({"id":id,"task":task})))
+    }
+    fn decision_audit(&mut self) -> Result<Vec<Value>, String> {
+        Ok((0..40).map(|i| json!({"order":i})).collect())
+    }
+    fn runtime_status(&mut self) -> Value {
+        json!({"limited":false,"cooldownUntil":null})
+    }
+    fn account_usage(&mut self) -> Result<Value, String> {
+        Ok(json!({"providers":[]}))
+    }
+    fn github_usage(&mut self) -> Result<Option<Value>, String> {
+        Ok(None)
+    }
+    fn subscribe_events(&mut self) -> Receiver<String> {
+        mpsc::channel().1
+    }
+}
+fn fixture() -> (
+    Arc<NativeDashboardApi<FixtureServices>>,
+    Arc<Mutex<Vec<Value>>>,
+    Arc<AtomicBool>,
+    Arc<AtomicBool>,
+) {
+    let services = FixtureServices::default();
+    let calls = services.calls.clone();
+    let fail_refresh = services.fail_refresh.clone();
+    let fail_webhook = services.fail_webhook.clone();
+    let options = DashboardApiOptions {
+        graph_directory: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
+        router_rules_path: std::env::temp_dir()
+            .join(format!("rust2-dashboard-api-rules-{}", std::process::id())),
+        webhook_secret: Some("local-fixture-secret".into()),
+        webhook_repositories: HashSet::from(["toy/repo".into()]),
+        webhook_job_id: None,
+        webhook_pr_number: Some(17),
+    };
+    (
+        Arc::new(NativeDashboardApi::new(options, services)),
+        calls,
+        fail_refresh,
+        fail_webhook,
+    )
+}
+fn call(
+    backend: &NativeDashboardApi<FixtureServices>,
+    method: &str,
+    url: &str,
+    body: Option<Value>,
+) -> DashboardResponse {
+    let bytes = body.map(|v| v.to_string().into_bytes()).unwrap_or_default();
+    backend.api(DashboardRequest {
+        method,
+        target: url,
+        body: &bytes,
+        headers: &HashMap::new(),
+    })
+}
+fn data(result: DashboardResponse) -> Value {
+    serde_json::from_slice(&result.body).unwrap()
+}
+#[test]
+fn dynamic_dashboard_routes_converge_on_service_backend() {
+    let (backend, calls, fail_refresh, _) = fixture();
+    let listing = call(&backend, "GET", "/api/jobs?status=ACTIVE", None);
+    assert_eq!(listing.status, 200);
+    let selected = data(listing);
+    assert_eq!(selected["total"], 1);
+    assert_eq!(selected["jobs"][0]["id"], "101");
+    assert_eq!(
+        data(call(
+            &backend,
+            "GET",
+            "/api/jobs?inventory=1&repo=toy%2Frepo",
+            None
+        ))["total"],
+        2
+    );
+    assert_eq!(
+        data(call(
+            &backend,
+            "GET",
+            "/api/job?id=101&repo=toy%2Frepo&pr=17",
+            None
+        ))["id"],
+        "101"
+    );
+    assert_eq!(
+        call(&backend, "GET", "/api/job?id=101&repo=other%2Frepo", None).status,
+        404
+    );
+    assert_eq!(
+        data(call(
+            &backend,
+            "GET",
+            "/api/events?job=101&task=2&limit=7",
+            None
+        ))[0]["limit"],
+        7
+    );
+    assert_eq!(
+        call(&backend, "GET", "/api/events?job=bad%20id", None).status,
+        400
+    );
+    assert_eq!(
+        data(call(&backend, "GET", "/api/status", None))["limited"],
+        false
+    );
+    assert_eq!(
+        data(call(&backend, "GET", "/api/usage", None))["providers"],
+        json!([])
+    );
+    assert_eq!(
+        data(call(&backend, "GET", "/api/decision-audit", None))
+            .as_array()
+            .unwrap()
+            .len(),
+        30
+    );
+    assert_eq!(
+        data(call(&backend, "GET", "/api/runtime-summary", None))
+            .get("jobs")
+            .is_some(),
+        false
+    ); // Source schema is authoritative.
+    fail_refresh.store(true, Ordering::Release);
+    assert_eq!(
+        call(&backend, "GET", "/api/jobs?refresh=1", None).status,
+        502
+    );
+    // An ordinary poll can use the last known inventory if SQLite briefly
+    // drops; explicit Refresh MUST report backend failure.
+    assert_eq!(
+        call(&backend, "GET", "/api/jobs?status=ACTIVE", None).status,
+        200
+    );
+    let recorded = calls.lock().unwrap();
+    assert!(recorded
+        .iter()
+        .any(|item| item["method"] == "discovered" && item["value"]["force"] == true));
+}
+#[test]
+fn dashboard_commands_validate_before_invoking_sqlite_graph_actions() {
+    let (backend, calls, _, _) = fixture();
+    assert_eq!(call(&backend, "GET", "/api/control", None).status, 404);
+    let command = json!({"command":"job.reconcile","jobId":"101"});
+    assert_eq!(
+        data(call(
+            &backend,
+            "POST",
+            "/api/control",
+            Some(command.clone())
+        )),
+        command
+    );
+    assert_eq!(
+        call(
+            &backend,
+            "POST",
+            "/api/task-command",
+            Some(json!({"jobId":"101","action":"update"}))
+        )
+        .status,
+        409
+    );
+    assert_eq!(
+        data(call(
+            &backend,
+            "POST",
+            "/api/task-action?id=101&task=2&action=retry",
+            None
+        ))["action"],
+        "retry"
+    );
+    assert_eq!(
+        call(
+            &backend,
+            "POST",
+            "/api/task-action?id=101&task=2&action=execute",
+            None
+        )
+        .status,
+        404
+    );
+    assert_eq!(
+        call(
+            &backend,
+            "POST",
+            "/api/job-state?id=101&state=UNKNOWN",
+            None
+        )
+        .status,
+        404
+    );
+    assert_eq!(
+        data(call(
+            &backend,
+            "POST",
+            "/api/task-state?id=101&task=2&state=BLOCKED&repo=toy%2Frepo",
+            None
+        ))["target"]["repository"],
+        "toy/repo"
+    );
+    assert_eq!(
+        data(call(
+            &backend,
+            "POST",
+            "/api/router-test",
+            Some(json!({"jobId":"101","taskId":"2"}))
+        ))["task"],
+        "2"
+    );
+    assert_eq!(
+        call(&backend, "POST", "/api/router-test", Some(json!({}))).status,
+        400
+    );
+    assert_eq!(
+        call(
+            &backend,
+            "PUT",
+            "/api/execution-router-rules",
+            Some(json!({"value":"large"}))
+        )
+        .status,
+        200
+    );
+    assert!(calls
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|item| item["method"] == "task_state"));
+}
+fn hmac_sha256(secret: &str, body: &[u8]) -> String {
+    let mut key = [0u8; 64];
+    let secret = secret.as_bytes();
+    if secret.len() > 64 {
+        key[..32].copy_from_slice(&Sha256::digest(secret));
+    } else {
+        key[..secret.len()].copy_from_slice(secret);
+    }
+    let mut inner = [0x36u8; 64];
+    let mut outer = [0x5cu8; 64];
+    for i in 0..64 {
+        inner[i] ^= key[i];
+        outer[i] ^= key[i];
+    }
+    let mut hash = Sha256::new();
+    hash.update(inner);
+    hash.update(body);
+    let digest = hash.finalize();
+    let mut hash = Sha256::new();
+    hash.update(outer);
+    hash.update(digest);
+    format!(
+        "sha256={}",
+        hash.finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    )
+}
+fn tcp(addr: &str, request: &str) -> (u16, Vec<u8>) {
+    let mut stream = TcpStream::connect(addr).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut result = Vec::new();
+    stream.read_to_end(&mut result).unwrap();
+    let at = result
+        .windows(4)
+        .position(|bytes| bytes == b"\r\n\r\n")
+        .unwrap()
+        + 4;
+    let headers = std::str::from_utf8(&result[..at]).unwrap();
+    let status = headers
+        .split_ascii_whitespace()
+        .nth(1)
+        .unwrap()
+        .parse()
+        .unwrap();
+    (status, result[at..].to_vec())
+}
+#[test]
+fn actual_pwa_http_transport_preserves_bytes_and_authenticates_webhooks() {
+    let (backend, calls, _, fail_webhook) = fixture();
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let server = {
+        let cloned = backend.clone();
+        let stop = stop.clone();
+        thread::spawn(move || serve_dashboard(listener, cloned, stop).unwrap())
+    };
+    let url = addr.to_string();
+    let (status, body) = tcp(&url, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    assert_eq!(status, 200);
+    assert_eq!(body, include_bytes!("../../dashboard/index.html"));
+    let (status, body) = tcp(
+        &url,
+        "GET /dashboard.js HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    );
+    assert_eq!(status, 200);
+    assert_eq!(body, include_bytes!("../../dashboard/dashboard.js"));
+    let (status, body) = tcp(
+        &url,
+        "GET /api/jobs?status=ACTIVE HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    );
+    assert_eq!(status, 200);
+    assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["total"], 1);
+    let payload = json!({"action":"synchronize","repository":{"full_name":"toy/repo"},
+        "pull_request":{"number":17,
+            "head":{"ref":"refs/heads/feature","sha":"abcdef123456"}}})
+    .to_string();
+    let sign = hmac_sha256("local-fixture-secret", payload.as_bytes());
+    let deliver = |signature: &str, delivery: &str| {
+        let req=format!("POST /webhooks/github HTTP/1.1\r\nHost: localhost\r\n            X-GitHub-Event: pull_request\r\nX-GitHub-Delivery: {delivery}\r\n            X-Hub-Signature-256: {signature}\r\nContent-Length: {}\r\n\r\n{payload}",
+            payload.len());
+        tcp(&url, &req)
+    };
+    assert_eq!(deliver("sha256=invalid", "one").0, 401);
+    fail_webhook.store(true, Ordering::Release);
+    let (status, body) = deliver(&sign, "one");
+    assert_eq!(status, 503, "{}", String::from_utf8_lossy(&body));
+    let (status, body) = deliver(&sign, "one");
+    assert_eq!(status, 202, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(std::str::from_utf8(&body).unwrap(), "Accepted");
+    let (status, body) = deliver(&sign, "one");
+    assert_eq!(status, 202);
+    assert_eq!(std::str::from_utf8(&body).unwrap(), "Duplicate");
+    let records = calls.lock().unwrap();
+    assert_eq!(
+        records
+            .iter()
+            .filter(|e| e["method"] == "github_webhook")
+            .count(),
+        2
+    );
+    drop(records);
+    // Duplicate security-critical headers must fail closed.
+    let request=format!("POST /webhooks/github HTTP/1.1\r\nHost: localhost\r\n        X-GitHub-Event: pull_request\r\nX-GitHub-Delivery: duplicate\r\n        X-Hub-Signature-256: {sign}\r\nX-Hub-Signature-256: {sign}\r\n        Content-Length: {}\r\n\r\n{payload}",payload.len());
+    assert_eq!(tcp(&url, &request).0, 400);
+    stop.store(true, Ordering::Release);
+    server.join().unwrap();
+}

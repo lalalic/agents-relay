@@ -40,6 +40,15 @@ API/webhook routes delegate to an injected backend. SSE frames come only from
 the backend event subscription. The Node/Rust API parity and restart/recovery
 gates are mandatory before replacing the Node service.
 
+### Rust native API integration (Dashboard-only)
+
+- The existing `rust/src/dashboard.rs` is still the *only* native HTTP/static/PWA/SSE transport. Do not replace it with the serial migration branch's obsolete, single-HTML-file HTTP listener.
+- `rust/src/dashboard_api.rs` translates the original server-side Dashboard routes into the injected `DashboardApiServices` interface. Its injected implementation must call the same authoritative SQLite transactions, Graph actions and event bus as the CLI; this module has no independent workflow policy or persisted lifecycle state.
+- The HTTP adapter preserves lowercase incoming headers for webhook verification, rejects duplicate header fields, bounds request bodies, checks HMAC-SHA256 before parsing the GitHub event, and records a delivery ID as accepted **only after** durable webhook handling succeeds. Uncommitted wakes must be retryable.
+- Existing browser files `dashboard/index.html`, `dashboard/dashboard.js`, `dashboard/dashboard.css`, service worker, manifest and icons remain unchanged. Both transports serve the same authoritative assets.
+- Focused evidence: `rust/tests/native_dashboard_api.rs` tests job filters/refresh, actions, webhook signature/duplicate/retry and physical TCP PWA serving; `rust/tests/native_dashboard_pwa.rs` keeps the original asset, SSE and Node-config byte parity. The existing Node Dashboard and Rust differential suites also pass.
+- **Not a production cutover:** the native adapter requires a concrete Graph/SQLite service provider and a live SSE subscription to be wired into the production daemon. Provider/browser-device E2E and remote PWA installation remain separate gates.
+
 ## Installation and release
 
 - npm package includes dashboard/ alongside dist/; files are resolved

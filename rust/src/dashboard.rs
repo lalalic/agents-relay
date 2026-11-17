@@ -3,6 +3,7 @@
 
 use crate::dashboard_data::DEFAULT_DASHBOARD_JOB_STATUSES;
 use std::{
+    collections::HashMap,
     io::{self, Read, Write},
     net::{TcpListener, TcpStream},
     process::Command,
@@ -49,6 +50,9 @@ pub struct DashboardRequest<'a> {
     pub method: &'a str,
     pub target: &'a str,
     pub body: &'a [u8],
+    /// Lowercase HTTP header names, preserved for authenticated webhook
+    /// verification by the native Graph/SQLite API backend.
+    pub headers: &'a HashMap<String, String>,
 }
 pub trait DashboardBackend: Send + Sync + 'static {
     /// Must use the authoritative Graph and SQLite lifecycle, same as CLI.
@@ -193,12 +197,17 @@ fn status_text(status: u16) -> &'static str {
     match status {
         200 => "OK",
         201 => "Created",
+        202 => "Accepted",
         204 => "No Content",
         400 => "Bad Request",
+        401 => "Unauthorized",
         403 => "Forbidden",
         404 => "Not Found",
+        405 => "Method Not Allowed",
         409 => "Conflict",
+        413 => "Payload Too Large",
         500 => "Internal Server Error",
+        502 => "Bad Gateway",
         503 => "Service Unavailable",
         _ => "Response",
     }
@@ -212,7 +221,7 @@ fn write_response(stream: &mut TcpStream, response: DashboardResponse) -> io::Re
     stream.write_all(headers.as_bytes())?;
     stream.write_all(&response.body)
 }
-fn read_request(stream: &mut TcpStream) -> io::Result<(String, String, Vec<u8>)> {
+fn read_request(stream: &mut TcpStream) -> io::Result<(String, String, Vec<u8>, HashMap<String, String>)> {
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     let mut bytes = Vec::new();
     let header_end = loop {
@@ -256,15 +265,24 @@ fn read_request(stream: &mut TcpStream) -> io::Result<(String, String, Vec<u8>)>
             "invalid request line",
         ));
     }
-    let length = header
-        .lines()
-        .find_map(|line| {
-            let (key, value) = line.split_once(':')?;
-            key.eq_ignore_ascii_case("content-length")
-                .then(|| value.trim().parse::<usize>().ok())
-                .flatten()
-        })
-        .unwrap_or(0);
+    let mut headers=HashMap::new();
+    for line in header.lines().skip(1) {
+        let line=line.trim_end_matches('\r');
+        if line.is_empty() { break; }
+        let (name,value)=line.split_once(':').ok_or_else(||
+            io::Error::new(io::ErrorKind::InvalidData,"malformed HTTP header"))?;
+        let name=name.trim().to_ascii_lowercase();
+        if name.is_empty()||!name.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-') {
+            return Err(io::Error::new(io::ErrorKind::InvalidData,"invalid HTTP header name"));
+        }
+        if headers.insert(name,value.trim().to_owned()).is_some() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData,"duplicate HTTP header"));
+        }
+    }
+    let length = headers.get("content-length")
+        .map(|raw|raw.parse::<usize>().map_err(|_|io::Error::new(
+            io::ErrorKind::InvalidData,"invalid content-length")))
+        .transpose()?.unwrap_or(0);
     if length > 1024 * 1024 {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "body too large"));
     }
@@ -281,14 +299,14 @@ fn read_request(stream: &mut TcpStream) -> io::Result<(String, String, Vec<u8>)>
         body.extend_from_slice(&buf[..n]);
     }
     body.truncate(length);
-    Ok((method, target, body))
+    Ok((method, target, body, headers))
 }
 fn handle_connection<B: DashboardBackend>(
     mut stream: TcpStream,
     backend: Arc<B>,
     shutdown: Arc<AtomicBool>,
 ) -> io::Result<()> {
-    let (method, target, body) = match read_request(&mut stream) {
+    let (method, target, body, headers) = match read_request(&mut stream) {
         Ok(value) => value,
         Err(error) => {
             let _ = write_response(
@@ -325,6 +343,7 @@ fn handle_connection<B: DashboardBackend>(
                 method: &method,
                 target: &target,
                 body: &body,
+                headers: &headers,
             }),
         );
     }
