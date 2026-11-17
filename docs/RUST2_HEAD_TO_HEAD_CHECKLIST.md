@@ -27,7 +27,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/agent-graph.ts` | `rust/src/agent_graph.rs` | PENDING | — |
 | `src/agent-prompt-builder.ts` | `rust/src/agent_prompt_builder.rs` | PENDING | — |
 | `src/agent-script-discovery.ts` | `rust/src/agent_script_discovery.rs` | PENDING | — |
-| `src/audit-tail.ts` | `rust/src/audit_tail.rs` | PENDING | — |
+| `src/audit-tail.ts` | `rust/src/audit_tail.rs` | PASS | Batch 5: isolated temp-file differential covers absent path, newest-first records, multiline JSON strings, malformed trailing line and a record spanning the 64 KiB reverse-read boundary (`rust/tests/head_to_head_batch5.mjs`) |
 | `src/blocker-recovery.ts` | `rust/src/blocker_recovery.rs` | PENDING | — |
 | `src/blockers.ts` | `rust/src/blockers.rs` | PENDING | — |
 | `src/browser-worker-pool-graph.ts` | `rust/src/browser_worker_pool_graph.rs` | PENDING | — |
@@ -48,11 +48,11 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/cli-prompt.ts` | `rust/src/cli_prompt.rs` | PENDING | — |
 | `src/cli-review.ts` | `rust/src/cli_review.rs` | PENDING | — |
 | `src/cli-revision.ts` | `rust/src/cli_revision.rs` | PENDING | — |
-| `src/cli-shutdown.ts` | `rust/src/cli_shutdown.rs` | PENDING | — |
+| `src/cli-shutdown.ts` | `rust/src/cli_shutdown.rs` | PASS | Batch 5: exit status precedence, serving mode, delayed default/custom grace and injected force-exit callback verified without terminating the test process (`rust/tests/native_batch5.rs`, `rust/tests/head_to_head_batch5.mjs`). |
 | `src/cli-support.ts` | `rust/src/cli_support.rs` | PENDING | — |
 | `src/cli-unblock.ts` | `rust/src/cli_unblock.rs` | PENDING | — |
 | `src/cli-worker-task.ts` | `rust/src/cli_worker_task.rs` | PENDING | — |
-| `src/cli-workflow-action.ts` | `rust/src/cli_workflow_action.rs` | PENDING | — |
+| `src/cli-workflow-action.ts` | `rust/src/cli_workflow_action.rs` | PASS | Batch 5: direct Node/Rust mapping and unsupported/missing argument errors; Rust exposes async delegated effect (`rust/tests/head_to_head_batch5.mjs`) |
 | `src/cli-workflow.ts` | `rust/src/cli_workflow.rs` | PENDING | — |
 | `src/cli.ts` | `rust/src/cli.rs` | PENDING | — |
 | `src/continuation.ts` | `rust/src/continuation.rs` | PENDING | — |
@@ -73,7 +73,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/escalation-notifier.ts` | `rust/src/escalation_notifier.rs` | PENDING | — |
 | `src/events-bus-runtime.ts` | `rust/src/events_bus_runtime.rs` | PENDING | — |
 | `src/events.ts` | `rust/src/events.rs` | PENDING | — |
-| `src/execution-boundary.ts` | `rust/src/execution_boundary.rs` | PENDING | — |
+| `src/execution-boundary.ts` | `rust/src/execution_boundary.rs` | PASS | Batch 5: controlled Node ordering/error release plus native Rust same-key serialization, different-key concurrency, panic release and reacquisition (`rust/tests/head_to_head_batch5.mjs`, `rust/tests/native_batch5.rs`) |
 | `src/execution-context.ts` | `rust/src/execution_context.rs` | PENDING | — |
 | `src/execution-event-identity.ts` | `rust/src/execution_event_identity.rs` | PENDING | — |
 | `src/execution-process-tracker.ts` | `rust/src/execution_process_tracker.rs` | PENDING | — |
@@ -107,7 +107,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/local-authority-store.ts` | `rust/src/local_authority_store.rs` | PENDING | — |
 | `src/local-commit-events.ts` | `rust/src/local_commit_events.rs` | PENDING | — |
 | `src/local-git-merge.ts` | `rust/src/local_git_merge.rs` | PENDING | — |
-| `src/local-job-path.ts` | `rust/src/local_job_path.rs` | PENDING | — |
+| `src/local-job-path.ts` | `rust/src/local_job_path.rs` | PASS | Batch 5: configured, empty and absent store-directory override compared directly with Node including default home path (`rust/tests/head_to_head_batch5.mjs`) |
 | `src/local-job-registry.ts` | `rust/src/local_job_registry.rs` | PENDING | — |
 | `src/local-managed-store.ts` | `rust/src/local_managed_store.rs` | PENDING | — |
 | `src/local-merge-delivery.ts` | `rust/src/local_merge_delivery.rs` | PENDING | — |
@@ -335,3 +335,17 @@ Reproduce from the repository root: `cargo fmt --manifest-path rust/Cargo.toml`;
 - [x] `node --test rust/tests/head_to_head.mjs rust/tests/head_to_head_adversarial.mjs rust/tests/head_to_head_batch4_edge.mjs`: **729 + 4132 + 70 = 4931** matching Node/Rust differential cases (including independent adversarial cases).
 - [x] `cargo test --offline --manifest-path rust/Cargo.toml`: **19/19** Rust-native tests pass across earlier and Batch 4 tests.
 - [x] `cargo clippy --offline --manifest-path rust/Cargo.toml --all-targets -- -D warnings` clean.
+
+### Batch 5 — local path, CLI effects, execution lock and audit tail (2026-11-16)
+
+- [x] `src/local-job-path.ts` → `rust/src/local_job_path.rs`.
+- [x] `src/cli-shutdown.ts` → `rust/src/cli_shutdown.rs`, with delayed detached force-exit callback and injectable callback boundary.
+- [x] `src/cli-workflow-action.ts` → `rust/src/cli_workflow_action.rs`.
+- [x] `src/execution-boundary.ts` → `rust/src/execution_boundary.rs`.
+- [x] `src/audit-tail.ts` → `rust/src/audit_tail.rs`.
+- [x] `node --test rust/tests/head_to_head_batch5.mjs` — **5/5** differential/behavioral cases passed; shutdown uses an injected callback to protect the Node test process.
+- [x] Native controlled Rust tests — **2/2** passed, including execution-boundary same-key ordering/different-key concurrency/error release and delayed injected shutdown callback.
+- [x] `scripts/rust2-verify.sh` — passed: Rust fmt, **21/21** native Rust cases, clippy with warnings denied, and **4936** total Node/Rust cases across all four differential suites.
+- [x] `npm run build --silent` — passed before focused Batch 5 comparison.
+
+Current verified source modules: **28 / 227**; remaining: **199**. The parity CLI remains a test-only differential entry point, not the Relay runtime or service.

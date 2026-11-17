@@ -1,11 +1,15 @@
 // New differential CLI: exposes verified Node source-module ports to isolated Rust/Node fixture comparisons.
 use agents_relay_rust2::{
+    audit_tail::read_jsonl_newest_first,
     cli_local_merge_config::configure_local_git_merge,
+    cli_shutdown::final_exit_code,
+    cli_workflow_action::workflow_operation,
     dependency_validity::validate_dependency_validity,
     final_review_role::is_final_review_agent,
     github_binding_order::order_github_binding_candidates,
     github_branch_projection::authoritative_branch_push_args,
     job_execution_slot::{job_has_active_execution, job_has_conflicting_execution},
+    local_job_path::relay_store_directory,
     planned_review_head::bind_planned_review_head,
     planner_agent_roles::validate_planner_agent_roles,
     planner_history_cleanup::parse_planner_history_cleanup,
@@ -23,6 +27,30 @@ use std::io::{self, BufRead};
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "relayStoreDirectory" => Ok(json!(relay_store_directory(
+            request["env"].as_str(),
+            request["home"].as_str()
+        ))
+        .to_string()),
+        "workflowOperation" => {
+            let args = request["args"]
+                .as_array()
+                .ok_or("args must be an array")?
+                .iter()
+                .map(|v| v.as_str().unwrap_or("").to_owned())
+                .collect::<Vec<_>>();
+            Ok(json!(workflow_operation(&args)?).to_string())
+        }
+        "shutdownExitCode" => Ok(json!(final_exit_code(
+            request["mainError"].as_bool().unwrap_or(false),
+            request["processExitCode"].as_i64().map(|v| v as i32)
+        ))
+        .to_string()),
+        "auditTail" => Ok(json!(read_jsonl_newest_first(
+            request["path"].as_str().ok_or("path required")?
+        )
+        .map_err(|e| e.to_string())?)
+        .to_string()),
         "isFinalReviewAgent" => {
             Ok(json!(is_final_review_agent(request["name"].as_str())).to_string())
         }
