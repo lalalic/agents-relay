@@ -315,3 +315,5 @@ pub mod types;
 pub mod worker_routing;
 pub mod model_routing;
 pub mod execution_routing;
+pub mod decision_audit;
+pub mod cli_job_create;

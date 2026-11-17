@@ -42,7 +42,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/cli-escalation.ts` | `rust/src/cli_escalation.rs` | PORTING | Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure. |
 | `src/cli-foreground.ts` | `rust/src/cli_foreground.rs` | PORTING | Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure. |
 | `src/cli-help.ts` | `rust/src/cli_help.rs` | PASS | Rebased to current main: all 47 CLI help keys, obsolete PR/projection/merge commands removed; direct Node/Rust byte-level CLI help and fallback differential (`rust/tests/head_to_head_cli_help.mjs`, `rust/tests/native_cli_help.rs`) |
-| `src/cli-job-create.ts` | `rust/src/cli_job_create.rs` | PENDING | — |
+| `src/cli-job-create.ts` | `rust/src/cli_job_create.rs` | PORTING | Serial Phase1 native SQLite Job creation and bounded/redacted JSONL routing audit port; uncompiled/untested, Stage2 bindings+differential pending. |
 | `src/cli-local-merge-config.ts` | `rust/src/cli_local_merge_config.rs` | PASS | 626 shared differential fixtures across 14 ports; merge success and validation errors compared (`rust/tests/head_to_head.mjs`) |
 | `src/cli-projection.ts` | `rust/src/cli_projection.rs` | EXCLUDED | Removed by main local-Git-only CLI lifecycle; PR projection commands and their Rust mirror/differential tests are retired, no longer an executable public CLI surface. |
 | `src/cli-prompt.ts` | `rust/src/cli_prompt.rs` | PENDING | — |
@@ -66,7 +66,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/dashboard-style.ts` | `rust/src/dashboard_style.rs` | PASS | Direct hotfix: exact 25,275 byte runtime dashboard CSS literal, SHA-256 676e173854d712a21bf4cf0a3dfaa59bf015a458ce9a2b54d8e632a082a56c34 (rust/tests/head_to_head_dashboard_style.mjs) |
 | `src/dashboard-workflow-inspection.ts` | `rust/src/dashboard_workflow_inspection.rs` | PASS | Batch 6: Node/Rust differential fixtures cover valid exact Event/Action graph symbols, source/test references, malformed identifiers and traversal rejection (`rust/tests/head_to_head_batch6.mjs`); native path-safety test. |
 | `src/dashboard.ts` | `rust/src/dashboard.rs` | PENDING | — |
-| `src/decision-audit.ts` | `rust/src/decision_audit.rs` | PENDING | — |
+| `src/decision-audit.ts` | `rust/src/decision_audit.rs` | PORTING | Serial Phase1 native SQLite Job creation and bounded/redacted JSONL routing audit port; uncompiled/untested, Stage2 bindings+differential pending. |
 | `src/decision.ts` | `rust/src/decision.rs` | PORTING | Wave3 A real isolated Laya owned shell, stdout/stderr, timeout and prior 4401 decision cases pass; actual external decision service caller and complete error/export paths still unproven (head_to_head_wave3_graph.mjs). |
 | `src/dependency-revision-execution.ts` | `rust/src/dependency_revision_execution.rs` | PORTING | Phase1 serial native Rust source port; uncompiled/unverified, production integration and head-to-head differential pending Phase2. |
 | `src/dependency-validity.ts` | `rust/src/dependency_validity.rs` | PASS | 327 shared differential fixtures across 4 ports; Rust native tests 5/5; Node focused regression 4/4; clippy clean (`rust/tests/head_to_head.mjs`) |
