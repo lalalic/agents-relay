@@ -17,7 +17,7 @@ test('service doctor detects old PM2 daemon argv, even when process is online, w
   writeFileSync(fakeNpx,'#!/bin/sh\ncat "$FAKE_PM2_SNAPSHOT"\n');chmodSync(fakeNpx,0o755);
   const desired=staticEntry[2].map(x=>x.replaceAll('__HOME__',root));
   const makeSnapshot=daemonArgs=>JSON.stringify([
-    {name:'agents-relay/daemon',pm2_env:{status:'online',pm_exec_path:desired[0],args:daemonArgs}},
+    {name:'agents-relay/daemon',pm2_env:{status:'online',pm_exec_path:'/opt/homebrew/bin/npx',args:daemonArgs}},
     {name:'agents-relay/dashboard-tunnel',pm2_env:{status:'online',pm_exec_path:'/opt/homebrew/bin/cloudflared',
       args:serviceDefinitions.find(x=>x[0]==='dashboard-tunnel')[2]}}
   ]);
@@ -25,7 +25,7 @@ test('service doctor detects old PM2 daemon argv, even when process is online, w
   const run=(mode)=>spawnSync(process.execPath,[serviceScript,mode],{
     encoding:'utf8',timeout:10000,env:{...process.env,HOME:root,PATH:root+':'+process.env.PATH,FAKE_PM2_SNAPSHOT:snapshot}
   });
-  writeFileSync(snapshot,makeSnapshot(['--workspace',root+'/Workspace',...desired.slice(1),'--github-webhook-secret-file','/private/key']));
+  writeFileSync(snapshot,makeSnapshot([...desired,'--workspace',root+'/Workspace','--github-webhook-secret-file','/private/key']));
   const bad=run('doctor');
   assert.equal(bad.status,2,bad.stderr);
   const report=JSON.parse(bad.stdout);
@@ -36,7 +36,7 @@ test('service doctor detects old PM2 daemon argv, even when process is online, w
   const setup=run('setup');
   assert.equal(setup.status,2,'setup must not falsely report successful upgrade of an existing service');
   assert.equal(JSON.parse(setup.stdout).services[0].configuration,'drift');
-  writeFileSync(snapshot,makeSnapshot(desired.slice(1)));
+  writeFileSync(snapshot,makeSnapshot(desired));
   const good=run('doctor');
   assert.equal(good.status,0,good.stderr);
   assert.equal(JSON.parse(good.stdout).services.every(x=>x.configuration==='match'),true);

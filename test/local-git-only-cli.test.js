@@ -70,9 +70,9 @@ test('service manager defines a local, workspace-scan-free daemon without retire
  const services=JSON.parse(definitions[1]);
  const [name,binary,args]=services.find(item=>item[0]==='daemon');
  assert.equal(name,'daemon');
- assert.equal(binary,'node');
- assert.equal(args[0],'__HOME__/Workspace/agents-relay/dist/relayd-main.js',
-   'managed daemon must use checked-out local build, never the @latest package');
+ assert.equal(binary,'npx');
+ assert.deepEqual(args.slice(0,4), ['--yes','--package','agents-relay@latest','agents-relayd'],
+   'Neo Master daemon must use published npm latest so package.published can restart it');
  for(const obsolete of ['--workspace','--workspace-root','--github-webhook-secret-file',
    '--github-repo','--no-github','--pr'])
    assert.equal(args.includes(obsolete),false,obsolete);

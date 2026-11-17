@@ -13,7 +13,7 @@ Goal: reliably create, inspect, resume, review, and merge a local Git Job, with 
 
 - Create: bind one Job ID to a validated canonical local Git root; optionally create the first Plan or a Coordinator DAG.
 - Inspect and resume: use the version-matched CLI and SQLite-backed Job/Task history.
-- Daemon: `agents-relayd` loads existing Jobs from SQLite, never a recursive Workspace scan; ordinary launch needs no `--workspace`. Repository paths come from immutable `job.projectRoot` only.
+- Daemon: `agents-relayd` loads existing Jobs from SQLite, never a recursive Workspace scan; ordinary launch needs no `--workspace`. Repository paths come from immutable `job.projectRoot` only. Neo Master production runs the published `agents-relay@latest` npm package (CLI and PM2 daemon); `neo/package-service-updater` monitors new publications. Never deploy a build from the dirty `rust2` developer checkout.
 - Review and merge: review the local Git head, then merge through the normal Job gate.
 - Deliver: only after `COMPLETED`, the daemon may non-force-push verified `main` when `origin/main` exists and fetch/push destinations match; otherwise skip or retry independently. Remote results never change Job lifecycle or create PRs.
 

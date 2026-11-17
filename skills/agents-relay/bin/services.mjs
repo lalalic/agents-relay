@@ -2,7 +2,7 @@
 import {spawnSync} from 'node:child_process';
 import {basename} from 'node:path';
 const skill="agents-relay";
-const definitions=[["daemon", "node", ["__HOME__/Workspace/agents-relay/dist/relayd-main.js", "--port", "8787", "--concurrency", "4", "--interval", "300000", "--refresh-ms", "300000"]], ["dashboard-tunnel", "cloudflared", ["tunnel", "--protocol", "http2", "--no-autoupdate", "run", "--url", "http://127.0.0.1:8787", "agents-relay-dashboard"]]];
+const definitions=[["daemon", "npx", ["--yes", "--package", "agents-relay@latest", "agents-relayd", "--port", "8787", "--concurrency", "4", "--interval", "300000", "--refresh-ms", "300000"]], ["dashboard-tunnel", "cloudflared", ["tunnel", "--protocol", "http2", "--no-autoupdate", "run", "--url", "http://127.0.0.1:8787", "agents-relay-dashboard"]]];
 const home=process.env.HOME||'';
 const expand=s=>s.replaceAll('__HOME__',home);
 const action=process.argv[2]||'status';
