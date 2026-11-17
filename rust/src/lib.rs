@@ -31,6 +31,18 @@ pub mod task_tag;
 pub mod worker_rejection;
 pub mod workflow {
     pub mod conditions;
+    // Direct Node src/workflow/graph-v2.ts executable state/guard/action/event Graph.
+    pub mod graph_v2;
+    // Companion grammar/topology half of the Node src/workflow/graph-v2.ts direct port.
+    pub mod graph_v2_parser;
+    // Direct Node src/workflow/usage-index.ts readonly Graph symbol usage index.
+    pub mod usage_index;
+    // Direct Node src/workflow/durable-publication.ts transactional workflow outbox/inbox.
+    pub mod durable_publication;
+    // Direct Node src/workflow/definitions-v2.ts canonical Task/Job Graph registries and transitions.
+    pub mod definitions_v2;
+    // Direct Node src/workflow/runtime.ts mechanical Graph-selected Task/Job effects.
+    pub mod runtime;
     // Direct Node src/workflow/action-ledger.ts Graph-authorized durable effect receipts.
     pub mod action_ledger;
     pub mod contracts;
@@ -132,3 +144,12 @@ pub mod github_webhook;
 
 // Direct Node src/markers.ts HTML metadata and legacy markdown read/render.
 pub mod markers;
+
+// Direct Node src/reconciler-workflow-outbox.ts transport publication effect.
+pub mod reconciler_workflow_outbox;
+
+// Direct Node src/graph-runtime.ts re-export alias to graph-v2 runtime.
+pub mod graph_runtime;
+
+// Direct Node src/agent-graph.ts production Agent DAG parsing and prompt text.
+pub mod agent_graph;

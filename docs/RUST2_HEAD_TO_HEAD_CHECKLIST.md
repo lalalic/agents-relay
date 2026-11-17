@@ -24,7 +24,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 |---|---|---|---|
 | `src/adapters.ts` | `rust/src/adapters.rs` | PENDING | — |
 | `src/agent-content-resolver.ts` | `rust/src/agent_content_resolver.rs` | PASS | Direct hotfix: 500 Node/Rust source-layer fixtures, 252 isolated Agent files/section inheritance cases, 120 multi-layer snapshots; 5 native tests, 18 focused Node regressions (rust/tests/head_to_head_agent_content_resolver.mjs; rust/tests/native_agent_content_resolver.rs) |
-| `src/agent-graph.ts` | `rust/src/agent_graph.rs` | PENDING | — |
+| `src/agent-graph.ts` | `rust/src/agent_graph.rs` | PASS | Eight-module Graph/Outbox batch: 1,050 DAG syntax/wave parses, 690 visibility policy cases, actual resolved Agent-contract prompt parity; `rust/tests/head_to_head_graph_*.mjs`, `rust/tests/head_to_head_agent_graph.mjs`, `rust/tests/head_to_head_workflow_*.mjs`, `rust/tests/native_graph_outbox_batch.rs` |
 | `src/agent-prompt-builder.ts` | `rust/src/agent_prompt_builder.rs` | PASS | Direct hotfix: 1,100 pure prompt/render fixtures; 220 reference-first fixtures; 150 exact execution prompts; isolated immutable SHA-256 snapshots and filesystem/error semantics; 5 Rust-native tests, 19 Node regressions (rust/tests/head_to_head_agent_prompt_builder.mjs; rust/tests/native_agent_prompt_builder.rs) |
 | `src/agent-script-discovery.ts` | `rust/src/agent_script_discovery.rs` | PENDING | — |
 | `src/audit-tail.ts` | `rust/src/audit_tail.rs` | PASS | Batch 5: isolated temp-file differential covers absent path, newest-first records, multiline JSON strings, malformed trailing line and a record spanning the 64 KiB reverse-read boundary (`rust/tests/head_to_head_batch5.mjs`) |
@@ -90,7 +90,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/github-pr-archive.ts` | `rust/src/github_pr_archive.rs` | PASS | Direct callback port: 1,156 Node/Rust fake GitHubClient display-only PR scenarios, 4 native tests and original Node PR archive regression (`rust/tests/head_to_head_github_pr_archive.mjs`, `rust/tests/native_github_pr_archive.rs`) |
 | `src/github-runtime-usage.ts` | `rust/src/github_runtime_usage.rs` | PASS | Direct port: 1,793 Node/Rust rate/header/Unicode/datetime fixtures, 5 native tests, 8 original Node runtime-rate regressions (`rust/tests/head_to_head_github_runtime_usage.mjs`, `rust/tests/native_github_runtime_usage.rs`) |
 | `src/github-webhook.ts` | `rust/src/github_webhook.rs` | PASS | Eight-file hotfix: 580 event/trusted comment fixtures, 1,000 package marker cases, 280 HMAC signatures, 240 delivery dedup windows; native HMAC/receipt tests; `rust/tests/head_to_head_eight_batch_*.mjs`, `rust/tests/native_eight_batch_*.rs` |
-| `src/graph-runtime.ts` | `rust/src/graph_runtime.rs` | PENDING | — |
+| `src/graph-runtime.ts` | `rust/src/graph_runtime.rs` | PASS | Eight-module Graph/Outbox batch: alias to canonical Graph-v2 runtime with 1,300 Graph runtime differential cases; `rust/tests/head_to_head_graph_*.mjs`, `rust/tests/head_to_head_agent_graph.mjs`, `rust/tests/head_to_head_workflow_*.mjs`, `rust/tests/native_graph_outbox_batch.rs` |
 | `src/host-invocation-store.ts` | `rust/src/host_invocation_store.rs` | PENDING | — |
 | `src/interactive-invocation.ts` | `rust/src/interactive_invocation.rs` | PENDING | — |
 | `src/interactive-request.ts` | `rust/src/interactive_request.rs` | PENDING | — |
@@ -148,7 +148,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/reconciler-pause.ts` | `rust/src/reconciler_pause.rs` | PASS | Direct port: 905 Node/Rust generation-selection cases; 3 native tests; in-memory cancellation callbacks only (`rust/tests/head_to_head_reconciler_pause.mjs`, `rust/tests/native_reconciler_pause.rs`) |
 | `src/reconciler-review.ts` | `rust/src/reconciler_review.rs` | PENDING | — |
 | `src/reconciler-runtime.ts` | `rust/src/reconciler_runtime.rs` | PENDING | — |
-| `src/reconciler-workflow-outbox.ts` | `rust/src/reconciler_workflow_outbox.rs` | PENDING | — |
+| `src/reconciler-workflow-outbox.ts` | `rust/src/reconciler_workflow_outbox.rs` | PASS | Eight-module Graph/Outbox batch: 550 direct Node/Rust transport drain outcomes within SQLite outbox fixture histories; `rust/tests/head_to_head_graph_*.mjs`, `rust/tests/head_to_head_agent_graph.mjs`, `rust/tests/head_to_head_workflow_*.mjs`, `rust/tests/native_graph_outbox_batch.rs` |
 | `src/reconciler.ts` | `rust/src/reconciler.rs` | PENDING | — |
 | `src/registry.ts` | `rust/src/registry.rs` | PASS | Batch 4: 700 shared differential cases across 21 source ports; filtering, trust domains, labels, task-kind evidence, exploratory ordering and reliability ranking (`rust/tests/head_to_head.mjs`) |
 | `src/relay-create.ts` | `rust/src/relay_create.rs` | PASS | Eight-file hotfix: Atomic SQLite create-if-absent and immutable metadata: 180 direct Node/Rust Job creation histories, native original Job and duplicate identity tests; `rust/tests/head_to_head_eight_batch_*.mjs`, `rust/tests/native_eight_batch_*.rs` |
@@ -221,16 +221,16 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/workflow/blocker-resolution-v2.ts` | `rust/src/workflow/blocker_resolution_v2.rs` | PENDING | — |
 | `src/workflow/conditions.ts` | `rust/src/workflow/conditions.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; tri-state guards, duplicate/unknown errors, sorted discovery, verification and safe-retry predicate (`rust/tests/head_to_head.mjs`) |
 | `src/workflow/contracts.ts` | `rust/src/workflow/contracts.rs` | PASS | Direct hotfix: 2,178 shared Node/Rust event/fact/action inventories, ordered effect policies, classification, errors and empty decisions (rust/tests/head_to_head_direct_hotfix.mjs) |
-| `src/workflow/definitions-v2.ts` | `rust/src/workflow/definitions_v2.rs` | PENDING | — |
+| `src/workflow/definitions-v2.ts` | `rust/src/workflow/definitions_v2.rs` | PASS | Eight-module Graph/Outbox batch: 950 real Task/Job Graph topology transitions and 1,150 canonical Graph guard/decision cases; `rust/tests/head_to_head_graph_*.mjs`, `rust/tests/head_to_head_agent_graph.mjs`, `rust/tests/head_to_head_workflow_*.mjs`, `rust/tests/native_graph_outbox_batch.rs` |
 | `src/workflow/dependency-revision-v2.ts` | `rust/src/workflow/dependency_revision_v2.rs` | PENDING | — |
 | `src/workflow/dispatcher.ts` | `rust/src/workflow/dispatcher.rs` | PENDING | — |
-| `src/workflow/durable-publication.ts` | `rust/src/workflow/durable_publication.rs` | PENDING | — |
+| `src/workflow/durable-publication.ts` | `rust/src/workflow/durable_publication.rs` | PASS | Eight-module Graph/Outbox batch: 550 direct Node/Rust SQLite outbox/inbox replay/commit/consumer histories and native rollback tests; `rust/tests/head_to_head_graph_*.mjs`, `rust/tests/head_to_head_agent_graph.mjs`, `rust/tests/head_to_head_workflow_*.mjs`, `rust/tests/native_graph_outbox_batch.rs` |
 | `src/workflow/durable-transition.ts` | `rust/src/workflow/durable_transition.rs` | PENDING | — |
 | `src/workflow/effects.ts` | `rust/src/workflow/effects.rs` | PASS | Direct hotfix: 762 stateful Node/Rust handler/receipt/onOutcome/observation fixtures; 8 Rust-native effect tests and 5 original Node regressions (rust/tests/head_to_head_workflow_effects.mjs; rust/tests/native_workflow_effects.rs) |
 | `src/workflow/entity-creation.ts` | `rust/src/workflow/entity_creation.rs` | PENDING | — |
 | `src/workflow/escalation.ts` | `rust/src/workflow/escalation.rs` | PENDING | — |
 | `src/workflow/force-restate-validation-v2.ts` | `rust/src/workflow/force_restate_validation_v2.rs` | PENDING | — |
-| `src/workflow/graph-v2.ts` | `rust/src/workflow/graph_v2.rs` | PENDING | — |
+| `src/workflow/graph-v2.ts` | `rust/src/workflow/graph_v2.rs` | PASS | Eight-module Graph/Outbox batch: 1,100 strict Node/Rust Mermaid syntax/topology cases; 1,300 Graph runtime/dispatcher decisions and action receipts, companion parser `graph_v2_parser.rs`; `rust/tests/head_to_head_graph_*.mjs`, `rust/tests/head_to_head_agent_graph.mjs`, `rust/tests/head_to_head_workflow_*.mjs`, `rust/tests/native_graph_outbox_batch.rs` |
 | `src/workflow/job-reconcile-v2.ts` | `rust/src/workflow/job_reconcile_v2.rs` | PENDING | — |
 | `src/workflow/lifecycle.ts` | `rust/src/workflow/lifecycle.rs` | PENDING | — |
 | `src/workflow/mermaid.ts` | `rust/src/workflow/mermaid.rs` | PASS | Direct hotfix: 924 Mermaid parser + 663 sync/async WorkflowEngine Node/Rust comparisons, real native callback/transition tests (rust/tests/head_to_head_mermaid.mjs; rust/tests/native_direct_hotfix.rs) |
@@ -240,13 +240,13 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/workflow/projection-conflict-v2.ts` | `rust/src/workflow/projection_conflict_v2.rs` | PENDING | — |
 | `src/workflow/review-v2.ts` | `rust/src/workflow/review_v2.rs` | PENDING | — |
 | `src/workflow/revision-v2.ts` | `rust/src/workflow/revision_v2.rs` | PENDING | — |
-| `src/workflow/runtime.ts` | `rust/src/workflow/runtime.rs` | PENDING | — |
+| `src/workflow/runtime.ts` | `rust/src/workflow/runtime.rs` | PASS | Eight-module Graph/Outbox batch: 1,160 Task/Job state mutations; 850 workflow Engine decisions and 90 no-start fallback semantic cases; `rust/tests/head_to_head_graph_*.mjs`, `rust/tests/head_to_head_agent_graph.mjs`, `rust/tests/head_to_head_workflow_*.mjs`, `rust/tests/native_graph_outbox_batch.rs` |
 | `src/workflow/task-action-policy.ts` | `rust/src/workflow/task_action_policy.rs` | PENDING | — |
 | `src/workflow/task-reconcile.ts` | `rust/src/workflow/task_reconcile.rs` | PENDING | — |
 | `src/workflow/task-related-action-v2.ts` | `rust/src/workflow/task_related_action_v2.rs` | PENDING | — |
 | `src/workflow/task-resolution.ts` | `rust/src/workflow/task_resolution.rs` | PENDING | — |
 | `src/workflow/troubleshooter-v2.ts` | `rust/src/workflow/troubleshooter_v2.rs` | PENDING | — |
-| `src/workflow/usage-index.ts` | `rust/src/workflow/usage_index.rs` | PENDING | — |
+| `src/workflow/usage-index.ts` | `rust/src/workflow/usage_index.rs` | PASS | Eight-module Graph/Outbox batch: 628 canonical Mermaid symbol usages and 480 synthetic reverse index and filter fixtures; `rust/tests/head_to_head_graph_*.mjs`, `rust/tests/head_to_head_agent_graph.mjs`, `rust/tests/head_to_head_workflow_*.mjs`, `rust/tests/native_graph_outbox_batch.rs` |
 | `src/workspace.ts` | `rust/src/workspace.rs` | PENDING | — |
 | `src/z-adapter.ts` | `rust/src/z_adapter.rs` | PENDING | — |
 | `src/z-oauth.ts` | `rust/src/z_oauth.rs` | PENDING | — |
@@ -555,3 +555,15 @@ This is only the Job JEL graph projection; Dashboard HTTP routing, additional ta
 - [x] `src/github-webhook.ts` → `rust/src/github_webhook.rs`: signed HMAC-SHA256 verification, event/action classification, trusted bot-only publish comments, package marker validation, one-time delivery receipts.
 - [x] `src/markers.ts` → `rust/src/markers.rs`: byte-accurate HTML comment rendering, safe angle-bracket escaping, historical Job/Task fallback content and Plan/Agent metadata handling.
 - [x] Four direct Node/Rust head-to-head suites with 16,969 head-to-head fixture scenarios, plus 12 native Rust boundary tests and 28 focused original Node integration regressions. All data is isolated in-memory SQLite; no live Jobs, remote GitHub calls, or source checkout writes.
+
+### Eight-module Graph, Agent DAG and durable Outbox batch (2026-11-17)
+
+- [x] `src/workflow/graph-v2.ts`: strict parser, declarative Graph registry, Guard/Action/Event execution and dispatcher. Grammar/topology isolated in `graph_v2_parser.rs`; never duplicate Graph-owned lifecycle policy.
+- [x] `src/graph-runtime.ts`: canonical Graph-v2 API re-export.
+- [x] `src/workflow/definitions-v2.ts`: canonical Job/Task Graph bindings and topology-only state validation.
+- [x] `src/workflow/usage-index.ts`: read-only canonical Mermaid reverse symbol inventory.
+- [x] `src/agent-graph.ts`: Coordinator DAG parsing, deterministic waves, source-visible Agent contracts and Agent-Graph prompt.
+- [x] `src/workflow/runtime.ts`: mechanical mutation effects, stale/blocked Task guards, Job/Task timestamp compatibility, no-start fallback receipts.
+- [x] `src/workflow/durable-publication.ts`: atomic SQLite publication outbox/inbox, durable key/identity collision, consumer dedupe and failure replay.
+- [x] `src/reconciler-workflow-outbox.ts`: publish pending events via caller-provided transports only, never mutate canonical state independently.
+- [x] Six isolated direct Node/Rust differential suites plus four native Rust boundary checks; no production services, user Jobs, or current root checkout writes during port construction.

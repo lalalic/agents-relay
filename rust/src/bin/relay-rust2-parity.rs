@@ -357,6 +357,405 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "workflowRuntimeMutation" => {
+            use agents_relay_rust2::workflow::runtime::*;
+            let mut target = request.get("target").cloned().unwrap_or(json!({}));
+            let at = request["timestamp"]
+                .as_str()
+                .unwrap_or("2026-11-17T05:00:00.000Z");
+            let result = match request["action"].as_str().unwrap_or("") {
+                "applyTaskMutation" => {
+                    apply_task_mutation(&mut target, request["mutation"].as_str().unwrap_or(""), at)
+                }
+                "applyTaskGraphTarget" => apply_task_graph_target(
+                    &mut target,
+                    request["state"].as_str().unwrap_or(""),
+                    at,
+                    request["authoritativeUnblock"] == true,
+                ),
+                "applyJobGraphTarget" => {
+                    apply_job_graph_target(
+                        &mut target,
+                        request["state"].as_str().unwrap_or(""),
+                        at,
+                    );
+                    Ok(())
+                }
+                "applyTaskWorkflowDecision" => {
+                    apply_task_workflow_decision(&mut target, &request["decision"], at)
+                }
+                "applyJobWorkflowDecision" => {
+                    apply_job_workflow_decision(&mut target, &request["decision"], at)
+                }
+                "applyHistoricalJobCompatibilityRepair" => {
+                    apply_historical_job_compatibility_repair(
+                        &mut target,
+                        request["state"].as_str().unwrap_or(""),
+                        at,
+                    )
+                }
+                _ => Err("Unknown workflow runtime mutation".into()),
+            };
+            result?;
+            Ok(agents_relay_rust2::observability::json_wire(&target))
+        }
+        "graphWorkflowDecision" => {
+            use agents_relay_rust2::workflow::{
+                mermaid::{
+                    parse_executable_mermaid, WorkflowAction, WorkflowEngine, WorkflowGuard,
+                },
+                runtime::graph_workflow_decision,
+            };
+            use std::{collections::HashMap, sync::Arc};
+            let graph = parse_executable_mermaid(request["source"].as_str().unwrap_or(""))?;
+            let guards = graph
+                .transitions
+                .iter()
+                .filter_map(|transition| transition.guard.as_deref())
+                .map(|name| {
+                    let result = request["guards"]
+                        .get(name)
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    (
+                        name.to_string(),
+                        WorkflowGuard::Sync(Arc::new(move |_| Ok(result))),
+                    )
+                })
+                .collect::<HashMap<_, _>>();
+            let actions = graph
+                .transitions
+                .iter()
+                .flat_map(|transition| transition.actions.iter())
+                .map(|name| (name.clone(), WorkflowAction::Declarative))
+                .collect::<HashMap<_, _>>();
+            let engine = WorkflowEngine::new(graph, guards, actions)?;
+            Ok(graph_workflow_decision(
+                &engine,
+                request["from"].as_str().unwrap_or(""),
+                request["event"].as_str().unwrap_or(""),
+                &request["facts"],
+            )?
+            .to_string())
+        }
+
+        "assertV2StateTransition" => {
+            use std::path::Path;
+            let graph = if request["graph"] == "task" {
+                agents_relay_rust2::workflow::definitions_v2::task_lifecycle_v2(Path::new(
+                    request["directory"].as_str().ok_or("directory needed")?,
+                ))?
+                .graph
+            } else if request["graph"] == "job" {
+                agents_relay_rust2::workflow::definitions_v2::job_lifecycle_v2(Path::new(
+                    request["directory"].as_str().ok_or("directory needed")?,
+                ))?
+                .graph
+            } else {
+                agents_relay_rust2::workflow::graph_v2::parse_graph_v2(
+                    request["source"].as_str().unwrap_or(""),
+                )?
+            };
+            agents_relay_rust2::workflow::definitions_v2::assert_v2_state_transition(
+                &graph,
+                request["from"].as_str().unwrap_or(""),
+                request["to"].as_str().unwrap_or(""),
+                request["kind"].as_str().unwrap_or("Job"),
+            )?;
+            Ok("null".into())
+        }
+        "canonicalWorkflowV2Evaluate" => {
+            use std::path::Path;
+            let path = Path::new(request["directory"].as_str().ok_or("directory needed")?);
+            let runtime = if request["graph"] == "task" {
+                agents_relay_rust2::workflow::definitions_v2::task_lifecycle_v2(path)?
+            } else {
+                agents_relay_rust2::workflow::definitions_v2::job_lifecycle_v2(path)?
+            };
+            Ok(runtime.evaluate_sync(&request["facts"])?.to_string())
+        }
+
+        "parseAgentGraph" => Ok(agents_relay_rust2::agent_graph::parse_agent_graph(
+            request["source"].as_str().unwrap_or(""),
+        )?
+        .json()
+        .to_string()),
+        "validateAgentSelection" => {
+            use std::collections::HashSet;
+            let visible = request["visible"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect::<HashSet<_>>();
+            agents_relay_rust2::agent_graph::validate_agent_selection(
+                &visible,
+                request["agentName"].as_str(),
+                request["source"].as_str(),
+            )?;
+            Ok("null".into())
+        }
+        "agentGraphPrompt" => {
+            use std::collections::HashSet;
+            let visible = request["visible"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect::<HashSet<_>>();
+            let prompt = agents_relay_rust2::agent_graph::agent_graph_prompt(
+                &visible,
+                request["source"].as_str().unwrap_or(""),
+                |name| {
+                    request["contracts"][name]
+                        .as_str()
+                        .map(str::to_owned)
+                        .ok_or_else(|| format!("Agent {name} contract not found"))
+                },
+            )?;
+            Ok(json!(prompt).to_string())
+        }
+
+        "workflowUsageIndex" => {
+            use agents_relay_rust2::workflow::{
+                graph_v2::parse_graph_v2,
+                usage_index::{build_workflow_usage_index, where_workflow_symbol},
+            };
+            use std::{collections::BTreeMap, path::Path};
+            let mut graphs = BTreeMap::new();
+            for entry in request["graphs"].as_array().into_iter().flatten() {
+                let name = entry["name"].as_str().ok_or("Graph name missing")?;
+                graphs.insert(
+                    name.to_string(),
+                    parse_graph_v2(entry["source"].as_str().unwrap_or(""))?,
+                );
+            }
+            if let Some(directory) = request["directory"].as_str() {
+                graphs = agents_relay_rust2::workflow::usage_index::executable_graphs(Path::new(
+                    directory,
+                ))?;
+            }
+            let index = build_workflow_usage_index(&graphs);
+            let usage = if let Some(id) = request["id"].as_str() {
+                where_workflow_symbol(&index, id, request["kind"].as_str())
+            } else {
+                index
+            };
+            Ok(json!(usage).to_string())
+        }
+
+        "parseGraphV2" => Ok(agents_relay_rust2::workflow::graph_v2::parse_graph_v2(
+            request["source"].as_str().unwrap_or(""),
+        )?
+        .json()
+        .to_string()),
+        "graphV2Scenario" => {
+            use agents_relay_rust2::workflow::graph_v2::{
+                parse_graph_v2, GraphDispatcher, GraphRegistry, GraphRuntime,
+            };
+            use std::sync::Arc;
+            let source = request["source"].as_str().unwrap_or("");
+            let graph = parse_graph_v2(source)?;
+            let mut registry = GraphRegistry::default();
+            for node in &graph.nodes {
+                match node.kind.as_str() {
+                    "state" => {
+                        registry.states.insert(node.semantic_id.clone());
+                    }
+                    "guard" => {
+                        let result = request["guards"]
+                            .get(&node.semantic_id)
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
+                        registry
+                            .guards
+                            .insert(node.semantic_id.clone(), Arc::new(move |_facts| result));
+                    }
+                    "action" => {
+                        registry
+                            .actions
+                            .insert(node.semantic_id.clone(), (None, None));
+                    }
+                    "emit" => {
+                        registry.events.insert(node.semantic_id.clone(), None);
+                    }
+                    _ => {}
+                }
+            }
+            for edge in &graph.edges {
+                if let Some(id) = edge.semantic_id.as_deref() {
+                    match edge.kind.as_str() {
+                        "on" | "emit" => {
+                            registry.events.insert(id.into(), None);
+                        }
+                        "request" => {
+                            registry.actions.entry(id.into()).or_insert((None, None));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            for rejected in request["rejectedPayloadIds"]
+                .as_array()
+                .into_iter()
+                .flatten()
+            {
+                let Some(id) = rejected.as_str() else {
+                    continue;
+                };
+                let check = Arc::new(|_payload: &Value| false);
+                if let Some(entry) = registry.events.get_mut(id) {
+                    *entry = Some(check.clone());
+                }
+                if let Some(entry) = registry.actions.get_mut(id) {
+                    entry.0 = Some(check.clone());
+                }
+            }
+            let receipts = request.get("receipts").cloned().unwrap_or(Value::Null);
+            for (id, (_, execute)) in registry.actions.iter_mut() {
+                let id = id.clone();
+                let output = receipts.get(&id).cloned().unwrap_or(json!({}));
+                *execute = Some(Arc::new(move |_context| Ok(output.clone())));
+            }
+            let runtime = GraphRuntime::new(source, registry)?;
+            let facts = &request["facts"];
+            if request["dispatch"] == true {
+                use std::{cell::RefCell, rc::Rc};
+                let transitions = Rc::new(RefCell::new(Vec::<Value>::new()));
+                let events = Rc::new(RefCell::new(Vec::<Value>::new()));
+                let transitions_sink = Rc::clone(&transitions);
+                let events_sink = Rc::clone(&events);
+                let result = GraphDispatcher { runtime: &runtime }.dispatch_sync(
+                    facts,
+                    move |transition| {
+                        transitions_sink.borrow_mut().push(transition.clone());
+                        Ok(())
+                    },
+                    move |event| {
+                        events_sink.borrow_mut().push(event.clone());
+                        Ok(())
+                    },
+                )?;
+                return Ok(json!({"result":result,"transitions":transitions.borrow().clone(),"events":events.borrow().clone()}).to_string());
+            }
+            Ok(runtime.evaluate_sync(facts)?.to_string())
+        }
+
+        "durableWorkflowScenario" => {
+            use rusqlite::{params, Connection};
+            let db = Connection::open_in_memory().map_err(|error| error.to_string())?;
+            db.execute_batch(
+                "CREATE TABLE objective (value INTEGER NOT NULL); INSERT INTO objective VALUES(0);",
+            )
+            .map_err(|error| error.to_string())?;
+            let outbox =
+                agents_relay_rust2::workflow::durable_publication::DurableWorkflowPublication::new(
+                    &db,
+                )?;
+            let inbox =
+                agents_relay_rust2::workflow::durable_publication::DurableWorkflowConsumer::new(
+                    &db,
+                )?;
+            let mut outputs = Vec::new();
+            for op in request["operations"].as_array().into_iter().flatten() {
+                use agents_relay_rust2::workflow::durable_publication::PendingWorkflowEvent;
+                let key = op["key"].as_str().unwrap_or("");
+                let event_id = op["eventId"].as_str().unwrap_or("");
+                let evt = PendingWorkflowEvent {
+                    key: key.to_string(),
+                    event_id: event_id.to_string(),
+                    payload: op["payload"].clone(),
+                };
+                let result: Result<Value, String> = match op["action"].as_str().unwrap_or("enqueue")
+                {
+                    "enqueue" => outbox
+                        .enqueue(key, event_id, &op["payload"])
+                        .map(|_| Value::Null),
+                    "transition" => outbox
+                        .commit_transition_and_events(
+                            |db| {
+                                db.execute("UPDATE objective SET value = value + 1", [])
+                                    .map_err(|error| error.to_string())?;
+                                if op["reject"] == true {
+                                    return Err("fixture transition failed".into());
+                                }
+                                Ok(())
+                            },
+                            &op["events"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .map(PendingWorkflowEvent::from_value)
+                                .collect::<Vec<_>>(),
+                        )
+                        .map(|_| Value::Null),
+                    "consume" => inbox
+                        .consume(op["consumerId"].as_str().unwrap_or(""), &evt, |db| {
+                            db.execute("UPDATE objective SET value = value + 1", [])
+                                .map_err(|error| error.to_string())?;
+                            if op["reject"] == true {
+                                return Err("fixture consumer failed".into());
+                            }
+                            Ok(())
+                        })
+                        .map(|accepted| json!(accepted)),
+                    "pending" => outbox.pending().map(|items| {
+                        json!(items
+                            .iter()
+                            .map(PendingWorkflowEvent::as_value)
+                            .collect::<Vec<_>>())
+                    }),
+                    "replay" => {
+                        let reject = op["rejectAfter"].as_i64().unwrap_or(-1);
+                        let mut sent = 0;
+                        outbox
+                            .replay(|event| {
+                                if reject >= 0 && sent >= reject {
+                                    return Err("fixture transport failed".into());
+                                }
+                                let _ = event;
+                                sent += 1;
+                                Ok(())
+                            })
+                            .map(|count| json!(count))
+                    }
+                    "drain" => {
+                        let transport = op["transport"].as_str().unwrap_or("both");
+                        let bus = transport == "both" || transport == "bus";
+                        let emit = transport == "both" || transport == "emit";
+                        let fail = op["reject"] == true;
+                        agents_relay_rust2::reconciler_workflow_outbox::drain_production_workflow_outbox(
+                            Some(&outbox),bus.then_some(move |_event:&PendingWorkflowEvent|if fail{Err("fixture bus failed".into())}else{Ok(())}),
+                            emit.then_some(move |_event:&PendingWorkflowEvent|if fail{Err("fixture emit failed".into())}else{Ok(())})
+                        ).map(|count|json!(count))
+                    }
+                    _ => Err("unknown workflow durable operation".into()),
+                };
+                outputs.push(match result {
+                    Ok(value) => json!({"ok":true,"value":value}),
+                    Err(error) => json!({"ok":false,"error":error}),
+                });
+            }
+            let value: i64 = db
+                .query_row("SELECT value FROM objective", [], |row| row.get(0))
+                .map_err(|error| error.to_string())?;
+            let mut out=db.prepare("SELECT event_key,event_id,payload_json,state FROM workflow_event_outbox ORDER BY event_key").map_err(|error|error.to_string())?;
+            let outbox_rows=out.query_map([],|row|Ok(json!({"key":row.get::<_,String>(0)?,"eventId":row.get::<_,String>(1)?,
+                "payload":serde_json::from_str::<Value>(&row.get::<_,String>(2)?).unwrap_or(Value::Null),"state":row.get::<_,String>(3)?})))
+                .map_err(|error|error.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())?;
+            let mut query=db.prepare("SELECT consumer_id,event_key,event_id,payload_json FROM workflow_event_inbox ORDER BY consumer_id,event_key").map_err(|error|error.to_string())?;
+            let receipts=query.query_map([],|row|Ok(json!({"consumerId":row.get::<_,String>(0)?,"key":row.get::<_,String>(1)?,
+                "eventId":row.get::<_,String>(2)?,"payload":serde_json::from_str::<Value>(&row.get::<_,String>(3)?).unwrap_or(Value::Null)})))
+                .map_err(|error|error.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())?;
+            let _ = params![];
+            Ok(
+                json!({"outputs":outputs,"value":value,"outbox":outbox_rows,"receipts":receipts})
+                    .to_string(),
+            )
+        }
+
         "marker" => Ok(json!(agents_relay_rust2::markers::marker(
             request["label"].as_str().unwrap_or(""),
             &request["value"]
