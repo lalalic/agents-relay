@@ -158,7 +158,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/relay-store.ts` | `rust/src/relay_store.rs` | PENDING | — |
 | `src/relay-workflow-operations.ts` | `rust/src/relay_workflow_operations.rs` | PASS | Wave2 A: 700 direct Node/Rust SQLite transactions/launch/outbox histories, three native rollback/idempotency/lease tests; `rust/tests/head_to_head_wave2_workflow_operations.mjs`, `native_wave2_workflow_operations.rs` |
 | `src/relayd-control.ts` | `rust/src/relayd_control.rs` | PENDING | — |
-| `src/relayd-dashboard-actions.ts` | `rust/src/relayd_dashboard_actions.rs` | PENDING | — |
+| `src/relayd-dashboard-actions.ts` | `rust/src/relayd_dashboard_actions.rs` | PORTING | Phase1 Rust daemon-side Dashboard actions draft only; client HTML/CSS/JS frozen unchanged; uncompiled/unverified. |
 | `src/relayd-main.ts` | `rust/src/relayd_main.rs` | PORTING | Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure. |
 | `src/relayd-utilities.ts` | `rust/src/relayd_utilities.rs` | PORTING | Phase1 serial Rust SERVER-only source draft; uncompiled/unverified; preserve original Dashboard client HTML/CSS/JS. |
 | `src/relayd.ts` | `rust/src/relayd.rs` | PENDING | — |

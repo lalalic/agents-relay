@@ -303,3 +303,4 @@ pub mod worker_failure_recovery;
 pub mod cli_worker_task;
 pub mod dashboard_actions;
 pub mod relayd_utilities;
+pub mod relayd_dashboard_actions;
