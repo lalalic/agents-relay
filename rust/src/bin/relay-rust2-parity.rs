@@ -166,6 +166,24 @@ fn workflow_engine_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "agentSourceLayers" => Ok(
+            agents_relay_rust2::agent_content_resolver::agent_source_layers(
+                request["projectPath"].as_str().unwrap_or(""),
+                &request["options"],
+            )
+            .to_string(),
+        ),
+        "resolveAgentMarkdown" => Ok(
+            agents_relay_rust2::agent_content_resolver::resolve_agent_markdown(
+                request["name"].as_str().unwrap_or(""),
+                request["builtinsRoot"].as_str().unwrap_or(""),
+                request["contextRoot"].as_str().unwrap_or(""),
+                request["sharedRoot"].as_str(),
+                request.get("layers"),
+            )?
+            .to_string(),
+        ),
+
         "buildAgentPrompt" => Ok(
             agents_relay_rust2::agent_prompt_builder::build_agent_prompt(&request["input"])?
                 .to_string(),

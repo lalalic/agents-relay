@@ -23,7 +23,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | Node.js source (authoritative) | Intended Rust module | Status | Evidence / reason |
 |---|---|---|---|
 | `src/adapters.ts` | `rust/src/adapters.rs` | PENDING | — |
-| `src/agent-content-resolver.ts` | `rust/src/agent_content_resolver.rs` | PENDING | — |
+| `src/agent-content-resolver.ts` | `rust/src/agent_content_resolver.rs` | PASS | Direct hotfix: 500 Node/Rust source-layer fixtures, 252 isolated Agent files/section inheritance cases, 120 multi-layer snapshots; 5 native tests, 18 focused Node regressions (rust/tests/head_to_head_agent_content_resolver.mjs; rust/tests/native_agent_content_resolver.rs) |
 | `src/agent-graph.ts` | `rust/src/agent_graph.rs` | PENDING | — |
 | `src/agent-prompt-builder.ts` | `rust/src/agent_prompt_builder.rs` | PASS | Direct hotfix: 1,100 pure prompt/render fixtures; 220 reference-first fixtures; 150 exact execution prompts; isolated immutable SHA-256 snapshots and filesystem/error semantics; 5 Rust-native tests, 19 Node regressions (rust/tests/head_to_head_agent_prompt_builder.mjs; rust/tests/native_agent_prompt_builder.rs) |
 | `src/agent-script-discovery.ts` | `rust/src/agent_script_discovery.rs` | PENDING | — |
@@ -431,3 +431,12 @@ This is only the Job JEL graph projection; Dashboard HTTP routing, additional ta
 - [x] `rust/tests/native_agent_prompt_builder.rs`: **5** native tests for immutable snapshot/permissions, trusted vs untrusted roles, strict fail-closed hash check, job/task/execution binding, and invalid arguments.
 - [x] Original Node tests `test/agent-prompt-builder.test.js`, `test/agent-prompt-model-only.test.js`, `test/managed-prompt-assembly.test.js`, and `test/prompt-action-parity.test.js`: **19/19 PASS** with an isolated SQLite store.
 - [x] Filesystem fixtures are disposable temporary directories. No production Agent prompt snapshots, process services, or Relay Jobs were modified.
+
+### Direct Rust2 hotfix — layered Agent Content Resolver (2026-11-16)
+
+- [x] `src/agent-content-resolver.ts` → `rust/src/agent_content_resolver.rs`: both exported functions `agentSourceLayers` and `resolveAgentMarkdown` implemented natively. Resolves builtin → global/shared → ancestor workspace → project Agent layers with deterministic path precedence and metadata, SHA-256 of merged Markdown, and strict symlink/realpath confinement.
+- [x] Full Node frontmatter scalar/list grammar, `extends: relay/<name>`, shared same-name/cross-name inheritance, author-supplied absolute Markdown base, standalone replacement, nested `sections.replace` / `sections.extend`, duplicate heading rejection, and source-anchored Markdown links without importing linked document contents.
+- [x] `rust/tests/head_to_head_agent_content_resolver.mjs`: **500** hierarchy path/deduplication fixtures; **252** real isolated file inheritance/section/validation cases; **120** true global/shared/workspace/parent/project multilevel Agent snapshots.
+- [x] Differential self-review fixed Node vs Rust edge behavior: empty line within section frontmatter retains section parsing; quote stripping removes a single delimiter at each end, not all quotes; separately matched later YAML metadata; `\s` vs JavaScript Unicode whitespace semantics for Markdown links, headings and fenced code.
+- [x] `rust/tests/native_agent_content_resolver.rs`: **5** Rust-native tests for ordered source roots, nested replace/extend, anchored links, symlink boundary, cross-name shared inheritance, and unknown Agent.
+- [x] Original Node regression tests (`test/agent-content-resolver.test.js`, `test/agent-prompt-builder.test.js`, `test/managed-prompt-assembly.test.js`) **18/18 PASS**, with isolated SQLite and ephemeral project directories. No production Agent files, live Relay daemon or Jobs touched.

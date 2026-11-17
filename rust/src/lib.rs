@@ -45,3 +45,6 @@ pub mod webhelm_daemon_client;
 
 // Direct Node src/agent-prompt-builder.ts implementation.
 pub mod agent_prompt_builder;
+
+// Direct Node src/agent-content-resolver.ts implementation.
+pub mod agent_content_resolver;
