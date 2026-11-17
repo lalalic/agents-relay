@@ -64,21 +64,13 @@ use sha2::{Digest, Sha256};
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 fn cleanup_git(repo: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    // src/workspace.ts uses an owned process for every Git effect. Share the
+    // 30-second owned subprocess transport with local merge, rather than the
+    // previous unbounded Command.output() implementation.
+    crate::local_git_merge::git(repo, args)
 }
 
 pub fn managed_local_job_worktree_path(

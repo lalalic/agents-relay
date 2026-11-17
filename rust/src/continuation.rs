@@ -294,3 +294,135 @@ mod native_webhook_tests {
         server.join().unwrap();
     }
 }
+
+/// Real owned-process transport used by the continuation and DAG verifier.
+/// Every child is supervised as a process group and is bound to this manager;
+/// no shell evaluation, environment credentials, or ambient process kill.
+use crate::owned_process::{OwnedProcessManager, OwnedProcessOptions, TerminationReason};
+use std::{
+    io::Read,
+    path::Path,
+    sync::atomic::{AtomicBool, Ordering},
+    thread,
+    time::{Duration, Instant},
+};
+
+#[derive(Clone, Copy, Default)]
+pub struct DeliveryProcessOptions<'a> {
+    pub timeout: Option<Duration>,
+    pub cancelled: Option<&'a AtomicBool>,
+    pub supervisor_path: Option<&'a Path>,
+    /// Optional complete process environment (Node spawn env replacement).
+    pub environment: Option<&'a std::collections::HashMap<String, String>>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct DeliveryProcessResult {
+    pub code: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// Runs the genuine native owned-process implementation. Output reader threads
+/// continuously drain pipes while the child is executing (avoids pipe deadlock).
+/// Cancellation and deadline kill only the newly owned group.
+pub fn run_delivery_owned_process(
+    manager: &mut OwnedProcessManager,
+    command: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    invocation: &str,
+    options: DeliveryProcessOptions<'_>,
+) -> Result<DeliveryProcessResult, String> {
+    if options.cancelled.is_some_and(|c| c.load(Ordering::Acquire)) {
+        return Err(format!("{invocation} aborted before launch"));
+    }
+    let process_options = OwnedProcessOptions {
+        invocation: invocation.into(),
+        cwd: cwd.map(Path::to_path_buf),
+        timeout_ms: None,
+        grace_ms: 150,
+        supervisor_path: options.supervisor_path.map(Path::to_path_buf),
+    };
+    let process = if let Some(environment) = options.environment {
+        manager.spawn_owned_process_piped_with_env(command, args, process_options, environment)?
+    } else {
+        manager.spawn_owned_process_piped(command, args, process_options)?
+    };
+    let stdout = process
+        .take_stdout()
+        .ok_or("Owned stdout pipe unavailable")?;
+    let stderr = process
+        .take_stderr()
+        .ok_or("Owned stderr pipe unavailable")?;
+    let out = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        std::io::BufReader::new(stdout)
+            .read_to_end(&mut bytes)
+            .map(|_| bytes)
+    });
+    let err = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        std::io::BufReader::new(stderr)
+            .read_to_end(&mut bytes)
+            .map(|_| bytes)
+    });
+    let started = Instant::now();
+    let mut terminated = None;
+    let exit = loop {
+        if let Some(status) = process.exit_status()? {
+            break status.code().unwrap_or(-1);
+        }
+        if terminated.is_none() {
+            if options.cancelled.is_some_and(|c| c.load(Ordering::Acquire)) {
+                process.terminate(TerminationReason::Cancel, None);
+                terminated = Some("Owned process cancelled");
+            } else if options
+                .timeout
+                .is_some_and(|limit| started.elapsed() >= limit)
+            {
+                process.terminate(TerminationReason::Timeout, None);
+                terminated = Some("Owned process timed out");
+            }
+        }
+        if terminated.is_some()
+            && started.elapsed() > options.timeout.unwrap_or_default() + Duration::from_secs(5)
+        {
+            return Err(terminated.unwrap_or("Owned process failed").to_owned());
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    let stdout = out
+        .join()
+        .map_err(|_| "Owned stdout reader panicked")?
+        .map_err(|e| e.to_string())?;
+    let stderr = err
+        .join()
+        .map_err(|_| "Owned stderr reader panicked")?
+        .map_err(|e| e.to_string())?;
+    if let Some(reason) = terminated {
+        return Err(reason.into());
+    }
+    Ok(DeliveryProcessResult {
+        code: exit,
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+    })
+}
+
+/// Production-shaped continuation transport. The selected command is not
+/// invoked unless its requested continuation kind matches, mirroring Node.
+pub fn continue_with_owned_process(
+    kind: &str,
+    input: &str,
+    continuation: Continuation<'_>,
+    command_override: Option<&str>,
+    manager: &mut OwnedProcessManager,
+    options: DeliveryProcessOptions<'_>,
+) -> Result<(), String> {
+    let mut run = |command: &str, args: &[&str], invocation: &str| {
+        let result = run_delivery_owned_process(manager, command, args, None, invocation, options)?;
+        Ok(result.code)
+    };
+    continue_with_http(kind, input, continuation, command_override, &mut run)
+}

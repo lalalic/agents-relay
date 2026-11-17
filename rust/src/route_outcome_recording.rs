@@ -351,3 +351,156 @@ mod native_audit_effect_tests {
         assert!(!called);
     }
 }
+
+/// The original DecisionAuditStore is an append-only JSONL file, NOT SQLite.
+/// Keep this optional non-authoritative audit transport separate from durable
+/// Job/Task state, and preserve Node's nested-key redaction before writing.
+fn sanitize_audit(value: &Value, key: &str) -> Value {
+    static SENSITIVE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let pattern = SENSITIVE.get_or_init(|| {
+        Regex::new(r"(?i)token|secret|password|credential|authorization|api.?key")
+            .expect("fixed sensitive-key regex")
+    });
+    if pattern.is_match(key) {
+        return Value::String("[redacted]".into());
+    }
+    match value {
+        Value::Array(items) => Value::Array(items.iter().map(|v| sanitize_audit(v, "")).collect()),
+        Value::Object(object) => Value::Object(
+            object
+                .iter()
+                .map(|(k, v)| (k.clone(), sanitize_audit(v, k)))
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
+}
+
+pub fn append_route_audit_jsonl(path: &std::path::Path, record: &Value) -> Result<(), String> {
+    use std::io::Write;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let line = serde_json::to_string(&sanitize_audit(record, "")).map_err(|e| e.to_string())?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| e.to_string())?;
+    file.write_all(format!("{line}\n").as_bytes())
+        .map_err(|e| e.to_string())
+}
+
+pub fn record_terminal_route_outcome_jsonl(
+    path: &std::path::Path,
+    task: &Value,
+    event: &Value,
+    execution_id: Option<&str>,
+) -> Option<Value> {
+    record_terminal_route_outcome(task, event, execution_id, |value| {
+        append_route_audit_jsonl(path, value)
+    })
+}
+
+pub fn record_launch_route_outcome_jsonl(
+    path: &std::path::Path,
+    task: &Value,
+    message: &str,
+    phase: &str,
+    execution_id: Option<&str>,
+    unknown_outcome: bool,
+) -> Option<Value> {
+    record_launch_route_outcome(
+        task,
+        message,
+        phase,
+        execution_id,
+        unknown_outcome,
+        |value| append_route_audit_jsonl(path, value),
+    )
+}
+
+pub fn record_watchdog_route_outcome_jsonl(
+    path: &std::path::Path,
+    task: &Value,
+    watchdog: &Value,
+) -> Option<Value> {
+    record_watchdog_route_outcome(task, watchdog, |value| {
+        append_route_audit_jsonl(path, value)
+    })
+}
+
+#[cfg(test)]
+mod jsonl_adapter_tests {
+    use super::*;
+
+    #[test]
+    fn real_jsonl_transport_is_append_only_redacted_and_best_effort() {
+        let dir = std::env::temp_dir().join(format!(
+            "rust2-wave4-audit-{}-{}",
+            std::process::id(),
+            crate::events::random_uuid()
+        ));
+        let path = dir.join("sub").join("audit.jsonl");
+        let task = json!({"jobId":"1","id":"2","adapter":"chatgpt","attempt":1,
+            "state":"RUNNING",
+            "routing":{"decisionId":"decision-2","provider":"fake","model":"test"}});
+        record_terminal_route_outcome_jsonl(
+            &path,
+            &task,
+            &json!({"type":"task.failed","message":"timeout: Bearer secret-token"}),
+            Some("exec-2"),
+        );
+        record_launch_route_outcome_jsonl(
+            &path,
+            &task,
+            "invalid api key",
+            "delivery",
+            Some("exec-2"),
+            false,
+        );
+        record_watchdog_route_outcome_jsonl(
+            &path,
+            &task,
+            &json!({"executionId":"exec-2","failedExit":false,
+                "failureMessage":"timeout","exitCode":null}),
+        );
+        let lines = std::fs::read_to_string(&path).unwrap();
+        let parsed = lines
+            .lines()
+            .map(|s| serde_json::from_str::<Value>(s).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0]["kind"], "timeout");
+        assert_eq!(parsed[1]["kind"], "auth_config_failure");
+        assert_eq!(parsed[2]["kind"], "timeout");
+        assert_eq!(parsed[1]["evidence"]["route"]["worker"], "chatgpt");
+        assert!(lines.contains("[redacted]"));
+        assert!(!lines.contains("secret-token"));
+        let record = json!({"record_type":"outcome",
+            "evidence":{"access_token":"never-write", "deep":[{"Password":"also-secret"}]}});
+        append_route_audit_jsonl(&path, &record).unwrap();
+        let new_line = std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .last()
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            serde_json::from_str::<Value>(&new_line).unwrap(),
+            json!({"record_type":"outcome","evidence":{
+                "access_token":"[redacted]","deep":[{"Password":"[redacted]"}]}})
+        );
+        let directory_not_a_file = dir.join("blocked");
+        std::fs::create_dir_all(&directory_not_a_file).unwrap();
+        // Logging failure is observational: never roll back an accepted Task.
+        assert!(record_terminal_route_outcome_jsonl(
+            &directory_not_a_file,
+            &task,
+            &json!({"type":"task.completed"}),
+            Some("exec-3")
+        )
+        .is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

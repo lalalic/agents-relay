@@ -90,6 +90,37 @@ where
     }
     None
 }
+/// Stage-verifier adapter that executes the real configured interpreter in an
+/// isolated owned subprocess; caller controls timeout/cancellation. Stage
+/// contract parsing and Graph policy remain in the existing shared module.
+pub fn dag_completion_error_owned(
+    task: &Value,
+    project_path: Option<&Path>,
+    interpreter: &str,
+    manager: &mut crate::owned_process::OwnedProcessManager,
+    options: crate::continuation::DeliveryProcessOptions<'_>,
+) -> Option<String> {
+    dag_completion_error(task, project_path, interpreter, |args, cwd| {
+        let (command, parameters) = args
+            .split_first()
+            .ok_or_else(|| "Stage verifier has no interpreter".to_string())?;
+        let parameters: Vec<_> = parameters.iter().map(String::as_str).collect();
+        let result = crate::continuation::run_delivery_owned_process(
+            manager,
+            command,
+            &parameters,
+            Some(cwd),
+            "dag.stage-validation",
+            options,
+        )?;
+        Ok(StageExecution {
+            stdout: result.stdout,
+            stderr: result.stderr,
+            code: result.code,
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

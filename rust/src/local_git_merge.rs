@@ -5,7 +5,6 @@ use serde_json::{json, Value};
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
     time::Duration,
 };
 
@@ -15,23 +14,41 @@ pub struct LocalMergeResult {
     pub merged_commit_sha: String,
 }
 
-fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !output.status.success() {
+pub(crate) fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
+    // Node execFileSync uses a 30-second deadline, a 1-MiB output limit and
+    // GIT_TERMINAL_PROMPT=0. Git is an actual Relay-owned child group, never a
+    // free-running Command.output() that could strand an entire reconciler.
+    let mut manager = crate::owned_process::OwnedProcessManager::default();
+    let mut argv = vec!["-C".to_string(), repo.to_string_lossy().into_owned()];
+    argv.extend(args.iter().map(|arg| (*arg).to_string()));
+    let refs: Vec<&str> = argv.iter().map(String::as_str).collect();
+    let mut environment: std::collections::HashMap<_, _> = std::env::vars().collect();
+    environment.insert("GIT_TERMINAL_PROMPT".into(), "0".into());
+    let response = crate::continuation::run_delivery_owned_process(
+        &mut manager,
+        "git",
+        &refs,
+        None,
+        "local-git-merge.git",
+        crate::continuation::DeliveryProcessOptions {
+            timeout: Some(Duration::from_secs(30)),
+            cancelled: None,
+            supervisor_path: None,
+            environment: Some(&environment),
+        },
+    )?;
+    if response.stdout.len() > 1024 * 1024 || response.stderr.len() > 1024 * 1024 {
+        return Err("git maxBuffer length exceeded (1048576 bytes)".into());
+    }
+    if response.code != 0 {
         return Err(format!(
             "git {} exited {:?}: {}",
             args.join(" "),
-            output.status.code(),
-            String::from_utf8_lossy(&output.stderr).trim()
+            Some(response.code),
+            response.stderr.trim()
         ));
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    Ok(response.stdout.trim().to_owned())
 }
 fn checked_ref(name: &str) -> Result<&str, String> {
     let valid = name.strip_prefix("refs/heads/").is_some_and(|s| {
