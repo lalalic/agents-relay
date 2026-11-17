@@ -915,6 +915,235 @@ fn invoke(request: &Value) -> Result<String, String> {
             Ok(json!({"result":match result{Ok(value)=>json!({"ok":true,"value":value}),Err(error)=>json!({"ok":false,"error":error})},
                 "job":snapshot.map(|raw|serde_json::from_str::<Value>(&raw).unwrap_or(Value::Null)),"pending":outbox}).to_string())
         }
+        "wave3CoordinatorTurn" => {
+            use agents_relay_rust2::reconcile_coordinator::ReconcileCoordinator;
+            use std::sync::{Arc, Mutex};
+            let batches = Arc::new(Mutex::new(Vec::<Value>::new()));
+            let failures = Arc::new(Mutex::new(Vec::<Value>::new()));
+            let produced = Arc::clone(&batches);
+            let reported = Arc::clone(&failures);
+            type ErrorReporter = dyn Fn(&str, &Value) + Send + Sync;
+            let reporter: Arc<ErrorReporter> = Arc::new(move |error, signal| {
+                reported
+                    .lock()
+                    .expect("fixture errors")
+                    .push(json!({"error":error,"signal":signal}));
+            });
+            let worker = ReconcileCoordinator::new(
+                move |job, signals| {
+                    produced
+                        .lock()
+                        .expect("fixture batches")
+                        .push(json!({"jobId":job,"signals":signals}));
+                    if signals.iter().any(|s| s["fail"] == true) {
+                        Err("fixture consumer failed".into())
+                    } else {
+                        Ok(())
+                    }
+                },
+                Some(reporter),
+            );
+            let turn = worker.begin_turn();
+            let replies = request["signals"]
+                .as_array()
+                .ok_or("signals array required")?
+                .iter()
+                .map(|item| {
+                    let signal = item["signal"].clone();
+                    match item["method"].as_str().unwrap_or("") {
+                        "accept" => Ok(worker.accept(signal)),
+                        "acceptTransport" => Ok(worker.accept_transport(signal)),
+                        "acceptObserved" => Ok(worker.accept_observed(signal)),
+                        other => Err(format!("Unknown ReconcileCoordinator method {other}")),
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            drop(turn);
+            let outcomes = replies
+                .into_iter()
+                .map(|reply| match reply.recv() {
+                    Ok(Ok(())) => json!({"ok":true}),
+                    Ok(Err(error)) => json!({"ok":false,"error":error}),
+                    Err(error) => json!({"ok":false,"error":error.to_string()}),
+                })
+                .collect::<Vec<_>>();
+            worker.settle();
+            let mut batches = batches.lock().expect("fixture batches").clone();
+            batches.sort_by(|a, b| a["jobId"].as_str().cmp(&b["jobId"].as_str()));
+            let mut failures = failures.lock().expect("fixture errors").clone();
+            failures.sort_by(|a, b| {
+                a["signal"]["reason"]
+                    .as_str()
+                    .cmp(&b["signal"]["reason"].as_str())
+            });
+            Ok(json!({"outcomes":outcomes,"batches":batches,"failures":failures,"idle":worker.is_idle()}).to_string())
+        }
+        "wave3Graph" => {
+            let directory =
+                std::path::Path::new(request["directory"].as_str().unwrap_or("workflow"));
+            match request["action"].as_str().unwrap_or("") {
+                "progressSqlite" => {
+                    use rusqlite::Connection;
+                    let mut db = Connection::open_in_memory().map_err(|e| e.to_string())?;
+                    db.execute_batch(
+                         "CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL)",
+                    )
+                    .map_err(|e| e.to_string())?;
+                    let job = &request["job"];
+                    let job_id = job["id"].as_str().ok_or("job id required")?;
+                    db.execute(
+                        "INSERT INTO job_snapshot VALUES(?,?,?)",
+                        rusqlite::params![
+                            job_id,
+                            job.to_string(),
+                            job["updatedAt"]
+                                .as_str()
+                                .unwrap_or("2026-11-17T09:00:00.000Z")
+                        ],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    let applied =
+                        agents_relay_rust2::task_inactivity_watchdog::accept_task_progress_sqlite(
+                            &mut db,
+                            directory,
+                            &request["event"],
+                            request["now"].as_i64().ok_or("now required")?,
+                        )?;
+                    let raw: String = db
+                        .query_row(
+                            "SELECT json FROM job_snapshot WHERE job_id=?",
+                            [job_id],
+                            |r| r.get(0),
+                        )
+                        .map_err(|e| e.to_string())?;
+                    let updated: Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+                    let task = updated["tasks"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .find(|t| t["id"] == request["event"]["task_id"]);
+                    Ok(json!({"accepted":applied.is_some(),
+                      "state":task.map(|t|t["state"].clone()).unwrap_or(Value::Null),
+                      "lastProgressEventAt":task.map(|t|t["lastProgressEventAt"].clone()).unwrap_or(Value::Null),
+                      "executionId":task.map(|t|t["executionId"].clone()).unwrap_or(Value::Null)
+                    }).to_string())
+                }
+                "plannerFactsMutable" => {
+                    let mut job = request["job"].clone();
+                    let facts=agents_relay_rust2::workflow::planner_orchestration_v2::
+                        planner_orchestration_facts_in_place(&mut job,request["recoverable"]==true);
+                    Ok(json!({"facts":facts,"plans":job["plans"]}).to_string())
+                }
+                "laya" => {
+                    let timeout = request["timeoutMs"].as_u64().unwrap_or(2000);
+                    let script = request["script"].as_str().ok_or("script required")?;
+                    let options = agents_relay_rust2::decision::LayaCliOptions {
+                        command: "/bin/sh".into(),
+                        args: vec!["-c".into(), script.into(), "fixture".into()],
+                        timeout_ms: timeout,
+                    };
+                    let engine = agents_relay_rust2::decision::LayaCliDecisionEngine::new(options);
+                    // Match Node's public `decide`, not the stub runner used by Wave2.
+                    Ok(engine
+                        .decide(&request["request"], &request["contract"])?
+                        .to_string())
+                }
+                "asyncTransition" => {
+                    use agents_relay_rust2::task_transitions::{
+                        transition_job_event_async, transition_task_event_async,
+                    };
+                    use std::sync::{Arc, Mutex};
+                    let trace = Arc::new(Mutex::new(Vec::<String>::new()));
+                    let state = Mutex::new(request["entity"].clone());
+                    let event = request["event"].as_str().ok_or("event required")?;
+                    let facts = &request["facts"];
+                    let timestamp = request["timestamp"]
+                        .as_str()
+                        .unwrap_or("2026-11-17T09:00:00Z");
+                    let effect_error = request["effectError"].as_str().map(str::to_owned);
+                    let persist_error = request["persistError"].as_str().map(str::to_owned);
+                    let affected = Arc::clone(&trace);
+                    let stored = Arc::clone(&trace);
+                    let effect = move |action: String| {
+                        let trace = Arc::clone(&affected);
+                        let error = effect_error.clone();
+                        async move {
+                            trace
+                                .lock()
+                                .expect("trace")
+                                .push(format!("effect:{action}"));
+                            if let Some(error) = error {
+                                return Err(error);
+                            }
+                            Ok(())
+                        }
+                    };
+                    let persist = move |_: Value| {
+                        let trace = Arc::clone(&stored);
+                        let error = persist_error.clone();
+                        async move {
+                            trace.lock().expect("trace").push("persist".into());
+                            if let Some(error) = error {
+                                return Err(error);
+                            }
+                            Ok(())
+                        }
+                    };
+                    fn run<T>(future: impl std::future::Future<Output = T>) -> T {
+                        use std::{
+                            pin::pin,
+                            task::{Context, Poll, Waker},
+                        };
+                        let mut future = pin!(future);
+                        let mut ctx = Context::from_waker(Waker::noop());
+                        match future.as_mut().poll(&mut ctx) {
+                            Poll::Ready(value) => value,
+                            Poll::Pending => panic!("async native fixture must resolve"),
+                        }
+                    }
+                    let mut entity = state.lock().expect("entity");
+                    let outcome = if request["kind"] == "task" {
+                        run(transition_task_event_async(
+                            directory,
+                            &mut entity,
+                            event,
+                            facts,
+                            timestamp,
+                            effect,
+                            persist,
+                        ))
+                    } else {
+                        run(transition_job_event_async(
+                            directory,
+                            &mut entity,
+                            event,
+                            facts,
+                            timestamp,
+                            effect,
+                            persist,
+                        ))
+                    };
+                    let trace = trace.lock().expect("trace").clone();
+                    Ok(json!({"outcome":match outcome {
+                        Ok(decision)=>json!({"ok":true,"decision":decision}),
+                        Err(error)=>json!({"ok":false,"error":error}),
+                    },"entity":*entity,"trace":trace})
+                    .to_string())
+                }
+                "resolutionRuntime" => {
+                    let runtime =
+                        agents_relay_rust2::workflow::task_resolution::task_resolution_v2(
+                            directory,
+                        )?;
+                    Ok(json!({"states":runtime.registry.states.len(),
+                      "guards":runtime.registry.guards.len(),
+                      "actions":runtime.registry.actions.len(),
+                      "events":runtime.registry.events.len()})
+                    .to_string())
+                }
+                action => Err(format!("unknown wave3 Graph action: {action}")),
+            }
+        }
         "wave2Graph" => {
             use agents_relay_rust2::{
                 task_transitions,
