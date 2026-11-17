@@ -15,6 +15,7 @@ actions:
 guards:
   - delivery.claimAvailable
   - delivery.originUsable
+  - delivery.remoteMainPresent
   - delivery.remoteContainsMain
   - delivery.retryAvailable
   - delivery.retryDue
@@ -32,6 +33,7 @@ exhausted["state: exhausted"]
 originUsable["guard: delivery.originUsable"]
 claimAvailable["guard: delivery.claimAvailable"]
 claimInspection["action: delivery.claimInspection"]
+remoteMainPresent["guard: delivery.remoteMainPresent"]
 remoteContains["guard: delivery.remoteContainsMain"]
 retryAvailable["guard: delivery.retryAvailable"]
 retryDue["guard: delivery.retryDue"]
@@ -47,7 +49,9 @@ claimAvailable -->|false| recordExhausted
 claimInspection --> inspect
 inspect -->|on: inspect.completed| originUsable
 originUsable -->|false| skip
-originUsable -->|true| remoteContains
+originUsable -->|true| remoteMainPresent
+remoteMainPresent -->|false| skip
+remoteMainPresent -->|true| remoteContains
 inspect -->|on: delivery.failed| retryAvailable
 remoteContains -->|true| recordDelivered
 remoteContains -->|false| pushMain
