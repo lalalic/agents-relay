@@ -1,7 +1,7 @@
 // Direct port of Node src/job-task-id-sequence.ts: globally numeric SQLite Job/Task allocation with scoped idempotency and snapshot high-water marks.
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, Error, ErrorCode, OptionalExtension, TransactionBehavior};
 use serde_json::Value;
-use std::{collections::HashSet, fs, path::Path, time::Duration};
+use std::{collections::HashSet, fs, path::Path, thread, time::Duration};
 
 pub fn is_generated_entity_id(id: &str, _repository: &str, _kind: &str) -> bool {
     !id.is_empty()
@@ -58,6 +58,28 @@ fn snapshot_high_water(db: &rusqlite::Transaction<'_>, kind: &str) -> Result<f64
     }
     Ok(highest)
 }
+fn sqlite_contention(error: &Error) -> bool {
+    matches!(error,Error::SqliteFailure(code,_) if matches!(code.code,ErrorCode::DatabaseBusy|ErrorCode::DatabaseLocked))
+}
+fn initialize_schema(db: &Connection) -> Result<(), String> {
+    // Initial WAL journal-mode negotiation may report SQLITE_BUSY even after
+    // busy_timeout: several fresh processes can open the new file together.
+    // Retry only SQLITE_BUSY/LOCKED. These statements are idempotent and are
+    // independent of the later BEGIN IMMEDIATE ID allocation transaction.
+    const SCHEMA:&str="PRAGMA journal_mode=WAL; PRAGMA busy_timeout=10000; \
+      CREATE TABLE IF NOT EXISTS sequences (repository TEXT NOT NULL,kind TEXT NOT NULL,value INTEGER NOT NULL,PRIMARY KEY(repository,kind)); \
+      CREATE TABLE IF NOT EXISTS idempotency (repository TEXT NOT NULL,kind TEXT NOT NULL,request_key TEXT NOT NULL,entity_id TEXT NOT NULL,PRIMARY KEY(repository,kind,request_key));";
+    for retry in 0..50 {
+        match db.execute_batch(SCHEMA) {
+            Ok(()) => return Ok(()),
+            Err(error) if sqlite_contention(&error) && retry < 49 => {
+                thread::sleep(Duration::from_millis(5))
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    unreachable!("schema initialization retries always return")
+}
 /// The caller owns the repository path. SQLite remains sole allocator, even if
 /// multiple local Node/Rust callers race for a Job or Task ID.
 pub fn allocate_entity_id(
@@ -82,10 +104,7 @@ pub fn allocate_entity_id(
     let mut db = Connection::open(store_path).map_err(|error| error.to_string())?;
     db.busy_timeout(Duration::from_millis(10000))
         .map_err(|error| error.to_string())?;
-    db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=10000; \
-      CREATE TABLE IF NOT EXISTS sequences (repository TEXT NOT NULL,kind TEXT NOT NULL,value INTEGER NOT NULL,PRIMARY KEY(repository,kind)); \
-      CREATE TABLE IF NOT EXISTS idempotency (repository TEXT NOT NULL,kind TEXT NOT NULL,request_key TEXT NOT NULL,entity_id TEXT NOT NULL,PRIMARY KEY(repository,kind,request_key));")
-        .map_err(|error|error.to_string())?;
+    initialize_schema(&db)?;
     let tx = db
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| error.to_string())?;

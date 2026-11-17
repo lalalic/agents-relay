@@ -1,6 +1,6 @@
 // Node/Rust differential for src/job-task-id-sequence.ts: real disposable SQLite files, atomic global ID allocation and repository-scoped idempotency.
 import test from 'node:test';import assert from 'node:assert/strict';
-import {spawnSync} from 'node:child_process';import {DatabaseSync} from 'node:sqlite';
+import {spawnSync,spawn} from 'node:child_process';import {DatabaseSync} from 'node:sqlite';
 import {mkdtempSync,mkdirSync,rmSync} from 'node:fs';import {tmpdir} from 'node:os';import {join,resolve,dirname} from 'node:path';import {fileURLToPath} from 'node:url';
 import {allocateEntityId,isGeneratedEntityId} from '../../dist/job-task-id-sequence.js';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..'),bin=resolve(root,'rust/target/debug/relay-rust2-parity');let compiled=false;
@@ -60,4 +60,34 @@ test('Node/Rust allocator produces identical durable sequence and idempotency ro
   }finally{rmSync(dir,{recursive:true,force:true})}
  }
  console.log(`Verified ${checked} complete SQLite Job/Task ID allocation histories`);
+});
+
+// True multi-process startup: unlike JS Promise-based synchronous SQLite calls,
+// separate rust2 CLI processes race to turn on WAL for a brand-new database.
+test('24 independent native Relay processes allocate distinct IDs during fresh WAL bootstrap',async()=>{
+ const dir=temp();try{
+  const directory=join(dir,'jobs');
+  rust({op:'isGeneratedEntityId',id:'1',repository:'repo',kind:'task'}); // build once before concurrency
+  const launch=()=>new Promise((resolve,reject)=>{
+   const p=spawn(bin,[],{stdio:['pipe','pipe','pipe']});let stdout='',stderr='';
+   p.stdout.setEncoding('utf8');p.stdout.on('data',part=>stdout+=part);
+   p.stderr.setEncoding('utf8');p.stderr.on('data',part=>stderr+=part);
+   p.on('error',reject);p.on('close',code=>{
+    if(code!==0)return reject(new Error(`native process ${code}: ${stderr}`));
+    try{resolve(JSON.parse(stdout.trim()))}catch(error){reject(error)}
+   });
+   p.stdin.end(JSON.stringify({op:'jobTaskIdSequenceScenario',directory,
+    operations:[{kind:'task',repository:'repo',occupied:[]}]})+'\n');
+  });
+  const outcomes=await Promise.all(Array.from({length:24},launch));
+  const ids=outcomes.map(result=>{
+   assert.equal(result.ok,true);assert.equal(result.value[0].ok,true,JSON.stringify(result));
+   return result.value[0].id;
+  });
+  assert.equal(new Set(ids).size,24,`Duplicate process-level SQLite IDs: ${ids.join(',')}`);
+  const db=new DatabaseSync(join(dir,'relay.sqlite'),{readOnly:true});
+  try{assert.equal(db.prepare("SELECT value FROM sequences WHERE repository='*' AND kind='task'").get().value,24);}
+  finally{db.close();}
+  console.log('Verified 24 independently launched native processes contend safely for a brand-new SQLite WAL database');
+ }finally{rmSync(dir,{recursive:true,force:true})}
 });
