@@ -203,7 +203,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/troubleshooter-qa-api.ts` | `rust/src/troubleshooter_qa_api.rs` | PASS | Direct hotfix: 13 isolated real Node HTTP vs Rust request/response/file outcomes, SHA-256, UTF8 recovery, invalid inputs; Rust native IO regression (rust/tests/head_to_head_ipc_hotfix.mjs; rust/tests/native_ipc_hotfix.rs) |
 | `src/troubleshooter.ts` | `rust/src/troubleshooter.rs` | PENDING | — |
 | `src/types.ts` | `rust/src/types.rs` | PENDING | — |
-| `src/unblock.ts` | `rust/src/unblock.rs` | PENDING | — |
+| `src/unblock.ts` | `rust/src/unblock.rs` | PORTING | Phase1 native Rust draft for Graph authority and Z WebHelm adapter request contract; uncompiled/unverified; no Dashboard client changes. |
 | `src/unified-job-registry.ts` | `rust/src/unified_job_registry.rs` | PASS | Direct hotfix: 455 Node/Rust atomic SQLite registry/Job creation histories, 5 native immutable-repository and rollback tests (`rust/tests/head_to_head_unified_job_registry.mjs`, `rust/tests/native_unified_job_registry.rs`) |
 | `src/unified-pr-facts.ts` | `rust/src/unified_pr_facts.rs` | PASS | Direct hotfix: 364 in-memory SQLite Node/Rust state-monotonic PR observations and Job scope scenarios; 3 Rust-native tests (`rust/tests/head_to_head_unified_pr_facts.mjs`, `rust/tests/native_unified_pr_facts.rs`) |
 | `src/unified-relay-schema.ts` | `rust/src/unified_relay_schema.rs` | PASS | Direct Node SQL template, including hostInvocationTablesSql; 258 in-memory SQLite schema/index/FK/constraint comparisons, 4 native tests (`rust/tests/head_to_head_unified_relay_schema.mjs`, `rust/tests/native_unified_relay_schema.rs`) |
@@ -248,7 +248,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/workflow/troubleshooter-v2.ts` | `rust/src/workflow/troubleshooter_v2.rs` | PASS | Graph policy + dispatcher batch: canonical Troubleshooter action, current execution and recovery boundary; 235 Node/Rust scenarios; `rust/tests/head_to_head_graph_policy_batch.mjs`, `rust/tests/head_to_head_graph_dispatcher_verified.mjs`, `rust/tests/head_to_head_graph_observation.mjs`, `rust/tests/native_graph_policy_batch.rs` |
 | `src/workflow/usage-index.ts` | `rust/src/workflow/usage_index.rs` | PASS | Eight-module Graph/Outbox batch: 628 canonical Mermaid symbol usages and 480 synthetic reverse index and filter fixtures; `rust/tests/head_to_head_graph_*.mjs`, `rust/tests/head_to_head_agent_graph.mjs`, `rust/tests/head_to_head_workflow_*.mjs`, `rust/tests/native_graph_outbox_batch.rs` |
 | `src/workspace.ts` | `rust/src/workspace.rs` | PENDING | — |
-| `src/z-adapter.ts` | `rust/src/z_adapter.rs` | PENDING | — |
+| `src/z-adapter.ts` | `rust/src/z_adapter.rs` | PORTING | Phase1 native Rust draft for Graph authority and Z WebHelm adapter request contract; uncompiled/unverified; no Dashboard client changes. |
 | `src/z-oauth.ts` | `rust/src/z_oauth.rs` | PORTING | Wave3 C real local fake HTTP PKCE/redirect/revoke flow and prior mocked negatives pass; production HTTPS provider/TLS/identity environment integration unverified (head_to_head_wave3_delivery.mjs). |
 
 ## Port notes
