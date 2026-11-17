@@ -242,3 +242,25 @@ pub mod events; // Direct Node src/events.ts memory and NATS event transports.
 
 // Direct Node src/feedback.ts attachment and marker port.
 pub mod feedback;
+// Wave 2 worker C: isolated file-to-file ports, merged by sole integration owner.
+pub mod dag_result_contract;
+pub mod delivery_parity_harness;
+pub mod host_invocation_store;
+pub mod local_git_merge;
+pub mod planner_task_ids;
+
+pub mod job_local_repository_migration;
+
+pub mod service_publication;
+
+pub mod route_outcome_recording;
+
+pub mod projection_failure_recovery;
+
+pub mod z_oauth;
+
+pub mod github_auth;
+pub mod job_worktree_cleanup;
+
+pub mod continuation;
+pub mod managed_worker_input;

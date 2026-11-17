@@ -357,6 +357,9 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "deliveryWave2" => {
+            Ok(agents_relay_rust2::delivery_parity_harness::delivery_wave2(request)?.to_string())
+        }
         "settlementFacts" => Ok(
             agents_relay_rust2::review_revision_settlement::settlement_facts(
                 &request["job"],
