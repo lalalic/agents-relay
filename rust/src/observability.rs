@@ -225,7 +225,7 @@ fn marker_to_utf16(ch: char) -> Option<u16> {
         .contains(&point)
         .then(|| (0xD800 + point - SURROGATE_MARKER_START) as u16)
 }
-fn slice_utf16_wire(text: &str, max: usize) -> String {
+pub(crate) fn slice_utf16_wire(text: &str, max: usize) -> String {
     let units = text.encode_utf16().take(max);
     char::decode_utf16(units)
         .map(|item| match item {

@@ -357,6 +357,45 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "emptyGitHubRuntimeRateUsage" => Ok(
+            agents_relay_rust2::github_runtime_usage::empty_github_runtime_rate_usage().to_string(),
+        ),
+        "observeRuntimeRateLimit" => Ok(agents_relay_rust2::observability::json_wire(
+            &agents_relay_rust2::github_runtime_usage::observe_runtime_rate_limit(
+                request["channel"].as_str().unwrap_or("rest"),
+                &request["response"],
+                request["observedAt"].as_str().unwrap_or(""),
+            )?,
+        )),
+        "runtimeRejection" => Ok(agents_relay_rust2::github_runtime_usage::runtime_rejection(
+            &request["observation"],
+        )?
+        .to_string()),
+        "parseGitHubCliHeaders" => Ok(
+            agents_relay_rust2::github_runtime_usage::parse_github_cli_headers(
+                request["output"].as_str().unwrap_or(""),
+                request["hadHeaders"] == true,
+            )
+            .to_string(),
+        ),
+
+        "cancelPausedGenerations" => {
+            let calls = std::cell::RefCell::new(Vec::<Value>::new());
+            agents_relay_rust2::reconciler_pause::cancel_paused_generations(
+                &request["job"],
+                |task_id, execution_id| {
+                    calls
+                        .borrow_mut()
+                        .push(json!({"kind":"task","taskId":task_id,"executionId":execution_id}))
+                },
+                |plan_id| {
+                    calls
+                        .borrow_mut()
+                        .push(json!({"kind":"plan","planId":plan_id}))
+                },
+            )?;
+            Ok(json!(calls.into_inner()).to_string())
+        }
         "workflowEffectsScenario" => Ok(workflow_effects_scenario(request)?.to_string()),
 
         "samePlannerChildDefinition" => Ok(json!(

@@ -57,3 +57,9 @@ pub mod task_id_migration;
 pub mod planner_child;
 // Direct Node src/observability.ts implementation; observational only.
 pub mod observability;
+
+// Direct Node src/reconciler-pause.ts port: durable pause generation cancellation.
+pub mod reconciler_pause;
+
+// Direct Node src/github-runtime-usage.ts rate-limit telemetry and CLI response handling.
+pub mod github_runtime_usage;

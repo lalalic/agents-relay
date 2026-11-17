@@ -88,7 +88,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/github-branch-projection.ts` | `rust/src/github_branch_projection.rs` | PASS | 626 shared differential fixtures across 14 ports; normal and force-with-lease argv compared (`rust/tests/head_to_head.mjs`) |
 | `src/github-client.ts` | `rust/src/github_client.rs` | PENDING | — |
 | `src/github-pr-archive.ts` | `rust/src/github_pr_archive.rs` | PENDING | — |
-| `src/github-runtime-usage.ts` | `rust/src/github_runtime_usage.rs` | PENDING | — |
+| `src/github-runtime-usage.ts` | `rust/src/github_runtime_usage.rs` | PASS | Direct port: 1,793 Node/Rust rate/header/Unicode/datetime fixtures, 5 native tests, 8 original Node runtime-rate regressions (`rust/tests/head_to_head_github_runtime_usage.mjs`, `rust/tests/native_github_runtime_usage.rs`) |
 | `src/github-webhook.ts` | `rust/src/github_webhook.rs` | PENDING | — |
 | `src/graph-runtime.ts` | `rust/src/graph_runtime.rs` | PENDING | — |
 | `src/host-invocation-store.ts` | `rust/src/host_invocation_store.rs` | PENDING | — |
@@ -145,7 +145,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/reconcile-coordinator.ts` | `rust/src/reconcile_coordinator.rs` | PENDING | — |
 | `src/reconciler-cancellation.ts` | `rust/src/reconciler_cancellation.rs` | PENDING | — |
 | `src/reconciler-context.ts` | `rust/src/reconciler_context.rs` | PENDING | — |
-| `src/reconciler-pause.ts` | `rust/src/reconciler_pause.rs` | PENDING | — |
+| `src/reconciler-pause.ts` | `rust/src/reconciler_pause.rs` | PASS | Direct port: 905 Node/Rust generation-selection cases; 3 native tests; in-memory cancellation callbacks only (`rust/tests/head_to_head_reconciler_pause.mjs`, `rust/tests/native_reconciler_pause.rs`) |
 | `src/reconciler-review.ts` | `rust/src/reconciler_review.rs` | PENDING | — |
 | `src/reconciler-runtime.ts` | `rust/src/reconciler_runtime.rs` | PENDING | — |
 | `src/reconciler-workflow-outbox.ts` | `rust/src/reconciler_workflow_outbox.rs` | PENDING | — |
