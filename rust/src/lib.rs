@@ -237,6 +237,7 @@ pub mod process_worker_parity_harness;
 pub mod projection_outbox;
 
 // Direct Node src/dashboard-data.ts readonly projections.
+pub mod dashboard;
 pub mod dashboard_data;
 pub mod events; // Direct Node src/events.ts memory and NATS event transports.
 

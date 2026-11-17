@@ -250,7 +250,7 @@ This small live suite covers two Temporary Chat submission gates: a normal text
 prompt and a prompt with an attachment. It does not exercise worker lifecycle
 events, durable-thread reuse, resume, or retry behavior.
 
-Open the dashboard on localhost port 8787. The marker format is intentionally public and append-friendly. Daemon/workspace operation reads the SQLite RelayStore inventory; historical GitHub audit evidence is not refreshed during Job execution.
+Open the dashboard on localhost port 8787. Its frontend is also an installable PWA with a shared Node/Rust static shell. The Service Worker caches only public assets, never Job data or SSE; see [Dashboard PWA migration](docs/DASHBOARD_PWA.md) for HTTPS installation and Rust backend readiness. The marker format is intentionally public and append-friendly. Daemon/workspace operation reads the SQLite RelayStore inventory; historical GitHub audit evidence is not refreshed during Job execution.
 
 Deterministic projection conflicts are safe and observable. A same-id/different-definition `append_task`/`append_plan` is classified once into a durable `conflict` state, stops consuming retry budget, keeps structured divergence evidence, and is never auto-overwritten. Historical projection conflict rows remain in SQLite for audit; the PR projection CLI is retired.
 
