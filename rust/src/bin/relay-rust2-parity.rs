@@ -357,6 +357,104 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "currentJobMetadata" => Ok(agents_relay_rust2::observability::json_wire(
+            &agents_relay_rust2::relay_job_snapshot_reads::current_job_metadata(&request["job"]),
+        )),
+        "normalizeRelayJob" => Ok(agents_relay_rust2::observability::json_wire(
+            &agents_relay_rust2::relay_job_snapshot_reads::normalize_relay_job(
+                request["raw"].as_str().unwrap_or(""),
+            )?,
+        )),
+        "relayJobSnapshotScenario" => {
+            use rusqlite::{params, Connection};
+            let db = Connection::open_in_memory().map_err(|error| error.to_string())?;
+            db.execute_batch("CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL)")
+                .map_err(|error|error.to_string())?;
+            for entry in request["records"].as_array().into_iter().flatten() {
+                let id = entry["id"].as_str().ok_or("job id required")?;
+                let raw = entry["json"].as_str().ok_or("job json required")?;
+                db.execute(
+                    "INSERT INTO job_snapshot VALUES(?,?,?)",
+                    params![id, raw, "2026-11-16T00:00:00Z"],
+                )
+                .map_err(|error| error.to_string())?;
+            }
+            let mut results = Vec::new();
+            for op in request["operations"].as_array().into_iter().flatten() {
+                let result = if op["action"] == "load" {
+                    agents_relay_rust2::relay_job_snapshot_reads::load_relay_job(
+                        &db,
+                        op["jobId"].as_str().unwrap_or(""),
+                    )
+                    .map(|item| item.unwrap_or(Value::Null))
+                } else {
+                    agents_relay_rust2::relay_job_snapshot_reads::list_relay_jobs(
+                        &db,
+                        op["jobId"].as_str(),
+                    )
+                    .map(|items| json!(items))
+                };
+                results.push(match result {
+                    Ok(item) => json!({"ok":true,"value":item}),
+                    Err(error) => json!({"ok":false,"error":error}),
+                });
+            }
+            Ok(agents_relay_rust2::observability::json_wire(&json!(
+                results
+            )))
+        }
+        "noGitHubMode" => {
+            let args = request["args"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            let process_args = request["processArgs"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            Ok(json!(agents_relay_rust2::no_github::no_github_mode(
+                &args,
+                &process_args,
+                request["envValue"].as_str()
+            ))
+            .to_string())
+        }
+        "disabledGitHubMethod" => {
+            let client = agents_relay_rust2::no_github::DisabledGitHubClient::new();
+            let execute = async {
+                match request["method"].as_str().unwrap_or("") {
+                    "request" => client.request().await,
+                    "graphql" => client.graphql().await,
+                    "rateLimitSnapshot" => client.rate_limit_snapshot().await,
+                    "currentLogin" => client.current_login().await,
+                    _ => Err("Unsupported disabled GitHub method".into()),
+                }
+            };
+            use std::{
+                future::Future,
+                pin::pin,
+                task::{Context, Poll, Waker},
+            };
+            let mut future = pin!(execute);
+            let mut context = Context::from_waker(Waker::noop());
+            let result = loop {
+                if let Poll::Ready(value) = future.as_mut().poll(&mut context) {
+                    break value;
+                }
+            };
+            Ok(json!(match result {
+                Ok(()) => json!({"ok":true}),
+                Err(error) => json!({"ok":false,"error":error}),
+            })
+            .to_string())
+        }
+
         "unifiedRelaySchemaScenario" => {
             use rusqlite::Connection;
             let db = Connection::open_in_memory().map_err(|error| error.to_string())?;

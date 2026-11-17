@@ -118,7 +118,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/markers.ts` | `rust/src/markers.rs` | PENDING | — |
 | `src/model-redecision.ts` | `rust/src/model_redecision.rs` | PENDING | — |
 | `src/model-routing.ts` | `rust/src/model_routing.rs` | PENDING | — |
-| `src/no-github.ts` | `rust/src/no_github.rs` | PENDING | — |
+| `src/no-github.ts` | `rust/src/no_github.rs` | PASS | Direct port: 900 Node/Rust --no-github switch fixtures, four disabled transport methods, 2 native tests and original Node disabled-API regression (`rust/tests/head_to_head_no_github.mjs`, `rust/tests/native_no_github.rs`) |
 | `src/observability.ts` | `rust/src/observability.rs` | PASS | Direct hotfix: 8,744 exact Node/Rust classification/redaction/correlation/environment fixtures; 6 Rust-native tests including interleaved Futures; 12 original Node regressions (rust/tests/head_to_head_observability.mjs; rust/tests/native_observability.rs) |
 | `src/outcome-review.ts` | `rust/src/outcome_review.rs` | PENDING | — |
 | `src/owned-process.ts` | `rust/src/owned_process.rs` | PENDING | — |
@@ -152,7 +152,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/reconciler.ts` | `rust/src/reconciler.rs` | PENDING | — |
 | `src/registry.ts` | `rust/src/registry.rs` | PASS | Batch 4: 700 shared differential cases across 21 source ports; filtering, trust domains, labels, task-kind evidence, exploratory ordering and reliability ranking (`rust/tests/head_to_head.mjs`) |
 | `src/relay-create.ts` | `rust/src/relay_create.rs` | PENDING | — |
-| `src/relay-job-snapshot-reads.ts` | `rust/src/relay_job_snapshot_reads.rs` | PENDING | — |
+| `src/relay-job-snapshot-reads.ts` | `rust/src/relay_job_snapshot_reads.rs` | PASS | Direct port: 400 Job metadata, 1,200 legacy Job normalization and 240 SQLite load/list Node/Rust fixtures; 4 native tests (`rust/tests/head_to_head_relay_job_snapshot_reads.mjs`, `rust/tests/native_relay_job_snapshot_reads.rs`) |
 | `src/relay-store-discovery.ts` | `rust/src/relay_store_discovery.rs` | PENDING | — |
 | `src/relay-store.ts` | `rust/src/relay_store.rs` | PENDING | — |
 | `src/relay-workflow-operations.ts` | `rust/src/relay_workflow_operations.rs` | PENDING | — |
@@ -504,3 +504,11 @@ This is only the Job JEL graph projection; Dashboard HTTP routing, additional ta
 - [x] Node `DatabaseSync` defaults `PRAGMA foreign_keys=ON`; the differential adapter explicitly configures native `Connection` to the same default. Production DB connection configuration remains caller-owned.
 - [x] `rust/tests/native_unified_relay_schema.rs`: **4** native tests for Job/Task/PR/HostInvocation/Projection schemas, checks and foreign keys, uniqueness, and the existing second-boot metadata conflict semantics.
 - [x] All tests run on transient in-memory SQLite databases. No live database migration or daemon restart occurred.
+
+### Direct Rust2 hotfix — normalized SQLite Job snapshot reads and disabled GitHub transport (2026-11-16)
+
+- [x] `src/relay-job-snapshot-reads.ts` → `rust/src/relay_job_snapshot_reads.rs`: all four exports `currentJobMetadata`, `normalizeRelayJob`, `loadRelayJob`, `listRelayJobs`. Compose the existing native `normalizeLegacyJobPrNumber` and `normalizeLegacyTaskLifecycle` ports, remove exactly six obsolete top-level Job fields, migrate historical Plan restatement fields, and keep SQLite reads strictly read-only.
+- [x] `rust/tests/head_to_head_relay_job_snapshot_reads.mjs`: **400** immutable top-level metadata fixtures; **1,200** full legacy Job/Task/Plan normalization cases; **240** independent in-memory SQLite Job load/list histories; `rust/tests/native_relay_job_snapshot_reads.rs` (**4**) covers immutable/nested metadata, legacy PR/title/Task/Plan, scoped ordering and UTF-16 surrogate wire handling.
+- [x] `src/no-github.ts` → `rust/src/no_github.rs`: exact public `DisabledGitHubClient` with four fail-closed transport methods and `noGitHubMode` across explicit arguments, process argv and strict `AGENTS_RELAY_NO_GITHUB=1` setting.
+- [x] `rust/tests/head_to_head_no_github.mjs`: **900** disable-mode Node/Rust cases plus all four API methods, with no real network calls. Two Rust native tests and original Node disabled GitHub transport regression verify the fail-closed boundary.
+- [x] No production Job SQLite, GitHub API, or Relay process touched. All test data lives in memory.

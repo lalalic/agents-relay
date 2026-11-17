@@ -90,3 +90,8 @@ pub mod job_pr_number_migration;
 
 // Direct Node src/unified-relay-schema.ts authoritative SQLite DDL port.
 pub mod unified_relay_schema;
+
+// Direct Node src/relay-job-snapshot-reads.ts durable Job normalization/reads.
+pub mod relay_job_snapshot_reads;
+// Direct Node src/no-github.ts fail-closed transport guard.
+pub mod no_github;
