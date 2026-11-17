@@ -287,3 +287,4 @@ pub mod interactive_request;
 pub mod interactive_resume;
 pub mod cli_review;
 pub mod cli_unblock;
+pub mod task_update;
