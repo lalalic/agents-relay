@@ -317,3 +317,5 @@ pub mod model_routing;
 pub mod execution_routing;
 pub mod decision_audit;
 pub mod cli_job_create;
+pub mod script_task_adapter;
+pub mod cli_prompt;

@@ -45,7 +45,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/cli-job-create.ts` | `rust/src/cli_job_create.rs` | PORTING | Serial Phase1 native SQLite Job creation and bounded/redacted JSONL routing audit port; uncompiled/untested, Stage2 bindings+differential pending. |
 | `src/cli-local-merge-config.ts` | `rust/src/cli_local_merge_config.rs` | PASS | 626 shared differential fixtures across 14 ports; merge success and validation errors compared (`rust/tests/head_to_head.mjs`) |
 | `src/cli-projection.ts` | `rust/src/cli_projection.rs` | EXCLUDED | Removed by main local-Git-only CLI lifecycle; PR projection commands and their Rust mirror/differential tests are retired, no longer an executable public CLI surface. |
-| `src/cli-prompt.ts` | `rust/src/cli_prompt.rs` | PENDING | — |
+| `src/cli-prompt.ts` | `rust/src/cli_prompt.rs` | PORTING | Phase1 serial native Rust Script Agent and read-only CLI Prompt port; uncompiled/untested, API integration Phase2. |
 | `src/cli-review.ts` | `rust/src/cli_review.rs` | PORTING | Phase1 serial native Rust draft; uncompiled, untested and not production-wired; parity pending. |
 | `src/cli-revision.ts` | `rust/src/cli_revision.rs` | PASS | Findings/receipt/input bounds and native HTTP request parity in 98-case shared CLI suite; rust/tests/head_to_head_cli_core.mjs, cli_http_native.rs |
 | `src/cli-shutdown.ts` | `rust/src/cli_shutdown.rs` | PASS | Batch 5: exit status precedence, serving mode, delayed default/custom grace and injected force-exit callback verified without terminating the test process (`rust/tests/native_batch5.rs`, `rust/tests/head_to_head_batch5.mjs`). |
@@ -181,7 +181,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/runtime-status-events.ts` | `rust/src/runtime_status_events.rs` | PASS | Direct port: 430 Node/Rust process-local change-event histories, original UUIDv4 and timestamp shape, two native tests (`rust/tests/head_to_head_runtime_status_events.mjs`, `rust/tests/native_runtime_status_events.rs`) |
 | `src/runtime-status.ts` | `rust/src/runtime_status.rs` | PASS | Direct port: 4,500 Node/Rust status/implementation/supersession fixtures and four native regressions (`rust/tests/head_to_head_runtime_status.mjs`, `rust/tests/native_runtime_status.rs`) |
 | `src/runtime-summary.ts` | `rust/src/runtime_summary.rs` | PASS | Direct port: 700 Node/Rust lease-fenced worker/model aggregation fixtures and three native regressions (`rust/tests/head_to_head_runtime_summary.mjs`, `rust/tests/native_runtime_summary.rs`) |
-| `src/script-task-adapter.ts` | `rust/src/script_task_adapter.rs` | PENDING | — |
+| `src/script-task-adapter.ts` | `rust/src/script_task_adapter.rs` | PORTING | Phase1 serial native Rust Script Agent and read-only CLI Prompt port; uncompiled/untested, API integration Phase2. |
 | `src/service-external-actions.ts` | `rust/src/service_external_actions.rs` | PORTING | Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure. |
 | `src/service-publication.ts` | `rust/src/service_publication.rs` | PASS | Wave2 C: exact SQLite commit/event receipt, dedupe and failed delivery paths with native failure test (`head_to_head_wave2_delivery.mjs`) |
 | `src/single-job-task-control.ts` | `rust/src/single_job_task_control.rs` | PORTING | Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure. |
