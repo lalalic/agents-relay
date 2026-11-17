@@ -195,7 +195,7 @@ test('L3 objective-only Job restarts and reaches Final Review before any automat
  const result=await runReplay({
   id:'objective-only-review-first',reviewEnabled:true,autoMerge:true,headSha:'head-1',tasks:[],
   plannerScript:{results:[
-   {objective_status:'in_progress',assessment:'Implement A first',next_tasks:[{id:'a',title:'Implement and verify stage A outcome',input:'Implement and verify stage A',output:{kind:'task_pr'},storySize:'S'}],unblocks:[]},
+   {objective_status:'in_progress',assessment:'Implement A first',next_tasks:[{id:'a',title:'Implement and verify stage A outcome',input:'Implement and verify stage A',output:{kind:'file',path:'fixtures/stage-a-output.json'},storySize:'S'}],unblocks:[]},
   ]},
   steps:[
    {type:'planner.settle'},

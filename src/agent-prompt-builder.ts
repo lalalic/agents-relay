@@ -107,6 +107,7 @@ export async function buildRelayWorkPrompt(input: {
   skillPath: string;
   taskTitle?: string;
   workerSelfReview?: boolean;
+  sourceCommitRequired?: boolean;
   jobId: string;
   taskId: string;
   executionId: string;
@@ -154,7 +155,12 @@ export async function buildRelayWorkPrompt(input: {
       `EVENT SOURCE (exact): job/${input.jobId}/task/${input.taskId}/execution/${input.executionId}`,
       'START: After Bootstrap and the minimal event-contract preflight, publish `task.started` through the canonical events-bus before beginning Task work. Verify the publish response.',
       'PROGRESS: Publish `task.progress` with concrete progress/evidence during long-running work and before the inactivity timeout. Progress is not completion.',
-      'TERMINAL: After verifying durable output, publish exactly ONE `task.completed`; if you cannot fulfill the Task, publish `task.failed` with phase, reason and evidence. Do not silently exit or treat a process/browser receipt as completion.',
+      ...(input.sourceCommitRequired ? [
+        'SOURCE DELIVERY (MANDATORY): After self review and tests, commit the actual source changes on this Job Git branch. The LAST commit must contain exact trailers `Relay-Task: '+input.taskId+'` and `Relay-Execution: '+input.executionId+'`. Do not stage other Workers changes or leave untracked source files.',
+        'SOURCE TERMINAL: Do NOT publish task.completed on the Event Bus. Instead run the matching package CLI: `agents-relay task complete --repo <local-repository-name> --id '+input.jobId+' --task-id '+input.taskId+' --execution-id '+input.executionId+' --commit-sha $(git rev-parse HEAD) --summary <evidence>`. Relay validates the commit and emits completion. A direct task.completed event is rejected. Report task.failed only on a verified unresolvable blocker.',
+      ] : [
+        'TERMINAL: After verifying durable output, publish exactly ONE `task.completed`; if you cannot fulfill the Task, publish `task.failed` with phase, reason and evidence. Do not silently exit or treat a process/browser receipt as completion.',
+      ]),
       'INTERACTIVE REVIEW: If this Job requires review, use only the review action and binding supplied by its Execution Context. Relay owns the suspension and resume state. Never invent a review tool or emit a terminal event while awaiting review. After resumption read the authoritative Task Context for the decision.',
       'Every event MUST use the exact source above. Do not publish `task.blocked` or `task.unblocked`; those are Relay-owned states. Relay must accept the correlated event.',
     ]),

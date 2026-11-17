@@ -23,6 +23,7 @@ import { createWorkerStartAck } from './worker-start-ack.js';
 import type { EventsHistoryPage } from './events-bus-runtime.js';
 import { monitorExecutionProcess } from './execution-process-tracker.js'; import { HostInteractiveInvocationCoordinator, hostInvocationPorts } from './interactive-invocation.js'; import { resumeInteractiveTask } from './interactive-resume.js';
 import { acceptTaskProgress, armInactivityWatchdog, inactivityDeadline, isCorrelatedWorkerEvent, isRecoverableWatchdogFailure } from './task-inactivity-watchdog.js';
+import { startedSourceBaseline, bindSourceBaseline, sourceCompletionVerified } from './git-delivery.js';
 
 /** cwdForJob resolves the effective Worker cwd (canonical Git root or isolated worktree).
  * It is never stored on Job; job.projectRoot is the immutable repository identity.
@@ -194,6 +195,7 @@ export abstract class ReconcilerRuntimeBase {
   }
   protected async markWorkerStarted(event: EventRecord): Promise<EventHandlingResult> {
     const live = this.live.get(event.task_id);
+    const baseline = startedSourceBaseline(await this.store.load(event.job_id), event.task_id);
     const transition = await this.taskTransitions.apply(event.job_id, event.task_id, 'task.started', {
       eligible: (job, task) => {
         if (!task.executionId || eventSourceId(event) !== executionEventSource(job.id, task.id, task.executionId)) return false;
@@ -207,6 +209,7 @@ export abstract class ReconcilerRuntimeBase {
           && Boolean(task.executionId && eventSourceId(event) === executionEventSource(event.job_id, task.id, task.executionId)),
       }),
       mutate: (_job, task) => {
+        bindSourceBaseline(task, baseline);
         task.updatedAt = task.lastProgressAt = new Date().toISOString(); task.lastProgressEventAt = event.timestamp;
       },
     });
@@ -396,6 +399,7 @@ export abstract class ReconcilerRuntimeBase {
              task.interactiveInvocation.executionId !== task.executionId ||
              !isCorrelatedWorkerEvent(task, event))) return false;
         if (isFinalReviewAgent(task.agentName) && event.type === 'task.completed') return false;
+        if (event.type === 'task.completed' && !sourceCompletionVerified(_job, task, terminalEventExecutionId ?? null)) return false;
         if (event.type === 'task.completed' && task.interactiveInvocation?.status !== undefined && task.interactiveInvocation.status !== 'approved') return false; // current interactive revision requires durable approval
         const modelBacked = ['codex', 'chatgpt', 'z', 'script'].includes(task.adapter);
         if (!trustedInternal && modelBacked && !isCorrelatedWorkerEvent(task, event)) {
@@ -409,7 +413,7 @@ export abstract class ReconcilerRuntimeBase {
       facts: (_job, task) => {
         const processExitedAfterPublishedTerminal = task.failureReason === 'worker_exit_without_terminal_event';
         const freshEnough = processExitedAfterPublishedTerminal || isCorrelatedWorkerEvent(task, event);
-        return { recoverableExecution: isRecoverableWatchdogFailure(task) && freshEnough, awaitingInteractiveDecision: lifecycleEvent === 'task.interactive_waiting' && task.interactiveInvocation?.status === 'awaiting_decision' };
+        return { recoverableExecution: isRecoverableWatchdogFailure(task) && freshEnough, awaitingInteractiveDecision: lifecycleEvent === 'task.interactive_waiting' && task.interactiveInvocation?.status === 'awaiting_decision', sourceDeliveryVerified: sourceCompletionVerified(_job, task, terminalEventExecutionId ?? null) };
       },
       mutate: (job, task) => {
         const modelBacked = ['codex', 'chatgpt', 'z', 'script'].includes(task.adapter);

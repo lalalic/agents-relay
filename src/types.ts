@@ -223,6 +223,10 @@ export type Task = {
   input: string; attachments?: string[]; output?: TaskOutput; review?: ReviewTaskMetadata; workerRequirements?: WorkerRequirements; workerSelection?: WorkerSelection; routing?: RoutingDecision; continuation?: Continuation | null; continuationDeliveredAt?: string | null; chatgptTabClosePolicy?: ChatGptTabClosePolicy; state: TaskState; attempt: number; maxAttempts: number;
   leaseOwner: string | null; leaseExpiresAt: string | null; executionId: string | null; executionHistory?: Array<{ id: string; attempt: number; startedAt: string }>; threadId: string | null; threadUrl?: string | null; threadHistory?: Array<{executionId:string;threadUrl:string;attempt:number;at:string}>;
   threadDeletedAt?: string | null; threadCleanupError?: string | null;
+  /** A code Worker must submit a validated Git commit via task complete. */
+  gitDeliveryRequired?: boolean;
+  gitDeliveryBaseline?: { executionId: string; sha: string };
+  gitDelivery?: { executionId: string; baseSha: string; commitSha: string; worktree: string; verifiedAt: string };
   reviewHeadSha?: string;
   recoveryPlanId?: string;
   recoveryContext?: { failureKind: string; reason: string; evidence?: string; recoveryTaskId: string; at: string; reroute: boolean };

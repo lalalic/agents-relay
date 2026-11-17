@@ -180,7 +180,7 @@ Returns the same summary used by the dashboard header plus a running array with 
   task: `Manage durable tasks.
 
 Usage:
-  npx agents-relay task <create|update|show|events|list|revise|retry|unblock|cancel> [options]
+  npx agents-relay task <create|update|show|events|list|revise|complete|retry|unblock|cancel> [options]
 
 Actions:
   create  Create one durable Task under an existing Job
@@ -190,7 +190,7 @@ Actions:
   revise  Submit an immutable-head targeted reviewer fix request
   retry   Retry a FAILED Task
   unblock Authoritatively invalidate a BLOCKED decision
-  complete Complete an orchestrator-owned Task
+  complete Verify a source Worker Git Commit, then atomically finish the current execution
   cancel  Cancel a Task`,
   'task create': `Create one durable Task under an existing Job.
 
@@ -210,6 +210,15 @@ Use --clear-routing to remove routing metadata.
 
 Example:
   npx agents-relay task update --repo LOCAL_ROOT_NAME --id 101 --task-id 202 --adapter chatgpt --provider chatgpt --model gpt-5.6-sol --reasoning high`,
+  'task complete': `Complete a commit-required source Task through the Relay daemon. Direct task.completed Event Bus submissions cannot complete such a Task.
+
+Required: --repo LOCAL_ROOT_NAME --id JOB_ID --task-id TASK_ID --execution-id CURRENT_EXECUTION --commit-sha FULL_GIT_SHA --summary TEXT.
+
+Before calling, commit the Task changes on the Job source branch and ensure its checkout is fully clean. The final commit message must contain exact trailers:
+  Relay-Task: TASK_ID
+  Relay-Execution: CURRENT_EXECUTION
+
+Relay verifies the current execution's started Git baseline, source branch HEAD, nonempty new commit, commit trailers, exact worktree and clean tracked/untracked status. It saves the proof and transitions the Task through the canonical lifecycle graph; retries with the same accepted proof are idempotent. A mismatched or uncommitted source cannot succeed. Historical pre-enforcement Tasks keep their original event contract.`,
   'task revise': `Authenticated immutable-head targeted revision request from the active Final Reviewer.
 
 Required: --repo LOCAL_ROOT_NAME --id JOB --task-id ORIGINAL --review-task-id FINAL_REVIEW --execution-id CURRENT_REVIEW_EXECUTION --head-sha EXACT_SHA --request-id STABLE_ID --findings-file PATH. The findings file contains a nonempty JSON array [{"id":"F-1","summary":"...","evidence":"..."}].

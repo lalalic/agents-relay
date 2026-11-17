@@ -15,7 +15,7 @@ const sha='abcdef0123456789abcdef0123456789abcdef01';
 const now=()=>new Date().toISOString();
 const base=(id,agentName,state)=>({jobId:'managed-review',id,title:id,kind:'work',priority:'P1',storySize:'M',agentName,parentTaskId:null,
  dependencies:[],capabilities:[],adapter:'codex',input:'deliver '+id,output:{kind:'task_pr'},state,attempt:1,maxAttempts:3,
- leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:state==='SUCCEEDED'?{summary:'original complete'}:null,
+ leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,output:{kind:'file',path:'simulated/revision-evidence.json'},result:state==='SUCCEEDED'?{summary:'original complete'}:null,
  error:null,timeoutMs:900000,createdAt:now(),updatedAt:now()});
 
 function setup() {
