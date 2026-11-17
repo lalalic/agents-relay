@@ -89,7 +89,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/github-client.ts` | `rust/src/github_client.rs` | PENDING | — |
 | `src/github-pr-archive.ts` | `rust/src/github_pr_archive.rs` | PASS | Direct callback port: 1,156 Node/Rust fake GitHubClient display-only PR scenarios, 4 native tests and original Node PR archive regression (`rust/tests/head_to_head_github_pr_archive.mjs`, `rust/tests/native_github_pr_archive.rs`) |
 | `src/github-runtime-usage.ts` | `rust/src/github_runtime_usage.rs` | PASS | Direct port: 1,793 Node/Rust rate/header/Unicode/datetime fixtures, 5 native tests, 8 original Node runtime-rate regressions (`rust/tests/head_to_head_github_runtime_usage.mjs`, `rust/tests/native_github_runtime_usage.rs`) |
-| `src/github-webhook.ts` | `rust/src/github_webhook.rs` | PENDING | — |
+| `src/github-webhook.ts` | `rust/src/github_webhook.rs` | PASS | Eight-file hotfix: 580 event/trusted comment fixtures, 1,000 package marker cases, 280 HMAC signatures, 240 delivery dedup windows; native HMAC/receipt tests; `rust/tests/head_to_head_eight_batch_*.mjs`, `rust/tests/native_eight_batch_*.rs` |
 | `src/graph-runtime.ts` | `rust/src/graph_runtime.rs` | PENDING | — |
 | `src/host-invocation-store.ts` | `rust/src/host_invocation_store.rs` | PENDING | — |
 | `src/interactive-invocation.ts` | `rust/src/interactive_invocation.rs` | PENDING | — |
@@ -115,7 +115,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/local-merge-projection.ts` | `rust/src/local_merge_projection.rs` | PENDING | — |
 | `src/managed-worker-input.ts` | `rust/src/managed_worker_input.rs` | PENDING | — |
 | `src/manual-plan.ts` | `rust/src/manual_plan.rs` | PENDING | — |
-| `src/markers.ts` | `rust/src/markers.rs` | PENDING | — |
+| `src/markers.ts` | `rust/src/markers.rs` | PASS | Eight-file hotfix: 5,160 Node/Rust Job/Task/Plan/Agent HTML-comment render/parse cases, native round-trip/security tests; `rust/tests/head_to_head_eight_batch_*.mjs`, `rust/tests/native_eight_batch_*.rs` |
 | `src/model-redecision.ts` | `rust/src/model_redecision.rs` | PENDING | — |
 | `src/model-routing.ts` | `rust/src/model_routing.rs` | PENDING | — |
 | `src/no-github.ts` | `rust/src/no_github.rs` | PASS | Main local-Git-only always-disabled mode with all four fail-closed GitHub transports, 900 Node/Rust flag fixtures and native tests (`rust/tests/head_to_head_no_github.mjs`, `rust/tests/native_no_github.rs`) |
@@ -141,7 +141,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/projection-outbox.ts` | `rust/src/projection_outbox.rs` | PENDING | — |
 | `src/projection-recovery-runtime.ts` | `rust/src/projection_recovery_runtime.rs` | EXCLUDED | Deleted in main; the old GitHub projection-recovery runtime is not part of the local-Git-only lifecycle. |
 | `src/projection-recovery.ts` | `rust/src/projection_recovery.rs` | EXCLUDED | Deleted in main; retired GitHub PR projection repair does not own Job completion. |
-| `src/publication-store.ts` | `rust/src/publication_store.rs` | PENDING | — |
+| `src/publication-store.ts` | `rust/src/publication_store.rs` | PASS | Eight-file hotfix: Transactional delivery dedupe and monotonic Job publication state: 285 independent in-memory SQLite histories plus native tests; `rust/tests/head_to_head_eight_batch_*.mjs`, `rust/tests/native_eight_batch_*.rs` |
 | `src/reconcile-coordinator.ts` | `rust/src/reconcile_coordinator.rs` | PENDING | — |
 | `src/reconciler-cancellation.ts` | `rust/src/reconciler_cancellation.rs` | PENDING | — |
 | `src/reconciler-context.ts` | `rust/src/reconciler_context.rs` | PENDING | — |
@@ -151,8 +151,8 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/reconciler-workflow-outbox.ts` | `rust/src/reconciler_workflow_outbox.rs` | PENDING | — |
 | `src/reconciler.ts` | `rust/src/reconciler.rs` | PENDING | — |
 | `src/registry.ts` | `rust/src/registry.rs` | PASS | Batch 4: 700 shared differential cases across 21 source ports; filtering, trust domains, labels, task-kind evidence, exploratory ordering and reliability ranking (`rust/tests/head_to_head.mjs`) |
-| `src/relay-create.ts` | `rust/src/relay_create.rs` | PENDING | — |
-| `src/relay-job-merge.ts` | `rust/src/relay_job_merge.rs` | PENDING | — |
+| `src/relay-create.ts` | `rust/src/relay_create.rs` | PASS | Eight-file hotfix: Atomic SQLite create-if-absent and immutable metadata: 180 direct Node/Rust Job creation histories, native original Job and duplicate identity tests; `rust/tests/head_to_head_eight_batch_*.mjs`, `rust/tests/native_eight_batch_*.rs` |
+| `src/relay-job-merge.ts` | `rust/src/relay_job_merge.rs` | PASS | Eight-file hotfix: Local-authored revision history + append-only Task comments: 440 Node/Rust inbound Job/Task/Plan merges, native provenance regression; `rust/tests/head_to_head_eight_batch_*.mjs`, `rust/tests/native_eight_batch_*.rs` |
 | `src/relay-job-snapshot-reads.ts` | `rust/src/relay_job_snapshot_reads.rs` | PASS | Direct port: 400 Job metadata, 1,200 legacy Job normalization and 240 SQLite load/list Node/Rust fixtures; 4 native tests (`rust/tests/head_to_head_relay_job_snapshot_reads.mjs`, `rust/tests/native_relay_job_snapshot_reads.rs`) |
 | `src/relay-store-discovery.ts` | `rust/src/relay_store_discovery.rs` | PENDING | — |
 | `src/relay-store.ts` | `rust/src/relay_store.rs` | PENDING | — |
@@ -186,11 +186,11 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/service-publication.ts` | `rust/src/service_publication.rs` | PENDING | — |
 | `src/single-job-task-control.ts` | `rust/src/single_job_task_control.rs` | PENDING | — |
 | `src/store-github.ts` | `rust/src/store_github.rs` | PENDING | — |
-| `src/store-task-definition.ts` | `rust/src/store_task_definition.rs` | PENDING | — |
+| `src/store-task-definition.ts` | `rust/src/store_task_definition.rs` | PASS | Eight-file hotfix: Immutable Task and Plan definitions, divergence and identity: 6,300 Node/Rust cases, native identity checks; `rust/tests/head_to_head_eight_batch_*.mjs`, `rust/tests/native_eight_batch_*.rs` |
 | `src/store.ts` | `rust/src/store.rs` | PENDING | — |
 | `src/task-actions.ts` | `rust/src/task_actions.rs` | PENDING | — |
 | `src/task-comments.ts` | `rust/src/task_comments.rs` | PASS | Direct hotfix: 2,620 Node/Rust comment append, context and stale snapshot fixtures; 5 native tests, original Node comment regressions (`rust/tests/head_to_head_task_comments.mjs`, `rust/tests/native_task_comments.rs`) |
-| `src/task-context.ts` | `rust/src/task_context.rs` | PENDING | — |
+| `src/task-context.ts` | `rust/src/task_context.rs` | PASS | Eight-file hotfix: Execution-bound read context, reviewer/troubleshooter history and exact reference prompt: 2,090 Node/Rust cases plus native stale-execution checks; `rust/tests/head_to_head_eight_batch_*.mjs`, `rust/tests/native_eight_batch_*.rs` |
 | `src/task-id-migration.ts` | `rust/src/task_id_migration.rs` | PASS | Direct hotfix: 7 cloned SQLite Node/Rust migrations, 3 preflight refusals, verified constraint rollback + immutable backup, 4 native tests, 3 original Node regressions (rust/tests/head_to_head_task_id_migration.mjs; rust/tests/native_task_id_migration.rs) |
 | `src/task-inactivity-watchdog.ts` | `rust/src/task_inactivity_watchdog.rs` | PENDING | — |
 | `src/task-recovery.ts` | `rust/src/task_recovery.rs` | PENDING | — |
@@ -214,7 +214,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/worker-routing.ts` | `rust/src/worker_routing.rs` | PENDING | — |
 | `src/worker-start-ack.ts` | `rust/src/worker_start_ack.rs` | PENDING | — |
 | `src/workflow-effect-failures.ts` | `rust/src/workflow_effect_failures.rs` | PENDING | — |
-| `src/workflow/action-ledger.ts` | `rust/src/workflow/action_ledger.rs` | PENDING | — |
+| `src/workflow/action-ledger.ts` | `rust/src/workflow/action_ledger.rs` | PASS | Eight-file hotfix: Graph-approved effect reservations with immutable execution/lease/attempt fencing: 410 independent Node/Rust SQLite histories and 2 native tests; `rust/tests/head_to_head_eight_batch_*.mjs`, `rust/tests/native_eight_batch_*.rs` |
 | `src/workflow/authoritative-conditions.ts` | `rust/src/workflow/authoritative_conditions.rs` | PENDING | — |
 | `src/workflow/authoritative-unblock-v2.ts` | `rust/src/workflow/authoritative_unblock_v2.rs` | PENDING | — |
 | `src/workflow/blocker-recovery.ts` | `rust/src/workflow/blocker_recovery.rs` | PENDING | — |
@@ -543,3 +543,15 @@ This is only the Job JEL graph projection; Dashboard HTTP routing, additional ta
 - [x] Retire `cli-projection`, `projection-recovery`, and `projection-recovery-runtime` from the executable Rust2 target; retain their history as `EXCLUDED` rather than falsely counting them PASS.
 - [x] Add newly-introduced `relay-job-merge.ts` as `PENDING`, with one-to-one future Rust path; 228 tracked historical+new files = 225 active current Node modules plus 3 excluded.
 - [x] Refresh `cli-help`, repository-scoped global numeric Task idempotency, unconditional local-only GitHub mode, and ACTIVE-only review generation fencing from current main.
+
+### Eight-file Rust2 direct-port batch (2026-11-17)
+
+- [x] `src/relay-create.ts` → `rust/src/relay_create.rs`: `BEGIN IMMEDIATE` creates immutable SQLite Job metadata or returns the pre-existing normalized Job, never overwriting a local objective.
+- [x] `src/relay-job-merge.ts` → `rust/src/relay_job_merge.rs`: latest-update field selection, comment merge, immutable review request/round preservation and plan round ordering.
+- [x] `src/store-task-definition.ts` → `rust/src/store_task_definition.rs`: durable Task/Plan identity and top-level field divergence, ignoring mutable lifecycle fields, removing `planUrl` without reordering ordered JSON keys.
+- [x] `src/task-context.ts` → `rust/src/task_context.rs`: execution generation, dependencies, reviewer/troubleshooter references, append-only comment histories, mandatory event-contract reference validation.
+- [x] `src/publication-store.ts` → `rust/src/publication_store.rs`: independent SQL delivery ledger with per-Job state, timestamp monotonicity, transactional idempotency and sorted event listing.
+- [x] `src/workflow/action-ledger.ts` → `rust/src/workflow/action_ledger.rs`: graph-authorized reservation and lease/generation fencing, postcondition tri-state and `Unknown` durability, never a second graph policy engine.
+- [x] `src/github-webhook.ts` → `rust/src/github_webhook.rs`: signed HMAC-SHA256 verification, event/action classification, trusted bot-only publish comments, package marker validation, one-time delivery receipts.
+- [x] `src/markers.ts` → `rust/src/markers.rs`: byte-accurate HTML comment rendering, safe angle-bracket escaping, historical Job/Task fallback content and Plan/Agent metadata handling.
+- [x] Four direct Node/Rust head-to-head suites with 16,969 head-to-head fixture scenarios, plus 12 native Rust boundary tests and 28 focused original Node integration regressions. All data is isolated in-memory SQLite; no live Jobs, remote GitHub calls, or source checkout writes.

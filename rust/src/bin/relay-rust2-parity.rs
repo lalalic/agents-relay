@@ -357,6 +357,329 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "marker" => Ok(json!(agents_relay_rust2::markers::marker(
+            request["label"].as_str().unwrap_or(""),
+            &request["value"]
+        ))
+        .to_string()),
+        "parseMarker" => Ok(agents_relay_rust2::observability::json_wire(
+            &agents_relay_rust2::markers::parse_marker(
+                request["body"].as_str().unwrap_or(""),
+                request["label"].as_str().unwrap_or(""),
+            )
+            .unwrap_or(Value::Null),
+        )),
+        "renderJobBody" => Ok(json!(agents_relay_rust2::markers::render_job_body(
+            &request["job"]
+        ))
+        .to_string()),
+        "renderJobComment" => Ok(json!(agents_relay_rust2::markers::render_job_comment(
+            &request["job"]
+        ))
+        .to_string()),
+        "renderTaskComment" => Ok(json!(agents_relay_rust2::markers::render_task_comment(
+            &request["task"]
+        ))
+        .to_string()),
+        "parseJob" => Ok(agents_relay_rust2::observability::json_wire(
+            &agents_relay_rust2::markers::parse_job(request["body"].as_str().unwrap_or(""))
+                .unwrap_or(Value::Null),
+        )),
+        "parseTask" => Ok(agents_relay_rust2::observability::json_wire(
+            &agents_relay_rust2::markers::parse_task(request["body"].as_str().unwrap_or(""))
+                .unwrap_or(Value::Null),
+        )),
+        "renderPlanComment" => Ok(json!(agents_relay_rust2::markers::render_plan_comment(
+            &request["plan"]
+        ))
+        .to_string()),
+        "parsePlan" => Ok(agents_relay_rust2::observability::json_wire(
+            &agents_relay_rust2::markers::parse_plan(request["body"].as_str().unwrap_or(""))
+                .unwrap_or(Value::Null),
+        )),
+        "renderAgentComment" => Ok(json!(agents_relay_rust2::markers::render_agent_comment(
+            &request["agent"]
+        ))
+        .to_string()),
+        "parseAgent" => Ok(agents_relay_rust2::observability::json_wire(
+            &agents_relay_rust2::markers::parse_agent(request["body"].as_str().unwrap_or(""))
+                .unwrap_or(Value::Null),
+        )),
+
+        "parseGitHubWebhook" => Ok(agents_relay_rust2::observability::json_wire(
+            &agents_relay_rust2::github_webhook::parse_github_webhook(
+                &request["headers"],
+                request["body"].as_str().unwrap_or("").as_bytes(),
+            )
+            .unwrap_or(Value::Null),
+        )),
+        "parsePackagePublicationMarker" => Ok(agents_relay_rust2::observability::json_wire(
+            &agents_relay_rust2::github_webhook::parse_package_publication_marker(&request["body"])
+                .unwrap_or(Value::Null),
+        )),
+        "parsePackagePublishFailureMarker" => Ok(agents_relay_rust2::observability::json_wire(
+            &agents_relay_rust2::github_webhook::parse_package_publish_failure_marker(
+                &request["body"],
+            )
+            .unwrap_or(Value::Null),
+        )),
+        "verifyGitHubWebhook" => Ok(json!(
+            agents_relay_rust2::github_webhook::verify_github_webhook(
+                request["secret"].as_str().unwrap_or(""),
+                request["body"].as_str().unwrap_or("").as_bytes(),
+                request["signature"].as_str()
+            )
+        )
+        .to_string()),
+        "deliveryDeduperScenario" => {
+            let mut deduper = agents_relay_rust2::github_webhook::DeliveryDeduper::new(
+                request["ttlMs"].as_i64().unwrap_or(86400000),
+                request["maxEntries"].as_u64().unwrap_or(10000) as usize,
+            );
+            let results = request["operations"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|op| {
+                    let id = op["id"].as_str().unwrap_or("");
+                    let now = op["now"].as_i64().unwrap_or(0);
+                    if op["action"] == "has" {
+                        deduper.has(id, now)
+                    } else {
+                        deduper.accept(id, now)
+                    }
+                })
+                .collect::<Vec<_>>();
+            Ok(json!(results).to_string())
+        }
+
+        "actionLedgerScenario" => {
+            use rusqlite::{params, Connection};
+            let db = Connection::open_in_memory().map_err(|error| error.to_string())?;
+            db.execute_batch(
+                "CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL);",
+            )
+            .map_err(|error| error.to_string())?;
+            for entry in request["jobs"].as_array().into_iter().flatten() {
+                db.execute(
+                    "INSERT INTO job_snapshot VALUES(?,?)",
+                    params![entry["id"].as_str(), entry["value"].to_string()],
+                )
+                .map_err(|error| error.to_string())?;
+            }
+            let ledger =
+                agents_relay_rust2::workflow::action_ledger::WorkflowActionLedger::new(&db)?;
+            let mut outputs = Vec::new();
+            for op in request["operations"].as_array().into_iter().flatten() {
+                let result: Result<Value, String> = match op["action"].as_str().unwrap_or("reserve")
+                {
+                    "reserve" => ledger
+                        .reserve(
+                            &op["identity"],
+                            &op["decision"],
+                            op["conditionId"].as_str().unwrap_or(""),
+                        )
+                        .map(|inserted| json!(inserted)),
+                    "running" => ledger
+                        .reserve_for_running_task(
+                            &op["identity"],
+                            &op["decision"],
+                            op["conditionId"].as_str().unwrap_or(""),
+                            op["now"].as_str().unwrap_or(""),
+                            op["allowedState"].as_str().unwrap_or("RUNNING"),
+                        )
+                        .map(|inserted| json!(inserted)),
+                    "dispatch" => ledger
+                        .reserve_for_claimed_dispatch(
+                            &op["identity"],
+                            &op["decision"],
+                            op["conditionId"].as_str().unwrap_or(""),
+                        )
+                        .map(|inserted| json!(inserted)),
+                    "trace" => ledger
+                        .trace(op["attemptKey"].as_str().unwrap_or(""))
+                        .map(|trace| trace.unwrap_or(Value::Null)),
+                    "verify" => {
+                        let specs = op["conditions"].as_array().cloned().unwrap_or_default();
+                        let conditions =
+                            agents_relay_rust2::workflow::conditions::ConditionRegistry::new(
+                                specs,
+                            )?;
+                        ledger.verify(
+                            op["attemptKey"].as_str().unwrap_or(""),
+                            &conditions,
+                            &op["facts"],
+                        )
+                    }
+                    _ => Err("unknown action ledger operation".into()),
+                };
+                outputs.push(match result {
+                    Ok(value) => json!({"ok":true,"value":value}),
+                    Err(error) => json!({"ok":false,"error":error}),
+                });
+            }
+            let mut query=db.prepare("SELECT attempt_key,execution_id,generation,graph,action_id,condition_id,outcome FROM workflow_action_trace ORDER BY attempt_key").map_err(|error|error.to_string())?;
+            let traces=query.query_map([],|row|Ok(json!({"attemptKey":row.get::<_,String>(0)?,"executionId":row.get::<_,String>(1)?,
+                "generation":row.get::<_,i64>(2)?,"graph":row.get::<_,String>(3)?,"actionId":row.get::<_,String>(4)?,
+                "conditionId":row.get::<_,String>(5)?,"outcome":row.get::<_,String>(6)?})))
+                .map_err(|error|error.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())?;
+            Ok(agents_relay_rust2::observability::json_wire(
+                &json!({"outputs":outputs,"traces":traces}),
+            ))
+        }
+
+        "taskExecutionContext" => Ok(agents_relay_rust2::observability::json_wire(
+            &agents_relay_rust2::task_context::task_execution_context(
+                &request["job"],
+                request["taskId"].as_str().unwrap_or(""),
+                request["executionId"].as_str().unwrap_or(""),
+            )?,
+        )),
+        "taskAgentHistoryContext" => Ok(json!(
+            agents_relay_rust2::task_context::task_agent_history_context(
+                &request["job"],
+                &request["task"]
+            )
+        )
+        .to_string()),
+        "taskReferencePrompt" => Ok(json!(
+            agents_relay_rust2::task_context::task_reference_prompt(
+                request["repository"].as_str().unwrap_or(""),
+                request["jobId"].as_str().unwrap_or(""),
+                request["taskId"].as_str().unwrap_or(""),
+                request["executionId"].as_str().unwrap_or(""),
+                request["managedInput"].as_str()
+            )?
+        )
+        .to_string()),
+        "publicationStoreScenario" => {
+            use rusqlite::Connection;
+            let mut db = Connection::open_in_memory().map_err(|error| error.to_string())?;
+            db.execute_batch("CREATE TABLE publication_state(job_id TEXT PRIMARY KEY,json TEXT NOT NULL); CREATE TABLE publication_delivery (job_id TEXT NOT NULL, delivery_id TEXT NOT NULL,type TEXT NOT NULL,json TEXT NOT NULL,observed_at TEXT NOT NULL, PRIMARY KEY(job_id,delivery_id));").map_err(|error|error.to_string())?;
+            let mut operations = Vec::new();
+            for op in request["operations"].as_array().into_iter().flatten() {
+                let id = op["jobId"].as_str().unwrap_or("");
+                let result:Result<Value,String>=match op["action"].as_str().unwrap_or("record"){
+                    "load"=>agents_relay_rust2::publication_store::load_publication_from_database(&db,id).map(|result|result.unwrap_or(Value::Null)),
+                    "list"=>agents_relay_rust2::publication_store::list_publication_events_from_database(&db,id).map(|items|json!(items)),
+                    _=>agents_relay_rust2::publication_store::record_publication_in_database(&mut db,id,
+                        op["deliveryId"].as_str().unwrap_or(""),op.get("publication").filter(|value|!value.is_null()),
+                        op.get("failure").filter(|value|!value.is_null()),op["observedAt"].as_str()).map(|ok|json!(ok))
+                };
+                operations.push(match result {
+                    Ok(value) => json!({"ok":true,"value":value}),
+                    Err(error) => json!({"ok":false,"error":error}),
+                });
+            }
+            let mut state_query = db
+                .prepare("SELECT job_id,json FROM publication_state ORDER BY job_id")
+                .map_err(|error| error.to_string())?;
+            let states = state_query
+                .query_map([], |row| {
+                    Ok(json!({"jobId":row.get::<_,String>(0)?,"json":row.get::<_,String>(1)?}))
+                })
+                .map_err(|error| error.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?;
+            let mut deliveries_query=db.prepare("SELECT job_id,delivery_id,type,json,observed_at FROM publication_delivery ORDER BY job_id,delivery_id").map_err(|error|error.to_string())?;
+            let deliveries=deliveries_query.query_map([],|row|Ok(json!({"jobId":row.get::<_,String>(0)?,"deliveryId":row.get::<_,String>(1)?,
+                "type":row.get::<_,String>(2)?,"json":row.get::<_,String>(3)?,"observedAt":row.get::<_,String>(4)?})))
+                .map_err(|error|error.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())?;
+            Ok(agents_relay_rust2::observability::json_wire(
+                &json!({"operations":operations,"states":states,"deliveries":deliveries}),
+            ))
+        }
+
+        "mergeInboundJobSnapshot" => Ok(agents_relay_rust2::observability::json_wire(
+            &agents_relay_rust2::relay_job_merge::merge_inbound_job_snapshot(
+                &request["local"],
+                &request["remote"],
+            ),
+        )),
+        "sameTaskDefinition" => Ok(json!(
+            agents_relay_rust2::store_task_definition::same_task_definition(
+                &request["left"],
+                &request["right"]
+            )
+        )
+        .to_string()),
+        "samePlanDefinition" => Ok(json!(
+            agents_relay_rust2::store_task_definition::same_plan_definition(
+                &request["left"],
+                &request["right"]
+            )
+        )
+        .to_string()),
+        "taskDefinitionDivergence" => Ok(json!(
+            agents_relay_rust2::store_task_definition::task_definition_divergence(
+                &request["left"],
+                &request["right"]
+            )
+        )
+        .to_string()),
+        "planDefinitionDivergence" => Ok(json!(
+            agents_relay_rust2::store_task_definition::plan_definition_divergence(
+                &request["left"],
+                &request["right"]
+            )
+        )
+        .to_string()),
+        "divergingDefinitionFields" => Ok(json!(
+            agents_relay_rust2::store_task_definition::diverging_definition_fields(
+                request["kind"].as_str().unwrap_or("task"),
+                &request["left"],
+                &request["right"]
+            )
+        )
+        .to_string()),
+        "isTaskForJob" => Ok(
+            json!(agents_relay_rust2::store_task_definition::is_task_for_job(
+                &request["task"],
+                request["jobId"].as_str().unwrap_or(""),
+                request["soleTrustedJob"].as_bool().unwrap_or(false)
+            ))
+            .to_string(),
+        ),
+        "isDurableDefinitionConflict" => Ok(json!(
+            agents_relay_rust2::store_task_definition::is_durable_definition_conflict(
+                &request["error"]
+            )
+        )
+        .to_string()),
+        "relayCreateScenario" => {
+            use rusqlite::{params, Connection};
+            let mut db = Connection::open_in_memory().map_err(|error| error.to_string())?;
+            db.execute_batch("CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL);").map_err(|error|error.to_string())?;
+            for row in request["existing"].as_array().into_iter().flatten() {
+                db.execute(
+                    "INSERT INTO job_snapshot VALUES(?,?,?)",
+                    params![row["jobId"].as_str(), row["json"].as_str(), "preexisting"],
+                )
+                .map_err(|error| error.to_string())?;
+            }
+            let mut results = Vec::new();
+            for job in request["jobs"].as_array().into_iter().flatten() {
+                let result = agents_relay_rust2::relay_create::create_job_if_absent(&mut db, job);
+                results.push(match result {
+                    Ok(value) => json!({"ok":true,"value":value}),
+                    Err(error) => json!({"ok":false,"error":error}),
+                });
+            }
+            let mut query = db
+                .prepare("SELECT job_id,json FROM job_snapshot ORDER BY job_id")
+                .map_err(|error| error.to_string())?;
+            let rows = query
+                .query_map([], |row| {
+                    Ok(json!({"jobId":row.get::<_,String>(0)?,"json":row.get::<_,String>(1)?}))
+                })
+                .map_err(|error| error.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?;
+            Ok(agents_relay_rust2::observability::json_wire(
+                &json!({"results":results,"rows":rows}),
+            ))
+        }
+
         "runtimeStatusPublisherScenario" => {
             use std::{cell::RefCell, rc::Rc};
             let events = Rc::new(RefCell::new(Vec::<Value>::new()));

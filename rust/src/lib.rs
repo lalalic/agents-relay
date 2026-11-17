@@ -31,6 +31,8 @@ pub mod task_tag;
 pub mod worker_rejection;
 pub mod workflow {
     pub mod conditions;
+    // Direct Node src/workflow/action-ledger.ts Graph-authorized durable effect receipts.
+    pub mod action_ledger;
     pub mod contracts;
     pub mod effects;
     pub mod mermaid;
@@ -112,3 +114,21 @@ pub mod runtime_summary;
 
 // Direct Node src/runtime-status-events.ts process-local status transition notifications.
 pub mod runtime_status_events;
+
+// Direct Node src/relay-job-merge.ts immutable Job/Plan/Task inbound merge.
+pub mod relay_job_merge;
+// Direct Node src/relay-create.ts atomic SQLite Job create-if-absent.
+pub mod relay_create;
+// Direct Node src/store-task-definition.ts immutable definition comparison.
+pub mod store_task_definition;
+
+// Direct Node src/task-context.ts immutable Task execution context and prompts.
+pub mod task_context;
+// Direct Node src/publication-store.ts transactional publication receipts.
+pub mod publication_store;
+
+// Direct Node src/github-webhook.ts trusted GitHub wake/webhook parsing and deduplication.
+pub mod github_webhook;
+
+// Direct Node src/markers.ts HTML metadata and legacy markdown read/render.
+pub mod markers;
