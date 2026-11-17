@@ -520,17 +520,58 @@ fn invoke(request: &Value) -> Result<String, String> {
             .unwrap_or(Value::Null)
             .to_string(),
         ),
+        "troubleshooterQaHandle" => {
+            let body = if let Some(data) = request["bodyBytes"].as_array() {
+                data.iter()
+                    .filter_map(Value::as_u64)
+                    .map(|byte| byte as u8)
+                    .collect::<Vec<_>>()
+            } else {
+                request["body"].as_str().unwrap_or("").as_bytes().to_vec()
+            };
+            let response = agents_relay_rust2::troubleshooter_qa_api::handle(
+                std::path::Path::new(request["path"].as_str().ok_or("path required")?),
+                agents_relay_rust2::troubleshooter_qa_api::Request {
+                    method: request["method"].as_str().unwrap_or("GET").into(),
+                    content_type: request["contentType"].as_str().map(str::to_string),
+                    body,
+                },
+            );
+            let headers = response
+                .headers
+                .into_iter()
+                .collect::<std::collections::BTreeMap<_, _>>();
+            Ok(json!({"status":response.status,"headers":headers,"body":String::from_utf8_lossy(&response.body)}).to_string())
+        }
         "webHelmRequest" => {
             let req = agents_relay_rust2::webhelm_daemon_client::DaemonRequest {
                 op: request["payload"]["op"].as_str().unwrap_or("").into(),
                 fields: request["payload"].as_object().cloned().unwrap_or_default(),
             };
-            Ok(agents_relay_rust2::webhelm_daemon_client::request(
+            let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+                request["aborted"] == true,
+            ));
+            let abort_timer = request["abortAfterMs"].as_u64().map(|delay| {
+                let flag = std::sync::Arc::clone(&cancelled);
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(delay));
+                    flag.store(true, std::sync::atomic::Ordering::Release);
+                })
+            });
+            let outcome = agents_relay_rust2::webhelm_daemon_client::request_with_cancel(
                 request["socket"].as_str().ok_or("socket required")?,
                 &req,
                 std::time::Duration::from_millis(request["timeoutMs"].as_u64().unwrap_or(45000)),
-            )?
-            .to_string())
+                if request.get("aborted").is_some() || abort_timer.is_some() {
+                    Some(&cancelled)
+                } else {
+                    None
+                },
+            );
+            if let Some(timer) = abort_timer {
+                let _ = timer.join();
+            }
+            Ok(outcome?.to_string())
         }
         "discoverAgents" => Ok(json!(agents_relay_rust2::registry::discover_agents(
             request["agents"]

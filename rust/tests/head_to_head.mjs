@@ -271,7 +271,7 @@ test('direct Node source ports produce matching results and errors',async()=>{
   const build=spawnSync('cargo',['build','--offline','--manifest-path','rust/Cargo.toml'],{cwd:root,encoding:'utf8',timeout:90000});
   assert.equal(build.status,0,`Rust build failed: ${build.stderr}`);
   const input=cases.map(item=>JSON.stringify(item)).join('\n')+'\n';
-  const result=spawnSync(rustBinary,[],{input,encoding:'utf8',maxBuffer:1024*1024,timeout:30000});
+  const result=spawnSync(rustBinary,[],{input,encoding:'utf8',maxBuffer:16*1024*1024,timeout:30000});
   assert.equal(result.status,0,`Rust CLI failed: ${result.stderr}`);
   const rustLines=result.stdout.trim().split('\n');
   assert.equal(rustLines.length,cases.length);

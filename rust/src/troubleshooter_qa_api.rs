@@ -28,7 +28,10 @@ fn response(status: u16, body: impl Into<Vec<u8>>, json_headers: bool) -> Respon
 }
 pub fn handle(path: &Path, req: Request) -> Response {
     let result = (|| -> Result<Response, String> {
-        let current = fs::read_to_string(path).map_err(|e| e.to_string())?;
+        // Node readFile(path, 'utf8') replaces invalid byte sequences rather than
+        // rejecting the whole document; hash the resulting decoded text.
+        let current_bytes = fs::read(path).map_err(|e| e.to_string())?;
+        let current = String::from_utf8_lossy(&current_bytes);
         match req.method.as_str() {
             "GET" => Ok(response(
                 200,
@@ -81,4 +84,10 @@ pub fn handle(path: &Path, req: Request) -> Response {
 fn sha256(data: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(data))
+}
+
+/// Node src/troubleshooter-qa-api.ts entrypoint. The host supplies the trusted
+/// file path and writes the returned response to its HTTP transport.
+pub fn handle_troubleshooter_qa(path: &Path, request: Request) -> Response {
+    handle(path, request)
 }

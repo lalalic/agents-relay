@@ -199,7 +199,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/task-update.ts` | `rust/src/task_update.rs` | PENDING | — |
 | `src/terminal-event-recovery.ts` | `rust/src/terminal_event_recovery.rs` | PASS | 327 shared differential fixtures across 4 ports; Rust native tests 5/5; Node focused regression 4/4; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/troubleshooter-fallback.ts` | `rust/src/troubleshooter_fallback.rs` | PENDING | — |
-| `src/troubleshooter-qa-api.ts` | `rust/src/troubleshooter_qa_api.rs` | PENDING | — |
+| `src/troubleshooter-qa-api.ts` | `rust/src/troubleshooter_qa_api.rs` | PASS | Direct hotfix: 13 isolated real Node HTTP vs Rust request/response/file outcomes, SHA-256, UTF8 recovery, invalid inputs; Rust native IO regression (rust/tests/head_to_head_ipc_hotfix.mjs; rust/tests/native_ipc_hotfix.rs) |
 | `src/troubleshooter.ts` | `rust/src/troubleshooter.rs` | PENDING | — |
 | `src/types.ts` | `rust/src/types.rs` | PENDING | — |
 | `src/unblock.ts` | `rust/src/unblock.rs` | PENDING | — |
@@ -207,7 +207,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/unified-pr-facts.ts` | `rust/src/unified_pr_facts.rs` | PENDING | — |
 | `src/unified-relay-schema.ts` | `rust/src/unified_relay_schema.rs` | PENDING | — |
 | `src/usage.ts` | `rust/src/usage.rs` | PENDING | — |
-| `src/webhelm-daemon-client.ts` | `rust/src/webhelm_daemon_client.rs` | PENDING | — |
+| `src/webhelm-daemon-client.ts` | `rust/src/webhelm_daemon_client.rs` | PASS | Direct hotfix: 15 real AF_UNIX Node/Rust socket response/timeout/abort/large-UTF8 fixtures, 1 malformed frame rejection, native cancellation/framing regression (rust/tests/head_to_head_ipc_hotfix.mjs; rust/tests/native_ipc_hotfix.rs) |
 | `src/worker-failure-recovery.ts` | `rust/src/worker_failure_recovery.rs` | PENDING | — |
 | `src/worker-rejection.ts` | `rust/src/worker_rejection.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; rejection classes, all platform phases, typed pre-submit evidence and unsafe/ambiguous failures (`rust/tests/head_to_head.mjs`) |
 | `src/worker-routing.ts` | `rust/src/worker_routing.rs` | PENDING | — |
@@ -353,8 +353,8 @@ Current verified source modules: **28 / 227**; remaining: **199**. The parity CL
 ### Batch 6 — artifact validation, QA API, WebHelm IPC and graph inspection (2026-11-16)
 
 - `src/cli-artifact.ts` → `rust/src/cli_artifact.rs`: filesystem-backed JSON and a partial JSON Schema validator. **PENDING** because Ajv keyword/format/reference parity is incomplete; supported basic object/property/required/type/minLength/enum cases were differential-tested.
-- `src/troubleshooter-qa-api.ts` → `rust/src/troubleshooter_qa_api.rs`: filesystem-backed GET/PUT request/response semantics, SHA-256 ETag/hash, size/content-type/conflict/status behavior. **PENDING** pending Node differential coverage of the handler response contract.
-- `src/webhelm-daemon-client.ts` → `rust/src/webhelm_daemon_client.rs`: configured socket resolution and newline-delimited JSON Unix socket IPC, errors and timeout handling. Native parser/timeout contract tests pass. **PENDING** because sandbox denies fixture socket listeners (`EPERM`), so transport behavior could not be differentially exercised.
+- `src/troubleshooter-qa-api.ts` → `rust/src/troubleshooter_qa_api.rs`: filesystem-backed GET/PUT and SHA-256 handling. **Subsequently PASS** following isolated real Node HTTP differential and Rust-native QA tests.
+- `src/webhelm-daemon-client.ts` → `rust/src/webhelm_daemon_client.rs`: native IPC framing and error/timeout handling. **Subsequently PASS** after real AF_UNIX listening was independently available on Neo Master and Node/Rust socket differential cases passed.
 - `src/dashboard-workflow-inspection.ts` → `rust/src/dashboard_workflow_inspection.rs`: read-only graph token inspection and path-confined source/test references. **PASS**: Node/Rust differential fixture and native traversal test pass.
 - `node --test rust/tests/head_to_head_batch6.mjs`: 2 differential tests passed; 1 Unix socket test skipped due sandbox `EPERM`.
 - Focused Node regressions: artifact validation **1/1**; graph symbol inspection/source references **2/2**. The entire `test/dashboard.test.js` invocation was attempted: **90/108 passed**, with 18 HTTP listener tests blocked by sandbox `listen EPERM`; graph inspection tests passed.
@@ -380,3 +380,13 @@ The three module ports verify standalone executable mechanics; they do not estab
 - [x] Tests compare JSON-wire snapshots; Node's `undefined` object fields are omitted by JSON serialization and are not durable policy data.
 
 Production Node.js Relay was not restarted or replaced; no canonical SQLite store or customer policy file was used.
+
+### Direct Rust2 hotfix — Troubleshooter HTTP and WebHelm Unix IPC verification (2026-11-16)
+
+- [x] `src/troubleshooter-qa-api.ts` → `rust/src/troubleshooter_qa_api.rs`: request/status/headers/body and actual file mutations on separately isolated Q&A markdown paths, including invalid UTF-8, SHA-256 conflicts, over-limit payloads, unsupported methods and missing file.
+- [x] `src/webhelm-daemon-client.ts` → `rust/src/webhelm_daemon_client.rs`: actual Node and Rust clients against a disposable AF_UNIX mock server with matching requests, valid/invalid frames, JS truthy error coercions, timeouts, AbortSignal-equivalent cancellation and large UTF-8/UTF-16 payloads. No real WebHelm daemon or session used.
+- [x] `rust/tests/head_to_head_ipc_hotfix.mjs`: **13** real HTTP comparisons, **15** real AF_UNIX comparisons and **1** malformed-frame rejection, comparing parsed JSON and sha256 digest of large payloads.
+- [x] `rust/tests/native_ipc_hotfix.rs`: invalid UTF-8 QA hash, live UnixStream cancellation and truthy error regression tests.
+- [x] Existing partial `src/cli-artifact.ts` remains **PENDING** because the Rust schema validator does not fully implement Node Ajv and must not be marked complete from basic schema fixtures.
+
+These tests verify isolated protocol behavior but do not count as a production daemon cutover or an actual WebHelm deployment.
