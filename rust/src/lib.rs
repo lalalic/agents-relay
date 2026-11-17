@@ -18,6 +18,7 @@ pub mod planner_agent_roles;
 pub mod planner_history_cleanup;
 pub mod planner_task_context;
 pub mod planner_task_title;
+pub mod process_identity;
 pub mod projection_failure_dedupe;
 pub mod registry;
 pub mod review_evidence;

@@ -166,6 +166,39 @@ fn workflow_engine_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "observeProcess" => Ok(agents_relay_rust2::process_identity::observe_process(
+            request["pid"].as_i64().unwrap_or(0),
+        )
+        .unwrap_or(Value::Null)
+        .to_string()),
+        "captureProcessRecord" => Ok(
+            agents_relay_rust2::process_identity::capture_process_record(
+                request["jobId"].as_str().unwrap_or(""),
+                request["taskId"].as_str().unwrap_or(""),
+                request["executionId"].as_str().unwrap_or(""),
+                request["leaseOwner"].as_str().unwrap_or(""),
+                request["pid"].as_i64().unwrap_or(0),
+            )
+            .unwrap_or(Value::Null)
+            .to_string(),
+        ),
+        "probeProcessRecord" => Ok(json!(
+            agents_relay_rust2::process_identity::probe_process_record(&request["record"])
+        )
+        .to_string()),
+        "activeRelayLeaseOwner" => Ok(json!(
+            agents_relay_rust2::process_identity::active_relay_lease_owner(
+                request["owner"].as_str().unwrap_or("")
+            )
+        )
+        .to_string()),
+        "stopOrphanedProcessGroup" => Ok(json!(
+            agents_relay_rust2::process_identity::stop_orphaned_process_group(
+                &request["record"],
+                std::time::Duration::from_millis(request["graceMs"].as_u64().unwrap_or(750))
+            )
+        )
+        .to_string()),
         "withLocalMergeLock" => {
             let dir =
                 std::path::Path::new(request["commonDir"].as_str().ok_or("commonDir required")?);

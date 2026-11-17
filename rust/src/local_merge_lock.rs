@@ -34,7 +34,7 @@ pub fn lock_directory(common_dir: &Path, target_ref: &str) -> PathBuf {
     ))
 }
 
-fn hostname() -> Result<String, String> {
+pub(crate) fn hostname() -> Result<String, String> {
     let mut bytes = [0u8; 256];
     let code = unsafe { libc::gethostname(bytes.as_mut_ptr().cast(), bytes.len()) };
     if code != 0 {
@@ -47,7 +47,7 @@ fn hostname() -> Result<String, String> {
     Ok(String::from_utf8_lossy(&bytes[..end]).to_string())
 }
 
-fn iso8601_now() -> String {
+pub(crate) fn iso8601_now() -> String {
     // Node `new Date().toISOString()` provides an ISO UTC millisecond stamp.
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

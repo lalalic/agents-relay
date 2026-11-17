@@ -134,7 +134,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/planner-task-title.ts` | `rust/src/planner_task_title.rs` | PASS | 327 shared differential fixtures across 4 ports; Rust native tests 5/5; Node focused regression 4/4; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/planner.ts` | `rust/src/planner.rs` | PENDING | — |
 | `src/pool.ts` | `rust/src/pool.rs` | PENDING | — |
-| `src/process-identity.ts` | `rust/src/process_identity.rs` | PENDING | — |
+| `src/process-identity.ts` | `rust/src/process_identity.rs` | PASS | Direct hotfix: real Node/Rust OS ps identity, isolated detached PGID leaders, lease owner inspection, stale generation fences and two actual disposable child-process terminations (rust/tests/head_to_head_process_identity.mjs; rust/tests/native_process_identity.rs) |
 | `src/projected-store.ts` | `rust/src/projected_store.rs` | PENDING | — |
 | `src/projection-failure-dedupe.ts` | `rust/src/projection_failure_dedupe.rs` | PASS | 626 shared differential fixtures across 14 ports; sequential duplicate/change/classification/reset vectors compared (`rust/tests/head_to_head.mjs`) |
 | `src/projection-failure-recovery.ts` | `rust/src/projection_failure_recovery.rs` | PENDING | — |
@@ -397,3 +397,12 @@ These tests verify isolated protocol behavior but do not count as a production d
 - [x] `rust/tests/head_to_head_local_merge_lock.mjs`: real isolated filesystem head-to-head tests for uncontended/failing actions, both Node-holds-Rust-waits and Rust-holds-Node-waits processes, stale/crashed/malformed owner, active PID, foreign host and recent incomplete owner fencing.
 - [x] `rust/tests/native_local_merge_lock.rs`: Rust panic-unwind release, different refs without contention, successor-owner preservation and SHA-256 lock naming.
 - [x] No production Git lock directories or real Relay worktrees used; fixtures are disposable temporary directories.
+
+### Direct Rust2 hotfix — process generation identity and orphan-group signals (2026-11-16)
+
+- [x] `src/process-identity.ts` → `rust/src/process_identity.rs`: 1.5-second bounded `ps` observation, PGID/start-token matching to prevent PID reuse, process snapshot (UTC ISO timestamp), active Relay lease owner matching, and safe SIGTERM→SIGKILL only for validated local, leader-generation records.
+- [x] `rust/tests/head_to_head_process_identity.mjs`: actual Node/Rust observations of freshly launched, disposable process-group leaders, wrong-host/PGID/token refusal, nonexistent/range PID probes, and real process termination verified separately for Node and Rust. Test never signals any production daemon or non-fixture PID.
+- [x] `rust/tests/native_process_identity.rs`: negative PID and wrong-host generation safety checks.
+- [x] Corrected out-of-range `process.kill(pid,0)` fallback to fail closed as `unknown`, and matched `pid=0` or negative PID probe behavior without transmitting a signal.
+
+Only isolated, specifically created process groups were terminated in verification. Production Relay processes and leases remain unchanged.
