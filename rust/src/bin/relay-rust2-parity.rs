@@ -357,6 +357,27 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "workflowObservationScenario" => Ok(
+            agents_relay_rust2::workflow::policy_parity_harness::observation_scenario(request)?
+                .to_string(),
+        ),
+
+        "workflowVerifiedDispatcherScenario" => Ok(
+            agents_relay_rust2::workflow::policy_parity_harness::verified_dispatcher_scenario(
+                request,
+            )?
+            .to_string(),
+        ),
+
+        "workflowPolicyScenario" => Ok(
+            agents_relay_rust2::workflow::policy_parity_harness::policy_scenario(request)?
+                .to_string(),
+        ),
+        "workflowDispatcherScenario" => Ok(
+            agents_relay_rust2::workflow::policy_parity_harness::dispatcher_scenario(request)?
+                .to_string(),
+        ),
+
         "workflowRuntimeMutation" => {
             use agents_relay_rust2::workflow::runtime::*;
             let mut target = request.get("target").cloned().unwrap_or(json!({}));

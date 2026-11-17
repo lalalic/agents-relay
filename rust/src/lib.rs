@@ -40,7 +40,25 @@ pub mod workflow {
     // Direct Node src/workflow/durable-publication.ts transactional workflow outbox/inbox.
     pub mod durable_publication;
     // Direct Node src/workflow/definitions-v2.ts canonical Task/Job Graph registries and transitions.
+    // Direct Node src/workflow/dispatcher.ts transition/action/event boundary.
+    pub mod dispatcher;
+    // Verified-effect/atomic-outbox half of direct Node dispatcher port.
+    pub mod dispatcher_verification;
+    // Direct ports of nine Node Graph-backed domain policy adapters.
+    pub mod authoritative_unblock_v2;
+    pub mod blocker_recovery;
+    pub mod blocker_resolution_v2;
+    pub mod dependency_revision_v2;
+    pub mod force_restate_validation_v2;
+    pub mod planner_trigger_v2;
+    pub mod projection_conflict_v2;
+    pub mod revision_v2;
+    pub mod troubleshooter_v2;
+    // Shared loader for Graph-driven v2 workflow wrappers.
     pub mod definitions_v2;
+    pub mod policy_graph;
+    // Isolated direct Node/Rust policy and dispatcher fixture adapters.
+    pub mod policy_parity_harness;
     // Direct Node src/workflow/runtime.ts mechanical Graph-selected Task/Job effects.
     pub mod runtime;
     // Direct Node src/workflow/action-ledger.ts Graph-authorized durable effect receipts.
