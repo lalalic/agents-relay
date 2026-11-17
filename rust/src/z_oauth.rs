@@ -1,0 +1,266 @@
+// Direct port of src/z-oauth.ts using a caller-supplied HTTP transport.
+// OAuth is worker-scoped; operator and refresh credentials are never returned.
+// No Neo endpoint, provider SDK, or production cloud dependency is embedded.
+use regex::Regex;
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::{fs, io::Read, path::Path};
+use url::{form_urlencoded, Url};
+
+pub const REDIRECT_URI: &str = "http://127.0.0.1:8765/agents-relay/oauth/callback";
+#[derive(Debug, Clone)]
+pub struct OAuthResponse {
+    pub status: u16,
+    pub body: String,
+    pub location: Option<String>,
+}
+pub fn z_worker_mcp_endpoint(origin: Option<&str>) -> Result<String, String> {
+    let configured = origin
+        .unwrap_or("")
+        .strip_suffix('/')
+        .unwrap_or(origin.unwrap_or(""));
+    let valid = Regex::new(r"^https://[A-Za-z0-9.-]+(?::\d{1,5})?$")
+        .map_err(|e| e.to_string())?
+        .is_match(configured);
+    if !valid {
+        return Err("Z OAuth origin must be HTTPS".into());
+    }
+    Ok(format!("{configured}/mcp"))
+}
+fn random(n: usize) -> Result<Vec<u8>, String> {
+    let mut bits = vec![0u8; n];
+    fs::File::open("/dev/urandom")
+        .and_then(|mut file| file.read_exact(&mut bits))
+        .map_err(|e| format!("Secure OAuth randomness unavailable: {e}"))?;
+    Ok(bits)
+}
+fn encode_base64url(bytes: &[u8]) -> String {
+    const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut s = String::new();
+    let (chunks, last) = bytes.as_chunks::<3>();
+    for chunk in chunks {
+        let [a, b, c] = [chunk[0], chunk[1], chunk[2]];
+        for idx in [
+            a >> 2,
+            ((a & 3) << 4) | (b >> 4),
+            ((b & 15) << 2) | (c >> 6),
+            c & 63,
+        ] {
+            s.push(T[idx as usize] as char);
+        }
+    }
+    if let Some(&a) = last.first() {
+        s.push(T[(a >> 2) as usize] as char);
+        if last.len() == 1 {
+            s.push(T[((a & 3) << 4) as usize] as char);
+        } else {
+            let b = last[1];
+            s.push(T[(((a & 3) << 4) | (b >> 4)) as usize] as char);
+            s.push(T[((b & 15) << 2) as usize] as char);
+        }
+    }
+    s
+}
+fn form(items: &[(&str, &str)]) -> String {
+    let mut writer = form_urlencoded::Serializer::new(String::new());
+    for &(key, val) in items {
+        writer.append_pair(key, val);
+    }
+    writer.finish()
+}
+fn body_json(response: &OAuthResponse) -> Result<Value, String> {
+    serde_json::from_str(&response.body).map_err(|e| e.to_string())
+}
+fn query_value(url: &Url, key: &str) -> Option<String> {
+    url.query_pairs()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| value.into_owned())
+}
+/// Fetcher receives a full absolute URL, method, optional request body, and
+/// transport headers. The caller must enforce the 15-second timeout and manual
+/// redirect contract (mirroring the supplied Node fetcher boundary).
+pub fn issue_z_worker_credential<F>(
+    origin: Option<&str>,
+    operator_token: Option<&str>,
+    operator_token_file: Option<&Path>,
+    mut fetcher: F,
+) -> Result<String, String>
+where
+    F: FnMut(&str, &str, Option<&str>, &[(&str, &str)]) -> Result<OAuthResponse, String>,
+{
+    let endpoint = z_worker_mcp_endpoint(origin)?;
+    let base = endpoint.strip_suffix("/mcp").unwrap_or(&endpoint);
+    let token = if let Some(token) = operator_token {
+        token.to_owned()
+    } else if let Some(file) = operator_token_file {
+        fs::read_to_string(file)
+            .unwrap_or_default()
+            .trim()
+            .to_owned()
+    } else {
+        String::new()
+    };
+    if token.is_empty() {
+        return Err(
+            "Configure AGENTS_RELAY_Z_OAUTH_OPERATOR_TOKEN_FILE or supply an operator token".into(),
+        );
+    }
+    let verifier = encode_base64url(&random(32)?);
+    let challenge = encode_base64url(&Sha256::digest(verifier.as_bytes()));
+    let state = random(18)?
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let request =
+        |path: &str,
+         method: &str,
+         body: Option<&str>,
+         headers: &[(&str, &str)],
+         fetcher: &mut F| fetcher(&format!("{base}{path}"), method, body, headers);
+    let registration_body = json!({
+        "client_name":"Agents Relay Z worker",
+        "redirect_uris":[REDIRECT_URI],
+        "grant_types":["authorization_code","refresh_token"],
+        "response_types":["code"],
+        "token_endpoint_auth_method":"none"
+    })
+    .to_string();
+    let registration = request(
+        "/register",
+        "POST",
+        Some(&registration_body),
+        &[("Content-Type", "application/json")],
+        &mut fetcher,
+    )?;
+    if registration.status != 201 {
+        return Err(format!(
+            "Z OAuth registration rejected: HTTP {}",
+            registration.status
+        ));
+    }
+    let client = body_json(&registration)?;
+    let client_id = client["client_id"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or("Z OAuth registration returned no client_id")?;
+    let auth_query = form(&[
+        ("response_type", "code"),
+        ("client_id", client_id),
+        ("redirect_uri", REDIRECT_URI),
+        ("code_challenge", &challenge),
+        ("code_challenge_method", "S256"),
+        ("scope", "mcp"),
+        ("resource", &endpoint),
+        ("state", &state),
+    ]);
+    let page = request(
+        &format!("/authorize?{auth_query}"),
+        "GET",
+        None,
+        &[],
+        &mut fetcher,
+    )?;
+    if page.status != 200 {
+        return Err(format!(
+            "OAuth authorization page rejected: HTTP {}",
+            page.status
+        ));
+    }
+    let regex =
+        Regex::new(r#"name="rid"\s+value="([A-Za-z0-9_-]+)""#).map_err(|e| e.to_string())?;
+    let rid = regex
+        .captures(&page.body)
+        .and_then(|m| m.get(1))
+        .map(|s| s.as_str())
+        .ok_or("OAuth authorization page lacked request ID")?;
+    let approve = form(&[("rid", rid), ("token", &token)]);
+    let approval = request(
+        "/authorize",
+        "POST",
+        Some(&approve),
+        &[("Content-Type", "application/x-www-form-urlencoded")],
+        &mut fetcher,
+    )?;
+    if approval.status != 302 {
+        return Err(format!("OAuth consent rejected: HTTP {}", approval.status));
+    }
+    let location = approval
+        .location
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or("OAuth approval lacked callback")?;
+    let callback = Url::parse(location).map_err(|e| e.to_string())?;
+    let redirect = Url::parse(REDIRECT_URI).map_err(|e| e.to_string())?;
+    if callback.origin() != redirect.origin()
+        || callback.path() != redirect.path()
+        || query_value(&callback, "state").as_deref() != Some(&state)
+        || query_value(&callback, "iss").as_deref() != Some(base)
+    {
+        return Err("OAuth callback state, redirect, or issuer mismatch".into());
+    }
+    let code = query_value(&callback, "code")
+        .filter(|s| !s.is_empty())
+        .ok_or("OAuth callback lacked authorization code")?;
+    let exchange = form(&[
+        ("grant_type", "authorization_code"),
+        ("client_id", client_id),
+        ("redirect_uri", REDIRECT_URI),
+        ("code", &code),
+        ("code_verifier", &verifier),
+    ]);
+    let response = request(
+        "/token",
+        "POST",
+        Some(&exchange),
+        &[("Content-Type", "application/x-www-form-urlencoded")],
+        &mut fetcher,
+    )?;
+    if response.status != 200 {
+        return Err(format!(
+            "OAuth token exchange rejected: HTTP {}",
+            response.status
+        ));
+    }
+    let worker = body_json(&response)?;
+    let access = worker["access_token"].as_str().filter(|s| !s.is_empty());
+    if access.is_none() || worker["expires_in"] != 3600 {
+        return Err("OAuth returned an invalid worker access token".into());
+    }
+    if let Some(refresh) = worker["refresh_token"].as_str().filter(|s| !s.is_empty()) {
+        let revoke = form(&[("token", refresh)]);
+        let result = request(
+            "/revoke",
+            "POST",
+            Some(&revoke),
+            &[("Content-Type", "application/x-www-form-urlencoded")],
+            &mut fetcher,
+        )?;
+        if result.status != 200 {
+            return Err("OAuth failed to revoke unused refresh credential".into());
+        }
+    }
+    Ok(access.expect("validated access token").to_owned())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn https_origin_validation_and_base64url_length() {
+        assert_eq!(
+            z_worker_mcp_endpoint(Some("https://oauth.example.test/")).unwrap(),
+            "https://oauth.example.test/mcp"
+        );
+        for bad in [
+            "http://host",
+            "https://host/path",
+            "https://u:pw@host",
+            "https://host:123456",
+            "https://host/?q=1",
+        ] {
+            assert!(z_worker_mcp_endpoint(Some(bad)).is_err(), "{bad}");
+        }
+        assert_eq!(encode_base64url(&[255]), "_w");
+        assert_eq!(encode_base64url(&[255, 254]), "__4");
+        assert_eq!(encode_base64url(&[255, 254, 253]), "__79");
+    }
+}
