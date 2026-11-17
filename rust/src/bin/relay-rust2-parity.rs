@@ -357,6 +357,79 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "executionEventSource" => Ok(json!(
+            agents_relay_rust2::execution_event_identity::execution_event_source(
+                request["jobId"].as_str().unwrap_or(""),
+                request["taskId"].as_str().unwrap_or(""),
+                request["executionId"].as_str().unwrap_or("")
+            )
+        )
+        .to_string()),
+        "eventSourceId" => Ok(json!(
+            agents_relay_rust2::execution_event_identity::event_source_id(&request["event"])
+        )
+        .to_string()),
+        "executionIdFromSource" => Ok(json!(
+            agents_relay_rust2::execution_event_identity::execution_id_from_source(
+                request["sourceId"].as_str(),
+                request["jobId"].as_str().unwrap_or(""),
+                request["taskId"].as_str().unwrap_or("")
+            )
+        )
+        .to_string()),
+        "terminalClaimScenario" => {
+            use agents_relay_rust2::execution_event_identity::{
+                claim_terminal_execution, terminal_execution_claimed,
+            };
+            let mut results = Vec::new();
+            for item in request["claims"].as_array().into_iter().flatten() {
+                if let Some(source) = item.as_str() {
+                    claim_terminal_execution(source);
+                }
+            }
+            for candidate in request["checks"].as_array().into_iter().flatten() {
+                results.push(json!(terminal_execution_claimed(
+                    candidate["jobId"].as_str().unwrap_or(""),
+                    candidate["taskId"].as_str().unwrap_or(""),
+                    candidate["executionId"].as_str().unwrap_or("")
+                )));
+            }
+            Ok(json!(results).to_string())
+        }
+        "localCommitScenario" => {
+            use agents_relay_rust2::local_commit_events::{LocalCommitBus, LocalCommitListener};
+            let bus = std::sync::Arc::new(LocalCommitBus::new());
+            let trace = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+            let mut ids = Vec::new();
+            for item in request["subscribers"].as_array().into_iter().flatten() {
+                let name = item.as_str().unwrap_or("").to_string();
+                let output = std::sync::Arc::clone(&trace);
+                let listener: LocalCommitListener = std::sync::Arc::new(move |job| {
+                    output
+                        .lock()
+                        .expect("fixture callback log")
+                        .push(json!({"subscriber":name,"job":job}));
+                });
+                ids.push(bus.subscribe(listener));
+            }
+            for (index, job) in request["jobs"].as_array().into_iter().flatten().enumerate() {
+                if let Some(remove) = request["unsubscribeBefore"]
+                    .as_object()
+                    .and_then(|data| data.get(&index.to_string()))
+                    .and_then(Value::as_array)
+                {
+                    for item in remove {
+                        if let Some(id) = item.as_u64().and_then(|n| ids.get(n as usize)) {
+                            bus.unsubscribe(*id);
+                        }
+                    }
+                }
+                bus.publish(job);
+            }
+            let logged = trace.lock().expect("fixture callback log").clone();
+            Ok(json!(logged).to_string())
+        }
+
         "emptyGitHubRuntimeRateUsage" => Ok(
             agents_relay_rust2::github_runtime_usage::empty_github_runtime_rate_usage().to_string(),
         ),

@@ -75,7 +75,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/events.ts` | `rust/src/events.rs` | PENDING | — |
 | `src/execution-boundary.ts` | `rust/src/execution_boundary.rs` | PASS | Batch 5: controlled Node ordering/error release plus native Rust same-key serialization, different-key concurrency, panic release and reacquisition (`rust/tests/head_to_head_batch5.mjs`, `rust/tests/native_batch5.rs`) |
 | `src/execution-context.ts` | `rust/src/execution_context.rs` | PENDING | — |
-| `src/execution-event-identity.ts` | `rust/src/execution_event_identity.rs` | PENDING | — |
+| `src/execution-event-identity.ts` | `rust/src/execution_event_identity.rs` | PASS | Direct port: 2,525 Node/Rust source/terminal claim fixtures, 3 native generation-binding tests (`rust/tests/head_to_head_execution_event_identity.mjs`, `rust/tests/native_execution_event_identity.rs`) |
 | `src/execution-process-tracker.ts` | `rust/src/execution_process_tracker.rs` | PENDING | — |
 | `src/execution-recovery.ts` | `rust/src/execution_recovery.rs` | PENDING | — |
 | `src/execution-routing.ts` | `rust/src/execution_routing.rs` | PENDING | — |
@@ -105,7 +105,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/legacy-blocked-task-migration.ts` | `rust/src/legacy_blocked_task_migration.rs` | PENDING | — |
 | `src/legacy-orchestrator-repair.ts` | `rust/src/legacy_orchestrator_repair.rs` | PENDING | — |
 | `src/local-authority-store.ts` | `rust/src/local_authority_store.rs` | PENDING | — |
-| `src/local-commit-events.ts` | `rust/src/local_commit_events.rs` | PENDING | — |
+| `src/local-commit-events.ts` | `rust/src/local_commit_events.rs` | PASS | Direct port: 621 Node/Rust listener/clone/unsubscribe fixtures, 4 native tests for reentrancy, Set semantics, panic propagation (`rust/tests/head_to_head_local_commit_events.mjs`, `rust/tests/native_local_commit_events.rs`) |
 | `src/local-git-merge.ts` | `rust/src/local_git_merge.rs` | PENDING | — |
 | `src/local-job-path.ts` | `rust/src/local_job_path.rs` | PASS | Batch 5: configured, empty and absent store-directory override compared directly with Node including default home path (`rust/tests/head_to_head_batch5.mjs`) |
 | `src/local-job-registry.ts` | `rust/src/local_job_registry.rs` | PENDING | — |

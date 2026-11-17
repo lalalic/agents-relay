@@ -63,3 +63,8 @@ pub mod reconciler_pause;
 
 // Direct Node src/github-runtime-usage.ts rate-limit telemetry and CLI response handling.
 pub mod github_runtime_usage;
+
+// Direct Node src/execution-event-identity.ts execution source binding port.
+pub mod execution_event_identity;
+// Direct Node src/local-commit-events.ts post-SQLite pub/sub port.
+pub mod local_commit_events;
