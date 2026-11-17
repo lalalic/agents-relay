@@ -46,11 +46,11 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/cli-local-merge-config.ts` | `rust/src/cli_local_merge_config.rs` | PASS | 626 shared differential fixtures across 14 ports; merge success and validation errors compared (`rust/tests/head_to_head.mjs`) |
 | `src/cli-projection.ts` | `rust/src/cli_projection.rs` | EXCLUDED | Removed by main local-Git-only CLI lifecycle; PR projection commands and their Rust mirror/differential tests are retired, no longer an executable public CLI surface. |
 | `src/cli-prompt.ts` | `rust/src/cli_prompt.rs` | PENDING | — |
-| `src/cli-review.ts` | `rust/src/cli_review.rs` | PENDING | — |
+| `src/cli-review.ts` | `rust/src/cli_review.rs` | PORTING | Phase1 serial native Rust draft; uncompiled, untested and not production-wired; parity pending. |
 | `src/cli-revision.ts` | `rust/src/cli_revision.rs` | PASS | Findings/receipt/input bounds and native HTTP request parity in 98-case shared CLI suite; rust/tests/head_to_head_cli_core.mjs, cli_http_native.rs |
 | `src/cli-shutdown.ts` | `rust/src/cli_shutdown.rs` | PASS | Batch 5: exit status precedence, serving mode, delayed default/custom grace and injected force-exit callback verified without terminating the test process (`rust/tests/native_batch5.rs`, `rust/tests/head_to_head_batch5.mjs`). |
 | `src/cli-support.ts` | `rust/src/cli_support.rs` | PENDING | — |
-| `src/cli-unblock.ts` | `rust/src/cli_unblock.rs` | PENDING | — |
+| `src/cli-unblock.ts` | `rust/src/cli_unblock.rs` | PORTING | Phase1 serial native Rust draft; uncompiled, untested and not production-wired; parity pending. |
 | `src/cli-worker-task.ts` | `rust/src/cli_worker_task.rs` | PENDING | — |
 | `src/cli-workflow-action.ts` | `rust/src/cli_workflow_action.rs` | PASS | Batch 5: direct Node/Rust mapping and unsupported/missing argument errors; Rust exposes async delegated effect (`rust/tests/head_to_head_batch5.mjs`) |
 | `src/cli-workflow.ts` | `rust/src/cli_workflow.rs` | PASS | Read-only Graph workflow commands, predicate error paths and isolated SQLite trace/verify in 98-case CLI Node/Rust suite; rust/tests/head_to_head_cli_core.mjs |
@@ -93,8 +93,8 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/graph-runtime.ts` | `rust/src/graph_runtime.rs` | PASS | Eight-module Graph/Outbox batch: alias to canonical Graph-v2 runtime with 1,300 Graph runtime differential cases; `rust/tests/head_to_head_graph_*.mjs`, `rust/tests/head_to_head_agent_graph.mjs`, `rust/tests/head_to_head_workflow_*.mjs`, `rust/tests/native_graph_outbox_batch.rs` |
 | `src/host-invocation-store.ts` | `rust/src/host_invocation_store.rs` | PASS | Wave2 C: Node/Rust in-memory SQLite event/decision ledger, generation fences, duplicate/stale decisions and rollback native tests (`head_to_head_wave2_delivery.mjs`) |
 | `src/interactive-invocation.ts` | `rust/src/interactive_invocation.rs` | PENDING | — |
-| `src/interactive-request.ts` | `rust/src/interactive_request.rs` | PENDING | — |
-| `src/interactive-resume.ts` | `rust/src/interactive_resume.rs` | PENDING | — |
+| `src/interactive-request.ts` | `rust/src/interactive_request.rs` | PORTING | Phase1 serial native Rust draft; uncompiled, untested and not production-wired; parity pending. |
+| `src/interactive-resume.ts` | `rust/src/interactive_resume.rs` | PORTING | Phase1 serial native Rust draft; uncompiled, untested and not production-wired; parity pending. |
 | `src/job-actions.ts` | `rust/src/job_actions.rs` | PENDING | — |
 | `src/job-execution-slot.ts` | `rust/src/job_execution_slot.rs` | PASS | 587 shared differential fixtures across 7 ports; Rust native tests 8/8; Node focused regression 18/18; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/job-local-repository-migration.ts` | `rust/src/job_local_repository_migration.rs` | PASS | Wave2 C: 34 Node/Rust temp Git/SQLite migration cases, preflight collisions/backup/atomic rewrite and native tests (`head_to_head_wave2_delivery.mjs`) |
