@@ -56,7 +56,20 @@ pub mod workflow {
     pub mod troubleshooter_v2;
     // Shared loader for Graph-driven v2 workflow wrappers.
     pub mod definitions_v2;
+    // Direct Node workflow/lifecycle.ts Graph façade for Job/Task transitions.
+    pub mod lifecycle;
+    // Direct Node Review, Job reconciliation and related Task Graph policies.
+    pub mod job_reconcile_v2;
     pub mod policy_graph;
+    pub mod review_v2;
+    pub mod task_action_policy;
+    // Direct Node Task/Job entity creation, prehuman escalation and legacy orchestrator rescue.
+    pub mod entity_creation;
+    pub mod escalation;
+    pub mod orchestrator_rescue;
+    // Isolated Node/Rust multi-module lifecycle differential fixture.
+    pub mod lifecycle_parity_harness;
+    pub mod task_related_action_v2;
     // Isolated direct Node/Rust policy and dispatcher fixture adapters.
     pub mod policy_parity_harness;
     // Direct Node src/workflow/runtime.ts mechanical Graph-selected Task/Job effects.
