@@ -166,6 +166,52 @@ fn workflow_engine_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "routingPolicyPath" => Ok(json!(agents_relay_rust2::routing_policy::policy_path(
+            request["explicit"].as_str(),
+            request["env"].as_str(),
+            std::path::Path::new(request["cwd"].as_str().unwrap_or("."))
+        ))
+        .to_string()),
+        "executionRouterRulesPath" => Ok(json!(
+            agents_relay_rust2::routing_policy::execution_router_rules_path(
+                request["explicit"].as_str(),
+                request["env"].as_str(),
+                std::path::Path::new(request["home"].as_str().unwrap_or("."))
+            )
+        )
+        .to_string()),
+        "safeRoutingPolicy" => {
+            Ok(agents_relay_rust2::routing_policy::safe_policy(&request["value"]).to_string())
+        }
+        "loadRoutingPolicy" => Ok(agents_relay_rust2::routing_policy::load_routing_policy(
+            request["path"].as_str().unwrap_or(""),
+            request["rulesPath"].as_str().unwrap_or(""),
+        )
+        .to_string()),
+        "loadExecutionRouterRules" => Ok(
+            agents_relay_rust2::routing_policy::load_execution_router_rules(
+                request["path"].as_str().unwrap_or(""),
+            )
+            .to_string(),
+        ),
+        "saveExecutionRouterRules" => Ok(
+            agents_relay_rust2::routing_policy::save_execution_router_rules(
+                request["text"].as_str().unwrap_or(""),
+                request["path"].as_str().unwrap_or(""),
+            )?
+            .to_string(),
+        ),
+        "policyAllows" => Ok(json!(agents_relay_rust2::routing_policy::policy_allows(
+            &request["candidate"],
+            &request["policy"]
+        ))
+        .to_string()),
+        "policyRank" => Ok(json!(agents_relay_rust2::routing_policy::policy_rank(
+            &request["candidate"],
+            request["taskKind"].as_str(),
+            &request["policy"]
+        ))
+        .to_string()),
         "workflowEngineScenario" => Ok(workflow_engine_scenario(request)?.to_string()),
         "parseExecutableMermaid" => Ok(
             agents_relay_rust2::workflow::mermaid::parse_executable_mermaid(

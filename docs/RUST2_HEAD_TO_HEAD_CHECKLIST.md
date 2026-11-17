@@ -176,7 +176,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/route-outcome-recording.ts` | `rust/src/route_outcome_recording.rs` | PENDING | — |
 | `src/router-evals.ts` | `rust/src/router_evals.rs` | PENDING | — |
 | `src/router-rules.ts` | `rust/src/router_rules.rs` | PASS | Direct hotfix: 2,178 Node/Rust choices, routing-instruction byte preservation, Unicode whitespace, headers, duplicate routes, append helpers (rust/tests/head_to_head_direct_hotfix.mjs) |
-| `src/routing-policy.ts` | `rust/src/routing_policy.rs` | PENDING | — |
+| `src/routing-policy.ts` | `rust/src/routing_policy.rs` | PASS | Direct hotfix: 2,418 Node/Rust route eligibility/ranking/path fixtures; 20 isolated policy/rules file round-trips, SHA-256, sanitizer, missing/invalid files (rust/tests/head_to_head_routing_policy.mjs; rust/tests/native_routing_policy.rs) |
 | `src/runtime-status-events.ts` | `rust/src/runtime_status_events.rs` | PENDING | — |
 | `src/runtime-status.ts` | `rust/src/runtime_status.rs` | PENDING | — |
 | `src/runtime-summary.ts` | `rust/src/runtime_summary.rs` | PENDING | — |
@@ -371,3 +371,12 @@ Current verified source modules: **28 / 227**; remaining: **199**. The parity CL
 - [x] Reviewed and corrected JavaScript vs Rust regex Unicode whitespace differences before marking PASS.
 
 The three module ports verify standalone executable mechanics; they do not establish that all CLI, Graph orchestration, Scheduler, Dashboard and live E2E features have reached production parity.
+
+### Direct Rust2 hotfix — Routing Policy persistence and ranking (2026-11-16)
+
+- [x] `src/routing-policy.ts` → `rust/src/routing_policy.rs`: Node-authored Router Rules adapter reuse, policy sanitization, SHA-256 of file content, raw JSON snapshots, optional home/env paths and real filesystem read/write in isolated test fixtures.
+- [x] `rust/tests/head_to_head_routing_policy.mjs`: **2,418** independent eligibility, rank and path cases, plus **20** file I/O and JSON-policy snapshot cases against the built Node reference.
+- [x] Native Rust regression tests cover invalid policy fields, profile/provider/quality ranking, file persistence and missing policy fallback.
+- [x] Tests compare JSON-wire snapshots; Node's `undefined` object fields are omitted by JSON serialization and are not durable policy data.
+
+Production Node.js Relay was not restarted or replaced; no canonical SQLite store or customer policy file was used.

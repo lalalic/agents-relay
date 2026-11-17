@@ -24,6 +24,7 @@ pub mod review_revision_merge;
 pub mod review_revision_policy;
 pub mod review_terminal_normalization;
 pub mod router_rules;
+pub mod routing_policy;
 pub mod task_tag;
 pub mod worker_rejection;
 pub mod workflow {
