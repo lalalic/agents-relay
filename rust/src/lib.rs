@@ -321,3 +321,5 @@ pub mod script_task_adapter;
 pub mod cli_prompt;
 pub mod dag_task_runtime;
 pub mod troubleshooter;
+pub mod interactive_invocation;
+pub mod execution_context;
