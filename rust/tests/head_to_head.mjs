@@ -4,6 +4,8 @@ import test from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { deriveTaskTitle } from '../../dist/task-title.js';
 import { isFinalReviewAgent } from '../../dist/final-review-role.js';
 import { validatePlannerAgentRoles } from '../../dist/planner-agent-roles.js';
@@ -18,8 +20,24 @@ import { orderGitHubBindingCandidates } from '../../dist/github-binding-order.js
 import { parsePlannerHistoryCleanup } from '../../dist/planner-history-cleanup.js';
 import { ProjectionFailureDeduplicator } from '../../dist/projection-failure-dedupe.js';
 import { bindPlannedReviewHead } from '../../dist/planned-review-head.js';
+import { normalizeReviewEvidence } from '../../dist/review-evidence.js';
+import { classifyWorkerRejection, classifyChatGptPlatformFailure, PreSubmissionRejection } from '../../dist/worker-rejection.js';
+import { parseJobTagJson, acceptedReportedTag, eventDataWithoutTag, taskTagWorkerPrompt } from '../../dist/task-tag.js';
+import { normalizeReviewerTerminalEvent } from '../../dist/review-terminal-normalization.js';
+import { plannerTaskContext } from '../../dist/planner-task-context.js';
+import { ConditionRegistry, booleanCondition, verifyActionEffect, safeRetryAllowed } from '../../dist/workflow/conditions.js';
+import { discoverAgents } from '../../dist/registry.js';
+import { reviewRevisionLimits, reviewFindingFingerprint, reviewRoundFindingFingerprint, repeatedFindingRounds } from '../../dist/review-revision-policy.js';
+import { validateDAGStageGate } from '../../dist/dag-stage-contract.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const dagRoot=mkdtempSync(resolve(tmpdir(),'relay-rust2-dag-'));
+function stageFixture(name,stageValidation,response,runName='run') {
+ const projectPath=resolve(dagRoot,name);mkdirSync(resolve(projectPath,'scripts'),{recursive:true});mkdirSync(resolve(projectPath,'runs',runName),{recursive:true});
+ writeFileSync(resolve(projectPath,'scripts/check.mjs'),'// isolated fixture\n');
+ if(stageValidation!==undefined)writeFileSync(resolve(projectPath,'project.run.json'),JSON.stringify({stageValidation}));
+ return {op:'validateDAGStageGate',projectPath,agent:'reviewer',runPath:resolve(projectPath,'runs',runName),interpreter:process.execPath,response};
+}
 const rustBinary = resolve(root, 'rust/target/debug/relay-rust2-parity');
 const ready = {hasSession:true,hasThread:true,terminalObserved:false,recoveryAttempts:0,outcomeUncertain:false,cancelled:false};
 const cases = [];
@@ -110,6 +128,43 @@ for (const recoveryAttempts of [-3, -1, 0, 0.5, 0.9999, 1, 2, 12]) {
   }
 }
 for (const executionId of ['', 'exec-original', '中文-exec-1', 'a/b/c', '"quoted"']) cases.push({op:'terminalRecoveryPrompt',executionId});
+for (const event of [
+  {type:'review.approved',data:{headSha:'abc',findings:['  ok  ']}},
+  {type:'review.changes_required',data:{outcome:{head_sha:'def',blocking_findings:[{message:'  bad  '},null]}}},
+  {type:'review.approved',data:{review:{headSha:'ghi',issues:'bad'}}},
+  {type:'review.approved',data:{head_sha:'',issues:[{},'']}},
+  {type:'review.approved',data:{head_sha:'null-case',findings:null}},
+  {type:'review.approved',data:{}},
+  {type:'review.approved',data:{head_sha:'héad',findings:['漢字 😀']}}
+]) cases.push({op:'normalizeReviewEvidence',event,task:{reviewHeadSha:'fallback'}});
+for (const message of ['RATE_LIMIT_EXCEEDED','usage limit reached','quota-exceeded','model is unavailable','unsupported model','provider refused','service unavailable','other']) cases.push({op:'classifyWorkerRejection',message});
+for (const [phase,error] of [['delivery',{status:'rejected',submitted:false,code:'MODEL_NOT_FOUND',message:'模型不可用'}],['delivery',{status:'rejected',submitted:false,code:'PROVIDER_UNAVAILABLE',message:''}],['delivery',{message:'uncertain'}],['launch',{message:'boom'}],['start-ack','plain'],['delivery',null],['delivery',{status:'rejected',submitted:true,code:'PROVIDER_UNAVAILABLE',message:'x'}]]) cases.push({op:'classifyChatGptFailure',phase,error});
+for (const raw of ['', 'null', '[]', '{}', '{bad', '{"description":"x","values":{"ok":"✅"}}', '{"description":"  ","values":{"x":"X"}}', '{"description":"x","values":{}}', '{"description":"x","values":{"é":"x"}}', JSON.stringify({description:'😀'.repeat(251),values:{x:'X'}}), JSON.stringify({description:'标签',values:{a:'中文😀'}}), JSON.stringify({description:'\ufeff',values:{x:'X'}}), '{"description":"\\u0085","values":{"10":"ten","2":"two","a":"A"}}']) cases.push({op:'parseJobTag',raw});
+for (const data of [undefined,null,{}, {tag:'ok',x:1}, {tag:'ok'}, {tag:null}]) cases.push({op:'eventDataWithoutTag',data});
+for(const tag of [undefined,null,{description:'Outcome',values:{pass:'PASS',fail:'FAIL'}},{description:'Unicode',values:{'α':'✅'}}]){const job=tag===undefined?{}:{tag};cases.push({op:'taskTagWorkerPrompt',job});cases.push({op:'acceptedReportedTag',job,data:{tag:'pass'}});}
+for (const event of [
+ {type:'task.completed',data:{verdict:'approved',head_sha:'abc',findings:[{message:'x'}]}},
+ {type:'task.completed',message:'',data:{verdict:'blocked',headSha:'def'}},
+ {type:'task.completed',data:{verdict:'changes_required',outcome:{head_sha:'h',blockingFindings:['x']}}},
+ {type:'task.completed',data:{verdict:'pass',head_sha:''}},
+ {type:'task.failed',data:{verdict:'approved',head_sha:'abc'}}
+]) cases.push({op:'normalizeReviewerTerminalEvent',event});
+for (const task of [{id:'t',title:'😀'.repeat(4001),kind:'work',input:'x'.repeat(4001),result:{summary:'s',data:{x:'😀'}},comments:[{author:'a',text:'c',createdAt:'now'}]}, {id:'u',title:'Unicode 😀 中文',input:'漢字'}, {id:'p',kind:'planner',input:'secret',dependencies:[],state:'QUEUED'}]) cases.push({op:'plannerTaskContext',task});
+for (const outcome of ['Verified','Failed','Unknown','failed']) cases.push({op:'conditionSafeRetry',outcome});
+for (const value of [true,false,null,'true',0]) cases.push({op:'conditionCheck',id:'merged',specs:[{id:'merged',kind:'boolean'}],facts:{merged:value}});
+cases.push({op:'conditionDiscover',specs:[{id:'z'},{id:'a'}]},{op:'conditionValidate',specs:[{id:'x'},{id:'x'}]},{op:'conditionCheck',id:'absent',specs:[],facts:{}}, {op:'conditionVerify',specs:[{id:'merged',kind:'boolean'}],actionId:'merge',conditionId:'merged',facts:{merged:true}}, {op:'conditionGuard',specs:[{id:'merged',kind:'boolean'}],id:'merged',facts:{merged:'yes'}});
+const registryAgent=(id,availability,succeeded,failed,timedOut,evaluations,extra={})=>({id,availability,capabilities:['review','code'],runtime:{adapter:'script'},routing:{trustDomains:['trusted'],labels:{zone:'east'}},evidence:{outcomes:{succeeded,failed,timedOut},evaluations},...extra});
+for(const query of [{},{capabilities:['review'],runtime:'script',availability:['available'],trustDomain:'trusted',labels:{zone:'east'},taskKind:'review',explore:true},{capabilities:['missing']},{labels:{zone:'west'}}])cases.push({op:'discoverAgents',agents:[registryAgent('unobserved','available',0,0,0,[]),registryAgent('reliable','busy',9,1,0,[{taskKind:'review'}]),registryAgent('available-low','available',1,2,1,[{taskKind:'other'}])],query});
+for(const env of [{},{AGENTS_RELAY_REVIEW_MAX_ROUNDS:'9',AGENTS_RELAY_REVIEW_NO_PROGRESS_LIMIT:'2'},{AGENTS_RELAY_REVIEW_MAX_ROUNDS:'  '},{AGENTS_RELAY_REVIEW_MAX_ROUNDS:'0'},{AGENTS_RELAY_REVIEW_NO_PROGRESS_LIMIT:'1.5'},{AGENTS_RELAY_REVIEW_MAX_ROUNDS:'101'}])cases.push({op:'reviewRevisionLimits',env});
+for(const findings of [[],[''],[' Fix   THIS ','fix this'],['İssue','issue','é','e\u0301'],['😀','漢字','a'],['  keep\n  spaces  '],['\u0085x\u0085']])cases.push({op:'reviewFindingFingerprint',findings});
+for(const round of [{reviewTaskId:'r1',requestIds:['q1']},{reviewTaskId:'r2',requestIds:['q2'],findingFingerprint:'frozen'}, {reviewTaskId:'r3',requestIds:[]}])cases.push({op:'reviewRoundFindingFingerprint',job:{reviewRevisionRequests:[{requestId:'q1',findings:[{summary:'Bug'}]},{requestId:'q2',findings:[{summary:'other'}]}]},round});
+cases.push({op:'repeatedFindingRounds',job:{reviewRevisionRequests:[{requestId:'a',findings:[{summary:'same'}]},{requestId:'b',findings:[{summary:' SAME  '}]},{requestId:'c',findings:[{summary:'different'}]}],reviewRevisionRounds:[{reviewTaskId:'old-a',requestIds:['a'],status:'changes_required',recordedAt:'1'},{reviewTaskId:'old-b',requestIds:['b'],status:'changes_required',recordedAt:'2'},{reviewTaskId:'old-c',requestIds:['c'],status:'changes_required',recordedAt:'3'}]},currentRound:{reviewTaskId:'now',requestIds:['b'],status:'changes_required'}});
+const stageConfig={script:'scripts/check.mjs',agents:{reviewer:'review-stage'}};
+const dagPass=stageFixture('dag-pass',stageConfig,{stdout:JSON.stringify({stage:'review-stage',status:'PASS',errors:[]}),stderr:'',code:0});
+dagPass.expectedInvocation={args:[process.execPath,realpathSync(resolve(dagPass.projectPath,'scripts/check.mjs')),'review-stage',realpathSync(dagPass.runPath)],cwd:realpathSync(dagPass.projectPath)};
+cases.push(stageFixture('dag-absent',undefined,{stdout:'',stderr:'',code:0}),stageFixture('dag-no-agent',{script:'scripts/check.mjs',agents:{other:'stage'}},{stdout:'',stderr:'',code:0}),stageFixture('dag-null',null,{stdout:'',stderr:'',code:0}),stageFixture('dag-bad-map',{script:'scripts/check.mjs',agents:[]},{stdout:'',stderr:'',code:0}),stageFixture('dag-bad-stage',{script:'scripts/check.mjs',agents:{reviewer:'Stage_1'}},{stdout:'',stderr:'',code:0}),stageFixture('dag-bad-script',{script:'../bad.mjs',agents:{reviewer:'review-stage'}},{stdout:'',stderr:'',code:0}),stageFixture('dag-invalid-output',stageConfig,{stdout:'not json',stderr:'',code:0}),stageFixture('dag-fail',stageConfig,{stdout:JSON.stringify({stage:'review-stage',status:'FAIL',errors:['missing evidence']}),stderr:'ignored',code:1}),dagPass);
+const outsideRun=resolve(dagRoot,'outside-run');mkdirSync(outsideRun);const escapedRun=stageFixture('dag-run-escape',stageConfig,{stdout:'',stderr:'',code:0});escapedRun.runPath=outsideRun;cases.push(escapedRun);
+const outsideScript=resolve(dagRoot,'outside.mjs');writeFileSync(outsideScript,'// outside fixture\n');const symlinkFixture=stageFixture('dag-script-escape',{script:'scripts/escape.mjs',agents:{reviewer:'review-stage'}},{stdout:'',stderr:'',code:0});symlinkSync(outsideScript,resolve(symlinkFixture.projectPath,'scripts/escape.mjs'));cases.push(symlinkFixture);
 
 for(const name of [null,undefined,'','reviewer','job-acceptance-reviewer','Reviewer',' job-acceptance-reviewer','implementation']) {
   cases.push({op:'isFinalReviewAgent',name});
@@ -184,13 +239,35 @@ async function nodeReference(request) {
         value={task:request.task,saveCalls};
         break;
       }
+      case 'normalizeReviewEvidence': value=normalizeReviewEvidence(request.event,request.task);break;
+      case 'classifyWorkerRejection': value=classifyWorkerRejection(request.message);break;
+      case 'classifyChatGptFailure': { let error=request.error; if(error&&error.status==='rejected'&&error.submitted===false){const pre=PreSubmissionRejection.fromPlatformResponse(error);if(pre)error=pre;} value=classifyChatGptPlatformFailure(error,request.phase);break; }
+      case 'parseJobTag': value=parseJobTagJson(request.raw);break;
+      case 'eventDataWithoutTag': value=eventDataWithoutTag(request.data);break;
+      case 'taskTagWorkerPrompt': value=taskTagWorkerPrompt(request.job);break;
+      case 'acceptedReportedTag': value=acceptedReportedTag(request.job,request.data);break;
+      case 'normalizeReviewerTerminalEvent': value=normalizeReviewerTerminalEvent(request.event);break;
+      case 'plannerTaskContext': value=JSON.parse(JSON.stringify(plannerTaskContext(request.task)));break;
+      case 'conditionSafeRetry': value=safeRetryAllowed(request.outcome);break;
+      case 'conditionCheck': value=new ConditionRegistry(request.specs.map(s=>booleanCondition(s.id))).check(request.id,request.facts);break;
+      case 'conditionDiscover': value=new ConditionRegistry(request.specs.map(s=>booleanCondition(s.id))).discover();break;
+      case 'conditionValidate': new ConditionRegistry(request.specs.map(s=>booleanCondition(s.id)));value=null;break;
+      case 'conditionVerify': value=verifyActionEffect(new ConditionRegistry(request.specs.map(s=>booleanCondition(s.id))),request.actionId,request.conditionId,request.facts);break;
+      case 'conditionGuard': value=new ConditionRegistry(request.specs.map(s=>booleanCondition(s.id))).guard(request.id)({durableFacts:request.facts});break;
+      case 'discoverAgents': value=discoverAgents(request.agents,request.query);break;
+      case 'reviewRevisionLimits': value=reviewRevisionLimits(request.env);break;
+      case 'reviewFindingFingerprint': value=reviewFindingFingerprint(request.findings);break;
+      case 'reviewRoundFindingFingerprint': value=reviewRoundFindingFingerprint(request.job,request.round);break;
+      case 'repeatedFindingRounds': value=repeatedFindingRounds(request.job,request.currentRound);break;
+      case 'validateDAGStageGate': await validateDAGStageGate({projectPath:request.projectPath,agent:request.agent,runPath:request.runPath,execute:async(args,cwd)=>{if(request.expectedInvocation){assert.deepStrictEqual(args,request.expectedInvocation.args);assert.equal(cwd,request.expectedInvocation.cwd);}return request.response;}});value=null;break;
       default: throw new Error('unrecognized op');
     }
     return {ok:true,value:value??null};
   }catch(e){return {ok:false,error:e.message};}
 }
 
-test('fourteen direct Node source ports produce matching results and errors',async()=>{
+test('direct Node source ports produce matching results and errors',async()=>{
+  try {
   const build=spawnSync('cargo',['build','--offline','--manifest-path','rust/Cargo.toml'],{cwd:root,encoding:'utf8',timeout:90000});
   assert.equal(build.status,0,`Rust build failed: ${build.stderr}`);
   const input=cases.map(item=>JSON.stringify(item)).join('\n')+'\n';
@@ -205,4 +282,5 @@ test('fourteen direct Node source ports produce matching results and errors',asy
     assert.equal(JSON.stringify(actual),JSON.stringify(expected),`Serialized JSON mismatch in case ${i}: ${JSON.stringify(cases[i])}`);
   }
   console.log(`Verified ${cases.length} exact Node/Rust differential cases (including errors, Unicode, stateful reset sequences, and projection behavior).`);
+  } finally { rmSync(dagRoot,{recursive:true,force:true}); }
 });

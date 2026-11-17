@@ -140,6 +140,166 @@ fn invoke(request: &Value) -> Result<String, String> {
             bind_planned_review_head(&mut task, request["localHeadSha"].as_str())?;
             Ok(json!({"task": task, "saveCalls": 1}).to_string())
         }
+        "normalizeReviewEvidence" => Ok(
+            agents_relay_rust2::review_evidence::normalize_review_evidence(
+                &request["event"],
+                &request["task"],
+            )
+            .to_string(),
+        ),
+        "classifyWorkerRejection" => Ok(json!(
+            agents_relay_rust2::worker_rejection::classify_worker_rejection(
+                request["message"].as_str().unwrap_or("")
+            )
+        )
+        .to_string()),
+        "classifyChatGptFailure" => Ok(
+            agents_relay_rust2::worker_rejection::classify_chatgpt_failure(
+                &request["error"],
+                request["phase"].as_str().unwrap_or("delivery"),
+            )
+            .to_string(),
+        ),
+        "parseJobTag" => Ok(agents_relay_rust2::task_tag::parse_job_tag_json(
+            request["raw"].as_str().unwrap_or(""),
+        )?
+        .to_string()),
+        "acceptedReportedTag" => Ok(agents_relay_rust2::task_tag::accepted_reported_tag(
+            &request["job"],
+            &request["data"],
+        )
+        .to_string()),
+        "eventDataWithoutTag" => {
+            Ok(agents_relay_rust2::task_tag::event_data_without_tag(&request["data"]).to_string())
+        }
+        "taskTagWorkerPrompt" => Ok(json!(agents_relay_rust2::task_tag::task_tag_worker_prompt(
+            &request["job"]
+        ))
+        .to_string()),
+        "normalizeReviewerTerminalEvent" => Ok(
+            agents_relay_rust2::review_terminal_normalization::normalize_reviewer_terminal_event(
+                &request["event"],
+            )
+            .to_string(),
+        ),
+        "plannerTaskContext" => Ok(
+            agents_relay_rust2::planner_task_context::planner_task_context_json_wire(
+                &request["task"],
+            ),
+        ),
+        "conditionCheck" => Ok(json!(agents_relay_rust2::workflow::conditions::check(
+            request["specs"]
+                .as_array()
+                .ok_or("specs must be an array")?,
+            request["id"].as_str().unwrap_or(""),
+            &request["facts"]
+        )?)
+        .to_string()),
+        "conditionDiscover" => Ok(json!(agents_relay_rust2::workflow::conditions::discover(
+            request["specs"]
+                .as_array()
+                .ok_or("specs must be an array")?
+        ))
+        .to_string()),
+        "conditionValidate" => {
+            agents_relay_rust2::workflow::conditions::validate_specs(
+                request["specs"]
+                    .as_array()
+                    .ok_or("specs must be an array")?,
+            )?;
+            Ok("null".into())
+        }
+        "conditionSafeRetry" => Ok(json!(agents_relay_rust2::workflow::conditions::safe_retry(
+            request["outcome"].as_str().unwrap_or("")
+        ))
+        .to_string()),
+        "conditionVerify" => Ok(agents_relay_rust2::workflow::conditions::verify(
+            request["specs"]
+                .as_array()
+                .ok_or("specs must be an array")?,
+            request["actionId"].as_str().unwrap_or(""),
+            request["conditionId"].as_str().unwrap_or(""),
+            &request["facts"],
+        )?
+        .to_string()),
+        "conditionGuard" => Ok(json!(
+            agents_relay_rust2::workflow::conditions::check(
+                request["specs"]
+                    .as_array()
+                    .ok_or("specs must be an array")?,
+                request["id"].as_str().unwrap_or(""),
+                &request["facts"],
+            )? == "Verified"
+        )
+        .to_string()),
+        "discoverAgents" => Ok(json!(agents_relay_rust2::registry::discover_agents(
+            request["agents"]
+                .as_array()
+                .ok_or("agents must be an array")?,
+            &request["query"]
+        ))
+        .to_string()),
+        "reviewRevisionLimits" => Ok(
+            agents_relay_rust2::review_revision_policy::review_revision_limits(&request["env"])?
+                .to_string(),
+        ),
+        "reviewFindingFingerprint" => Ok(json!(
+            agents_relay_rust2::review_revision_policy::review_finding_fingerprint(
+                request["findings"]
+                    .as_array()
+                    .ok_or("findings must be an array")?
+            )
+        )
+        .to_string()),
+        "reviewRoundFindingFingerprint" => Ok(json!(
+            agents_relay_rust2::review_revision_policy::review_round_finding_fingerprint(
+                &request["job"],
+                &request["round"]
+            )
+        )
+        .to_string()),
+        "repeatedFindingRounds" => Ok(json!(
+            agents_relay_rust2::review_revision_policy::repeated_finding_rounds(
+                &request["job"],
+                &request["currentRound"]
+            )
+        )
+        .to_string()),
+        "validateDAGStageGate" => {
+            let response = &request["response"];
+            agents_relay_rust2::dag_stage_contract::validate_dag_stage_gate(
+                std::path::Path::new(
+                    request["projectPath"]
+                        .as_str()
+                        .ok_or("projectPath required")?,
+                ),
+                request["agent"].as_str().unwrap_or(""),
+                std::path::Path::new(request["runPath"].as_str().ok_or("runPath required")?),
+                request["interpreter"].as_str().unwrap_or("node"),
+                |args, cwd| {
+                    if let Some(expected) = request.get("expectedInvocation") {
+                        let expected_args = expected["args"]
+                            .as_array()
+                            .cloned()
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter_map(|v| v.as_str().map(str::to_owned))
+                            .collect::<Vec<_>>();
+                        if args != expected_args
+                            || cwd.to_string_lossy() != expected["cwd"].as_str().unwrap_or("")
+                        {
+                            return Err("stage validator invocation mismatch".into());
+                        }
+                    }
+                    Ok(agents_relay_rust2::dag_stage_contract::StageExecution {
+                        stdout: response["stdout"].as_str().unwrap_or("").into(),
+                        stderr: response["stderr"].as_str().unwrap_or("").into(),
+                        code: response["code"].as_i64().unwrap_or(0) as i32,
+                    })
+                },
+            )?;
+            Ok("null".into())
+        }
         _ => Err(format!("unknown operation: {op}")),
     }
 }

@@ -1,5 +1,6 @@
 // New rust2 library: routes one-to-one ports of Node src modules without importing the retired Rust rewrite.
 pub mod cli_local_merge_config;
+pub mod dag_stage_contract;
 pub mod dependency_validity;
 pub mod final_review_role;
 pub mod github_binding_order;
@@ -9,8 +10,18 @@ pub mod js_text;
 pub mod planned_review_head;
 pub mod planner_agent_roles;
 pub mod planner_history_cleanup;
+pub mod planner_task_context;
 pub mod planner_task_title;
 pub mod projection_failure_dedupe;
+pub mod registry;
+pub mod review_evidence;
 pub mod review_revision_merge;
+pub mod review_revision_policy;
+pub mod review_terminal_normalization;
+pub mod task_tag;
+pub mod worker_rejection;
+pub mod workflow {
+    pub mod conditions;
+}
 pub mod task_title;
 pub mod terminal_event_recovery;

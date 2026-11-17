@@ -57,7 +57,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/cli.ts` | `rust/src/cli.rs` | PENDING | — |
 | `src/continuation.ts` | `rust/src/continuation.rs` | PENDING | — |
 | `src/dag-result-contract.ts` | `rust/src/dag_result_contract.rs` | PENDING | — |
-| `src/dag-stage-contract.ts` | `rust/src/dag_stage_contract.rs` | PENDING | — |
+| `src/dag-stage-contract.ts` | `rust/src/dag_stage_contract.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; isolated temp project fixtures, symlink/run escape checks, malformed/failing validator outputs, and checked execution args (`rust/tests/head_to_head.mjs`) |
 | `src/dag-task-runtime.ts` | `rust/src/dag_task_runtime.rs` | PENDING | — |
 | `src/dashboard-actions.ts` | `rust/src/dashboard_actions.rs` | PENDING | — |
 | `src/dashboard-data.ts` | `rust/src/dashboard_data.rs` | PENDING | — |
@@ -129,7 +129,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/planner-history-cleanup.ts` | `rust/src/planner_history_cleanup.rs` | PASS | 626 shared differential fixtures across 14 ports; valid, missing, malformed, duplicate, and target-required payloads compared (`rust/tests/head_to_head.mjs`) |
 | `src/planner-recovery.ts` | `rust/src/planner_recovery.rs` | PENDING | — |
 | `src/planner-runtime.ts` | `rust/src/planner_runtime.rs` | PENDING | — |
-| `src/planner-task-context.ts` | `rust/src/planner_task_context.rs` | PENDING | — |
+| `src/planner-task-context.ts` | `rust/src/planner_task_context.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; bounded input/result/comment context, planner input omission, Unicode, and undefined-field JSON normalization (`rust/tests/head_to_head.mjs`) |
 | `src/planner-task-ids.ts` | `rust/src/planner_task_ids.rs` | PENDING | — |
 | `src/planner-task-title.ts` | `rust/src/planner_task_title.rs` | PASS | 327 shared differential fixtures across 4 ports; Rust native tests 5/5; Node focused regression 4/4; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/planner.ts` | `rust/src/planner.rs` | PENDING | — |
@@ -150,7 +150,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/reconciler-runtime.ts` | `rust/src/reconciler_runtime.rs` | PENDING | — |
 | `src/reconciler-workflow-outbox.ts` | `rust/src/reconciler_workflow_outbox.rs` | PENDING | — |
 | `src/reconciler.ts` | `rust/src/reconciler.rs` | PENDING | — |
-| `src/registry.ts` | `rust/src/registry.rs` | PENDING | — |
+| `src/registry.ts` | `rust/src/registry.rs` | PASS | Batch 4: 700 shared differential cases across 21 source ports; filtering, trust domains, labels, task-kind evidence, exploratory ordering and reliability ranking (`rust/tests/head_to_head.mjs`) |
 | `src/relay-create.ts` | `rust/src/relay_create.rs` | PENDING | — |
 | `src/relay-job-snapshot-reads.ts` | `rust/src/relay_job_snapshot_reads.rs` | PENDING | — |
 | `src/relay-store-discovery.ts` | `rust/src/relay_store_discovery.rs` | PENDING | — |
@@ -162,16 +162,16 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/relayd-utilities.ts` | `rust/src/relayd_utilities.rs` | PENDING | — |
 | `src/relayd.ts` | `rust/src/relayd.rs` | PENDING | — |
 | `src/review-chair.ts` | `rust/src/review_chair.rs` | PENDING | — |
-| `src/review-evidence.ts` | `rust/src/review_evidence.rs` | PENDING | — |
+| `src/review-evidence.ts` | `rust/src/review_evidence.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; head precedence/fallback, finding aliases, malformed/null findings, trimming, Unicode and missing evidence (`rust/tests/head_to_head.mjs`) |
 | `src/review-generation-fence.ts` | `rust/src/review_generation_fence.rs` | PENDING | — |
 | `src/review-replan.ts` | `rust/src/review_replan.rs` | PENDING | — |
 | `src/review-revision-execution.ts` | `rust/src/review_revision_execution.rs` | PENDING | — |
 | `src/review-revision-merge.ts` | `rust/src/review_revision_merge.rs` | PASS | 626 shared differential fixtures across 14 ports; local history copy/delete and null handling compared (`rust/tests/head_to_head.mjs`) |
 | `src/review-revision-model.ts` | `rust/src/review_revision_model.rs` | PENDING | — |
-| `src/review-revision-policy.ts` | `rust/src/review_revision_policy.rs` | PENDING | — |
+| `src/review-revision-policy.ts` | `rust/src/review_revision_policy.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; operator bounds/errors, normalized/deduplicated Unicode findings, SHA-256 identity, request-derived fingerprints and consecutive repeated rounds (`rust/tests/head_to_head.mjs`) |
 | `src/review-revision-settlement.ts` | `rust/src/review_revision_settlement.rs` | PENDING | — |
 | `src/review-revision-stale.ts` | `rust/src/review_revision_stale.rs` | PENDING | — |
-| `src/review-terminal-normalization.ts` | `rust/src/review_terminal_normalization.rs` | PENDING | — |
+| `src/review-terminal-normalization.ts` | `rust/src/review_terminal_normalization.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; verdict aliases, required explicit head, findings preservation, blocked failure reason/default message (`rust/tests/head_to_head.mjs`) |
 | `src/reviewer-thread.ts` | `rust/src/reviewer_thread.rs` | PENDING | — |
 | `src/route-outcome-recording.ts` | `rust/src/route_outcome_recording.rs` | PENDING | — |
 | `src/router-evals.ts` | `rust/src/router_evals.rs` | PENDING | — |
@@ -193,7 +193,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/task-id-migration.ts` | `rust/src/task_id_migration.rs` | PENDING | — |
 | `src/task-inactivity-watchdog.ts` | `rust/src/task_inactivity_watchdog.rs` | PENDING | — |
 | `src/task-recovery.ts` | `rust/src/task_recovery.rs` | PENDING | — |
-| `src/task-tag.ts` | `rust/src/task_tag.rs` | PENDING | — |
+| `src/task-tag.ts` | `rust/src/task_tag.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; parse errors/limits, Unicode, allowed-tag filtering, data removal, and worker prompt (`rust/tests/head_to_head.mjs`) |
 | `src/task-title.ts` | `rust/src/task_title.rs` | PASS | 327 shared differential fixtures across 4 ports; Rust native tests 5/5; Node focused regression 4/4; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/task-transitions.ts` | `rust/src/task_transitions.rs` | PENDING | — |
 | `src/task-update.ts` | `rust/src/task_update.rs` | PENDING | — |
@@ -209,7 +209,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/usage.ts` | `rust/src/usage.rs` | PENDING | — |
 | `src/webhelm-daemon-client.ts` | `rust/src/webhelm_daemon_client.rs` | PENDING | — |
 | `src/worker-failure-recovery.ts` | `rust/src/worker_failure_recovery.rs` | PENDING | — |
-| `src/worker-rejection.ts` | `rust/src/worker_rejection.rs` | PENDING | — |
+| `src/worker-rejection.ts` | `rust/src/worker_rejection.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; rejection classes, all platform phases, typed pre-submit evidence and unsafe/ambiguous failures (`rust/tests/head_to_head.mjs`) |
 | `src/worker-routing.ts` | `rust/src/worker_routing.rs` | PENDING | — |
 | `src/worker-start-ack.ts` | `rust/src/worker_start_ack.rs` | PENDING | — |
 | `src/workflow-effect-failures.ts` | `rust/src/workflow_effect_failures.rs` | PENDING | — |
@@ -218,7 +218,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/workflow/authoritative-unblock-v2.ts` | `rust/src/workflow/authoritative_unblock_v2.rs` | PENDING | — |
 | `src/workflow/blocker-recovery.ts` | `rust/src/workflow/blocker_recovery.rs` | PENDING | — |
 | `src/workflow/blocker-resolution-v2.ts` | `rust/src/workflow/blocker_resolution_v2.rs` | PENDING | — |
-| `src/workflow/conditions.ts` | `rust/src/workflow/conditions.rs` | PENDING | — |
+| `src/workflow/conditions.ts` | `rust/src/workflow/conditions.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; tri-state guards, duplicate/unknown errors, sorted discovery, verification and safe-retry predicate (`rust/tests/head_to_head.mjs`) |
 | `src/workflow/contracts.ts` | `rust/src/workflow/contracts.rs` | PENDING | — |
 | `src/workflow/definitions-v2.ts` | `rust/src/workflow/definitions_v2.rs` | PENDING | — |
 | `src/workflow/dependency-revision-v2.ts` | `rust/src/workflow/dependency_revision_v2.rs` | PENDING | — |
@@ -307,3 +307,31 @@ Current verified source modules: **14 / 227**; remaining: **213**. Node integrat
 - [x] `cargo test --offline --manifest-path rust/Cargo.toml` — **15/15** Rust native cases passed.
 - [x] `cargo clippy --offline --manifest-path rust/Cargo.toml --all-targets -- -D warnings` — clean.
 - [x] Explicit `null` cleanup target rejected exactly as Node; mixed-case/diacritic ordering verified using macOS `en_US.UTF-8` POSIX collation; 4096-entry dedupe eviction verified. On non-macOS, non-ISO date-string collation still requires explicit cross-platform validation; canonical `createdAt` ISO values retain lexicographic parity.
+
+### Batch 4 — DAG contracts, review policy, worker, registry, tag and condition helpers (2026-11-16)
+
+- [x] `src/review-evidence.ts` → `rust/src/review_evidence.rs`.
+- [x] `src/worker-rejection.ts` → `rust/src/worker_rejection.rs`.
+- [x] `src/task-tag.ts` → `rust/src/task_tag.rs`.
+- [x] `src/review-terminal-normalization.ts` → `rust/src/review_terminal_normalization.rs`.
+- [x] `src/planner-task-context.ts` → `rust/src/planner_task_context.rs`.
+- [x] `src/review-revision-policy.ts` → `rust/src/review_revision_policy.rs`.
+- [x] `src/registry.ts` → `rust/src/registry.rs`.
+- [x] `src/workflow/conditions.ts` → `rust/src/workflow/conditions.rs`.
+- [x] `src/dag-stage-contract.ts` → `rust/src/dag_stage_contract.rs`, using isolated filesystem fixtures and a mocked execution callback; no real validator process is launched.
+- [x] `node --test rust/tests/head_to_head.mjs` — **729/729** exact Node/Rust cases passed across 23 mapped source ports, including errors and serialized output.
+- [x] `cargo test --offline --manifest-path rust/Cargo.toml` — **15/15** Rust native tests passed.
+- [x] `cargo clippy --offline --manifest-path rust/Cargo.toml --all-targets -- -D warnings` — passed.
+- [x] Focused isolated-store Node regressions — **15/15** passed (`workflow-conditions`, `worker-rejection`, `task-tag`, `reviewer-failure-normalization`, `review-revision-policy`, `workflow-action-integration`, `workflow-action-ledger`).
+- [x] `node scripts/rust2-checklist-verify.mjs` — validated all 227 ledger rows; **PASS=23**, **PENDING=204**.
+
+Reproduce from the repository root: `cargo fmt --manifest-path rust/Cargo.toml`; `npm run build`; `node --test rust/tests/head_to_head.mjs`; `cargo test --offline --manifest-path rust/Cargo.toml`; `cargo clippy --offline --manifest-path rust/Cargo.toml --all-targets -- -D warnings`; `node --import ./test/test-store-env.mjs --test test/workflow-conditions.test.js test/worker-rejection.test.js test/task-tag.test.js test/reviewer-failure-normalization.test.js test/review-revision-policy.test.js test/workflow-action-integration.test.js test/workflow-action-ledger.test.js`; `node scripts/rust2-checklist-verify.mjs`.
+
+### Batch 4 independent adversarial self-review (2026-11-16)
+
+- [x] Fixed Node regex semantics for Worker rejection messages with mixed `_ .-` separators, after six independent differential mismatches.
+- [x] Fixed the five remaining UTF-16 truncation mismatches via lossless `planner_task_context_json_wire`; `serde_json::Value` cannot represent an unmatched JS surrogate, so HTTP/CLI JSON outputs use explicit `\uXXXX` escapes where needed.
+- [x] Added native Graph `ConditionSpec` callbacks and `ConditionRegistry::new_custom` so guards can evaluate caller-supplied conditions, not only boolean JSON descriptors.
+- [x] `node --test rust/tests/head_to_head.mjs rust/tests/head_to_head_adversarial.mjs rust/tests/head_to_head_batch4_edge.mjs`: **729 + 4132 + 70 = 4931** matching Node/Rust differential cases (including independent adversarial cases).
+- [x] `cargo test --offline --manifest-path rust/Cargo.toml`: **19/19** Rust-native tests pass across earlier and Batch 4 tests.
+- [x] `cargo clippy --offline --manifest-path rust/Cargo.toml --all-targets -- -D warnings` clean.
