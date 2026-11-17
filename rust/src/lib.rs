@@ -288,3 +288,12 @@ pub mod interactive_resume;
 pub mod cli_review;
 pub mod cli_unblock;
 pub mod task_update;
+
+// Serial Phase 1 ports: full differential verification deferred to Phase 2.
+pub mod planner_child_recovery;
+pub mod chatgpt_platform_fallback;
+pub mod escalation_notifier;
+pub mod force_restate_validation;
+pub mod legacy_orchestrator_repair;
+pub mod job_actions;
+pub mod dependency_revision_execution;
