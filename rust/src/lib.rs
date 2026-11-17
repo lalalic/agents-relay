@@ -54,6 +54,7 @@ pub mod workflow {
     pub mod usage_index;
     // Direct Node src/workflow/durable-publication.ts transactional workflow outbox/inbox.
     pub mod durable_publication;
+    pub mod durable_transition;
     // Direct Node src/workflow/definitions-v2.ts canonical Task/Job Graph registries and transitions.
     // Direct Node src/workflow/dispatcher.ts transition/action/event boundary.
     pub mod dispatcher;
@@ -266,3 +267,81 @@ pub mod job_worktree_cleanup;
 
 pub mod continuation;
 pub mod managed_worker_input;
+
+// Serial phase-1 direct Node module ports; parity gates intentionally deferred.
+pub mod browser_worker_routing;
+pub mod cli_foreground;
+pub mod local_job_registry;
+pub mod model_redecision;
+pub mod reconciler_context;
+pub mod relay_store_discovery;
+pub mod relayd_main;
+pub mod service_external_actions;
+pub mod single_job_task_control;
+pub mod workflow_effect_failures;
+pub mod cli_escalation;
+pub mod cli_coordinator;
+pub mod execution_process_tracker;
+pub mod execution_recovery;
+pub mod job_pause;
+pub mod local_managed_store;
+pub mod router_evals;
+pub mod interactive_request;
+pub mod interactive_resume;
+pub mod cli_review;
+pub mod cli_unblock;
+pub mod task_update;
+
+// Serial Phase 1 ports: full differential verification deferred to Phase 2.
+pub mod planner_child_recovery;
+pub mod chatgpt_platform_fallback;
+pub mod escalation_notifier;
+pub mod force_restate_validation;
+pub mod legacy_orchestrator_repair;
+pub mod job_actions;
+pub mod dependency_revision_execution;
+pub mod manual_plan;
+pub mod task_recovery;
+pub mod worker_failure_recovery;
+pub mod cli_worker_task;
+pub mod dashboard_actions;
+pub mod relayd_utilities;
+pub mod relayd_dashboard_actions;
+pub mod unblock;
+pub mod z_adapter;
+pub mod task_actions;
+pub mod blockers;
+pub mod local_merge_delivery;
+pub mod local_merge_projection;
+pub mod types;
+pub mod worker_routing;
+pub mod model_routing;
+pub mod execution_routing;
+pub mod decision_audit;
+pub mod cli_job_create;
+pub mod script_task_adapter;
+pub mod cli_prompt;
+pub mod dag_task_runtime;
+pub mod troubleshooter;
+pub mod interactive_invocation;
+pub mod execution_context;
+pub mod cli_support;
+pub mod workspace;
+pub mod github_client;
+pub mod usage;
+pub mod browser_worker_runtime;
+pub mod store;
+pub mod relay_store;
+pub mod local_authority_store;
+pub mod projected_store;
+pub mod store_github;
+pub mod planner;
+pub mod planner_runtime;
+pub mod adapters;
+pub mod pool;
+pub mod reconciler_review;
+pub mod reconciler_runtime;
+pub mod reconciler;
+pub mod relayd_control;
+pub mod relayd;
+pub mod cli;

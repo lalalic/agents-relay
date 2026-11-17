@@ -22,7 +22,7 @@ fn timestamp(row: &Value) -> i64 {
 // Node uses ICU collation; Darwin's en_US.UTF-8 strcoll_l follows the same
 // primary accent and secondary case weights for Relay's repository/id sorting.
 #[cfg(target_os = "macos")]
-fn locale_compare(a: &str, b: &str) -> Ordering {
+pub(crate) fn locale_compare(a: &str, b: &str) -> Ordering {
     use std::{ffi::CString, sync::OnceLock};
     // ICU (Node) sorts Latin accents at their base-letter primary weight, which
     // differs from Darwin strcoll_l. Compare primary weights before libc ties.
@@ -75,7 +75,7 @@ fn locale_compare(a: &str, b: &str) -> Ordering {
         .then_with(|| b.cmp(a))
 }
 #[cfg(not(target_os = "macos"))]
-fn locale_compare(a: &str, b: &str) -> Ordering {
+pub(crate) fn locale_compare(a: &str, b: &str) -> Ordering {
     fn primary(s: &str) -> String {
         s.chars()
             .flat_map(|c| {

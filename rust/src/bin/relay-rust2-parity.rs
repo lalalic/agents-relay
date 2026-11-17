@@ -357,6 +357,26 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        // Node src/adapters.ts: exact public worker argument and submitted receipt contracts.
+        "stage2BuildCodexArgs" => Ok(json!(agents_relay_rust2::adapters::build_codex_args(
+            &request["route"],request["input"].as_str().unwrap_or(""))).to_string()),
+        "stage2TabClosePolicy" => Ok(json!(agents_relay_rust2::adapters::chatgpt_tab_close_policy_value(
+            request.get("value"),request["fallback"].as_str().unwrap_or("after-start"))?).to_string()),
+        "stage2ParseDriverJson" => Ok(agents_relay_rust2::adapters::parse_driver_json(
+            request["output"].as_str().unwrap_or(""))?.to_string()),
+        // Node src/pool.ts: pure Job ordering, admission and Graph restart checks.
+        "stage2CompareJobPriority" => {
+            use std::cmp::Ordering;
+            let compared=agents_relay_rust2::pool::compare_job_priority(&request["a"],&request["b"]);
+            Ok(json!(match compared{Ordering::Less=>-1,Ordering::Equal=>0,Ordering::Greater=>1}).to_string())
+        }
+        "stage2RunnableManagedJobs" => Ok(json!(agents_relay_rust2::pool::runnable_managed_jobs(
+            request["items"].as_array().map(Vec::as_slice).unwrap_or(&[]))).to_string()),
+        "stage2ActiveWorkerSlots" => Ok(json!(agents_relay_rust2::pool::active_worker_slots(
+            &request["job"])).to_string()),
+        "stage2NeedsLifecycleReconciliation" => Ok(json!(agents_relay_rust2::pool::needs_lifecycle_reconciliation(
+            std::path::Path::new(request["graphDirectory"].as_str().unwrap_or("workflow")),
+            &request["job"],request["now"].as_i64().unwrap_or(0))?).to_string()),
         "wave4LocalMerge" => {
             let repo = std::path::Path::new(request["repo"].as_str().ok_or("repo missing")?);
             let receipt = agents_relay_rust2::local_git_merge::deliver_local_merge(
