@@ -55,8 +55,8 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/cli-workflow-action.ts` | `rust/src/cli_workflow_action.rs` | PASS | Batch 5: direct Node/Rust mapping and unsupported/missing argument errors; Rust exposes async delegated effect (`rust/tests/head_to_head_batch5.mjs`) |
 | `src/cli-workflow.ts` | `rust/src/cli_workflow.rs` | PASS | Read-only Graph workflow commands, predicate error paths and isolated SQLite trace/verify in 98-case CLI Node/Rust suite; rust/tests/head_to_head_cli_core.mjs |
 | `src/cli.ts` | `rust/src/cli.rs` | PENDING | — |
-| `src/continuation.ts` | `rust/src/continuation.rs` | PENDING | — |
-| `src/dag-result-contract.ts` | `rust/src/dag_result_contract.rs` | PENDING | — |
+| `src/continuation.ts` | `rust/src/continuation.rs` | PORTING | Wave2 C: eight controlled continuation kind/error cases; owned-process cancellation/timeouts and HTTP runtime adapter missing (`head_to_head_wave2_delivery.mjs`) |
+| `src/dag-result-contract.ts` | `rust/src/dag_result_contract.rs` | PORTING | Wave2 C: DAG output validation/negative paths; owned Stage verifier subprocess integration still injected (`head_to_head_wave2_delivery.mjs`) |
 | `src/dag-stage-contract.ts` | `rust/src/dag_stage_contract.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; isolated temp project fixtures, symlink/run escape checks, malformed/failing validator outputs, and checked execution args (`rust/tests/head_to_head.mjs`) |
 | `src/dag-task-runtime.ts` | `rust/src/dag_task_runtime.rs` | PENDING | — |
 | `src/dashboard-actions.ts` | `rust/src/dashboard_actions.rs` | PENDING | — |
@@ -67,7 +67,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/dashboard-workflow-inspection.ts` | `rust/src/dashboard_workflow_inspection.rs` | PASS | Batch 6: Node/Rust differential fixtures cover valid exact Event/Action graph symbols, source/test references, malformed identifiers and traversal rejection (`rust/tests/head_to_head_batch6.mjs`); native path-safety test. |
 | `src/dashboard.ts` | `rust/src/dashboard.rs` | PENDING | — |
 | `src/decision-audit.ts` | `rust/src/decision_audit.rs` | PENDING | — |
-| `src/decision.ts` | `rust/src/decision.rs` | PENDING | — |
+| `src/decision.ts` | `rust/src/decision.rs` | PORTING | Wave2 A: 4,401 random choice/fallback/Jev mock cases pass; real Laya owned-subprocess stdout, timeout and cancellation adapter incomplete (`head_to_head_wave2_decision.mjs`) |
 | `src/dependency-revision-execution.ts` | `rust/src/dependency_revision_execution.rs` | PENDING | — |
 | `src/dependency-validity.ts` | `rust/src/dependency_validity.rs` | PASS | 327 shared differential fixtures across 4 ports; Rust native tests 5/5; Node focused regression 4/4; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/escalation-notifier.ts` | `rust/src/escalation_notifier.rs` | PENDING | — |
@@ -82,8 +82,8 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/feedback.ts` | `rust/src/feedback.rs` | PASS | 1,077 shared Node/Rust fixtures, 84 real disposable-filesystem materializations, byte equality/errors, native tests and focused Node regressions; rust/tests/head_to_head_worker_c*.mjs |
 | `src/final-review-role.ts` | `rust/src/final_review_role.rs` | PASS | 587 shared differential fixtures across 7 ports; Rust native tests 8/8; Node focused regression 18/18; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/force-restate-validation.ts` | `rust/src/force_restate_validation.rs` | PENDING | — |
-| `src/force-restate.ts` | `rust/src/force_restate.rs` | PENDING | — |
-| `src/github-auth.ts` | `rust/src/github_auth.rs` | PENDING | — |
+| `src/force-restate.ts` | `rust/src/force_restate.rs` | PORTING | Wave2 A: forceRestate forwarding and native rejection tested; full manual-plan apply/store effects not wired (`native_wave2_graph.rs`) |
+| `src/github-auth.ts` | `rust/src/github_auth.rs` | PORTING | Wave2 C: config precedence/trusted author validation and errors; real GhApiClient/AppAuth factory and login probes missing (`head_to_head_wave2_delivery.mjs`) |
 | `src/github-binding-order.ts` | `rust/src/github_binding_order.rs` | PASS | 626 shared differential fixtures across 14 ports; stable ordering and priority groups compared (`rust/tests/head_to_head.mjs`) |
 | `src/github-branch-projection.ts` | `rust/src/github_branch_projection.rs` | PASS | 626 shared differential fixtures across 14 ports; normal and force-with-lease argv compared (`rust/tests/head_to_head.mjs`) |
 | `src/github-client.ts` | `rust/src/github_client.rs` | PENDING | — |
@@ -91,58 +91,58 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/github-runtime-usage.ts` | `rust/src/github_runtime_usage.rs` | PASS | Direct port: 1,793 Node/Rust rate/header/Unicode/datetime fixtures, 5 native tests, 8 original Node runtime-rate regressions (`rust/tests/head_to_head_github_runtime_usage.mjs`, `rust/tests/native_github_runtime_usage.rs`) |
 | `src/github-webhook.ts` | `rust/src/github_webhook.rs` | PASS | Eight-file hotfix: 580 event/trusted comment fixtures, 1,000 package marker cases, 280 HMAC signatures, 240 delivery dedup windows; native HMAC/receipt tests; `rust/tests/head_to_head_eight_batch_*.mjs`, `rust/tests/native_eight_batch_*.rs` |
 | `src/graph-runtime.ts` | `rust/src/graph_runtime.rs` | PASS | Eight-module Graph/Outbox batch: alias to canonical Graph-v2 runtime with 1,300 Graph runtime differential cases; `rust/tests/head_to_head_graph_*.mjs`, `rust/tests/head_to_head_agent_graph.mjs`, `rust/tests/head_to_head_workflow_*.mjs`, `rust/tests/native_graph_outbox_batch.rs` |
-| `src/host-invocation-store.ts` | `rust/src/host_invocation_store.rs` | PENDING | — |
+| `src/host-invocation-store.ts` | `rust/src/host_invocation_store.rs` | PASS | Wave2 C: Node/Rust in-memory SQLite event/decision ledger, generation fences, duplicate/stale decisions and rollback native tests (`head_to_head_wave2_delivery.mjs`) |
 | `src/interactive-invocation.ts` | `rust/src/interactive_invocation.rs` | PENDING | — |
 | `src/interactive-request.ts` | `rust/src/interactive_request.rs` | PENDING | — |
 | `src/interactive-resume.ts` | `rust/src/interactive_resume.rs` | PENDING | — |
 | `src/job-actions.ts` | `rust/src/job_actions.rs` | PENDING | — |
 | `src/job-execution-slot.ts` | `rust/src/job_execution_slot.rs` | PASS | 587 shared differential fixtures across 7 ports; Rust native tests 8/8; Node focused regression 18/18; clippy clean (`rust/tests/head_to_head.mjs`) |
-| `src/job-local-repository-migration.ts` | `rust/src/job_local_repository_migration.rs` | PENDING | — |
+| `src/job-local-repository-migration.ts` | `rust/src/job_local_repository_migration.rs` | PASS | Wave2 C: 34 Node/Rust temp Git/SQLite migration cases, preflight collisions/backup/atomic rewrite and native tests (`head_to_head_wave2_delivery.mjs`) |
 | `src/job-pause.ts` | `rust/src/job_pause.rs` | PENDING | — |
 | `src/job-pr-number-migration.ts` | `rust/src/job_pr_number_migration.rs` | PASS | Direct hotfix: 2,401 combined Node/Rust Task/Job normalization fixtures, 190 in-memory SQLite migration histories, five native tests including JavaScript lone-surrogate escape fidelity (`rust/tests/head_to_head_legacy_migrations.mjs`, `rust/tests/native_job_pr_number_migration.rs`) |
 | `src/job-task-id-sequence.ts` | `rust/src/job_task_id_sequence.rs` | PASS | Main repo-scoped Task and Job idempotency, 170 independent SQLite allocation histories, 240 grammar fixtures, 5 native tests plus cross-process concurrency (`rust/tests/head_to_head_job_task_id_sequence.mjs`, `rust/tests/native_job_task_id_sequence.rs`) |
-| `src/job-worktree-cleanup.ts` | `rust/src/job_worktree_cleanup.rs` | PENDING | — |
+| `src/job-worktree-cleanup.ts` | `rust/src/job_worktree_cleanup.rs` | PORTING | Wave2 C: blocked/unsafe error parity; actual canonical resolver and filesystem cleanup still injected (`head_to_head_wave2_delivery.mjs`) |
 | `src/legacy-blocked-task-migration.ts` | `rust/src/legacy_blocked_task_migration.rs` | PASS | Direct hotfix: task lifecycle Node/Rust normalization, 190 in-memory SQLite update histories, four native tests (`rust/tests/head_to_head_legacy_migrations.mjs`, `rust/tests/native_legacy_blocked_task_migration.rs`) |
 | `src/legacy-orchestrator-repair.ts` | `rust/src/legacy_orchestrator_repair.rs` | PENDING | — |
 | `src/local-authority-store.ts` | `rust/src/local_authority_store.rs` | PENDING | — |
 | `src/local-commit-events.ts` | `rust/src/local_commit_events.rs` | PASS | Direct port: 621 Node/Rust listener/clone/unsubscribe fixtures, 4 native tests for reentrancy, Set semantics, panic propagation (`rust/tests/head_to_head_local_commit_events.mjs`, `rust/tests/native_local_commit_events.rs`) |
-| `src/local-git-merge.ts` | `rust/src/local_git_merge.rs` | PENDING | — |
+| `src/local-git-merge.ts` | `rust/src/local_git_merge.rs` | PORTING | Wave2 C: real disposable Git merges/error/lock parity; caller still must supply canonical Graph completion/gating facts (`head_to_head_wave2_delivery.mjs`) |
 | `src/local-job-path.ts` | `rust/src/local_job_path.rs` | PASS | Batch 5: configured, empty and absent store-directory override compared directly with Node including default home path (`rust/tests/head_to_head_batch5.mjs`) |
 | `src/local-job-registry.ts` | `rust/src/local_job_registry.rs` | PENDING | — |
 | `src/local-managed-store.ts` | `rust/src/local_managed_store.rs` | PENDING | — |
 | `src/local-merge-delivery.ts` | `rust/src/local_merge_delivery.rs` | PENDING | — |
 | `src/local-merge-lock.ts` | `rust/src/local_merge_lock.rs` | PASS | Direct hotfix: real Node↔Rust cross-process directory locking, stale/foreign/live PID and owner recovery, timeout/error/panic-safe release (rust/tests/head_to_head_local_merge_lock.mjs; rust/tests/native_local_merge_lock.rs) |
 | `src/local-merge-projection.ts` | `rust/src/local_merge_projection.rs` | PENDING | — |
-| `src/managed-worker-input.ts` | `rust/src/managed_worker_input.rs` | PENDING | — |
+| `src/managed-worker-input.ts` | `rust/src/managed_worker_input.rs` | PORTING | Wave2 C: ten direct prompt assembly/strip checks; runtime agent-contract resolver binding is injected, not ported (`head_to_head_wave2_delivery.mjs`) |
 | `src/manual-plan.ts` | `rust/src/manual_plan.rs` | PENDING | — |
 | `src/markers.ts` | `rust/src/markers.rs` | PASS | Eight-file hotfix: 5,160 Node/Rust Job/Task/Plan/Agent HTML-comment render/parse cases, native round-trip/security tests; `rust/tests/head_to_head_eight_batch_*.mjs`, `rust/tests/native_eight_batch_*.rs` |
 | `src/model-redecision.ts` | `rust/src/model_redecision.rs` | PENDING | — |
 | `src/model-routing.ts` | `rust/src/model_routing.rs` | PENDING | — |
 | `src/no-github.ts` | `rust/src/no_github.rs` | PASS | Main local-Git-only always-disabled mode with all four fail-closed GitHub transports, 900 Node/Rust flag fixtures and native tests (`rust/tests/head_to_head_no_github.mjs`, `rust/tests/native_no_github.rs`) |
 | `src/observability.ts` | `rust/src/observability.rs` | PASS | Direct hotfix: 8,744 exact Node/Rust classification/redaction/correlation/environment fixtures; 6 Rust-native tests including interleaved Futures; 12 original Node regressions (rust/tests/head_to_head_observability.mjs; rust/tests/native_observability.rs) |
-| `src/outcome-review.ts` | `rust/src/outcome_review.rs` | PENDING | — |
+| `src/outcome-review.ts` | `rust/src/outcome_review.rs` | PORTING | Wave2 B: options/reviewer contract/verdict differentials pass; evaluateOutcome and runOutcomeReview external execution missing (`head_to_head_wave2_review.mjs`) |
 | `src/owned-process.ts` | `rust/src/owned_process.rs` | PORTING | POSIX process-group lifetime, ownership fences, parent death, cancellation and stress pass Node/Rust and native subprocess tests; Windows taskkill, complete Node SpawnOptions mapping and production caller wiring remain unported. |
 | `src/planned-review-head.ts` | `rust/src/planned_review_head.rs` | PASS | 626 shared differential fixtures across 14 ports; head binding, exact prompt append, duplicate suppression, errors, and save count compared (`rust/tests/head_to_head.mjs`) |
 | `src/planner-agent-roles.ts` | `rust/src/planner_agent_roles.rs` | PASS | 587 shared differential fixtures across 7 ports; Rust native tests 8/8; Node focused regression 18/18; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/planner-child-recovery.ts` | `rust/src/planner_child_recovery.rs` | PENDING | — |
 | `src/planner-child.ts` | `rust/src/planner_child.rs` | PASS | 355+ Node/Rust direct differential cases: field-by-field equality, absent/null, defaults, nested arrays/objects, Unicode, unrelated metadata; Rust native test (`rust/tests/head_to_head_planner_child.mjs`, `rust/src/planner_child.rs`) |
 | `src/planner-history-cleanup.ts` | `rust/src/planner_history_cleanup.rs` | PASS | 626 shared differential fixtures across 14 ports; valid, missing, malformed, duplicate, and target-required payloads compared (`rust/tests/head_to_head.mjs`) |
-| `src/planner-recovery.ts` | `rust/src/planner_recovery.rs` | PENDING | — |
+| `src/planner-recovery.ts` | `rust/src/planner_recovery.rs` | PASS | Wave2 B/parent: sole exported recovery constructor, original Node vs Rust in isolated SQLite, idempotent Task IDs, second Plan, existing Task, wrong status, rollback rejection (`head_to_head_wave2_review_effects.mjs`) |
 | `src/planner-runtime.ts` | `rust/src/planner_runtime.rs` | PENDING | — |
 | `src/planner-task-context.ts` | `rust/src/planner_task_context.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; bounded input/result/comment context, planner input omission, Unicode, and undefined-field JSON normalization (`rust/tests/head_to_head.mjs`) |
-| `src/planner-task-ids.ts` | `rust/src/planner_task_ids.rs` | PENDING | — |
+| `src/planner-task-ids.ts` | `rust/src/planner_task_ids.rs` | PASS | Wave2 C: direct randomized Node/Rust planner Task ID allocation, aliases and repeat idempotency; native global SQLite allocator (`head_to_head_wave2_delivery.mjs`) |
 | `src/planner-task-title.ts` | `rust/src/planner_task_title.rs` | PASS | 327 shared differential fixtures across 4 ports; Rust native tests 5/5; Node focused regression 4/4; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/planner.ts` | `rust/src/planner.rs` | PENDING | — |
 | `src/pool.ts` | `rust/src/pool.rs` | PENDING | — |
 | `src/process-identity.ts` | `rust/src/process_identity.rs` | PASS | Direct hotfix: real Node/Rust OS ps identity, isolated detached PGID leaders, lease owner inspection, stale generation fences and two actual disposable child-process terminations (rust/tests/head_to_head_process_identity.mjs; rust/tests/native_process_identity.rs) |
 | `src/projected-store.ts` | `rust/src/projected_store.rs` | PENDING | — |
 | `src/projection-failure-dedupe.ts` | `rust/src/projection_failure_dedupe.rs` | PASS | 626 shared differential fixtures across 14 ports; sequential duplicate/change/classification/reset vectors compared (`rust/tests/head_to_head.mjs`) |
-| `src/projection-failure-recovery.ts` | `rust/src/projection_failure_recovery.rs` | PENDING | — |
+| `src/projection-failure-recovery.ts` | `rust/src/projection_failure_recovery.rs` | PASS | Wave2 C: 12 Node/Rust optional remote projection failure/dedupe/error cases plus native no-Job-transition test (`head_to_head_wave2_delivery.mjs`) |
 | `src/projection-outbox.ts` | `rust/src/projection_outbox.rs` | PASS | In-memory Node/Rust SQLite 52 seeded histories / 3,673 observations and 5 strict 39-operation rollback/ordering/idempotency/upgrade cases; rust/tests/head_to_head_worker_c_outbox.mjs, head_to_head_projection_outbox_strict.mjs |
 | `src/projection-recovery-runtime.ts` | `rust/src/projection_recovery_runtime.rs` | EXCLUDED | Deleted in main; the old GitHub projection-recovery runtime is not part of the local-Git-only lifecycle. |
 | `src/projection-recovery.ts` | `rust/src/projection_recovery.rs` | EXCLUDED | Deleted in main; retired GitHub PR projection repair does not own Job completion. |
 | `src/publication-store.ts` | `rust/src/publication_store.rs` | PASS | Eight-file hotfix: Transactional delivery dedupe and monotonic Job publication state: 285 independent in-memory SQLite histories plus native tests; `rust/tests/head_to_head_eight_batch_*.mjs`, `rust/tests/native_eight_batch_*.rs` |
-| `src/reconcile-coordinator.ts` | `rust/src/reconcile_coordinator.rs` | PENDING | — |
+| `src/reconcile-coordinator.ts` | `rust/src/reconcile_coordinator.rs` | PORTING | Wave2 A: 260 Node/Rust FIFO/error/settle cases; same-turn queueMicrotask coalescing differs from Rust scheduling (`head_to_head_wave2_coordinator.mjs`) |
 | `src/reconciler-cancellation.ts` | `rust/src/reconciler_cancellation.rs` | PASS | Direct Node/Rust deterministic plan-first Graph-selected cancellation, generation source fence and callback order; rust/tests/head_to_head_process_browser_worker.mjs |
 | `src/reconciler-context.ts` | `rust/src/reconciler_context.rs` | PENDING | — |
 | `src/reconciler-pause.ts` | `rust/src/reconciler_pause.rs` | PASS | Direct port: 905 Node/Rust generation-selection cases; 3 native tests; in-memory cancellation callbacks only (`rust/tests/head_to_head_reconciler_pause.mjs`, `rust/tests/native_reconciler_pause.rs`) |
@@ -156,25 +156,25 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/relay-job-snapshot-reads.ts` | `rust/src/relay_job_snapshot_reads.rs` | PASS | Direct port: 400 Job metadata, 1,200 legacy Job normalization and 240 SQLite load/list Node/Rust fixtures; 4 native tests (`rust/tests/head_to_head_relay_job_snapshot_reads.mjs`, `rust/tests/native_relay_job_snapshot_reads.rs`) |
 | `src/relay-store-discovery.ts` | `rust/src/relay_store_discovery.rs` | PENDING | — |
 | `src/relay-store.ts` | `rust/src/relay_store.rs` | PENDING | — |
-| `src/relay-workflow-operations.ts` | `rust/src/relay_workflow_operations.rs` | PENDING | — |
+| `src/relay-workflow-operations.ts` | `rust/src/relay_workflow_operations.rs` | PASS | Wave2 A: 700 direct Node/Rust SQLite transactions/launch/outbox histories, three native rollback/idempotency/lease tests; `rust/tests/head_to_head_wave2_workflow_operations.mjs`, `native_wave2_workflow_operations.rs` |
 | `src/relayd-control.ts` | `rust/src/relayd_control.rs` | PENDING | — |
 | `src/relayd-dashboard-actions.ts` | `rust/src/relayd_dashboard_actions.rs` | PENDING | — |
 | `src/relayd-main.ts` | `rust/src/relayd_main.rs` | PENDING | — |
 | `src/relayd-utilities.ts` | `rust/src/relayd_utilities.rs` | PENDING | — |
 | `src/relayd.ts` | `rust/src/relayd.rs` | PENDING | — |
-| `src/review-chair.ts` | `rust/src/review_chair.rs` | PENDING | — |
+| `src/review-chair.ts` | `rust/src/review_chair.rs` | PASS | Wave2 B: all seven public runtime functions and 3,042 review-suite fixtures, invalid findings/panels, synthesis and attribution; 6 focused original Node Chair tests (`head_to_head_wave2_review.mjs`) |
 | `src/review-evidence.ts` | `rust/src/review_evidence.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; head precedence/fallback, finding aliases, malformed/null findings, trimming, Unicode and missing evidence (`rust/tests/head_to_head.mjs`) |
 | `src/review-generation-fence.ts` | `rust/src/review_generation_fence.rs` | PASS | Main-only ACTIVE Job review fence, no projectionRecovery bypass; 1,950 randomized Node/Rust immutable review generations, 4 native regressions (`rust/tests/head_to_head_review_generation_fence.mjs`, `rust/tests/native_review_generation_fence.rs`) |
-| `src/review-replan.ts` | `rust/src/review_replan.rs` | PENDING | — |
-| `src/review-revision-execution.ts` | `rust/src/review_revision_execution.rs` | PENDING | — |
+| `src/review-replan.ts` | `rust/src/review_replan.rs` | PORTING | Wave2 B: randomized review replan/ready facts; reviewWorkSettled Graph/troubleshooter checks still missing (`head_to_head_wave2_review.mjs`) |
+| `src/review-revision-execution.ts` | `rust/src/review_revision_execution.rs` | PORTING | Wave2 B: request-ready and Graph reconciliation randomized; reconcileReviewRevisions store.mutateJob wrapper not ported (`head_to_head_wave2_review.mjs`) |
 | `src/review-revision-merge.ts` | `rust/src/review_revision_merge.rs` | PASS | 626 shared differential fixtures across 14 ports; local history copy/delete and null handling compared (`rust/tests/head_to_head.mjs`) |
-| `src/review-revision-model.ts` | `rust/src/review_revision_model.rs` | PENDING | — |
+| `src/review-revision-model.ts` | `rust/src/review_revision_model.rs` | PORTING | Wave2 B: dependency generation/coverage parity; recordTargetedRevisionRequest and submitTargetedRevisionRequest atomic Task/SQLite writes missing (`head_to_head_wave2_review.mjs`) |
 | `src/review-revision-policy.ts` | `rust/src/review_revision_policy.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; operator bounds/errors, normalized/deduplicated Unicode findings, SHA-256 identity, request-derived fingerprints and consecutive repeated rounds (`rust/tests/head_to_head.mjs`) |
-| `src/review-revision-settlement.ts` | `rust/src/review_revision_settlement.rs` | PENDING | — |
-| `src/review-revision-stale.ts` | `rust/src/review_revision_stale.rs` | PENDING | — |
+| `src/review-revision-settlement.ts` | `rust/src/review_revision_settlement.rs` | PORTING | Wave2 B: exact settlement Graph facts and Node reducers; durable SQLite mutateJob atomic read/recheck/write facade not ported (`head_to_head_wave2_review_effects.mjs`) |
+| `src/review-revision-stale.ts` | `rust/src/review_revision_stale.rs` | PORTING | Wave2 B: stale generation and cancellation intent parity; exact atomic mutation and post-commit cancellation missing (`head_to_head_wave2_review_effects.mjs`) |
 | `src/review-terminal-normalization.ts` | `rust/src/review_terminal_normalization.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; verdict aliases, required explicit head, findings preservation, blocked failure reason/default message (`rust/tests/head_to_head.mjs`) |
-| `src/reviewer-thread.ts` | `rust/src/reviewer_thread.rs` | PENDING | — |
-| `src/route-outcome-recording.ts` | `rust/src/route_outcome_recording.rs` | PENDING | — |
+| `src/reviewer-thread.ts` | `rust/src/reviewer_thread.rs` | PORTING | Wave2 B: thread destination, ID, requirements and receipt-preparation parity; recordThreadDelivery durable receipt not ported (`head_to_head_wave2_review.mjs`) |
+| `src/route-outcome-recording.ts` | `rust/src/route_outcome_recording.rs` | PORTING | Wave2 C: >70 audit classification/record byte parity; exact public async terminal/launch/watchdog append wrappers not exposed yet (`head_to_head_wave2_delivery.mjs`) |
 | `src/router-evals.ts` | `rust/src/router_evals.rs` | PENDING | — |
 | `src/router-rules.ts` | `rust/src/router_rules.rs` | PASS | Direct hotfix: 2,178 Node/Rust choices, routing-instruction byte preservation, Unicode whitespace, headers, duplicate routes, append helpers (rust/tests/head_to_head_direct_hotfix.mjs) |
 | `src/routing-policy.ts` | `rust/src/routing_policy.rs` | PASS | Direct hotfix: 2,418 Node/Rust route eligibility/ranking/path fixtures; 20 isolated policy/rules file round-trips, SHA-256, sanitizer, missing/invalid files (rust/tests/head_to_head_routing_policy.mjs; rust/tests/native_routing_policy.rs) |
@@ -183,7 +183,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/runtime-summary.ts` | `rust/src/runtime_summary.rs` | PASS | Direct port: 700 Node/Rust lease-fenced worker/model aggregation fixtures and three native regressions (`rust/tests/head_to_head_runtime_summary.mjs`, `rust/tests/native_runtime_summary.rs`) |
 | `src/script-task-adapter.ts` | `rust/src/script_task_adapter.rs` | PENDING | — |
 | `src/service-external-actions.ts` | `rust/src/service_external_actions.rs` | PENDING | — |
-| `src/service-publication.ts` | `rust/src/service_publication.rs` | PENDING | — |
+| `src/service-publication.ts` | `rust/src/service_publication.rs` | PASS | Wave2 C: exact SQLite commit/event receipt, dedupe and failed delivery paths with native failure test (`head_to_head_wave2_delivery.mjs`) |
 | `src/single-job-task-control.ts` | `rust/src/single_job_task_control.rs` | PENDING | — |
 | `src/store-github.ts` | `rust/src/store_github.rs` | PENDING | — |
 | `src/store-task-definition.ts` | `rust/src/store_task_definition.rs` | PASS | Eight-file hotfix: Immutable Task and Plan definitions, divergence and identity: 6,300 Node/Rust cases, native identity checks; `rust/tests/head_to_head_eight_batch_*.mjs`, `rust/tests/native_eight_batch_*.rs` |
@@ -196,10 +196,10 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/task-recovery.ts` | `rust/src/task_recovery.rs` | PENDING | — |
 | `src/task-tag.ts` | `rust/src/task_tag.rs` | PASS | Batch 4: 729 shared differential cases across 23 source ports; parse errors/limits, Unicode, allowed-tag filtering, data removal, and worker prompt (`rust/tests/head_to_head.mjs`) |
 | `src/task-title.ts` | `rust/src/task_title.rs` | PASS | 327 shared differential fixtures across 4 ports; Rust native tests 5/5; Node focused regression 4/4; clippy clean (`rust/tests/head_to_head.mjs`) |
-| `src/task-transitions.ts` | `rust/src/task_transitions.rs` | PENDING | — |
+| `src/task-transitions.ts` | `rust/src/task_transitions.rs` | PORTING | Wave2 A: transition, retry and completion Graph decisions compared; exact async effect/persistence callback facade incomplete (`head_to_head_wave2_graph.mjs`) |
 | `src/task-update.ts` | `rust/src/task_update.rs` | PENDING | — |
 | `src/terminal-event-recovery.ts` | `rust/src/terminal_event_recovery.rs` | PASS | 327 shared differential fixtures across 4 ports; Rust native tests 5/5; Node focused regression 4/4; clippy clean (`rust/tests/head_to_head.mjs`) |
-| `src/troubleshooter-fallback.ts` | `rust/src/troubleshooter_fallback.rs` | PENDING | — |
+| `src/troubleshooter-fallback.ts` | `rust/src/troubleshooter_fallback.rs` | PORTING | Wave2 B: runtime-error fallback Graph reducer parity; transactional store wrapper and human escalation delivery missing (`head_to_head_wave2_review_effects.mjs`) |
 | `src/troubleshooter-qa-api.ts` | `rust/src/troubleshooter_qa_api.rs` | PASS | Direct hotfix: 13 isolated real Node HTTP vs Rust request/response/file outcomes, SHA-256, UTF8 recovery, invalid inputs; Rust native IO regression (rust/tests/head_to_head_ipc_hotfix.mjs; rust/tests/native_ipc_hotfix.rs) |
 | `src/troubleshooter.ts` | `rust/src/troubleshooter.rs` | PENDING | — |
 | `src/types.ts` | `rust/src/types.rs` | PENDING | — |
@@ -215,7 +215,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/worker-start-ack.ts` | `rust/src/worker_start_ack.rs` | PASS | Node/Rust exact job/task/source acknowledgment, spoof rejection, timeout, cancellation, unsubscribe ordering; rust/tests/head_to_head_process_browser_worker.mjs |
 | `src/workflow-effect-failures.ts` | `rust/src/workflow_effect_failures.rs` | PENDING | — |
 | `src/workflow/action-ledger.ts` | `rust/src/workflow/action_ledger.rs` | PASS | Eight-file hotfix: Graph-approved effect reservations with immutable execution/lease/attempt fencing: 410 independent Node/Rust SQLite histories and 2 native tests; `rust/tests/head_to_head_eight_batch_*.mjs`, `rust/tests/native_eight_batch_*.rs` |
-| `src/workflow/authoritative-conditions.ts` | `rust/src/workflow/authoritative_conditions.rs` | PENDING | — |
+| `src/workflow/authoritative-conditions.ts` | `rust/src/workflow/authoritative_conditions.rs` | PASS | Wave2 A: direct in-memory SQLite process/lease/terminal predicate parity and native ended_at fencing; `rust/tests/head_to_head_wave2_graph.mjs` |
 | `src/workflow/authoritative-unblock-v2.ts` | `rust/src/workflow/authoritative_unblock_v2.rs` | PASS | Graph policy + dispatcher batch: authoritative Task release Graph and action callback; 235 Node/Rust scenarios and native blocked guard; `rust/tests/head_to_head_graph_policy_batch.mjs`, `rust/tests/head_to_head_graph_dispatcher_verified.mjs`, `rust/tests/head_to_head_graph_observation.mjs`, `rust/tests/native_graph_policy_batch.rs` |
 | `src/workflow/blocker-recovery.ts` | `rust/src/workflow/blocker_recovery.rs` | PASS | Graph policy + dispatcher batch: canonical blocker trust-boundary, adoption, registration, async effects; 235 Node/Rust scenarios; `rust/tests/head_to_head_graph_policy_batch.mjs`, `rust/tests/head_to_head_graph_dispatcher_verified.mjs`, `rust/tests/head_to_head_graph_observation.mjs`, `rust/tests/native_graph_policy_batch.rs` |
 | `src/workflow/blocker-resolution-v2.ts` | `rust/src/workflow/blocker_resolution_v2.rs` | PASS | Graph policy + dispatcher batch: canonical blocker resolution, obsolete and draft release decisions; 235 Node/Rust scenarios; `rust/tests/head_to_head_graph_policy_batch.mjs`, `rust/tests/head_to_head_graph_dispatcher_verified.mjs`, `rust/tests/head_to_head_graph_observation.mjs`, `rust/tests/native_graph_policy_batch.rs` |
@@ -235,21 +235,21 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/workflow/lifecycle.ts` | `rust/src/workflow/lifecycle.rs` | PASS | Eight-module Lifecycle batch: Graph-owned Task/Job lifecycle decisions and exact mutation/persist actions, 1,400 Node/Rust multi-case suite; `rust/tests/head_to_head_lifecycle_batch.mjs` and `rust/tests/native_lifecycle_batch.rs` |
 | `src/workflow/mermaid.ts` | `rust/src/workflow/mermaid.rs` | PASS | Direct hotfix: 924 Mermaid parser + 663 sync/async WorkflowEngine Node/Rust comparisons, real native callback/transition tests (rust/tests/head_to_head_mermaid.mjs; rust/tests/native_direct_hotfix.rs) |
 | `src/workflow/orchestrator-rescue.ts` | `rust/src/workflow/orchestrator_rescue.rs` | PASS | Eight-module Lifecycle batch: legacy orphan execution safe quarantine/repair, 640 Node/Rust fixtures; `rust/tests/head_to_head_lifecycle_batch.mjs` and `rust/tests/native_lifecycle_batch.rs` |
-| `src/workflow/planner-orchestration-v2.ts` | `rust/src/workflow/planner_orchestration_v2.rs` | PENDING | — |
+| `src/workflow/planner-orchestration-v2.ts` | `rust/src/workflow/planner_orchestration_v2.rs` | PORTING | Wave2 A: Graph facts/dispatch randomized parity; Node in-place plans sort and awaited effect side effects lack complete proof (`head_to_head_wave2_graph.mjs`) |
 | `src/workflow/planner-trigger-v2.ts` | `rust/src/workflow/planner_trigger_v2.rs` | PASS | Graph policy + dispatcher batch: canonical planner manual/unblock/review/initial path with transient check_ states; 235 Node/Rust scenarios; `rust/tests/head_to_head_graph_policy_batch.mjs`, `rust/tests/head_to_head_graph_dispatcher_verified.mjs`, `rust/tests/head_to_head_graph_observation.mjs`, `rust/tests/native_graph_policy_batch.rs` |
 | `src/workflow/projection-conflict-v2.ts` | `rust/src/workflow/projection_conflict_v2.rs` | PASS | Graph policy + dispatcher batch: projection-conflict and historical outbox Graph; 470 Node/Rust scenarios with JS numeric retry guard; `rust/tests/head_to_head_graph_policy_batch.mjs`, `rust/tests/head_to_head_graph_dispatcher_verified.mjs`, `rust/tests/head_to_head_graph_observation.mjs`, `rust/tests/native_graph_policy_batch.rs` |
 | `src/workflow/review-v2.ts` | `rust/src/workflow/review_v2.rs` | PASS | Eight-module Lifecycle batch: Review event/outcome, stale approval and exact Graph callback decisions, 820 Node/Rust scenarios; `rust/tests/head_to_head_lifecycle_batch.mjs` and `rust/tests/native_lifecycle_batch.rs` |
 | `src/workflow/revision-v2.ts` | `rust/src/workflow/revision_v2.rs` | PASS | Graph policy + dispatcher batch: canonical Review revision lifecycle, authorized effects and immutable head checks; 235 Node/Rust scenarios; `rust/tests/head_to_head_graph_policy_batch.mjs`, `rust/tests/head_to_head_graph_dispatcher_verified.mjs`, `rust/tests/head_to_head_graph_observation.mjs`, `rust/tests/native_graph_policy_batch.rs` |
 | `src/workflow/runtime.ts` | `rust/src/workflow/runtime.rs` | PASS | Eight-module Graph/Outbox batch: 1,160 Task/Job state mutations; 850 workflow Engine decisions and 90 no-start fallback semantic cases; `rust/tests/head_to_head_graph_*.mjs`, `rust/tests/head_to_head_agent_graph.mjs`, `rust/tests/head_to_head_workflow_*.mjs`, `rust/tests/native_graph_outbox_batch.rs` |
 | `src/workflow/task-action-policy.ts` | `rust/src/workflow/task_action_policy.rs` | PASS | Eight-module Lifecycle batch: cancellation scope from related Task Graph, included in 760 fixtures; `rust/tests/head_to_head_lifecycle_batch.mjs` and `rust/tests/native_lifecycle_batch.rs` |
-| `src/workflow/task-reconcile.ts` | `rust/src/workflow/task_reconcile.rs` | PENDING | — |
+| `src/workflow/task-reconcile.ts` | `rust/src/workflow/task_reconcile.rs` | PASS | Wave2 A: dependency-ready, full cycle detection and Graph-authorized reconciliation compared against Node including negative/corrupt fixtures; `head_to_head_wave2_graph.mjs`, `native_wave2_graph.rs` |
 | `src/workflow/task-related-action-v2.ts` | `rust/src/workflow/task_related_action_v2.rs` | PASS | Eight-module Lifecycle batch: authoritative Task related facts, transient Graph decisions and cancel source, 760 Node/Rust fixtures; `rust/tests/head_to_head_lifecycle_batch.mjs` and `rust/tests/native_lifecycle_batch.rs` |
-| `src/workflow/task-resolution.ts` | `rust/src/workflow/task_resolution.rs` | PENDING | — |
+| `src/workflow/task-resolution.ts` | `rust/src/workflow/task_resolution.rs` | PORTING | Wave2 A: sync/async Graph and fact parity across 5,410 fixtures; exported taskResolutionV2 GraphRuntime object is not exposed as an exact Rust API (`head_to_head_wave2_graph.mjs`) |
 | `src/workflow/troubleshooter-v2.ts` | `rust/src/workflow/troubleshooter_v2.rs` | PASS | Graph policy + dispatcher batch: canonical Troubleshooter action, current execution and recovery boundary; 235 Node/Rust scenarios; `rust/tests/head_to_head_graph_policy_batch.mjs`, `rust/tests/head_to_head_graph_dispatcher_verified.mjs`, `rust/tests/head_to_head_graph_observation.mjs`, `rust/tests/native_graph_policy_batch.rs` |
 | `src/workflow/usage-index.ts` | `rust/src/workflow/usage_index.rs` | PASS | Eight-module Graph/Outbox batch: 628 canonical Mermaid symbol usages and 480 synthetic reverse index and filter fixtures; `rust/tests/head_to_head_graph_*.mjs`, `rust/tests/head_to_head_agent_graph.mjs`, `rust/tests/head_to_head_workflow_*.mjs`, `rust/tests/native_graph_outbox_batch.rs` |
 | `src/workspace.ts` | `rust/src/workspace.rs` | PENDING | — |
 | `src/z-adapter.ts` | `rust/src/z_adapter.rs` | PENDING | — |
-| `src/z-oauth.ts` | `rust/src/z_oauth.rs` | PENDING | — |
+| `src/z-oauth.ts` | `rust/src/z_oauth.rs` | PORTING | Wave2 C: 21 mocked HTTP OAuth PKCE/origin/refresh negatives pass; real HTTP fetcher, redirects and timeout integration absent (`head_to_head_wave2_delivery.mjs`) |
 
 ## Port notes
 

@@ -4,6 +4,9 @@ use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde_json::{json, Value};
 
+// Preserve the Node public constant export alongside the idiomatic Rust constant.
+#[allow(non_upper_case_globals)]
+pub const host_invocation_tables_sql: &str = HOST_INVOCATION_TABLES_SQL;
 pub const HOST_INVOCATION_TABLES_SQL: &str = r#"
   CREATE TABLE IF NOT EXISTS host_invocation_event (
     job_id TEXT NOT NULL, task_id TEXT NOT NULL, event_id TEXT NOT NULL,
