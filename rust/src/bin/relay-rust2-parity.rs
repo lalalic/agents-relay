@@ -357,6 +357,99 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "unifiedJobRegistryScenario" => {
+            use rusqlite::{params, Connection};
+            let mut db = Connection::open_in_memory().map_err(|error| error.to_string())?;
+            db.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE source_registry(job_id TEXT PRIMARY KEY,source_file TEXT NOT NULL UNIQUE,repository TEXT NOT NULL,pr_number INTEGER NOT NULL); CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL);")
+                .map_err(|error|error.to_string())?;
+            for job in request["preexisting"].as_array().into_iter().flatten() {
+                let id = job["id"].as_str().ok_or("preexisting id required")?;
+                db.execute(
+                    "INSERT INTO job_snapshot VALUES(?,?,?)",
+                    params![id, job.to_string(), "PREEXISTING"],
+                )
+                .map_err(|error| error.to_string())?;
+            }
+            let mut results = Vec::new();
+            for op in request["operations"].as_array().into_iter().flatten() {
+                let job = &op["job"];
+                let operation = op["action"].as_str().unwrap_or("ensure");
+                let result = if operation == "ensure" {
+                    agents_relay_rust2::unified_job_registry::ensure_unified_job_registry(
+                        &db,
+                        job,
+                        op["expectedJobId"].as_str().unwrap_or(""),
+                    )
+                    .map(|_| Value::Null)
+                } else {
+                    let fail = op["failWrite"] == true;
+                    agents_relay_rust2::unified_job_registry::create_unified_job_if_absent(
+                        &mut db,
+                        job,
+                        |tx, now| {
+                            if fail {
+                                return Err("injected snapshot write failed".into());
+                            }
+                            tx.execute(
+                                "INSERT INTO job_snapshot VALUES(?,?,?)",
+                                params![job["id"].as_str(), job.to_string(), now],
+                            )
+                            .map_err(|error| error.to_string())?;
+                            Ok(())
+                        },
+                    )
+                };
+                results.push(match result {
+                    Ok(value) => json!({"ok":true,"value":value}),
+                    Err(error) => json!({"ok":false,"error":error}),
+                });
+            }
+            let mut source=db.prepare("SELECT job_id,source_file,repository,pr_number FROM source_registry ORDER BY job_id")
+                .map_err(|error|error.to_string())?;
+            let bindings=source.query_map([],|row|Ok(json!({"job_id":row.get::<_,String>(0)?,"source_file":row.get::<_,String>(1)?,"repository":row.get::<_,String>(2)?,"pr_number":row.get::<_,i64>(3)?})))
+                .map_err(|error|error.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())?;
+            let mut query = db
+                .prepare("SELECT job_id,json FROM job_snapshot ORDER BY job_id")
+                .map_err(|error| error.to_string())?;
+            let snapshots=query.query_map([],|row|Ok(json!({"job_id":row.get::<_,String>(0)?,"json":serde_json::from_str::<Value>(&row.get::<_,String>(1)?).unwrap_or(Value::Null)})))
+                .map_err(|error|error.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())?;
+            Ok(json!({"operations":results,"bindings":bindings,"snapshots":snapshots}).to_string())
+        }
+
+        "isGeneratedEntityId" => Ok(json!(
+            agents_relay_rust2::job_task_id_sequence::is_generated_entity_id(
+                request["id"].as_str().unwrap_or(""),
+                request["repository"].as_str().unwrap_or(""),
+                request["kind"].as_str().unwrap_or("task")
+            )
+        )
+        .to_string()),
+        "jobTaskIdSequenceScenario" => {
+            let directory = request["directory"].as_str().ok_or("directory required")?;
+            let mut outputs = Vec::new();
+            for op in request["operations"].as_array().into_iter().flatten() {
+                let occupied = op["occupied"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect::<std::collections::HashSet<_>>();
+                let value = agents_relay_rust2::job_task_id_sequence::allocate_entity_id(
+                    std::path::Path::new(directory),
+                    op["repository"].as_str().unwrap_or(""),
+                    op["kind"].as_str().unwrap_or("task"),
+                    op["requestKey"].as_str(),
+                    &occupied,
+                );
+                outputs.push(match value {
+                    Ok(id) => json!({"ok":true,"id":id}),
+                    Err(error) => json!({"ok":false,"error":error}),
+                });
+            }
+            Ok(json!(outputs).to_string())
+        }
+
         "reviewGenerationMatches" => Ok(json!(
             agents_relay_rust2::review_generation_fence::review_generation_matches(
                 &request["current"],

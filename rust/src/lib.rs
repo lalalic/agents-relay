@@ -76,3 +76,9 @@ pub mod events_bus_runtime;
 pub mod review_generation_fence;
 // Direct Node src/unified-pr-facts.ts job-scoped monotonic SQLite facts.
 pub mod unified_pr_facts;
+
+// Direct Node src/job-task-id-sequence.ts global persistent numeric IDs.
+pub mod job_task_id_sequence;
+
+// Direct Node src/unified-job-registry.ts immutable local Job identity and transactions.
+pub mod unified_job_registry;

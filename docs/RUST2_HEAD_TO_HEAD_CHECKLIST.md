@@ -100,7 +100,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/job-local-repository-migration.ts` | `rust/src/job_local_repository_migration.rs` | PENDING | — |
 | `src/job-pause.ts` | `rust/src/job_pause.rs` | PENDING | — |
 | `src/job-pr-number-migration.ts` | `rust/src/job_pr_number_migration.rs` | PENDING | — |
-| `src/job-task-id-sequence.ts` | `rust/src/job_task_id_sequence.rs` | PENDING | — |
+| `src/job-task-id-sequence.ts` | `rust/src/job_task_id_sequence.rs` | PASS | Direct hotfix: 240 Node/Rust ID grammar fixtures, 170 complete independent SQLite allocation histories, 5 native tests including 32 concurrent allocations (`rust/tests/head_to_head_job_task_id_sequence.mjs`, `rust/tests/native_job_task_id_sequence.rs`) |
 | `src/job-worktree-cleanup.ts` | `rust/src/job_worktree_cleanup.rs` | PENDING | — |
 | `src/legacy-blocked-task-migration.ts` | `rust/src/legacy_blocked_task_migration.rs` | PENDING | — |
 | `src/legacy-orchestrator-repair.ts` | `rust/src/legacy_orchestrator_repair.rs` | PENDING | — |
@@ -203,7 +203,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/troubleshooter.ts` | `rust/src/troubleshooter.rs` | PENDING | — |
 | `src/types.ts` | `rust/src/types.rs` | PENDING | — |
 | `src/unblock.ts` | `rust/src/unblock.rs` | PENDING | — |
-| `src/unified-job-registry.ts` | `rust/src/unified_job_registry.rs` | PENDING | — |
+| `src/unified-job-registry.ts` | `rust/src/unified_job_registry.rs` | PASS | Direct hotfix: 455 Node/Rust atomic SQLite registry/Job creation histories, 5 native immutable-repository and rollback tests (`rust/tests/head_to_head_unified_job_registry.mjs`, `rust/tests/native_unified_job_registry.rs`) |
 | `src/unified-pr-facts.ts` | `rust/src/unified_pr_facts.rs` | PASS | Direct hotfix: 364 in-memory SQLite Node/Rust state-monotonic PR observations and Job scope scenarios; 3 Rust-native tests (`rust/tests/head_to_head_unified_pr_facts.mjs`, `rust/tests/native_unified_pr_facts.rs`) |
 | `src/unified-relay-schema.ts` | `rust/src/unified_relay_schema.rs` | PENDING | — |
 | `src/usage.ts` | `rust/src/usage.rs` | PENDING | — |
@@ -478,3 +478,12 @@ This is only the Job JEL graph projection; Dashboard HTTP routing, additional ta
 - [x] `src/unified-pr-facts.ts` → `rust/src/unified_pr_facts.rs`: port SQL INSERT ON CONFLICT with non-regressing timestamps and irreversible MERGED state. All PR records are scoped by Job ID and remain observational, not local Git lifecycle truth.
 - [x] `rust/tests/head_to_head_unified_pr_facts.mjs`: **364** multi-operation in-memory SQLite scenarios executed separately on Node and Rust, checking all stored rows and SQL constraint errors. Three native tests cover state monotonicity, equal-timestamp updates, cross-Job scoping and invalid states.
 - [x] No running Relay process, authoritative Job SQLite DB or GitHub service touched; test stores are isolated in-memory.
+
+### Direct Rust2 hotfix — global Job/Task ID sequence and immutable repository registry (2026-11-16)
+
+- [x] `src/job-task-id-sequence.ts` → `rust/src/job_task_id_sequence.rs`: durable SQLite WAL + 10 s busy timeout, immediate transaction, global positive decimal Job and Task ID sequences, historic snapshot high-water marks, occupied-ID skipping, idempotency persistence with repository scope for Jobs and global scope for Task keys.
+- [x] `rust/tests/head_to_head_job_task_id_sequence.mjs`: **240** Node/Rust generated ID grammar fixtures plus **170** independently cloned real SQLite allocation histories (all output IDs, durable sequence and idempotency table rows compared). `rust/tests/native_job_task_id_sequence.rs`: **5** native tests including 32 concurrent allocations through distinct SQLite connections with no ID reuse, malformed legacy snapshots, invalid keys, and global Job/Task separation.
+- [x] `src/unified-job-registry.ts` → `rust/src/unified_job_registry.rs`: immutable scoped repository identity, once-only positive PR binding, atomic `BEGIN IMMEDIATE` create-if-absent, idempotent return of stored Job, collision check on local canonical `projectRoot`, callback write rollback.
+- [x] `rust/tests/head_to_head_unified_job_registry.mjs`: **455** in-memory real SQLite histories separately executed with the Node and native Rust implementations; compares every registry binding, Job snapshot and outcome. `rust/tests/native_unified_job_registry.rs`: **5** native tests for immutable identity, collision and rollback.
+- [x] Original Node `test/job-task-id-sequence.test.js` and `test/consolidated-sqlite.test.js` contain baseline incompatibilities with current local-worktree policy, global Task-key semantics and renamed error messages (five unrelated failures, no Node source edits). Exact source-module differential fixtures and Cargo tests are green.
+- [x] No production SQLite, live Relay Job, process or GitHub service was accessed or changed.
