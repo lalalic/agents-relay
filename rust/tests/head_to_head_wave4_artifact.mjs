@@ -1,3 +1,4 @@
+// Direct original Node src/cli-artifact.ts vs Rust JSON Schema compile, filesystem and CLI parity.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';

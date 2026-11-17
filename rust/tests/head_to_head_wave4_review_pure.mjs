@@ -1,3 +1,4 @@
+// Original Node src/review-replan.ts and src/reviewer-thread.ts vs Rust exported API parity.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';

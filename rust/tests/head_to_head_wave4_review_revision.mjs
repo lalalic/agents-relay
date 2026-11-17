@@ -1,3 +1,4 @@
+// Direct Node src/review-revision-model.ts and execution helpers vs Rust randomized parity.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
