@@ -54,6 +54,7 @@ pub mod workflow {
     pub mod usage_index;
     // Direct Node src/workflow/durable-publication.ts transactional workflow outbox/inbox.
     pub mod durable_publication;
+    pub mod durable_transition;
     // Direct Node src/workflow/definitions-v2.ts canonical Task/Job Graph registries and transitions.
     // Direct Node src/workflow/dispatcher.ts transition/action/event boundary.
     pub mod dispatcher;
@@ -306,3 +307,4 @@ pub mod relayd_utilities;
 pub mod relayd_dashboard_actions;
 pub mod unblock;
 pub mod z_adapter;
+pub mod task_actions;
