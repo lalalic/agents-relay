@@ -230,3 +230,106 @@ mod tests {
         assert!(prompt.contains("Read-only evaluation safety boundary"));
     }
 }
+
+/// Bind the shared managed-input assembly to the same layered Rust Agent
+/// resolver used by other execution-context consumers. No caller-supplied
+/// fake selected Agent object is necessary.
+pub fn resolve_agent_contract_native(
+    context: &Value,
+    name: &str,
+    package_root: &Path,
+) -> Result<Value, String> {
+    let agent = context["agents"]
+        .as_array()
+        .and_then(|agents| agents.iter().find(|a| a["name"] == name))
+        .ok_or_else(|| format!("Agent {name} is not visible in the resolved execution context"))?;
+    if !agent["path"].as_str().is_some_and(|p| !p.is_empty()) {
+        return Err(format!("Agent {name} has no readable Markdown contract"));
+    }
+    let project = context
+        .pointer("/project/path")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let shared = context
+        .pointer("/project/sharedRoot")
+        .and_then(Value::as_str);
+    let layers = crate::agent_content_resolver::agent_source_layers(project, &context["project"]);
+    let builtin = package_root.join("skills/agents-relay/agents");
+    let resolved = crate::agent_content_resolver::resolve_agent_markdown(
+        name,
+        &builtin.to_string_lossy(),
+        project,
+        shared,
+        Some(&layers),
+    )?;
+    let definition = resolved["content"].as_str().unwrap_or("");
+    if definition.trim().is_empty() {
+        return Err(format!("Agent {name} Markdown contract is empty"));
+    }
+    Ok(json!({"agent":agent,"definition":definition,
+        "hash":resolved["hash"],"sources":resolved["sources"]}))
+}
+
+pub fn managed_worker_input_resolved(
+    job: &Value,
+    task: &Value,
+    context: Option<&Value>,
+    mode: &str,
+    package_root: &Path,
+    reference_directory: Option<&str>,
+) -> Result<String, String> {
+    managed_worker_input(
+        job,
+        task,
+        context,
+        mode,
+        package_root,
+        |context, name| resolve_agent_contract_native(context, name, package_root),
+        reference_directory,
+    )
+}
+
+#[cfg(test)]
+mod native_resolver_tests {
+    use super::*;
+    use std::fs;
+    #[test]
+    fn resolves_actual_layered_agent_and_fails_closed_for_invisible_contract() {
+        let root =
+            std::env::temp_dir().join(format!("rust2-wave3-resolver-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("agents")).unwrap();
+        fs::write(
+            root.join("agents/implementation.agent.md"),
+            "---\nname: implementation\n---\nYou are the fixture implementation agent.\n",
+        )
+        .unwrap();
+        let context = json!({"project":{"path":root},"agents":[
+            {"name":"implementation","path":root.join("agents/implementation.agent.md"),"runtime":"chatgpt"}
+        ]});
+        let resolved = resolve_agent_contract_native(&context, "implementation", &root).unwrap();
+        assert!(resolved["definition"]
+            .as_str()
+            .unwrap()
+            .contains("fixture implementation"));
+        assert!(resolved["hash"].as_str().unwrap().len() >= 32);
+        assert_eq!(
+            resolve_agent_contract_native(&context, "missing", &root).unwrap_err(),
+            "Agent missing is not visible in the resolved execution context"
+        );
+        let task = json!({"id":"51","adapter":"chatgpt","executionId":"e51","input":"evaluate locally",
+            "output":{"kind":"file"}});
+        let prompt = managed_worker_input_resolved(
+            &json!({"repository":"myrepo"}),
+            &task,
+            Some(&context),
+            "evaluation",
+            &root,
+            None,
+        )
+        .unwrap();
+        assert!(prompt.contains("fixture implementation"));
+        assert!(prompt.contains("Do not use tools"));
+        let _ = fs::remove_dir_all(root);
+    }
+}

@@ -166,3 +166,131 @@ mod tests {
         );
     }
 }
+
+/// Native HTTP delivery transport. The caller still owns the local process
+/// execution adapter, preventing an implicit Codex/CLI launch.
+pub fn webhook_http_post(target: &str, body: &str) -> Result<u16, String> {
+    let agent = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .timeout_global(Some(std::time::Duration::from_secs(30)))
+            .http_status_as_error(false)
+            .build(),
+    );
+    agent
+        .post(target)
+        .header("content-type", "application/json")
+        .send(body)
+        .map(|response| response.status().as_u16())
+        .map_err(|error| error.to_string())
+}
+
+pub fn continue_with_http<Run>(
+    kind: &str,
+    input: &str,
+    continuation: Continuation<'_>,
+    command_override: Option<&str>,
+    mut run_owned: Run,
+) -> Result<(), String>
+where
+    Run: FnMut(&str, &[&str], &str) -> Result<i32, String>,
+{
+    let mut post = webhook_http_post;
+    continue_with_adapters(
+        kind,
+        input,
+        continuation,
+        command_override,
+        &mut ContinuationAdapters {
+            run_owned: &mut run_owned,
+            post: &mut post,
+        },
+    )
+}
+
+#[cfg(test)]
+mod native_webhook_tests {
+    use super::*;
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        thread,
+    };
+    #[test]
+    fn webhook_posts_json_and_reports_server_rejection() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            for reply in ["200 OK", "503 Service Unavailable"] {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                    .unwrap();
+                let mut data = Vec::new();
+                let mut goal = None;
+                loop {
+                    let mut buf = [0u8; 4096];
+                    let n = stream.read(&mut buf).unwrap();
+                    if n == 0 {
+                        break;
+                    }
+                    data.extend_from_slice(&buf[..n]);
+                    if goal.is_none() {
+                        if let Some(end) = data.windows(4).position(|v| v == b"\r\n\r\n") {
+                            let header = String::from_utf8_lossy(&data[..end]);
+                            let len = header
+                                .lines()
+                                .find_map(|l| {
+                                    l.to_ascii_lowercase()
+                                        .strip_prefix("content-length: ")
+                                        .and_then(|n| n.trim().parse::<usize>().ok())
+                                })
+                                .unwrap_or(0);
+                            goal = Some(end + 4 + len);
+                        }
+                    }
+                    if goal.is_some_and(|total| data.len() >= total) {
+                        break;
+                    }
+                }
+                let req = String::from_utf8(data).unwrap();
+                assert!(req.starts_with("POST /hook HTTP/1.1"));
+                assert!(req
+                    .to_lowercase()
+                    .contains("content-type: application/json"));
+                assert!(
+                    req.ends_with(r#"{"input":"safe \u003ctext\u003e"}"#)
+                        || req.ends_with(r#"{"input":"safe <text>"}"#)
+                );
+                stream
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 {reply}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    )
+                    .unwrap();
+            }
+        });
+        let target = format!("http://{addr}/hook");
+        assert!(continue_with_http(
+            "webhook",
+            "safe <text>",
+            Continuation::Webhook { target: &target },
+            None,
+            |_, _, _| panic!("no process")
+        )
+        .is_ok());
+        assert_eq!(
+            continue_with_http(
+                "webhook",
+                "safe <text>",
+                Continuation::Webhook { target: &target },
+                None,
+                |_, _, _| panic!("no process")
+            )
+            .unwrap_err(),
+            "Continuation webhook returned 503"
+        );
+        server.join().unwrap();
+    }
+}

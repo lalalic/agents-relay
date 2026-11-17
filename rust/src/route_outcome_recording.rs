@@ -263,3 +263,91 @@ mod tests {
         assert!(!value.to_string().contains("superSecret"));
     }
 }
+
+// Public Graph-selected audit effects. The store append is deliberately
+// best-effort and occurs after the authoritative durable transition.
+pub fn record_terminal_route_outcome<F>(
+    task: &Value,
+    event: &Value,
+    execution_id: Option<&str>,
+    append: F,
+) -> Option<Value>
+where
+    F: FnMut(&Value) -> Result<(), String>,
+{
+    let (kind, reason, evidence) = terminal_route_arguments(event, execution_id);
+    record_route_outcome(task, &kind, &reason, &evidence, append)
+}
+
+pub fn record_launch_route_outcome<F>(
+    task: &Value,
+    message: &str,
+    phase: &str,
+    execution_id: Option<&str>,
+    unknown_outcome: bool,
+    append: F,
+) -> Option<Value>
+where
+    F: FnMut(&Value) -> Result<(), String>,
+{
+    let (kind, reason, evidence) =
+        launch_route_arguments(task, message, phase, execution_id, unknown_outcome);
+    record_route_outcome(task, &kind, &reason, &evidence, append)
+}
+
+pub fn record_watchdog_route_outcome<F>(task: &Value, watchdog: &Value, append: F) -> Option<Value>
+where
+    F: FnMut(&Value) -> Result<(), String>,
+{
+    let (kind, reason, evidence) = watchdog_route_arguments(watchdog);
+    record_route_outcome(task, &kind, &reason, &evidence, append)
+}
+
+#[cfg(test)]
+mod native_audit_effect_tests {
+    use super::*;
+    #[test]
+    fn all_public_audit_effects_preserve_order_and_ignore_append_failure() {
+        let task = json!({"jobId":"9","id":"21","adapter":"chatgpt","attempt":1,
+            "state":"ACTIVE","routing":{"decisionId":"decision-21","provider":"fake","model":"test"}});
+        let mut kinds = Vec::new();
+        record_terminal_route_outcome(&task, &json!({"type":"task.completed"}), Some("ex"), |r| {
+            kinds.push(r["kind"].as_str().unwrap().to_string());
+            Ok(())
+        });
+        record_launch_route_outcome(
+            &task,
+            "deadline exceeded",
+            "launch",
+            Some("ex"),
+            false,
+            |r| {
+                kinds.push(r["kind"].as_str().unwrap().to_string());
+                Ok(())
+            },
+        );
+        record_watchdog_route_outcome(
+            &task,
+            &json!({"executionId":"ex","failedExit":true,
+            "rawError":"invalid api key","failureMessage":"failed","exitCode":1}),
+            |r| {
+                kinds.push(r["kind"].as_str().unwrap().to_string());
+                Err("offline".into())
+            },
+        );
+        assert_eq!(kinds, ["success", "timeout", "auth_config_failure"]);
+        let mut called = false;
+        let missing = json!({"id":"99","adapter":"chatgpt"});
+        assert!(record_terminal_route_outcome(
+            &missing,
+            &json!({"type":"task.completed"}),
+            None,
+            |_| {
+                called = true;
+                Ok(())
+            }
+        )
+        .is_none());
+        assert!(!called);
+    }
+}

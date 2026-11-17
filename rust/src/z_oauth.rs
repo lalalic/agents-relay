@@ -264,3 +264,213 @@ mod tests {
         assert_eq!(encode_base64url(&[255, 254, 253]), "__79");
     }
 }
+
+// Real opt-in HTTPS transport. Every OAuth call has a 15-second global limit,
+// and redirects remain visible for exact issuer/state validation.
+pub fn oauth_http_request(
+    url: &str,
+    method: &str,
+    body: Option<&str>,
+    headers: &[(&str, &str)],
+) -> Result<OAuthResponse, String> {
+    let config = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(15)))
+        .max_redirects(0)
+        .http_status_as_error(false)
+        .build();
+    let agent = ureq::Agent::new_with_config(config);
+    let response = match method {
+        "GET" => {
+            let mut request = agent.get(url);
+            for &(name, value) in headers {
+                request = request.header(name, value);
+            }
+            request.call()
+        }
+        "POST" => {
+            let mut request = agent.post(url);
+            for &(name, value) in headers {
+                request = request.header(name, value);
+            }
+            request.send(body.unwrap_or(""))
+        }
+        _ => return Err(format!("Unsupported OAuth HTTP method: {method}")),
+    }
+    .map_err(|error| error.to_string())?;
+    let mut response = response;
+    let location = response
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let status = response.status().as_u16();
+    let body = response
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| e.to_string())?;
+    Ok(OAuthResponse {
+        status,
+        body,
+        location,
+    })
+}
+
+/// Production-bound implementation (not activated without an explicit origin
+/// and operator token). Never returns the operator or refresh credential.
+pub fn issue_z_worker_credential_http(
+    origin: Option<&str>,
+    operator_token: Option<&str>,
+    operator_token_file: Option<&Path>,
+) -> Result<String, String> {
+    issue_z_worker_credential(
+        origin,
+        operator_token,
+        operator_token_file,
+        oauth_http_request,
+    )
+}
+
+#[cfg(test)]
+mod native_http_tests {
+    use super::*;
+    use std::{io::Write as _, net::TcpListener, thread};
+    fn read_complete_request(socket: &mut std::net::TcpStream) -> String {
+        let mut data = Vec::new();
+        let mut chunk = [0u8; 4096];
+        let mut goal = None;
+        loop {
+            let count = socket.read(&mut chunk).unwrap();
+            if count == 0 {
+                break;
+            }
+            data.extend_from_slice(&chunk[..count]);
+            if goal.is_none() {
+                if let Some(header_end) = data.windows(4).position(|v| v == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&data[..header_end]);
+                    let length = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length: ")
+                                .and_then(|v| v.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    goal = Some(header_end + 4 + length);
+                }
+            }
+            if goal.is_some_and(|size| data.len() >= size) {
+                break;
+            }
+        }
+        String::from_utf8(data).unwrap()
+    }
+    #[test]
+    fn local_http_transport_preserves_redirect_location_and_request_body() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                .unwrap();
+            let request = read_complete_request(&mut socket);
+            assert!(request.starts_with("POST /authorize HTTP/1.1"));
+            assert!(request.contains("rid=fixture&token=operator"));
+            socket.write_all(b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:8765/agents-relay/oauth/callback?code=x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        });
+        let url = format!("http://{address}/authorize");
+        let result = oauth_http_request(
+            &url,
+            "POST",
+            Some("rid=fixture&token=operator"),
+            &[("Content-Type", "application/x-www-form-urlencoded")],
+        )
+        .unwrap();
+        assert_eq!(result.status, 302);
+        assert_eq!(
+            result.location.as_deref(),
+            Some("http://127.0.0.1:8765/agents-relay/oauth/callback?code=x")
+        );
+        server.join().unwrap();
+    }
+    #[test]
+    fn complete_pkce_flow_over_disposable_local_http_server() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let mut count = 0;
+            let mut state = String::new();
+            for socket in listener.incoming().take(5) {
+                let mut socket = socket.unwrap();
+                socket
+                    .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                    .unwrap();
+                let req = read_complete_request(&mut socket);
+                let first = req.lines().next().unwrap_or("");
+                let (status, body, extra) = match count {
+                    0 => {
+                        assert!(first.starts_with("POST /register "));
+                        ("201 Created", r#"{"client_id":"fixture"}"#, String::new())
+                    }
+                    1 => {
+                        assert!(first.starts_with("GET /authorize?"));
+                        let url = first.split_whitespace().nth(1).unwrap();
+                        state = Url::parse(&format!("http://localhost{url}"))
+                            .unwrap()
+                            .query_pairs()
+                            .find(|(k, _)| k == "state")
+                            .unwrap()
+                            .1
+                            .into_owned();
+                        assert_eq!(state.len(), 36);
+                        (
+                            "200 OK",
+                            r#"<input name="rid" value="rid1">"#,
+                            String::new(),
+                        )
+                    }
+                    2 => {
+                        assert!(first.starts_with("POST /authorize "));
+                        assert!(req.contains("token=operator"));
+                        ("302 Found","",format!("Location: {REDIRECT_URI}?code=valid-code&state={state}&iss=https%3A%2F%2Foauth.test\r\n"))
+                    }
+                    3 => {
+                        assert!(first.starts_with("POST /token "));
+                        assert!(req.contains("code_verifier="));
+                        (
+                            "200 OK",
+                            r#"{"access_token":"worker-only","expires_in":3600,"refresh_token":"refresh-secret"}"#,
+                            String::new(),
+                        )
+                    }
+                    _ => {
+                        assert!(first.starts_with("POST /revoke "));
+                        assert!(req.contains("token=refresh-secret"));
+                        ("200 OK", "{}", String::new())
+                    }
+                };
+                let reply=format!("HTTP/1.1 {status}\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len());
+                socket.write_all(reply.as_bytes()).unwrap();
+                count += 1;
+            }
+            assert_eq!(count, 5);
+        });
+        let token = issue_z_worker_credential(
+            Some("https://oauth.test"),
+            Some("operator"),
+            None,
+            |url, method, body, headers| {
+                let parsed = Url::parse(url).unwrap();
+                let local = format!(
+                    "http://{address}{}{}",
+                    parsed.path(),
+                    parsed.query().map(|q| format!("?{q}")).unwrap_or_default()
+                );
+                oauth_http_request(&local, method, body, headers)
+            },
+        )
+        .unwrap();
+        assert_eq!(token, "worker-only");
+        server.join().unwrap();
+    }
+}

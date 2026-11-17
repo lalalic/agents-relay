@@ -325,3 +325,32 @@ mod tests {
         let _ = fs::remove_dir_all(tmp);
     }
 }
+
+/// Exact public localMergeFacts facade. Reuse the separately verified
+/// runtime-status and Task transition facts rather than requiring every CLI,
+/// worker and reconciler caller to supply manually duplicated gate booleans.
+pub fn local_merge_facts_bound(job: &Value, head_sha: Option<&str>, now_ms: i64) -> Value {
+    local_merge_facts(
+        job,
+        head_sha,
+        now_ms,
+        crate::runtime_status::implementation_complete(job),
+        crate::task_transitions::completion_gate_satisfied(job),
+    )
+}
+
+#[cfg(test)]
+mod native_bound_facts_tests {
+    use super::*;
+    #[test]
+    fn binds_completion_facts_from_shared_modules() {
+        let job = json!({"id":"9","state":"ACTIVE","reviewEnabled":false,
+            "autoMerge":true,"plans":[{"round":1,"status":"SUCCEEDED","objectiveStatus":"satisfied"}],
+            "tasks":[{"id":"12","kind":"work","state":"SUCCEEDED","adapter":"chatgpt","output":{"kind":"task_pr"}}],
+            "localMerge":{"status":"pending","nextAttemptAt":"2026-11-16T00:00:00.000Z"}});
+        let facts = local_merge_facts_bound(&job, None, 1_795_000_000_000);
+        assert_eq!(facts["implementationComplete"], true);
+        assert_eq!(facts["completionGateSatisfied"], true);
+        assert_eq!(facts["mergeAttemptReady"], true);
+    }
+}

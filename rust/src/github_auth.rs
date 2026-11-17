@@ -92,7 +92,10 @@ where
 {
     let config = github_app_config(args, env)?;
     let key = if let Some(cfg) = &config {
-        Some(fs::read_to_string(Path::new(&cfg.private_key_file)).map_err(|e| e.to_string())?)
+        // Node readFile(file, 'utf8') replaces malformed UTF-8 rather than
+        // failing before the client's App credential validator sees the key.
+        let bytes = fs::read(Path::new(&cfg.private_key_file)).map_err(|e| e.to_string())?;
+        Some(String::from_utf8_lossy(&bytes).into_owned())
     } else {
         None
     };
@@ -173,5 +176,54 @@ mod tests {
         .unwrap();
         assert_eq!(ctx.trusted_authors.len(), 2);
         assert!(!ctx.app_auth);
+    }
+}
+
+#[cfg(test)]
+mod native_app_client_tests {
+    use super::*;
+    #[test]
+    fn client_factory_receives_exact_lossy_node_utf8_and_probes_in_order() {
+        let path = std::env::temp_dir().join(format!("rust2-auth-key-{}", std::process::id()));
+        fs::write(&path, [0xff, 0xfe, b'k', b'e', b'y']).unwrap();
+        let args = vec![
+            "--github-app-id".into(),
+            "app1".into(),
+            "--github-app-installation-id".into(),
+            "7".into(),
+            "--github-app-private-key-file".into(),
+            path.to_string_lossy().to_string(),
+            "--trusted-authors".into(),
+            " alice, bob,alice ".into(),
+        ];
+        let calls = std::cell::RefCell::new(Vec::new());
+        let (client, context) = github_auth_context(
+            &args,
+            &HashMap::new(),
+            true,
+            |opt| {
+                calls.borrow_mut().push("construct");
+                let (id, installation, key) = opt.unwrap();
+                assert_eq!((id, installation), ("app1", "7"));
+                assert_eq!(key, "\u{fffd}\u{fffd}key");
+                Ok("fixture-client")
+            },
+            |_| {
+                calls.borrow_mut().push("current");
+                Ok("viewer".into())
+            },
+            |_| {
+                calls.borrow_mut().push("local");
+                Ok(Some("localuser".into()))
+            },
+        )
+        .unwrap();
+        assert_eq!(client, "fixture-client");
+        assert_eq!(&*calls.borrow(), &["construct", "current", "local"]);
+        assert_eq!(context.trusted_authors.len(), 4);
+        assert!(context.trusted_authors.contains("viewer"));
+        assert!(context.trusted_authors.contains("localuser"));
+        assert!(context.app_auth);
+        let _ = fs::remove_file(path);
     }
 }

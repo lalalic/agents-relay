@@ -38,10 +38,23 @@ where
         return Some("DAG Agent Task has no file result target".into());
     }
     let path = Path::new(task["output"]["path"].as_str().unwrap_or(""));
-    let parsed: Value = match fs::read_to_string(path)
-        .map_err(|e| e.to_string())
-        .and_then(|s| serde_json::from_str(&s).map_err(|e| e.to_string()))
-    {
+    // Node readFile(..., 'utf8') decodes invalid UTF-8 lossily and reports
+    // filesystem errors with the attempted path, not Rust's OS error suffix.
+    let parsed: Value = match fs::read(path)
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => format!(
+                "ENOENT: no such file or directory, open '{}'",
+                path.display()
+            ),
+            std::io::ErrorKind::PermissionDenied => {
+                format!("EACCES: permission denied, open '{}'", path.display())
+            }
+            _ => error.to_string(),
+        })
+        .and_then(|bytes| {
+            serde_json::from_str(&String::from_utf8_lossy(&bytes))
+                .map_err(|error| error.to_string())
+        }) {
         Ok(p) => p,
         Err(e) => return Some(format!("DAG Agent result unreadable: {e}")),
     };
