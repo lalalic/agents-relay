@@ -32,7 +32,7 @@ test('Agents Relay capability eval fixtures cover real user decisions and negati
     assert.ok(categories.has(capability), 'missing capability: ' + capability);
   }
   const skill = await readFile(new URL('SKILL.md',skillRoot),'utf8');
-  assert.ok(skill.includes('matching-absolute-dist/cli.js'), 'bound execution CLI');
+  assert.ok(skill.includes('agents-relay@${RELAY_VERSION}') && skill.includes('agents-relay@latest'), 'published npm CLI and bound execution version');
   assert.match(skill,/task context.*--execution-id/, 'worker identity fencing');
   assert.match(skill,/plan context.*--execution-id/, 'planner identity fencing');
   assert.match(skill,/PLAN_APPLIED:/, 'durable Planner receipt');
