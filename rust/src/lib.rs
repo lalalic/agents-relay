@@ -325,3 +325,5 @@ pub mod interactive_invocation;
 pub mod execution_context;
 pub mod cli_support;
 pub mod workspace;
+pub mod github_client;
+pub mod usage;
