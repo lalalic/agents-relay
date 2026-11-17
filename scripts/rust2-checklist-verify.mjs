@@ -24,8 +24,20 @@ for(const row of rows){
  const expectTarget = 'rust/src/' + row.source.slice(4).replace(/\.(ts|js)$/,'.rs').replaceAll('-','_');
  assert.equal(row.target,expectTarget,`Incorrect target path for ${row.source}`);
  if (row.status==='EXCLUDED') {
-  assert(!currentSources.includes(row.source),`EXCLUDED file remains active in main: ${row.source}`);
-  assert(!existsSync(resolve(root,row.source)),`EXCLUDED file still on disk: ${row.source}`);
+  // dashboard-html.ts remains as the Node-side compatibility projection for
+  // the shared PWA. EXCLUDED means no second Rust browser HTML renderer, not
+  // that this wrapper must be removed from the Node runtime.
+  if (row.source==='src/dashboard-html.ts') {
+   assert(currentSources.includes(row.source),'PWA compatibility source missing in pinned main');
+   const wrapper=readFileSync(resolve(root,row.source),'utf8');
+   assert.match(wrapper,/dashboardIndexHtml = readFileSync/);
+   assert.match(wrapper,/dashboardClientJs = readFileSync/);
+   assert(existsSync(resolve(root,'dashboard/index.html')));
+   assert(existsSync(resolve(root,'dashboard/dashboard.js')));
+  } else {
+   assert(!currentSources.includes(row.source),`EXCLUDED file remains active in main: ${row.source}`);
+   assert(!existsSync(resolve(root,row.source)),`EXCLUDED file still on disk: ${row.source}`);
+  }
   assert(!/^\s*(?:—|-)\s*$/.test(row.evidence),`EXCLUDED without removal evidence: ${row.source}`);
   continue;
  }

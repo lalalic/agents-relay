@@ -23,6 +23,12 @@ Node `workflow/*.mmd` owns decisions; Rust modules may port only effects, adapte
 - Phase2 branch verified Rust compilation, native tests and available differential tests; post-merge regression evidence and commit SHA are recorded separately in the integration report. The four quarantined Worker C module statuses remain `PORTING` until independent canonical provenance is established.
 - `rust/src/dashboard_api.rs` is the sole native server-side Dashboard route integration; `rust/src/relayd.rs` binds it to the shared PWA HTTP transport, not to a legacy competing HTML server.
 
+## PORTING exported API audit (2026-11-17)
+
+The reproducible static export inventory is in [RUST2_API_PARITY_AUDIT.md](RUST2_API_PARITY_AUDIT.md) with a [per-symbol machine-readable matrix](RUST2_API_PARITY_MATRIX.json). Run `node scripts/rust2-api-parity-audit.mjs --check` to verify the report or `--write` to regenerate it.
+
+For the 107 `PORTING` files: 734 Node runtime export symbols/methods, 549 plausible Rust declaration names, 168 without a direct name match, and 17 constructor shape reviews. These are **candidate mapping gaps, not proven functional differences**. Type/field structure, signatures, negative/restart cases, durable side effects and actual caller wiring are not established by a static name match. The ledger statuses remain unchanged until each specific surface has independently verified head-to-head tests and production binding evidence.
+
 ## Source-by-source ledger
 
 Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = port + Node/Rust differential tests passed; `EXCLUDED` = explicit documented semantic removal. A Rust file existing is not PASS.
