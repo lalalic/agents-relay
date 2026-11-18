@@ -78,3 +78,95 @@ where
     }
     Ok(current)
 }
+
+use crate::{
+    agent_graph::parse_agent_graph,
+    cli_core_support::{arg,has_arg,text_option},
+    cli_support_events::{publish_wake,ServiceEventBusPort},
+    local_merge_lock::iso8601_now,
+    relay_store::SQLiteRelayStore,
+    task_transitions::try_transition_task_event,
+    workflow::lifecycle::dispatch_job_lifecycle_sync,
+    workspace::{resolve_workspace_root,resolve_job_project_root},
+};
+use std::path::Path;
+
+/// Public Coordinator CLI. No dedicated scheduler or Shortcut runtime:
+/// validate the saved Agent Graph, bind immutable roots under a single SQLite
+/// transaction, then optionally wake the ordinary daemon Reconciler.
+pub fn run_coordinator_job_command(
+    graph_directory:&Path,args:&[String],id:&str,store:&SQLiteRelayStore,
+    job:&Value,local_file:Option<&Path>,
+    env_global_root:Option<&str>,env_shared_root:Option<&str>,
+    mut foreground:Option<&mut dyn FnMut(&SQLiteRelayStore,&str,&str)->Result<(),String>>,
+    bus:Option<&dyn ServiceEventBusPort>,
+)->Result<Option<Value>,String>{
+    let in_foreground=has_arg(args,"--foreground");
+    validate_coordinator_args(args,foreground.is_some())?;
+    if local_file.is_some(){
+        return Err("Job start requires authoritative SQLite".into());
+    }
+    let task_id=arg(args,"--task-id","");
+    if task_id.is_empty(){return Err("job run requires --task-id".into());}
+    let task=job.get("tasks").and_then(Value::as_array)
+        .and_then(|tasks|tasks.iter().find(|task|
+            task.get("id").and_then(Value::as_str)==Some(task_id)))
+        .ok_or_else(||format!("Task {task_id} not found"))?;
+    let override_graph=if has_arg(args,"--agent-graph-file"){
+        let source=text_option(args,"--agent-graph","--agent-graph-file",None)?;
+        if source.is_empty(){None}else{
+            parse_agent_graph(&source)?;
+            Some(source)
+        }
+    }else{None};
+    let existing_graph=task.get("agentGraph").and_then(Value::as_str)
+        .filter(|graph|!graph.is_empty());
+    let graph=existing_graph.or(override_graph.as_deref())
+        .ok_or("job run requires a durable Agent Graph Task")?;
+    parse_agent_graph(graph)?;
+    let workspace=resolve_workspace_root(
+        Some(arg(args,"--workspace-root","")).filter(|s|!s.is_empty()))?;
+    let project=resolve_job_project_root(job)?;
+    if has_arg(args,"--project-path"){
+        return Err("Job --project-path is removed; use the independent Git repository root".into());
+    }
+    if in_foreground && matches!(job.get("state").and_then(Value::as_str),
+        Some("COMPLETED"|"CANCELLED")){
+        foreground.as_mut().ok_or("Foreground runner not configured")?
+            (store,id,task_id)?;
+        return Ok(None);
+    }
+    let global_root=Some(arg(args,"--global-root",""))
+        .filter(|value|!value.is_empty()).or(env_global_root);
+    let shared_root=Some(arg(args,"--shared-root",""))
+        .filter(|value|!value.is_empty()).or(env_shared_root);
+    let now=iso8601_now();
+    let no_github=true;
+    store.mutate_job(id,|current|{
+        bind_coordinator_start(
+            &current,task_id,graph,
+            &project.to_string_lossy(),&workspace.to_string_lossy(),
+            shared_root,global_root,no_github,in_foreground,
+            |task|try_transition_task_event(
+                graph_directory,task,"queue",
+                &json!({"dependenciesSatisfied":true}),&now)
+                .is_ok_and(|decision|
+                    decision["accepted"]==true&&decision["target"]=="QUEUED"),
+            |job|dispatch_job_lifecycle_sync(
+                graph_directory,job,"activate",&json!({}),&now)
+                .is_ok_and(|decision|
+                    decision["accepted"]==true&&decision["target"]=="ACTIVE"),
+        )
+    })?;
+    let scheduled=store.load_job(id)?
+        .ok_or_else(||format!("Local authoritative Job {id} not found"))?;
+    if in_foreground {
+        foreground.as_mut().ok_or("Foreground runner not configured")?
+            (store,id,task_id)?;
+        return Ok(None);
+    }
+    publish_wake(bus,&scheduled,task_id,"Coordinator Job activated");
+    Ok(Some(json!({"jobId":id,"taskId":task_id,
+        "scheduled":true,"state":scheduled.get("state"),
+        "graphRuntime":"tasks"})))
+}

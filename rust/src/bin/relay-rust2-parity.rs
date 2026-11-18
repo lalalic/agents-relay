@@ -360,6 +360,32 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=closure::invoke(request)?{return Ok(output);}
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "apiCliCoordinator" => {
+            use agents_relay_rust2::{
+                cli_coordinator::run_coordinator_job_command,
+                relay_store::SQLiteRelayStore,
+            };
+            let store=SQLiteRelayStore::open(std::path::Path::new(":memory:"),None)?;
+            store.save_job(&request["job"])?;
+            let id=request["job"]["id"].as_str().ok_or("Fixture Job ID required")?;
+            let job=store.load_job(id)?.ok_or("Fixture Job missing")?;
+            let args=request["args"].as_array().into_iter().flatten()
+                .filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>();
+            let mut foreground_called=false;
+            let mut foreground=|_:&SQLiteRelayStore,_:&str,_:&str|{
+                foreground_called=true;Ok(())
+            };
+            let result=run_coordinator_job_command(
+                std::path::Path::new(request["graphDirectory"].as_str().unwrap_or("workflow")),
+                &args,id,&store,&job,None,None,None,
+                if request["hasForeground"]==true{Some(&mut foreground)}else{None},
+                None);
+            let after=store.load_job(id)?.ok_or("Fixture Job vanished")?;
+            Ok(json!({"outcome":match result{
+                Ok(value)=>json!({"ok":true,"value":value}),
+                Err(error)=>json!({"ok":false,"error":error}),
+            },"after":after,"foregroundCalled":foreground_called}).to_string())
+        }
         "apiModelRedecision" => {
             struct StubUsage(Value);
             impl agents_relay_rust2::usage::UsageSnapshotProvider for StubUsage {
