@@ -188,7 +188,107 @@ async function setTaskState(task,state,select){const job=selected();if(!job||sta
 function taskStateField(task){const box=element('div','detail-group');box.append(element('p','detail-label',text('State')));const select=document.createElement('select');select.className='job-filter task-state-select';select.setAttribute('aria-label','Task state');for(const state of TASK_STATES)select.append(new Option(state,state));select.value=task.state;select.addEventListener('change',()=>void setTaskState(task,select.value,select));box.append(select);return box;}
 function manualOverrideField(task){const rows=Array.isArray(task.manualStateOverrides)?task.manualStateOverrides:[];const last=rows.at(-1);return field('Manual override',last?last.from+' → '+last.to+' · '+relativeTime(last.at):'—');}
 function iconSvg(name){const paths={close:'M5 5l14 14M19 5 5 19',detail:'M7 3h7l4 4v14H7zM14 3v5h4M10 12h5m-5 4h5'};const ns='http://www.w3.org/2000/svg';const svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('aria-hidden','true');const path=document.createElementNS(ns,'path');path.setAttribute('d',paths[name]);svg.append(path);return svg;}
-function showDetailsDialog(title,sections){const dialog=element('dialog','details-dialog');dialog.setAttribute('aria-label',title);const head=element('div','details-dialog-head');const name=element('strong','',text(title));const close=element('button','icon-button');close.append(iconSvg('close'));close.type='button';close.setAttribute('aria-label','Close details');close.title='Close details';close.addEventListener('click',()=>dialog.close());head.append(name,close);dialog.append(head);for(const [label,value] of sections){if(value===undefined||value===null||value==='')continue;dialog.append(element('h3','',text(label)));const content=element('pre');content.textContent=typeof value==='string'?value:JSON.stringify(value,null,2);dialog.append(content);}dialog.addEventListener('close',()=>dialog.remove());document.body.append(dialog);dialog.showModal();}function openJobDetails(){const job=selected();if(!job)return;showDetailsDialog('Job '+job.id+' · '+value(job.title),[['Objective',job.objective],['Description',job.description],['State',job.state],['Plans',job.plans?.map(p=>({id:p.id,status:p.status,assessment:p.assessment,error:p.error,generatedTaskIds:p.generatedTaskIds}))],['Review',job.review],['Outcome',job.result],['Publication',job.publication],['Failure',job.error]]);}function openTaskDetails(task){const result=task.result?.data??task.result;showDetailsDialog('Task '+task.id+' · '+value(task.title),[['Input / task objective',task.input],['State',task.state],['Conclusion',result],['Result summary',task.result?.summary],['Planner assessment',task.plannerResult?.assessment],['Resolution',task.resolution],['Resolution classification',task.resolutionClassification],['Failure',task.failureReason||task.error],['Dependencies',task.dependencies]]);}document.querySelector('#job-content-open').addEventListener('click',openJobDetails);function renderTaskDetail(task){taskDetailRoot.replaceChildren();if(!task){taskDetailRoot.append(element('p','empty',text('Select a task to inspect execution details.')));return;}const routing=task.routing||{};const groups=element('div','detail-groups');groups.append(field('Title',task.title||'—'),field('Task ID',task.id),field('Kind',task.kind||'work'),taskStateField(task),...(task.state==='FAILED'&&task.resolution?.state?[field('Resolution state',task.resolution.state),field('Resolution path',task.resolution.path||'—'),field('Resolution target',task.resolution.targetTaskId||'—')]:[]),manualOverrideField(task),field('Planning decision',task.planningDecisionId||'—'),field('Planning source',task.planningSource||'—'),field('Planning round',task.planningRound===undefined?'—':String(task.planningRound)),field('Project / agent',value(task.projectName)+' / '+value(task.agentName)),field('Parent task',task.parentTaskId||'root'),...(task.resolutionClassification?[field('Resolution classification',task.resolutionClassification.kind),field('Resolution target',task.resolutionClassification.targetTaskId),field('Resolution evidence',task.resolutionClassification.evidence),field('Resolution reason',task.resolutionClassification.reason)]:[]),field('Adapter',task.adapter),field('Provider / model',value(routing.provider)+' / '+value(routing.model)),field('Reasoning / profile',value(routing.reasoning||routing.profile)),field('Attempt',attemptBudget(task)),field('Dependencies',Array.isArray(task.dependencies)&&task.dependencies.length?task.dependencies.join(', '):'none'),taskCommentField(task),chatField(task));const job=selected();if(task.reviewHeadSha&&job)groups.append(commitField('HEAD commit',job,task.reviewHeadSha));const graph=agentGraphField(task);if(graph)groups.append(graph);if(task.plannerResult)groups.append(field('Objective status',task.plannerResult.objective_status),markdownField('Assessment',task.plannerResult.assessment));if(task.error)groups.append(field('Error',task.error));const result=task.result?.data??task.result;if(result){groups.append(field('Conclusion',result.verdict||result.outcome?.verdict||task.result?.summary||'Available'));}taskDetailRoot.append(groups);const details=element('button','icon-button');details.append(iconSvg('detail'));details.type='button';details.setAttribute('aria-label','Task details and conclusion');details.title='Task details and conclusion';details.addEventListener('click',()=>openTaskDetails(task));taskDetailRoot.append(details);}
+function detailContentText(input){
+  if(input===undefined||input===null||input==='')return '';
+  if(typeof input==='string')return input;
+  return JSON.stringify(input,null,2);
+}
+function detailContentSection(label,content,emptyMessage){
+  const section=element('section','dialog-content-section');
+  section.append(element('h3','',text(label)));
+  const body=element('div','dialog-content-body');
+  const rendered=detailContentText(content);
+  if(rendered.trim())body.append(element('pre','dialog-content-text',text(rendered)));
+  else body.append(element('p','dialog-empty',text(emptyMessage||'Not recorded')));
+  section.append(body);
+  return section;
+}
+function detailCommentsSection(comments){
+  const section=element('section','dialog-content-section dialog-comments');
+  section.append(element('h3','',text('Comments')));
+  const body=element('div','dialog-content-body');
+  const all=comments.slice().sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
+  if(!all.length)body.append(element('p','dialog-empty',text('No comments recorded')));
+  else{
+    const visible=all.slice(0,50);
+    if(all.length>visible.length)body.append(element('p','dialog-empty',text('Showing the latest '+visible.length+' of '+all.length+' comments')));
+    const list=element('ol','dialog-comment-list');
+    for(const comment of visible){
+      const item=element('li','dialog-comment');
+      const meta=element('div','dialog-comment-meta');
+      meta.append(element('strong','',text(comment.author||'Unknown')));
+      if(comment.taskId)meta.append(element('span','',text('Task '+comment.taskId)));
+      if(comment.createdAt){const when=element('time','',text(comment.createdAt));when.dateTime=comment.createdAt;meta.append(when);}
+      item.append(meta,element('p','dialog-comment-text',text(comment.text||'—')));
+      list.append(item);
+    }
+    body.append(list);
+  }
+  section.append(body);
+  return section;
+}
+function showDetailsDialog(kind,id,title,state,sections,comments,metadata){
+  const dialog=element('dialog','details-dialog');
+  const headingId='details-dialog-heading';
+  dialog.setAttribute('aria-labelledby',headingId);
+  const head=element('div','details-dialog-head');
+  const heading=element('div','dialog-heading');
+  const eyebrow=element('div','dialog-eyebrow');
+  eyebrow.append(element('span','',text(kind+' '+id)),element('span','badge '+value(state),text(state||'UNKNOWN')));
+  const name=element('h2','',text(title||kind+' '+id));
+  name.id=headingId;
+  heading.append(eyebrow,name);
+  const close=element('button','icon-button');
+  close.append(iconSvg('close'));
+  close.type='button';
+  close.setAttribute('aria-label','Close details');
+  close.title='Close details';
+  close.addEventListener('click',()=>dialog.close());
+  head.append(heading,close);
+  const body=element('div','details-dialog-body');
+  for(const [label,content,emptyMessage] of sections)body.append(detailContentSection(label,content,emptyMessage));
+  body.append(detailCommentsSection(comments));
+  const extra=element('details','dialog-metadata');
+  extra.append(element('summary','',text('Execution & diagnostics')));
+  for(const [label,content] of metadata){
+    if(content===undefined||content===null||content==='')continue;
+    extra.append(detailContentSection(label,content));
+  }
+  body.append(extra);
+  dialog.append(head,body);
+  dialog.addEventListener('close',()=>dialog.remove());
+  document.body.append(dialog);
+  dialog.showModal();
+  close.focus();
+}
+function openJobDetails(){
+  const job=selected();
+  if(!job)return;
+  const comments=(job.tasks||[]).flatMap(task=>(task.comments||[]).map(comment=>({...comment,taskId:task.id})));
+  showDetailsDialog('Job',job.id,job.title,job.state,[
+    ['Objective',job.objective||job.title,'No Job objective recorded'],
+    ['Content',job.description,'No Job description recorded'],
+    ['Input',job.continuation?.input,'Job-level input not recorded; select a Task to see its input']
+  ],comments,[
+    ['Plans',job.plans?.map(p=>({id:p.id,status:p.status,assessment:p.assessment,error:p.error,generatedTaskIds:p.generatedTaskIds}))],
+    ['Review',job.review],['Outcome',job.result],['Publication',job.publication],['Failure',job.error]
+  ]);
+}
+function openTaskDetails(task){
+  const result=task.result?.data??task.result;
+  const summary=task.result?.summary;
+  const content=summary&&result?summary+'\n\n'+detailContentText(result):summary||result;
+  showDetailsDialog('Task',task.id,task.title,task.state,[
+    ['Objective',task.title,'No Task title recorded'],
+    ['Content',content,'No Task result recorded yet'],
+    ['Input',task.input,'No Task input recorded']
+  ],task.comments||[],[
+    ['Planner assessment',task.plannerResult?.assessment],['Resolution',task.resolution],
+    ['Resolution classification',task.resolutionClassification],
+    ['Failure',task.failureReason||task.error],['Dependencies',task.dependencies]
+  ]);
+}
+document.querySelector('#job-content-open').addEventListener('click',openJobDetails);function renderTaskDetail(task){taskDetailRoot.replaceChildren();if(!task){taskDetailRoot.append(element('p','empty',text('Select a task to inspect execution details.')));return;}const routing=task.routing||{};const groups=element('div','detail-groups');groups.append(field('Title',task.title||'—'),field('Task ID',task.id),field('Kind',task.kind||'work'),taskStateField(task),...(task.state==='FAILED'&&task.resolution?.state?[field('Resolution state',task.resolution.state),field('Resolution path',task.resolution.path||'—'),field('Resolution target',task.resolution.targetTaskId||'—')]:[]),manualOverrideField(task),field('Planning decision',task.planningDecisionId||'—'),field('Planning source',task.planningSource||'—'),field('Planning round',task.planningRound===undefined?'—':String(task.planningRound)),field('Project / agent',value(task.projectName)+' / '+value(task.agentName)),field('Parent task',task.parentTaskId||'root'),...(task.resolutionClassification?[field('Resolution classification',task.resolutionClassification.kind),field('Resolution target',task.resolutionClassification.targetTaskId),field('Resolution evidence',task.resolutionClassification.evidence),field('Resolution reason',task.resolutionClassification.reason)]:[]),field('Adapter',task.adapter),field('Provider / model',value(routing.provider)+' / '+value(routing.model)),field('Reasoning / profile',value(routing.reasoning||routing.profile)),field('Attempt',attemptBudget(task)),field('Dependencies',Array.isArray(task.dependencies)&&task.dependencies.length?task.dependencies.join(', '):'none'),taskCommentField(task),chatField(task));const job=selected();if(task.reviewHeadSha&&job)groups.append(commitField('HEAD commit',job,task.reviewHeadSha));const graph=agentGraphField(task);if(graph)groups.append(graph);if(task.plannerResult)groups.append(field('Objective status',task.plannerResult.objective_status),markdownField('Assessment',task.plannerResult.assessment));if(task.error)groups.append(field('Error',task.error));const result=task.result?.data??task.result;if(result){groups.append(field('Conclusion',result.verdict||result.outcome?.verdict||task.result?.summary||'Available'));}taskDetailRoot.append(groups);const details=element('button','icon-button');details.append(iconSvg('detail'));details.type='button';details.setAttribute('aria-label','Task details and conclusion');details.title='Task details and conclusion';details.addEventListener('click',()=>openTaskDetails(task));taskDetailRoot.append(details);}
 function reviewStatus(job){const review=job?.review;if(!review)return 'Not started';if(review.outcome==='approved'&&review.headSha===job.headSha)return 'MERGE READY · approved';const stale=Array.isArray(job?.tasks)&&job.tasks.some(task=>['reviewer','job-acceptance-reviewer'].includes(task.agentName)&&task.reviewHeadSha&&job.headSha&&task.reviewHeadSha!==job.headSha);if(stale)return 'STALE · awaiting review';return String(review.outcome||'pending').replace('_',' ').toUpperCase();}function renderSelectedJob(){jobDetail.replaceChildren();const job=selected();if(!job){selectedJobTitle.textContent='';jobContentButton.disabled=true;jobContentButton.dataset.state='IDLE';jobDetail.append(element('div','empty',text('No durable jobs discovered.')));buildTree([]);renderTaskDetail(null);return;}selectedJobTitle.textContent=value(job.title||job.id);jobContentButton.disabled=false;jobContentButton.dataset.state=JOB_STATES.includes(job.state)?job.state:'IDLE';jobContentButton.setAttribute('aria-label','Job details · '+value(job.state));jobContentButton.title='Job details · '+value(job.state);if(jobSelectionKey(job)!==selectedJob){selectedJob=jobSelectionKey(job);selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}const summary=element('div','job-summary');summary.append(field('PR state',Number(job.prNumber||0)===0?'Not applicable':job.githubState||'UNKNOWN'),jobStateField(job),field('Runtime status',job.runtimeStatus||'IDLE'),field('Review',job.reviewEnabled===false?'Not required':reviewStatus(job)),field('Creator thread',job.creatorThreadId||'—'),threadField('Implementation thread',job.implementationThreadId),threadField('Reviewer thread',job.reviewerThreadId),commitField('Review head SHA',job,job.review?.headSha||job.headSha||''),prField(job),field('Repository',job.repository||'—'),field('Project root',job.projectRoot||'—'),field('Last activity',relativeTime(job.updatedAt)),field('Task states',compactCounts(job.tasks)),jelField(job));jobDetail.append(summary);const selectedTask=(job.tasks||[]).find(task=>task.id===selectedTaskId)||null;if(selectedTaskId&&!selectedTask){selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}buildTree(job.tasks||[]);renderTaskDetail(selectedTask);renderEventScope();}function renderAll(){jobs.sort(compareJobs);syncFilters();renderJobList();renderSelectedJob();syncMobileJobsView();}
 function isCompleteUnmerged(job){return job.runtimeStatus==='MERGE_PENDING';}
 function compareJobs(a,b){const lifecycleGroup=job=>job.state==='COMPLETED'||job.state==='CANCELLED'?1:0;const timestamp=job=>{const updated=Date.parse(job.updatedAt||'');if(Number.isFinite(updated))return updated;const created=Date.parse(job.createdAt||'');return Number.isFinite(created)?created:0;};return lifecycleGroup(a)-lifecycleGroup(b)||timestamp(b)-timestamp(a)||String(a.repository||'').localeCompare(String(b.repository||''))||String(a.id||'').localeCompare(String(b.id||''));}

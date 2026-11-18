@@ -1496,3 +1496,25 @@ test('CLI foreground reconciler forwards configured shared root to Shortcut Work
  try{assert.equal(reconciler.options.executionContextRoots.sharedRoot,'/tmp/shared-visioner');assert.equal(reconciler.options.executionContextRoots.globalRoot,'/tmp/global-agents');}
  finally{await reconciler.close();}
 });
+
+test('Job and Task dialogs prioritize durable content and append-only comments', () => {
+  const source = dashboardHtml;
+  const start = source.indexOf('function detailContentText(');
+  const end = source.indexOf("document.querySelector('#job-content-open').addEventListener", start);
+  assert.ok(start >= 0 && end > start, 'content-first detail dialog implementation exists');
+  const details = source.slice(start, end);
+  assert.match(details, /\['Objective',job\.objective\|\|job\.title/);
+  assert.match(details, /\['Content',job\.description/);
+  assert.match(details, /\['Input',job\.continuation\?\.input/);
+  assert.match(details, /\['Objective',task\.title/);
+  assert.match(details, /\['Input',task\.input/);
+  assert.match(details, /task\.comments\|\|\[\]/);
+  assert.match(details, /job\.tasks\|\|\[\]\)\.flatMap/);
+  assert.match(details, /comments\.slice\(\)\.sort/);
+  assert.match(details, /detailCommentsSection\(comments\)/);
+  assert.match(details, /element\('details','dialog-metadata'\)/);
+  assert.match(details, /dialog\.showModal\(\)/);
+  assert.doesNotMatch(details, /innerHTML\s*=/, 'user-supplied comments use text nodes');
+  assert.ok(source.indexOf('body.append(detailCommentsSection(comments))', start) < source.indexOf("element('details','dialog-metadata')", start), 'comments appear before diagnostics');
+  for (const selector of ['.details-dialog-body', '.dialog-content-text', '.dialog-comment-list']) assert.ok(source.includes(selector), 'dialog styles include '+selector);
+});
