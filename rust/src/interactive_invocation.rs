@@ -259,3 +259,19 @@ impl HostInteractiveInvocationCoordinator {
     }
     pub fn close(&mut self){self.waiters.clear();}
 }
+
+/// Public Node hostInvocationPorts explicitly binds durable SQLite methods;
+/// the effect executor must never infer acceptance from an event receipt.
+pub use crate::interactive_invocation_ports::{host_invocation_ports,HostInvocationPorts};
+impl HostInteractiveInvocationCoordinator {
+    pub fn apply_event<Accepted,Emit>(
+        &mut self,ports:&mut HostInvocationPorts<'_>,graph_dir:&Path,
+        event:&Value,on_accepted:Accepted,emit:Emit,
+    )->Result<Value,String>
+    where Accepted:FnMut(&Value,&Value)->Result<(),String>,
+          Emit:FnMut(&Value)->Result<(),String>,
+    {
+        crate::interactive_invocation_ports::apply_host_event(
+            self,ports,graph_dir,event,on_accepted,emit)
+    }
+}

@@ -324,6 +324,7 @@ pub mod cli_prompt;
 pub mod dag_task_runtime;
 pub mod troubleshooter;
 pub mod interactive_invocation;
+pub mod interactive_invocation_ports;
 pub mod execution_context;
 pub mod cli_support;
 pub mod cli_support_events;

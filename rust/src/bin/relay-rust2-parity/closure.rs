@@ -6,6 +6,36 @@ use serde_json::{json,Value};
 pub(super) fn invoke(request:&Value)->Result<Option<String>,String>{
     let op=request["op"].as_str().unwrap_or("");
     let result:Result<String,String>=match op{
+        // Direct Node HostInteractiveInvocationCoordinator + hostInvocationPorts
+        // through real temporary SQLite and the canonical interactive Graph.
+        "hostInvocationPortsScenario"=>{
+            use agents_relay_rust2::{
+                relay_store::SQLiteRelayStore,
+                interactive_invocation::HostInteractiveInvocationCoordinator,
+                interactive_invocation_ports::host_invocation_ports,
+            };
+            let mut store=SQLiteRelayStore::open(std::path::Path::new(":memory:"),None)?;
+            store.save_job(&request["job"])?;
+            let mut coordinator=HostInteractiveInvocationCoordinator::default();
+            let graph=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+            let mut decisions=Vec::new();
+            let mut callback_count=0usize;
+            let mut events=Vec::new();
+            let mut ports=host_invocation_ports(&mut store);
+            for event in request["events"].as_array().ok_or("events required")? {
+                let outcome=coordinator.apply_event(&mut ports,&graph,event,
+                    |_,_|{callback_count+=1;Ok(())},
+                    |accepted|{events.push(accepted.clone());Ok(())});
+                decisions.push(match outcome{
+                    Ok(value)=>json!({"ok":true,"value":value}),
+                    Err(error)=>json!({"ok":false,"error":error}),
+                });
+            }
+            let job=ports.load_job(request["job"]["id"].as_str().unwrap_or(""))?
+                .ok_or("snapshot disappeared")?;
+            Ok(json!({"decisions":decisions,"callbacks":callback_count,
+                "events":events,"task":job["tasks"][0]}).to_string())
+        }
         // Public PlannerTaskSpec and CommandObjectivePlanner effects.
         // Runner is injected and never invokes a real Codex executable.
         "plannerPublicPorts"=>{
