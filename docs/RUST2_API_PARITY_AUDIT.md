@@ -16,15 +16,15 @@ A listed direct differential import only means a head-to-head test imports the c
 |---|---:|
 | sourceCount | 107 |
 | runtimeExportSymbols | 734 |
-| directNameMatches | 549 |
-| unmappedRuntimeSymbols | 168 |
+| directNameMatches | 595 |
+| unmappedRuntimeSymbols | 122 |
 | runtimeConstructorReviews | 17 |
-| typeOrShapeReviewSymbols | 288 |
+| typeOrShapeReviewSymbols | 286 |
 | filesWithUnmappedRuntime | 46 |
-| filesWithoutDirectDiffImport | 76 |
-| filesWithoutOtherRustReferences | 45 |
+| filesWithoutDirectDiffImport | 70 |
+| filesWithoutOtherRustReferences | 41 |
 
-Source tree: `a7fabd653a00`; Rust source tree: `76129c775bd1`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `a7fabd653a00`; Rust source tree: `d52314421a01`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Per-file candidate surface (all 107 PORTING files)
 
@@ -44,10 +44,10 @@ Source tree: `a7fabd653a00`; Rust source tree: `76129c775bd1`. Rust module rows 
 | `src/cli-job-create.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/cli-prompt.ts` | 5 | 5 | 0 | 0 | 0 |
 | `src/cli-review.ts` | 3 | 1 | 2 | 0 | 0 |
-| `src/cli-support.ts` | 38 | 13 | 24 | 0 | 1 |
+| `src/cli-support.ts` | 38 | 30 | 7 | 3 | 2 |
 | `src/cli-unblock.ts` | 2 | 0 | 2 | 0 | 0 |
 | `src/cli-worker-task.ts` | 3 | 3 | 0 | 0 | 1 |
-| `src/cli.ts` | 6 | 1 | 5 | 0 | 0 |
+| `src/cli.ts` | 6 | 1 | 5 | 0 | 1 |
 | `src/continuation.ts` | 7 | 0 | 6 | 1 | 11 |
 | `src/dag-result-contract.ts` | 1 | 1 | 0 | 1 | 3 |
 | `src/dag-task-runtime.ts` | 5 | 5 | 0 | 0 | 2 |
@@ -58,7 +58,7 @@ Source tree: `a7fabd653a00`; Rust source tree: `76129c775bd1`. Rust module rows 
 | `src/decision.ts` | 11 | 11 | 0 | 2 | 1 |
 | `src/dependency-revision-execution.ts` | 3 | 2 | 1 | 0 | 1 |
 | `src/escalation-notifier.ts` | 2 | 2 | 0 | 0 | 0 |
-| `src/events.ts` | 13 | 13 | 0 | 1 | 25 |
+| `src/events.ts` | 13 | 13 | 0 | 3 | 27 |
 | `src/execution-context.ts` | 6 | 6 | 0 | 1 | 0 |
 | `src/execution-process-tracker.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/execution-recovery.ts` | 2 | 2 | 0 | 0 | 0 |
@@ -75,7 +75,7 @@ Source tree: `a7fabd653a00`; Rust source tree: `76129c775bd1`. Rust module rows 
 | `src/job-pause.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/job-worktree-cleanup.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/legacy-orchestrator-repair.ts` | 1 | 1 | 0 | 0 | 0 |
-| `src/local-authority-store.ts` | 33 | 19 | 14 | 0 | 0 |
+| `src/local-authority-store.ts` | 33 | 31 | 2 | 1 | 1 |
 | `src/local-git-merge.ts` | 6 | 6 | 0 | 1 | 4 |
 | `src/local-job-registry.ts` | 2 | 1 | 1 | 0 | 1 |
 | `src/local-managed-store.ts` | 1 | 0 | 1 | 0 | 0 |
@@ -91,7 +91,7 @@ Source tree: `a7fabd653a00`; Rust source tree: `76129c775bd1`. Rust module rows 
 | `src/planner-runtime.ts` | 7 | 0 | 6 | 0 | 0 |
 | `src/planner.ts` | 22 | 14 | 6 | 0 | 3 |
 | `src/pool.ts` | 15 | 9 | 6 | 1 | 2 |
-| `src/projected-store.ts` | 34 | 18 | 16 | 0 | 0 |
+| `src/projected-store.ts` | 34 | 31 | 3 | 1 | 1 |
 | `src/projection-outbox.ts` | 25 | 25 | 0 | 2 | 1 |
 | `src/reconcile-coordinator.ts` | 7 | 7 | 0 | 2 | 1 |
 | `src/reconciler-context.ts` | 3 | 2 | 1 | 0 | 0 |
@@ -99,7 +99,7 @@ Source tree: `a7fabd653a00`; Rust source tree: `76129c775bd1`. Rust module rows 
 | `src/reconciler-runtime.ts` | 10 | 4 | 6 | 0 | 1 |
 | `src/reconciler.ts` | 8 | 4 | 4 | 0 | 1 |
 | `src/relay-store-discovery.ts` | 3 | 3 | 0 | 0 | 4 |
-| `src/relay-store.ts` | 46 | 43 | 2 | 0 | 3 |
+| `src/relay-store.ts` | 46 | 44 | 1 | 1 | 4 |
 | `src/relayd-control.ts` | 1 | 0 | 1 | 0 | 0 |
 | `src/relayd-dashboard-actions.ts` | 1 | 0 | 1 | 0 | 0 |
 | `src/relayd-main.ts` | 0 | 0 | 0 | 0 | 0 |
@@ -117,7 +117,7 @@ Source tree: `a7fabd653a00`; Rust source tree: `76129c775bd1`. Rust module rows 
 | `src/service-external-actions.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/single-job-task-control.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/store-github.ts` | 21 | 19 | 2 | 0 | 0 |
-| `src/store.ts` | 22 | 15 | 7 | 0 | 1 |
+| `src/store.ts` | 22 | 15 | 7 | 1 | 1 |
 | `src/task-actions.ts` | 18 | 14 | 4 | 0 | 5 |
 | `src/task-inactivity-watchdog.ts` | 6 | 4 | 2 | 3 | 2 |
 | `src/task-recovery.ts` | 4 | 4 | 0 | 0 | 1 |
@@ -127,7 +127,7 @@ Source tree: `a7fabd653a00`; Rust source tree: `76129c775bd1`. Rust module rows 
 | `src/troubleshooter.ts` | 6 | 6 | 0 | 0 | 2 |
 | `src/types.ts` | 7 | 7 | 0 | 1 | 4 |
 | `src/unblock.ts` | 4 | 3 | 1 | 0 | 2 |
-| `src/usage.ts` | 26 | 0 | 18 | 0 | 0 |
+| `src/usage.ts` | 26 | 3 | 15 | 1 | 1 |
 | `src/worker-failure-recovery.ts` | 1 | 0 | 1 | 0 | 0 |
 | `src/worker-routing.ts` | 8 | 7 | 1 | 0 | 3 |
 | `src/workflow-effect-failures.ts` | 2 | 2 | 0 | 0 | 0 |
@@ -140,10 +140,8 @@ Source tree: `a7fabd653a00`; Rust source tree: `76129c775bd1`. Rust module rows 
 
 ## Priority review: unmapped exported runtime symbols
 
-- **src/cli-support.ts** (24): SERVICE_DEFAULTS, ServiceEventBus, ServiceEventBus.publish, ServiceEventBus.subscribe, ServiceEventBus.subscribeAll, ServiceEventBus.close, arg, hasArg, textOption, storeFor, eventBus, withEventBus, publishWake, publishTaskUnblocked, publishTaskBlocked, publishDependentUnblocked, requestManagedReconciliation, priority, storySize, chatGptTabClosePolicy, jobTagFromArgs, continuation, rejectRemovedJobOptions, rejectRemoteLifecycleOptions
-- **src/usage.ts** (18): BrowserWorkspaceUsageReader, BrowserWorkspaceUsageReader.read, CodexApiUsageReader, CodexApiUsageReader.read, CodexSessionUsageReader, CodexSessionUsageReader.read, ZaiUsageReader, ZaiUsageReader.read, DeepSeekCreditReader, DeepSeekCreditReader.read, OpenRouterCreditReader, OpenRouterCreditReader.read, UsageRegistry, UsageRegistry.snapshot, readUsageSnapshot, UnavailableUsageReader, UnavailableUsageReader.read, codexAndZaiUsageRegistry
-- **src/projected-store.ts** (16): ProjectedDurableStore.recordExecutionProcess, ProjectedDurableStore.loadExecutionProcess, ProjectedDurableStore.finishExecutionProcess, ProjectedDurableStore.mutateJob, ProjectedDurableStore.markEventProcessed, ProjectedDurableStore.recordHostInvocationEvent, ProjectedDurableStore.hasHostInvocationDecision, ProjectedDurableStore.recordHostInvocationDecision, ProjectedDurableStore.listAgents, ProjectedDurableStore.saveAgent, ProjectedDurableStore.comments, ProjectedDurableStore.applyPullRequestFacts, ProjectedDurableStore.pullRequestState, ProjectedDurableStore.pullRequestHead, ProjectedDurableStore.registerBlockerDependent, ProjectedDurableStore.resolveBlockerDependents
-- **src/local-authority-store.ts** (14): LocalAuthorityDurableStore.reserveWorkflowLaunch, LocalAuthorityDurableStore.verifyWorkflowLaunch, LocalAuthorityDurableStore.commitWorkflowMutationAndEvents, LocalAuthorityDurableStore.commitWorkflowMutationWithEvents, LocalAuthorityDurableStore.drainWorkflowEvents, LocalAuthorityDurableStore.recordHostInvocationEvent, LocalAuthorityDurableStore.hasHostInvocationDecision, LocalAuthorityDurableStore.recordExecutionProcess, LocalAuthorityDurableStore.loadExecutionProcess, LocalAuthorityDurableStore.finishExecutionProcess, LocalAuthorityDurableStore.applyPullRequestFacts, LocalAuthorityDurableStore.registerBlockerDependent, LocalAuthorityDurableStore.resolveBlockerDependents, LocalAuthorityDurableStore.listAgents
+- **src/usage.ts** (15): BrowserWorkspaceUsageReader, BrowserWorkspaceUsageReader.read, CodexApiUsageReader, CodexApiUsageReader.read, CodexSessionUsageReader, CodexSessionUsageReader.read, ZaiUsageReader, ZaiUsageReader.read, DeepSeekCreditReader, DeepSeekCreditReader.read, OpenRouterCreditReader, OpenRouterCreditReader.read, UsageRegistry.snapshot, UnavailableUsageReader.read, codexAndZaiUsageRegistry
+- **src/cli-support.ts** (7): ServiceEventBus.publish, ServiceEventBus.subscribe, ServiceEventBus.subscribeAll, ServiceEventBus.close, storeFor, eventBus, withEventBus
 - **src/store.ts** (7): loadManagedGitHubPullRequestGraphql, loadManagedGitHubJobGraphql, InMemoryStore.closePullRequest, InMemoryStore.updatePullRequestBody, withGitHubRequestContext, resolvePullRequest, listManagedGitHubJobs
 - **src/continuation.ts** (6): CodexThreadContinuation, CodexThreadContinuation.continue, CommandContinuation, CommandContinuation.continue, WebhookContinuation, WebhookContinuation.continue
 - **src/planner-runtime.ts** (6): PlannerApplyValidationError, activateCommittedPlannerWork, drainPlannerUnblocks, retryPendingPlannerUnblocks, finishPlanner, launchPlanExecution
@@ -154,12 +152,13 @@ Source tree: `a7fabd653a00`; Rust source tree: `76129c775bd1`. Rust module rows 
 - **src/reconciler.ts** (4): Reconciler.reconcile, Reconciler.recoverLostExecutions, Reconciler.planJob, Reconciler.applyPlannerTree
 - **src/task-actions.ts** (4): classifyFailedTask, applyTaskUnblockRetrySnapshot, supersedeCancelledTask, dispatchTaskAction
 - **src/adapters.ts** (3): LaunchFailure, StartAckTimeout, ensureChatGptWebHelmReady
+- **src/projected-store.ts** (3): ProjectedDurableStore.comments, ProjectedDurableStore.registerBlockerDependent, ProjectedDurableStore.resolveBlockerDependents
 - **src/cli-escalation.ts** (2): runConfiguredEscalation, runEscalationCommand
 - **src/cli-review.ts** (2): runInteractiveReviewCommand, runReviewCommand
 - **src/cli-unblock.ts** (2): runTaskUnblockCommand, runJobUnblockCommand
 - **src/interactive-invocation.ts** (2): hostInvocationPorts, HostInteractiveInvocationCoordinator.applyEvent
+- **src/local-authority-store.ts** (2): LocalAuthorityDurableStore.registerBlockerDependent, LocalAuthorityDurableStore.resolveBlockerDependents
 - **src/outcome-review.ts** (2): evaluateOutcome, runOutcomeReview
-- **src/relay-store.ts** (2): SQLiteRelayStore.saveAgentWithProjection, SQLiteRelayStore.close
 - **src/relayd-utilities.ts** (2): configureDaemonObservability, configureExecutionRouterRulesPath
 - **src/script-task-adapter.ts** (2): ScriptTaskAdapter, ScriptTaskAdapter.launch
 - **src/store-github.ts** (2): GitHubStore.registerBlockerDependent, GitHubStore.resolveBlockerDependents
@@ -179,6 +178,7 @@ Source tree: `a7fabd653a00`; Rust source tree: `76129c775bd1`. Rust module rows 
 - **src/owned-process.ts** (1): ownedProcessTerminationReason
 - **src/reconciler-context.ts** (1): resolvePlannerContext
 - **src/reconciler-review.ts** (1): ReconcilerReviewBase
+- **src/relay-store.ts** (1): SQLiteRelayStore.close
 - **src/relayd-control.ts** (1): createWorkspaceControl
 - **src/relayd-dashboard-actions.ts** (1): createDashboardActions
 - **src/unblock.ts** (1): unblockTask

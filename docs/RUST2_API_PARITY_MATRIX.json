@@ -2,16 +2,16 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity.",
   "summary": {
     "sourceTree": "a7fabd653a006bcd33b84d3eb7ac4c28b085f9dd",
-    "rustTree": "76129c775bd1154ce864ad3405f473f6c846ccde",
+    "rustTree": "d52314421a01e8a490b4401a697034225bd85626",
     "sourceCount": 107,
     "runtimeExportSymbols": 734,
-    "directNameMatches": 549,
-    "unmappedRuntimeSymbols": 168,
+    "directNameMatches": 595,
+    "unmappedRuntimeSymbols": 122,
     "runtimeConstructorReviews": 17,
-    "typeOrShapeReviewSymbols": 288,
+    "typeOrShapeReviewSymbols": 286,
     "filesWithUnmappedRuntime": 46,
-    "filesWithoutDirectDiffImport": 76,
-    "filesWithoutOtherRustReferences": 45
+    "filesWithoutDirectDiffImport": 70,
+    "filesWithoutOtherRustReferences": 41
   },
   "files": [
     {
@@ -726,51 +726,39 @@
       "target": "rust/src/cli_support.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 38,
-      "directNameMatches": 13,
+      "directNameMatches": 30,
       "unmappedRuntime": [
-        "SERVICE_DEFAULTS",
-        "ServiceEventBus",
         "ServiceEventBus.publish",
         "ServiceEventBus.subscribe",
         "ServiceEventBus.subscribeAll",
         "ServiceEventBus.close",
-        "arg",
-        "hasArg",
-        "textOption",
         "storeFor",
         "eventBus",
-        "withEventBus",
-        "publishWake",
-        "publishTaskUnblocked",
-        "publishTaskBlocked",
-        "publishDependentUnblocked",
-        "requestManagedReconciliation",
-        "priority",
-        "storySize",
-        "chatGptTabClosePolicy",
-        "jobTagFromArgs",
-        "continuation",
-        "rejectRemovedJobOptions",
-        "rejectRemoteLifecycleOptions"
+        "withEventBus"
       ],
       "typeOrShapeReview": [
         "ServiceEventBus.constructor",
         "EventBusResolution"
       ],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_cli_support_closure.mjs",
+        "rust/tests/head_to_head_cli_support_publish_closure.mjs",
+        "rust/tests/head_to_head_service_event_bus_closure.mjs"
+      ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
         "rust/src/cli.rs"
       ],
       "exports": [
         {
           "name": "SERVICE_DEFAULTS",
           "kind": "variable",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "ServiceEventBus",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "constructor",
@@ -805,17 +793,17 @@
         {
           "name": "arg",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "hasArg",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "textOption",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "integerArg",
@@ -905,62 +893,62 @@
         {
           "name": "publishWake",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "publishTaskUnblocked",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "publishTaskBlocked",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "publishDependentUnblocked",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "requestManagedReconciliation",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "priority",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "storySize",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "chatGptTabClosePolicy",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "jobTagFromArgs",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "continuation",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "rejectRemovedJobOptions",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "rejectRemoteLifecycleOptions",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -1046,7 +1034,9 @@
         "Service"
       ],
       "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs"
+      ],
       "exports": [
         {
           "name": "dashboardJobSetState",
@@ -1844,12 +1834,16 @@
         "EventBus"
       ],
       "directDiffImports": [
+        "rust/tests/head_to_head_cli_support_publish_closure.mjs",
+        "rust/tests/head_to_head_service_event_bus_closure.mjs",
         "rust/tests/head_to_head_worker_c.mjs"
       ],
       "otherRustModuleReferences": [
         "rust/src/adapters.rs",
+        "rust/src/bin/relay-rust2-parity/closure.rs",
         "rust/src/chatgpt_platform_fallback.rs",
         "rust/src/cli.rs",
+        "rust/src/cli_support_events.rs",
         "rust/src/decision_audit.rs",
         "rust/src/feedback.rs",
         "rust/src/github_client.rs",
@@ -2924,28 +2918,20 @@
       "target": "rust/src/local_authority_store.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 33,
-      "directNameMatches": 19,
+      "directNameMatches": 31,
       "unmappedRuntime": [
-        "LocalAuthorityDurableStore.reserveWorkflowLaunch",
-        "LocalAuthorityDurableStore.verifyWorkflowLaunch",
-        "LocalAuthorityDurableStore.commitWorkflowMutationAndEvents",
-        "LocalAuthorityDurableStore.commitWorkflowMutationWithEvents",
-        "LocalAuthorityDurableStore.drainWorkflowEvents",
-        "LocalAuthorityDurableStore.recordHostInvocationEvent",
-        "LocalAuthorityDurableStore.hasHostInvocationDecision",
-        "LocalAuthorityDurableStore.recordExecutionProcess",
-        "LocalAuthorityDurableStore.loadExecutionProcess",
-        "LocalAuthorityDurableStore.finishExecutionProcess",
-        "LocalAuthorityDurableStore.applyPullRequestFacts",
         "LocalAuthorityDurableStore.registerBlockerDependent",
-        "LocalAuthorityDurableStore.resolveBlockerDependents",
-        "LocalAuthorityDurableStore.listAgents"
+        "LocalAuthorityDurableStore.resolveBlockerDependents"
       ],
       "typeOrShapeReview": [
         "LocalAuthorityDurableStore.projection"
       ],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_store_facade_closure.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs"
+      ],
       "exports": [
         {
           "name": "LocalAuthorityDurableStore",
@@ -2968,31 +2954,31 @@
           "name": "reserveWorkflowLaunch",
           "kind": "class-method",
           "parent": "LocalAuthorityDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "verifyWorkflowLaunch",
           "kind": "class-method",
           "parent": "LocalAuthorityDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "commitWorkflowMutationAndEvents",
           "kind": "class-method",
           "parent": "LocalAuthorityDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "commitWorkflowMutationWithEvents",
           "kind": "class-method",
           "parent": "LocalAuthorityDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "drainWorkflowEvents",
           "kind": "class-method",
           "parent": "LocalAuthorityDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "mergePullRequest",
@@ -3010,13 +2996,13 @@
           "name": "recordHostInvocationEvent",
           "kind": "class-method",
           "parent": "LocalAuthorityDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "hasHostInvocationDecision",
           "kind": "class-method",
           "parent": "LocalAuthorityDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "recordHostInvocationDecision",
@@ -3028,25 +3014,25 @@
           "name": "recordExecutionProcess",
           "kind": "class-method",
           "parent": "LocalAuthorityDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "loadExecutionProcess",
           "kind": "class-method",
           "parent": "LocalAuthorityDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "finishExecutionProcess",
           "kind": "class-method",
           "parent": "LocalAuthorityDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "applyPullRequestFacts",
           "kind": "class-method",
           "parent": "LocalAuthorityDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "headSha",
@@ -3142,7 +3128,7 @@
           "name": "listAgents",
           "kind": "class-method",
           "parent": "LocalAuthorityDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "saveAgent",
@@ -3982,22 +3968,9 @@
       "target": "rust/src/projected_store.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 34,
-      "directNameMatches": 18,
+      "directNameMatches": 31,
       "unmappedRuntime": [
-        "ProjectedDurableStore.recordExecutionProcess",
-        "ProjectedDurableStore.loadExecutionProcess",
-        "ProjectedDurableStore.finishExecutionProcess",
-        "ProjectedDurableStore.mutateJob",
-        "ProjectedDurableStore.markEventProcessed",
-        "ProjectedDurableStore.recordHostInvocationEvent",
-        "ProjectedDurableStore.hasHostInvocationDecision",
-        "ProjectedDurableStore.recordHostInvocationDecision",
-        "ProjectedDurableStore.listAgents",
-        "ProjectedDurableStore.saveAgent",
         "ProjectedDurableStore.comments",
-        "ProjectedDurableStore.applyPullRequestFacts",
-        "ProjectedDurableStore.pullRequestState",
-        "ProjectedDurableStore.pullRequestHead",
         "ProjectedDurableStore.registerBlockerDependent",
         "ProjectedDurableStore.resolveBlockerDependents"
       ],
@@ -4006,8 +3979,12 @@
         "ProjectionConflictObserver",
         "ProjectedDurableStore.projection"
       ],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_store_facade_closure.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs"
+      ],
       "exports": [
         {
           "name": "githubProjectionRetryAt",
@@ -4067,49 +4044,49 @@
           "name": "recordExecutionProcess",
           "kind": "class-method",
           "parent": "ProjectedDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "loadExecutionProcess",
           "kind": "class-method",
           "parent": "ProjectedDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "finishExecutionProcess",
           "kind": "class-method",
           "parent": "ProjectedDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "mutateJob",
           "kind": "class-method",
           "parent": "ProjectedDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "markEventProcessed",
           "kind": "class-method",
           "parent": "ProjectedDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "recordHostInvocationEvent",
           "kind": "class-method",
           "parent": "ProjectedDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "hasHostInvocationDecision",
           "kind": "class-method",
           "parent": "ProjectedDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "recordHostInvocationDecision",
           "kind": "class-method",
           "parent": "ProjectedDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "hydrate",
@@ -4157,13 +4134,13 @@
           "name": "listAgents",
           "kind": "class-method",
           "parent": "ProjectedDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "saveAgent",
           "kind": "class-method",
           "parent": "ProjectedDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "comments",
@@ -4175,19 +4152,19 @@
           "name": "applyPullRequestFacts",
           "kind": "class-method",
           "parent": "ProjectedDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "pullRequestState",
           "kind": "class-method",
           "parent": "ProjectedDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "pullRequestHead",
           "kind": "class-method",
           "parent": "ProjectedDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "headSha",
@@ -4803,9 +4780,8 @@
       "target": "rust/src/relay_store.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 46,
-      "directNameMatches": 43,
+      "directNameMatches": 44,
       "unmappedRuntime": [
-        "SQLiteRelayStore.saveAgentWithProjection",
         "SQLiteRelayStore.close"
       ],
       "typeOrShapeReview": [
@@ -4827,8 +4803,11 @@
         "discoverLocalRelayStoreSnapshots",
         "LocalRelayStoreSnapshot"
       ],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_store_facade_closure.mjs"
+      ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
         "rust/src/local_authority_store.rs",
         "rust/src/projected_store.rs",
         "rust/src/relayd.rs"
@@ -5012,7 +4991,7 @@
           "name": "saveAgentWithProjection",
           "kind": "class-method",
           "parent": "SQLiteRelayStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "loadPullRequestFacts",
@@ -6005,7 +5984,9 @@
         "GitHubAppAuthOptions",
         "GitHubStore"
       ],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_store_facade_closure.mjs"
+      ],
       "otherRustModuleReferences": [
         "rust/src/relayd.rs"
       ],
@@ -7079,7 +7060,7 @@
       "target": "rust/src/usage.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 26,
-      "directNameMatches": 0,
+      "directNameMatches": 3,
       "unmappedRuntime": [
         "BrowserWorkspaceUsageReader",
         "BrowserWorkspaceUsageReader.read",
@@ -7093,10 +7074,7 @@
         "DeepSeekCreditReader.read",
         "OpenRouterCreditReader",
         "OpenRouterCreditReader.read",
-        "UsageRegistry",
         "UsageRegistry.snapshot",
-        "readUsageSnapshot",
-        "UnavailableUsageReader",
         "UnavailableUsageReader.read",
         "codexAndZaiUsageRegistry"
       ],
@@ -7109,8 +7087,6 @@
         "CreditProvider",
         "AccountUsageOverview",
         "UsageSnapshot",
-        "UsageSnapshotProvider",
-        "UsageReader",
         "CreditReader",
         "BrowserWorkspaceCapacityReader",
         "BrowserWorkspaceUsageReader.constructor",
@@ -7122,8 +7098,12 @@
         "UsageRegistry.constructor",
         "UnavailableUsageReader.constructor"
       ],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_usage_registry_closure.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs"
+      ],
       "exports": [
         {
           "name": "AccountUsageWindow",
@@ -7168,12 +7148,12 @@
         {
           "name": "UsageSnapshotProvider",
           "kind": "interface",
-          "static": "review"
+          "static": "name-match"
         },
         {
           "name": "UsageReader",
           "kind": "interface",
-          "static": "review"
+          "static": "name-match"
         },
         {
           "name": "CreditReader",
@@ -7290,7 +7270,7 @@
         {
           "name": "UsageRegistry",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "constructor",
@@ -7307,12 +7287,12 @@
         {
           "name": "readUsageSnapshot",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "UnavailableUsageReader",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "constructor",
