@@ -388,3 +388,6 @@ pub fn list_managed_github_jobs<C:crate::store_github::GitHubApi>(
         .and_then(Value::as_i64).unwrap_or(0)));
     Ok(result)
 }
+
+// Public Store facade uses the dedicated PR effect module.
+pub use crate::store_pull_request::resolve_pull_request;
