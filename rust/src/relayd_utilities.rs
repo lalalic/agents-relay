@@ -164,3 +164,41 @@ where
     }
     Ok(result)
 }
+
+/// Node configureDaemonObservability: select and install the process-wide
+/// structured observer from trusted daemon environment, not Task content.
+pub fn configure_daemon_observability(env:&Value)->crate::observability::RelayObservability {
+    let configured=crate::observability::RelayObservability::from_environment(env);
+    crate::observability::set_observability(configured.clone());
+    configured
+}
+
+/// Mechanical daemon CLI router file configuration. Returns the same selected
+/// path as src/relayd-utilities.ts and keeps the explicit option in the
+/// inherited process environment for all subsequent providers.
+pub fn configure_execution_router_rules_path(argv:&[String])->String {
+    let mut config=env::vars().collect::<HashMap<_,_>>();
+    let home=env::var("HOME").map(PathBuf::from)
+        .unwrap_or_else(|_|PathBuf::from("/"));
+    let selected=configure_execution_router_rules_path_with_env(argv,&mut config,&home);
+    if !value(argv,"--execution-router-rules","").is_empty(){
+        // The option is trusted operator-controlled CLI input.
+        env::set_var("AGENTS_RELAY_EXECUTION_ROUTER_RULES",&selected);
+    }
+    selected
+}
+
+/// Injectable environment used only to verify daemon CLI selection without
+/// mutating the test runner's environment or touching a real rules file.
+pub fn configure_execution_router_rules_path_with_env(
+    argv:&[String],env:&mut HashMap<String,String>,home:&Path,
+)->String {
+    let explicit=value(argv,"--execution-router-rules","");
+    if !explicit.is_empty(){
+        let selected=crate::routing_policy::execution_router_rules_path(
+            Some(explicit),None,home);
+        env.insert("AGENTS_RELAY_EXECUTION_ROUTER_RULES".into(),selected);
+    }
+    crate::routing_policy::execution_router_rules_path(
+        None,env.get("AGENTS_RELAY_EXECUTION_ROUTER_RULES").map(String::as_str),home)
+}

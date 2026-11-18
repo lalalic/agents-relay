@@ -360,6 +360,27 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=closure::invoke(request)?{return Ok(output);}
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "apiDaemonObservability" => {
+            let configured=agents_relay_rust2::relayd_utilities::configure_daemon_observability(
+                &request["env"]);
+            let global=agents_relay_rust2::observability::observability();
+            Ok(json!({"level":configured.minimum_level,
+                "installedLevel":global.minimum_level,
+                "enabled":request["levels"].as_array().into_iter().flatten()
+                    .map(|level|configured.is_enabled(level.as_str().unwrap_or("")))
+                    .collect::<Vec<_>>()}).to_string())
+        }
+        "apiRouterRulesDaemonConfig" => {
+            let mut env=request["env"].as_object().into_iter().flatten()
+                .filter_map(|(key,value)|value.as_str().map(|value|(key.clone(),value.to_owned())))
+                .collect::<std::collections::HashMap<_,_>>();
+            let args=request["args"].as_array().into_iter().flatten()
+                .filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>();
+            let home=std::path::Path::new(request["home"].as_str().unwrap_or("/tmp"));
+            let path=agents_relay_rust2::relayd_utilities::configure_execution_router_rules_path_with_env(
+                &args,&mut env,home);
+            Ok(json!({"path":path,"env":env}).to_string())
+        }
         "apiEscalationConfigured" => {
             let env = request["env"].as_object().into_iter().flatten()
                 .filter_map(|(key, value)| value.as_str().map(|value| (key.clone(), value.to_owned())))
