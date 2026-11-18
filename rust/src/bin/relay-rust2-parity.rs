@@ -24,6 +24,8 @@ use agents_relay_rust2::{
 };
 #[path = "relay-rust2-parity/closure.rs"]
 mod closure;
+#[path = "relay-rust2-parity/pool_public.rs"]
+mod pool_public;
 #[path = "relay-rust2-parity/control_factory.rs"]
 mod control_factory;
 #[path = "relay-rust2-parity/dashboard_factory.rs"]
@@ -514,6 +516,8 @@ fn invoke(request: &Value) -> Result<String, String> {
                 Err(error)=>json!({"ok":false,"error":error}),
             },"calls":client.calls}).to_string())
         }
+        "apiPoolLocal" => pool_public::local(request),
+        "apiPoolWatch" => pool_public::watch(request),
         "apiPoolWebhook" => {
             use agents_relay_rust2::pool::RepositoryWorkerPool;
             let pool=RepositoryWorkerPool::new(2,"workflow");

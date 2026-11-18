@@ -209,9 +209,10 @@ pub fn event_wake_signal(event:&Value)->Option<Value>{
     let lifecycle=is_lifecycle_event(event);
     let wake=matches!(event_type,"job.wake"|"review.created"|"planner.completed");
     if !wake && !lifecycle{return None;}
-    Some(json!({"jobId":event.get("job_id"),
-        "reason":signal_reason(event),
-        "event":if lifecycle{Some(event)}else{None}}))
+    let mut signal=json!({"jobId":event.get("job_id"),
+        "reason":signal_reason(event)});
+    if lifecycle{signal["event"]=event.clone();}
+    Some(signal)
 }
 /// The sync native Pool accepts authoritative Store and Reconciler ports.
 /// Caller supplies an already-verified local Job inventory. No IO or
@@ -322,9 +323,9 @@ impl RepositoryWorkerPool{
             if capacity==0{break;}
             let id=field(&job,"id").to_owned();
             if !self.in_reconcile.insert(id.clone()){continue;}
-            let run:Result<Option<(Value,usize)>,String>=(||{
+            let run:Result<Option<(Option<Value>,usize)>,String>=(||{
                 let local=resolve(&id)?.ok_or_else(||
-                    format!("Local Job {id} not found"))?;
+                    format!("Authoritative SQLite Job is not registered: {id}"))?;
                 if !needs_lifecycle_reconciliation(&self.graph_directory,
                     &local,Utc::now().timestamp_millis())?{
                     return Ok(None);
@@ -343,13 +344,29 @@ impl RepositoryWorkerPool{
                 let allowance=if ready>0||expired{
                     capacity.min(ready.max(1)).max(1)
                 }else{0};
-                let result=reconcile(&id,allowance)?;
+                // Node catches only the per-Job Reconciler effect error.
+                // Local SQLite lookup, Graph eligibility and hydration errors
+                // remain fail-closed and propagate to the caller.
+                let result=match reconcile(&id,allowance){
+                    Ok(value)=>Some(value),
+                    Err(error)=>{
+                        crate::observability::observability().record(&json!({
+                            "stage":"reconcile","event":"reconcile.job_failed",
+                            "level":"error","outcome":"failed",
+                            "message":format!("Reconcile failed for {id}: {error}"),
+                            "correlation":{"jobId":id,"repository":field(&job,"repository"),
+                                "prNumber":job.get("prNumber")},
+                            "data":{"classification":"job-isolated"}
+                        }));
+                        None
+                    }
+                };
                 Ok(Some((result,allowance)))
             })();
             self.in_reconcile.remove(&id);
             if let Some((value,used))=run?{
                 capacity=capacity.saturating_sub(used);
-                updated.push(value);
+                if let Some(value)=value{updated.push(value);}
             }
         }
         Ok(updated)
@@ -466,4 +483,34 @@ impl RepositoryWorkerPool{
             Some("orchestrator"),Some(data),Some(source)));
         emitted
     }
+}
+
+
+#[path="pool_public_ports.rs"]
+mod pool_public_ports;
+pub use pool_public_ports::PoolEventBus;
+impl RepositoryWorkerPool {
+    /// Node reconcileLocalJob: local SQLite lookup, direct DAG continuation,
+    /// then capacity scheduling. No GitHub discovery or independent policy.
+    pub fn reconcile_local_job<Resolve,Load,Inventory,Execute>(
+        &mut self,job_id:&str,resolve:Resolve,load:Load,
+        inventory:Inventory,execute:Execute,
+    )->Result<(),String>
+    where
+        Resolve:FnMut(&str)->Result<Option<Value>,String>,
+        Load:FnMut(&str)->Result<Value,String>,
+        Inventory:FnMut()->Result<Vec<Value>,String>,
+        Execute:FnMut(&str,usize)->Result<Value,String>,
+    {
+        pool_public_ports::reconcile_local_job(self,job_id,resolve,load,inventory,execute)
+    }
+    /// Node watch: subscribe and release exactly one EventBus handler.
+    pub fn watch(&self,bus:&dyn PoolEventBus,
+        coordinator:&crate::reconcile_coordinator::ReconcileCoordinator)
+        ->Result<Box<dyn FnOnce()+Send>,String>{
+        pool_public_ports::watch(bus,coordinator)
+    }
+    /// Node webhookSignal rejects unresolved delivery by doing nothing.
+    pub fn webhook_signal(&self,_bus:Option<&dyn PoolEventBus>,_wake:&Value)
+        ->Result<(),String>{Ok(())}
 }
