@@ -49,3 +49,51 @@ pub fn should_enable_github(job: &Value, no_github: bool, client_available: bool
         && job.get("githubRepo").and_then(Value::as_str).is_some_and(|s| !s.is_empty())
         && job.get("prNumber").and_then(Value::as_i64).is_some_and(|n| n > 0)
 }
+
+/// Node createJobIdRegistryResolver. The resolver is an explicit, single-owner
+/// cache: one immutable `(SQLite file, Job ID)` key corresponds to exactly one
+/// writable LocalAuthority Store. Inventory remains read-only until selected.
+pub struct LocalJobRegistryResolver {
+    directory:std::path::PathBuf,
+    no_github:bool,
+    cached:std::collections::HashMap<String,ResolvedLocalJob>,
+}
+pub struct ResolvedLocalJob {
+    pub job:Value,
+    pub store:crate::local_authority_store::LocalAuthorityDurableStore,
+}
+impl ResolvedLocalJob {
+    pub fn relay(&self)->&crate::relay_store::SQLiteRelayStore{
+        &self.store.authority
+    }
+}
+impl LocalJobRegistryResolver {
+    pub fn resolve(&mut self,job_id:&str)->Result<Option<&ResolvedLocalJob>,String>{
+        let selected=match find_job_id_snapshot(&self.directory,job_id)?{
+            Some(selected)=>selected,None=>return Ok(None),
+        };
+        let key=scoped_store_cache_key(&selected)?;
+        if !self.cached.contains_key(&key){
+            let scoped=crate::relay_store::SQLiteRelayStore::open(
+                &selected.snapshot.path,Some(job_id))?;
+            self.cached.insert(key.clone(),ResolvedLocalJob{
+                job:selected.job.clone(),
+                store:crate::local_authority_store::LocalAuthorityDurableStore::new(
+                    scoped,self.no_github),
+            });
+        }
+        if let Some(entry)=self.cached.get_mut(&key){
+            entry.job=selected.job;
+        }
+        Ok(self.cached.get(&key))
+    }
+    pub fn cached_count(&self)->usize{self.cached.len()}
+}
+pub fn create_job_id_registry_resolver(
+    directory:&Path,no_github:bool,
+)->LocalJobRegistryResolver{
+    LocalJobRegistryResolver{
+        directory:directory.to_path_buf(),no_github,
+        cached:std::collections::HashMap::new(),
+    }
+}

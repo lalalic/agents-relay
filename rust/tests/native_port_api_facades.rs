@@ -122,3 +122,48 @@ fn webhelm_preflight_requires_both_profile_and_running_daemon(){
     }).unwrap_err();
     assert_eq!(err,"Global WebHelm daemon is not running");
 }
+#[test]
+fn job_id_resolver_uses_readonly_unique_selection_and_reuses_scoped_sqlite(){
+    use agents_relay_rust2::local_job_registry::create_job_id_registry_resolver;
+    let root=fixture_dir();let directory=root.join("stores");
+    std::fs::create_dir_all(&directory).unwrap();
+    let path=root.join("relay.sqlite");
+    for (id,state) in [("101","ACTIVE"),("102","COMPLETED")]{
+        let scoped=SQLiteRelayStore::open(&path,Some(id)).unwrap();
+        scoped.save_job(&json!({"id":id,"title":id,"repository":format!("repo-{id}"),"prNumber":0,
+            "projectRoot":root.join(id).to_string_lossy(),"state":state,
+            "plans":[],"tasks":[],"createdAt":"2026-11-17T10:00:00Z",
+            "updatedAt":"2026-11-17T10:00:00Z"})).unwrap();
+        scoped.close().unwrap();
+    }
+    let mut registry=create_job_id_registry_resolver(&directory,true);
+    assert!(registry.resolve("invalid").unwrap().is_none());
+    assert_eq!(registry.cached_count(),0);
+    assert_eq!(registry.resolve("101").unwrap().unwrap().job["state"],"ACTIVE");
+    let first=registry.resolve("101").unwrap().unwrap().relay() as *const SQLiteRelayStore;
+    let second=registry.resolve("101").unwrap().unwrap().relay() as *const SQLiteRelayStore;
+    assert_eq!(first,second,"same job scope must not open another writable store");
+    assert_eq!(registry.resolve("102").unwrap().unwrap().job["state"],"COMPLETED");
+    assert_eq!(registry.cached_count(),2,"same DB path is scoped by immutable Job ID");
+    drop(registry);
+    std::fs::remove_dir_all(root).unwrap();
+}
+#[test]
+fn planner_agent_requires_execution_binding_before_any_worker_or_file_effect(){
+    use agents_relay_rust2::planner::AgentObjectivePlanner;
+    let agent=AgentObjectivePlanner::new(Some("definitely-not-codex"),None);
+    let context=json!({"job":{"id":"31","tasks":[]},"tasks":[],"objective":"safe"});
+    let root=fixture_dir();
+    assert_eq!(agent.plan(&context,&root,&root,None,
+        |_,_,_|->Result<agents_relay_rust2::planner_adapters::PlannerProcessResult,String>{
+            panic!("invalid Planner identity cannot launch a Worker")
+        }).unwrap_err(),"Planner execution is missing its durable Plan and execution identity");
+}
+#[test]
+fn planner_public_spec_rejects_missing_output_and_bad_adapter(){
+    use agents_relay_rust2::planner::planning_spec;
+    let error=planning_spec(&json!({"id":"1","adapter":"codex"})).unwrap_err();
+    assert_eq!(error,"Initial task 1 requires an output contract");
+    let error=planning_spec(&json!({"id":"1","adapter":"unknown","output":{"kind":"file","path":"/tmp/data"}})).unwrap_err();
+    assert_eq!(error,"Initial task 1 requires a supported worker adapter");
+}

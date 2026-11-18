@@ -6,6 +6,33 @@ use serde_json::{json,Value};
 pub(super) fn invoke(request:&Value)->Result<Option<String>,String>{
     let op=request["op"].as_str().unwrap_or("");
     let result:Result<String,String>=match op{
+        // Public PlannerTaskSpec and CommandObjectivePlanner effects.
+        // Runner is injected and never invokes a real Codex executable.
+        "plannerPublicPorts"=>{
+            use agents_relay_rust2::planner::{planning_spec,CommandObjectivePlanner};
+            let method=request["method"].as_str().unwrap_or("");
+            let result=match method{
+                "planningSpec"=>planning_spec(&request["task"]),
+                "command"=>{
+                    let command=request["command"].as_str().unwrap_or("");
+                    let planner=CommandObjectivePlanner::new(command)?;
+                    planner.plan(&request["context"],|actual,stdin|{
+                        if stdin.trim().is_empty(){return Err("Planner stdin missing".into());}
+                        if actual!=command{return Err("Wrong Planner executable".into());}
+                        Ok(agents_relay_rust2::planner_adapters::PlannerProcessResult{
+                            exit_code:request["exitCode"].as_i64().unwrap_or(0) as i32,
+                            stdout:request["stdout"].as_str().unwrap_or("").into(),
+                            stderr:request["stderr"].as_str().unwrap_or("").into(),
+                        })
+                    })
+                },
+                _=>Err("Unknown Planner method".into()),
+            };
+            Ok(json!({"outcome":match result{
+                Ok(value)=>json!({"ok":true,"value":value}),
+                Err(error)=>json!({"ok":false,"error":error}),
+            }}).to_string())
+        }
         // Node model-routing.ts, worker-routing.ts and execution-routing.ts
         // public entrypoints using the original Rust policy/eligibility paths.
         // Choices are injected; a CLI/model receipt cannot bypass hard gates.

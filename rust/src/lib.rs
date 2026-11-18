@@ -339,6 +339,7 @@ pub mod local_authority_store;
 pub mod projected_store;
 pub mod store_github;
 pub mod planner;
+pub mod planner_adapters;
 pub mod planner_runtime;
 pub mod adapters;
 pub mod pool;
