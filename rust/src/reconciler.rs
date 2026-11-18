@@ -460,6 +460,28 @@ impl Reconciler{
         self.reconciling.remove(&job_id);
         result
     }
+    /// Apply the CLI Planner proposal through the existing Graph and
+    /// SQLite generation-fenced commit; read back the accepted durable Plan.
+    pub fn apply_planner_tree<P:crate::planner_runtime_public::PlannerFinishPorts>(
+        &mut self,ports:&mut P,job_id:&str,plan_id:&str,
+        execution_id:&str,proposal:&Value,
+    )->Result<Value,String>{
+        let candidate=crate::planner::parse_planner_result(proposal)
+            .map_err(|cause|crate::planner_runtime::PlannerApplyValidationError::new(
+                "candidate",vec![cause,
+                    "Correct the candidate and retry plan apply with the same active Planner execution.".into()],
+                None).to_string())?;
+        crate::planner_runtime_public::finish_planner(ports,
+            &self.graph_directory,job_id,plan_id,Some(execution_id),
+            None,Some(&candidate),true)?;
+        let committed=ports.load(job_id)?;
+        let current=committed.get("plans").and_then(Value::as_array)
+            .into_iter().flatten().find(|entry|field(entry,"id")==plan_id);
+        match current{
+            Some(plan) if field(plan,"status")=="SUCCEEDED"=>Ok(plan.clone()),
+            _=>Err(format!("Plan {plan_id} was not committed")),
+        }
+    }
     /// Node Reconciler.planJob: native Graph and generation-checked SQLite
     /// mutation, with Planner launch and settlement owned by the host.
     pub async fn plan_job<Load,LFut,Mutate,Append,AFut,Save,SFut,Launch,PFut>(
