@@ -7,7 +7,7 @@ use crate::{
     execution_routing::{
         discover_execution_routes,route_execution_with_choice,
     },
-    final_review_role::is_final_review_agent,
+    final_review_role::{is_final_review_agent,FINAL_REVIEW_AGENT},
     job_task_id_sequence::allocate_entity_id,
     local_merge_lock::iso8601_now,
     review_evidence::normalize_review_evidence,
@@ -230,7 +230,7 @@ pub fn create_final_review_task(
         "jobId":job.get("id"),"id":id,"title":"Final Review",
         "kind":"work","priority":job.get("priority"),
         "storySize":"M","projectName":job.get("title"),
-        "agentName":"final-review","parentTaskId":null,
+        "agentName":FINAL_REVIEW_AGENT,"parentTaskId":null,
         "dependencies":[],"capabilities":["review"],
         "workerSelection":selection,"adapter":candidate.get("adapter"),
         "input":final_review_input(job,head),
@@ -298,7 +298,7 @@ pub fn ensure_final_review(
         "review.created","queued",
         &format!("Final review Task {id} created for {head} using worker-router"),
         Some("orchestrator"),Some(json!({
-            "headSha":head,"agentName":"final-review",
+            "headSha":head,"agentName":FINAL_REVIEW_AGENT,
             "reviewerRouting":{"workerId":route.pointer("/selection/workerId"),
                 "reason":"worker-router",
                 "selectedBy":route.pointer("/selection/selectedBy")}
@@ -518,3 +518,6 @@ pub fn apply_review_event(
         ||disposition==Some("targeted");
     Ok(result)
 }
+
+// Node ReconcilerReviewBase's owned runtime host adapter, extracted for SRP.
+pub use crate::reconciler_review_base::{ReconcilerReviewBase,ReviewBaseHost};
