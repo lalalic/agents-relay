@@ -10,6 +10,7 @@ use crate::{
     },
     events::event_for,
     final_review_role::is_final_review_agent,
+    git_delivery::{source_completion_verified,started_source_baseline,bind_source_baseline},
     interactive_invocation::{
         apply_interactive_decision,HostInteractiveInvocationCoordinator,
     },
@@ -191,6 +192,9 @@ impl ReconcilerRuntime{
         let Some(index)=task_index(job,id)else{return Ok(
             RuntimeEffect::ignored(job,"task.started.ignored"));};
         let task=&job["tasks"][index];
+        // Match Node markWorkerStarted: snapshot the exact source HEAD before
+        // this execution's code changes, then bind it only on Graph acceptance.
+        let baseline=started_source_baseline(job,id)?;
         let execution=field(task,"executionId");
         let valid=DateTime::parse_from_rfc3339(field(event,"timestamp"))
             .ok().is_some_and(|stamp|
@@ -214,6 +218,7 @@ impl ReconcilerRuntime{
         if decision.get("accepted")!=Some(&Value::Bool(true)){
             return Ok(RuntimeEffect::ignored(job,"task.started.ignored"));
         }
+        bind_source_baseline(&mut next,baseline.as_deref());
         let now=iso8601_now();
         next["updatedAt"]=json!(now);
         next["lastProgressAt"]=json!(now);
@@ -274,7 +279,12 @@ impl ReconcilerRuntime{
         }
         let prev=field(task,"executionId").to_string();
         let mut candidate=task.clone();
+        let source_verified=source_completion_verified(job,task,event_execution.as_deref());
+        if event_type=="task.completed"&&!source_verified{
+            return Ok(RuntimeEffect::ignored(job,"task.completed.unverified_git_delivery"));
+        }
         let facts=json!({
+            "sourceDeliveryVerified":source_verified,
             "recoverableExecution":is_recoverable_watchdog_failure(task)
                 &&(field(task,"failureReason")=="worker_exit_without_terminal_event"
                     ||correlated(task,event)),

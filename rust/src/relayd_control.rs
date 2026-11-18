@@ -7,6 +7,10 @@ use crate::{
     cli_job_create::ensure_managed_github_job,
     interactive_request::{begin_interactive_review,abort_interactive_review,interactive_waiting_event},
     local_merge_lock::iso8601_now,
+    git_delivery::verify_source_commit,
+    events::event_for,
+    execution_event_identity::execution_event_source,
+    reconciler_runtime::ReconcilerRuntime,
     registry::discover_agents,
     task_actions::{dispatch_task_action_snapshot,classify_failed_task_snapshot,supersede_cancelled_task_snapshot},
     task_comments::append_task_comment,
@@ -251,6 +255,63 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
                 backend.publish(&event_for_unblock(&job_id,&id,reason))?;
             }
             waking(backend,&job_id,"control.job.unblock",snapshot)
+        },
+        "task.complete"=>{
+            let task_id=field(body,"taskId");
+            let execution_id=field(body,"executionId");
+            let commit_sha=field(body,"commitSha");
+            let repository=field(body,"repository");
+            let summary=field(body,"summary").trim();
+            if task_id.is_empty()||execution_id.is_empty()||commit_sha.is_empty()
+                ||summary.is_empty()||repository!=field(&job,"repository")
+                ||summary.encode_utf16().count()>4000{
+                return Err("task.complete requires matching repository, Task/Execution IDs, commit SHA and bounded summary".into());
+            }
+            let original=task(&job,task_id).ok_or("task.complete is for commit-required source Tasks only")?;
+            if original["gitDeliveryRequired"]!=true{
+                return Err("task.complete is for commit-required source Tasks only".into());
+            }
+            if original["state"]=="SUCCEEDED"
+                &&original.pointer("/gitDelivery/executionId").and_then(Value::as_str)==Some(execution_id)
+                &&original.pointer("/gitDelivery/commitSha").and_then(Value::as_str)==Some(commit_sha){
+                return Ok(json!({"accepted":true,"idempotent":true,"task":original}));
+            }
+            // Git is independently re-verified before every candidate receipt.
+            // SQLite mutation fences this exact execution and start SHA.
+            let receipt=verify_source_commit(&job,original,execution_id,commit_sha)?;
+            let stored=backend.mutate_job(&job_id,&|fresh|{
+                let current=fresh.get_mut("tasks").and_then(Value::as_array_mut)
+                    .and_then(|list|list.iter_mut().find(|t|field(t,"id")==task_id))
+                    .ok_or("task.complete refused: stale or replaced source Task execution")?;
+                if current["gitDeliveryRequired"]!=true||current["state"]!="RUNNING"
+                    ||field(current,"executionId")!=execution_id
+                    ||current.pointer("/gitDeliveryBaseline/executionId")!=receipt.get("executionId")
+                    ||current.pointer("/gitDeliveryBaseline/sha")!=receipt.get("baseSha"){
+                    return Err("task.complete refused: stale or replaced source Task execution".into());
+                }
+                current["gitDelivery"]=receipt.clone();
+                current["updatedAt"]=json!(iso8601_now());
+                Ok(())
+            })?;
+            let event=event_for(&job_id,task_id,
+                original.get("parentTaskId").and_then(Value::as_str),
+                "task.completed","succeeded",summary,Some("worker"),
+                Some(json!({"commit_sha":commit_sha,"verified_git_delivery":true})),
+                Some(json!({"id":execution_event_source(&job_id,task_id,execution_id),
+                    "agent":original.get("agentName").and_then(Value::as_str).unwrap_or("worker"),
+                    "component":"agents-relay-cli"})));
+            // Delegate the success decision and all Task field mutations to
+            // the canonical Graph through the same ReconcilerRuntime entrypoint.
+            let mut runtime=ReconcilerRuntime::new("control.task.complete",0);
+            let effect=runtime.apply_event(&graph,&stored,&event,None)?;
+            if !effect.applied{
+                return Err(format!("task.complete rejected by Task Graph: {}",effect.reason));
+            }
+            let saved=persist_candidate(backend,&job_id,&stored,&effect.job)?;
+            // An event bus failure cannot roll back verified SQLite success.
+            let _=backend.publish(&event);
+            backend.wake(&job_id,"control.task.complete")?;
+            Ok(json!({"accepted":true,"task":task(&saved,task_id)}))
         },
         "task.comment"=>{
             let task_id=required(body,"taskId","task.comment")?;

@@ -18,6 +18,8 @@ pub mod decision;
 pub mod dependency_validity;
 pub mod execution_boundary;
 pub mod final_review_role;
+pub mod git_delivery;
+pub mod cli_task_complete;
 pub mod force_restate;
 pub mod github_binding_order;
 pub mod github_branch_projection;

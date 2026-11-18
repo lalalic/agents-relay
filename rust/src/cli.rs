@@ -13,6 +13,7 @@ use crate::{
         new_local_repository,integer_arg,
     },
     cli_revision::revision_request,
+    cli_task_complete::task_complete_request,
     cli_workflow::workflow_cli_result,
     cli_worker_task::{
         recovery_diagnosis_from_args,dependency_validity_from_args,
@@ -349,13 +350,18 @@ pub fn run_task_command<P:CliRuntimePort>(
     port:&mut P,action:&str,args:&[String],stdin:Option<&str>,
 )->Result<Value,String>{
     let allowed=["create","update","show","context","events","comment",
-        "comments","list","retry","recover","unblock","escalate",
+        "comments","list","complete","retry","recover","unblock","escalate",
         "resume-troubleshooter","cancel","supersede","classify","revise"];
     if !allowed.contains(&action){
         return Err(format!("Unsupported Task command {action}"));
     }
     if has_arg(args,"--shortcut-local"){
         return Err("Legacy Shortcut local binding is removed".into());
+    }
+    if action=="complete"{
+        // No speculative Task load or success transition: daemon authenticates
+        // the active execution, verifies Git and commits through SQLite/Graph.
+        return port.control(args,&task_complete_request(args)?);
     }
     if matches!(action,"context"|"events"|"revise"){
         return port.execute("task",action,args);
