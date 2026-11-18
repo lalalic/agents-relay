@@ -12,7 +12,7 @@ use crate::{
     local_merge_lock::iso8601_now,
     review_evidence::normalize_review_evidence,
     review_generation_fence::review_generation_matches,
-    review_replan::{review_plan_ready,review_work_settled},
+    review_replan::{review_plan_ready_with_head,review_work_settled},
     review_revision_model::{
         targeted_requests_for_review,targeted_requests_cover_review,
     },
@@ -87,7 +87,7 @@ pub fn review_facts(directory:&Path,job:&Value,head:Option<&str>)
         "jobActive":field(job,"state")=="ACTIVE",
         "reviewWorkSettled":review_work_settled(directory,job)?,
         "headAvailable":head.is_some_and(|h|!h.is_empty()),
-        "reviewPlanReady":review_plan_ready(job),
+        "reviewPlanReady":review_plan_ready_with_head(job, head),
         "noActiveReviewTask":!review_tasks.iter().any(|task|
             matches!(field(task,"state"),"DRAFT"|"QUEUED"|"RUNNING")),
         "currentReviewCancelled":current.is_some_and(|task|

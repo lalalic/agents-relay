@@ -1,7 +1,7 @@
 // Direct port of Node src/workflow/entity-creation.ts: validate declared Task dependencies,
 // derive durable metadata and activate only by canonical Task/Job lifecycle Graph events.
 use super::lifecycle::{dispatch_job_lifecycle_sync, dispatch_task_lifecycle_sync};
-use crate::{dependency_validity::validate_dependency_validity, task_title::derive_task_title};
+use crate::{dependency_validity::validate_dependency_validity, final_review_role::is_final_review_agent, task_title::derive_task_title};
 use serde_json::{json, Value};
 use std::path::Path;
 fn dependencies_satisfied(job: &Value, deps: &[String]) -> bool {
@@ -39,6 +39,23 @@ fn validate_task_requirements(value: &Value) -> Result<(), String> {
     validate_dependency_validity(&dependencies, &value["dependencyValidity"], &field)?;
     Ok(())
 }
+/// Match the Node Task constructor's immutable source-commit requirement.
+/// A Task may not choose this policy via an input event or override flag.
+fn source_commit_required(task: &Value) -> bool {
+    let agent = task["agentName"].as_str();
+    let graph_present = match task.get("agentGraph") {
+        None | Some(Value::Null | Value::Bool(false)) => false,
+        Some(Value::String(value)) => !value.is_empty(),
+        Some(Value::Number(number)) => number.as_f64().unwrap_or(0.0) != 0.0,
+        Some(_) => true,
+    };
+    task["output"]["kind"] == "task_pr"
+        && task["kind"] != "planner"
+        && !graph_present
+        && !is_final_review_agent(agent)
+        && !matches!(agent, Some("troubleshooter" | "planner" | "review-chair"))
+}
+
 pub fn create_task_entity(
     directory: &Path,
     job: &Value,
@@ -64,6 +81,7 @@ pub fn create_task_entity(
                 &fallback,
             ))
         });
+    task["gitDeliveryRequired"] = json!(source_commit_required(value));
     task["title"] = json!(title);
     task["state"] = json!("DRAFT");
     if !defer {

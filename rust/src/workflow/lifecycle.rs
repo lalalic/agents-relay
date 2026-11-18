@@ -8,12 +8,20 @@ use super::{
 };
 use serde_json::{json, Value};
 use std::path::Path;
-fn facts_for(task: &Value, facts: &Value) -> Value {
+fn facts_for(task: &Value, facts: &Value, dispatch: bool) -> Value {
     let mut facts = facts.clone();
     if !facts.is_object() {
         facts = json!({});
     }
     facts["troubleshooterTask"] = json!(task["agentName"] == "troubleshooter");
+    // Read-only decisions use Node's default. Actual dispatch is fail-closed
+    // for source Tasks unless their current execution has a verified Git receipt.
+    let verified = if dispatch {
+        task["gitDeliveryRequired"] != true || facts["sourceDeliveryVerified"] == true
+    } else {
+        facts["sourceDeliveryVerified"] != false
+    };
+    facts["sourceDeliveryVerified"] = json!(verified);
     facts
 }
 fn graph_decision(
@@ -59,7 +67,7 @@ pub fn decide_task_lifecycle(
         &runtime,
         task["state"].as_str().unwrap_or(""),
         event,
-        &facts_for(task, facts),
+        &facts_for(task, facts, false),
     )?;
     workflow_decision(&decision, &action_ids(&decision))
 }
@@ -88,7 +96,7 @@ where
 {
     let runtime = task_lifecycle_v2(directory)?;
     let initial = task["state"].as_str().unwrap_or("").to_string();
-    let decision = graph_decision(&runtime, &initial, event, &facts_for(task, facts))?;
+    let decision = graph_decision(&runtime, &initial, event, &facts_for(task, facts, true))?;
     if decision["accepted"] != true {
         return workflow_decision(&decision, &[]);
     }

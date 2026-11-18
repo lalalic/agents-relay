@@ -120,6 +120,12 @@ pub fn review_needs_replan(job: &Value) -> bool {
         })
 }
 pub fn review_plan_ready(job: &Value) -> bool {
+    review_plan_ready_with_head(job, job["headSha"].as_str())
+}
+/// Original Node reviewPlanReady: a review-triggered Plan is audit provenance,
+/// not another eligibility gate. Only a different verified source HEAD permits
+/// re-review after changes_required (assuming work and planning have settled).
+pub fn review_plan_ready_with_head(job: &Value, current_head_sha: Option<&str>) -> bool {
     let plans = arr(job, "plans");
     let tasks = arr(job, "tasks");
     if plans.iter().any(|p| p["status"] == "PLANNING") {
@@ -127,33 +133,27 @@ pub fn review_plan_ready(job: &Value) -> bool {
     }
     let latest = plans.last();
     let legacy = latest.is_none()
-        && tasks
-            .iter()
-            .any(|t| t["kind"] == "planner" && t["state"] == "SUCCEEDED");
+        && tasks.iter().any(|t| t["kind"] == "planner" && t["state"] == "SUCCEEDED");
     if !legacy && latest.is_some_and(|p| p["status"] != "SUCCEEDED") {
         return false;
     }
     if !tasks.iter().any(|t| t["kind"] != "planner" && !reviewer(t)) {
         return false;
     }
-    let Some(id) = task_id(job) else { return true };
-    if job["review"]["revisionDisposition"] == "targeted" || !requires_revision(job) {
+    if task_id(job).is_none()
+        || job["review"]["revisionDisposition"] == "targeted"
+        || !requires_revision(job)
+    {
         return true;
     }
-    plans.iter().any(|p| {
-        p["status"] == "SUCCEEDED"
-            && p["trigger"]["source"] == "review"
-            && p["trigger"]["reviewTaskId"] == id
-            && p["generatedTaskIds"].as_array().is_some_and(|ids| {
-                !ids.is_empty()
-                    && ids.iter().all(|id| {
-                        tasks
-                            .iter()
-                            .any(|task| task["id"] == *id && task["state"] == "SUCCEEDED")
-                    })
-            })
-    })
+    match (current_head_sha, job["review"]["headSha"].as_str()) {
+        (Some(current), Some(reviewed)) if !current.is_empty() && !reviewed.is_empty() => {
+            current != reviewed
+        }
+        _ => false,
+    }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,6 +167,18 @@ mod tests {
     fn review_without_plan() {
         let j = json!({"tasks":[{"kind":"work","agentName":"worker","state":"SUCCEEDED"}]});
         assert!(review_plan_ready(&j));
+    }
+    #[test]
+    fn re_review_requires_new_verified_head_not_plan_metadata() {
+        let mut job = json!({"headSha":"new-head","review":{"taskId":"r1","headSha":"old-head","outcome":"changes_required"},
+            "tasks":[{"kind":"work","agentName":"implementation","state":"SUCCEEDED"}],"plans":[]});
+        assert!(review_plan_ready(&job), "a new committed head is enough after work settles");
+        assert!(!review_plan_ready_with_head(&job, Some("old-head")), "old source head must not open Review");
+        assert!(review_plan_ready_with_head(&job, Some("fresh-head")));
+        job["headSha"] = json!("old-head");
+        assert!(!review_plan_ready(&job));
+        job["plans"] = json!([{"status":"PLANNING"}]);
+        assert!(!review_plan_ready_with_head(&job, Some("fresh-head")));
     }
     #[test]
     fn immutable_replan() {

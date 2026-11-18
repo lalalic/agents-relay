@@ -76,6 +76,35 @@ fn blocked_task_requires_troubleshooter_authority_even_when_graph_receives_unblo
     assert_eq!(original["state"], "QUEUED");
 }
 #[test]
+fn git_delivery_graph_fails_closed_for_required_source_task_completion() {
+    let dir = workflow();
+    let base = json!({"id":"source-task","jobId":"job","kind":"work",
+        "agentName":"implementation","state":"RUNNING","executionId":"run-1",
+        "gitDeliveryRequired":true,"updatedAt":"2026-11-16T05:00:00.000Z"});
+    let mut unverified = base.clone();
+    let result = dispatch_task_lifecycle_sync(&dir, &mut unverified, "task.completed", &json!({}), STAMP).unwrap();
+    assert_eq!(result["accepted"], false, "missing receipt must not complete source Task");
+    assert_eq!(unverified["state"], "RUNNING");
+    let result = dispatch_task_lifecycle_sync(&dir, &mut unverified, "task.completed", &json!({"sourceDeliveryVerified":false}), STAMP).unwrap();
+    assert_eq!(result["accepted"], false);
+    let result = dispatch_task_lifecycle_sync(&dir, &mut unverified, "task.completed", &json!({"sourceDeliveryVerified":true}), STAMP).unwrap();
+    assert_eq!(result["accepted"], true, "bound host must verify exact receipt before dispatch");
+    assert_eq!(unverified["state"], "SUCCEEDED");
+
+    // Historical Task compatibility must not impose a new Git commit contract.
+    let mut legacy = base.clone();
+    legacy.as_object_mut().unwrap().remove("gitDeliveryRequired");
+    let result = dispatch_task_lifecycle_sync(&dir, &mut legacy, "task.completed", &json!({"sourceDeliveryVerified":false}), STAMP).unwrap();
+    assert_eq!(result["accepted"], true);
+    assert_eq!(legacy["state"], "SUCCEEDED");
+
+    // Node's read-only decision API defaults unknown evidence to true; dispatch
+    // cannot rely on that convention for a commit-required Task.
+    assert_eq!(decide_task_lifecycle(&dir, &base, "task.completed", &json!({})).unwrap()["accepted"], true);
+    assert_eq!(decide_task_lifecycle(&dir, &base, "task.completed", &json!({"sourceDeliveryVerified":false})).unwrap()["accepted"], false);
+}
+
+#[test]
 fn review_graph_exposes_strict_finishes_and_stale_authority() {
     let dir = workflow();
     assert_eq!(review_graph_state(None), "NONE");

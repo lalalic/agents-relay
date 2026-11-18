@@ -79,6 +79,25 @@ test('canonical Job and Task Graph lifecycle decision/mutation/merged review fac
  for(const [i,req] of lifecycleCases.entries())assert.deepEqual(comparableRust(rust(req),req.action),await node(req),`lifecycle fixture ${i}: ${JSON.stringify(req).slice(0,540)}`);
  console.log(`Verified ${lifecycleCases.length} Node/Rust Task/Job lifecycle and Job reconciliation scenarios`);
 });
+// Explicit commit-gate parity: read-only decisions default evidence differently
+// from actual Task state changes; only execution-bound receipt verification may
+// authorize a commit-required source Task to become SUCCEEDED.
+const gitDeliveryCases=[];
+for(const action of ['taskDecide','taskDispatch'])for(const state of ['RUNNING','FAILED'])
+ for(const required of [true,false,undefined])for(const verified of [true,false,undefined]){
+  const t={jobId:'g',id:'source',kind:'work',agentName:'implementation',state,
+   title:'source',attempt:1,updatedAt:DATE,executionId:'e-1'};
+  if(required!==undefined)t.gitDeliveryRequired=required;
+  const facts=verified===undefined?{}:{sourceDeliveryVerified:verified};
+  gitDeliveryCases.push({op:'lifecycleBatchScenario',action,directory,event:'task.completed',
+   task:t,facts,timestamp:STAMP});
+ }
+test('source-commit Graph guard has Node/Rust read-only and dispatch parity with fail-closed source receipts',async()=>{
+ for(const [i,req] of gitDeliveryCases.entries())assert.deepEqual(
+  comparableRust(rust(req),req.action),await node(req),
+  `git delivery lifecycle ${i}: ${JSON.stringify(req)}`);
+ console.log(`Verified ${gitDeliveryCases.length} direct Node/Rust source-commit guard cases`);
+});
 const reviewCases=[];
 for(let i=0;i<820;i++){
  const action=pick(['reviewState','reviewOutcome','reviewDecision','reviewDispatch']);
@@ -108,6 +127,7 @@ for(let i=0;i<780;i++){
  const action=pick(['createTask','createJob']);
  t.state=undefined;t.title=pick([undefined,'','Custom title',`  Custom ${i}  `]);
  t.adapter=pick(['chatgpt','script','orchestrator']);
+ t.output=pick([undefined,{kind:'task_pr'},{kind:'file',path:'docs/a.md'}]);
  t.workerRequirements=pick([undefined,{capabilities:[]},{capabilities:['code']},{capabilities:'bad'},{}]);
  t.dependencies=pick([[],['a'],['a','b']]);
  t.dependencyValidity=pick([undefined,null,{'a':'order-only'},{'bad':'rerun'},{'a':'invalid'}]);
