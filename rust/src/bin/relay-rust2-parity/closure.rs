@@ -6,6 +6,50 @@ use serde_json::{json,Value};
 pub(super) fn invoke(request:&Value)->Result<Option<String>,String>{
     let op=request["op"].as_str().unwrap_or("");
     let result:Result<String,String>=match op{
+        // Node src/usage.ts public observer reader interfaces. All cases use
+        // disposable source fixtures or unconfigured keys, never real providers.
+        "usageReaderSurface" => {
+            use agents_relay_rust2::usage::{
+                BrowserWorkspaceUsageReader,CodexSessionUsageReader,
+                ZaiUsageReader,DeepSeekCreditReader,OpenRouterCreditReader,
+            };
+            let mut results=Vec::new();
+            let count=request["count"].as_u64().unwrap_or(1).min(8);
+            match request["kind"].as_str().unwrap_or("") {
+                "codex-session"=>{
+                    let home=request["home"].as_str().ok_or("home required")?;
+                    let now=request["nowMs"].as_i64().ok_or("nowMs required")?;
+                    let reader=CodexSessionUsageReader::with_clock(
+                        Some(std::path::Path::new(home)),Some(8),Some(10_000),move||now);
+                    for _ in 0..count{results.push(reader.read());}
+                },
+                "browser"=>{
+                    let command=request["command"].as_str().ok_or("command required")?;
+                    let reader=BrowserWorkspaceUsageReader::new(
+                        Some(std::path::Path::new(command)),Some(3000));
+                    for _ in 0..count{results.push(reader.read());}
+                },
+                "zai"=>{
+                    let reader=ZaiUsageReader::new(Some(""));
+                    for _ in 0..count{results.push(reader.read());}
+                },
+                "deepseek"=>{
+                    let reader=DeepSeekCreditReader::new(Some(""));
+                    for _ in 0..count{results.push(reader.read());}
+                },
+                "openrouter"=>{
+                    let reader=OpenRouterCreditReader::new(Some(""));
+                    for _ in 0..count{results.push(reader.read());}
+                },
+                _=>return Err("Unknown usage reader".into()),
+            }
+            for result in &mut results{
+                for timestamp in ["generatedAt","observedAt"] {
+                    if result.get(timestamp).is_some(){result[timestamp]=json!("NORMALIZED");}
+                }
+            }
+            Ok(json!(results).to_string())
+        }
         // Node usage.ts: concurrent usage snapshot aggregation and injected
         // unavailable reader; no command or network providers in fixtures.
         "usageRegistryScenario" => {

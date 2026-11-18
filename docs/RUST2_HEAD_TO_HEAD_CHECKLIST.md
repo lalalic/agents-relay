@@ -27,7 +27,7 @@ Node `workflow/*.mmd` owns decisions; Rust modules may port only effects, adapte
 
 The reproducible static export inventory is in [RUST2_API_PARITY_AUDIT.md](RUST2_API_PARITY_AUDIT.md) with a [per-symbol machine-readable matrix](RUST2_API_PARITY_MATRIX.json). Run `node scripts/rust2-api-parity-audit.mjs --check` to verify the report or `--write` to regenerate it.
 
-For the 107 `PORTING` files: 734 Node runtime export symbols/methods, 549 plausible Rust declaration names, 168 without a direct name match, and 17 constructor shape reviews. These are **candidate mapping gaps, not proven functional differences**. Type/field structure, signatures, negative/restart cases, durable side effects and actual caller wiring are not established by a static name match. The ledger statuses remain unchanged until each specific surface has independently verified head-to-head tests and production binding evidence.
+The 107 `PORTING` files contain 734 Node runtime exports/methods. The [milestone](RUST2_HEAD_TO_HEAD_MILESTONE_20261117.md) recorded 122 unmatched public names; subsequent mitigations are recorded in [RUST2_UNMATCHED_MITIGATION_20261117.md](RUST2_UNMATCHED_MITIGATION_20261117.md). **Current counts live in the generated matrix**, rather than a stale hand-copied number. Unmatched names are candidate mapping gaps, not proven functional differences. Type/field structure, signatures, negative/restart cases, durable side effects and actual caller wiring are not established by a static name match. The ledger statuses remain unchanged until each specific surface has independently verified head-to-head tests and production binding evidence.
 
 ## API parity closure tranche: CLI, Store, EventBus and usage (2026-11-17)
 

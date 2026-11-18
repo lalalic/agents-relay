@@ -41,6 +41,33 @@ test('AST captures methods and top-level exports, not only regex function names'
   const daemon=report.files.find(file=>file.source==='src/relayd.ts');
   assert(daemon.exports.some(x=>x.kind==='function'&&x.name==='runDaemon'));
 });
+test('cross-module reexports and Rust raw-keyword methods have grounded public facade names',()=>{
+  const lookup=(source,name,parent)=>{
+    const file=report.files.find(f=>f.source===source);
+    assert(file,'Missing report row '+source);
+    const symbol=file.exports.find(s=>s.name===name&&(!parent||s.parent===parent));
+    assert(symbol,'Missing export '+source+' '+name);
+    assert.equal(symbol.static,'name-match',source+' '+(parent?parent+'.':'')+name);
+  };
+  for(const method of ['publish','subscribe','subscribeAll','close'])
+    lookup('src/cli-support.ts',method,'ServiceEventBus');
+  lookup('src/usage.ts','snapshot','UsageRegistry');
+  lookup('src/usage.ts','read','UnavailableUsageReader');
+  for(const owner of ['CodexThreadContinuation','CommandContinuation','WebhookContinuation']){
+    lookup('src/continuation.ts',owner);
+    lookup('src/continuation.ts','continue',owner);
+  }
+  for(const name of ['closePullRequest','updatePullRequestBody'])
+    lookup('src/store.ts',name,'InMemoryStore');
+  for(const owner of ['BrowserWorkspaceUsageReader','CodexSessionUsageReader',
+    'ZaiUsageReader','DeepSeekCreditReader','OpenRouterCreditReader']){
+    lookup('src/usage.ts',owner);
+    lookup('src/usage.ts','read',owner);
+  }
+  const cli=report.files.find(f=>f.source==='src/cli.ts');
+  assert(cli.unmappedRuntime.includes('startService'),
+    'The audit must not convert unverified runtime wiring into parity');
+});
 test('generated report is deterministic against the current source trees',()=>{
   assert.equal(report.summary.sourceTree,execFileSync('git',['rev-parse','HEAD:src'],{cwd:root,encoding:'utf8'}).trim());
   assert.equal(report.summary.rustTree,execFileSync('git',['rev-parse','HEAD:rust/src'],{cwd:root,encoding:'utf8'}).trim());

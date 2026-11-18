@@ -237,6 +237,10 @@ impl InMemoryStore {
     pub fn save_agent(&mut self,agent:&Value){
         self.put(format!("AGENT:{}",field(agent,"id")),render_agent_comment(agent));
     }
+    // Node InMemoryStore offers two lifecycle-neutral GitHub projection no-ops.
+    // Live Relay never uses this test-only fixture for GitHub writes.
+    pub fn close_pull_request(&mut self) {}
+    pub fn update_pull_request_body(&mut self,_body:&str) {}
     pub fn comments(&self)->Vec<Value>{
         self.bodies().into_iter().enumerate().map(|(index,body)|json!({
             "id":index+1,"body":body,"updatedAt":crate::local_merge_lock::iso8601_now(),

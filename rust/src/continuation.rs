@@ -6,6 +6,60 @@ pub enum Continuation<'a> {
     Command { target: &'a str },
     Webhook { target: &'a str },
 }
+// Node's three public ContinuationAdapter classes each select one concrete
+// delivery transport. All effects stay behind the host-provided owned-process
+// and HTTP adapters; no executable or HTTP destination is implicit.
+#[derive(Clone,Debug)]
+pub struct CodexThreadContinuation {
+    command:String,
+}
+impl Default for CodexThreadContinuation {
+    fn default()->Self{Self::new("codex")}
+}
+impl CodexThreadContinuation {
+    pub fn new(command:impl Into<String>)->Self{Self{command:command.into()}}
+    pub fn kind(&self)->&'static str{"codex-thread"}
+    pub fn r#continue<Run,Post>(
+        &self,input:&str,continuation:Continuation<'_>,
+        adapters:&mut ContinuationAdapters<'_,Run,Post>,
+    )->Result<(),String>
+    where Run:FnMut(&str,&[&str],&str)->Result<i32,String>,
+          Post:FnMut(&str,&str)->Result<u16,String>,
+    {
+        continue_with_adapters(self.kind(),input,continuation,
+            Some(&self.command),adapters)
+    }
+}
+#[derive(Clone,Copy,Debug,Default)]
+pub struct CommandContinuation;
+impl CommandContinuation {
+    pub fn new()->Self{Self}
+    pub fn kind(&self)->&'static str{"command"}
+    pub fn r#continue<Run,Post>(
+        &self,input:&str,continuation:Continuation<'_>,
+        adapters:&mut ContinuationAdapters<'_,Run,Post>,
+    )->Result<(),String>
+    where Run:FnMut(&str,&[&str],&str)->Result<i32,String>,
+          Post:FnMut(&str,&str)->Result<u16,String>,
+    {
+        continue_with_adapters(self.kind(),input,continuation,None,adapters)
+    }
+}
+#[derive(Clone,Copy,Debug,Default)]
+pub struct WebhookContinuation;
+impl WebhookContinuation {
+    pub fn new()->Self{Self}
+    pub fn kind(&self)->&'static str{"webhook"}
+    pub fn r#continue<Run,Post>(
+        &self,input:&str,continuation:Continuation<'_>,
+        adapters:&mut ContinuationAdapters<'_,Run,Post>,
+    )->Result<(),String>
+    where Run:FnMut(&str,&[&str],&str)->Result<i32,String>,
+          Post:FnMut(&str,&str)->Result<u16,String>,
+    {
+        continue_with_adapters(self.kind(),input,continuation,None,adapters)
+    }
+}
 pub struct ContinuationAdapters<'a, Run, Post>
 where
     Run: FnMut(&str, &[&str], &str) -> Result<i32, String>,

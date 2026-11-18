@@ -83,6 +83,41 @@ function collectNodeExports(path) {
   }
   return exports;
 }
+// For type reexports, inspect the real referenced impl instead of matching
+// arbitrary method names in unrelated Rust modules. This is *name evidence*,
+// not signature verification, a runtime wiring check or behavior parity.
+function publicImplMethods(path, owner) {
+  if (!existsSync(join(root,path))) return [];
+  const text=read(path);
+  const methods=[];
+  const re=/\bimpl(?:<[^{}]*>)?\s+(?:[A-Za-z_]\w*\s+for\s+)?([A-Za-z_]\w*)(?:<[^{}]*>)?\s*\{/g;
+  let match;
+  while((match=re.exec(text))) {
+    if(match[1]!==owner)continue;
+    let level=1,end=re.lastIndex;
+    for(;end<text.length&&level;end++) {
+      if(text[end]==='{') level++;
+      if(text[end]==='}') level--;
+    }
+    if(level!==0)continue;
+    const body=text.slice(re.lastIndex,end-1);
+    methods.push(...[...body.matchAll(/\bpub(?:\([^)]*\))?\s+(?:(?:async|unsafe)\s+)*fn\s+(?:r#)?([A-Za-z_]\w*)\b/g)].map(m=>m[1]));
+  }
+  return methods;
+}
+function reexportedTypeMethods(sourceText) {
+  const lookup=new Map();
+  for(const match of sourceText.matchAll(/\bpub\s+use\s+crate::([A-Za-z_]\w*)::\{([^{}]+)\}\s*;/gs)){
+    const target=`rust/src/${match[1]}.rs`;
+    for(const item of match[2].split(',').map(v=>v.trim()).filter(Boolean)){
+      const [name,alias]=item.split(/\s+as\s+/);
+      const exported=alias||name;
+      if(!/^[A-Za-z_]\w*$/.test(name) || !/^[A-Za-z_]\w*$/.test(exported))continue;
+      lookup.set(exported,publicImplMethods(target,name));
+    }
+  }
+  return lookup;
+}
 const canonical = s => s.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
 const has = (list, symbol) => list.some(item => canonical(item) === canonical(symbol));
 function collectRustSurface(path) {
@@ -102,11 +137,12 @@ function collectRustSurface(path) {
       .filter(item=>item && /^[A-Za-z_]\w*$/.test(item));
   });
   return {
-    functions: collect(/\bpub(?:\([^)]*\))?\s+(?:(?:async|unsafe)\s+)*fn\s+([A-Za-z_]\w*)\b/g),
-    methods: collect(/\b(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|unsafe)\s+)*fn\s+([A-Za-z_]\w*)\b/g),
+    functions: collect(/\bpub(?:\([^)]*\))?\s+(?:(?:async|unsafe)\s+)*fn\s+(?:r#)?([A-Za-z_]\w*)\b/g),
+    methods: collect(/\b(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|unsafe)\s+)*fn\s+(?:r#)?([A-Za-z_]\w*)\b/g),
     types: collect(/\bpub(?:\([^)]*\))?\s+(?:(?:struct|enum|trait|type|union))\s+([A-Za-z_]\w*)\b/g),
     values: collect(/\bpub(?:\([^)]*\))?\s+(?:const|static)\s+([A-Za-z_]\w*)\b/g),
     reexports,
+    reexportedTypeMethods: reexportedTypeMethods(text),
     source: text,
   };
 }
@@ -116,7 +152,11 @@ function classification(api, rust) {
   if (api.kind === 'variable') return has([...rust.functions,...rust.values,...rust.reexports], name) ? 'name-match' : 'unmapped';
   if (api.kind === 'class') return has([...rust.types,...rust.reexports], name) ? 'name-match' : 'unmapped';
   if (api.kind === 'enum') return has([...rust.types,...rust.reexports], name) ? 'name-match' : 'unmapped';
-  if (api.kind === 'class-method') return has(rust.methods, name) ? 'name-match' : 'unmapped';
+  if (api.kind === 'class-method') {
+    if (api.parent && rust.reexportedTypeMethods.has(api.parent))
+      return has(rust.reexportedTypeMethods.get(api.parent), name) ? 'name-match' : 'unmapped';
+    return has(rust.methods, name) ? 'name-match' : 'unmapped';
+  }
   if (api.kind === 'class-constructor') return has(rust.methods,'new') || has(rust.methods,'default') ? 'name-match' : 'review';
   if (api.kind === 'class-property') return 'review';
   if (api.kind === 'type' || api.kind === 'interface') return has([...rust.types,...rust.reexports], name) ? 'name-match' : 'review';

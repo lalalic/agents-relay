@@ -8,6 +8,8 @@ use crate::{
 };
 pub use crate::usage_registry::{UsageReader,UsageRegistry,UsageSnapshotProvider,
     UnavailableUsageReader,read_usage_snapshot};
+pub use crate::usage_readers::{BrowserWorkspaceUsageReader,CodexSessionUsageReader,
+    ZaiUsageReader,DeepSeekCreditReader,OpenRouterCreditReader};
 use chrono::{DateTime,Utc};
 use serde_json::{json,Value};
 use std::{fs,path::{Path,PathBuf},time::Duration};
@@ -186,6 +188,13 @@ pub fn parse_browser_workspace_capacity(
 }
 pub fn browser_workspace_usage(command:&Path,timeout_ms:u64)->Value{
     let observed=iso8601_now();
+    // Node spawnOwnedProcess reports ENOENT on absolute missing executables;
+    // the managed Rust launcher instead returns a synthetic 126 status.
+    // Preserve the real caller-visible error rather than inventing an exit.
+    if command.is_absolute() && !command.is_file(){
+        return unavailable_browser_workspace(
+            "Browser Workspace capacity probe could not be started.",&observed);
+    }
     let args=["capacity"];
     let mut manager=OwnedProcessManager::default();
     match run_delivery_owned_process(&mut manager,
