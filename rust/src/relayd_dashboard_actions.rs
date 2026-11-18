@@ -140,3 +140,161 @@ pub fn workspace_task_set_state_request(
     require_dashboard_job(overviews, field(job, "id"), target)?;
     dashboard_task_set_state(job,task_id,state)
 }
+
+/// Node src/relayd-dashboard-actions.ts public createDashboardActions factory.
+/// The server injects one authoritative SQLite-bound Store/Pool backend;
+/// browser-side HTML and Dashboard policy are intentionally not copied here.
+/// Every non-pure operation is delegated to the SAME backend after validation.
+pub trait DashboardActionPorts {
+    fn overviews(&mut self)->Result<Vec<Value>,String>;
+    fn require_local_binding(&mut self,job_id:&str)->Result<(),String>;
+    fn load_job(&mut self,job_id:&str)->Result<Value,String>;
+    fn job_action(&mut self,job_id:&str,action:&str)->Result<Value,String>;
+    fn job_set_state(&mut self,job_id:&str,state:&str)->Result<Value,String>;
+    fn task_action(&mut self,job_id:&str,task_id:&str,action:&str)->Result<Value,String>;
+    fn task_set_state(&mut self,job_id:&str,task_id:&str,state:&str)->Result<Value,String>;
+    fn task_id(&mut self,job_id:&str,repository:&str,key:Option<&str>)
+        ->Result<String,String>;
+    fn mutate_job(&mut self,job_id:&str,
+        update:&mut dyn FnMut(Value)->Result<Value,String>)->Result<Value,String>;
+    fn append_task(&mut self,job_id:&str,task:&Value)->Result<(),String>;
+    fn save_job(&mut self,job:&Value)->Result<(),String>;
+    fn apply_job_activate(&mut self,job:&mut Value)->Result<(),String>{
+        let decision=dispatch_job_lifecycle_sync(self.workflow_directory(),job,
+            "activate",&json!({}),&iso8601_now())?;
+        if decision.get("accepted")!=Some(&Value::Bool(true)){
+            return Err(format!("Job {} activation rejected",field(job,"id")));
+        }
+        Ok(())
+    }
+    fn supports_mutate_job(&self)->bool{true}
+    fn reconcile_local_job(&mut self,job_id:&str,reason:&str)->Result<(),String>;
+    fn refresh_all(&mut self)->Result<(),String>;
+    fn workflow_directory(&self)->&Path;
+}
+pub struct DashboardActions<Ports:DashboardActionPorts>{
+    pub ports:Ports,
+}
+pub fn create_dashboard_actions<Ports:DashboardActionPorts>(
+    ports:Ports,
+)->DashboardActions<Ports>{
+    DashboardActions{ports}
+}
+impl<Ports:DashboardActionPorts> DashboardActions<Ports>{
+    pub fn dashboard_overview(
+        &mut self,job_id:&str,target:Option<&Value>,
+    )->Result<Option<Value>,String>{
+        Ok(dashboard_overview(&self.ports.overviews()?,job_id,target))
+    }
+    fn require_visible(&mut self,job_id:&str,target:Option<&Value>)->Result<(),String>{
+        require_dashboard_job(&self.ports.overviews()?,job_id,target).map(|_|())
+    }
+    pub fn workspace_job_action(&mut self,job_id:&str,action:&str)
+        ->Result<Value,String>{
+        self.require_visible(job_id,None)?;
+        self.ports.require_local_binding(job_id)?;
+        if action=="reconcile"{
+            self.ports.reconcile_local_job(job_id,"control.job.reconcile")?;
+            return self.ports.load_job(job_id);
+        }
+        self.ports.job_action(job_id,action)
+    }
+    pub fn workspace_job_set_state(&mut self,job_id:&str,state:&str,
+        target:Option<&Value>)->Result<Value,String>{
+        self.require_visible(job_id,target)?;
+        self.ports.require_local_binding(job_id)?;
+        let result=self.ports.job_set_state(job_id,state)?;
+        self.ports.refresh_all()?;
+        Ok(result)
+    }
+    pub fn workspace_task_create(&mut self,job_id:&str,provided:&Value,
+        idempotency_key:Option<&str>)->Result<Value,String>{
+        self.require_visible(job_id,None)?;
+        if field(provided,"jobId")!=job_id{
+            return Err(format!("Task {} belongs to {}, not {}",
+                field(provided,"id"),field(provided,"jobId"),job_id));
+        }
+        self.ports.require_local_binding(job_id)?;
+        let job=self.ports.load_job(job_id)?;
+        if is_terminal(&job){return Err(format!(
+            "Cannot create task on terminal job {} ({})",field(&job,"id"),field(&job,"state")))}
+        if !field(provided,"id").is_empty(){
+            return Err("Task IDs are allocated by Relay and cannot be supplied".into());
+        }
+        let key=idempotency_key.map(|value|format!("{job_id}:{value}"));
+        let id=self.ports.task_id(job_id,field(&job,"repository"),key.as_deref())?;
+        let mut task=provided.clone();task["id"]=json!(id);
+        let mut already_created=false;
+        if self.ports.supports_mutate_job(){
+            let directory=self.ports.workflow_directory().to_path_buf();
+            self.ports.mutate_job(job_id,&mut |mut current|{
+                if is_terminal(&current){return Err(format!(
+                    "Cannot create task on terminal job {}",field(&current,"id")))}
+                if let Some(existing)=tasks(&current).iter().find(|candidate|
+                    field(candidate,"id")==id){
+                    if idempotency_key.is_none()
+                        || existing.get("input")!=task.get("input")
+                        || existing.get("output")!=task.get("output"){
+                        return Err(format!(
+                            "Task {id} already exists with a different definition or no retry key"));
+                    }
+                    already_created=true;
+                    return Ok(current);
+                }
+                current.get_mut("tasks").and_then(Value::as_array_mut)
+                    .ok_or("Job snapshot missing Task array")?.push(task.clone());
+                if field(&current,"state")=="DRAFT"{
+                    let decision=dispatch_job_lifecycle_sync(&directory,&mut current,
+                        "activate",&json!({}),&iso8601_now())?;
+                    if decision.get("accepted")!=Some(&Value::Bool(true)){
+                        return Err(format!("Job {job_id} activation rejected"));
+                    }
+                }
+                current["updatedAt"]=json!(iso8601_now());
+                Ok(current)
+            })?;
+        }else{
+            if idempotency_key.is_some(){
+                if let Some(existing)=tasks(&job).iter().find(|candidate|
+                    field(candidate,"id")==id){
+                    if existing.get("input")!=task.get("input")
+                        || existing.get("output")!=task.get("output"){
+                        return Err(format!(
+                            "Task {id} already exists with a different definition"));
+                    }
+                    let mut reply=job.clone();reply["createdTaskId"]=json!(id);
+                    return Ok(reply);
+                }
+            }
+            self.ports.append_task(job_id,&task)?;
+            // Mirror Node's compatibility branch exactly: after appendTask,
+            // activate the refreshed DRAFT Job and persist that same snapshot.
+            // Production backends must still use the atomic mutateJob path.
+            let mut refreshed=self.ports.load_job(job_id)?;
+            if field(&refreshed,"state")=="DRAFT"{
+                self.ports.apply_job_activate(&mut refreshed)?;
+                self.ports.save_job(&refreshed)?;
+            }
+        }
+        if !already_created{
+            self.ports.reconcile_local_job(job_id,"control.task.create")?;
+        }
+        let mut reply=self.ports.load_job(job_id)?;
+        reply["createdTaskId"]=json!(id);
+        Ok(reply)
+    }
+    pub fn workspace_task_action(&mut self,job_id:&str,task_id:&str,
+        action:&str)->Result<Value,String>{
+        self.require_visible(job_id,None)?;
+        self.ports.require_local_binding(job_id)?;
+        self.ports.task_action(job_id,task_id,action)
+    }
+    pub fn workspace_task_set_state(&mut self,job_id:&str,task_id:&str,
+        state:&str,target:Option<&Value>)->Result<Value,String>{
+        self.require_visible(job_id,target)?;
+        self.ports.require_local_binding(job_id)?;
+        let result=self.ports.task_set_state(job_id,task_id,state)?;
+        self.ports.refresh_all()?;
+        Ok(result)
+    }
+}
