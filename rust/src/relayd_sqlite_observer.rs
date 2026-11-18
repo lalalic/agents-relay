@@ -1,0 +1,71 @@
+//! Actual SQLite-backed read-only daemon host, not a fixture that fabricates
+//! Job state. This is the isolated first stage of the native daemon entrypoint:
+//! operational mutations and Worker launch remain fail-closed until their
+//! concrete Graph+SQLite services are bound and independently verified.
+use crate::relayd::{inventory_from_local,exact_job,DaemonConfig,DaemonServices};
+use serde_json::{json,Value};
+use std::sync::mpsc::{self,Receiver};
+
+pub struct ReadOnlySQLiteHost {
+    config:DaemonConfig,
+}
+impl ReadOnlySQLiteHost {
+    pub fn new(config:DaemonConfig)->Self {Self{config}}
+    fn rejected(operation:&str)->Result<Value,String>{
+        Err(format!("Rust Relay {operation} denied: isolated read-only host has no mutation or Worker execution binding"))
+    }
+}
+impl DaemonServices for ReadOnlySQLiteHost {
+    fn control(&mut self,_body:&Value)->Result<Value,String>{Self::rejected("control")}
+    fn load(&mut self,id:&str)->Result<Value,String>{
+        exact_job(&inventory_from_local(&self.config,false)?,id,None,None)?
+            .ok_or_else(||format!("SQLite Job {id} not found"))
+    }
+    fn save_exact(&mut self,_id:&str,_prior:&Value,_next:&Value)->Result<Value,String>{
+        Self::rejected("save_exact")
+    }
+    fn job_action(&mut self,_id:&str,_action:&str)->Result<Value,String>{Self::rejected("job_action")}
+    fn task_command(&mut self,_body:&Value)->Result<Value,String>{Self::rejected("task_command")}
+    fn task_action(&mut self,_id:&str,_task_id:&str,_action:&str)->Result<Value,String>{
+        Self::rejected("task_action")
+    }
+    fn job_set_state(&mut self,_id:&str,_state:&str,_target:&Value)->Result<Value,String>{
+        Self::rejected("job_set_state")
+    }
+    fn task_set_state(&mut self,_id:&str,_task_id:&str,_state:&str,_target:&Value)->Result<Value,String>{
+        Self::rejected("task_set_state")
+    }
+    fn event_history(&mut self,_id:&str,_task_id:Option<&str>,_limit:i64)
+        ->Result<Vec<Value>,String>{Err("Read-only daemon event history port unavailable".into())}
+    fn publish_event(&mut self,_event:&Value)->Result<(),String>{
+        Err("Read-only daemon event bus publish disabled".into())
+    }
+    fn subscribe_events(&mut self)->Receiver<String>{mpsc::channel().1}
+    fn router_test(&mut self,_id:&str,_task_id:&str)->Result<Value,String>{
+        Self::rejected("router_test")
+    }
+    fn decision_audit(&mut self)->Result<Vec<Value>,String>{
+        Err("Read-only daemon decision audit unavailable".into())
+    }
+    fn account_usage(&mut self)->Result<Value,String>{Self::rejected("account_usage")}
+    fn github_usage(&mut self)->Result<Option<Value>,String>{Ok(None)}
+    fn status(&mut self)->Value{
+        match inventory_from_local(&self.config,false){
+            Ok(jobs)=>json!({
+                "runtime":"native-rust","mode":"read-only",
+                "productionReady":false,"jobCount":jobs.len(),
+                "reason":"No Worker effect, Graph mutation or event transport bound",
+            }),
+            Err(error)=>json!({
+                "runtime":"native-rust","mode":"read-only",
+                "productionReady":false,"error":error,
+            }),
+        }
+    }
+    fn registered_agents(&mut self)->Result<Vec<Value>,String>{
+        Err("Read-only daemon agent registry unavailable".into())
+    }
+    fn effect(&mut self,_action:&Value)->Result<(),String>{
+        Err("Read-only daemon cannot launch or complete Workers".into())
+    }
+}

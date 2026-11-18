@@ -357,6 +357,7 @@ pub mod reconciler_durable;
 pub mod reconciler_git_head;
 pub mod relayd_control;
 pub mod relayd;
+pub mod relayd_sqlite_observer;
 pub mod cli;
 pub mod cli_runtime_public;
 pub mod cli_service_public;

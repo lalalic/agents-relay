@@ -83,7 +83,7 @@ impl DaemonConfig{
             workspace_root:workspace,
             store_directory:get_path("storeDirectory",
                 &crate::relay_store::relay_store_directory().to_string_lossy()),
-            graph_directory:get_path("graphDirectory","workflows"),
+            graph_directory:get_path("graphDirectory","workflow"),
             profile_home:get_path("codexHome",".codex"),
             policy_path:get_path("routingPolicyPath",
                 ".agents-relay/routing-policy.json"),
