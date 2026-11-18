@@ -5,6 +5,7 @@
 use agents_relay_rust2::{
     relayd::{run_daemon,DaemonConfig},
     relayd_sqlite_observer::ReadOnlySQLiteHost,
+    relayd_sqlite_write::IsolatedSQLiteWriteHost,
 };
 use serde_json::json;
 use std::{path::Path,sync::atomic::{AtomicBool,Ordering}};
@@ -13,7 +14,7 @@ extern "C" fn stop_signal(_:libc::c_int){STOP.store(true,Ordering::Release);}
 fn main(){
     let args=std::env::args().skip(1).collect::<Vec<_>>();
     if args.iter().any(|arg|matches!(arg.as_str(),"--help"|"-h")){
-        println!("agents-relayd-rust (isolated read-only preview)\\n  --isolated-store-dir /absolute/path/to/stores\\n  --port N\\n  --interval MS\\nNo production Workers or writes. No Node fallback.");
+        println!("agents-relayd-rust (isolated preview)\n  --isolated-store-dir /absolute/path/to/stores (read-only)\n  --isolated-write-store-dir /absolute/path/to/stores (SQLite/Graph isolated mutations)\n  --port N\n  --interval MS\nNo production Workers or live state. No Node fallback.");
         return;
     }
     if args.first().is_some_and(|a|a=="--version"){
@@ -29,7 +30,11 @@ fn main(){
 fn execute(args:&[String])->Result<(),String>{
     let arg=|name:&str|args.iter().position(|v|v==name)
         .and_then(|i|args.get(i+1)).map(String::as_str).unwrap_or("");
-    let store=arg("--isolated-store-dir");
+    let writable=!arg("--isolated-write-store-dir").is_empty();
+    if writable&&!arg("--isolated-store-dir").is_empty(){
+        return Err("Select exactly one isolated daemon store mode".into());
+    }
+    let store=if writable{arg("--isolated-write-store-dir")}else{arg("--isolated-store-dir")};
     if store.is_empty()||!Path::new(store).is_absolute()||!Path::new(store).is_dir(){
         return Err("Native daemon requires --isolated-store-dir pointing to an existing absolute caller-owned directory".into());
     }
@@ -50,8 +55,14 @@ fn execute(args:&[String])->Result<(),String>{
         libc::signal(libc::SIGTERM,stop_signal as *const () as libc::sighandler_t);
         libc::signal(libc::SIGINT,stop_signal as *const () as libc::sighandler_t);
     }
-    eprintln!("Native Relay isolated read-only observer on 127.0.0.1:{}",config.port);
-    run_daemon(config.clone(),ReadOnlySQLiteHost::new(config),&STOP,|_|{
-        Err("Isolated native read-only daemon: production Job reconciliation disabled".into())
-    })
+    eprintln!("Native Relay isolated {} observer on 127.0.0.1:{}",if writable{"write"}else{"read-only"},config.port);
+    if writable{
+        run_daemon(config.clone(),IsolatedSQLiteWriteHost::new(config),&STOP,|_|{
+            Err("Isolated native write daemon: Worker execution adapter not yet bound".into())
+        })
+    }else{
+        run_daemon(config.clone(),ReadOnlySQLiteHost::new(config),&STOP,|_|{
+            Err("Isolated native read-only daemon: production Job reconciliation disabled".into())
+        })
+    }
 }

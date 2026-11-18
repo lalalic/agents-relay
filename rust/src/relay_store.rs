@@ -118,6 +118,18 @@ pub struct SQLiteRelayStore {
 }
 impl SQLiteRelayStore {
     pub fn open(path:&Path,scope_job_id:Option<&str>)->Result<Self,String>{
+        Self::open_with_claim_reset(path,scope_job_id,true)
+    }
+    /// Live daemon requests share long-lived scoped SQLite connections.
+    /// Resetting all processing outbox claims on every HTTP lookup would
+    /// violate other jobs' in-flight leases. Recovery resets are explicit
+    /// at daemon ownership acquisition; ordinary active opens skip them.
+    pub fn open_without_claim_reset(path:&Path,scope_job_id:Option<&str>)
+        ->Result<Self,String>{
+        Self::open_with_claim_reset(path,scope_job_id,false)
+    }
+    fn open_with_claim_reset(path:&Path,scope_job_id:Option<&str>,reset:bool)
+        ->Result<Self,String>{
         if path!=Path::new(":memory:"){
             if let Some(parent)=path.parent(){
                 fs::create_dir_all(parent).map_err(sql)?;
@@ -148,8 +160,10 @@ impl SQLiteRelayStore {
             initialize_legacy(&db)?;
         }
         migrate_legacy_blocked_tasks(&db)?;
-        ProjectionOutbox::new(&db,scope_job_id)
-            .reset_processing(&iso8601_now())?;
+        if reset {
+            ProjectionOutbox::new(&db,scope_job_id)
+                .reset_processing(&iso8601_now())?;
+        }
         Ok(Self{db,path:path.into(),
             scope_job_id:scope_job_id.map(str::to_owned)})
     }

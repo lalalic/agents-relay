@@ -32,10 +32,10 @@ impl Drop for Guard{
         let _=self.0.kill();let _=self.0.wait();
     }
 }
-fn start(root:&Path,port:u16)->Guard{
+fn start_mode(root:&Path,port:u16,store_flag:&str)->Guard{
     let child=Command::new(binary())
         .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
-        .arg("--isolated-store-dir").arg(root.join("stores"))
+        .arg(store_flag).arg(root.join("stores"))
         .arg("--port").arg(port.to_string())
         .arg("--interval").arg("100")
         .stdout(std::process::Stdio::null())
@@ -49,6 +49,7 @@ fn start(root:&Path,port:u16)->Guard{
     }
     panic!("native daemon never listened on isolated port")
 }
+fn start(root:&Path,port:u16)->Guard{start_mode(root,port,"--isolated-store-dir")}
 fn body(reply:&str)->Value{
     let raw=reply.split_once("\r\n\r\n").unwrap().1;
     serde_json::from_str(raw).expect("native daemon reply contains JSON")
@@ -103,4 +104,61 @@ fn native_daemon_refuses_missing_or_live_store_bindings(){
         .arg("--port").arg("0").output().unwrap();
     assert!(!denied.status.success());
     assert!(String::from_utf8_lossy(&denied.stderr).contains("requires --isolated-store-dir"));
+}
+
+#[test]
+fn native_write_mode_mutations_use_one_sqlite_cas_and_survive_process_restart(){
+    let root=root();let path=root.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&path,Some("17")).unwrap();
+    let initial=json!({"id":"17","repository":"fixture","projectRoot":"/tmp/fixture",
+        "title":"Before native writes","state":"DRAFT","prNumber":0,
+        "createdAt":"2026-11-18T17:00:00.000Z","updatedAt":"2026-11-18T17:00:00.000Z",
+        "tasks":[{"id":"2","jobId":"17","kind":"work","agentName":"implementation",
+            "state":"DRAFT","title":"Child Task","createdAt":"2026-11-18T17:00:00.000Z",
+            "updatedAt":"2026-11-18T17:00:00.000Z","comments":[]}],"plans":[]});
+    store.save_job(&initial).unwrap();store.close().unwrap();
+    let port=socket_port();
+    for attempt in 0..2{
+        let daemon=start_mode(&root,port,"--isolated-write-store-dir");
+        let status=body(&request(port,"GET","/api/status","").unwrap());
+        assert_eq!(status["mode"],"isolated-write");
+        assert_eq!(status["productionReady"],false);
+        assert_eq!(status["jobCount"],1);
+        if attempt==0{
+            let cli=Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
+                .args(["job","update","--id","17","--title","After native write",
+                    "--port",&port.to_string()]).output().unwrap();
+            assert!(cli.status.success(),"{}",String::from_utf8_lossy(&cli.stderr));
+            assert_eq!(serde_json::from_slice::<Value>(&cli.stdout).unwrap()["title"],"After native write");
+            let comment=request(port,"POST","/api/control",
+                r#"{"command":"task.comment","jobId":"17","taskId":"2","message":"Rust SQLite persisted"}"#).unwrap();
+            assert!(comment.starts_with("HTTP/1.1 200"),"{comment}");
+            assert!(comment.contains("Rust SQLite persisted"));
+            let rejected=request(port,"POST","/api/control",
+                r#"{"command":"job.update","jobId":"17","patch":{"projectPath":"/tmp/forbidden"}}"#).unwrap();
+            assert!(!rejected.starts_with("HTTP/1.1 200"));
+            let forged=request(port,"POST","/api/control",
+                r#"{"command":"task.complete","jobId":"17","taskId":"2","repository":"fixture","executionId":"forged","commitSha":"0000000000000000000000000000000000000000","summary":"fake"}"#).unwrap();
+            assert!(!forged.starts_with("HTTP/1.1 200"));
+            let wake=request(port,"POST","/api/control",
+                r#"{"command":"job.reconcile","jobId":"17"}"#).unwrap();
+            assert!(wake.starts_with("HTTP/1.1 200"),"{wake}");
+            assert_eq!(body(&request(port,"GET","/api/status","").unwrap())["wakeCount"],1);
+        }
+        let read=request(port,"GET","/api/job?id=17","").unwrap();
+        assert!(read.starts_with("HTTP/1.1 200"),"{read}");
+        let saved=body(&read);
+        assert_eq!(saved["title"],"After native write");
+        assert_eq!(saved["state"],"DRAFT");
+        assert!(saved["tasks"][0]["comments"].as_array().unwrap().iter()
+            .any(|c|c.to_string().contains("Rust SQLite persisted")));
+        drop(daemon);
+        // Reopening a fresh scoped connection observes exactly the same durable
+        // state; no event receipt was treated as a Task success.
+        let persisted=SQLiteRelayStore::open_without_claim_reset(&path,Some("17"))
+            .unwrap().load_job("17").unwrap().unwrap();
+        assert_eq!(persisted["title"],"After native write");
+        assert_eq!(persisted["tasks"][0]["state"],"DRAFT");
+    }
+    fs::remove_dir_all(root).unwrap();
 }
