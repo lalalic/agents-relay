@@ -254,3 +254,137 @@ impl InMemoryStore {
                 .map(str::to_owned))
     }
 }
+
+// Public GitHub metadata readers. Production Task/Job authority remains SQLite;
+// these methods read remote collaboration data through the explicit GitHub port.
+pub fn load_managed_github_pull_request_graphql<C:crate::store_github::GitHubApi>(
+    client:&mut C,repository:&str,pr_number:u64,
+    trusted_authors:&HashSet<String>,
+)->Result<Vec<Value>,String>{
+    let parts=repository.split('/').collect::<Vec<_>>();
+    // Original Node snapshot short-circuits before any remote request.
+    if parts.len()<2||parts[0].is_empty()||parts[1].is_empty()||pr_number==0{
+        return Ok(Vec::new());
+    }
+    let variables=json!({"owner":parts[0],"name":parts[1],"number":pr_number});
+    let result=client.graphql(managed_github_pull_request_query(),&variables)?;
+    Ok(load_managed_github_pull_request_snapshot_graphql(
+        repository,pr_number,trusted_authors,&result
+    )["overviews"].as_array().cloned().unwrap_or_default())
+}
+pub fn load_managed_github_job_graphql<C:crate::store_github::GitHubApi>(
+    client:&mut C,repository:&str,pr_number:u64,job_id:&str,
+    trusted_authors:&HashSet<String>,
+)->Result<Option<Value>,String>{
+    Ok(load_managed_github_pull_request_graphql(
+        client,repository,pr_number,trusted_authors)?
+        .into_iter().find(|item|field(&item["job"],"id")==job_id))
+}
+/// A request-context adapter must restore the caller's context in a finally
+/// path, even for errors. The client port decides whether contexts are enabled.
+pub fn with_github_request_context<T,Work,Context>(
+    context:&str,mut work:Work,context_port:Option<Context>,
+)->Result<T,String>
+where
+    Work:FnMut()->Result<T,String>,
+    Context:FnOnce(&str,&mut dyn FnMut()->Result<T,String>)->Result<T,String>,
+{
+    if let Some(with_context)=context_port{
+        with_context(context,&mut work)
+    }else{
+        work()
+    }
+}
+
+/// Read only the GitHub PR metadata projection. Pagination and a finite
+/// seen-cursor set prevent a misbehaving GitHub endpoint from looping forever.
+pub fn list_managed_github_jobs<C:crate::store_github::GitHubApi>(
+    client:&mut C,repository:&str,trusted_authors:&HashSet<String>,
+)->Result<Vec<Value>,String>{
+    let (owner,name)=repository.split_once('/').ok_or_else(||
+        format!("Invalid GitHub repository {repository}"))?;
+    if owner.is_empty()||name.is_empty(){
+        return Err(format!("Invalid GitHub repository {repository}"));
+    }
+    const FIRST:&str="query($owner:String!,$name:String!,$cursor:String){repository(owner:$owner,name:$name){open:pullRequests(first:50,after:$cursor,states:OPEN,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number body state isDraft merged mergedAt closedAt comments(first:100){nodes{author{login} body}}} pageInfo{hasNextPage endCursor}} recentMerged:pullRequests(first:20,states:MERGED,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number body state isDraft merged mergedAt closedAt comments(first:100){nodes{author{login} body}}}} recentClosed:pullRequests(first:20,states:CLOSED,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number body state isDraft merged mergedAt closedAt comments(first:100){nodes{author{login} body}}}}}}";
+    const NEXT:&str="query($owner:String!,$name:String!,$cursor:String){repository(owner:$owner,name:$name){open:pullRequests(first:50,after:$cursor,states:OPEN,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number body state isDraft merged mergedAt closedAt comments(first:100){nodes{author{login} body}}} pageInfo{hasNextPage endCursor}}}}";
+    let mut cursor:Option<String>=None;
+    let mut first=true;
+    let mut visited=HashSet::<String>::new();
+    let mut numbers=HashSet::<i64>::new();
+    let mut result=Vec::<Value>::new();
+    loop{
+        let variables=json!({"owner":owner,"name":name,"cursor":cursor});
+        let data=client.graphql(if first{FIRST}else{NEXT},&variables)?;
+        let repo=&data["repository"];
+        let mut collect=|items:&Value|{
+            for pr in items.as_array().into_iter().flatten(){
+                let number=pr.get("number").and_then(Value::as_i64)
+                    .or_else(||pr.get("number").and_then(Value::as_str)
+                        .and_then(|s|s.parse::<i64>().ok()))
+                    .unwrap_or(0);
+                if number<=0 || !numbers.insert(number){continue;}
+                let rows=pr.pointer("/comments/nodes").and_then(Value::as_array)
+                    .map(Vec::as_slice).unwrap_or(&[]);
+                let trusted=rows.iter().filter(|comment|
+                    comment.pointer("/author/login").and_then(Value::as_str)
+                    .is_some_and(|name|trusted_authors.contains(name))
+                ).collect::<Vec<_>>();
+                let publication=rows.iter().filter(|comment|
+                    comment.pointer("/author/login").and_then(Value::as_str)
+                    .is_some_and(|name|trusted_authors.contains(name)
+                        ||matches!(name,"github-actions[bot]"|"github-actions")))
+                    .filter_map(|comment|crate::github_webhook::parse_package_publication_marker(
+                        &json!(field(comment,"body")))).last();
+                let from_body=parse_job(field(pr,"body"));
+                let from_comments=trusted.iter().filter_map(|comment|
+                    parse_job(field(comment,"body"))).collect::<Vec<_>>();
+                let jobs=from_body.map(|job|vec![job]).unwrap_or(from_comments);
+                let tasks=trusted.iter().filter_map(|comment|
+                    parse_task(field(comment,"body"))).collect::<Vec<_>>();
+                let state=field(pr,"state").to_ascii_uppercase();
+                let github_state=if pr.get("merged")==Some(&Value::Bool(true))
+                    ||state=="MERGED"{"MERGED"}else if state=="CLOSED"{"CLOSED"}else{"OPEN"};
+                let count=jobs.len();
+                for mut job in jobs{
+                    let job_id=field(&job,"id").to_owned();
+                    if field(&job,"description").is_empty()&&!field(pr,"body").is_empty(){
+                        job["description"]=pr["body"].clone();
+                    }
+                    job["prNumber"]=json!(number);
+                    job["repository"]=json!(repository);
+                    job["tasks"]=json!(tasks.iter().filter(|task|
+                        field(task,"jobId")==job_id
+                            ||(field(task,"jobId").is_empty()&&count==1))
+                        .cloned().collect::<Vec<_>>());
+                    result.push(json!({"job":job,"githubState":github_state,
+                        "draft":pr.get("isDraft")==Some(&Value::Bool(true)),
+                        "mergedAt":pr.get("mergedAt"),
+                        "closedAt":pr.get("closedAt"),
+                        "publication":publication}));
+                }
+            }
+        };
+        collect(&repo["open"]["nodes"]);
+        if first{
+            collect(&repo["recentMerged"]["nodes"]);
+            collect(&repo["recentClosed"]["nodes"]);
+        }
+        let page=&repo["open"]["pageInfo"];
+        let next=if page["hasNextPage"]==true{
+            page.get("endCursor").and_then(Value::as_str).map(str::to_owned)
+        }else{None};
+        first=false;
+        match next{
+            Some(value) if visited.insert(value.clone())=>{
+                cursor=Some(value);
+            },
+            Some(_)=>return Err("GitHub GraphQL pagination repeated a cursor".into()),
+            None=>break,
+        }
+    }
+    result.sort_by(|a,b|b.pointer("/job/prNumber").and_then(Value::as_i64)
+        .unwrap_or(0).cmp(&a.pointer("/job/prNumber")
+        .and_then(Value::as_i64).unwrap_or(0)));
+    Ok(result)
+}

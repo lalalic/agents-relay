@@ -360,6 +360,58 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=closure::invoke(request)?{return Ok(output);}
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "apiStoreGithubPublic" => {
+            use agents_relay_rust2::{
+                store::{
+                    load_managed_github_pull_request_graphql,
+                    load_managed_github_job_graphql,list_managed_github_jobs,
+                },
+                store_github::GitHubApi,
+            };
+            use std::collections::HashSet;
+            struct FixtureClient {
+                responses:Vec<Value>,calls:Vec<Value>,
+            }
+            impl GitHubApi for FixtureClient {
+                fn graphql(&mut self,query:&str,variables:&Value)->Result<Value,String>{
+                    self.calls.push(json!({"query":query,"variables":variables}));
+                    if self.responses.is_empty() {
+                        return Err("Fixture GraphQL response exhausted".into());
+                    }
+                    let response=self.responses.remove(0);
+                    if let Some(error)=response.get("fixtureError").and_then(Value::as_str){
+                        return Err(error.to_owned());
+                    }
+                    Ok(response)
+                }
+                fn request(&mut self,_path:&str,_method:&str,_body:Option<&Value>)
+                    ->Result<Value,String>{
+                    Err("Unexpected fixture network request".into())
+                }
+            }
+            let mut client=FixtureClient{
+                responses:request["responses"].as_array().cloned().unwrap_or_default(),
+                calls:Vec::new()
+            };
+            let trusted=request["trusted"].as_array().into_iter().flatten()
+                .filter_map(Value::as_str).map(str::to_owned).collect::<HashSet<_>>();
+            let repo=request["repository"].as_str().unwrap_or("");
+            let number=request["prNumber"].as_u64().unwrap_or(0);
+            let result=match request["kind"].as_str().unwrap_or("pull"){
+                "pull"=>load_managed_github_pull_request_graphql(
+                    &mut client,repo,number,&trusted).map(|value|json!(value)),
+                "job"=>load_managed_github_job_graphql(
+                    &mut client,repo,number,
+                    request["jobId"].as_str().unwrap_or(""),&trusted).map(|value|json!(value)),
+                "list"=>list_managed_github_jobs(&mut client,repo,&trusted)
+                    .map(|value|json!(value)),
+                _=>Err("Unknown Store GitHub operation".into()),
+            };
+            Ok(json!({"outcome":match result{
+                Ok(value)=>json!({"ok":true,"value":value}),
+                Err(error)=>json!({"ok":false,"error":error}),
+            },"calls":client.calls}).to_string())
+        }
         "apiCliCoordinator" => {
             use agents_relay_rust2::{
                 cli_coordinator::run_coordinator_job_command,
