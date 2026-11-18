@@ -360,6 +360,33 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=closure::invoke(request)?{return Ok(output);}
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "apiCliReview" => {
+            use agents_relay_rust2::cli_review::run_review_command;
+            let action=request["action"].as_str().unwrap_or("interactive");
+            let args=request["args"].as_array().into_iter().flatten()
+                .filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>();
+            let mut request_body=Value::Null;
+            let mut control_body=Value::Null;
+            let output=run_review_command(action,&args,
+                |file|{
+                    let bytes=std::fs::read(file).map_err(|e|e.to_string())?;
+                    request_body=serde_json::from_slice(&bytes)
+                        .map_err(|e|e.to_string())?;
+                    Ok(request["previewOutput"].as_str()
+                        .unwrap_or("{\"status\":\"pending\"}").to_owned())
+                },
+                |_,body|{
+                    control_body=body.clone();
+                    Ok(request.get("controlResponse").cloned().unwrap_or(Value::Null))
+                },
+                |_| Ok(request.get("outcomeResponse").cloned()
+                    .unwrap_or(Value::Null)),
+            );
+            Ok(json!({"outcome":match output{
+                Ok(value)=>json!({"ok":true,"value":value}),
+                Err(error)=>json!({"ok":false,"error":error}),
+            },"preview":request_body,"control":control_body}).to_string())
+        }
         "apiCliUnblock" => {
             use agents_relay_rust2::{
                 cli_unblock::{run_task_unblock_command,run_job_unblock_command},

@@ -69,3 +69,108 @@ pub fn review_job_response(job: &Value) -> Value {
         "note":"Relay graph will create the review Task once eligible; this is not a delivery receipt."
     })
 }
+
+// The CLI owns its private review request file; an injected host port owns
+// the actual Neo call. No review receipt is equated with approval.
+use std::{
+    fs::{self,OpenOptions},io::Write,path::PathBuf,
+    sync::atomic::{AtomicU64,Ordering},
+    time::{SystemTime,UNIX_EPOCH},
+};
+static REVIEW_TMP_SEQ:AtomicU64=AtomicU64::new(0);
+struct ReviewRequestDir(PathBuf);
+impl ReviewRequestDir {
+    fn allocate()->Result<Self,String>{
+        for _ in 0..32 {
+            let stamp=SystemTime::now().duration_since(UNIX_EPOCH)
+                .map_err(|e|e.to_string())?.as_nanos();
+            let seq=REVIEW_TMP_SEQ.fetch_add(1,Ordering::Relaxed);
+            let path=std::env::temp_dir().join(format!(
+                "relay-review-{}-{stamp}-{seq}",std::process::id()));
+            #[cfg(unix)]
+            let result={
+                use std::os::unix::fs::DirBuilderExt;
+                let mut builder=fs::DirBuilder::new();
+                builder.mode(0o700);
+                builder.create(&path)
+            };
+            #[cfg(not(unix))]
+            let result=fs::create_dir(&path);
+            match result {
+                Ok(())=>return Ok(Self(path)),
+                Err(err) if err.kind()==std::io::ErrorKind::AlreadyExists=>continue,
+                Err(err)=>return Err(err.to_string()),
+            }
+        }
+        Err("Unable to allocate private review request directory".into())
+    }
+    fn write(&self,request:&Value)->Result<PathBuf,String>{
+        let path=self.0.join("request.json");
+        let mut options=OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]{
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        options.open(&path).and_then(|mut file|
+            file.write_all(request.to_string().as_bytes()))
+            .map_err(|error|error.to_string())?;
+        Ok(path)
+    }
+}
+impl Drop for ReviewRequestDir {
+    fn drop(&mut self){let _=fs::remove_dir_all(&self.0);}
+}
+
+/// Interactive review request passes only a private JSON handoff to the
+/// review.preview host tool. The host executor is a trusted, explicit port,
+/// not a new autonomous Relay Worker or a fabricated review result.
+pub fn run_interactive_review_command<Preview,Control>(
+    argv:&[String],mut preview:Preview,mut control:Control,
+)->Result<Value,String>
+where
+    Preview:FnMut(&Path)->Result<String,String>,
+    Control:FnMut(&[String],&Value)->Result<Value,String>,
+{
+    let request=interactive_review_request(argv)?;
+    if matches!(argv.first().map(String::as_str),Some("request"|"--path")){
+        let private=ReviewRequestDir::allocate()?;
+        let file=private.write(&request)?;
+        let stdout=preview(&file)?;
+        let receipt:Value=serde_json::from_str(&stdout)
+            .map_err(|error|error.to_string())?;
+        if receipt.get("isError")==Some(&Value::Bool(true))
+            ||receipt.pointer("/result/isError")==Some(&Value::Bool(true)){
+            let summary=receipt.to_string();
+            return Err(format!("Neo review.preview rejected: {}",
+                summary.chars().take(600).collect::<String>()));
+        }
+        return Ok(receipt);
+    }
+    control(&argv[1..],&request)
+}
+
+/// Review CLI dispatch retains the original Node order: validation, host
+/// invocation, response formatting. An outcome-review effect is injected by
+/// the runtime that owns the Graph/SQLite durable review lifecycle.
+pub fn run_review_command<Preview,Control,Outcome>(
+    action:&str,args:&[String],mut preview:Preview,
+    mut control:Control,mut outcome_review:Outcome,
+)->Result<Value,String>
+where
+    Preview:FnMut(&Path)->Result<String,String>,
+    Control:FnMut(&[String],&Value)->Result<Value,String>,
+    Outcome:FnMut(&[String])->Result<Value,String>,
+{
+    match action {
+        "run"=>outcome_review(args),
+        "interactive"=>run_interactive_review_command(
+            args,|path|preview(path),|flags,body|control(flags,body)),
+        "job"=>{
+            let request=review_job_request(args)?;
+            let job=control(args,&request)?;
+            Ok(review_job_response(&job))
+        },
+        _=>Err("review supports: job | run | interactive".into())
+    }
+}
