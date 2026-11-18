@@ -27,16 +27,19 @@ function normalized(x){
 function wire(value){return JSON.parse(JSON.stringify(normalized(value)));}
 function stableGenerated(value){
  const copy=structuredClone(value);
- const generated=copy.job?.tasks?.filter(t=>t.agentName==='troubleshooter'&&t.parentTaskId==='t-1')??[];
- const ids=generated.map(t=>t.id).filter(Boolean);
- function replace(v){
-  if(typeof v==='string')for(const id of ids)v=v.replaceAll(String(id),'<recovery-id>');
-  if(Array.isArray(v))return v.map(replace);
-  if(v&&typeof v==='object')return Object.fromEntries(Object.entries(v).map(([k,val])=>[k,replace(val)]));
-  return v;
+ // Normalize ONLY a newly allocated Troubleshooter Task's own ID. Never
+ // rewrite arbitrary strings: SQLite may allocate the same short numeric ID
+ // as the unrelated, immutable Job ID, and global replace would hide bugs.
+ for(const snapshot of [copy.job,copy.outcome?.value]){
+  for(const task of snapshot?.tasks??[]){
+   if(task.agentName==='troubleshooter'&&task.parentTaskId==='t-1'){
+    task.id='<recovery-id>';
+   }
+  }
  }
- return replace(copy);
+ return copy;
 }
+
 function rust(){
  const child=spawnSync(bin,[],{cwd:root,encoding:'utf8',timeout:120000,
  input:cases.map(f=>JSON.stringify({op:'apiReconcilerReconcile',root,jobId:'1',...f})).join('\n')+'\n',maxBuffer:8*1024*1024});
@@ -82,4 +85,17 @@ test('Reconciler ACTIVE Graph decisions with safe intercepted provider effects N
  }
  assert.deepEqual(differences,[],JSON.stringify(differences,null,2));
  console.log('Verified',cases.length,'active Graph decision cases without provider execution');
+});
+test('generated Troubleshooter ID normalization never changes immutable Job identity',()=>{
+ const snapshot={outcome:{ok:true,value:job([{...task('FAILED')},{
+  id:'1',parentTaskId:'t-1',agentName:'troubleshooter',state:'QUEUED'
+ }])},job:job([{...task('FAILED')},{
+  id:'1',parentTaskId:'t-1',agentName:'troubleshooter',state:'QUEUED'
+ }])};
+ const normalized=stableGenerated(snapshot);
+ assert.equal(normalized.job.id,'1');
+ assert.equal(normalized.outcome.value.id,'1');
+ assert.equal(normalized.job.tasks[0].id,'t-1');
+ assert.equal(normalized.job.tasks[1].id,'<recovery-id>');
+ assert.equal(normalized.outcome.value.tasks[1].id,'<recovery-id>');
 });
