@@ -2,7 +2,7 @@
 
 > 本表是逐文件的真实审计清单，不是所有模块均通过。**PASS** 需公开 API 原始 Node/Rust 直接差分、Rust 原生负面测试和实际生产调用绑定；只通过静态 API 名称匹配，不能晋级。**HOLD** 指存在尚未关闭的证据缺口，不等同于未实现。
 
-- 原始检查范围：107 个源模块。已认证 **3 PASS**，保留 **104 HOLD/PORTING**。
+- 原始检查范围：107 个源模块。已认证 **5 PASS**，保留 **102 HOLD/PORTING**。
 - 本轮仅跑 Rust 原生测试与必要的 Node/Rust 差分；未重跑独立 Node 全量测试。
 - 这份报告对应上次全量 Node/Rust 230/230 PASS 后的逐项认证。全量 230/230 不等于 107 个模块逐一通过。
 - `directDiffTests` 与 `otherRustModuleReferences` 基于静态文本检索；测试文件出现导入或 Rust 源文件出现引用，仅说明有线索，不表示覆盖了每个公开 API 或进入生产。
@@ -25,6 +25,15 @@
 - 7 exported helper APIs across 160 randomized original Node/Rust fixture sets and 350 sync/async Graph effect traces
 - Native Graph tests and production Task recovery, action, Planner and Troubleshooter callers verified
 - 直接差分：`rust/tests/head_to_head_wave2_graph.mjs`, `rust/tests/head_to_head_wave3_graph.mjs`, `rust/tests/head_to_head_wave4_graph.mjs`
+
+### `src/local-merge-delivery.ts`
+- 20 组原始 Node/Rust 直接 Graph merge/COMPLETED 成功与拒绝差分，通过 `rust/tests/head_to_head_local_merge_completion.mjs`。
+- 真实隔离 Git source → main merge、SQLite CAS、结果事件、重启幂等、无 Origin 跳过和本地 bare origin 非强制推送、拒绝外部远端，Rust 原生 E2E 通过。
+- 正式服务调用绑定：`rust/src/relayd.rs` → `DaemonServices::reconcile_local_completion` → `rust/src/relayd_sqlite_write.rs`。真实模型、完整人工审核和跨节点 L4 仍未验收。
+
+### `src/local-merge-projection.ts`
+- 原 Node/Rust 远端投影的 17 个直接差分场景通过：普通成功、无 origin、失败重试门禁、过期 lease、已完成、远端冲突及有效隔离 bare origin。
+- Rust 原生测试证明 SQLite Graph 幂等性、实际非强制推送、错误 SHA 和外部远端拒绝；正式 daemon 已接通 `effect.remoteDelivery`。真实生产远端与模型 L4 尚未验收。
 
 ## 已有局部验证、但不能升级的关键模块
 
@@ -94,8 +103,8 @@
 | 47 | `src/local-git-merge.ts` | **HOLD** | 6 | 1 | 5 | 1 | 结构审核、模块特定场景／生产门禁 |
 | 48 | `src/local-job-registry.ts` | **HOLD** | 2 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 49 | `src/local-managed-store.ts` | **HOLD** | 1 | 0 | 0 | 1 | 直接差分、运行调用、结构审核、模块特定场景／生产门禁 |
-| 50 | `src/local-merge-delivery.ts` | **HOLD** | 1 | 0 | 0 | 1 | 直接差分、运行调用、结构审核、模块特定场景／生产门禁 |
-| 51 | `src/local-merge-projection.ts` | **HOLD** | 1 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
+| 50 | `src/local-merge-delivery.ts` | **PASS** | 1 | 1 | 1 | 1 | 认证已完成 |
+| 51 | `src/local-merge-projection.ts` | **PASS** | 1 | 1 | 2 | 0 | 认证已完成
 | 52 | `src/managed-worker-input.ts` | **HOLD** | 1 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 53 | `src/manual-plan.ts` | **HOLD** | 1 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 54 | `src/model-redecision.ts` | **HOLD** | 2 | 1 | 1 | 3 | 结构审核、模块特定场景／生产门禁 |
@@ -315,12 +324,6 @@
 49. **`src/local-managed-store.ts`** — 原记录：Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure.
    - 类型/形状需复核：`LocalManagedStore`
    - 当前静态引用缺口：未发现其他 Rust 模块引用该模块
-
-50. **`src/local-merge-delivery.ts`** — 原记录：Serial Phase1 native Rust port for authoritative Graph/SQLite and guarded Git side effects. UNCOMPILED/UNTESTED, finish production bindings in Phase2.
-   - 类型/形状需复核：`LocalMergeEffect`
-   - 当前静态引用缺口：未发现其他 Rust 模块引用该模块
-
-51. **`src/local-merge-projection.ts`** — 原记录：Serial Phase1 native Rust port for authoritative Graph/SQLite and guarded Git side effects. UNCOMPILED/UNTESTED, finish production bindings in Phase2.
 
 52. **`src/managed-worker-input.ts`** — 原记录：Wave3 C native layered Agent resolver and 75 original Node prompt comparisons pass; daemon execution-context entrypoint integration unverified (head_to_head_wave3_delivery.mjs).
 

@@ -875,6 +875,23 @@ fn invoke(request: &Value) -> Result<String, String> {
             };
             Ok(json!({"completed":completed,"job":job,"mergeInputs":inputs}).to_string())
         }
+        "nativeRemoteProjectionReconcile" => {
+            use std::cell::RefCell;
+            let job_id=request["job"]["id"].as_str().ok_or("Job ID missing")?;
+            let repo=std::path::Path::new(request["repo"].as_str().ok_or("Git root missing")?);
+            let job=RefCell::new(request["job"].clone());
+            agents_relay_rust2::local_merge_projection::reconcile_completed_local_delivery(
+                std::path::Path::new("workflow"),job_id,repo,
+                |_id|Ok(job.borrow().clone()),
+                |_id,mutate|{
+                    let mut current=job.borrow().clone();
+                    let changed=mutate(&mut current)?;
+                    *job.borrow_mut()=current.clone();
+                    Ok((current,changed))
+                })?;
+            let output=job.into_inner();
+            Ok(output.to_string())
+        }
         "wave4LocalMerge" => {
             let repo = std::path::Path::new(request["repo"].as_str().ok_or("repo missing")?);
             let receipt = agents_relay_rust2::local_git_merge::deliver_local_merge(

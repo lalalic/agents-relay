@@ -259,6 +259,14 @@ where
     let attempts=initial.get("attempts").and_then(Value::as_u64).unwrap_or(0);
     let opening=decide_projection_delivery(directory,stage,event,
         &json!({"retryDue":retry_due,"claimAvailable":attempts<MAX_ATTEMPTS}))?;
+    // The Graph can accept a waiting/retry-due check without issuing an
+    // effect (retry timer not due). Node returns normally in that case;
+    // treating it as a failed delivery invents errors on every daemon tick.
+    if opening["accepted"]!=true
+        || opening.get("actions").and_then(Value::as_array)
+            .is_some_and(|actions|actions.is_empty()){
+        return Ok(());
+    }
     let opening_action=selected_action(&opening)?;
     if opening_action=="delivery.recordExhausted" {
         let _=mutate(job_id,&|current:&mut Value|{
