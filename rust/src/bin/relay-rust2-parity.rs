@@ -530,6 +530,7 @@ fn invoke(request: &Value) -> Result<String, String> {
         }
         "apiPlannerLaunch" => planner_launch_public::invoke(request),
         "apiPlannerFinish" => planner_finish_public::invoke(request),
+        "apiPlannerApplyTree" => planner_finish_public::apply_tree(request),
         "apiReviewBase" => review_base_public::invoke(request),
         "apiRuntimeBase" => runtime_base_public::invoke(request),
         "apiReconcilerPlanJob" => reconciler_recovery_public::plan(request),

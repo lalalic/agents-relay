@@ -76,3 +76,30 @@ pub fn invoke(request:&Value)->Result<String,String>{
         Err(error)=>json!({"ok":false,"error":error})
     },"job":fixture.job,"calls":fixture.calls,"live":fixture.live}).to_string())
 }
+
+/// Call the real native Reconciler public method, not the Planner helper
+/// directly. The same host ports record durable effects for differential tests.
+pub fn apply_tree(request:&Value)->Result<String,String>{
+    use agents_relay_rust2::reconciler::Reconciler;
+    let root=PathBuf::from(request["root"].as_str().unwrap_or("."));
+    let mut fixture=Fixture{
+        job:request["job"].clone(),calls:vec![],
+        live:request["live"].as_str().map(str::to_owned),
+        atomic:request["atomic"]!=false,
+        store:root.join(".rust2-planner-fixture-id-sequence"),
+        registered:request["workers"].as_array().cloned().unwrap_or_default(),
+        context:request["context"].clone(),reconcile_error:None,
+        registration:request["registration"]==true,
+    };
+    let mut reconciler=Reconciler::new(root.join("workflow"),
+        &root,&root,&root,&root,json!({"owner":"relay"}));
+    let outcome=reconciler.apply_planner_tree(&mut fixture,
+        request["jobId"].as_str().unwrap_or("41"),
+        request["planId"].as_str().unwrap_or("plan-1"),
+        request["executionId"].as_str().unwrap_or("ex1"),
+        &request["proposal"]);
+    Ok(json!({"outcome":match outcome{
+        Ok(plan)=>json!({"ok":true,"value":plan}),
+        Err(error)=>json!({"ok":false,"error":error})
+    },"job":fixture.job,"calls":fixture.calls,"live":fixture.live}).to_string())
+}

@@ -140,3 +140,37 @@ fn sqlite_cas_fencing_and_failed_validation_roll_back_all_task_and_plan_writes()
     assert_eq!(host.emitted.len(),0);
     drop(host);std::fs::remove_dir_all(root).unwrap();
 }
+#[test]
+fn reconciler_apply_planner_tree_uses_same_durable_sqlite_cas_and_rejects_stale_generation(){
+    use agents_relay_rust2::reconciler::Reconciler;
+    let (root,mut host)=fixture();
+    let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+    let mut rec=Reconciler::new(&graph,&root,&root,&root,&root,
+        json!({"owner":"relay"}));
+    let proposal=json!({"objective_status":"satisfied",
+        "assessment":"Implementation complete","next_tasks":[],"unblocks":[]});
+    let before=host.load("41").unwrap();
+    let rejected=rec.apply_planner_tree(&mut host,"41","plan-1","other-generation",
+        &proposal).unwrap_err();
+    assert!(rejected.contains("not owned by this active execution"));
+    assert_eq!(host.load("41").unwrap(),before);
+    assert_eq!(host.mutations.load(Ordering::SeqCst),0);
+    host.race=true;
+    let fenced=rec.apply_planner_tree(&mut host,"41","plan-1","exec-1",
+        &proposal).unwrap_err();
+    assert!(fenced.contains("fencing"),"{fenced}");
+    assert_eq!(host.load("41").unwrap()["plans"][0]["status"],"PLANNING");
+    assert!(host.emitted.is_empty());
+    let applied=rec.apply_planner_tree(&mut host,"41","plan-1","exec-1",
+        &proposal).unwrap();
+    assert_eq!(applied["status"],"SUCCEEDED");
+    assert_eq!(applied["appliedExecutionId"],"exec-1");
+    assert_eq!(host.load("41").unwrap()["plans"][0],applied);
+    let writes=host.mutations.load(Ordering::SeqCst);
+    let repeated=rec.apply_planner_tree(&mut host,"41","plan-1","exec-1",
+        &proposal).unwrap();
+    assert_eq!(repeated,applied);
+    assert_eq!(host.mutations.load(Ordering::SeqCst),writes);
+    drop(host);
+    std::fs::remove_dir_all(root).unwrap();
+}
