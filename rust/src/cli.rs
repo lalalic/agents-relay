@@ -483,3 +483,16 @@ pub fn run_cli<P:CliRuntimePort>(
         other=>Err(format!("Unsupported command {other}"))
     }
 }
+
+/// Node cli.runtimePlanner: selects a concrete owned-process Planner.
+pub fn runtime_planner(args:&[String])
+    ->Result<crate::cli_runtime_public::RuntimePlanner,String>{
+    crate::cli_runtime_public::runtime_planner(args)
+}
+/// Node cli.dashboardJobAction: Graph transitions through the passed Store,
+/// followed by a Reconciler wake for start/reconcile only.
+pub fn dashboard_job_action<P:crate::cli_runtime_public::DashboardJobActionPorts>(
+    ports:&mut P,action:&str,job_id:&str,
+)->Result<Value,String>{
+    crate::cli_runtime_public::dashboard_job_action(ports,action,job_id)
+}
