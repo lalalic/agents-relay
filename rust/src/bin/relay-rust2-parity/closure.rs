@@ -123,6 +123,16 @@ pub(super) fn invoke(request:&Value)->Result<Option<String>,String>{
                 Err(error)=>json!({"ok":false,"error":error})
             }}).to_string())
         }
+        // Node src/usage.ts CodexApiUsageReader: launch an owned *injected*
+        // fake app-server only, send JSON-RPC 1+2 and read id=2 quota.
+        "codexApiUsage"=>{
+            use agents_relay_rust2::usage::CodexApiUsageReader;
+            let command=request["command"].as_str().ok_or("command required")?;
+            let clock=request["clock"].as_str().ok_or("clock required")?.to_string();
+            let reader=CodexApiUsageReader::with_command_and_clock(
+                command,move||clock.clone());
+            Ok(reader.read().to_string())
+        }
         // Node src/usage.ts public observer reader interfaces. All cases use
         // disposable source fixtures or unconfigured keys, never real providers.
         "usageReaderSurface" => {

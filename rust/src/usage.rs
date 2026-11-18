@@ -10,6 +10,22 @@ pub use crate::usage_registry::{UsageReader,UsageRegistry,UsageSnapshotProvider,
     UnavailableUsageReader,read_usage_snapshot};
 pub use crate::usage_readers::{BrowserWorkspaceUsageReader,CodexSessionUsageReader,
     ZaiUsageReader,DeepSeekCreditReader,OpenRouterCreditReader};
+pub use crate::usage_codex_api::{CodexApiUsageReader};
+/// Node codexAndZaiUsageRegistry's public production reader selection.
+/// No provider is started until the caller actually requests a snapshot.
+pub fn codex_and_zai_usage_registry(
+    _codex_home:Option<&std::path::Path>,_legacy_window_days:Option<i64>,
+)->UsageRegistry{
+    let optional=|key:&str|std::env::var(key).ok().is_some_and(|v|!v.is_empty());
+    UsageRegistry::new(
+        Box::new(CodexApiUsageReader::new()),
+        Box::new(ZaiUsageReader::new(None)),
+        optional("DEEPSEEK_API_KEY").then(||Box::new(DeepSeekCreditReader::new(None)) as Box<dyn UsageReader>),
+        optional("OPENROUTER_API_KEY").then(||Box::new(OpenRouterCreditReader::new(None)) as Box<dyn UsageReader>),
+        Some(Box::new(BrowserWorkspaceUsageReader::new(None,None))),
+    )
+}
+
 use chrono::{DateTime,Utc};
 use serde_json::{json,Value};
 use std::{fs,path::{Path,PathBuf},time::Duration};

@@ -109,6 +109,11 @@ impl OwnedProcess {
     }
     /// Transfer a private stdout/stderr pipe to the owning decision adapter.
     /// No external process can acquire the child handle or its process group.
+    /// Transfer the private JSON-RPC stdin only to the original process owner.
+    /// Untrusted callers cannot send input to a foreign PID or process group.
+    pub fn take_stdin(&self) -> Option<std::process::ChildStdin> {
+        self.inner.child.lock().expect("child mutex").stdin.take()
+    }
     pub fn take_stdout(&self) -> Option<std::process::ChildStdout> {
         self.inner.child.lock().expect("child mutex").stdout.take()
     }
@@ -200,7 +205,7 @@ impl OwnedProcessManager {
         args: &[&str],
         options: OwnedProcessOptions,
     ) -> Result<OwnedProcess, String> {
-        self.spawn_configured(command, args, options, false, None)
+        self.spawn_configured(command, args, options, false, None, false)
     }
 
     /// Spawn exactly the same owned process group, but preserve private pipe
@@ -211,7 +216,7 @@ impl OwnedProcessManager {
         args: &[&str],
         options: OwnedProcessOptions,
     ) -> Result<OwnedProcess, String> {
-        self.spawn_configured(command, args, options, true, None)
+        self.spawn_configured(command, args, options, true, None, false)
     }
     pub fn spawn_owned_process_piped_with_env(
         &mut self,
@@ -220,7 +225,17 @@ impl OwnedProcessManager {
         options: OwnedProcessOptions,
         env: &HashMap<String, String>,
     ) -> Result<OwnedProcess, String> {
-        self.spawn_configured(command, args, options, true, Some(env))
+        self.spawn_configured(command, args, options, true, Some(env), false)
+    }
+    /// JSON-RPC providers require a private stdin as well as stdout.
+    /// Only freshly spawned, supervisor-attested process groups are eligible.
+    pub fn spawn_owned_process_stdio(
+        &mut self,
+        command: &str,
+        args: &[&str],
+        options: OwnedProcessOptions,
+    ) -> Result<OwnedProcess, String> {
+        self.spawn_configured(command, args, options, true, None, true)
     }
     fn spawn_configured(
         &mut self,
@@ -229,6 +244,7 @@ impl OwnedProcessManager {
         options: OwnedProcessOptions,
         piped: bool,
         env: Option<&HashMap<String, String>>,
+        stdin_piped: bool,
     ) -> Result<OwnedProcess, String> {
         // A POSIX bootstrap shell immediately stops itself before exec. This
         // gives the supervisor time to prove parent/leader ownership even
@@ -242,9 +258,18 @@ impl OwnedProcessManager {
         };
         #[cfg(not(unix))]
         let mut cmd = Command::new(command);
-        cmd.args(args).stdin(Stdio::null());
+        cmd.args(args).stdin(if stdin_piped {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
         if piped {
-            cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+            // The Codex JSON-RPC app-server uses stdout as its framed protocol
+            // and explicitly ignores stderr (matching Node spawn stdio). An
+            // unread stderr pipe could deadlock on a noisy provider.
+            cmd.stdout(Stdio::piped()).stderr(if stdin_piped {
+                Stdio::null()
+            }else{Stdio::piped()});
         } else {
             cmd.stdout(Stdio::null()).stderr(Stdio::null());
         }

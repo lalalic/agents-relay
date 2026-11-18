@@ -333,6 +333,7 @@ pub mod github_client;
 pub mod usage;
 pub mod usage_registry;
 pub mod usage_readers;
+pub mod usage_codex_api;
 pub mod browser_worker_runtime;
 pub mod store;
 pub mod relay_store;
