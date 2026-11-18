@@ -2,16 +2,16 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity.",
   "summary": {
     "sourceTree": "a7fabd653a006bcd33b84d3eb7ac4c28b085f9dd",
-    "rustTree": "fb963599a9aed10894ff2e704d0f9a4ec02ed6cc",
+    "rustTree": "af1308e56977247772775392b074669fe5d9e551",
     "sourceCount": 107,
     "runtimeExportSymbols": 734,
-    "directNameMatches": 700,
-    "unmappedRuntimeSymbols": 21,
+    "directNameMatches": 721,
+    "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 13,
-    "typeOrShapeReviewSymbols": 282,
-    "filesWithUnmappedRuntime": 6,
-    "filesWithoutDirectDiffImport": 49,
-    "filesWithoutOtherRustReferences": 29
+    "typeOrShapeReviewSymbols": 281,
+    "filesWithUnmappedRuntime": 0,
+    "filesWithoutDirectDiffImport": 45,
+    "filesWithoutOtherRustReferences": 25
   },
   "files": [
     {
@@ -1010,14 +1010,8 @@
       "target": "rust/src/cli.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 6,
-      "directNameMatches": 1,
-      "unmappedRuntime": [
-        "runtimePlanner",
-        "runtime",
-        "dashboardJobAction",
-        "createService",
-        "startService"
-      ],
+      "directNameMatches": 6,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "dashboardJobSetState",
         "dashboardTaskAction",
@@ -1027,11 +1021,16 @@
         "SERVICE_DEFAULTS",
         "eventBus",
         "chatGptTabClosePolicy",
-        "ensureManagedGitHubJob",
-        "Service"
+        "ensureManagedGitHubJob"
       ],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_cli_runtime_factory.mjs",
+        "rust/tests/head_to_head_cli_runtime_public.mjs",
+        "rust/tests/head_to_head_cli_service_public.mjs"
+      ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/cli_runtime_public.rs",
+        "rust/src/bin/relay-rust2-parity/cli_service_public.rs",
         "rust/src/bin/relay-rust2-parity/closure.rs"
       ],
       "exports": [
@@ -1083,32 +1082,32 @@
         {
           "name": "runtimePlanner",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "runtime",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "dashboardJobAction",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "Service",
           "kind": "interface",
-          "static": "review"
+          "static": "name-match"
         },
         {
           "name": "createService",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "startService",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "isEntrypoint",
@@ -1420,6 +1419,7 @@
       ],
       "directDiffImports": [],
       "otherRustModuleReferences": [
+        "rust/src/cli_service_public.rs",
         "rust/src/dashboard_api.rs",
         "rust/src/relayd.rs"
       ],
@@ -1604,7 +1604,8 @@
         "rust/tests/head_to_head_wave3_graph.mjs"
       ],
       "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity.rs"
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/cli_runtime_public.rs"
       ],
       "exports": [
         {
@@ -1830,8 +1831,11 @@
       "otherRustModuleReferences": [
         "rust/src/adapters.rs",
         "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/bin/relay-rust2-parity/pool_public.rs",
+        "rust/src/bin/relay-rust2-parity/runtime_base_public.rs",
         "rust/src/chatgpt_platform_fallback.rs",
         "rust/src/cli.rs",
+        "rust/src/cli_service_public.rs",
         "rust/src/cli_support.rs",
         "rust/src/cli_support_events.rs",
         "rust/src/decision_audit.rs",
@@ -1842,12 +1846,16 @@
         "rust/src/legacy_orchestrator_repair.rs",
         "rust/src/local_merge_delivery.rs",
         "rust/src/local_merge_projection.rs",
+        "rust/src/planner_launch_public.rs",
         "rust/src/planner_runtime.rs",
+        "rust/src/planner_runtime_public.rs",
         "rust/src/pool.rs",
+        "rust/src/pool_public_ports.rs",
         "rust/src/projection_failure_recovery.rs",
         "rust/src/reconciler.rs",
         "rust/src/reconciler_review.rs",
         "rust/src/reconciler_runtime.rs",
+        "rust/src/reconciler_runtime_base.rs",
         "rust/src/relayd_control.rs",
         "rust/src/route_outcome_recording.rs",
         "rust/src/script_task_adapter.rs",
@@ -2080,7 +2088,9 @@
         "ExecutionRecoveryPorts"
       ],
       "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "otherRustModuleReferences": [
+        "rust/src/reconciler.rs"
+      ],
       "exports": [
         {
           "name": "ExecutionRecoveryPorts",
@@ -2417,7 +2427,9 @@
         "HistoryValidation"
       ],
       "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "otherRustModuleReferences": [
+        "rust/src/planner_runtime_public.rs"
+      ],
       "exports": [
         {
           "name": "forceRestateRunnable",
@@ -2613,7 +2625,8 @@
         "rust/src/bin/relay-rust2-parity/closure.rs",
         "rust/src/interactive_invocation_ports.rs",
         "rust/src/interactive_resume.rs",
-        "rust/src/reconciler_runtime.rs"
+        "rust/src/reconciler_runtime.rs",
+        "rust/src/reconciler_runtime_base.rs"
       ],
       "exports": [
         {
@@ -2813,7 +2826,9 @@
       "typeOrShapeReview": [],
       "directDiffImports": [],
       "otherRustModuleReferences": [
-        "rust/src/dashboard_actions.rs"
+        "rust/src/cli_runtime_public.rs",
+        "rust/src/dashboard_actions.rs",
+        "rust/src/reconciler_manual_plan_public.rs"
       ],
       "exports": [
         {
@@ -3152,7 +3167,8 @@
         "rust/src/bin/relay-rust2-parity.rs",
         "rust/src/cli_job_create.rs",
         "rust/src/job_worktree_cleanup.rs",
-        "rust/src/local_merge_delivery.rs"
+        "rust/src/local_merge_delivery.rs",
+        "rust/src/reconciler_git_head.rs"
       ],
       "exports": [
         {
@@ -3316,7 +3332,9 @@
       "unmappedRuntime": [],
       "typeOrShapeReview": [],
       "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "otherRustModuleReferences": [
+        "rust/src/reconciler_manual_plan_public.rs"
+      ],
       "exports": [
         {
           "name": "executeManualPlan",
@@ -3513,9 +3531,11 @@
       "otherRustModuleReferences": [
         "rust/src/adapters.rs",
         "rust/src/bin/owned-process-supervisor.rs",
+        "rust/src/bin/relay-rust2-parity/cli_service_public.rs",
         "rust/src/bin/relay-rust2-parity.rs",
         "rust/src/browser_worker_runtime.rs",
         "rust/src/cli_escalation.rs",
+        "rust/src/cli_service_public.rs",
         "rust/src/continuation.rs",
         "rust/src/dag_result_contract.rs",
         "rust/src/decision.rs",
@@ -3589,21 +3609,24 @@
       "target": "rust/src/planner_runtime.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 7,
-      "directNameMatches": 5,
-      "unmappedRuntime": [
-        "finishPlanner",
-        "launchPlanExecution"
-      ],
+      "directNameMatches": 7,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "PlannerApplyValidationError.code",
         "PlannerRuntimePorts"
       ],
       "directDiffImports": [
         "rust/tests/head_to_head_planner_activation.mjs",
+        "rust/tests/head_to_head_planner_finish_public.mjs",
+        "rust/tests/head_to_head_planner_launch_public.mjs",
         "rust/tests/head_to_head_planner_unblocks.mjs"
       ],
       "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity/closure.rs"
+        "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/bin/relay-rust2-parity/planner_finish_public.rs",
+        "rust/src/bin/relay-rust2-parity/planner_launch_public.rs",
+        "rust/src/planner_runtime_public.rs",
+        "rust/src/reconciler.rs"
       ],
       "exports": [
         {
@@ -3646,12 +3669,12 @@
         {
           "name": "finishPlanner",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "launchPlanExecution",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -3676,14 +3699,17 @@
         "AgentObjectivePlanner.constructor"
       ],
       "directDiffImports": [
+        "rust/tests/head_to_head_planner_finish_public.mjs",
         "rust/tests/head_to_head_planner_public_ports.mjs"
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/closure.rs",
         "rust/src/planner_adapters.rs",
         "rust/src/planner_runtime.rs",
+        "rust/src/planner_runtime_public.rs",
         "rust/src/pool.rs",
-        "rust/src/reconciler.rs"
+        "rust/src/reconciler.rs",
+        "rust/src/reconciler_manual_plan_public.rs"
       ],
       "exports": [
         {
@@ -3852,20 +3878,18 @@
       "target": "rust/src/pool.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 15,
-      "directNameMatches": 12,
-      "unmappedRuntime": [
-        "RepositoryWorkerPool.reconcileLocalJob",
-        "RepositoryWorkerPool.watch",
-        "RepositoryWorkerPool.webhookSignal"
-      ],
+      "directNameMatches": 15,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [],
       "directDiffImports": [
+        "rust/tests/head_to_head_pool_public_lifecycle.mjs",
         "rust/tests/head_to_head_pool_reconcile_known.mjs",
         "rust/tests/head_to_head_pool_webhook.mjs",
         "rust/tests/head_to_head_stage2_pool_adapters.mjs",
         "rust/tests/head_to_head_store_github_public.mjs"
       ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/pool_public.rs",
         "rust/src/bin/relay-rust2-parity.rs",
         "rust/src/relayd.rs"
       ],
@@ -3915,7 +3939,7 @@
           "name": "reconcileLocalJob",
           "kind": "class-method",
           "parent": "RepositoryWorkerPool",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "reconcileKnown",
@@ -3939,13 +3963,13 @@
           "name": "watch",
           "kind": "class-method",
           "parent": "RepositoryWorkerPool",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "webhookSignal",
           "kind": "class-method",
           "parent": "RepositoryWorkerPool",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "webhookWake",
@@ -4431,7 +4455,11 @@
         "rust/tests/head_to_head_wave3_graph.mjs"
       ],
       "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity.rs"
+        "rust/src/bin/relay-rust2-parity/pool_public.rs",
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/pool.rs",
+        "rust/src/pool_public_ports.rs",
+        "rust/src/reconciler_runtime_base.rs"
       ],
       "exports": [
         {
@@ -4515,21 +4543,22 @@
       "target": "rust/src/reconciler_review.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 1,
-      "directNameMatches": 0,
-      "unmappedRuntime": [
-        "ReconcilerReviewBase"
-      ],
+      "directNameMatches": 1,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_reconciler_review_base.mjs"
+      ],
       "otherRustModuleReferences": [
         "rust/src/reconciler.rs",
+        "rust/src/reconciler_review_base.rs",
         "rust/src/reconciler_runtime.rs"
       ],
       "exports": [
         {
           "name": "ReconcilerReviewBase",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -4538,24 +4567,21 @@
       "target": "rust/src/reconciler_runtime.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 10,
-      "directNameMatches": 4,
-      "unmappedRuntime": [
-        "ReconcilerRuntimeBase",
-        "ReconcilerRuntimeBase.reconcile",
-        "ReconcilerRuntimeBase.bindInteractiveInvocation",
-        "ReconcilerRuntimeBase.handleEvent",
-        "ReconcilerRuntimeBase.watch",
-        "ReconcilerRuntimeBase.wake"
-      ],
+      "directNameMatches": 10,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "executionEventSource",
         "ReconcileOptions",
         "EventHandlingResult",
         "withExecutionBoundary"
       ],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_reconciler_apply_event.mjs",
+        "rust/tests/head_to_head_reconciler_runtime_base.mjs"
+      ],
       "otherRustModuleReferences": [
-        "rust/src/reconciler.rs"
+        "rust/src/reconciler.rs",
+        "rust/src/reconciler_runtime_base.rs"
       ],
       "exports": [
         {
@@ -4581,7 +4607,7 @@
         {
           "name": "ReconcilerRuntimeBase",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "constructor",
@@ -4593,13 +4619,13 @@
           "name": "reconcile",
           "kind": "class-method",
           "parent": "ReconcilerRuntimeBase",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "bindInteractiveInvocation",
           "kind": "class-method",
           "parent": "ReconcilerRuntimeBase",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "applyEvent",
@@ -4611,13 +4637,13 @@
           "name": "handleEvent",
           "kind": "class-method",
           "parent": "ReconcilerRuntimeBase",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "watch",
           "kind": "class-method",
           "parent": "ReconcilerRuntimeBase",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "idle",
@@ -4635,7 +4661,7 @@
           "name": "wake",
           "kind": "class-method",
           "parent": "ReconcilerRuntimeBase",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -4644,20 +4670,27 @@
       "target": "rust/src/reconciler.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 8,
-      "directNameMatches": 4,
-      "unmappedRuntime": [
-        "Reconciler.reconcile",
-        "Reconciler.recoverLostExecutions",
-        "Reconciler.planJob",
-        "Reconciler.applyPlannerTree"
-      ],
+      "directNameMatches": 8,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "executionEventSource",
         "ReconcileOptions",
         "managedWorkerInput"
       ],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_reconciler_active_public.mjs",
+        "rust/tests/head_to_head_reconciler_apply_planner_tree.mjs",
+        "rust/tests/head_to_head_reconciler_git_head.mjs",
+        "rust/tests/head_to_head_reconciler_plan_job.mjs",
+        "rust/tests/head_to_head_reconciler_reconcile_public.mjs",
+        "rust/tests/head_to_head_reconciler_recover_lost.mjs"
+      ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/planner_finish_public.rs",
+        "rust/src/bin/relay-rust2-parity/reconcile_public.rs",
+        "rust/src/bin/relay-rust2-parity/reconciler_recovery_public.rs",
+        "rust/src/cli_runtime_public.rs",
+        "rust/src/cli_service_public.rs",
         "rust/src/relayd.rs"
       ],
       "exports": [
@@ -4696,13 +4729,13 @@
           "name": "reconcile",
           "kind": "class-method",
           "parent": "Reconciler",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "recoverLostExecutions",
           "kind": "class-method",
           "parent": "Reconciler",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "recoverStartupOrphans",
@@ -4714,13 +4747,13 @@
           "name": "planJob",
           "kind": "class-method",
           "parent": "Reconciler",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "applyPlannerTree",
           "kind": "class-method",
           "parent": "Reconciler",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -4799,6 +4832,7 @@
         "rust/tests/head_to_head_store_facade_closure.mjs"
       ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/cli_service_public.rs",
         "rust/src/bin/relay-rust2-parity/closure.rs",
         "rust/src/bin/relay-rust2-parity/sqlite_api.rs",
         "rust/src/bin/relay-rust2-parity.rs",
@@ -5336,7 +5370,10 @@
         "configureExecutionRouterRulesPath"
       ],
       "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/cli_service_public.rs",
+        "rust/src/cli_service_public.rs"
+      ],
       "exports": [
         {
           "name": "daemonHelp",
@@ -5581,6 +5618,7 @@
         "rust/src/bin/relay-rust2-wave4-review.rs",
         "rust/src/cli_job_create.rs",
         "rust/src/cli_review.rs",
+        "rust/src/cli_runtime_public.rs",
         "rust/src/reconciler_review.rs"
       ],
       "exports": [
@@ -5990,9 +6028,11 @@
         "GitHubStore"
       ],
       "directDiffImports": [
+        "rust/tests/head_to_head_cli_runtime_factory.mjs",
         "rust/tests/head_to_head_cli_unblock.mjs",
         "rust/tests/head_to_head_host_invocation_ports.mjs",
         "rust/tests/head_to_head_local_blocker_port.mjs",
+        "rust/tests/head_to_head_reconciler_git_head.mjs",
         "rust/tests/head_to_head_resolve_pull_request.mjs",
         "rust/tests/head_to_head_store_facade_closure.mjs",
         "rust/tests/head_to_head_store_github_public.mjs"
@@ -6458,6 +6498,7 @@
         "rust/tests/head_to_head_wave3_graph.mjs"
       ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/reconciler_recovery_public.rs",
         "rust/src/bin/relay-rust2-parity.rs",
         "rust/src/cli_coordinator.rs",
         "rust/src/dag_task_runtime.rs",
@@ -6468,6 +6509,7 @@
         "rust/src/job_actions.rs",
         "rust/src/local_git_merge.rs",
         "rust/src/local_merge_delivery.rs",
+        "rust/src/planner_runtime_public.rs",
         "rust/src/reconciler.rs",
         "rust/src/reconciler_review.rs",
         "rust/src/reconciler_runtime.rs",
@@ -6669,7 +6711,9 @@
       "otherRustModuleReferences": [
         "rust/src/cli.rs",
         "rust/src/cli_workflow.rs",
+        "rust/src/planner_launch_public.rs",
         "rust/src/projection_outbox.rs",
+        "rust/src/reconciler.rs",
         "rust/src/reconciler_review.rs"
       ],
       "exports": [
@@ -7573,6 +7617,7 @@
         "rust/src/force_restate_validation.rs",
         "rust/src/planner.rs",
         "rust/src/planner_runtime.rs",
+        "rust/src/planner_runtime_public.rs",
         "rust/src/task_actions.rs",
         "rust/src/task_recovery.rs",
         "rust/src/troubleshooter_fallback.rs"
@@ -7668,6 +7713,7 @@
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/closure.rs",
         "rust/src/cli_coordinator.rs",
+        "rust/src/cli_service_public.rs",
         "rust/src/relayd.rs"
       ],
       "exports": [

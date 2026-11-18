@@ -16,15 +16,15 @@ A listed direct differential import only means a head-to-head test imports the c
 |---|---:|
 | sourceCount | 107 |
 | runtimeExportSymbols | 734 |
-| directNameMatches | 700 |
-| unmappedRuntimeSymbols | 21 |
+| directNameMatches | 721 |
+| unmappedRuntimeSymbols | 0 |
 | runtimeConstructorReviews | 13 |
-| typeOrShapeReviewSymbols | 282 |
-| filesWithUnmappedRuntime | 6 |
-| filesWithoutDirectDiffImport | 49 |
-| filesWithoutOtherRustReferences | 29 |
+| typeOrShapeReviewSymbols | 281 |
+| filesWithUnmappedRuntime | 0 |
+| filesWithoutDirectDiffImport | 45 |
+| filesWithoutOtherRustReferences | 25 |
 
-Source tree: `a7fabd653a00`; Rust source tree: `fb963599a9ae`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `a7fabd653a00`; Rust source tree: `af1308e56977`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Per-file candidate surface (all 107 PORTING files)
 
@@ -47,85 +47,85 @@ Source tree: `a7fabd653a00`; Rust source tree: `fb963599a9ae`. Rust module rows 
 | `src/cli-support.ts` | 38 | 37 | 0 | 4 | 4 |
 | `src/cli-unblock.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/cli-worker-task.ts` | 3 | 3 | 0 | 0 | 1 |
-| `src/cli.ts` | 6 | 1 | 5 | 0 | 1 |
+| `src/cli.ts` | 6 | 6 | 0 | 3 | 3 |
 | `src/continuation.ts` | 7 | 7 | 0 | 1 | 11 |
 | `src/dag-result-contract.ts` | 1 | 1 | 0 | 1 | 3 |
 | `src/dag-task-runtime.ts` | 5 | 5 | 0 | 0 | 2 |
 | `src/dashboard-actions.ts` | 3 | 3 | 0 | 0 | 1 |
 | `src/dashboard-data.ts` | 8 | 8 | 0 | 1 | 3 |
-| `src/dashboard.ts` | 1 | 1 | 0 | 0 | 2 |
+| `src/dashboard.ts` | 1 | 1 | 0 | 0 | 3 |
 | `src/decision-audit.ts` | 13 | 13 | 0 | 1 | 1 |
-| `src/decision.ts` | 11 | 11 | 0 | 2 | 1 |
+| `src/decision.ts` | 11 | 11 | 0 | 2 | 2 |
 | `src/dependency-revision-execution.ts` | 3 | 3 | 0 | 0 | 1 |
 | `src/escalation-notifier.ts` | 2 | 2 | 0 | 0 | 0 |
-| `src/events.ts` | 13 | 13 | 0 | 3 | 29 |
+| `src/events.ts` | 13 | 13 | 0 | 3 | 36 |
 | `src/execution-context.ts` | 6 | 6 | 0 | 1 | 0 |
 | `src/execution-process-tracker.ts` | 2 | 2 | 0 | 0 | 0 |
-| `src/execution-recovery.ts` | 2 | 2 | 0 | 0 | 0 |
+| `src/execution-recovery.ts` | 2 | 2 | 0 | 0 | 1 |
 | `src/execution-routing.ts` | 6 | 6 | 0 | 1 | 2 |
 | `src/feedback.ts` | 23 | 23 | 0 | 2 | 0 |
-| `src/force-restate-validation.ts` | 6 | 6 | 0 | 0 | 0 |
+| `src/force-restate-validation.ts` | 6 | 6 | 0 | 0 | 1 |
 | `src/force-restate.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/github-auth.ts` | 2 | 2 | 0 | 0 | 1 |
 | `src/github-client.ts` | 10 | 10 | 0 | 0 | 0 |
-| `src/interactive-invocation.ts` | 12 | 11 | 0 | 1 | 4 |
+| `src/interactive-invocation.ts` | 12 | 11 | 0 | 1 | 5 |
 | `src/interactive-request.ts` | 5 | 5 | 0 | 1 | 2 |
 | `src/interactive-resume.ts` | 2 | 2 | 0 | 0 | 0 |
-| `src/job-actions.ts` | 4 | 4 | 0 | 0 | 1 |
+| `src/job-actions.ts` | 4 | 4 | 0 | 0 | 3 |
 | `src/job-pause.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/job-worktree-cleanup.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/legacy-orchestrator-repair.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/local-authority-store.ts` | 33 | 33 | 0 | 4 | 5 |
-| `src/local-git-merge.ts` | 6 | 6 | 0 | 1 | 4 |
+| `src/local-git-merge.ts` | 6 | 6 | 0 | 1 | 5 |
 | `src/local-job-registry.ts` | 2 | 2 | 0 | 0 | 1 |
 | `src/local-managed-store.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/local-merge-delivery.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/local-merge-projection.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/managed-worker-input.ts` | 1 | 1 | 0 | 0 | 1 |
-| `src/manual-plan.ts` | 1 | 1 | 0 | 0 | 0 |
+| `src/manual-plan.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/model-redecision.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/model-routing.ts` | 4 | 4 | 0 | 1 | 4 |
 | `src/outcome-review.ts` | 5 | 5 | 0 | 2 | 2 |
-| `src/owned-process.ts` | 5 | 5 | 0 | 1 | 16 |
+| `src/owned-process.ts` | 5 | 5 | 0 | 1 | 18 |
 | `src/planner-child-recovery.ts` | 1 | 1 | 0 | 0 | 0 |
-| `src/planner-runtime.ts` | 7 | 5 | 2 | 2 | 1 |
-| `src/planner.ts` | 22 | 20 | 0 | 1 | 5 |
-| `src/pool.ts` | 15 | 12 | 3 | 4 | 2 |
+| `src/planner-runtime.ts` | 7 | 7 | 0 | 4 | 5 |
+| `src/planner.ts` | 22 | 20 | 0 | 2 | 7 |
+| `src/pool.ts` | 15 | 15 | 0 | 5 | 3 |
 | `src/projected-store.ts` | 34 | 34 | 0 | 2 | 1 |
 | `src/projection-outbox.ts` | 25 | 25 | 0 | 2 | 1 |
-| `src/reconcile-coordinator.ts` | 7 | 7 | 0 | 2 | 1 |
+| `src/reconcile-coordinator.ts` | 7 | 7 | 0 | 2 | 5 |
 | `src/reconciler-context.ts` | 3 | 3 | 0 | 0 | 0 |
-| `src/reconciler-review.ts` | 1 | 0 | 1 | 0 | 2 |
-| `src/reconciler-runtime.ts` | 10 | 4 | 6 | 0 | 1 |
-| `src/reconciler.ts` | 8 | 4 | 4 | 0 | 1 |
+| `src/reconciler-review.ts` | 1 | 1 | 0 | 1 | 3 |
+| `src/reconciler-runtime.ts` | 10 | 10 | 0 | 2 | 2 |
+| `src/reconciler.ts` | 8 | 8 | 0 | 6 | 6 |
 | `src/relay-store-discovery.ts` | 3 | 3 | 0 | 0 | 4 |
-| `src/relay-store.ts` | 46 | 45 | 0 | 8 | 19 |
+| `src/relay-store.ts` | 46 | 45 | 0 | 8 | 20 |
 | `src/relayd-control.ts` | 1 | 1 | 0 | 1 | 1 |
 | `src/relayd-dashboard-actions.ts` | 1 | 1 | 0 | 1 | 1 |
 | `src/relayd-main.ts` | 0 | 0 | 0 | 0 | 0 |
 | `src/relayd-utilities.ts` | 10 | 10 | 0 | 1 | 2 |
-| `src/relayd.ts` | 1 | 1 | 0 | 0 | 0 |
+| `src/relayd.ts` | 1 | 1 | 0 | 0 | 2 |
 | `src/review-replan.ts` | 3 | 3 | 0 | 3 | 4 |
 | `src/review-revision-execution.ts` | 3 | 3 | 0 | 3 | 2 |
 | `src/review-revision-model.ts` | 7 | 7 | 0 | 3 | 3 |
 | `src/review-revision-settlement.ts` | 1 | 1 | 0 | 1 | 3 |
 | `src/review-revision-stale.ts` | 1 | 1 | 0 | 1 | 2 |
-| `src/reviewer-thread.ts` | 9 | 9 | 0 | 2 | 5 |
+| `src/reviewer-thread.ts` | 9 | 9 | 0 | 2 | 6 |
 | `src/route-outcome-recording.ts` | 5 | 5 | 0 | 1 | 2 |
 | `src/router-evals.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/script-task-adapter.ts` | 3 | 3 | 0 | 0 | 0 |
 | `src/service-external-actions.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/single-job-task-control.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/store-github.ts` | 21 | 21 | 0 | 1 | 6 |
-| `src/store.ts` | 22 | 22 | 0 | 6 | 4 |
+| `src/store.ts` | 22 | 22 | 0 | 8 | 4 |
 | `src/task-actions.ts` | 18 | 18 | 0 | 1 | 8 |
 | `src/task-inactivity-watchdog.ts` | 6 | 6 | 0 | 3 | 2 |
 | `src/task-recovery.ts` | 4 | 4 | 0 | 0 | 2 |
-| `src/task-transitions.ts` | 6 | 6 | 0 | 2 | 19 |
+| `src/task-transitions.ts` | 6 | 6 | 0 | 2 | 21 |
 | `src/task-update.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/troubleshooter-fallback.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/troubleshooter.ts` | 6 | 6 | 0 | 0 | 2 |
-| `src/types.ts` | 7 | 7 | 0 | 1 | 4 |
+| `src/types.ts` | 7 | 7 | 0 | 1 | 6 |
 | `src/unblock.ts` | 4 | 4 | 0 | 1 | 4 |
 | `src/usage.ts` | 26 | 18 | 0 | 3 | 5 |
 | `src/worker-failure-recovery.ts` | 1 | 1 | 0 | 1 | 2 |
@@ -133,19 +133,13 @@ Source tree: `a7fabd653a00`; Rust source tree: `fb963599a9ae`. Rust module rows 
 | `src/workflow-effect-failures.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/workflow/durable-transition.ts` | 4 | 4 | 0 | 1 | 0 |
 | `src/workflow/planner-orchestration-v2.ts` | 4 | 4 | 0 | 3 | 3 |
-| `src/workflow/task-resolution.ts` | 12 | 12 | 0 | 3 | 8 |
-| `src/workspace.ts` | 21 | 21 | 0 | 1 | 3 |
+| `src/workflow/task-resolution.ts` | 12 | 12 | 0 | 3 | 9 |
+| `src/workspace.ts` | 21 | 21 | 0 | 1 | 4 |
 | `src/z-adapter.ts` | 5 | 5 | 0 | 0 | 0 |
 | `src/z-oauth.ts` | 2 | 2 | 0 | 0 | 1 |
 
 ## Priority review: unmapped exported runtime symbols
 
-- **src/reconciler-runtime.ts** (6): ReconcilerRuntimeBase, ReconcilerRuntimeBase.reconcile, ReconcilerRuntimeBase.bindInteractiveInvocation, ReconcilerRuntimeBase.handleEvent, ReconcilerRuntimeBase.watch, ReconcilerRuntimeBase.wake
-- **src/cli.ts** (5): runtimePlanner, runtime, dashboardJobAction, createService, startService
-- **src/reconciler.ts** (4): Reconciler.reconcile, Reconciler.recoverLostExecutions, Reconciler.planJob, Reconciler.applyPlannerTree
-- **src/pool.ts** (3): RepositoryWorkerPool.reconcileLocalJob, RepositoryWorkerPool.watch, RepositoryWorkerPool.webhookSignal
-- **src/planner-runtime.ts** (2): finishPlanner, launchPlanExecution
-- **src/reconciler-review.ts** (1): ReconcilerReviewBase
 
 ## Required next verification
 
