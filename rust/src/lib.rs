@@ -345,6 +345,7 @@ pub mod planner;
 pub mod planner_adapters;
 pub mod planner_runtime;
 pub mod planner_runtime_public;
+pub mod planner_launch_public;
 pub mod adapters;
 pub mod pool;
 pub mod reconciler_review;

@@ -445,3 +445,6 @@ pub fn retry_pending_planner_unblocks(
 // Node public host invocation while shared native policy methods remain in
 // this module. Store effects are supplied by the active runtime owner.
 pub use crate::planner_runtime_public::{finish_planner,PlannerFinishPorts};
+
+// Node launchPlanExecution: owned lifecycle, slot fence and Planner callback.
+pub use crate::planner_launch_public::{launch_plan_execution,PlannerLaunchPorts};

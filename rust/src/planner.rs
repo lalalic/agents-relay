@@ -242,6 +242,7 @@ fn validate_resolution(value:Option<&Value>,field:&str)
     Ok(Some(proposal.clone()))
 }
 pub fn parse_planner_result(value:&Value)->Result<Value,String>{
+    if !value.is_object(){return Err("Planner result must be an object".into());}
     let status=field(value,"objective_status");
     if !matches!(status,"in_progress"|"satisfied"){
         return Err("Planner objective_status must be in_progress or satisfied".into());

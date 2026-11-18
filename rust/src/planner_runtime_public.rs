@@ -78,6 +78,9 @@ pub trait PlannerFinishPorts {
     fn can_register_unblock(&self)->bool{false}
     fn reconcile(&mut self,job_id:&str,plan_id:&str,context:&str)
         ->Result<(),String>;
+    /// The host tracks the follow-up operation and reports its failure
+    /// without invalidating a successfully committed Planner candidate.
+    fn detached_reconcile(&mut self,_job_id:&str,_plan_id:&str,_why:&str){}
     fn release_live(&mut self,plan_id:&str,execution_id:Option<&str>);
     fn has_live(&self,plan_id:&str,execution_id:Option<&str>)->bool;
     fn store_directory(&self)->&Path;
@@ -321,6 +324,7 @@ pub fn finish_planner<P:PlannerFinishPorts>(
                 &format!("Planner {plan_id}: {message}"),Some("user"),None,None))?;
             if retry&&old["manualPlanning"]!=true{
                 ports.reconcile(job_id,plan_id,"planner retry reconciliation")?;
+                ports.detached_reconcile(job_id,plan_id,"planner retry reconciliation");
             }
         }
         release(ports);return Ok(())
@@ -428,6 +432,7 @@ pub fn finish_planner<P:PlannerFinishPorts>(
             release(ports);
             if old["manualPlanning"]!=true{
                 ports.reconcile(job_id,plan_id,"planner follow-up reconciliation")?;
+                ports.detached_reconcile(job_id,plan_id,"planner follow-up reconciliation");
             }
             Ok(())
         },

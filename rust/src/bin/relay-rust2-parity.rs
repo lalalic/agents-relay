@@ -36,6 +36,8 @@ mod runtime_base_public;
 mod review_base_public;
 #[path = "relay-rust2-parity/planner_finish_public.rs"]
 mod planner_finish_public;
+#[path = "relay-rust2-parity/planner_launch_public.rs"]
+mod planner_launch_public;
 #[path = "relay-rust2-parity/control_factory.rs"]
 mod control_factory;
 #[path = "relay-rust2-parity/dashboard_factory.rs"]
@@ -526,6 +528,7 @@ fn invoke(request: &Value) -> Result<String, String> {
                 Err(error)=>json!({"ok":false,"error":error}),
             },"calls":client.calls}).to_string())
         }
+        "apiPlannerLaunch" => planner_launch_public::invoke(request),
         "apiPlannerFinish" => planner_finish_public::invoke(request),
         "apiReviewBase" => review_base_public::invoke(request),
         "apiRuntimeBase" => runtime_base_public::invoke(request),
