@@ -360,6 +360,35 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=closure::invoke(request)?{return Ok(output);}
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "apiCliUnblock" => {
+            use agents_relay_rust2::{
+                cli_unblock::{run_task_unblock_command,run_job_unblock_command},
+                relay_store::SQLiteRelayStore,
+            };
+            let store=SQLiteRelayStore::open(std::path::Path::new(":memory:"),None)?;
+            store.save_job(&request["job"])?;
+            let job_id=request["job"]["id"].as_str().ok_or("Fixture Job ID required")?;
+            let job=store.load_job(job_id)?.ok_or("Fixture Job missing")?;
+            let args=request["args"].as_array().into_iter().flatten()
+                .filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>();
+            let graph=std::path::Path::new(request["graphDirectory"].as_str().unwrap_or("workflow"));
+            let result=match request["kind"].as_str().unwrap_or("task"){
+                "job"=>run_job_unblock_command(graph,&args,&store,&job,None),
+                "task"=>{
+                    let id=request["taskId"].as_str().ok_or("Fixture Task ID required")?;
+                    let task=job["tasks"].as_array().into_iter().flatten()
+                        .find(|item|item["id"]==id)
+                        .ok_or("Fixture Task missing")?;
+                    run_task_unblock_command(graph,&args,&store,&job,task,None,None)
+                },
+                _=>Err("Unknown CLI unblock fixture".into()),
+            };
+            let after=store.load_job(job_id)?.ok_or("Fixture Job vanished")?;
+            Ok(json!({"outcome":match result{
+                Ok(value)=>json!({"ok":true,"value":value}),
+                Err(error)=>json!({"ok":false,"error":error}),
+            },"after":after}).to_string())
+        }
         "apiDaemonObservability" => {
             let configured=agents_relay_rust2::relayd_utilities::configure_daemon_observability(
                 &request["env"]);
