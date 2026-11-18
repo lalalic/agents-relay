@@ -6,6 +6,16 @@ use serde_json::{json,Value};
 pub(super) fn invoke(request:&Value)->Result<Option<String>,String>{
     let op=request["op"].as_str().unwrap_or("");
     let result:Result<String,String>=match op{
+        // Public Node createWorkspaceControl factory: reject invalid payloads
+        // before any SQLite/Graph or daemon effect using the same backend.
+        "workspaceControlFactoryParity"=>{
+            let body=request.get("body").unwrap_or(&Value::Null);
+            let result=super::control_factory::invoke(body);
+            Ok(json!({"outcome":match result{
+                Ok(value)=>json!({"ok":true,"value":value}),
+                Err(error)=>json!({"ok":false,"error":error}),
+            }}).to_string())
+        }
         // Real temporary local Git repositories: no network, external PR,
         // force reset or Job effects are allowed by this parity fixture.
         "workspaceManagedParity"=>{

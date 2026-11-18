@@ -82,21 +82,27 @@ fn waking<B:WorkspaceControlBackend>(backend:&mut B,id:&str,reason:&str,
 fn control_create<B:WorkspaceControlBackend>(
     backend:&mut B,body:&Value,
 )->Result<Value,String>{
-    let repository=required(body,"repository","job.create")?.to_owned();
-    if !allowed_repo(&backend.repositories(),&repository)
-        &&backend.repository_path(&repository).is_none(){
-        return Err(format!("Local repository {repository} is not authorized"));
-    }
+    // Preserve Node public factory validation order: reject obsolete options
+    // before checking the repository and before any backend side effects.
     let opts=body.get("options").filter(|v|v.is_object())
         .cloned().unwrap_or(json!({}));
-    for obsolete in ["projectPath","contentOnly","executionMode","schedule"]{
-        if opts.get(obsolete).is_some(){
-            return Err(format!("Job {obsolete} is removed or unsupported"));
-        }
+    if opts.get("projectPath").is_some(){
+        return Err("Job projectPath is removed; use an independent local Git root".into());
     }
+    if opts.get("contentOnly").is_some()||opts.get("executionMode").is_some(){
+        return Err("Execution mode/content-only is obsolete; use normal Job reviewEnabled and autoMerge policy".into());
+    }
+    let repository=body.get("repository").and_then(Value::as_str)
+        .filter(|s|!s.is_empty())
+        .ok_or("job.create requires repository")?.to_string();
+    if opts.get("schedule").is_some(){return Err("Job schedules are unsupported".into());}
     if opts.get("coordinator").is_some_and(|v|!v.is_null())
         &&body.get("initialPlan")==Some(&Value::Bool(true)){
         return Err("Coordinator Job must not request an initial Planner".into());
+    }
+    if !allowed_repo(&backend.repositories(),&repository)
+        &&backend.repository_path(&repository).is_none(){
+        return Err(format!("Local repository {repository} is not authorized"));
     }
     let root=text(&opts,"projectRoot")
         .map(str::to_owned).or_else(||backend.repository_path(&repository))
@@ -184,9 +190,14 @@ fn control_review<B:WorkspaceControlBackend>(
 pub fn workspace_control<B:WorkspaceControlBackend>(
     backend:&mut B,body:&Value,
 )->Result<Value,String>{
-    let command=required(body,"command","control")?;
+    let command=body.get("command").and_then(Value::as_str)
+        .filter(|s|!s.is_empty())
+        .ok_or("control command is required")?;
     if command=="job.create"{return control_create(backend,body);}
-    let job_id=required(body,"jobId",command)?.to_owned();
+    let job_id=body.get("jobId").and_then(Value::as_str)
+        .filter(|s|!s.is_empty())
+        .ok_or_else(||format!("{command} requires jobId"))?
+        .to_owned();
     let job=backend.load_job(&job_id)?;
     let graph=backend.graph_directory().to_path_buf();
     match command{
@@ -401,4 +412,13 @@ fn event_for_unblock(job_id:&str,task_id:&str,reason:&str)->Value{
     crate::events::event_for(job_id,task_id,None,
         "task.unblocked","queued",reason,Some("orchestrator"),
         Some(json!({})),None)
+}
+
+/// Node createWorkspaceControl returns an owned callback that closes over
+/// its dependencies. Rust captures the same authorized backend: the returned
+/// callback executes the existing SQLite/Graph-bound workspace_control.
+pub fn create_workspace_control<'a,B:WorkspaceControlBackend>(
+    backend:&'a mut B,
+)->impl FnMut(&Value)->Result<Value,String>+'a{
+    move |body|workspace_control(backend,body)
 }

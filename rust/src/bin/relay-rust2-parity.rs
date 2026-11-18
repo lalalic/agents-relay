@@ -24,6 +24,8 @@ use agents_relay_rust2::{
 };
 #[path = "relay-rust2-parity/closure.rs"]
 mod closure;
+#[path = "relay-rust2-parity/control_factory.rs"]
+mod control_factory;
 use serde_json::{json, Value};
 use std::io::{self, BufRead};
 
