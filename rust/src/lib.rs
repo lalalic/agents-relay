@@ -354,6 +354,7 @@ pub mod relayd;
 pub mod cli;
 pub mod cli_runtime_public;
 pub mod reconciler_manual_plan_public;
+pub mod reconciler_runtime_base;
 
 pub mod store_pull_request;
 
