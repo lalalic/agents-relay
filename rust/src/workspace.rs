@@ -381,3 +381,52 @@ pub fn assert_clean_worktree_at_head(
     }
     Ok(())
 }
+
+/// Node src/workspace.ts prepareManagedExecutionWorktree: a stable, shared
+/// per-PR checkout that validates the canonical primary remote and immutable
+/// head SHA before any worktree effect. Existing dirty or divergent Job work
+/// is preserved: no hard reset, no force checkout and no source ref update.
+pub fn prepare_managed_execution_worktree(
+    project_path:&Path,repository:&str,pr_number:u64,
+    head:&Value,_execution_id:&str,workspace_root:&Path,
+)->Result<PathBuf,String>{
+    let primary=PathBuf::from(git(project_path,&["rev-parse","--show-toplevel"])?);
+    let project_relative=git(project_path,&["rev-parse","--show-prefix"])?;
+    let project_relative=project_relative.trim_end_matches('/');
+    let remote=git(&primary,&["config","--get","remote.origin.url"])?;
+    if github_repository_from_remote(&remote).as_deref()!=Some(repository){
+        return Err(format!("Primary checkout {} does not match {repository}",primary.display()));
+    }
+    let ref_name=field(head,"ref");
+    let expected_sha=field(head,"sha");
+    git(&primary,&["fetch","origin",
+        &format!("refs/heads/{ref_name}:refs/remotes/origin/{ref_name}")])?;
+    let fetched=git(&primary,&["rev-parse",
+        &format!("refs/remotes/origin/{ref_name}")])?;
+    if fetched!=expected_sha{
+        return Err(format!("PR #{pr_number} head changed while preparing execution checkout ({expected_sha} -> {fetched})"));
+    }
+    let checkout=managed_job_worktree_path(repository,pr_number,workspace_root)?;
+    let parent=checkout.parent().ok_or("Managed worktree has no parent")?;
+    fs::create_dir_all(parent).map_err(|e|e.to_string())?;
+    if checkout.exists(){
+        let existing_root=git(&checkout,&["rev-parse","--show-toplevel"])?;
+        if fs::canonicalize(existing_root).map_err(|e|e.to_string())?
+            !=fs::canonicalize(&checkout).map_err(|e|e.to_string())?{
+            return Err(format!("Worktree ownership mismatch: {}",checkout.display()));
+        }
+        let existing_head=git(&checkout,&["rev-parse","HEAD"])?;
+        if existing_head!=expected_sha{
+            if !git(&checkout,&["status","--porcelain"])?.is_empty(){
+                return Err(format!("Job worktree has changes while PR head advanced: {}",checkout.display()));
+            }
+            if !git_ok(&checkout,&["merge-base","--is-ancestor",&existing_head,expected_sha]){
+                return Err(format!("Job worktree has non-fast-forward history; preserve commits: {}",checkout.display()));
+            }
+            git(&checkout,&["merge","--ff-only",expected_sha])?;
+        }
+    }else{
+        git(&primary,&["worktree","add","--detach",&checkout.to_string_lossy(),expected_sha])?;
+    }
+    Ok(if project_relative.is_empty(){checkout}else{checkout.join(project_relative)})
+}

@@ -6,6 +6,21 @@ use serde_json::{json,Value};
 pub(super) fn invoke(request:&Value)->Result<Option<String>,String>{
     let op=request["op"].as_str().unwrap_or("");
     let result:Result<String,String>=match op{
+        // Real temporary local Git repositories: no network, external PR,
+        // force reset or Job effects are allowed by this parity fixture.
+        "workspaceManagedParity"=>{
+            let result=agents_relay_rust2::workspace::prepare_managed_execution_worktree(
+                std::path::Path::new(request["projectPath"].as_str().ok_or("projectPath required")?),
+                request["repository"].as_str().ok_or("repository required")?,
+                request["prNumber"].as_u64().ok_or("prNumber required")?,
+                &request["head"],"ignored",
+                std::path::Path::new(request["workspaceRoot"].as_str().ok_or("workspaceRoot required")?),
+            );
+            Ok(json!({"outcome":match result{
+                Ok(path)=>json!({"ok":true,"value":path.to_string_lossy()}),
+                Err(error)=>json!({"ok":false,"error":error}),
+            }}).to_string())
+        }
         // Direct Node HostInteractiveInvocationCoordinator + hostInvocationPorts
         // through real temporary SQLite and the canonical interactive Graph.
         "hostInvocationPortsScenario"=>{
