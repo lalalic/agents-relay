@@ -6,6 +6,38 @@ use serde_json::{json,Value};
 pub(super) fn invoke(request:&Value)->Result<Option<String>,String>{
     let op=request["op"].as_str().unwrap_or("");
     let result:Result<String,String>=match op{
+        // Public PlannerRuntime activation and typed validation errors.
+        // Graph lifecycle selects the activation; failed guards don't mutate.
+        "plannerRuntimePublicParity"=>{
+            use agents_relay_rust2::planner_runtime::{
+                PlannerApplyValidationError,activate_committed_planner_work};
+            let result=match request["method"].as_str().unwrap_or(""){
+                "error"=>{
+                    let phase=request["phase"].as_str().unwrap_or("candidate");
+                    let issues=request["issues"].as_array().into_iter().flatten()
+                        .filter_map(|x|x.as_str().map(str::to_owned)).collect();
+                    let err=PlannerApplyValidationError::new(
+                        phase,issues,request["retryable"].as_bool());
+                    json!({"name":PlannerApplyValidationError::NAME,
+                        "code":PlannerApplyValidationError::CODE,"phase":err.phase,
+                        "retryable":err.retryable,"issues":err.issues,
+                        "message":err.message()})
+                },
+                "activation"=>{
+                    let mut job=request["job"].clone();
+                    let dir=std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("../workflow");
+                    let outcome=activate_committed_planner_work(&dir,&mut job,
+                        "2026-11-17T22:55:00.000Z");
+                    json!({"outcome":match outcome{
+                        Ok(ok)=>json!({"ok":true,"value":ok}),
+                        Err(error)=>json!({"ok":false,"error":error}),
+                    },"job":job})
+                },
+                _=>return Err("Unknown PlannerRuntime method".into()),
+            };
+            Ok(result.to_string())
+        }
         // Public Node createWorkspaceControl factory: reject invalid payloads
         // before any SQLite/Graph or daemon effect using the same backend.
         "workspaceControlFactoryParity"=>{

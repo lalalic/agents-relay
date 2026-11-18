@@ -300,3 +300,50 @@ pub fn planner_reconciler_step(
     }
     Ok(candidate)
 }
+
+/// Node PlannerApplyValidationError: retain the structured typed diagnosis
+/// while preserving its stable JSON message and nonretryable fencing phase.
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub struct PlannerApplyValidationError {
+    pub phase:String,
+    pub issues:Vec<String>,
+    pub retryable:bool,
+}
+impl PlannerApplyValidationError {
+    pub const CODE:&'static str="PLAN_APPLY_VALIDATION_FAILED";
+    pub const NAME:&'static str="PlannerApplyValidationError";
+    pub fn new(phase:&str,issues:Vec<String>,retryable:Option<bool>)->Self {
+        Self{phase:phase.into(),issues,
+            retryable:retryable.unwrap_or(phase!="fencing")}
+    }
+    pub fn message(&self)->String {
+        let issues=serde_json::to_string(&self.issues).unwrap_or_else(|_|"[]".into());
+        format!(r#"{{"code":"PLAN_APPLY_VALIDATION_FAILED","phase":"{}","retryable":{},"issues":{}}}"#,
+            self.phase,self.retryable,issues)
+    }
+}
+impl std::fmt::Display for PlannerApplyValidationError {
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {
+        f.write_str(&self.message())
+    }
+}
+impl std::error::Error for PlannerApplyValidationError {}
+
+/// Node activateCommittedPlannerWork mutates the candidate Job only after
+/// canonical Job Graph selects DRAFT->ACTIVE for an actual QUEUED child Task.
+/// Not a new state machine: it reuses the shared Graph lifecycle dispatcher.
+pub fn activate_committed_planner_work(
+    graph_directory:&Path,job:&mut Value,now:&str,
+)->Result<bool,String> {
+    if field(job,"state")!="DRAFT"
+        ||!job.get("tasks").and_then(Value::as_array).into_iter().flatten()
+            .any(|task|field(task,"state")=="QUEUED") {
+        return Ok(false);
+    }
+    let decision=crate::workflow::lifecycle::dispatch_job_lifecycle_sync(
+        graph_directory,job,"activate",&json!({}),now)?;
+    if decision.get("accepted")!=Some(&Value::Bool(true)) {
+        return Err(format!("Job {} activation rejected after planning",field(job,"id")));
+    }
+    Ok(true)
+}
