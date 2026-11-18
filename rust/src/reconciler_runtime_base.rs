@@ -37,6 +37,44 @@ impl RuntimeBaseEventBus for NatsEventBus {
         Ok(Box::new(move||subscription.unsubscribe()))
     }
 }
+// A single canonical Graph candidate is committed before any volatile effect.
+// The coordinator and direct applyEvent API share this exact path.
+fn apply_durable_event(
+    host:&Arc<dyn RuntimeBaseStore>,runtime:&Arc<Mutex<ReconcilerRuntime>>,
+    directory:&std::path::Path,event:&Value,
+)->Result<RuntimeEffect,String>{
+    let kind=event.get("type").and_then(Value::as_str).unwrap_or("");
+    if kind=="job.wake"{
+        return Ok(RuntimeEffect::recognized(&Value::Null,"job.wake",true));
+    }
+    if kind=="github.webhook"{
+        return Ok(RuntimeEffect::recognized(&Value::Null,"github.audit_only",false));
+    }
+    if !matches!(kind,"task.started"|"task.progress"|
+        "task.completed"|"task.failed"|"task.blocked"|
+        "task.cancelled"|"task.interactive_waiting"|
+        "task.interactive_decision"|"review.started"|
+        "review.approved"|"review.changes_required"|"review.blocked"){
+        return Ok(RuntimeEffect::ignored(&Value::Null,kind));
+    }
+    let job=event.get("job_id").and_then(Value::as_str).unwrap_or("undefined");
+    let mut effect:Option<RuntimeEffect>=None;
+    let mut callback=|current:Value|{
+        let next=runtime.lock().map_err(|e|e.to_string())?
+            .apply_event(directory,&current,event,None)?;
+        let candidate=next.job.clone();
+        effect=Some(next);
+        Ok(candidate)
+    };
+    host.mutate_job(job,&mut callback)?;
+    let Some(done)=effect else{
+        return Err("Runtime SQLite callback was not executed".into());
+    };
+    runtime.lock().map_err(|e|e.to_string())?
+        .finalize_after_commit(&done);
+    for event in &done.events{host.emit(event)?;}
+    Ok(done)
+}
 pub struct ReconcilerRuntimeBase {
     host:Arc<dyn RuntimeBaseStore>,
     runtime:Arc<Mutex<ReconcilerRuntime>>,
@@ -59,39 +97,8 @@ impl ReconcilerRuntimeBase {
                 let Some(event)=signal.get("event").filter(|v|!v.is_null())else{
                     should_reconcile=true;continue;
                 };
-                let kind=event.get("type").and_then(Value::as_str).unwrap_or("");
-                // Node does not open SQLite for pure audit/no-op transport
-                // observations. They can neither advance Task state nor
-                // acquire a lease. Job wakes call Reconciler below.
-                if kind=="job.wake"{should_reconcile=true;continue;}
-                if kind=="github.webhook"
-                    || !matches!(kind,"task.started"|"task.progress"|
-                        "task.completed"|"task.failed"|"task.blocked"|
-                        "task.cancelled"|"task.interactive_waiting"|
-                        "task.interactive_decision"|"review.started"|
-                        "review.approved"|"review.changes_required"|
-                        "review.blocked"){
-                    continue;
-                }
-                let mut effect:Option<RuntimeEffect>=None;
-                let mut callback=|current:Value|{
-                    let next=consuming_runtime.lock().map_err(|e|e.to_string())?
-                        .apply_event(&graph,&current,event,None)?;
-                    let candidate=next.job.clone();
-                    effect=Some(next);
-                    Ok(candidate)
-                };
-                // All mutable Graph decisions execute against fresh SQLite
-                // state. A failed commit never releases an execution owner.
-                consuming_host.mutate_job(job_id,&mut callback)?;
-                let Some(done)=effect else{
-                    return Err("Runtime SQLite callback was not executed".into());
-                };
-                consuming_runtime.lock().map_err(|e|e.to_string())?
-                    .finalize_after_commit(&done);
-                for event in &done.events{
-                    consuming_host.emit(event)?;
-                }
+                let done=apply_durable_event(&consuming_host,&consuming_runtime,
+                    &graph,event)?;
                 should_reconcile|=done.reconcile;
                 detached|=done.reconcile&&done.reconcile_detached;
             }
@@ -123,6 +130,12 @@ impl ReconcilerRuntimeBase {
         self.host.reconcile(job_id)
     }
     pub fn wake(&self,job_id:&str)->Result<Value,String>{self.reconcile(job_id)}
+    /// Node ReconcilerRuntimeBase.applyEvent executes exactly one Graph
+    /// decision against fresh SQLite and returns its direct handling facts.
+    /// It does NOT independently call Reconciler; callers may enqueue a wake.
+    pub fn apply_event(&self,event:&Value)->Result<RuntimeEffect,String>{
+        apply_durable_event(&self.host,&self.runtime,&self.directory,event)
+    }
     pub fn handle_event(&self,event:Value)->Result<(),String>{
         let job=event.get("job_id").and_then(Value::as_str)
             .unwrap_or("undefined");

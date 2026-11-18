@@ -97,7 +97,7 @@ async function node(f){
  }catch(error){errors.push(error.message);}}
  await instance.idle();
  await instance.close();
- return normalize(compact({calls,job:current,errors,direct}));
+ return normalize(compact({calls,job:current,errors,direct,outcomes:[]}));
 }
 function firstDiff(a,b,path='root'){
  if(typeof a!==typeof b||a===null||b===null)return JSON.stringify(a)===JSON.stringify(b)?null:{path,expected:a,actual:b};

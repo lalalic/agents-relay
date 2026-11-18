@@ -51,8 +51,18 @@ pub fn invoke(request:&Value)->Result<String,String>{
         runtime.watch(Some(&bus),request["jobId"].as_str().unwrap_or("41"))
     }else{runtime.watch(None,request["jobId"].as_str().unwrap_or("41"))};
     let mut errors=vec![];
+    let mut outcomes=vec![];
     for event in request["events"].as_array().into_iter().flatten(){
-        let result=if watch{bus.publish(event)}else{runtime.handle_event(event.clone())};
+        let result=if request["directApply"]==true{
+            runtime.apply_event(event).map(|effect|{
+                let mut value=json!({"applied":effect.applied,
+                    "reconcile":effect.reconcile,"reason":effect.reason});
+                if effect.reconcile&&effect.reconcile_detached{
+                    value["reconcileMode"]=json!("detached");
+                }
+                outcomes.push(value);
+            })
+        }else if watch{bus.publish(event)}else{runtime.handle_event(event.clone())};
         if let Err(error)=result{errors.push(error);}
     }
     runtime.idle();
@@ -78,7 +88,7 @@ pub fn invoke(request:&Value)->Result<String,String>{
     runtime.idle();
     let result=json!({"calls":store.calls.lock().map_err(|e|e.to_string())?.clone(),
         "job":store.state.lock().map_err(|e|e.to_string())?.clone(),
-        "errors":errors,"direct":direct});
+        "errors":errors,"direct":direct,"outcomes":outcomes});
     runtime.close()?;
     Ok(result.to_string())
 }

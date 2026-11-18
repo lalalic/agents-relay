@@ -157,8 +157,13 @@ impl ReconcilerRuntime{
         let Some(index)=task_index(job,id)else{return Ok(
             RuntimeEffect::ignored(job,"task.progress.ignored"));};
         let task=&job["tasks"][index];
-        if !correlated(task,event)
-            ||!matches!(field(task,"state"),"RUNNING"|"QUEUED"){
+        // Node acceptTaskProgress accepts only a RUNNING execution, never a
+        // merely QUEUED lease. The event timestamp must be valid and not
+        // future-dated before Graph can update progress facts.
+        let parsed_at=DateTime::parse_from_rfc3339(field(event,"timestamp"));
+        if !correlated(task,event)||field(task,"state")!="RUNNING"
+            ||!parsed_at.ok().is_some_and(|at|
+                at.timestamp_millis()<=Utc::now().timestamp_millis()){
             return Ok(RuntimeEffect::ignored(job,"task.progress.ignored"));
         }
         let now=iso8601_now();
@@ -617,3 +622,7 @@ impl ReconcilerRuntime{
             &&self.planner_live.is_empty()&&self.continuation_live.is_empty()
     }
 }
+
+// Public Node ReconcilerRuntimeBase host contract lives in the SRP module;
+// this re-export preserves the original runtime module's API entrypoint.
+pub use crate::reconciler_runtime_base::{ReconcilerRuntimeBase,RuntimeBaseStore,RuntimeBaseEventBus};
