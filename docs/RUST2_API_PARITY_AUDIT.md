@@ -16,15 +16,15 @@ A listed direct differential import only means a head-to-head test imports the c
 |---|---:|
 | sourceCount | 107 |
 | runtimeExportSymbols | 734 |
-| directNameMatches | 646 |
-| unmappedRuntimeSymbols | 74 |
+| directNameMatches | 684 |
+| unmappedRuntimeSymbols | 36 |
 | runtimeConstructorReviews | 14 |
 | typeOrShapeReviewSymbols | 283 |
-| filesWithUnmappedRuntime | 30 |
-| filesWithoutDirectDiffImport | 66 |
-| filesWithoutOtherRustReferences | 41 |
+| filesWithUnmappedRuntime | 12 |
+| filesWithoutDirectDiffImport | 55 |
+| filesWithoutOtherRustReferences | 33 |
 
-Source tree: `a7fabd653a00`; Rust source tree: `5e5f54d9064e`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `a7fabd653a00`; Rust source tree: `7a928f4ec92e`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Per-file candidate surface (all 107 PORTING files)
 
@@ -32,20 +32,20 @@ Source tree: `a7fabd653a00`; Rust source tree: `5e5f54d9064e`. Rust module rows 
 |---|---:|---:|---:|---:|---:|
 | `src/adapters.ts` | 12 | 12 | 0 | 2 | 4 |
 | `src/blocker-recovery.ts` | 1 | 1 | 0 | 0 | 0 |
-| `src/blockers.ts` | 2 | 2 | 0 | 0 | 2 |
+| `src/blockers.ts` | 2 | 2 | 0 | 0 | 3 |
 | `src/browser-worker-pool.ts` | 15 | 15 | 0 | 1 | 3 |
 | `src/browser-worker-routing.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/browser-worker-runtime.ts` | 2 | 2 | 0 | 0 | 1 |
 | `src/chatgpt-platform-fallback.ts` | 5 | 5 | 0 | 0 | 1 |
 | `src/cli-artifact.ts` | 2 | 2 | 0 | 4 | 1 |
-| `src/cli-coordinator.ts` | 1 | 0 | 1 | 0 | 0 |
-| `src/cli-escalation.ts` | 4 | 2 | 2 | 0 | 0 |
+| `src/cli-coordinator.ts` | 1 | 1 | 0 | 1 | 1 |
+| `src/cli-escalation.ts` | 4 | 4 | 0 | 1 | 1 |
 | `src/cli-foreground.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/cli-job-create.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/cli-prompt.ts` | 5 | 5 | 0 | 0 | 0 |
-| `src/cli-review.ts` | 3 | 1 | 2 | 0 | 0 |
-| `src/cli-support.ts` | 38 | 34 | 3 | 3 | 2 |
-| `src/cli-unblock.ts` | 2 | 0 | 2 | 0 | 0 |
+| `src/cli-review.ts` | 3 | 3 | 0 | 1 | 1 |
+| `src/cli-support.ts` | 38 | 37 | 0 | 4 | 4 |
+| `src/cli-unblock.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/cli-worker-task.ts` | 3 | 3 | 0 | 0 | 1 |
 | `src/cli.ts` | 6 | 1 | 5 | 0 | 1 |
 | `src/continuation.ts` | 7 | 7 | 0 | 1 | 11 |
@@ -54,11 +54,11 @@ Source tree: `a7fabd653a00`; Rust source tree: `5e5f54d9064e`. Rust module rows 
 | `src/dashboard-actions.ts` | 3 | 3 | 0 | 0 | 1 |
 | `src/dashboard-data.ts` | 8 | 8 | 0 | 1 | 3 |
 | `src/dashboard.ts` | 1 | 1 | 0 | 0 | 2 |
-| `src/decision-audit.ts` | 13 | 13 | 0 | 1 | 0 |
+| `src/decision-audit.ts` | 13 | 13 | 0 | 1 | 1 |
 | `src/decision.ts` | 11 | 11 | 0 | 2 | 1 |
-| `src/dependency-revision-execution.ts` | 3 | 2 | 1 | 0 | 1 |
+| `src/dependency-revision-execution.ts` | 3 | 3 | 0 | 0 | 1 |
 | `src/escalation-notifier.ts` | 2 | 2 | 0 | 0 | 0 |
-| `src/events.ts` | 13 | 13 | 0 | 3 | 27 |
+| `src/events.ts` | 13 | 13 | 0 | 3 | 28 |
 | `src/execution-context.ts` | 6 | 6 | 0 | 1 | 0 |
 | `src/execution-process-tracker.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/execution-recovery.ts` | 2 | 2 | 0 | 0 | 0 |
@@ -68,14 +68,14 @@ Source tree: `a7fabd653a00`; Rust source tree: `5e5f54d9064e`. Rust module rows 
 | `src/force-restate.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/github-auth.ts` | 2 | 2 | 0 | 0 | 1 |
 | `src/github-client.ts` | 10 | 10 | 0 | 0 | 0 |
-| `src/interactive-invocation.ts` | 12 | 9 | 2 | 0 | 1 |
-| `src/interactive-request.ts` | 5 | 4 | 1 | 0 | 1 |
-| `src/interactive-resume.ts` | 2 | 1 | 1 | 0 | 0 |
+| `src/interactive-invocation.ts` | 12 | 11 | 0 | 1 | 4 |
+| `src/interactive-request.ts` | 5 | 5 | 0 | 1 | 2 |
+| `src/interactive-resume.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/job-actions.ts` | 4 | 4 | 0 | 0 | 1 |
 | `src/job-pause.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/job-worktree-cleanup.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/legacy-orchestrator-repair.ts` | 1 | 1 | 0 | 0 | 0 |
-| `src/local-authority-store.ts` | 33 | 31 | 2 | 1 | 3 |
+| `src/local-authority-store.ts` | 33 | 33 | 0 | 4 | 5 |
 | `src/local-git-merge.ts` | 6 | 6 | 0 | 1 | 4 |
 | `src/local-job-registry.ts` | 2 | 2 | 0 | 0 | 1 |
 | `src/local-managed-store.ts` | 1 | 1 | 0 | 0 | 0 |
@@ -83,15 +83,15 @@ Source tree: `a7fabd653a00`; Rust source tree: `5e5f54d9064e`. Rust module rows 
 | `src/local-merge-projection.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/managed-worker-input.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/manual-plan.ts` | 1 | 1 | 0 | 0 | 0 |
-| `src/model-redecision.ts` | 2 | 1 | 1 | 0 | 0 |
-| `src/model-routing.ts` | 4 | 4 | 0 | 1 | 3 |
-| `src/outcome-review.ts` | 5 | 3 | 2 | 1 | 2 |
-| `src/owned-process.ts` | 5 | 5 | 0 | 1 | 14 |
+| `src/model-redecision.ts` | 2 | 2 | 0 | 1 | 1 |
+| `src/model-routing.ts` | 4 | 4 | 0 | 1 | 4 |
+| `src/outcome-review.ts` | 5 | 5 | 0 | 2 | 2 |
+| `src/owned-process.ts` | 5 | 5 | 0 | 1 | 15 |
 | `src/planner-child-recovery.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/planner-runtime.ts` | 7 | 0 | 6 | 0 | 0 |
 | `src/planner.ts` | 22 | 20 | 0 | 1 | 5 |
 | `src/pool.ts` | 15 | 9 | 6 | 1 | 2 |
-| `src/projected-store.ts` | 34 | 31 | 3 | 1 | 1 |
+| `src/projected-store.ts` | 34 | 33 | 1 | 1 | 1 |
 | `src/projection-outbox.ts` | 25 | 25 | 0 | 2 | 1 |
 | `src/reconcile-coordinator.ts` | 7 | 7 | 0 | 2 | 1 |
 | `src/reconciler-context.ts` | 3 | 3 | 0 | 0 | 0 |
@@ -99,11 +99,11 @@ Source tree: `a7fabd653a00`; Rust source tree: `5e5f54d9064e`. Rust module rows 
 | `src/reconciler-runtime.ts` | 10 | 4 | 6 | 0 | 1 |
 | `src/reconciler.ts` | 8 | 4 | 4 | 0 | 1 |
 | `src/relay-store-discovery.ts` | 3 | 3 | 0 | 0 | 4 |
-| `src/relay-store.ts` | 46 | 45 | 0 | 1 | 6 |
+| `src/relay-store.ts` | 46 | 45 | 0 | 6 | 18 |
 | `src/relayd-control.ts` | 1 | 0 | 1 | 0 | 0 |
 | `src/relayd-dashboard-actions.ts` | 1 | 0 | 1 | 0 | 0 |
 | `src/relayd-main.ts` | 0 | 0 | 0 | 0 | 0 |
-| `src/relayd-utilities.ts` | 10 | 8 | 2 | 0 | 1 |
+| `src/relayd-utilities.ts` | 10 | 10 | 0 | 1 | 2 |
 | `src/relayd.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/review-replan.ts` | 3 | 3 | 0 | 3 | 4 |
 | `src/review-revision-execution.ts` | 3 | 3 | 0 | 3 | 2 |
@@ -116,25 +116,25 @@ Source tree: `a7fabd653a00`; Rust source tree: `5e5f54d9064e`. Rust module rows 
 | `src/script-task-adapter.ts` | 3 | 3 | 0 | 0 | 0 |
 | `src/service-external-actions.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/single-job-task-control.ts` | 1 | 1 | 0 | 0 | 0 |
-| `src/store-github.ts` | 21 | 19 | 2 | 0 | 0 |
-| `src/store.ts` | 22 | 17 | 5 | 1 | 1 |
-| `src/task-actions.ts` | 18 | 14 | 4 | 0 | 5 |
+| `src/store-github.ts` | 21 | 21 | 0 | 0 | 3 |
+| `src/store.ts` | 22 | 22 | 0 | 6 | 3 |
+| `src/task-actions.ts` | 18 | 18 | 0 | 1 | 8 |
 | `src/task-inactivity-watchdog.ts` | 6 | 6 | 0 | 3 | 2 |
-| `src/task-recovery.ts` | 4 | 4 | 0 | 0 | 1 |
-| `src/task-transitions.ts` | 6 | 6 | 0 | 2 | 16 |
-| `src/task-update.ts` | 2 | 0 | 2 | 0 | 0 |
+| `src/task-recovery.ts` | 4 | 4 | 0 | 0 | 2 |
+| `src/task-transitions.ts` | 6 | 6 | 0 | 2 | 19 |
+| `src/task-update.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/troubleshooter-fallback.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/troubleshooter.ts` | 6 | 6 | 0 | 0 | 2 |
 | `src/types.ts` | 7 | 7 | 0 | 1 | 4 |
-| `src/unblock.ts` | 4 | 3 | 1 | 0 | 2 |
-| `src/usage.ts` | 26 | 15 | 3 | 2 | 2 |
+| `src/unblock.ts` | 4 | 4 | 0 | 1 | 4 |
+| `src/usage.ts` | 26 | 15 | 3 | 2 | 4 |
 | `src/worker-failure-recovery.ts` | 1 | 0 | 1 | 0 | 0 |
 | `src/worker-routing.ts` | 8 | 8 | 0 | 1 | 4 |
 | `src/workflow-effect-failures.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/workflow/durable-transition.ts` | 4 | 4 | 0 | 1 | 0 |
 | `src/workflow/planner-orchestration-v2.ts` | 4 | 4 | 0 | 3 | 3 |
 | `src/workflow/task-resolution.ts` | 12 | 12 | 0 | 3 | 8 |
-| `src/workspace.ts` | 21 | 20 | 1 | 0 | 1 |
+| `src/workspace.ts` | 21 | 20 | 1 | 0 | 2 |
 | `src/z-adapter.ts` | 5 | 5 | 0 | 0 | 0 |
 | `src/z-oauth.ts` | 2 | 2 | 0 | 0 | 1 |
 
@@ -144,30 +144,12 @@ Source tree: `a7fabd653a00`; Rust source tree: `5e5f54d9064e`. Rust module rows 
 - **src/pool.ts** (6): aggregateManagedGitHubJobs, RepositoryWorkerPool.reconcileLocalJob, RepositoryWorkerPool.reconcileKnown, RepositoryWorkerPool.watch, RepositoryWorkerPool.webhookSignal, RepositoryWorkerPool.webhookWake
 - **src/reconciler-runtime.ts** (6): ReconcilerRuntimeBase, ReconcilerRuntimeBase.reconcile, ReconcilerRuntimeBase.bindInteractiveInvocation, ReconcilerRuntimeBase.handleEvent, ReconcilerRuntimeBase.watch, ReconcilerRuntimeBase.wake
 - **src/cli.ts** (5): runtimePlanner, runtime, dashboardJobAction, createService, startService
-- **src/store.ts** (5): loadManagedGitHubPullRequestGraphql, loadManagedGitHubJobGraphql, withGitHubRequestContext, resolvePullRequest, listManagedGitHubJobs
 - **src/reconciler.ts** (4): Reconciler.reconcile, Reconciler.recoverLostExecutions, Reconciler.planJob, Reconciler.applyPlannerTree
-- **src/task-actions.ts** (4): classifyFailedTask, applyTaskUnblockRetrySnapshot, supersedeCancelledTask, dispatchTaskAction
-- **src/cli-support.ts** (3): storeFor, eventBus, withEventBus
-- **src/projected-store.ts** (3): ProjectedDurableStore.comments, ProjectedDurableStore.registerBlockerDependent, ProjectedDurableStore.resolveBlockerDependents
 - **src/usage.ts** (3): CodexApiUsageReader, CodexApiUsageReader.read, codexAndZaiUsageRegistry
-- **src/cli-escalation.ts** (2): runConfiguredEscalation, runEscalationCommand
-- **src/cli-review.ts** (2): runInteractiveReviewCommand, runReviewCommand
-- **src/cli-unblock.ts** (2): runTaskUnblockCommand, runJobUnblockCommand
-- **src/interactive-invocation.ts** (2): hostInvocationPorts, HostInteractiveInvocationCoordinator.applyEvent
-- **src/local-authority-store.ts** (2): LocalAuthorityDurableStore.registerBlockerDependent, LocalAuthorityDurableStore.resolveBlockerDependents
-- **src/outcome-review.ts** (2): evaluateOutcome, runOutcomeReview
-- **src/relayd-utilities.ts** (2): configureDaemonObservability, configureExecutionRouterRulesPath
-- **src/store-github.ts** (2): GitHubStore.registerBlockerDependent, GitHubStore.resolveBlockerDependents
-- **src/task-update.ts** (2): applyManagedTaskUpdate, managedTaskUpdateHandler
-- **src/cli-coordinator.ts** (1): runCoordinatorJobCommand
-- **src/dependency-revision-execution.ts** (1): reconcileDependencyRevisions
-- **src/interactive-request.ts** (1): failInteractiveReview
-- **src/interactive-resume.ts** (1): recoverInteractiveDecisions
-- **src/model-redecision.ts** (1): redecideFailedTask
+- **src/projected-store.ts** (1): ProjectedDurableStore.comments
 - **src/reconciler-review.ts** (1): ReconcilerReviewBase
 - **src/relayd-control.ts** (1): createWorkspaceControl
 - **src/relayd-dashboard-actions.ts** (1): createDashboardActions
-- **src/unblock.ts** (1): unblockTask
 - **src/worker-failure-recovery.ts** (1): handleWorkerLaunchFailure
 - **src/workspace.ts** (1): prepareManagedExecutionWorktree
 

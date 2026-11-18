@@ -2,16 +2,16 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity.",
   "summary": {
     "sourceTree": "a7fabd653a006bcd33b84d3eb7ac4c28b085f9dd",
-    "rustTree": "5e5f54d9064e0cd75de6dc9672a134135ee3f925",
+    "rustTree": "7a928f4ec92e924e8bc7382df3bd62ca10870d84",
     "sourceCount": 107,
     "runtimeExportSymbols": 734,
-    "directNameMatches": 646,
-    "unmappedRuntimeSymbols": 74,
+    "directNameMatches": 684,
+    "unmappedRuntimeSymbols": 36,
     "runtimeConstructorReviews": 14,
     "typeOrShapeReviewSymbols": 283,
-    "filesWithUnmappedRuntime": 30,
-    "filesWithoutDirectDiffImport": 66,
-    "filesWithoutOtherRustReferences": 41
+    "filesWithUnmappedRuntime": 12,
+    "filesWithoutDirectDiffImport": 55,
+    "filesWithoutOtherRustReferences": 33
   },
   "files": [
     {
@@ -235,6 +235,7 @@
       "directDiffImports": [],
       "otherRustModuleReferences": [
         "rust/src/blocker_recovery.rs",
+        "rust/src/blocker_store_port.rs",
         "rust/src/relayd_control.rs"
       ],
       "exports": [
@@ -549,18 +550,20 @@
       "target": "rust/src/cli_coordinator.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 1,
-      "directNameMatches": 0,
-      "unmappedRuntime": [
-        "runCoordinatorJobCommand"
-      ],
+      "directNameMatches": 1,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_coordinator_cli.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs"
+      ],
       "exports": [
         {
           "name": "runCoordinatorJobCommand",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -569,14 +572,15 @@
       "target": "rust/src/cli_escalation.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 4,
-      "directNameMatches": 2,
-      "unmappedRuntime": [
-        "runConfiguredEscalation",
-        "runEscalationCommand"
-      ],
+      "directNameMatches": 4,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_escalation_executor.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs"
+      ],
       "exports": [
         {
           "name": "escalationCommand",
@@ -591,12 +595,12 @@
         {
           "name": "runConfiguredEscalation",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "runEscalationCommand",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -691,14 +695,15 @@
       "target": "rust/src/cli_review.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 3,
-      "directNameMatches": 1,
-      "unmappedRuntime": [
-        "runInteractiveReviewCommand",
-        "runReviewCommand"
-      ],
+      "directNameMatches": 3,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_cli_review.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs"
+      ],
       "exports": [
         {
           "name": "reviewRequestThreadOverride",
@@ -708,12 +713,12 @@
         {
           "name": "runInteractiveReviewCommand",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "runReviewCommand",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -722,24 +727,23 @@
       "target": "rust/src/cli_support.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 38,
-      "directNameMatches": 34,
-      "unmappedRuntime": [
-        "storeFor",
-        "eventBus",
-        "withEventBus"
-      ],
+      "directNameMatches": 37,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "ServiceEventBus.constructor",
         "EventBusResolution"
       ],
       "directDiffImports": [
         "rust/tests/head_to_head_cli_support_closure.mjs",
+        "rust/tests/head_to_head_cli_support_public_api.mjs",
         "rust/tests/head_to_head_cli_support_publish_closure.mjs",
         "rust/tests/head_to_head_service_event_bus_closure.mjs"
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/closure.rs",
-        "rust/src/cli.rs"
+        "rust/src/bin/relay-rust2-parity/sqlite_api.rs",
+        "rust/src/cli.rs",
+        "rust/src/cli_unblock.rs"
       ],
       "exports": [
         {
@@ -820,7 +824,7 @@
         {
           "name": "storeFor",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "saveLocal",
@@ -875,12 +879,12 @@
         {
           "name": "eventBus",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "withEventBus",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "publishWake",
@@ -949,24 +953,25 @@
       "target": "rust/src/cli_unblock.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 2,
-      "directNameMatches": 0,
-      "unmappedRuntime": [
-        "runTaskUnblockCommand",
-        "runJobUnblockCommand"
-      ],
+      "directNameMatches": 2,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_cli_unblock.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs"
+      ],
       "exports": [
         {
           "name": "runTaskUnblockCommand",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "runJobUnblockCommand",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -1473,7 +1478,9 @@
       "directDiffImports": [
         "rust/tests/head_to_head_wave4_delivery.mjs"
       ],
-      "otherRustModuleReferences": [],
+      "otherRustModuleReferences": [
+        "rust/src/model_redecision.rs"
+      ],
       "exports": [
         {
           "name": "DECISION_AUDIT_SCHEMA_VERSION",
@@ -1738,10 +1745,8 @@
       "target": "rust/src/dependency_revision_execution.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 3,
-      "directNameMatches": 2,
-      "unmappedRuntime": [
-        "reconcileDependencyRevisions"
-      ],
+      "directNameMatches": 3,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [],
       "directDiffImports": [],
       "otherRustModuleReferences": [
@@ -1761,7 +1766,7 @@
         {
           "name": "reconcileDependencyRevisions",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -1827,6 +1832,7 @@
         "rust/src/bin/relay-rust2-parity/closure.rs",
         "rust/src/chatgpt_platform_fallback.rs",
         "rust/src/cli.rs",
+        "rust/src/cli_support.rs",
         "rust/src/cli_support_events.rs",
         "rust/src/decision_audit.rs",
         "rust/src/feedback.rs",
@@ -2583,11 +2589,8 @@
       "target": "rust/src/interactive_invocation.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 12,
-      "directNameMatches": 9,
-      "unmappedRuntime": [
-        "hostInvocationPorts",
-        "HostInteractiveInvocationCoordinator.applyEvent"
-      ],
+      "directNameMatches": 11,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "InteractiveDecision",
         "InteractiveInvocationStatus",
@@ -2602,8 +2605,13 @@
         "HostInteractiveInvocationCoordinator.constructor",
         "WorkerInteractiveContinuation"
       ],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_host_invocation_ports.mjs"
+      ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/interactive_invocation_ports.rs",
+        "rust/src/interactive_resume.rs",
         "rust/src/reconciler_runtime.rs"
       ],
       "exports": [
@@ -2685,7 +2693,7 @@
         {
           "name": "hostInvocationPorts",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "HostInteractiveInvocationCoordinator",
@@ -2708,7 +2716,7 @@
           "name": "applyEvent",
           "kind": "class-method",
           "parent": "HostInteractiveInvocationCoordinator",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "close",
@@ -2733,13 +2741,14 @@
       "target": "rust/src/interactive_request.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 5,
-      "directNameMatches": 4,
-      "unmappedRuntime": [
-        "failInteractiveReview"
-      ],
+      "directNameMatches": 5,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_atomic_public_apis.mjs"
+      ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/sqlite_api.rs",
         "rust/src/relayd_control.rs"
       ],
       "exports": [
@@ -2766,7 +2775,7 @@
         {
           "name": "failInteractiveReview",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -2775,10 +2784,8 @@
       "target": "rust/src/interactive_resume.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 2,
-      "directNameMatches": 1,
-      "unmappedRuntime": [
-        "recoverInteractiveDecisions"
-      ],
+      "directNameMatches": 2,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [],
       "directDiffImports": [],
       "otherRustModuleReferences": [],
@@ -2791,7 +2798,7 @@
         {
           "name": "recoverInteractiveDecisions",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -2903,19 +2910,21 @@
       "target": "rust/src/local_authority_store.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 33,
-      "directNameMatches": 31,
-      "unmappedRuntime": [
-        "LocalAuthorityDurableStore.registerBlockerDependent",
-        "LocalAuthorityDurableStore.resolveBlockerDependents"
-      ],
+      "directNameMatches": 33,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "LocalAuthorityDurableStore.projection"
       ],
       "directDiffImports": [
+        "rust/tests/head_to_head_cli_unblock.mjs",
+        "rust/tests/head_to_head_host_invocation_ports.mjs",
+        "rust/tests/head_to_head_local_blocker_port.mjs",
         "rust/tests/head_to_head_store_facade_closure.mjs"
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/cli_support.rs",
         "rust/src/local_job_registry.rs",
         "rust/src/local_managed_store.rs"
       ],
@@ -3031,13 +3040,13 @@
           "name": "registerBlockerDependent",
           "kind": "class-method",
           "parent": "LocalAuthorityDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "resolveBlockerDependents",
           "kind": "class-method",
           "parent": "LocalAuthorityDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "comments",
@@ -3320,17 +3329,19 @@
       "target": "rust/src/model_redecision.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 2,
-      "directNameMatches": 1,
-      "unmappedRuntime": [
-        "redecideFailedTask"
-      ],
+      "directNameMatches": 2,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "FailureEvidenceInput",
         "ModelRedecisionOptions",
         "ModelRedecisionResult"
       ],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_model_redecision.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs"
+      ],
       "exports": [
         {
           "name": "FailureClassification",
@@ -3365,7 +3376,7 @@
         {
           "name": "redecideFailedTask",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -3387,7 +3398,8 @@
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/closure.rs",
         "rust/src/decision_audit.rs",
-        "rust/src/execution_routing.rs"
+        "rust/src/execution_routing.rs",
+        "rust/src/model_redecision.rs"
       ],
       "exports": [
         {
@@ -3432,16 +3444,14 @@
       "target": "rust/src/outcome_review.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 5,
-      "directNameMatches": 3,
-      "unmappedRuntime": [
-        "evaluateOutcome",
-        "runOutcomeReview"
-      ],
+      "directNameMatches": 5,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "OutcomeReview",
         "ReviewOptions"
       ],
       "directDiffImports": [
+        "rust/tests/head_to_head_outcome_review_public.mjs",
         "rust/tests/head_to_head_wave2_review.mjs"
       ],
       "otherRustModuleReferences": [
@@ -3477,12 +3487,12 @@
         {
           "name": "evaluateOutcome",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "runOutcomeReview",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -3504,6 +3514,7 @@
         "rust/src/bin/owned-process-supervisor.rs",
         "rust/src/bin/relay-rust2-parity.rs",
         "rust/src/browser_worker_runtime.rs",
+        "rust/src/cli_escalation.rs",
         "rust/src/continuation.rs",
         "rust/src/dag_result_contract.rs",
         "rust/src/decision.rs",
@@ -3947,11 +3958,9 @@
       "target": "rust/src/projected_store.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 34,
-      "directNameMatches": 31,
+      "directNameMatches": 33,
       "unmappedRuntime": [
-        "ProjectedDurableStore.comments",
-        "ProjectedDurableStore.registerBlockerDependent",
-        "ProjectedDurableStore.resolveBlockerDependents"
+        "ProjectedDurableStore.comments"
       ],
       "typeOrShapeReview": [
         "ProjectionConflictEvent",
@@ -4173,13 +4182,13 @@
           "name": "registerBlockerDependent",
           "kind": "class-method",
           "parent": "ProjectedDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "resolveBlockerDependents",
           "kind": "class-method",
           "parent": "ProjectedDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -4779,15 +4788,32 @@
         "LocalRelayStoreSnapshot"
       ],
       "directDiffImports": [
+        "rust/tests/head_to_head_cli_support_public_api.mjs",
+        "rust/tests/head_to_head_cli_unblock.mjs",
+        "rust/tests/head_to_head_coordinator_cli.mjs",
+        "rust/tests/head_to_head_host_invocation_ports.mjs",
+        "rust/tests/head_to_head_local_blocker_port.mjs",
         "rust/tests/head_to_head_store_facade_closure.mjs"
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/bin/relay-rust2-parity/sqlite_api.rs",
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/cli_coordinator.rs",
+        "rust/src/cli_support.rs",
+        "rust/src/cli_unblock.rs",
+        "rust/src/dependency_revision_execution.rs",
+        "rust/src/interactive_invocation_ports.rs",
+        "rust/src/interactive_request.rs",
+        "rust/src/interactive_resume.rs",
         "rust/src/local_authority_store.rs",
         "rust/src/local_job_registry.rs",
         "rust/src/local_managed_store.rs",
         "rust/src/projected_store.rs",
-        "rust/src/relayd.rs"
+        "rust/src/relayd.rs",
+        "rust/src/task_actions.rs",
+        "rust/src/task_update.rs",
+        "rust/src/unblock.rs"
       ],
       "exports": [
         {
@@ -5204,17 +5230,17 @@
       "target": "rust/src/relayd_utilities.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 10,
-      "directNameMatches": 8,
-      "unmappedRuntime": [
-        "configureDaemonObservability",
-        "configureExecutionRouterRulesPath"
-      ],
+      "directNameMatches": 10,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "PullRequestRefreshTrigger",
         "GitHubReadPathDiagnostics"
       ],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_daemon_public_setup.mjs"
+      ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs",
         "rust/src/relayd.rs"
       ],
       "exports": [
@@ -5226,7 +5252,7 @@
         {
           "name": "configureDaemonObservability",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "PullRequestRefreshTrigger",
@@ -5281,7 +5307,7 @@
         {
           "name": "configureExecutionRouterRulesPath",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -5788,14 +5814,15 @@
       "target": "rust/src/store_github.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 21,
-      "directNameMatches": 19,
-      "unmappedRuntime": [
-        "GitHubStore.registerBlockerDependent",
-        "GitHubStore.resolveBlockerDependents"
-      ],
+      "directNameMatches": 21,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [],
       "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/store.rs",
+        "rust/src/store_pull_request.rs"
+      ],
       "exports": [
         {
           "name": "GitHubStore",
@@ -5854,13 +5881,13 @@
           "name": "registerBlockerDependent",
           "kind": "class-method",
           "parent": "GitHubStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "resolveBlockerDependents",
           "kind": "class-method",
           "parent": "GitHubStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "load",
@@ -5929,14 +5956,8 @@
       "target": "rust/src/store.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 22,
-      "directNameMatches": 17,
-      "unmappedRuntime": [
-        "loadManagedGitHubPullRequestGraphql",
-        "loadManagedGitHubJobGraphql",
-        "withGitHubRequestContext",
-        "resolvePullRequest",
-        "listManagedGitHubJobs"
-      ],
+      "directNameMatches": 22,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "Comment",
         "PullRequestState",
@@ -5956,9 +5977,16 @@
         "GitHubStore"
       ],
       "directDiffImports": [
-        "rust/tests/head_to_head_store_facade_closure.mjs"
+        "rust/tests/head_to_head_cli_unblock.mjs",
+        "rust/tests/head_to_head_host_invocation_ports.mjs",
+        "rust/tests/head_to_head_local_blocker_port.mjs",
+        "rust/tests/head_to_head_resolve_pull_request.mjs",
+        "rust/tests/head_to_head_store_facade_closure.mjs",
+        "rust/tests/head_to_head_store_github_public.mjs"
       ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/cli_support.rs",
         "rust/src/relayd.rs"
       ],
       "exports": [
@@ -5995,12 +6023,12 @@
         {
           "name": "loadManagedGitHubPullRequestGraphql",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "loadManagedGitHubJobGraphql",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "dashboardManagedJobs",
@@ -6119,7 +6147,7 @@
         {
           "name": "withGitHubRequestContext",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "GitHubRateLimitBucket",
@@ -6139,7 +6167,7 @@
         {
           "name": "resolvePullRequest",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "GhApiClient",
@@ -6164,7 +6192,7 @@
         {
           "name": "listManagedGitHubJobs",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -6173,26 +6201,26 @@
       "target": "rust/src/task_actions.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 18,
-      "directNameMatches": 14,
-      "unmappedRuntime": [
-        "classifyFailedTask",
-        "applyTaskUnblockRetrySnapshot",
-        "supersedeCancelledTask",
-        "dispatchTaskAction"
-      ],
+      "directNameMatches": 18,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "TaskActionId",
         "TaskActionRequest",
         "TaskActionResult",
         "TaskRetryPolicy"
       ],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_atomic_public_apis.mjs"
+      ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/sqlite_api.rs",
         "rust/src/blockers.rs",
         "rust/src/cli.rs",
+        "rust/src/interactive_request.rs",
         "rust/src/reconciler.rs",
         "rust/src/reconciler_runtime.rs",
-        "rust/src/relayd_control.rs"
+        "rust/src/relayd_control.rs",
+        "rust/src/task_update.rs"
       ],
       "exports": [
         {
@@ -6253,12 +6281,12 @@
         {
           "name": "classifyFailedTask",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "applyTaskUnblockRetrySnapshot",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "applyTaskRetryAction",
@@ -6298,12 +6326,12 @@
         {
           "name": "supersedeCancelledTask",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "dispatchTaskAction",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -6369,6 +6397,7 @@
       ],
       "directDiffImports": [],
       "otherRustModuleReferences": [
+        "rust/src/cli_unblock.rs",
         "rust/src/relayd_control.rs"
       ],
       "exports": [
@@ -6416,9 +6445,12 @@
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/cli_coordinator.rs",
         "rust/src/dag_task_runtime.rs",
         "rust/src/dependency_revision_execution.rs",
         "rust/src/force_restate_validation.rs",
+        "rust/src/interactive_request.rs",
+        "rust/src/interactive_resume.rs",
         "rust/src/job_actions.rs",
         "rust/src/local_git_merge.rs",
         "rust/src/local_merge_delivery.rs",
@@ -6480,24 +6512,25 @@
       "target": "rust/src/task_update.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 2,
-      "directNameMatches": 0,
-      "unmappedRuntime": [
-        "applyManagedTaskUpdate",
-        "managedTaskUpdateHandler"
-      ],
+      "directNameMatches": 2,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_atomic_public_apis.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/sqlite_api.rs"
+      ],
       "exports": [
         {
           "name": "applyManagedTaskUpdate",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "managedTaskUpdateHandler",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -6983,16 +7016,18 @@
       "target": "rust/src/unblock.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 4,
-      "directNameMatches": 3,
-      "unmappedRuntime": [
-        "unblockTask"
-      ],
+      "directNameMatches": 4,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "UnblockSource"
       ],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_atomic_public_apis.mjs"
+      ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/sqlite_api.rs",
         "rust/src/blockers.rs",
+        "rust/src/cli_unblock.rs",
         "rust/src/relayd_control.rs"
       ],
       "exports": [
@@ -7019,7 +7054,7 @@
         {
           "name": "unblockTask",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -7060,6 +7095,8 @@
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/model_redecision.rs",
         "rust/src/usage_readers.rs"
       ],
       "exports": [
@@ -7614,6 +7651,7 @@
       ],
       "directDiffImports": [],
       "otherRustModuleReferences": [
+        "rust/src/cli_coordinator.rs",
         "rust/src/relayd.rs"
       ],
       "exports": [
