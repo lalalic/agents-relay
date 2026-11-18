@@ -177,11 +177,28 @@ impl<'a> GitHubProjectionWriter<'a>{
 pub struct ProjectedDurableStore{
     pub relay:SQLiteRelayStore,
     pub seeded_facts:Option<Value>,
+    /// Node `github.comments()` is an external read, never a SQLite projection.
+    /// This port must be explicitly attached to the same original GitHub
+    /// provider; missing service wiring fails closed, not as an empty list.
+    github_comments:Option<Box<dyn FnMut()->Result<Vec<Value>,String>+Send>>,
 }
 impl ProjectedDurableStore{
     pub fn new(relay:SQLiteRelayStore,seed:Option<Value>)->Self{
         if let Some(facts)=seed.as_ref(){let _=relay.save_pull_request_facts(facts);}
-        Self{relay,seeded_facts:seed}
+        Self{relay,seeded_facts:seed,github_comments:None}
+    }
+    pub fn with_github_comments<Read>(mut self,read:Read)->Self
+    where Read:FnMut()->Result<Vec<Value>,String>+Send+'static{
+        self.github_comments=Some(Box::new(read));
+        self
+    }
+    pub fn with_github_store<Client>(self,mut github:crate::store_github::GitHubStore<Client>)->Self
+    where Client:crate::store_github::GitHubApi+Send+'static{
+        self.with_github_comments(move||github.comments())
+    }
+    pub fn comments(&mut self)->Result<Vec<Value>,String>{
+        self.github_comments.as_mut()
+            .ok_or("Projected GitHub comments require an attached GitHub Store")?()
     }
     // SQLite-first DurableStore API parity. These are exact delegations
     // to the canonical transaction/receipt store, not remote PR projections.

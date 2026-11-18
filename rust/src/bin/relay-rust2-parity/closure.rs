@@ -123,6 +123,46 @@ pub(super) fn invoke(request:&Value)->Result<Option<String>,String>{
                 Err(error)=>json!({"ok":false,"error":error})
             }}).to_string())
         }
+        // Node ProjectedDurableStore.comments: call actual GitHubStore
+        // GraphQL pagination/cache/seed through injected offline API.
+        "projectedGithubComments"=>{
+            use agents_relay_rust2::{
+                projected_store::ProjectedDurableStore,
+                relay_store::SQLiteRelayStore,
+                store_github::{GitHubApi,GitHubStore},
+            };
+            use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+            struct FakeApi{pages:Vec<Value>,calls:Arc<AtomicUsize>}
+            impl GitHubApi for FakeApi{
+                fn graphql(&mut self,_query:&str,_variables:&Value)->Result<Value,String>{
+                    let index=self.calls.fetch_add(1,Ordering::SeqCst);
+                    self.pages.get(index).cloned()
+                        .ok_or("GraphQL fixture exhausted".into())
+                }
+                fn request(&mut self,_path:&str,_method:&str,_body:Option<&Value>)
+                    ->Result<Value,String>{Err("Unexpected REST write".into())}
+            }
+            let calls=Arc::new(AtomicUsize::new(0));
+            let pages=request["pages"].as_array().cloned().unwrap_or_default();
+            let github=GitHubStore::new(
+                FakeApi{pages,calls:Arc::clone(&calls)},
+                request["repository"].as_str().unwrap_or("owner/repo"),
+                request["prNumber"].as_u64().unwrap_or(1),
+                Default::default(),request.get("seed").filter(|v|!v.is_null()));
+            let relay=SQLiteRelayStore::open(std::path::Path::new(":memory:"),None)?;
+            let mut projected=ProjectedDurableStore::new(relay,None)
+                .with_github_store(github);
+            let count=request["readCount"].as_u64().unwrap_or(1).min(3);
+            let mut outcomes=Vec::new();
+            for _ in 0..count {
+                outcomes.push(match projected.comments(){
+                    Ok(comments)=>json!({"ok":true,"value":comments}),
+                    Err(error)=>json!({"ok":false,"error":error}),
+                });
+            }
+            Ok(json!({"outcomes":outcomes,
+                "calls":calls.load(Ordering::SeqCst)}).to_string())
+        }
         // Node src/usage.ts CodexApiUsageReader: launch an owned *injected*
         // fake app-server only, send JSON-RPC 1+2 and read id=2 quota.
         "codexApiUsage"=>{
