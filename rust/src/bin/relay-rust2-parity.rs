@@ -360,6 +360,31 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=closure::invoke(request)?{return Ok(output);}
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "apiOutcomeReview" => {
+            use agents_relay_rust2::outcome_review::evaluate_outcome;
+            let role=std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent().unwrap().join("agents/outcome-reviewer.agent.md");
+            let mut inputs=Vec::<Value>::new();
+            let run=evaluate_outcome(&request["options"],
+                |reviewer,_|{
+                    if reviewer!="reviewer" {
+                        return Err(format!("professional reviewer not found: {reviewer}"));
+                    }
+                    std::fs::read_to_string(&role).map_err(|error|error.to_string())
+                },
+                |reviewer,prompt,project|{
+                    inputs.push(json!({"reviewer":reviewer,"prompt":prompt,
+                        "project":project.to_string_lossy()}));
+                    if let Some(error)=request.get("spawnError").and_then(Value::as_str){
+                        return Err(error.to_owned());
+                    }
+                    Ok(request.get("spawnResponse").cloned().unwrap_or(Value::Null))
+                });
+            Ok(json!({"outcome":match run{
+                Ok(value)=>json!({"ok":true,"value":value}),
+                Err(error)=>json!({"ok":false,"error":error}),
+            },"inputs":inputs}).to_string())
+        }
         "apiResolvePullRequest" => {
             use agents_relay_rust2::{
                 store_pull_request::resolve_pull_request,

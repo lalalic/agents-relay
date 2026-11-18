@@ -166,6 +166,7 @@ where
         if output.get("error").is_some_and(|v| !v.is_null()) || status != Some(0) {
             let reason = output["error"]
                 .as_str()
+                .or_else(|| output.pointer("/error/message").and_then(Value::as_str))
                 .or_else(|| output["stderr"].as_str().filter(|text| !text.is_empty()))
                 .map(str::to_owned)
                 .unwrap_or_else(|| {
@@ -413,3 +414,11 @@ mod wave4_runtime_tests {
         fs::remove_dir_all(dir).unwrap();
     }
 }
+
+// The runtime-injected versions above implement the complete public APIs.
+// Preserve the exported Node-facing names while enforcing explicit,
+// authorized definition and owned-process ports. No implicit Codex CLI.
+pub use self::{
+    evaluate_outcome_with_runner as evaluate_outcome,
+    run_outcome_review_with_runner as run_outcome_review,
+};
