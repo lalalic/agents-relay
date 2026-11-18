@@ -9,6 +9,7 @@ import {
  listManagedGitHubJobs
 } from '../../dist/store.js';
 import {renderJobBody,renderJobComment,renderTaskComment} from '../../dist/markers.js';
+import {aggregateManagedGitHubJobs} from '../../dist/pool.js';
 const root=resolve(import.meta.dirname,'../..');
 const bin=join(root,'rust/target/debug/relay-rust2-parity');
 const job=(id='41')=>({
@@ -79,6 +80,37 @@ for(const kind of ['pull','list']) {
  scenarios.push({kind,repository:'test/repo',prNumber:7,trusted:['trusted-dev'],
   responses:[{fixtureError:'Simulated GitHub GraphQL outage'}]});
 }
+// Aggregate all unique GitHub repositories, retaining Node's ordering and
+// Promise.all error surface. No remote PR or local Job store is touched.
+const aggregateCases=[
+ {repositories:[],responses:[]},
+ {repositories:['test/repo'],responses:[list([row(7),row(10),row(11)])]},
+ {repositories:['test/repo','test/repo'],responses:[list([row(7)])]},
+ {repositories:['test/repo','test/repo','alt/repo'],responses:[
+   list([row(14),row(11)]),list([row(19),row(5)])
+ ]},
+ {repositories:['test/repo','alt/repo'],responses:[
+   list([row(7,{jobId:'41'})]),list([row(13,{jobId:'51'})])
+ ]},
+ {repositories:['bad','test/repo'],responses:[list([row(7)])]},
+ {repositories:['test/repo','bad','alt/repo'],responses:[
+   list([row(7)]),list([row(17)])
+ ]},
+ {repositories:['bad','bad'],responses:[]},
+ {repositories:['test/repo','alt/repo'],responses:[
+   {fixtureError:'Simulated GraphQL outage'},list([row(17)])
+ ]},
+ {repositories:['test/repo','alt/repo'],responses:[
+   list([row(7)]),{fixtureError:'Simulated GraphQL outage'}
+ ]},
+ {repositories:['test/repo','alt/repo','third/repo'],responses:[
+   list([row(7)]),list([row(20)]),list([row(3)])
+ ]},
+];
+for(const {repositories,responses} of aggregateCases){
+ scenarios.push({kind:'aggregate',repositories,responses,trusted:['trusted-dev']});
+ scenarios.push({kind:'aggregate',repositories,responses,trusted:['nobody']});
+}
 async function node(f){
  let calls=[];
  const responses=structuredClone(f.responses);
@@ -96,12 +128,14 @@ async function node(f){
    await loadManagedGitHubPullRequestGraphql(client,f.repository,f.prNumber,trusted):
    f.kind==='job'?
    await loadManagedGitHubJobGraphql(client,f.repository,f.prNumber,f.jobId,trusted):
+   f.kind==='aggregate'?
+   await aggregateManagedGitHubJobs(client,f.repositories,trusted):
    await listManagedGitHubJobs(client,f.repository,trusted);
   outcome={ok:true,value};
  }catch(error){outcome={ok:false,error:error.message};}
  return JSON.parse(JSON.stringify({outcome,calls}));
 }
-test('Node/Rust GitHub Store public readers, marker trust and pagination',async()=>{
+test('Node/Rust GitHub Store readers and repository aggregate, marker trust and pagination',async()=>{
  const expected=[];for(const f of scenarios)expected.push(await node(f));
  const process=spawnSync(bin,[],{cwd:root,
   input:scenarios.map(f=>JSON.stringify({op:'apiStoreGithubPublic',...f})).join('\n')+'\n',

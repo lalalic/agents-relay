@@ -514,8 +514,78 @@ fn invoke(request: &Value) -> Result<String, String> {
                 Err(error)=>json!({"ok":false,"error":error}),
             },"calls":client.calls}).to_string())
         }
+        "apiPoolWebhook" => {
+            use agents_relay_rust2::pool::RepositoryWorkerPool;
+            let pool=RepositoryWorkerPool::new(2,"workflow");
+            let mut events=Vec::<Value>::new();
+            let fail_at=request["failAt"].as_u64().map(|n|n as usize);
+            let mut publish=|event:&Value|->Result<(),String>{
+                if fail_at==Some(events.len()){
+                    return Err("Fixture publish failure".into());
+                }
+                events.push(event.clone());
+                Ok(())
+            };
+            let result=if request["bus"]==false{
+                pool.webhook_wake(&request["job"],&request["wake"],None)
+            }else{
+                pool.webhook_wake(&request["job"],&request["wake"],Some(&mut publish))
+            };
+            Ok(json!({"outcome":match result{
+                Ok(())=>json!({"ok":true}),
+                Err(error)=>json!({"ok":false,"error":error})
+            },"events":events}).to_string())
+        }
+        "apiPoolKnown" => {
+            use agents_relay_rust2::pool::RepositoryWorkerPool;
+            use std::{cell::RefCell,collections::HashMap,rc::Rc};
+            let found=Rc::new(request["localJobs"].as_array().into_iter().flatten()
+                .filter_map(|job|job.get("id").and_then(Value::as_str)
+                    .map(|id|(id.to_owned(),job.clone())))
+                .collect::<HashMap<_,_>>());
+            let discovered=request["discovered"].as_array().into_iter()
+                .flatten().map(|job|json!({"job":job})).collect::<Vec<_>>();
+            let calls=Rc::new(RefCell::new(Vec::<Value>::new()));
+            let mut pool=RepositoryWorkerPool::new(2,"workflow");
+            let hydrated=request["hydrateEnabled"]!=false;
+            let recoverable=request["recoverEnabled"]!=false;
+            let recovery_error=request["recoverError"].as_str().map(str::to_owned);
+            let recovered_state=request["recoveredState"].as_str().map(str::to_owned);
+            let found_lookup=Rc::clone(&found);
+            let found_recovery=Rc::clone(&found);
+            let hydrate_calls=Rc::clone(&calls);
+            let recovery_calls=Rc::clone(&calls);
+            let execute_calls=Rc::clone(&calls);
+            let result=pool.reconcile_known(&discovered,
+                move |id|Ok(found_lookup.get(id).cloned()),
+                move |id,_job|{
+                    if hydrated{
+                        hydrate_calls.borrow_mut().push(json!(["hydrate",id]));
+                    }
+                    Ok(())
+                },
+                move |id|{
+                    recovery_calls.borrow_mut().push(json!(["make",0,id]));
+                    if !recoverable{return Ok(None);}
+                    recovery_calls.borrow_mut().push(json!(["recover",id]));
+                    if let Some(error)=&recovery_error{return Err(error.clone());}
+                    let Some(mut next)=found_recovery.get(id).cloned()
+                        else{return Err(format!("Local job not found: {id}"));};
+                    if let Some(state)=&recovered_state{next["state"]=json!(state);}
+                    Ok(Some(next))
+                },
+                move |id,slots|{
+                    execute_calls.borrow_mut().push(json!(["reconcile",id,slots]));
+                    Ok(Value::Null)
+                });
+            Ok(json!({"outcome":match result{
+                Ok(())=>json!({"ok":true}),
+                Err(error)=>json!({"ok":false,"error":error})
+            },"calls":calls.borrow().clone()}).to_string())
+        }
         "apiStoreGithubPublic" => {
             use agents_relay_rust2::{
+                pool::aggregate_managed_github_jobs,
                 store::{
                     load_managed_github_pull_request_graphql,
                     load_managed_github_job_graphql,list_managed_github_jobs,
@@ -559,6 +629,13 @@ fn invoke(request: &Value) -> Result<String, String> {
                     request["jobId"].as_str().unwrap_or(""),&trusted).map(|value|json!(value)),
                 "list"=>list_managed_github_jobs(&mut client,repo,&trusted)
                     .map(|value|json!(value)),
+                "aggregate"=>{
+                    let repositories=request["repositories"].as_array()
+                        .into_iter().flatten().filter_map(Value::as_str)
+                        .map(str::to_owned).collect::<Vec<_>>();
+                    aggregate_managed_github_jobs(&mut client,&repositories,&trusted)
+                        .map(|value|json!(value))
+                },
                 _=>Err("Unknown Store GitHub operation".into()),
             };
             Ok(json!({"outcome":match result{

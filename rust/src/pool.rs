@@ -46,6 +46,35 @@ pub fn runnable_managed_jobs(items:&[Value])->Vec<Value>{
     jobs
 }
 pub fn terminal_managed_jobs(_items:&[Value])->Vec<Value>{Vec::new()}
+/// Node aggregateManagedGitHubJobs: query each distinct repository through the
+/// real GitHub Store reader, then sort projections by newest update and PR.
+/// GitHub metadata is only a projection; local SQLite owns lifecycle.
+pub fn aggregate_managed_github_jobs<C:crate::store_github::GitHubApi>(
+    client:&mut C,repositories:&[String],trusted_authors:&HashSet<String>,
+)->Result<Vec<Value>,String>{
+    let mut seen=HashSet::<&str>::new();
+    let mut rows=Vec::new();
+    let mut first_error=None;
+    // Promise.all in Node starts every distinct query even when one rejects.
+    for repository in repositories{
+        if !seen.insert(repository.as_str()){continue;}
+        match crate::store::list_managed_github_jobs(client,repository,trusted_authors){
+            Ok(mut group)=>rows.append(&mut group),
+            Err(error)=>{if first_error.is_none(){first_error=Some(error);}}
+        }
+    }
+    if let Some(error)=first_error{return Err(error);}
+    rows.sort_by(|a,b|{
+        crate::dashboard_data::locale_compare(
+            field(&b["job"],"updatedAt"),field(&a["job"],"updatedAt"))
+        .then_with(||{
+            let left=a.pointer("/job/prNumber").and_then(Value::as_i64).unwrap_or(0);
+            let right=b.pointer("/job/prNumber").and_then(Value::as_i64).unwrap_or(0);
+            right.cmp(&left)
+        })
+    });
+    Ok(rows)
+}
 fn millis(value:&str)->Option<i64>{
     DateTime::parse_from_rfc3339(value).ok().map(|time|time.timestamp_millis())
 }
@@ -201,6 +230,60 @@ impl RepositoryWorkerPool{
             running:false,pending:false,in_reconcile:HashSet::new(),
             published:HashSet::new()}
     }
+    /// Node RepositoryWorkerPool.reconcileKnown: startup recovery runs for
+    /// ACTIVE Jobs before ordinary capacity scheduling. The injected ports
+    /// correspond to the local Store hydration and Reconciler recovery.
+    pub fn reconcile_known<Lookup,Hydrate,Recover,Execute>(
+        &mut self,discovered:&[Value],
+        mut lookup:Lookup,mut hydrate:Hydrate,mut recover:Recover,
+        mut execute:Execute,
+    )->Result<(),String>
+    where
+        Lookup:FnMut(&str)->Result<Option<Value>,String>,
+        Hydrate:FnMut(&str,&Value)->Result<(),String>,
+        Recover:FnMut(&str)->Result<Option<Value>,String>,
+        Execute:FnMut(&str,usize)->Result<Value,String>,
+    {
+        let mut recovered=Vec::with_capacity(discovered.len());
+        for item in discovered{
+            let job=&item["job"];
+            if field(job,"state")!="ACTIVE"{
+                recovered.push(item.clone());
+                continue;
+            }
+            let id=field(job,"id");
+            if lookup(id)?.is_none(){
+                return Err(format!("Authoritative SQLite Job is not registered: {id}"));
+            }
+            hydrate(id,job)?;
+            if !self.in_reconcile.insert(id.to_owned()){
+                return Err(format!("Duplicate concurrent Reconcile for {id}"));
+            }
+            let restore=recover(id);
+            self.in_reconcile.remove(id);
+            let next=restore?.unwrap_or_else(||job.clone());
+            let mut updated=item.clone();
+            updated["job"]=next;
+            recovered.push(updated);
+        }
+        // Node reconcileDiscovered hydrates each ACTIVE projection a second
+        // time, only after a local Store was resolved and while capacity is
+        // available. Keep that ordering inside the resolver used by the
+        // existing capacity scheduler, not in an unconditional pre-pass.
+        let snapshots=recovered.iter().filter_map(|item|{
+            item.get("job").and_then(|job|job.get("id").and_then(Value::as_str)
+                .map(|id|(id.to_owned(),job.clone())))
+        }).collect::<HashMap<_,_>>();
+        self.reconcile_discovered(&recovered,
+            |id|{
+                let current=lookup(id)?;
+                if current.is_some(){
+                    if let Some(snapshot)=snapshots.get(id){hydrate(id,snapshot)?;}
+                }
+                Ok(current)
+            },&mut execute)?;
+        Ok(())
+    }
     pub fn reconcile_job<Lookup,Reconcile>(
         &mut self,job_id:&str,mut lookup:Lookup,
         mut reconcile:Reconcile,
@@ -320,6 +403,16 @@ impl RepositoryWorkerPool{
         if reason.starts_with("github.webhook:"){return None;}
         Some(json!({"jobId":job_id,"reason":reason}))
     }
+    /// Node webhookWake: publish the observation events in order and stop on
+    /// the first EventBus error. No bus means no side effect or execution wake.
+    pub fn webhook_wake(
+        &self,job:&Value,wake:&Value,
+        mut publish:Option<&mut dyn FnMut(&Value)->Result<(),String>>,
+    )->Result<(),String>{
+        let Some(ref mut send)=publish else{return Ok(());};
+        for event in self.webhook_wake_events(job,wake){send(&event)?;}
+        Ok(())
+    }
     pub fn webhook_wake_events(&self,job:&Value,wake:&Value)->Vec<Value>{
         let job_id=field(job,"id");
         let delivery=field(wake,"deliveryId");
@@ -330,38 +423,47 @@ impl RepositoryWorkerPool{
         if let Some(published)=wake.get("publication").filter(|v|!v.is_null()){
             let package=field(published,"package");
             let version=field(published,"version");
+            let mut data=json!({"deliveryId":delivery,"repository":repo,
+                "package":package,"version":version});
+            if let Some(number)=job.get("prNumber"){data["prNumber"]=number.clone();}
+            for key in ["registry","sha"]{
+                if let Some(value)=published.get(key){data[key]=value.clone();}
+            }
             let mut event=event_for(job_id,"release",None,
                 "package.published","succeeded",
                 &format!("Published {package}@{version}"),
-                Some("orchestrator"),Some(json!({
-                    "deliveryId":delivery,"repository":repo,
-                    "prNumber":job.get("prNumber"),"package":package,
-                    "version":version,"registry":published.get("registry"),
-                    "sha":published.get("sha")})),Some(source.clone()));
+                Some("orchestrator"),Some(data),Some(source.clone()));
             event["event_id"]=json!(format!(
                 "github:{job_id}:{delivery}:package.published"));
             emitted.push(event);
         }
         if let Some(failed)=wake.get("publishFailure").filter(|v|!v.is_null()){
+            let mut data=failed.clone();
+            if !data.is_object(){data=json!({});}
+            data["repository"]=json!(repo);
+            if let Some(number)=job.get("prNumber"){data["prNumber"]=number.clone();}
+            data["deliveryId"]=json!(delivery);
             let mut event=event_for(job_id,"release",None,
                 "package.publish_failed","failed",
                 &format!("Publish workflow {} failed: {}",
                     field(failed,"runId"),field(failed,"stage")),
-                Some("user"),Some(failed.clone()),Some(source.clone()));
+                Some("user"),Some(data),Some(source.clone()));
             event["event_id"]=json!(format!(
                 "github:{job_id}:{delivery}:package.publish_failed"));
             emitted.push(event);
         }
+        let mut data=json!({"deliveryId":delivery,"repository":repo});
+        for key in ["event","action"]{
+            if let Some(value)=wake.get(key){data[key]=value.clone();}
+        }
+        if let Some(number)=job.get("prNumber"){data["prNumber"]=number.clone();}
         emitted.push(event_for(job_id,"github",None,
             "github.webhook","queued",
             &format!("GitHub webhook {}{}",
                 field(wake,"event"),
                 if field(wake,"action").is_empty(){String::new()}
                 else{format!(":{}",field(wake,"action"))}),
-            Some("orchestrator"),Some(json!({
-                "deliveryId":delivery,"event":wake.get("event"),
-                "action":wake.get("action"),"repository":repo,
-                "prNumber":job.get("prNumber")})),Some(source)));
+            Some("orchestrator"),Some(data),Some(source)));
         emitted
     }
 }
