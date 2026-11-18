@@ -58,7 +58,6 @@ pub const WORKFLOW_FACT_NAMES: &[&str] = &[
     "notMerged",
     "autoMerge",
     "recoverableExecution",
-    "sourceDeliveryVerified",
     "retryAvailable",
     "reviewUnblocked",
     "initialPlan",

@@ -1,8 +1,8 @@
-// Native Rust regression for Node src/cli-help.ts: all 47 current main command help texts and command/action fallback semantics.
+// Native Rust regression for Node src/cli-help.ts: all 48 current Node command help texts and command/action fallback semantics.
 use agents_relay_rust2::cli_help::{help_text, CLI_HELP_ENTRIES, CLI_USAGE};
 #[test]
 fn all_source_help_keys_are_present_and_not_empty() {
-    assert_eq!(CLI_HELP_ENTRIES.len(), 47);
+    assert_eq!(CLI_HELP_ENTRIES.len(), 48);
     for (key, content) in CLI_HELP_ENTRIES {
         assert!(!key.is_empty());
         assert!(!content.trim().is_empty(), "Missing Help for {key}");
@@ -15,6 +15,11 @@ fn combined_action_help_preserves_correct_subcommands_and_unknown_fallback() {
         help_text(Some("job"), Some("run")),
         help_text(Some("job run"), None)
     );
+    assert_eq!(
+        help_text(Some("task"), Some("complete")),
+        help_text(Some("task complete"), None)
+    );
+    assert!(help_text(Some("task complete"), None).contains("--commit-sha"));
     assert_eq!(
         help_text(Some("task"), Some("comments")),
         help_text(Some("task comments"), None)

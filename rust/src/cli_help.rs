@@ -243,7 +243,7 @@ Returns the same summary used by the dashboard header plus a running array with 
         r##########"Manage durable tasks.
 
 Usage:
-  npx agents-relay task <create|update|show|events|list|revise|retry|unblock|cancel> [options]
+  npx agents-relay task <create|update|show|events|list|revise|complete|retry|unblock|cancel> [options]
 
 Actions:
   create  Create one durable Task under an existing Job
@@ -253,8 +253,20 @@ Actions:
   revise  Submit an immutable-head targeted reviewer fix request
   retry   Retry a FAILED Task
   unblock Authoritatively invalidate a BLOCKED decision
-  complete Complete an orchestrator-owned Task
+  complete Verify a source Worker Git Commit, then atomically finish the current execution
   cancel  Cancel a Task"##########,
+    ),
+    (
+        r##########"task complete"##########,
+        r##########"Complete a commit-required source Task through the Relay daemon. Direct task.completed Event Bus submissions cannot complete such a Task.
+
+Required: --repo LOCAL_ROOT_NAME --id JOB_ID --task-id TASK_ID --execution-id CURRENT_EXECUTION --commit-sha FULL_GIT_SHA --summary TEXT.
+
+Before calling, commit the Task changes on the Job source branch and ensure its checkout is fully clean. The final commit message must contain exact trailers:
+  Relay-Task: TASK_ID
+  Relay-Execution: CURRENT_EXECUTION
+
+Relay verifies the current execution's started Git baseline, source branch HEAD, nonempty new commit, commit trailers, exact worktree and clean tracked/untracked status. It saves the proof and transitions the Task through the canonical lifecycle graph; retries with the same accepted proof are idempotent. A mismatched or uncommitted source cannot succeed. Historical pre-enforcement Tasks keep their original event contract."##########,
     ),
     (
         r##########"task create"##########,
