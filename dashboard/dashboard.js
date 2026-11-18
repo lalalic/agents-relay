@@ -356,18 +356,43 @@ function openJobDetails(){
   const inputs=uniqueInputs(candidates,objective);
   showDetailsDialog('Job',job.id,job.title,objective,inputs,readerReviewComments(job));
 }
-function taskReaderObjective(task){
+function taskReaderEnvelope(task){
+  const raw=detailText(task.input);
+  if(!raw.startsWith('{'))return null;
+  try{
+    const parsed=JSON.parse(raw);
+    return parsed&&typeof parsed==='object'&&!Array.isArray(parsed)?parsed:null;
+  }catch{return null;}
+}
+function taskReaderObjective(task,envelope=taskReaderEnvelope(task)){
+  const explicit=detailText(task.objective)||detailText(envelope?.taskObjective)||detailText(envelope?.objective);
+  if(explicit)return explicit;
   const title=detailText(task.title);
-  // Generic agent/role names are identifiers, not meaningful objectives.
+  // A serialized Script/DAG execution envelope is not a natural-language objective.
+  // Until an actual Task objective is persisted, use its title rather than inventing one.
+  if(envelope)return title||'Task '+task.id;
   if(title&&/\s/.test(title))return title;
-  const paragraphs=detailText(task.input).split(/\n\s*\n/).map(item=>item.trim());
-  const first=paragraphs.find(item=>item&&!/^(Job ID|Task ID|Review head SHA|Execution ID):/i.test(item));
+  const first=detailText(task.input).split(/\n\s*\n/).map(item=>item.trim())
+    .find(item=>item&&!/^(Job ID|Task ID|Review head SHA|Execution ID):/i.test(item));
   return first||title||'Task '+task.id;
+}
+function taskReaderInputs(task,envelope=taskReaderEnvelope(task)){
+  if(!envelope)return [{content:task.input}];
+  const inputs=[];
+  const request=detailText(envelope.taskInput)||detailText(envelope.input)||detailText(envelope.prompt);
+  const instruction=detailText(envelope.instruction)||detailText(envelope.instructions);
+  if(request)inputs.push({source:'Task request',content:request});
+  if(instruction)inputs.push({source:'Execution instructions',content:instruction});
+  // For unknown JSON input contracts, preserve the full input without turning it
+  // into a fake objective. Known DAG transport fields are not user-facing content.
+  if(!inputs.length)inputs.push({content:'```json\n'+JSON.stringify(envelope,null,2)+'\n```'});
+  return inputs;
 }
 function openTaskDetails(task){
   const job=selected();
-  const objective=taskReaderObjective(task);
-  const candidates=[{content:task.input}];
+  const envelope=taskReaderEnvelope(task);
+  const objective=taskReaderObjective(task,envelope);
+  const candidates=taskReaderInputs(task,envelope);
   for(const attachment of task.attachments||[])candidates.push({source:'Attachment',content:attachment});
   const inputs=uniqueInputs(candidates,objective);
   showDetailsDialog('Task',task.id,task.title,objective,inputs,readerReviewComments(job,task));

@@ -1504,7 +1504,7 @@ test('Job and Task dialogs read durable intent and review feedback, not status a
   assert.ok(start >= 0 && end > start);
   const reader = source.slice(start, end);
   assert.match(reader, /job\.objective\|\|job\.description\|\|job\.title/);
-  assert.match(reader, /taskReaderObjective\(task\)/);
+  assert.match(reader, /taskReaderObjective\(task,envelope\)/);
   assert.match(reader, /job\.continuation\?\.input/);
   assert.match(reader, /task\.input/);
   assert.match(reader, /uniqueInputs\(candidates,objective\)/);
@@ -1521,6 +1521,34 @@ test('Job and Task dialogs read durable intent and review feedback, not status a
   assert.doesNotMatch(reader, /innerHTML|document\.write/);
 });
 
+
+test('Task reader extracts human-readable Script DAG inputs without exposing JSON as its objective', () => {
+  const source=readFileSync(new URL('../dashboard/dashboard.js',import.meta.url),'utf8');
+  const start=source.indexOf('function taskReaderEnvelope(task)');
+  const end=source.indexOf('function openTaskDetails(task)',start);
+  const {taskReaderEnvelope,taskReaderObjective,taskReaderInputs}=runInNewContext(source.slice(start,end)+
+    '\n({taskReaderEnvelope,taskReaderObjective,taskReaderInputs})',
+    {detailText:value=>typeof value==='string'?value.trim():''});
+  const task={id:'2000',title:'vlog-visioner',input:JSON.stringify({
+    taskInput:'Process this project.\n\n- Canonical media: 6 files',
+    agent:'vlog-visioner',nodeId:'visioner',predecessorOutputs:{director:{result:'internal'}},
+    outputPath:'/tmp/2000.json',instruction:'Analyze the authorized media',
+  })};
+  const envelope=taskReaderEnvelope(task);
+  assert.equal(taskReaderObjective(task,envelope),'vlog-visioner');
+  assert.deepEqual([...taskReaderInputs(task,envelope)].map(x=>[x.source,x.content]),[
+    ['Task request','Process this project.\n\n- Canonical media: 6 files'],
+    ['Execution instructions','Analyze the authorized media'],
+  ]);
+  assert.equal(taskReaderObjective({...task,objective:'**Inspect** all media'}),'**Inspect** all media');
+  assert.equal(taskReaderObjective({...task,input:JSON.stringify({...JSON.parse(task.input),taskObjective:'Create a shot inventory'})}),
+    'Create a shot inventory');
+  assert.equal(taskReaderObjective({id:'1999',title:'Coordinator',input:'Process this selected run.\n\n- Source A'}),
+    'Process this selected run.');
+  assert.equal(taskReaderObjective({id:'2',title:'Editor',input:'{not valid JSON'}),'{not valid JSON');
+  const fallback=taskReaderInputs({id:'7',title:'Worker',input:JSON.stringify({unrecognized:1})});
+  assert.match(fallback[0].content,/```json\n/);
+});
 
 test('content reader removes objective duplicates and preserves independent inputs and review findings', () => {
   const source = readFileSync(new URL('../dashboard/dashboard.js', import.meta.url), 'utf8');
