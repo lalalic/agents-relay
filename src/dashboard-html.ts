@@ -19,6 +19,14 @@ export function dashboardSourceRevision(): string | null {
 }
 
 export const dashboardIndexHtml = readFileSync(new URL('../dashboard/index.html', import.meta.url), 'utf8');
+/** Cache-bust executable app assets at the URL boundary. Public CDN cache rules may
+ * override no-cache for up to four hours; a release-specific URL must never
+ * reuse an older JavaScript or CSS response while /api/version is current. */
+export const dashboardPageHtml = dashboardIndexHtml
+  .replace('href="/dashboard.css"', `href="/dashboard.css?v=${encodeURIComponent(dashboardVersion)}"`)
+  .replace('src="/vendor/markdown-it.min.js"', `src="/vendor/markdown-it.min.js?v=${encodeURIComponent(dashboardVersion)}"`)
+  .replace('src="/dashboard.js"', `src="/dashboard.js?v=${encodeURIComponent(dashboardVersion)}"`);
+
 export const dashboardClientJs = readFileSync(new URL('../dashboard/dashboard.js', import.meta.url), 'utf8');
 export const dashboardMarkdownJs = readFileSync(new URL('../dashboard/vendor/markdown-it.min.js', import.meta.url), 'utf8');
 export const dashboardJelFunction = readFileSync(new URL('../dashboard/jel-function.js', import.meta.url), 'utf8').trimEnd();

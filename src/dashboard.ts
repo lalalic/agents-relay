@@ -40,7 +40,7 @@ function isTaskId(candidate: string): boolean {
 
 
 export { dashboardHtml, dashboardVersion, dashboardSourceRevision } from './dashboard-html.js';
-import { dashboardIndexHtml, dashboardConfigScript, dashboardVersion } from './dashboard-html.js';
+import { dashboardPageHtml, dashboardConfigScript, dashboardVersion } from './dashboard-html.js';
 
 export function serveDashboard(
   store: DurableStore,
@@ -151,7 +151,7 @@ export function serveDashboard(
   const server = createServer(async (req, res) => {
     if (req.method === 'GET' && req.url === '/') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
-      res.end(dashboardIndexHtml);
+      res.end(dashboardPageHtml);
       return;
     }
     if (req.method === 'GET' && req.url === '/dashboard-config.js') {
@@ -159,7 +159,10 @@ export function serveDashboard(
       res.end(dashboardConfigScript());
       return;
     }
-    const asset = req.method === 'GET' ? dashboardStaticAssets[req.url ?? ''] : undefined;
+    const staticUrl = new URL(req.url ?? '/', 'http://127.0.0.1');
+    // Reject arbitrary query variants; accept only the active package version.
+    const validStaticQuery = !staticUrl.search || (staticUrl.searchParams.size === 1 && staticUrl.searchParams.get('v') === dashboardVersion);
+    const asset = req.method === 'GET' && validStaticQuery ? dashboardStaticAssets[staticUrl.pathname] : undefined;
     if (asset) {
       try {
         const content = await readFile(new URL('../dashboard/' + asset[0], import.meta.url));
