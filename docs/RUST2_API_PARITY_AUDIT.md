@@ -16,15 +16,15 @@ A listed direct differential import only means a head-to-head test imports the c
 |---|---:|
 | sourceCount | 107 |
 | runtimeExportSymbols | 734 |
-| directNameMatches | 695 |
-| unmappedRuntimeSymbols | 26 |
+| directNameMatches | 696 |
+| unmappedRuntimeSymbols | 25 |
 | runtimeConstructorReviews | 13 |
 | typeOrShapeReviewSymbols | 282 |
-| filesWithUnmappedRuntime | 8 |
-| filesWithoutDirectDiffImport | 51 |
-| filesWithoutOtherRustReferences | 31 |
+| filesWithUnmappedRuntime | 7 |
+| filesWithoutDirectDiffImport | 50 |
+| filesWithoutOtherRustReferences | 30 |
 
-Source tree: `a7fabd653a00`; Rust source tree: `5f573e5dbb09`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `a7fabd653a00`; Rust source tree: `b85a1de7ab81`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Per-file candidate surface (all 107 PORTING files)
 
@@ -101,7 +101,7 @@ Source tree: `a7fabd653a00`; Rust source tree: `5f573e5dbb09`. Rust module rows 
 | `src/relay-store-discovery.ts` | 3 | 3 | 0 | 0 | 4 |
 | `src/relay-store.ts` | 46 | 45 | 0 | 8 | 19 |
 | `src/relayd-control.ts` | 1 | 1 | 0 | 1 | 1 |
-| `src/relayd-dashboard-actions.ts` | 1 | 0 | 1 | 0 | 0 |
+| `src/relayd-dashboard-actions.ts` | 1 | 1 | 0 | 1 | 1 |
 | `src/relayd-main.ts` | 0 | 0 | 0 | 0 | 0 |
 | `src/relayd-utilities.ts` | 10 | 10 | 0 | 1 | 2 |
 | `src/relayd.ts` | 1 | 1 | 0 | 0 | 0 |
@@ -146,7 +146,6 @@ Source tree: `a7fabd653a00`; Rust source tree: `5f573e5dbb09`. Rust module rows 
 - **src/reconciler.ts** (4): Reconciler.reconcile, Reconciler.recoverLostExecutions, Reconciler.planJob, Reconciler.applyPlannerTree
 - **src/planner-runtime.ts** (2): finishPlanner, launchPlanExecution
 - **src/reconciler-review.ts** (1): ReconcilerReviewBase
-- **src/relayd-dashboard-actions.ts** (1): createDashboardActions
 - **src/worker-failure-recovery.ts** (1): handleWorkerLaunchFailure
 
 ## Required next verification

@@ -2,16 +2,16 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity.",
   "summary": {
     "sourceTree": "a7fabd653a006bcd33b84d3eb7ac4c28b085f9dd",
-    "rustTree": "5f573e5dbb099953a07d7f5e066197389460ce3c",
+    "rustTree": "b85a1de7ab81161638f466396ea67e63553f82db",
     "sourceCount": 107,
     "runtimeExportSymbols": 734,
-    "directNameMatches": 695,
-    "unmappedRuntimeSymbols": 26,
+    "directNameMatches": 696,
+    "unmappedRuntimeSymbols": 25,
     "runtimeConstructorReviews": 13,
     "typeOrShapeReviewSymbols": 282,
-    "filesWithUnmappedRuntime": 8,
-    "filesWithoutDirectDiffImport": 51,
-    "filesWithoutOtherRustReferences": 31
+    "filesWithUnmappedRuntime": 7,
+    "filesWithoutDirectDiffImport": 50,
+    "filesWithoutOtherRustReferences": 30
   },
   "files": [
     {
@@ -5203,18 +5203,20 @@
       "target": "rust/src/relayd_dashboard_actions.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 1,
-      "directNameMatches": 0,
-      "unmappedRuntime": [
-        "createDashboardActions"
-      ],
+      "directNameMatches": 1,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_dashboard_factory.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/dashboard_factory.rs"
+      ],
       "exports": [
         {
           "name": "createDashboardActions",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
