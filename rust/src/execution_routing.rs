@@ -479,3 +479,25 @@ pub fn route_execution_with_choice(
         "model":selected["model"],"routing":routing,"audit":audit,
         "facts":facts,"workerRequirements":requirements}))
 }
+
+/// Node routeExecution entrypoint. Model/Worker eligibility comes from one
+/// validated route discovery; only the decision choice is passed back by
+/// a caller-provided Decision Engine. No second routing policy is invented.
+pub fn route_execution(
+    workers:&[Value],requirements:&Value,options:&Value,
+    home:&Path,policy_path:&Path,rules_path:&Path,now_ms:i64,
+    proposed_choice:Option<&str>,evidence:Option<Value>,
+    recent_outcomes:&[Value],audit:Option<Value>,
+)->Result<Value,String>{
+    let discovered=discover_execution_routes(workers,requirements,options,
+        home,policy_path,rules_path,now_ms)?;
+    let mut result=route_execution_with_choice(&discovered,requirements,workers,options,
+        proposed_choice,evidence,recent_outcomes,audit)?;
+    // Public Node routeExecution returns the chosen candidate, selection,
+    // model, routing and audit. The extra eligibility facts stay internal.
+    if let Some(map)=result.as_object_mut(){
+        map.remove("facts");map.remove("workerRequirements");
+        map.remove("routing");
+    }
+    Ok(result)
+}

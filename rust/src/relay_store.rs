@@ -153,6 +153,11 @@ impl SQLiteRelayStore {
         Ok(Self{db,path:path.into(),
             scope_job_id:scope_job_id.map(str::to_owned)})
     }
+    /// Node SQLiteRelayStore.close: explicitly release the exact owned SQLite
+    /// connection rather than close an external/borrowed process-wide store.
+    pub fn close(self)->Result<(),String>{
+        self.db.close().map_err(|(_,error)|error.to_string())
+    }
     fn scope(&self,job_id:&str)->Result<(),String>{
         scope_guard(self.scope_job_id.as_deref(),job_id)
     }

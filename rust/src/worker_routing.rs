@@ -255,3 +255,16 @@ pub fn route_worker_with_choice(
     Ok(json!({"candidate":selected,
         "selection":selection(selected,by,evidence)}))
 }
+
+/// Node routeWorker entrypoint. Graph/decision engine owns the requested
+/// choice; route_worker_with_choice enforces hard constraints and fallback.
+/// The host supplies only a validated, signed choice/evidence when available.
+pub fn route_worker(
+    candidates:&[Value],requirements:&Value,options:&Value,
+    proposed_choice:Option<&str>,evidence:Option<&Value>,
+)->Result<Value,String>{
+    let mode=options.get("decisionMode").and_then(Value::as_str).unwrap_or("off");
+    let fallback=json!({"mode":mode,"fallback":true});
+    route_worker_with_choice(candidates,requirements,mode,proposed_choice,
+        Some(evidence.unwrap_or(&fallback)))
+}

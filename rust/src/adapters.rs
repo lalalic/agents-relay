@@ -37,6 +37,42 @@ impl WorkerExecution{
             thread_id:None,delivery_receipt:None,process_exit:None}
     }
 }
+// Node LaunchFailure and StartAckTimeout are public error identities.
+// Timeout is delegated to the original WorkerStartAck implementation, which
+// independently verifies execution-scoped task.started evidence.
+pub use crate::worker_start_ack::StartAckTimeout;
+#[derive(Debug,Clone,PartialEq,Eq)]
+pub struct LaunchFailure(pub String);
+impl std::fmt::Display for LaunchFailure {
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result{
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for LaunchFailure{}
+impl From<StartAckTimeout> for LaunchFailure {
+    fn from(error:StartAckTimeout)->Self{Self(error.0)}
+}
+/// Node ensureChatGptWebHelmReady uses two owned CLI observations, not a
+/// browser submission receipt or an implicit new WebHelm session. Injecting
+/// command execution permits identical offline error and ordering tests.
+pub fn ensure_chat_gpt_webhelm_ready<Run>(mut run:Run)->Result<(),String>
+where Run:FnMut(&[&str])->Result<String,String>{
+    fn workspace_json(output:&str)->Result<Value,String>{
+        for line in output.trim().lines().rev(){
+            if let Ok(value)=serde_json::from_str::<Value>(line){return Ok(value);}
+        }
+        Err("webhelm returned no JSON result".into())
+    }
+    let profile=workspace_json(&run(&["platform","profile","chatgpt"])?)?;
+    if profile["platform"]!="chatgpt"{
+        return Err("Global WebHelm CLI cannot load the ChatGPT platform skill".into());
+    }
+    let status=workspace_json(&run(&["status"])?)?;
+    if status.pointer("/daemon/running")!=Some(&Value::Bool(true)){
+        return Err("Global WebHelm daemon is not running".into());
+    }
+    Ok(())
+}
 pub trait WorkerAdapter {
     fn name(&self)->&'static str;
     fn id(&self)->&str;

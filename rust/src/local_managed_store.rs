@@ -31,3 +31,18 @@ pub fn open_local_managed_store_location(
         scope_job_id, github_enabled: pr_number > 0 && !no_github,
     })
 }
+
+/// Node openLocalManagedStore: construct the actual canonical SQLite-backed
+/// LocalAuthority Store using the same validated immutable Job scope.
+/// Rust owns the SQLite connection inside `authority` (single source of truth).
+pub fn open_local_managed_store(
+    repository:&str,pr_number:i64,directory:&Path,
+    job_id:Option<&str>,no_github:bool,
+)->Result<crate::local_authority_store::LocalAuthorityDurableStore,String>{
+    let location=open_local_managed_store_location(repository,pr_number,
+        directory,job_id,no_github)?;
+    let relay=crate::relay_store::SQLiteRelayStore::open(
+        &location.sqlite_path,Some(&location.scope_job_id))?;
+    Ok(crate::local_authority_store::LocalAuthorityDurableStore::new(
+        relay,!location.github_enabled))
+}

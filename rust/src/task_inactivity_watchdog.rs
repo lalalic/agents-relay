@@ -196,6 +196,14 @@ impl Drop for WatchdogTimers {
         }
     }
 }
+/// Node armInactivityWatchdog is a lifecycle-neutral timer effect; one Task
+/// identity can have at most one active timer in the caller-owned collection.
+pub fn arm_inactivity_watchdog(
+    task:&Value,execution_id:&str,timers:&mut WatchdogTimers,
+    post_exit_grace_ms:i64,on_expire:impl FnOnce()+Send+'static,
+)->Option<i64>{
+    timers.arm(task,execution_id,post_exit_grace_ms,on_expire)
+}
 /// Equivalent to acceptTaskProgress eligibility plus mutation. A durable transition adapter must
 /// apply the returned Task atomically through the Task Graph before publishing success.
 pub fn task_progress_mutation(task: &Value, event: &Value, now: i64) -> Option<Value> {
@@ -228,6 +236,13 @@ pub fn task_progress_mutation(task: &Value, event: &Value, now: i64) -> Option<V
 /// Apply a correlated progress event to fresh SQLite state and commit it atomically.
 /// The canonical Graph selects the legal RUNNING self-loop; no receipt can revive
 /// a cancelled or superseded execution. No live-store defaults are used.
+/// Node acceptTaskProgress: apply the accepted, correlated observation
+/// through the canonical Graph+SQLite transition; never accept a stale lease.
+pub fn accept_task_progress(
+    db:&mut Connection,graph_dir:&Path,event:&Value,received_at:i64,
+)->Result<Option<Value>,String>{
+    accept_task_progress_sqlite(db,graph_dir,event,received_at)
+}
 pub fn accept_task_progress_sqlite(
     db: &mut Connection,
     graph_dir: &Path,

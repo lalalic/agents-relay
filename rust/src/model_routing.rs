@@ -319,3 +319,16 @@ pub fn route_model_with_choice(
     }
     Ok(json!({"candidate":selected,"routing":routing,"audit":audit}))
 }
+
+/// Node routeModel entrypoint. Policy is read from explicit paths. Provider
+/// decision evidence is injected and the shared native selection contract
+/// checks eligibility; no unconfigured LLM, CLI or account reader is run.
+pub fn route_model(
+    worker:&Value,candidates:&[Value],options:&Value,
+    policy_path:&str,rules_path:&str,
+    proposed_choice:Option<&str>,evidence:Option<&Value>,audit:Option<Value>,
+)->Result<Value,String>{
+    let policy=crate::routing_policy::load_routing_policy(policy_path,rules_path);
+    route_model_with_choice(worker,candidates,options,&policy,
+        proposed_choice,evidence,audit)
+}

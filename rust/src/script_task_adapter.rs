@@ -64,6 +64,38 @@ pub fn prepare_script_input(task:&Value)->Result<(Value,String,String),String>{
     }
     Ok((parsed,output_path,field(task,"executionId").into()))
 }
+/// Node ScriptTaskAdapter WorkerAdapter identity and effect facade. The
+/// supplied invoker owns execution of the trusted Script module, while the
+/// existing shared Task events and Graph remain the lifecycle authority.
+pub struct ScriptTaskAdapter<Invoke,Emit>
+where Invoke:FnMut(&Path,&Value,&AtomicBool)->Result<Value,String>,
+      Emit:FnMut(&Value)->Result<(),String>,
+{
+    pub roots:Value,
+    invoke:Invoke,
+    emit:Emit,
+}
+impl<Invoke,Emit> ScriptTaskAdapter<Invoke,Emit>
+where Invoke:FnMut(&Path,&Value,&AtomicBool)->Result<Value,String>,
+      Emit:FnMut(&Value)->Result<(),String>,
+{
+    pub fn new(roots:Value,invoke:Invoke,emit:Emit)->Self{
+        Self{roots,invoke,emit}
+    }
+    pub fn launch(&mut self,task:&Value,context:&Value,cancelled:&AtomicBool)
+        ->Result<ScriptLaunch,String>{
+        launch_script_task(task,context,&self.roots,cancelled,
+            &mut self.invoke,&mut self.emit)
+    }
+}
+impl<Invoke,Emit> crate::adapters::WorkerAdapter for ScriptTaskAdapter<Invoke,Emit>
+where Invoke:FnMut(&Path,&Value,&AtomicBool)->Result<Value,String>,
+      Emit:FnMut(&Value)->Result<(),String>,
+{
+    fn name(&self)->&'static str{SCRIPT_ADAPTER_NAME}
+    fn id(&self)->&str{SCRIPT_ADAPTER_ID}
+    fn capabilities(&self)->&'static [&'static str]{&SCRIPT_ADAPTER_CAPABILITIES}
+}
 /// Only freshly owned process groups may run Script-issued commands.
 pub fn run_script_command(
     args:&[String],cwd:&Path,cancelled:Option<&AtomicBool>,

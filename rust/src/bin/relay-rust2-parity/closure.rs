@@ -6,6 +6,66 @@ use serde_json::{json,Value};
 pub(super) fn invoke(request:&Value)->Result<Option<String>,String>{
     let op=request["op"].as_str().unwrap_or("");
     let result:Result<String,String>=match op{
+        // Node model-routing.ts, worker-routing.ts and execution-routing.ts
+        // public entrypoints using the original Rust policy/eligibility paths.
+        // Choices are injected; a CLI/model receipt cannot bypass hard gates.
+        "routeFacade"=>{
+            let candidates=request["candidates"].as_array().ok_or("candidates required")?;
+            let requirements=&request["requirements"];
+            let options=&request["options"];
+            let proposed=request["choice"].as_str();
+            let evidence=request.get("evidence").filter(|v|!v.is_null());
+            let policy=request["policyPath"].as_str().unwrap_or("");
+            let rules=request["rulesPath"].as_str().unwrap_or("");
+            let result=match request["kind"].as_str().unwrap_or(""){
+                "worker"=>agents_relay_rust2::worker_routing::route_worker(
+                    candidates,requirements,options,proposed,evidence),
+                "model"=>agents_relay_rust2::model_routing::route_model(
+                    &request["worker"],candidates,options,policy,rules,
+                    proposed,evidence,None),
+                "execution"=>agents_relay_rust2::execution_routing::route_execution(
+                    candidates,requirements,options,
+                    std::path::Path::new(request["home"].as_str().unwrap_or("")),
+                    std::path::Path::new(policy),std::path::Path::new(rules),
+                    request["nowMs"].as_i64().unwrap_or(0),proposed,
+                    evidence.cloned(),
+                    request["recentOutcomes"].as_array().map(Vec::as_slice).unwrap_or(&[]),
+                    None),
+                _=>Err("Unknown routing facade".into()),
+            };
+            Ok(json!({"outcome":match result {
+                Ok(mut result)=>{
+                    for path in ["routing","candidate.routing"]{
+                        if let Some(route)=if path=="routing"{result.get_mut("routing")}
+                            else{result.pointer_mut("/candidate/routing")} {
+                            if route.get("decidedAt").is_some(){route["decidedAt"]=json!("NORMALIZED");}
+                            if route.get("decisionId").is_some(){route["decisionId"]=json!("NORMALIZED");}
+                        }
+                    }
+                    if result.pointer("/selection/selectedAt").is_some(){
+                        result["selection"]["selectedAt"]=json!("NORMALIZED");
+                    }
+                    if result.get("audit").is_some(){result["audit"]=Value::Null;}
+                    json!({"ok":true,"value":result})
+                },
+                Err(error)=>json!({"ok":false,"error":error}),
+            }}).to_string())
+        }
+        // Original Node adapters.ts WebHelm readiness: argv, late JSON,
+        // platform validation and daemon running truth are all observable.
+        "webhelmReadyParity"=>{
+            let mut calls=Vec::<String>::new();
+            let outcome=agents_relay_rust2::adapters::ensure_chat_gpt_webhelm_ready(|argv|{
+                calls.push(argv.join(" "));
+                Ok(if argv.first()==Some(&"platform") {
+                    request["profileOutput"].as_str().unwrap_or("")
+                }else{request["statusOutput"].as_str().unwrap_or("")}.into())
+            });
+            Ok(json!({"calls":calls,"outcome":match outcome{
+                Ok(())=>json!({"ok":true}),
+                Err(error)=>json!({"ok":false,"error":error})
+            }}).to_string())
+        }
         // Node src/usage.ts public observer reader interfaces. All cases use
         // disposable source fixtures or unconfigured keys, never real providers.
         "usageReaderSurface" => {

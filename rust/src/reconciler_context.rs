@@ -20,6 +20,17 @@ where
     resolve(cwd.into(), name.into()).await.ok().flatten()
 }
 
+/// Node resolvePlannerContext delegates to the *same* execution resolver
+/// as Worker Tasks, but forces the role to planner and uses the previously
+/// selected routing cwd. Agent discovery is injected, never guessed.
+pub async fn resolve_planner_context<Resolve,Fut>(
+    project_path:&str,roots:&Value,agents:&[Value],adapters:&[Value],resolve:Resolve,
+)->Result<Value,String>
+where Resolve:FnOnce(String,String,Value)->Fut,
+      Fut:Future<Output=Result<Value,String>>,
+{
+    resolve_task_context(project_path,"planner",roots,agents,adapters,resolve).await
+}
 /// Resolve the actual Role execution context with the same registered Agent
 /// and adapter/runtime metadata that every other entrypoint uses.
 pub async fn resolve_task_context<Resolve, Fut>(

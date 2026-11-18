@@ -83,6 +83,11 @@ struct Record {
 pub struct OwnedProcess {
     inner: Arc<Record>,
 }
+/// Node ownedProcessTerminationReason for a typed *owned* process handle.
+/// Unknown foreign processes cannot be passed in, and no PID is probed.
+pub fn owned_process_termination_reason(child:&OwnedProcess)->Option<&'static str>{
+    child.termination_reason().map(TerminationReason::as_str)
+}
 impl OwnedProcess {
     pub fn pid(&self) -> u32 {
         self.inner.pid

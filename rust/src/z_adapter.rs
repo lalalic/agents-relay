@@ -96,3 +96,23 @@ pub fn z_terminal_recovery_request(
         )
     }))
 }
+
+/// Node ZAdapter exposes an independent WorkerAdapter identity; its actual
+/// short-lived OAuth credential and WebHelm execution remain injected by the
+/// caller, not baked into a generic ChatGPT worker or produced by this struct.
+#[derive(Clone,Copy,Debug,Default)]
+pub struct ZAdapter;
+impl ZAdapter {
+    pub fn new()->Self{Self}
+    pub fn launch_request(
+        &self,prompt:&str,files:&[String],token:&str,
+        endpoint:Option<&str>,execution_id:&str,timeout_ms:u64,
+    )->Result<Value,String>{
+        z_worker_launch_request(prompt,files,token,endpoint,execution_id,timeout_ms)
+    }
+}
+impl crate::adapters::WorkerAdapter for ZAdapter {
+    fn name(&self)->&'static str{"z"}
+    fn id(&self)->&str{Z_ADAPTER_ID}
+    fn capabilities(&self)->&'static [&'static str]{&Z_CAPABILITIES}
+}

@@ -16,6 +16,20 @@ use std::{
     sync::atomic::{AtomicBool,Ordering},
     time::{Duration,Instant},
 };
+/// Node browserWorkerPool: process-scoped singleton with the same SQLite
+/// lease authority. Callers must set AGENTS_RELAY_STORE_DIR for tests before
+/// first use; no session or Task completion is inferred from this pool.
+pub fn browser_worker_pool()
+    ->Result<&'static std::sync::Mutex<BrowserWorkerPoolManager>,String>{
+    static INSTANCE:std::sync::OnceLock<
+        Result<std::sync::Mutex<BrowserWorkerPoolManager>,String>
+    >=std::sync::OnceLock::new();
+    INSTANCE.get_or_init(||
+        BrowserWorkerPoolManager::open(
+            crate::browser_worker_pool::BrowserPoolOptions::default())
+            .map(std::sync::Mutex::new).map_err(|e|e.to_string())
+    ).as_ref().map_err(Clone::clone)
+}
 pub const RELAY_WORKSPACE_CAPACITY:u64=6;
 pub const OUTPUT_LIMIT:usize=2_000_000;
 pub const OBSERVE:&str=r#"const url=(await page_info()).url;

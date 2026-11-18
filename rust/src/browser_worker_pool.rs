@@ -183,6 +183,12 @@ fn graph(state: &str, event: &str, action: &str, healthy: bool) -> PoolResult<()
     Ok(())
 }
 impl BrowserWorkerPoolManager {
+    /// Releases this specific pool's SQLite connection; it never stops a
+    /// different browser worker or declares a leased execution completed.
+    pub fn close(self)->PoolResult<()> {
+        self.db.close().map_err(|(_,error)|BrowserPoolError::from(error))
+    }
+
     pub fn open(options: BrowserPoolOptions) -> PoolResult<Self> {
         Self::with_clock(options, system_ms)
     }
