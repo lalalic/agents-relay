@@ -469,3 +469,119 @@ fn killed_native_daemon_never_accepts_orphaned_script_completion_after_restart()
     drop(restart);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn native_daemon_completes_planned_script_job_through_task_and_job_graph(){
+    let root=root();let project=root.join("project");
+    fs::create_dir_all(project.join("agents/.shortcut")).unwrap();
+    fs::write(project.join("agents/fixture.agent.md"),
+        "---\nname: fixture\ncapabilities: [script]\n---\n# Fixture\n").unwrap();
+    fs::write(project.join("agents/.shortcut/fixture.agent.mjs"),
+        "export async function run(){return {status:'COMPLETED',output:{ok:true},artifacts:{}}}\n").unwrap();
+    assert!(Command::new("git").arg("-C").arg(&project)
+        .args(["init","-q","-b","main"]).status().unwrap().success());
+    let store_path=root.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&store_path,Some("51")).unwrap();
+    store.save_job(&json!({
+        "id":"51","repository":"project","projectRoot":project,
+        "state":"ACTIVE","prNumber":0,"reviewEnabled":false,"priority":"P2",
+        "title":"Planned native Script completion",
+        "createdAt":"2026-11-18T00:00:00.000Z","updatedAt":"2026-11-18T00:00:00.000Z",
+        "plans":[{"id":"1","round":1,"status":"SUCCEEDED","objectiveStatus":"satisfied"}],
+        "tasks":[{"id":"2","jobId":"51","kind":"work","adapter":"script",
+            "agentName":"fixture","title":"Actual Shortcut","state":"QUEUED",
+            "executionId":null,"leaseOwner":null,"leaseExpiresAt":null,
+            "attempt":0,"maxAttempts":1,"dependencies":[],"input":"{}",
+            "output":{"kind":"file","path":root.join("result.json")},
+            "createdAt":"2026-11-18T00:00:00.000Z","updatedAt":"2026-11-18T00:00:00.000Z"}]})).unwrap();
+    store.close().unwrap();
+    let port=socket_port();let daemon=start_mode(&root,port,"--isolated-write-store-dir");
+    let mut observed=Value::Null;
+    for _ in 0..100{
+        observed=body(&request(port,"GET","/api/job?id=51","").unwrap());
+        if observed["state"]=="COMPLETED"{break;}
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(observed["state"],"COMPLETED","{observed}");
+    assert_eq!(observed["tasks"][0]["state"],"SUCCEEDED");
+    assert_eq!(observed["tasks"][0]["attempt"],1);
+    assert!(root.join("result.json").exists());
+    drop(daemon);
+    let again=start_mode(&root,port,"--isolated-write-store-dir");
+    thread::sleep(Duration::from_millis(200));
+    let persisted=body(&request(port,"GET","/api/job?id=51","").unwrap());
+    assert_eq!(persisted["state"],"COMPLETED");
+    assert_eq!(persisted["tasks"][0]["attempt"],1);
+    drop(again);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn native_daemon_merges_verified_source_branch_and_persists_job_terminal_state(){
+    let root=root();let project=root.join("project");
+    fs::create_dir_all(&project).unwrap();
+    let git=|args:&[&str]|{
+        let result=Command::new("git").arg("-C").arg(&project)
+            .args(args).output().unwrap();
+        assert!(result.status.success(),"{}",String::from_utf8_lossy(&result.stderr));
+        String::from_utf8_lossy(&result.stdout).trim().to_string()
+    };
+    git(&["init","-q","-b","main"]);
+    git(&["config","user.name","Rust2 isolated source"]);
+    git(&["config","user.email","fixture@example.invalid"]);
+    fs::write(project.join("base.txt"),"base\n").unwrap();
+    git(&["add","base.txt"]);git(&["commit","-qm","baseline"]);
+    git(&["checkout","-qb","relay/job-61"]);
+    fs::write(project.join("feature.txt"),"feature\n").unwrap();
+    git(&["add","feature.txt"]);git(&["commit","-qm","source"]);
+    let source=git(&["rev-parse","HEAD"]);
+    git(&["checkout","-q","main"]);
+    let store_path=root.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&store_path,Some("61")).unwrap();
+    store.save_job(&json!({
+        "id":"61","repository":"project","projectRoot":project,
+        "state":"ACTIVE","prNumber":0,"reviewEnabled":false,"autoMerge":true,
+        "title":"Native source delivery",
+        "createdAt":"2026-11-18T00:00:00.000Z","updatedAt":"2026-11-18T00:00:00.000Z",
+        "plans":[{"id":"1","round":1,"status":"SUCCEEDED","objectiveStatus":"satisfied"}],
+        "tasks":[{"id":"2","jobId":"61","kind":"work","adapter":"script",
+            "agentName":"fixture","title":"Already delivered source","state":"SUCCEEDED",
+            "output":{"kind":"task_pr"},
+            "createdAt":"2026-11-18T00:00:00.000Z","updatedAt":"2026-11-18T00:00:00.000Z"}],
+        "localMerge":{"status":"pending","attempts":0,
+            "sourceRef":"refs/heads/relay/job-61","targetRef":"refs/heads/main"}
+    })).unwrap();
+    store.close().unwrap();
+    let port=socket_port();let daemon=start_mode(&root,port,"--isolated-write-store-dir");
+    let mut observed=Value::Null;
+    for _ in 0..100{
+        observed=body(&request(port,"GET","/api/job?id=61","").unwrap());
+        if observed["state"]=="COMPLETED"{break;}
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(observed["state"],"COMPLETED","{observed}");
+    assert_eq!(observed["localMerge"]["status"],"succeeded");
+    assert_eq!(observed["localMerge"]["sourceSha"],source);
+    let merged=git(&["rev-parse","refs/heads/main"]);
+    assert_eq!(observed["localMerge"]["mergedCommitSha"],merged);
+    assert!(project.join("feature.txt").exists());
+    assert_eq!(git(&["rev-list","--parents","-n","1","main"])
+        .split_whitespace().count(),3);
+    // The next daemon reconciliation tick must inspect the durable completed
+    // merge and settle optional origin delivery without a second CLI command.
+    for _ in 0..50{
+        observed=body(&request(port,"GET","/api/job?id=61","").unwrap());
+        if observed["remoteDelivery"]["status"]=="skipped"{break;}
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(observed["remoteDelivery"]["status"],"skipped",
+        "Native daemon failed to process post-completion no-origin Graph projection: {observed}");
+    drop(daemon);
+    let restart=start_mode(&root,port,"--isolated-write-store-dir");
+    thread::sleep(Duration::from_millis(200));
+    let persisted=body(&request(port,"GET","/api/job?id=61","").unwrap());
+    assert_eq!(persisted["state"],"COMPLETED");
+    assert_eq!(git(&["rev-parse","main"]),merged);
+    drop(restart);
+    fs::remove_dir_all(root).unwrap();
+}

@@ -12,7 +12,8 @@ use crate::{
         relay_job_state_command,relay_task_command,readonly_job_for,
         new_local_repository,integer_arg,
     },
-    cli_revision::revision_request,
+    cli_revision::{revision_request,validate_revision_receipt},
+    cli_review::{review_job_request,review_job_response},
     cli_task_complete::task_complete_request,
     cli_workflow::workflow_cli_result,
     cli_worker_task::{
@@ -363,7 +364,12 @@ pub fn run_task_command<P:CliRuntimePort>(
         // the active execution, verifies Git and commits through SQLite/Graph.
         return port.control(args,&task_complete_request(args)?);
     }
-    if matches!(action,"context"|"events"|"revise"){
+    if action=="revise"{
+        let request=revision_request(args)?;
+        let accepted=port.control(args,&request)?;
+        return validate_revision_receipt(&request,accepted);
+    }
+    if matches!(action,"context"|"events"){
         return port.execute("task",action,args);
     }
     let id=required(args,"--id","Task command")?;
@@ -459,6 +465,12 @@ pub fn run_cli<P:CliRuntimePort>(
         "task"=>run_task_command(port,
             args.first().map(String::as_str).unwrap_or(""),
             &args[args.len().min(1)..],stdin),
+        "review" if args.first().is_some_and(|a|a=="job")=>{
+            let flags=&args[1..];
+            let request=review_job_request(flags)?;
+            let response=port.control(flags,&request)?;
+            Ok(review_job_response(&response))
+        },
         "review"|"artifact"|"prompt"|"context"|"blocker"|"escalation"=>
             port.execute(command,args.first().map(String::as_str).unwrap_or(""),
                 &args[args.len().min(1)..]),

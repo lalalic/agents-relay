@@ -846,6 +846,35 @@ fn invoke(request: &Value) -> Result<String, String> {
         "stage2NeedsLifecycleReconciliation" => Ok(json!(agents_relay_rust2::pool::needs_lifecycle_reconciliation(
             std::path::Path::new(request["graphDirectory"].as_str().unwrap_or("workflow")),
             &request["job"],request["now"].as_i64().unwrap_or(0))?).to_string()),
+        "nativeLocalMergeReconcile" => {
+            use std::{future::{ready,Future},pin::pin,task::{Context,Poll,Waker}};
+            let mut job=request["job"].clone();
+            let now=request["nowMs"].as_i64().unwrap_or(1795000000000);
+            let head=request["headSha"].as_str();
+            let mut inputs=Vec::new();
+            let completed={
+            let future=agents_relay_rust2::local_merge_delivery::reconcile_local_git_completion(
+                std::path::Path::new("workflow"),&mut job,head,true,
+                Some(std::path::Path::new("/tmp/rust2-mock-repo")),now,
+                |candidate,_event|ready(Ok(candidate)),
+                |_repo,receipt|{
+                    inputs.push(receipt.clone());
+                    if let Some(error)=request["mergeError"].as_str(){
+                        return Err(error.into());
+                    }
+                    Ok(request.get("mergeResult").cloned().unwrap_or(json!({
+                        "sourceSha":head,"mergedCommitSha":"b".repeat(40)
+                    })))
+                });
+            let mut future=pin!(future);
+            let mut ctx=Context::from_waker(Waker::noop());
+            match future.as_mut().poll(&mut ctx){
+                Poll::Ready(answer)=>answer?,
+                Poll::Pending=>return Err("Mock Git completion Future unexpectedly suspended".into()),
+            }
+            };
+            Ok(json!({"completed":completed,"job":job,"mergeInputs":inputs}).to_string())
+        }
         "wave4LocalMerge" => {
             let repo = std::path::Path::new(request["repo"].as_str().ok_or("repo missing")?);
             let receipt = agents_relay_rust2::local_git_merge::deliver_local_merge(

@@ -258,6 +258,10 @@ pub trait DaemonServices:Send{
     fn github_usage(&mut self)->Result<Option<Value>,String>;
     fn status(&mut self)->Value;
     fn registered_agents(&mut self)->Result<Vec<Value>,String>;
+    /// Physical completion is an action selected by Job Lifecycle Graph, not
+    /// a Task side effect or a CLI status override. Hosts without a verified
+    /// merge/SQLite binding leave the Job ACTIVE and fail closed.
+    fn reconcile_local_completion(&mut self,_id:&str)->Result<bool,String>{Ok(false)}
     fn effect(&mut self,action:&Value)->Result<(),String>;
 }
 pub struct DaemonDashboardBackend<S:DaemonServices>{
@@ -398,6 +402,14 @@ pub fn run_daemon<S:DaemonServices+'static>(
                             &mut DaemonReconcileHost(&mut *guard))?;
                         Ok(updated)
                     })?;
+                // Only the canonical Job Lifecycle may authorize local Git
+                // merge or COMPLETE. Reconcile after Task results are durably
+                // written; never infer completion from a Worker receipt.
+                for job in inventory.iter().filter(|j|field(j,"state")=="ACTIVE"){
+                    let mut guard=services.lock()
+                        .map_err(|_|"Daemon service lock poisoned")?;
+                    guard.reconcile_local_completion(field(job,"id"))?;
+                }
                 // Optional remote push is a distinct, durable projection.
                 // A historic COMPLETED Job without a matching marker never
                 // enters this effect queue, not even for metadata inspection.

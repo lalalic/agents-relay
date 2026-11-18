@@ -207,6 +207,16 @@ impl SQLiteRelayStore {
         };
         work(&mut operations)
     }
+    /// Targeted final-review revisions are one atomic Graph+SQLite change;
+    /// callers cannot directly mutate child IDs, reviewer comments or Task
+    /// state. The repository-wide SQLite sequence is authoritative.
+    pub fn submit_review_revision(&self,store_directory:&Path,graph:&Path,
+        job_id:&str,input:&Value)->Result<Value,String>{
+        self.scope(job_id)?;
+        self.workflow_operation(|ops|
+            crate::review_revision_model::submit_targeted_revision_request(
+                ops,store_directory,graph,job_id,input))
+    }
     pub fn mutate_job<F>(&self,job_id:&str,mutate:F)->Result<Value,String>
     where F:FnOnce(Value)->Result<Value,String>{
         self.scope(job_id)?;

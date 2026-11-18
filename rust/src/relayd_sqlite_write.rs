@@ -5,6 +5,9 @@
 use crate::{
     dashboard_actions::dashboard_job_set_state,
     git_delivery::source_commit_sha,
+    local_merge_delivery::{native_merge_effect,reconcile_local_git_completion},
+    local_git_merge::{local_source_head,git as checked_local_git},
+    local_merge_projection::reconcile_completed_local_delivery,
     agent_script_discovery::discover_script_agent,
     native_script_execution::run_claimed_script_task,
     native_script_worker::configured_script_interpreter,
@@ -16,7 +19,7 @@ use crate::{
     relayd_control::{workspace_control,WorkspaceControlBackend},
 };
 use serde_json::{json,Value};
-use std::{cell::{Ref,RefCell,RefMut},collections::{HashMap,HashSet},path::{Path,PathBuf},sync::mpsc::{self,Receiver,Sender}};
+use std::{cell::{Ref,RefCell,RefMut},collections::{HashMap,HashSet},future::{ready,Future},path::{Path,PathBuf},pin::pin,sync::mpsc::{self,Receiver,Sender},task::{Context,Poll,Waker}};
 fn field<'a>(v:&'a Value,key:&str)->&'a str{v.get(key).and_then(Value::as_str).unwrap_or("")}
 fn denied(name:&str)->String{format!("Rust isolated-write daemon {name} not bound; refusing unsafe side effect")}
 
@@ -32,6 +35,22 @@ impl IsolatedSQLiteWriteHost {
         Self{config,subscriptions:Vec::new(),wake_count:0,reconcile_attempts:0,connections:RefCell::new(HashMap::new())}
     }
     fn path(&self)->PathBuf{relay_unified_store_path(&self.config.store_directory)}
+    /// Isolated writes must be confined to the same disposable caller-owned
+    /// workspace as SQLite. A copied Job snapshot pointing at a live source
+    /// checkout cannot authorize either a Script Worker or a Git merge/push.
+    fn isolated_project(&self,job:&Value)->Result<PathBuf,String>{
+        let root=std::fs::canonicalize(field(job,"projectRoot"))
+            .map_err(|e|format!("Invalid isolated Job projectRoot: {e}"))?;
+        let base=std::fs::canonicalize(
+            self.config.store_directory.parent().ok_or("Isolated store has no parent")?)
+            .map_err(|e|e.to_string())?;
+        if root==base || !root.starts_with(&base)
+            || root.file_name().and_then(|v|v.to_str())!=Some(field(job,"repository"))
+            ||!root.join(".git").is_dir(){
+            return Err("Isolated Rust daemon refuses Job project outside its own independent Git fixture".into());
+        }
+        Ok(root)
+    }
     fn ensure_scoped(&self,id:&str,allow_create:bool)->Result<(),String>{
         if id.is_empty(){return Err("Immutable Job ID required".into());}
         if self.connections.borrow().contains_key(id){return Ok(());}
@@ -64,9 +83,99 @@ impl IsolatedSQLiteWriteHost {
             Ok(candidate)
         })
     }
+    fn isolated_origin(&self,project:&Path)->Result<(),String>{
+        let names=checked_local_git(project,&["remote"])?;
+        if !names.lines().any(|name|name=="origin"){return Ok(());}
+        let url=checked_local_git(project,&["remote","get-url","--push","origin"])?;
+        let raw=Path::new(&url);
+        if !raw.is_absolute(){
+            return Err("Isolated native daemon refuses network or relative Git origin delivery".into());
+        }
+        let origin=std::fs::canonicalize(raw)
+            .map_err(|e|format!("Invalid isolated Git origin: {e}"))?;
+        let parent=std::fs::canonicalize(
+            self.config.store_directory.parent().ok_or("Isolated store parent missing")?)
+            .map_err(|e|e.to_string())?;
+        if !origin.starts_with(parent){
+            return Err("Isolated native daemon refuses delivery outside its own Git fixture".into());
+        }
+        Ok(())
+    }
+    pub fn reconcile_remote_delivery(&self,id:&str,expected_sha:&str)->Result<(),String>{
+        let job=self.scoped(id)?.load_job(id)?
+            .ok_or_else(||format!("SQLite Job {id} not found"))?;
+        if job.pointer("/localMerge/mergedCommitSha").and_then(Value::as_str)
+            !=Some(expected_sha) || expected_sha.is_empty(){
+            return Err("Remote delivery expected SHA no longer matches SQLite completion".into());
+        }
+        let project=self.isolated_project(&job)?;
+        self.isolated_origin(&project)?;
+        let graph=self.config.graph_directory.clone();
+        reconcile_completed_local_delivery(&graph,id,&project,
+            |job_id|self.scoped(job_id)?.load_job(job_id)?
+                .ok_or_else(||format!("SQLite Job {job_id} not found")),
+            |job_id,mutate|{
+                let mut changed=false;
+                let saved=self.scoped(job_id)?.mutate_job(job_id,|mut job|{
+                    changed=mutate(&mut job)?;
+                    Ok(job)
+                })?;
+                Ok((saved,changed))
+            })
+    }
     fn emit(&mut self,value:Value){
         let payload=value.to_string();
         self.subscriptions.retain(|sender|sender.send(payload.clone()).is_ok());
+    }
+    /// Current Job Graph invokes this effect; the shared local Git module
+    /// owns immutable source/target ref checks and completion guard. Each
+    /// SQLite snapshot/merge receipt uses an exact CAS, never overwriting
+    /// concurrent Task/Review progress.
+    pub fn reconcile_git_delivery(&self,id:&str)->Result<bool,String>{
+        let mut job=self.scoped(id)?.load_job(id)?
+            .ok_or_else(||format!("SQLite Job {id} not found"))?;
+        if field(&job,"state")!="ACTIVE"{return Ok(false);}
+        let project=self.isolated_project(&job)?;
+        let ref_name=job.pointer("/localMerge/sourceRef")
+            .and_then(Value::as_str).filter(|s|!s.is_empty());
+        let head=ref_name.map(|ref_name|local_source_head(&project,ref_name))
+            .transpose()?;
+        let timestamp=chrono::Utc::now().timestamp_millis();
+        let graph=self.config.graph_directory.clone();
+        let prior=RefCell::new(job.clone());
+        let save=|candidate:Value,event:Option<Value>|{
+            let outcome=(||->Result<Value,String>{
+                let expected=prior.borrow().clone();
+                let db=self.scoped(id)?;
+                let committed=if let Some(event)=event{
+                    let key=event.get("event_id").and_then(Value::as_str)
+                        .ok_or("Merge result has no durable event identity")?;
+                    db.commit_workflow_mutation_and_events(id,|current|{
+                        if current!=expected{return Err("Concurrent Job merge receipt CAS conflict".into());}
+                        Ok(candidate)
+                    },&[json!({"key":key,"event":event})])?
+                }else{
+                    db.mutate_job(id,|current|{
+                        if current!=expected{return Err("Concurrent Job completion CAS conflict".into());}
+                        Ok(candidate)
+                    })?
+                };
+                prior.replace(committed.clone());
+                Ok(committed)
+            })();
+            ready(outcome)
+        };
+        let future=reconcile_local_git_completion(&graph,&mut job,head.as_deref(),
+            true,Some(&project),timestamp,save,native_merge_effect);
+        // This action's save adapter is entirely synchronous SQLite I/O.
+        // A pending Future would be a wiring bug, never a reason to mark
+        // a Job complete without committed source/target evidence.
+        let mut future=pin!(future);
+        let mut ctx=Context::from_waker(Waker::noop());
+        match future.as_mut().poll(&mut ctx){
+            Poll::Ready(result)=>result,
+            Poll::Pending=>Err("Native local Git completion effect unexpectedly suspended".into())
+        }
     }
 }
 impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
@@ -129,8 +238,19 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
     fn manual_plan(&mut self,_:&str,_:Option<&str>,_:bool)->Result<Value,String>{
         Err(denied("manual_plan"))
     }
-    fn review_targeted(&mut self,_:&str,_:&Value)->Result<Value,String>{
-        Err(denied("review_targeted"))
+    fn review_targeted(&mut self,id:&str,request:&Value)->Result<Value,String>{
+        // Only the exact reviewer execution and immutable reviewed HEAD can
+        // submit a correction. Atomic SQLite mutation allocates one numeric
+        // child ID, appends the feedback and enqueues the Revision Graph task.
+        let mut input=request.clone();
+        if input.get("originalTaskId").is_some()
+            &&input["originalTaskId"]!=input["taskId"]{
+            return Err("Reviewer original Task identity conflicts with requested Task".into());
+        }
+        input["originalTaskId"]=input["taskId"].clone();
+        let directory=self.config.store_directory.clone();
+        let graph=self.config.graph_directory.clone();
+        self.scoped(id)?.submit_review_revision(&directory,&graph,id,&input)
     }
     fn blocker_ensure(&mut self,_:&Value)->Result<Value,String>{Err(denied("blocker_ensure"))}
     fn blocker_resolve(&mut self,_:&str,_:&str)->Result<Value,String>{Err(denied("blocker_resolve"))}
@@ -185,6 +305,9 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                 "productionReady":false,"error":error}),
         }
     }
+    fn reconcile_local_completion(&mut self,id:&str)->Result<bool,String>{
+        self.reconcile_git_delivery(id)
+    }
     fn registered_agents(&mut self)->Result<Vec<Value>,String>{
         self.reconcile_attempts+=1;
         let mut seen=HashSet::new();let mut agents=Vec::new();
@@ -197,9 +320,12 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         Ok(agents)
     }
     fn effect(&mut self,action:&Value)->Result<(),String>{
-        eprintln!("native isolated Worker effect: {}",field(action,"action"));
+        if field(action,"action")=="effect.remoteDelivery"{
+            return self.reconcile_remote_delivery(
+                field(action,"jobId"),field(action,"expectedMergedCommitSha"));
+        }
         if field(action,"action")!="effect.launchTask"{
-            return Err(denied("Planner, remote delivery or unsupported Worker effect"));
+            return Err(denied("Planner or unsupported Worker effect"));
         }
         let id=field(action,"jobId");
         let task_id=field(action,"taskId");
@@ -212,19 +338,27 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         if field(task,"adapter")!="script"{
             return Err(denied("non-Script Worker adapter"));
         }
-        let project=Path::new(field(&original,"projectRoot"));
-        if !project.is_absolute()||!project.is_dir(){
-            return Err("Source Worker requires canonical absolute Job projectRoot".into());
-        }
+        let project=self.isolated_project(&original)?;
         let script=discover_script_agent(field(task,"agentName"),
             field(&original,"projectRoot"),None,
             self.config.workspace_root.to_str(),None)?
             .ok_or("Source Worker has no declared trusted Shortcut")?;
         if !Path::new(&script).is_file(){return Err("Script Agent module is absent".into());}
+        let isolated_parent=std::fs::canonicalize(
+            self.config.store_directory.parent().ok_or("Isolated store parent missing")?)
+            .map_err(|e|e.to_string())?;
+        let output=task.pointer("/output/path").and_then(Value::as_str)
+            .ok_or("Native Script Worker requires a declared file output")?;
+        let output_parent=Path::new(output).parent()
+            .ok_or("Native Script Worker output path has no parent")?;
+        let output_existing=output_parent.ancestors()
+            .find(|path|path.exists())
+            .and_then(|path|std::fs::canonicalize(path).ok())
+            .ok_or("Native Script Worker output parent cannot be canonicalized")?;
         if task.pointer("/output/kind")!=Some(&json!("file"))
-            ||!task.pointer("/output/path").and_then(Value::as_str)
-                .is_some_and(|path|Path::new(path).is_absolute()){
-            return Err("Native Script Worker requires a declared absolute file output".into());
+            || !Path::new(output).is_absolute()
+            || !output_existing.starts_with(&isolated_parent){
+            return Err("Native Script Worker output must remain inside the isolated job root".into());
         }
         let runtime=configured_script_interpreter()?;
         let mut reconciler=Reconciler::new(
