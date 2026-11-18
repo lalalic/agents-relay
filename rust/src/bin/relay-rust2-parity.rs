@@ -360,6 +360,49 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=closure::invoke(request)?{return Ok(output);}
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "apiResolvePullRequest" => {
+            use agents_relay_rust2::{
+                store_pull_request::resolve_pull_request,
+                store_github::GitHubApi,
+            };
+            struct FixtureClient {responses:Vec<Value>,calls:Vec<Value>}
+            impl FixtureClient {
+                fn next(&mut self)->Result<Value,String>{
+                    if self.responses.is_empty(){
+                        return Err("Fixture GitHub effect exhausted".into());
+                    }
+                    let row=self.responses.remove(0);
+                    if let Some(error)=row.get("fixtureError").and_then(Value::as_str){
+                        return Err(error.to_owned());
+                    }
+                    Ok(row)
+                }
+            }
+            impl GitHubApi for FixtureClient {
+                fn graphql(&mut self,query:&str,variables:&Value)->Result<Value,String>{
+                    self.calls.push(json!({"kind":"graphql",
+                        "query":query,"variables":variables}));
+                    self.next()
+                }
+                fn request(&mut self,path:&str,method:&str,body:Option<&Value>)
+                    ->Result<Value,String>{
+                    self.calls.push(json!({"kind":"request",
+                        "path":path,"method":method,"body":body}));
+                    self.next()
+                }
+            }
+            let mut client=FixtureClient{
+                responses:request["responses"].as_array().cloned().unwrap_or_default(),
+                calls:Vec::new()
+            };
+            let result=resolve_pull_request(&mut client,
+                request["repository"].as_str().unwrap_or(""),
+                &request["options"]);
+            Ok(json!({"outcome":match result{
+                Ok(value)=>json!({"ok":true,"value":value}),
+                Err(error)=>json!({"ok":false,"error":error}),
+            },"calls":client.calls}).to_string())
+        }
         "apiStoreGithubPublic" => {
             use agents_relay_rust2::{
                 store::{
