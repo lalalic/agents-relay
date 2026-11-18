@@ -1,0 +1,2792 @@
+{
+  "report": "Rust2 original 107 PORTING module certification",
+  "date": "2026-11-18",
+  "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
+  "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
+  "counts": {
+    "HOLD": 104,
+    "PASS": 3
+  },
+  "records": [
+    {
+      "source": "src/adapters.ts",
+      "target": "rust/src/adapters.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 12,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_stage2_pool_adapters.mjs",
+        "rust/tests/head_to_head_webhelm_preflight.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/script_task_adapter.rs",
+        "rust/src/z_adapter.rs"
+      ],
+      "typeOrShapeReviews": [
+        "Execution",
+        "LaunchContext",
+        "CodexAdapter.name",
+        "CodexAdapter.id",
+        "CodexAdapter.capabilities",
+        "BrowserWorkerRequest",
+        "BrowserWorkerResponse",
+        "AgentRun",
+        "ChatGptAgentRunner",
+        "ChatGptAdapterOptions",
+        "ChatGptAdapter.name",
+        "ChatGptAdapter.id",
+        "ChatGptAdapter.capabilities",
+        "ChatGptAdapter.tabClosePolicy"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 14 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Worker adapter/Repository Pool draft; not compiled/tested, Stage2 parity/wiring pending."
+    },
+    {
+      "source": "src/blocker-recovery.ts",
+      "target": "rust/src/blocker_recovery.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [
+        "BlockerRecoveryInput"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial authorized Blocker Graph recovery creation/adoption/dependency receipt native Rust draft; uncompiled/untested, cross-Job CAS Phase2."
+    },
+    {
+      "source": "src/blockers.ts",
+      "target": "rust/src/blockers.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 2,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/blocker_recovery.rs",
+        "rust/src/blocker_store_port.rs",
+        "rust/src/relayd_control.rs"
+      ],
+      "typeOrShapeReviews": [
+        "DependentStoreFactory",
+        "BlockerDependentTarget"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "仍有 2 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Serial Phase1 native Rust port for authoritative Graph/SQLite and guarded Git side effects. UNCOMPILED/UNTESTED, finish production bindings in Phase2."
+    },
+    {
+      "source": "src/browser-worker-pool.ts",
+      "target": "rust/src/browser_worker_pool.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 15,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_process_browser_worker.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/adapters.rs",
+        "rust/src/browser_worker_runtime.rs",
+        "rust/src/process_worker_parity_harness.rs"
+      ],
+      "typeOrShapeReviews": [
+        "BrowserProvider",
+        "BrowserPoolState",
+        "BrowserPoolAdmissionError.submitted"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 3 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave4 A: 48 concurrent disposable SQLite manager initializations with bounded SQLITE_BUSY/LOCKED retry; prior real FIFO/lease/quarantine and Graph branch tests pass. Production acquire/session/error mapping remains unverified (native_wave4_graph.rs; head_to_head_process_browser_worker.mjs)."
+    },
+    {
+      "source": "src/browser-worker-routing.ts",
+      "target": "rust/src/browser_worker_routing.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
+    },
+    {
+      "source": "src/browser-worker-runtime.ts",
+      "target": "rust/src/browser_worker_runtime.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 2,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/adapters.rs"
+      ],
+      "typeOrShapeReviews": [
+        "BrowserReceipt",
+        "PoolSubmission",
+        "PooledRun"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺独立原 Node/Rust 动态/失联 WebHelm 会话租约验证；不能把 Pool mock 看作实际 Provider 生命周期",
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "仍有 3 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native WebHelm Browser Pool lease/session/probe/recovery first port; uncompiled/untested; end-to-end wiring Phase2."
+    },
+    {
+      "source": "src/chatgpt-platform-fallback.ts",
+      "target": "rust/src/chatgpt_platform_fallback.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 5,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/worker_failure_recovery.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Rust source port; uncompiled/unverified, production integration and head-to-head differential pending Phase2."
+    },
+    {
+      "source": "src/cli-artifact.ts",
+      "target": "rust/src/cli_artifact.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 2,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_batch6.mjs",
+        "rust/tests/head_to_head_cli_core.mjs",
+        "rust/tests/head_to_head_wave3_artifact.mjs",
+        "rust/tests/head_to_head_wave4_artifact.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave4 B: original Node/Ajv schema-compile errors, CLI output/error priority, UTF16 Unicode/unknown-format tests plus Wave3 277 filesystem comparisons. Recursive $ref, full Ajv dialect/format and CLI edge parity remain unverified (head_to_head_wave4_artifact.mjs; head_to_head_wave3_artifact.mjs)."
+    },
+    {
+      "source": "src/cli-coordinator.ts",
+      "target": "rust/src/cli_coordinator.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_coordinator_cli.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "11 个真实 Git/SQLite Head-to-Head 场景及 4 个 Rust 原生测试已通过，但 run_coordinator_job_command 只发现 parity harness 引用，正式 CLI 生产分发尚未直接绑定本端口",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure."
+    },
+    {
+      "source": "src/cli-escalation.ts",
+      "target": "rust/src/cli_escalation.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 4,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_escalation_executor.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure."
+    },
+    {
+      "source": "src/cli-foreground.ts",
+      "target": "rust/src/cli_foreground.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 2,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
+    },
+    {
+      "source": "src/cli-job-create.ts",
+      "target": "rust/src/cli_job_create.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/relayd_control.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Serial Phase1 native SQLite Job creation and bounded/redacted JSONL routing audit port; uncompiled/untested, Stage2 bindings+differential pending."
+    },
+    {
+      "source": "src/cli-prompt.ts",
+      "target": "rust/src/cli_prompt.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 5,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Rust Script Agent and read-only CLI Prompt port; uncompiled/untested, API integration Phase2."
+    },
+    {
+      "source": "src/cli-review.ts",
+      "target": "rust/src/cli_review.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 3,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_cli_review.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Rust draft; uncompiled, untested and not production-wired; parity pending."
+    },
+    {
+      "source": "src/cli-support.ts",
+      "target": "rust/src/cli_support.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 38,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_cli_support_closure.mjs",
+        "rust/tests/head_to_head_cli_support_public_api.mjs",
+        "rust/tests/head_to_head_cli_support_publish_closure.mjs",
+        "rust/tests/head_to_head_service_event_bus_closure.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/bin/relay-rust2-parity/sqlite_api.rs",
+        "rust/src/cli.rs",
+        "rust/src/cli_task_complete.rs",
+        "rust/src/cli_unblock.rs"
+      ],
+      "typeOrShapeReviews": [
+        "ServiceEventBus.constructor",
+        "EventBusResolution"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 2 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 native CLI immutable Job bindings, HTTP control, Git workspace identity/worktree port; no compilation/tests; Stage2 head-to-head pending."
+    },
+    {
+      "source": "src/cli-unblock.ts",
+      "target": "rust/src/cli_unblock.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 2,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_cli_unblock.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "直接 Task/Job Graph+SQLite 负面/重放测试已通过，但 run_task_unblock_command/run_job_unblock_command 目前仅由 parity harness 和测试调用，正式 CLI 生产调用链待闭合",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Rust draft; uncompiled, untested and not production-wired; parity pending."
+    },
+    {
+      "source": "src/cli-worker-task.ts",
+      "target": "rust/src/cli_worker_task.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 3,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/cli.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Rust draft; uncompiled and untested, production API/binding and differential to close in Phase2."
+    },
+    {
+      "source": "src/cli.ts",
+      "target": "rust/src/cli.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 6,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_cli_runtime_factory.mjs",
+        "rust/tests/head_to_head_cli_runtime_public.mjs",
+        "rust/tests/head_to_head_cli_service_public.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/cli_runtime_public.rs",
+        "rust/src/bin/relay-rust2-parity/cli_service_public.rs",
+        "rust/src/bin/relay-rust2-parity/closure.rs"
+      ],
+      "typeOrShapeReviews": [
+        "dashboardJobSetState",
+        "dashboardTaskAction",
+        "dashboardTaskSetState",
+        "helpText",
+        "runtimeReviewer",
+        "SERVICE_DEFAULTS",
+        "eventBus",
+        "chatGptTabClosePolicy",
+        "ensureManagedGitHubJob"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 9 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial Rust source first draft of Reconciler/daemon/Control/CLI; UNCOMPILED/UNTESTED, missing direct API wiring and parity must be repaired in Phase2. Dashboard browser client unchanged."
+    },
+    {
+      "source": "src/continuation.ts",
+      "target": "rust/src/continuation.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 7,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_wave4_delivery.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/adapters.rs",
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/browser_worker_runtime.rs",
+        "rust/src/dag_result_contract.rs",
+        "rust/src/delivery_parity_harness.rs",
+        "rust/src/github_client.rs",
+        "rust/src/local_git_merge.rs",
+        "rust/src/local_merge_projection.rs",
+        "rust/src/script_task_adapter.rs",
+        "rust/src/usage.rs",
+        "rust/src/workspace.rs"
+      ],
+      "typeOrShapeReviews": [
+        "ContinuationAdapter",
+        "CodexThreadContinuation.kind",
+        "CommandContinuation.kind",
+        "WebhookContinuation.kind"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 4 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave4 C: owned subprocess group with real pipe/exit/timeout/cancel effects and 125 randomized original Node/Rust command cases; prior local webhook POST. Exact ENOENT/error precedence and production caller remain unverified (head_to_head_wave4_delivery.mjs; native_wave4_delivery.rs)."
+    },
+    {
+      "source": "src/dag-result-contract.ts",
+      "target": "rust/src/dag_result_contract.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_wave4_delivery.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/delivery_parity_harness.rs",
+        "rust/src/reconciler_runtime.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave4 C: 42 direct Node/Rust actual isolated stage verifier subprocess cases plus prior 105 file/rejection cases; native timeout/cancel. Abnormal signal/large output and Graph terminal caller binding remain unverified (head_to_head_wave4_delivery.mjs; native_wave4_delivery.rs)."
+    },
+    {
+      "source": "src/dag-task-runtime.ts",
+      "target": "rust/src/dag_task_runtime.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 5,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/pool.rs",
+        "rust/src/reconciler.rs"
+      ],
+      "typeOrShapeReviews": [
+        "DAGChild",
+        "DAGCheckpoint"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "仍有 2 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native DAG Task projection and Troubleshooter recovery first port; uncompiled/unverified, production bindings Phase2."
+    },
+    {
+      "source": "src/dashboard-actions.ts",
+      "target": "rust/src/dashboard_actions.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 3,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/relayd_dashboard_actions.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial Rust SERVER-only source draft; uncompiled/unverified; preserve original Dashboard client HTML/CSS/JS."
+    },
+    {
+      "source": "src/dashboard-data.ts",
+      "target": "rust/src/dashboard_data.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 8,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_worker_c.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/dashboard.rs",
+        "rust/src/dashboard_api.rs",
+        "rust/src/pool.rs"
+      ],
+      "typeOrShapeReviews": [
+        "DashboardWorkflowGraph",
+        "EffectiveGitHubUsage",
+        "DashboardJobLike",
+        "DashboardJobsSearchResult"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 4 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "PROVENANCE QUARANTINE: prior Worker C used duplicate shared worktree; its source and differential output are not admissible PASS evidence. Pending independent canonical commit and direct Node/Rust/native verification from `hotfix/rust2-parallel-projection-canonical-20261117` and `/tmp/rust2-parallel-projection-canonical-20261117.handoff.md`. Existing Rust is retained for compatibility with later Wave2/3/4; not yet reverified."
+    },
+    {
+      "source": "src/dashboard.ts",
+      "target": "rust/src/dashboard.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/cli_service_public.rs",
+        "rust/src/dashboard_api.rs",
+        "rust/src/relayd.rs"
+      ],
+      "typeOrShapeReviews": [
+        "dashboardWorkflowGraphs",
+        "githubPrUrl",
+        "searchDashboardJobs",
+        "dashboardHtml",
+        "dashboardVersion",
+        "dashboardSourceRevision"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "Rust Dashboard 服务/静态资源存在，但缺完整服务器入口的 Node/Rust 差分与真实浏览器/API/restart 验证，不能以 DOM/CSS 字节匹配认证整个服务",
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "仍有 6 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "PWA-preserving native Dashboard API integration: rust/src/dashboard.rs remains the shared PWA/SSE HTTP transport, rust/src/dashboard_api.rs provides injected Graph/SQLite API route mapping, webhook signature/durable-ack dedup and error paths. Native integration: rust/tests/native_dashboard_api.rs (3/3), native_dashboard_pwa.rs (4/4); Node dashboard 117/117; dashboard JEL/style/data differential 3/3. Production service callback binding, physical browser install, and full endpoint parity remain unverified; do NOT claim production-ready."
+    },
+    {
+      "source": "src/decision-audit.ts",
+      "target": "rust/src/decision_audit.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 13,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_wave4_delivery.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/model_redecision.rs"
+      ],
+      "typeOrShapeReviews": [
+        "AuditFailureEvidence",
+        "DecisionAuditRecord",
+        "DecisionOutcomeRecord",
+        "DecisionAuditStore",
+        "RouterRouteResult"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 5 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Serial Phase1 native SQLite Job creation and bounded/redacted JSONL routing audit port; uncompiled/untested, Stage2 bindings+differential pending."
+    },
+    {
+      "source": "src/decision.ts",
+      "target": "rust/src/decision.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 11,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_wave2_decision.mjs",
+        "rust/tests/head_to_head_wave3_graph.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/cli_runtime_public.rs"
+      ],
+      "typeOrShapeReviews": [
+        "JsonValue",
+        "ChoiceDecisionContract",
+        "DecisionContract",
+        "DecisionRequest",
+        "ChoiceDecisionResult",
+        "DecisionResult",
+        "DecisionMode",
+        "DecisionEngine",
+        "DecisionEvidence",
+        "DecisionChoice",
+        "JevDecisionEngine.name",
+        "LayaCliDecisionEngine.name"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 12 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave3 A real isolated Laya owned shell, stdout/stderr, timeout and prior 4401 decision cases pass; actual external decision service caller and complete error/export paths still unproven (head_to_head_wave3_graph.mjs)."
+    },
+    {
+      "source": "src/dependency-revision-execution.ts",
+      "target": "rust/src/dependency_revision_execution.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 3,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/reconciler.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Rust source port; uncompiled/unverified, production integration and head-to-head differential pending Phase2."
+    },
+    {
+      "source": "src/escalation-notifier.ts",
+      "target": "rust/src/escalation_notifier.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 2,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [
+        "EscalationNotification",
+        "NotificationReceipt",
+        "EscalationNotifier"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "仍有 3 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Rust source port; uncompiled/unverified, production integration and head-to-head differential pending Phase2."
+    },
+    {
+      "source": "src/events.ts",
+      "target": "rust/src/events.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 13,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_cli_support_publish_closure.mjs",
+        "rust/tests/head_to_head_service_event_bus_closure.mjs",
+        "rust/tests/head_to_head_worker_c.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/adapters.rs",
+        "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/bin/relay-rust2-parity/pool_public.rs",
+        "rust/src/bin/relay-rust2-parity/runtime_base_public.rs",
+        "rust/src/chatgpt_platform_fallback.rs",
+        "rust/src/cli.rs",
+        "rust/src/cli_service_public.rs",
+        "rust/src/cli_support.rs",
+        "rust/src/cli_support_events.rs",
+        "rust/src/decision_audit.rs",
+        "rust/src/feedback.rs",
+        "rust/src/github_client.rs",
+        "rust/src/interactive_invocation.rs",
+        "rust/src/interactive_request.rs",
+        "rust/src/legacy_orchestrator_repair.rs",
+        "rust/src/local_merge_delivery.rs",
+        "rust/src/local_merge_projection.rs",
+        "rust/src/planner_launch_public.rs",
+        "rust/src/planner_runtime.rs",
+        "rust/src/planner_runtime_public.rs",
+        "rust/src/pool.rs",
+        "rust/src/pool_public_ports.rs",
+        "rust/src/projection_failure_recovery.rs",
+        "rust/src/reconciler.rs",
+        "rust/src/reconciler_review.rs",
+        "rust/src/reconciler_runtime.rs",
+        "rust/src/reconciler_runtime_base.rs",
+        "rust/src/relayd_control.rs",
+        "rust/src/route_outcome_recording.rs",
+        "rust/src/script_task_adapter.rs",
+        "rust/src/service_publication.rs",
+        "rust/src/task_recovery.rs",
+        "rust/src/troubleshooter_fallback.rs",
+        "rust/src/worker_failure_orchestration.rs",
+        "rust/src/worker_failure_recovery.rs",
+        "rust/src/workflow_effect_failures.rs"
+      ],
+      "typeOrShapeReviews": [
+        "EventBus"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "PROVENANCE QUARANTINE: prior Worker C used duplicate shared worktree; its source and differential output are not admissible PASS evidence. Pending independent canonical commit and direct Node/Rust/native verification from `hotfix/rust2-parallel-projection-canonical-20261117` and `/tmp/rust2-parallel-projection-canonical-20261117.handoff.md`. Existing Rust is retained for compatibility with later Wave2/3/4; not yet reverified."
+    },
+    {
+      "source": "src/execution-context.ts",
+      "target": "rust/src/execution_context.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 6,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_agent_graph.mjs"
+      ],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [
+        "ExecutionRole",
+        "ContextSource",
+        "ResolvedInstruction",
+        "ResolvedSkill",
+        "ResolvedAgent",
+        "ResolvedRuntime",
+        "ExecutionContext",
+        "ProviderInstructions",
+        "ExecutionContextRoots",
+        "ExecutionContextOptions"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "仍有 10 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Serial Phase1 native interactive invocation Graph/Host and layered execution context port; uncompiled/untested, store integration Stage2."
+    },
+    {
+      "source": "src/execution-process-tracker.ts",
+      "target": "rust/src/execution_process_tracker.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 2,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure."
+    },
+    {
+      "source": "src/execution-recovery.ts",
+      "target": "rust/src/execution_recovery.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 2,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/reconciler.rs"
+      ],
+      "typeOrShapeReviews": [
+        "ExecutionRecoveryPorts"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure."
+    },
+    {
+      "source": "src/execution-routing.ts",
+      "target": "rust/src/execution_routing.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 6,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_route_facades.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/reconciler_review.rs"
+      ],
+      "typeOrShapeReviews": [
+        "ExecutionRouteCandidate",
+        "ExecutionRouteEvaluation",
+        "WorkerGateEvaluation",
+        "ExecutionRoutingDecision",
+        "ExecutionRoutingOptions"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 5 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Serial Phase1 native Worker+Model routing policy, hard gates and source profile discovery port; uncompiled/unverified, decision audit/service binding Phase2."
+    },
+    {
+      "source": "src/feedback.ts",
+      "target": "rust/src/feedback.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 23,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_worker_c.mjs",
+        "rust/tests/head_to_head_worker_c_feedback_store.mjs"
+      ],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [
+        "FeedbackSource",
+        "FeedbackActorClass",
+        "FeedbackVisibility",
+        "FeedbackTriageStatus",
+        "FeedbackProvenance",
+        "LegacyFeedbackAttachmentInput",
+        "LegacyFeedbackSubmission",
+        "LegacyFeedbackRecord",
+        "FeedbackAttachment",
+        "FeedbackDownstreamReference",
+        "FeedbackRecord",
+        "FileFeedbackStore.root"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "仍有 12 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "PROVENANCE QUARANTINE: prior Worker C used duplicate shared worktree; its source and differential output are not admissible PASS evidence. Pending independent canonical commit and direct Node/Rust/native verification from `hotfix/rust2-parallel-projection-canonical-20261117` and `/tmp/rust2-parallel-projection-canonical-20261117.handoff.md`. Existing Rust is retained for compatibility with later Wave2/3/4; not yet reverified."
+    },
+    {
+      "source": "src/force-restate-validation.ts",
+      "target": "rust/src/force_restate_validation.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 6,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/planner_runtime_public.rs"
+      ],
+      "typeOrShapeReviews": [
+        "HistoryValidation"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Rust source port; uncompiled/unverified, production integration and head-to-head differential pending Phase2."
+    },
+    {
+      "source": "src/force-restate.ts",
+      "target": "rust/src/force_restate.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave3 A retained tested forceRestate forwarding; actual manual plan apply/store/launch effects still require a Rust production binding (native_wave2_graph.rs)."
+    },
+    {
+      "source": "src/github-auth.ts",
+      "target": "rust/src/github_auth.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 2,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/delivery_parity_harness.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave3 C 102 Node/Rust identity/probe cases with injected GhApiClient pass; real App Auth client, provider login probe and runtime factory not yet ported (head_to_head_wave3_delivery.mjs)."
+    },
+    {
+      "source": "src/github-client.ts",
+      "target": "rust/src/github_client.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 10,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "10 个运行导出、没有直接差分或 Rust 调用引用；如属显式淘汰 API，应经契约核准标为 EXCLUDED，不能默认为 PASS",
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 native owned GitHub CLI transport and provider usage/capacity readers port; UNCOMPILED UNTESTED, runtime API/parity closure Phase2."
+    },
+    {
+      "source": "src/interactive-invocation.ts",
+      "target": "rust/src/interactive_invocation.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 12,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_host_invocation_ports.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/interactive_invocation_ports.rs",
+        "rust/src/interactive_resume.rs",
+        "rust/src/reconciler_runtime.rs",
+        "rust/src/reconciler_runtime_base.rs"
+      ],
+      "typeOrShapeReviews": [
+        "InteractiveDecision",
+        "InteractiveInvocationStatus",
+        "InteractiveInvocation",
+        "InteractiveDecisionDelivery",
+        "InteractiveDecisionOutcome",
+        "InteractiveDecisionResult",
+        "AcceptedInteractiveDecision",
+        "HostInvocationCoordinatorOptions",
+        "GenericInteractiveFeedback",
+        "HostInteractiveContext",
+        "HostInteractiveInvocationCoordinator.constructor",
+        "WorkerInteractiveContinuation"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 12 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Serial Phase1 native interactive invocation Graph/Host and layered execution context port; uncompiled/untested, store integration Stage2."
+    },
+    {
+      "source": "src/interactive-request.ts",
+      "target": "rust/src/interactive_request.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 5,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_atomic_public_apis.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/sqlite_api.rs",
+        "rust/src/relayd_control.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Rust draft; uncompiled, untested and not production-wired; parity pending."
+    },
+    {
+      "source": "src/interactive-resume.ts",
+      "target": "rust/src/interactive_resume.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 2,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接复审/恢复差分及真实执行调用；必须保护 human approval、过期回执、重启幂等",
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Rust draft; uncompiled, untested and not production-wired; parity pending."
+    },
+    {
+      "source": "src/job-actions.ts",
+      "target": "rust/src/job_actions.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 4,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/cli_runtime_public.rs",
+        "rust/src/dashboard_actions.rs",
+        "rust/src/reconciler_manual_plan_public.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Rust source port; uncompiled/unverified, production integration and head-to-head differential pending Phase2."
+    },
+    {
+      "source": "src/job-pause.ts",
+      "target": "rust/src/job_pause.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 2,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure."
+    },
+    {
+      "source": "src/job-worktree-cleanup.ts",
+      "target": "rust/src/job_worktree_cleanup.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/delivery_parity_harness.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave4 C: bounded owned Git command effect; prior 142 real disposable Git/identity/path/dirty checks. Production canonical cwd resolver and legacy path/error mapping remain unverified (head_to_head_wave3_delivery.mjs; local_git_merge.rs)."
+    },
+    {
+      "source": "src/legacy-orchestrator-repair.ts",
+      "target": "rust/src/legacy_orchestrator_repair.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [
+        "LegacyOrchestratorRepairPorts"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Rust source port; uncompiled/unverified, production integration and head-to-head differential pending Phase2."
+    },
+    {
+      "source": "src/local-authority-store.ts",
+      "target": "rust/src/local_authority_store.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 33,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_cli_unblock.mjs",
+        "rust/tests/head_to_head_host_invocation_ports.mjs",
+        "rust/tests/head_to_head_local_blocker_port.mjs",
+        "rust/tests/head_to_head_store_facade_closure.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/cli_support.rs",
+        "rust/src/local_job_registry.rs",
+        "rust/src/local_managed_store.rs"
+      ],
+      "typeOrShapeReviews": [
+        "LocalAuthorityDurableStore.projection"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Store/SQLite authoritative facade over existing transaction/outbox primitives; UNCOMPILED UNTESTED, API parity Phase2."
+    },
+    {
+      "source": "src/local-git-merge.ts",
+      "target": "rust/src/local_git_merge.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 6,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_wave4_delivery_git.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/cli_job_create.rs",
+        "rust/src/job_worktree_cleanup.rs",
+        "rust/src/local_merge_delivery.rs",
+        "rust/src/reconciler_git_head.rs"
+      ],
+      "typeOrShapeReviews": [
+        "LocalMergeReceipt"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave4 C: 40 direct original Node/Rust real isolated Git merges, exact refs/SHA/error/idempotency; 30s owned process plus prior 270 Graph facts. Preemptive maxBuffer/error text and production completion Graph caller remain unverified (head_to_head_wave4_delivery_git.mjs; native_wave4_delivery.rs)."
+    },
+    {
+      "source": "src/local-job-registry.ts",
+      "target": "rust/src/local_job_registry.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 2,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/cli_support.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
+    },
+    {
+      "source": "src/local-managed-store.ts",
+      "target": "rust/src/local_managed_store.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [
+        "LocalManagedStore"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure."
+    },
+    {
+      "source": "src/local-merge-delivery.ts",
+      "target": "rust/src/local_merge_delivery.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [
+        "LocalMergeEffect"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Serial Phase1 native Rust port for authoritative Graph/SQLite and guarded Git side effects. UNCOMPILED/UNTESTED, finish production bindings in Phase2."
+    },
+    {
+      "source": "src/local-merge-projection.ts",
+      "target": "rust/src/local_merge_projection.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/relayd.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Serial Phase1 native Rust port for authoritative Graph/SQLite and guarded Git side effects. UNCOMPILED/UNTESTED, finish production bindings in Phase2."
+    },
+    {
+      "source": "src/managed-worker-input.ts",
+      "target": "rust/src/managed_worker_input.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/delivery_parity_harness.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave3 C native layered Agent resolver and 75 original Node prompt comparisons pass; daemon execution-context entrypoint integration unverified (head_to_head_wave3_delivery.mjs)."
+    },
+    {
+      "source": "src/manual-plan.ts",
+      "target": "rust/src/manual_plan.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/reconciler_manual_plan_public.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Rust draft; uncompiled and untested, production API/binding and differential to close in Phase2."
+    },
+    {
+      "source": "src/model-redecision.ts",
+      "target": "rust/src/model_redecision.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 2,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_model_redecision.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs"
+      ],
+      "typeOrShapeReviews": [
+        "FailureEvidenceInput",
+        "ModelRedecisionOptions",
+        "ModelRedecisionResult"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "redecide_failed_task 目前只发现 parity harness 引用，缺实际 Worker 恢复执行入口与提交/回滚的原生证据",
+        "仍有 3 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
+    },
+    {
+      "source": "src/model-routing.ts",
+      "target": "rust/src/model_routing.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 4,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_route_facades.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/decision_audit.rs",
+        "rust/src/execution_routing.rs",
+        "rust/src/model_redecision.rs"
+      ],
+      "typeOrShapeReviews": [
+        "ModelCandidate",
+        "ModelRoutingDecision",
+        "ModelRoutingOptions"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 3 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Serial Phase1 native Worker+Model routing policy, hard gates and source profile discovery port; uncompiled/unverified, decision audit/service binding Phase2."
+    },
+    {
+      "source": "src/outcome-review.ts",
+      "target": "rust/src/outcome_review.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 5,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_outcome_review_public.mjs",
+        "rust/tests/head_to_head_wave2_review.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/bin/relay-rust2-wave4-review.rs"
+      ],
+      "typeOrShapeReviews": [
+        "OutcomeReview",
+        "ReviewOptions"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 2 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave4 B: 500 randomized args/aggregate Node/Rust comparisons and native injected real file/role runner/exit-code effects. Full agent resolver, owned reviewer subprocess and production binding remain unverified (head_to_head_wave4_review_pure.mjs; outcome_review.rs)."
+    },
+    {
+      "source": "src/owned-process.ts",
+      "target": "rust/src/owned_process.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 5,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_process_browser_worker.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/adapters.rs",
+        "rust/src/bin/owned-process-supervisor.rs",
+        "rust/src/bin/relay-rust2-parity/cli_service_public.rs",
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/browser_worker_runtime.rs",
+        "rust/src/cli_escalation.rs",
+        "rust/src/cli_service_public.rs",
+        "rust/src/continuation.rs",
+        "rust/src/dag_result_contract.rs",
+        "rust/src/decision.rs",
+        "rust/src/git_delivery.rs",
+        "rust/src/github_client.rs",
+        "rust/src/local_git_merge.rs",
+        "rust/src/local_merge_projection.rs",
+        "rust/src/process_worker_parity_harness.rs",
+        "rust/src/script_task_adapter.rs",
+        "rust/src/usage.rs",
+        "rust/src/usage_codex_api.rs",
+        "rust/src/workspace.rs"
+      ],
+      "typeOrShapeReviews": [
+        "OwnedProcessTerminationReason"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave3 A isolated pipe/exit/timeout, waitpid stop-handshake and POSIX process-group tests pass; Windows taskkill, full SpawnOptions mapping and parent caller integration remain (native_wave3_graph.rs)."
+    },
+    {
+      "source": "src/planner-child-recovery.ts",
+      "target": "rust/src/planner_child_recovery.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Rust source port; uncompiled/unverified, production integration and head-to-head differential pending Phase2."
+    },
+    {
+      "source": "src/planner-runtime.ts",
+      "target": "rust/src/planner_runtime.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 7,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_planner_activation.mjs",
+        "rust/tests/head_to_head_planner_finish_public.mjs",
+        "rust/tests/head_to_head_planner_launch_public.mjs",
+        "rust/tests/head_to_head_planner_unblocks.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/bin/relay-rust2-parity/planner_finish_public.rs",
+        "rust/src/bin/relay-rust2-parity/planner_launch_public.rs",
+        "rust/src/planner_runtime_public.rs",
+        "rust/src/reconciler.rs"
+      ],
+      "typeOrShapeReviews": [
+        "PlannerApplyValidationError.code",
+        "PlannerRuntimePorts"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 2 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Planner protocol and Graph-owned execution runtime source port; uncompiled/unverified, Stage2 API and differential closure pending."
+    },
+    {
+      "source": "src/planner.ts",
+      "target": "rust/src/planner.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 22,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_planner_finish_public.mjs",
+        "rust/tests/head_to_head_planner_public_ports.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/planner_adapters.rs",
+        "rust/src/planner_runtime.rs",
+        "rust/src/planner_runtime_public.rs",
+        "rust/src/pool.rs",
+        "rust/src/reconciler.rs",
+        "rust/src/reconciler_manual_plan_public.rs"
+      ],
+      "typeOrShapeReviews": [
+        "ObjectiveStatus",
+        "PlannerTaskSpec",
+        "PlannerUnblockSpec",
+        "PlannerResult",
+        "PlannerContext",
+        "SemanticTaskTreeEntry",
+        "ObjectivePlanner",
+        "PlannerRoundOptions",
+        "validatePlannerAgentRoles",
+        "CommandObjectivePlanner.constructor",
+        "AgentObjectivePlanner.constructor"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 11 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Planner protocol and Graph-owned execution runtime source port; uncompiled/unverified, Stage2 API and differential closure pending."
+    },
+    {
+      "source": "src/pool.ts",
+      "target": "rust/src/pool.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 15,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_pool_public_lifecycle.mjs",
+        "rust/tests/head_to_head_pool_reconcile_known.mjs",
+        "rust/tests/head_to_head_pool_webhook.mjs",
+        "rust/tests/head_to_head_stage2_pool_adapters.mjs",
+        "rust/tests/head_to_head_store_github_public.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/pool_public.rs",
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/relayd.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Worker adapter/Repository Pool draft; not compiled/tested, Stage2 parity/wiring pending."
+    },
+    {
+      "source": "src/projected-store.ts",
+      "target": "rust/src/projected_store.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 34,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_projected_comments.mjs",
+        "rust/tests/head_to_head_store_facade_closure.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs"
+      ],
+      "typeOrShapeReviews": [
+        "ProjectionConflictEvent",
+        "ProjectionConflictObserver",
+        "ProjectedDurableStore.projection"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 3 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Serial Phase1 Rust GitHub marker Store and retryable SQLite projection transport; UNCOMPILED/UNTESTED; Graph/production API parity Phase2."
+    },
+    {
+      "source": "src/projection-outbox.ts",
+      "target": "rust/src/projection_outbox.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 25,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_projection_outbox_strict.mjs",
+        "rust/tests/head_to_head_worker_c_outbox.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/relay_store.rs"
+      ],
+      "typeOrShapeReviews": [
+        "ProjectionOperation",
+        "ProjectionStatus",
+        "ProjectionRequest",
+        "ProjectionOutboxItem",
+        "ProjectionConflictDiagnostic",
+        "ProjectionConflictResolution",
+        "ProjectionConflictResolutionRequest",
+        "ProjectionConflictRecord",
+        "ProjectionOutboxPort"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "独立 canonical strict SQLite 差分覆盖排队、优先级、回执、回滚与升级，但仍需验证 25 公开接口的实际生产调用及历史共享 C 工作树的 provenance 隔离",
+        "仍有 9 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "PROVENANCE QUARANTINE: prior Worker C used duplicate shared worktree; its source and differential output are not admissible PASS evidence. Pending independent canonical commit and direct Node/Rust/native verification from `hotfix/rust2-parallel-projection-canonical-20261117` and `/tmp/rust2-parallel-projection-canonical-20261117.handoff.md`. Existing Rust is retained for compatibility with later Wave2/3/4; not yet reverified."
+    },
+    {
+      "source": "src/reconcile-coordinator.ts",
+      "target": "rust/src/reconcile_coordinator.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 7,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_wave2_coordinator.mjs",
+        "rust/tests/head_to_head_wave3_graph.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/pool_public.rs",
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/pool.rs",
+        "rust/src/pool_public_ports.rs",
+        "rust/src/reconciler_runtime_base.rs"
+      ],
+      "typeOrShapeReviews": [
+        "ReconcileSignal"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave3 A explicit begin_turn batching adds 160 randomized same-turn Node/Rust cases to prior FIFO tests; implicit queueMicrotask scheduling at real Rust callers unproven (head_to_head_wave3_graph.mjs)."
+    },
+    {
+      "source": "src/reconciler-context.ts",
+      "target": "rust/src/reconciler_context.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 3,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
+    },
+    {
+      "source": "src/reconciler-review.ts",
+      "target": "rust/src/reconciler_review.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_reconciler_review_base.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/reconciler.rs",
+        "rust/src/reconciler_review_base.rs",
+        "rust/src/reconciler_runtime.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Dashboard SERVER, Final Review and Event Runtime first draft; UNCOMPILED/UNTESTED, Stage2 integration and parity. Dashboard browser client unchanged."
+    },
+    {
+      "source": "src/reconciler-runtime.ts",
+      "target": "rust/src/reconciler_runtime.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 10,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_reconciler_apply_event.mjs",
+        "rust/tests/head_to_head_reconciler_runtime_base.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/reconciler.rs",
+        "rust/src/reconciler_runtime_base.rs",
+        "rust/src/relayd_control.rs"
+      ],
+      "typeOrShapeReviews": [
+        "executionEventSource",
+        "ReconcileOptions",
+        "EventHandlingResult",
+        "withExecutionBoundary"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 4 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Dashboard SERVER, Final Review and Event Runtime first draft; UNCOMPILED/UNTESTED, Stage2 integration and parity. Dashboard browser client unchanged."
+    },
+    {
+      "source": "src/reconciler.ts",
+      "target": "rust/src/reconciler.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 8,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_reconciler_active_public.mjs",
+        "rust/tests/head_to_head_reconciler_apply_planner_tree.mjs",
+        "rust/tests/head_to_head_reconciler_git_head.mjs",
+        "rust/tests/head_to_head_reconciler_plan_job.mjs",
+        "rust/tests/head_to_head_reconciler_reconcile_public.mjs",
+        "rust/tests/head_to_head_reconciler_recover_lost.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/planner_finish_public.rs",
+        "rust/src/bin/relay-rust2-parity/reconcile_public.rs",
+        "rust/src/bin/relay-rust2-parity/reconciler_recovery_public.rs",
+        "rust/src/cli_runtime_public.rs",
+        "rust/src/cli_service_public.rs",
+        "rust/src/relayd.rs"
+      ],
+      "typeOrShapeReviews": [
+        "executionEventSource",
+        "ReconcileOptions",
+        "managedWorkerInput"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 3 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial Rust source first draft of Reconciler/daemon/Control/CLI; UNCOMPILED/UNTESTED, missing direct API wiring and parity must be repaired in Phase2. Dashboard browser client unchanged."
+    },
+    {
+      "source": "src/relay-store-discovery.ts",
+      "target": "rust/src/relay_store_discovery.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 3,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/local_job_registry.rs",
+        "rust/src/local_managed_store.rs",
+        "rust/src/relay_store.rs",
+        "rust/src/relayd.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
+    },
+    {
+      "source": "src/relay-store.ts",
+      "target": "rust/src/relay_store.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 46,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_cli_support_public_api.mjs",
+        "rust/tests/head_to_head_cli_unblock.mjs",
+        "rust/tests/head_to_head_coordinator_cli.mjs",
+        "rust/tests/head_to_head_host_invocation_ports.mjs",
+        "rust/tests/head_to_head_local_blocker_port.mjs",
+        "rust/tests/head_to_head_planner_unblocks.mjs",
+        "rust/tests/head_to_head_projected_comments.mjs",
+        "rust/tests/head_to_head_store_facade_closure.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/cli_service_public.rs",
+        "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/bin/relay-rust2-parity/sqlite_api.rs",
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/cli_coordinator.rs",
+        "rust/src/cli_support.rs",
+        "rust/src/cli_unblock.rs",
+        "rust/src/dependency_revision_execution.rs",
+        "rust/src/interactive_invocation_ports.rs",
+        "rust/src/interactive_request.rs",
+        "rust/src/interactive_resume.rs",
+        "rust/src/local_authority_store.rs",
+        "rust/src/local_job_registry.rs",
+        "rust/src/local_managed_store.rs",
+        "rust/src/planner_runtime.rs",
+        "rust/src/projected_store.rs",
+        "rust/src/relayd.rs",
+        "rust/src/task_actions.rs",
+        "rust/src/task_update.rs",
+        "rust/src/unblock.rs"
+      ],
+      "typeOrShapeReviews": [
+        "mergeInboundJobSnapshot",
+        "ProjectionConflictDiagnostic",
+        "ProjectionConflictRecord",
+        "ProjectionConflictResolution",
+        "ProjectionConflictResolutionRequest",
+        "ProjectionOperation",
+        "ProjectionOutboxItem",
+        "ProjectionRequest",
+        "ProjectionStatus",
+        "PullRequestFacts",
+        "RelayStore",
+        "SQLiteRelayStore.constructor",
+        "relayStoreDirectory",
+        "relayUnifiedStorePath",
+        "resolveUnifiedJobScope",
+        "discoverLocalRelayStoreSnapshots",
+        "LocalRelayStoreSnapshot"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 17 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Store/SQLite authoritative facade over existing transaction/outbox primitives; UNCOMPILED UNTESTED, API parity Phase2."
+    },
+    {
+      "source": "src/relayd-control.ts",
+      "target": "rust/src/relayd_control.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_workspace_control_factory.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/control_factory.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial Rust source first draft of Reconciler/daemon/Control/CLI; UNCOMPILED/UNTESTED, missing direct API wiring and parity must be repaired in Phase2. Dashboard browser client unchanged."
+    },
+    {
+      "source": "src/relayd-dashboard-actions.ts",
+      "target": "rust/src/relayd_dashboard_actions.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_dashboard_factory.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/dashboard_factory.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 Rust daemon-side Dashboard actions draft only; client HTML/CSS/JS frozen unchanged; uncompiled/unverified."
+    },
+    {
+      "source": "src/relayd-main.ts",
+      "target": "rust/src/relayd_main.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 0,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "此模块没有可枚举 Runtime API：零静态未匹配名称不是守护进程启动和恢复等价证据，必须做真实进程启动/退出/重启门禁",
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
+    },
+    {
+      "source": "src/relayd-utilities.ts",
+      "target": "rust/src/relayd_utilities.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 10,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_daemon_public_setup.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/relayd.rs"
+      ],
+      "typeOrShapeReviews": [
+        "PullRequestRefreshTrigger",
+        "GitHubReadPathDiagnostics"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 2 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial Rust SERVER-only source draft; uncompiled/unverified; preserve original Dashboard client HTML/CSS/JS."
+    },
+    {
+      "source": "src/relayd.ts",
+      "target": "rust/src/relayd.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/cli_service_public.rs",
+        "rust/src/cli_service_public.rs"
+      ],
+      "typeOrShapeReviews": [
+        "daemonHelp",
+        "normalizeDaemonArguments",
+        "overlayOperationalOverviews",
+        "mergeOperationalInventory",
+        "recoveryScanRepositories",
+        "shouldCoalescePullRequestRefresh",
+        "configureExecutionRouterRulesPath"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "公开 daemon 运行入口没有直接差分测试，必须验证 CLI、SQLite/NATS、Dashboard、重启及 Graph 生产调用一致",
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "仍有 7 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial Rust source first draft of Reconciler/daemon/Control/CLI; UNCOMPILED/UNTESTED, missing direct API wiring and parity must be repaired in Phase2. Dashboard browser client unchanged."
+    },
+    {
+      "source": "src/review-replan.ts",
+      "target": "rust/src/review_replan.rs",
+      "originalStatus": "PORTING",
+      "decision": "PASS",
+      "runtimeExports": 3,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_wave2_review.mjs",
+        "rust/tests/head_to_head_wave3_review_model.mjs",
+        "rust/tests/head_to_head_wave4_review_pure.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/bin/relay-rust2-wave4-review.rs",
+        "rust/src/pool.rs",
+        "rust/src/reconciler_review.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [
+        "All 3 public pure APIs directly matched original Node with negative durable Job/re-review cases in head_to_head_wave4_review_pure.mjs",
+        "Rust native review_replan unit tests and canonical reconciler_review/pool/planner callers verified",
+        "Redundant planner review-needs-replan implementation replaced by one shared source"
+      ],
+      "openGates": [],
+      "legacyLedgerNote": "Certified: all 3 pure exports directly compared with original Node (350 randomized durable Job/recovery/immutable-head scenarios in `rust/tests/head_to_head_wave4_review_pure.mjs`, additional `rust/tests/head_to_head_wave2_review.mjs`); 4 native Rust review unit cases, real canonical `reconciler_review`, `pool`, and Planner Graph callers; duplicate Planner decision fact replaced by shared implementation. L4 external provider scenarios are tracked separately."
+    },
+    {
+      "source": "src/review-revision-execution.ts",
+      "target": "rust/src/review_revision_execution.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 3,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_wave2_graph.mjs",
+        "rust/tests/head_to_head_wave2_review.mjs",
+        "rust/tests/head_to_head_wave4_review_revision.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/reconciler.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave4 B: 1050 direct randomized original Node/Graph vs Rust reconcile scenarios; prior real SQLite atomic/idempotent native tests. Publication failure order and malformed legacy persisted requests remain unverified (head_to_head_wave4_review_revision.mjs; native_wave3_review_store.rs)."
+    },
+    {
+      "source": "src/review-revision-model.ts",
+      "target": "rust/src/review_revision_model.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 7,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_wave2_review.mjs",
+        "rust/tests/head_to_head_wave3_review_model.mjs",
+        "rust/tests/head_to_head_wave4_review_revision.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/dependency_revision_execution.rs",
+        "rust/src/reconciler_review.rs"
+      ],
+      "typeOrShapeReviews": [
+        "SubmitReviewRevision"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave4 B: 720 randomized request/dependency vector and 1050 reconcile cases; prior SQLite ID/request/comment atomic rollback tests. Alternate stores and legacy JavaScript undefined/invalid fields remain unverified (head_to_head_wave4_review_revision.mjs; native_wave3_review_store.rs)."
+    },
+    {
+      "source": "src/review-revision-settlement.ts",
+      "target": "rust/src/review_revision_settlement.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_wave2_review_effects.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/reconciler.rs",
+        "rust/src/reconciler_review.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave3 B SQLite read/recheck/write settlement with stale-head rollback passes; multi-round ownership and concurrent Graph error edge parity incomplete (native_wave3_review_store.rs)."
+    },
+    {
+      "source": "src/review-revision-stale.ts",
+      "target": "rust/src/review_revision_stale.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_wave2_review_effects.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/reconciler_review.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave3 B SQLite stale-cancel commit fence and zero post-failure side effects pass; actual owned-process cancel callback/failure wiring unverified (native_wave3_review_store.rs)."
+    },
+    {
+      "source": "src/reviewer-thread.ts",
+      "target": "rust/src/reviewer_thread.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 9,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_wave2_review.mjs",
+        "rust/tests/head_to_head_wave4_review_pure.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/bin/relay-rust2-wave4-review.rs",
+        "rust/src/cli_job_create.rs",
+        "rust/src/cli_review.rs",
+        "rust/src/cli_runtime_public.rs",
+        "rust/src/reconciler_review.rs"
+      ],
+      "typeOrShapeReviews": [
+        "ReviewThreadDestination"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave4 B: 7700 mixed API randomized direct Node/Rust comparisons (includes reviewer destinations, revision threads, empty reviewHeadSha fix), native legacy load/save and Wave3 SQLite atomic thread receipts. Real remote sender/timeouts/publication remain unverified (scripts/head_to_head_wave4_review_b.mjs)."
+    },
+    {
+      "source": "src/route-outcome-recording.ts",
+      "target": "rust/src/route_outcome_recording.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 5,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_wave4_delivery.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/delivery_parity_harness.rs",
+        "rust/src/reconciler_runtime.rs"
+      ],
+      "typeOrShapeReviews": [
+        "DecisionAuditStore"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "JSONL、审计分类与追加失败的原生测试通过，但正式 Runtime 目前仅直接使用 classify_routing_failure，terminal/launch/watchdog 审计写入没有生产调用证据",
+        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave4 C: 180 randomized direct Node/Rust durable JSONL append/redaction, best-effort failure and multi-record cases; prior outcome classification. Full post-Graph/SQLite production audit caller sequencing remains unverified (head_to_head_wave4_delivery.mjs; native_wave4_delivery.rs)."
+    },
+    {
+      "source": "src/router-evals.ts",
+      "target": "rust/src/router_evals.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 2,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure."
+    },
+    {
+      "source": "src/script-task-adapter.ts",
+      "target": "rust/src/script_task_adapter.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 3,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [
+        "ScriptTaskAdapter.name",
+        "ScriptTaskAdapter.id",
+        "ScriptTaskAdapter.capabilities"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺独立公开 API 差分和生产 Rust 调用引用；需要真实 Script Worker 子进程、回执、终止/超时、结果持久化门禁",
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "仍有 3 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Rust Script Agent and read-only CLI Prompt port; uncompiled/untested, API integration Phase2."
+    },
+    {
+      "source": "src/service-external-actions.ts",
+      "target": "rust/src/service_external_actions.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 2,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
+    },
+    {
+      "source": "src/single-job-task-control.ts",
+      "target": "rust/src/single_job_task_control.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
+    },
+    {
+      "source": "src/store-github.ts",
+      "target": "rust/src/store_github.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 21,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_projected_comments.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/pool.rs",
+        "rust/src/projected_store.rs",
+        "rust/src/store.rs",
+        "rust/src/store_pull_request.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Serial Phase1 Rust GitHub marker Store and retryable SQLite projection transport; UNCOMPILED/UNTESTED; Graph/production API parity Phase2."
+    },
+    {
+      "source": "src/store.ts",
+      "target": "rust/src/store.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 22,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_cli_runtime_factory.mjs",
+        "rust/tests/head_to_head_cli_unblock.mjs",
+        "rust/tests/head_to_head_host_invocation_ports.mjs",
+        "rust/tests/head_to_head_local_blocker_port.mjs",
+        "rust/tests/head_to_head_reconciler_git_head.mjs",
+        "rust/tests/head_to_head_resolve_pull_request.mjs",
+        "rust/tests/head_to_head_store_facade_closure.mjs",
+        "rust/tests/head_to_head_store_github_public.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/cli_support.rs",
+        "rust/src/pool.rs",
+        "rust/src/relayd.rs"
+      ],
+      "typeOrShapeReviews": [
+        "Comment",
+        "PullRequestState",
+        "ManagedJobOverview",
+        "GitHubPullRequestSeed",
+        "ManagedGitHubPullRequestSnapshot",
+        "AtomicJobMutation",
+        "DurableStore",
+        "GitHubGraphqlDiagnostics",
+        "GitHubClient",
+        "GitHubRateLimitBucket",
+        "GitHubRateLimitSnapshot",
+        "PullRequest",
+        "GhApiClient",
+        "createGitHubAppJwt",
+        "GitHubAppAuthOptions",
+        "GitHubStore"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 16 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Store/SQLite authoritative facade over existing transaction/outbox primitives; UNCOMPILED UNTESTED, API parity Phase2."
+    },
+    {
+      "source": "src/task-actions.ts",
+      "target": "rust/src/task_actions.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 18,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_atomic_public_apis.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/sqlite_api.rs",
+        "rust/src/blockers.rs",
+        "rust/src/cli.rs",
+        "rust/src/interactive_request.rs",
+        "rust/src/reconciler.rs",
+        "rust/src/reconciler_runtime.rs",
+        "rust/src/relayd_control.rs",
+        "rust/src/task_update.rs"
+      ],
+      "typeOrShapeReviews": [
+        "TaskActionId",
+        "TaskActionRequest",
+        "TaskActionResult",
+        "TaskRetryPolicy"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 4 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial Rust native Task Graph/SQLite snapshot draft; compile and head-to-head differential deferred to Phase2."
+    },
+    {
+      "source": "src/task-inactivity-watchdog.ts",
+      "target": "rust/src/task_inactivity_watchdog.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 6,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_process_browser_worker.mjs",
+        "rust/tests/head_to_head_wave3_graph.mjs",
+        "rust/tests/head_to_head_wave4_watchdog.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/reconciler_runtime.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave4 A: 500 randomized direct Node/Rust classification/deadline cases, native cancellation/re-arm/old-generation timers; Wave3 250 SQLite progress/idempotency cases. Full production timer/caller and transition wiring remain unverified (head_to_head_wave4_watchdog.mjs; native_wave4_graph.rs)."
+    },
+    {
+      "source": "src/task-recovery.ts",
+      "target": "rust/src/task_recovery.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 4,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/cli_unblock.rs",
+        "rust/src/relayd_control.rs"
+      ],
+      "typeOrShapeReviews": [
+        "EscalationRequest"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Rust draft; uncompiled and untested, production API/binding and differential to close in Phase2."
+    },
+    {
+      "source": "src/task-transitions.ts",
+      "target": "rust/src/task_transitions.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 6,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_wave2_graph.mjs",
+        "rust/tests/head_to_head_wave3_graph.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/reconciler_recovery_public.rs",
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/cli_coordinator.rs",
+        "rust/src/dag_task_runtime.rs",
+        "rust/src/dependency_revision_execution.rs",
+        "rust/src/force_restate_validation.rs",
+        "rust/src/interactive_request.rs",
+        "rust/src/interactive_resume.rs",
+        "rust/src/job_actions.rs",
+        "rust/src/local_git_merge.rs",
+        "rust/src/local_merge_delivery.rs",
+        "rust/src/planner_runtime_public.rs",
+        "rust/src/reconciler.rs",
+        "rust/src/reconciler_review.rs",
+        "rust/src/reconciler_runtime.rs",
+        "rust/src/task_actions.rs",
+        "rust/src/task_inactivity_watchdog.rs",
+        "rust/src/task_recovery.rs",
+        "rust/src/unblock.rs",
+        "rust/src/workflow/authoritative_conditions.rs",
+        "rust/src/workflow/durable_transition.rs"
+      ],
+      "typeOrShapeReviews": [
+        "dependencyReady",
+        "detectCycles"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 2 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave3 A async Task/Job Graph effect callback ordering and 180 Node/Rust cases pass; public durable transition runtime/production dispatcher binding unproven (head_to_head_wave3_graph.mjs)."
+    },
+    {
+      "source": "src/task-update.ts",
+      "target": "rust/src/task_update.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 2,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_atomic_public_apis.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/sqlite_api.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial Task mutable-field/identity guard draft; uncompiled, untested, and not production-wired."
+    },
+    {
+      "source": "src/troubleshooter-fallback.ts",
+      "target": "rust/src/troubleshooter_fallback.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 2,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_wave2_review_effects.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave4 B: canonical Graph-authorized SQLite atomic escalation state plus outbox intent, native idempotency and rollback 3/3; prior fallback native cases. Actual downstream human delivery and all legacy saveTask/concurrent request effects remain unverified (native_wave4_review_escalation.rs)."
+    },
+    {
+      "source": "src/troubleshooter.ts",
+      "target": "rust/src/troubleshooter.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 6,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/pool.rs",
+        "rust/src/reconciler.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native DAG Task projection and Troubleshooter recovery first port; uncompiled/unverified, production bindings Phase2."
+    },
+    {
+      "source": "src/types.ts",
+      "target": "rust/src/types.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 7,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_legacy_migrations.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/cli.rs",
+        "rust/src/cli_workflow.rs",
+        "rust/src/planner_launch_public.rs",
+        "rust/src/projection_outbox.rs",
+        "rust/src/reconciler.rs",
+        "rust/src/reconciler_review.rs"
+      ],
+      "typeOrShapeReviews": [
+        "ChatGptTabClosePolicy",
+        "PlanningDecisionSource",
+        "AgentAvailability",
+        "AgentEndpoint",
+        "AgentEvidence",
+        "AgentRegistration",
+        "DecisionEvidence",
+        "ResourceUsageWindow",
+        "BrowserWorkspaceCapacity",
+        "Result",
+        "TaskResolutionPath",
+        "TaskResolutionOwner",
+        "TaskResolutionState",
+        "TaskResolutionProposal",
+        "JobChangeCycle",
+        "BlockerDependentState",
+        "ReviewTarget",
+        "ReviewTaskMetadata",
+        "ManualTaskStateOverride",
+        "ReviewOutcome",
+        "ReviewRevisionDisposition",
+        "DependencyValidity",
+        "DependencyRevisionVector",
+        "RevisionKind",
+        "RevisionStatus",
+        "RevisionFinding",
+        "ReviewRevisionRequest",
+        "ReviewRevisionRound",
+        "TaskRevision",
+        "ChatGptThreadDelivery",
+        "RecoveryFailureRecord",
+        "JobPause",
+        "ProjectionRecovery"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 33 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Serial Phase1 native Rust wire contract and Worker Router first port; uncompiled and unverified, differential/binding Phase2."
+    },
+    {
+      "source": "src/unblock.ts",
+      "target": "rust/src/unblock.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 4,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_atomic_public_apis.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/sqlite_api.rs",
+        "rust/src/blockers.rs",
+        "rust/src/cli_unblock.rs",
+        "rust/src/relayd_control.rs"
+      ],
+      "typeOrShapeReviews": [
+        "UnblockSource"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 native Rust draft for Graph authority and Z WebHelm adapter request contract; uncompiled/unverified; no Dashboard client changes."
+    },
+    {
+      "source": "src/usage.ts",
+      "target": "rust/src/usage.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 26,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_codex_api_usage.mjs",
+        "rust/tests/head_to_head_usage_readers_mitigation.mjs",
+        "rust/tests/head_to_head_usage_registry_closure.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/model_redecision.rs",
+        "rust/src/usage_codex_api.rs",
+        "rust/src/usage_readers.rs"
+      ],
+      "typeOrShapeReviews": [
+        "AccountUsageWindow",
+        "AccountUsageSnapshot",
+        "AccountUsageProvider",
+        "CreditBalance",
+        "CreditSnapshot",
+        "CreditProvider",
+        "AccountUsageOverview",
+        "UsageSnapshot",
+        "CreditReader",
+        "BrowserWorkspaceCapacityReader",
+        "BrowserWorkspaceUsageReader.constructor",
+        "CodexApiUsageReader.constructor",
+        "CodexSessionUsageReader.constructor",
+        "ZaiUsageReader.constructor",
+        "DeepSeekCreditReader.constructor",
+        "OpenRouterCreditReader.constructor",
+        "UsageRegistry.constructor",
+        "UnavailableUsageReader.constructor"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 18 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 native owned GitHub CLI transport and provider usage/capacity readers port; UNCOMPILED UNTESTED, runtime API/parity closure Phase2."
+    },
+    {
+      "source": "src/worker-failure-recovery.ts",
+      "target": "rust/src/worker_failure_recovery.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 1,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_worker_failure_orchestration.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/worker_failure_parity.rs",
+        "rust/src/worker_failure_orchestration.rs"
+      ],
+      "typeOrShapeReviews": [
+        "WorkerFailurePorts"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial native Rust draft; uncompiled and untested, production API/binding and differential to close in Phase2."
+    },
+    {
+      "source": "src/worker-routing.ts",
+      "target": "rust/src/worker_routing.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 8,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_route_facades.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/execution_routing.rs",
+        "rust/src/model_routing.rs",
+        "rust/src/reconciler_review.rs"
+      ],
+      "typeOrShapeReviews": [
+        "WorkerCandidate",
+        "WorkerRoutingDecision",
+        "WorkerRoutingOptions",
+        "WorkerEligibilityOptions"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 4 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Serial Phase1 native Rust wire contract and Worker Router first port; uncompiled and unverified, differential/binding Phase2."
+    },
+    {
+      "source": "src/workflow-effect-failures.ts",
+      "target": "rust/src/workflow_effect_failures.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 2,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
+    },
+    {
+      "source": "src/workflow/durable-transition.ts",
+      "target": "rust/src/workflow/durable_transition.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 4,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_wave3_graph.mjs"
+      ],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [
+        "DurableTaskTransitionResult"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 serial Rust native Task Graph/SQLite snapshot draft; compile and head-to-head differential deferred to Phase2."
+    },
+    {
+      "source": "src/workflow/planner-orchestration-v2.ts",
+      "target": "rust/src/workflow/planner_orchestration_v2.rs",
+      "originalStatus": "PORTING",
+      "decision": "PASS",
+      "runtimeExports": 4,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_wave2_graph.mjs",
+        "rust/tests/head_to_head_wave3_graph.mjs",
+        "rust/tests/head_to_head_wave4_graph.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/pool.rs",
+        "rust/src/reconciler.rs"
+      ],
+      "typeOrShapeReviews": [
+        "PlannerOrchestrationState"
+      ],
+      "certificationEvidence": [
+        "Full public Graph registry and 500 job fact / 360 Graph decisions / 210 effect callbacks with original Node parity",
+        "Native Graph runtime/action tests and production reconciler/pool uses the Rust facts and decision API"
+      ],
+      "openGates": [],
+      "legacyLedgerNote": "Certified: full public Graph registry, 500 original Node/Rust fact histories, 360 canonical Graph branch/negative decisions, 210 async callback/receipt/failure parity cases (`rust/tests/head_to_head_wave4_graph.mjs`); native Graph effects and registry tests (`rust/tests/native_wave4_graph.rs`); actual `rust/src/reconciler.rs` and `rust/src/pool.rs` call shared planner facts/decisions. Production role/provider L4 remains an independent release gate."
+    },
+    {
+      "source": "src/workflow/task-resolution.ts",
+      "target": "rust/src/workflow/task_resolution.rs",
+      "originalStatus": "PORTING",
+      "decision": "PASS",
+      "runtimeExports": 12,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_wave2_graph.mjs",
+        "rust/tests/head_to_head_wave3_graph.mjs",
+        "rust/tests/head_to_head_wave4_graph.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/blockers.rs",
+        "rust/src/force_restate_validation.rs",
+        "rust/src/planner.rs",
+        "rust/src/planner_runtime.rs",
+        "rust/src/planner_runtime_public.rs",
+        "rust/src/task_actions.rs",
+        "rust/src/task_recovery.rs",
+        "rust/src/troubleshooter_fallback.rs"
+      ],
+      "typeOrShapeReviews": [
+        "TaskResolutionClassification",
+        "TaskResolutionEffects"
+      ],
+      "certificationEvidence": [
+        "7 exported helper APIs across 160 randomized original Node/Rust fixture sets and 350 sync/async Graph effect traces",
+        "Native Graph tests and production Task recovery, action, Planner and Troubleshooter callers verified"
+      ],
+      "openGates": [],
+      "legacyLedgerNote": "Certified: all public Task Resolution helpers/Graph constructors/actions exercised against original Node across 160 randomized fixture sets (7 helper actions each) and 350 sync/async action, missing callback and rejection traces (`rust/tests/head_to_head_wave4_graph.mjs`); native Graph tests (`rust/tests/native_wave2_graph.rs`, `rust/tests/native_wave3_graph.rs`) plus canonical Rust Task/Planner/Troubleshooter action callers (`rust/src/task_recovery.rs`, `rust/src/task_actions.rs`, `rust/src/planner_runtime.rs`, `rust/src/troubleshooter_fallback.rs`). Cross-worker L4 remains a separate system-level gate."
+    },
+    {
+      "source": "src/workspace.ts",
+      "target": "rust/src/workspace.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 21,
+      "staticNameMismatch": 0,
+      "directDiffTests": [
+        "rust/tests/head_to_head_managed_workspace.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/cli_coordinator.rs",
+        "rust/src/cli_service_public.rs",
+        "rust/src/relayd.rs"
+      ],
+      "typeOrShapeReviews": [
+        "DiscoveredRepository",
+        "ManagedPullRequestHead",
+        "ManagedWorktreeCleanupResult"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "仍有 3 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 native CLI immutable Job bindings, HTTP control, Git workspace identity/worktree port; no compilation/tests; Stage2 head-to-head pending."
+    },
+    {
+      "source": "src/z-adapter.ts",
+      "target": "rust/src/z_adapter.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 5,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [],
+      "typeOrShapeReviews": [
+        "ZAdapter.name",
+        "ZAdapter.id",
+        "ZAdapter.capabilities"
+      ],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
+        "仍有 3 个类型/字段/构造器审核标记，未证明结构等价",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Phase1 native Rust draft for Graph authority and Z WebHelm adapter request contract; uncompiled/unverified; no Dashboard client changes."
+    },
+    {
+      "source": "src/z-oauth.ts",
+      "target": "rust/src/z_oauth.rs",
+      "originalStatus": "PORTING",
+      "decision": "HOLD",
+      "runtimeExports": 2,
+      "staticNameMismatch": 0,
+      "directDiffTests": [],
+      "otherRustModuleReferences": [
+        "rust/src/delivery_parity_harness.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [],
+      "openGates": [
+        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
+        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      ],
+      "legacyLedgerNote": "Wave3 C real local fake HTTP PKCE/redirect/revoke flow and prior mocked negatives pass; production HTTPS provider/TLS/identity environment integration unverified (head_to_head_wave3_delivery.mjs)."
+    }
+  ]
+}

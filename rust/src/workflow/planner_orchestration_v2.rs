@@ -2,6 +2,7 @@
 // planning decisions. These functions only derive facts from supplied durable Job.
 use super::dispatcher::{dispatch_workflow_graph, DispatchOptions};
 use super::policy_graph::{choose_policy, execute_policy, load_policy_graph};
+use crate::review_replan::review_needs_replan;
 use serde_json::{json, Value};
 use std::{collections::HashSet, future::Future, path::Path};
 
@@ -44,23 +45,6 @@ fn rows(value: &Value) -> &[Value] {
 }
 fn truthy(value: &Value) -> bool {
     !value.is_null() && value != false && value != "" && value != 0
-}
-fn review_needs_replan(job: &Value) -> bool {
-    let review = &job["review"];
-    if !truthy(&review["taskId"]) || review["revisionDisposition"] == "targeted" {
-        return false;
-    }
-    let changes = review["outcome"] == "changes_required"
-        || (review["outcome"] == "stale"
-            && rows(&job["reviewRevisionRounds"]).iter().any(|round| {
-                round["reviewTaskId"] == review["taskId"] && round["status"] == "changes_required"
-            }));
-    changes
-        && !rows(&job["plans"]).iter().any(|plan| {
-            plan.pointer("/trigger/source") == Some(&json!("review"))
-                && plan.pointer("/trigger/reviewTaskId") == Some(&review["taskId"])
-                && plan["status"] != "FAILED"
-        })
 }
 fn unconsumed_unblock_task_ids(job: &Value) -> Option<Vec<Value>> {
     let consumed: HashSet<String> = rows(&job["plans"])
