@@ -16,15 +16,15 @@ A listed direct differential import only means a head-to-head test imports the c
 |---|---:|
 | sourceCount | 107 |
 | runtimeExportSymbols | 734 |
-| directNameMatches | 697 |
-| unmappedRuntimeSymbols | 24 |
+| directNameMatches | 700 |
+| unmappedRuntimeSymbols | 21 |
 | runtimeConstructorReviews | 13 |
 | typeOrShapeReviewSymbols | 282 |
 | filesWithUnmappedRuntime | 6 |
 | filesWithoutDirectDiffImport | 49 |
 | filesWithoutOtherRustReferences | 29 |
 
-Source tree: `a7fabd653a00`; Rust source tree: `f6d5c8bed730`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `a7fabd653a00`; Rust source tree: `fb963599a9ae`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Per-file candidate surface (all 107 PORTING files)
 
@@ -90,7 +90,7 @@ Source tree: `a7fabd653a00`; Rust source tree: `f6d5c8bed730`. Rust module rows 
 | `src/planner-child-recovery.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/planner-runtime.ts` | 7 | 5 | 2 | 2 | 1 |
 | `src/planner.ts` | 22 | 20 | 0 | 1 | 5 |
-| `src/pool.ts` | 15 | 9 | 6 | 1 | 2 |
+| `src/pool.ts` | 15 | 12 | 3 | 4 | 2 |
 | `src/projected-store.ts` | 34 | 34 | 0 | 2 | 1 |
 | `src/projection-outbox.ts` | 25 | 25 | 0 | 2 | 1 |
 | `src/reconcile-coordinator.ts` | 7 | 7 | 0 | 2 | 1 |
@@ -116,8 +116,8 @@ Source tree: `a7fabd653a00`; Rust source tree: `f6d5c8bed730`. Rust module rows 
 | `src/script-task-adapter.ts` | 3 | 3 | 0 | 0 | 0 |
 | `src/service-external-actions.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/single-job-task-control.ts` | 1 | 1 | 0 | 0 | 0 |
-| `src/store-github.ts` | 21 | 21 | 0 | 1 | 5 |
-| `src/store.ts` | 22 | 22 | 0 | 6 | 3 |
+| `src/store-github.ts` | 21 | 21 | 0 | 1 | 6 |
+| `src/store.ts` | 22 | 22 | 0 | 6 | 4 |
 | `src/task-actions.ts` | 18 | 18 | 0 | 1 | 8 |
 | `src/task-inactivity-watchdog.ts` | 6 | 6 | 0 | 3 | 2 |
 | `src/task-recovery.ts` | 4 | 4 | 0 | 0 | 2 |
@@ -140,10 +140,10 @@ Source tree: `a7fabd653a00`; Rust source tree: `f6d5c8bed730`. Rust module rows 
 
 ## Priority review: unmapped exported runtime symbols
 
-- **src/pool.ts** (6): aggregateManagedGitHubJobs, RepositoryWorkerPool.reconcileLocalJob, RepositoryWorkerPool.reconcileKnown, RepositoryWorkerPool.watch, RepositoryWorkerPool.webhookSignal, RepositoryWorkerPool.webhookWake
 - **src/reconciler-runtime.ts** (6): ReconcilerRuntimeBase, ReconcilerRuntimeBase.reconcile, ReconcilerRuntimeBase.bindInteractiveInvocation, ReconcilerRuntimeBase.handleEvent, ReconcilerRuntimeBase.watch, ReconcilerRuntimeBase.wake
 - **src/cli.ts** (5): runtimePlanner, runtime, dashboardJobAction, createService, startService
 - **src/reconciler.ts** (4): Reconciler.reconcile, Reconciler.recoverLostExecutions, Reconciler.planJob, Reconciler.applyPlannerTree
+- **src/pool.ts** (3): RepositoryWorkerPool.reconcileLocalJob, RepositoryWorkerPool.watch, RepositoryWorkerPool.webhookSignal
 - **src/planner-runtime.ts** (2): finishPlanner, launchPlanExecution
 - **src/reconciler-review.ts** (1): ReconcilerReviewBase
 

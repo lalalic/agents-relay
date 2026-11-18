@@ -2,11 +2,11 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity.",
   "summary": {
     "sourceTree": "a7fabd653a006bcd33b84d3eb7ac4c28b085f9dd",
-    "rustTree": "f6d5c8bed7306c032fc60f1d619c620695789e0a",
+    "rustTree": "fb963599a9aed10894ff2e704d0f9a4ec02ed6cc",
     "sourceCount": 107,
     "runtimeExportSymbols": 734,
-    "directNameMatches": 697,
-    "unmappedRuntimeSymbols": 24,
+    "directNameMatches": 700,
+    "unmappedRuntimeSymbols": 21,
     "runtimeConstructorReviews": 13,
     "typeOrShapeReviewSymbols": 282,
     "filesWithUnmappedRuntime": 6,
@@ -3852,18 +3852,18 @@
       "target": "rust/src/pool.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 15,
-      "directNameMatches": 9,
+      "directNameMatches": 12,
       "unmappedRuntime": [
-        "aggregateManagedGitHubJobs",
         "RepositoryWorkerPool.reconcileLocalJob",
-        "RepositoryWorkerPool.reconcileKnown",
         "RepositoryWorkerPool.watch",
-        "RepositoryWorkerPool.webhookSignal",
-        "RepositoryWorkerPool.webhookWake"
+        "RepositoryWorkerPool.webhookSignal"
       ],
       "typeOrShapeReview": [],
       "directDiffImports": [
-        "rust/tests/head_to_head_stage2_pool_adapters.mjs"
+        "rust/tests/head_to_head_pool_reconcile_known.mjs",
+        "rust/tests/head_to_head_pool_webhook.mjs",
+        "rust/tests/head_to_head_stage2_pool_adapters.mjs",
+        "rust/tests/head_to_head_store_github_public.mjs"
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity.rs",
@@ -3893,7 +3893,7 @@
         {
           "name": "aggregateManagedGitHubJobs",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "activeWorkerSlots",
@@ -3921,7 +3921,7 @@
           "name": "reconcileKnown",
           "kind": "class-method",
           "parent": "RepositoryWorkerPool",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "reconcile",
@@ -3951,7 +3951,7 @@
           "name": "webhookWake",
           "kind": "class-method",
           "parent": "RepositoryWorkerPool",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -5831,6 +5831,7 @@
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/closure.rs",
         "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/pool.rs",
         "rust/src/projected_store.rs",
         "rust/src/store.rs",
         "rust/src/store_pull_request.rs"
@@ -5999,6 +6000,7 @@
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity.rs",
         "rust/src/cli_support.rs",
+        "rust/src/pool.rs",
         "rust/src/relayd.rs"
       ],
       "exports": [
