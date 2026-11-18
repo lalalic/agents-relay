@@ -15,8 +15,8 @@ A listed direct differential import only means a head-to-head test imports the c
 | Metric | Count |
 |---|---:|
 | sourceCount | 107 |
-| pendingSourceModules | 2 |
-| pendingRuntimeExportSymbols | 7 |
+| pendingSourceModules | 0 |
+| pendingRuntimeExportSymbols | 0 |
 | runtimeExportSymbols | 734 |
 | directNameMatches | 721 |
 | unmappedRuntimeSymbols | 0 |
@@ -26,12 +26,10 @@ A listed direct differential import only means a head-to-head test imports the c
 | filesWithoutDirectDiffImport | 45 |
 | filesWithoutOtherRustReferences | 25 |
 
-Source tree: `c846739e5f60`; Rust source tree: `c60e3c5b0da8`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `c846739e5f60`; Rust source tree: `0dfcef18305b`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
-- **src/cli-task-complete.ts** (1 Node runtime exports): runTaskCompleteCommand. Rust target: rust/src/cli_task_complete.rs.
-- **src/git-delivery.ts** (6 Node runtime exports): sourceCommitRequired, sourceCommitSha, startedSourceBaseline, bindSourceBaseline, verifySourceCommit, sourceCompletionVerified. Rust target: rust/src/git_delivery.rs.
 
 ## Per-file candidate surface (all 107 PORTING files)
 
@@ -51,7 +49,7 @@ Source tree: `c846739e5f60`; Rust source tree: `c60e3c5b0da8`. Rust module rows 
 | `src/cli-job-create.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/cli-prompt.ts` | 5 | 5 | 0 | 0 | 0 |
 | `src/cli-review.ts` | 3 | 3 | 0 | 1 | 1 |
-| `src/cli-support.ts` | 38 | 37 | 0 | 4 | 4 |
+| `src/cli-support.ts` | 38 | 37 | 0 | 4 | 5 |
 | `src/cli-unblock.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/cli-worker-task.ts` | 3 | 3 | 0 | 0 | 1 |
 | `src/cli.ts` | 6 | 6 | 0 | 3 | 3 |
@@ -93,7 +91,7 @@ Source tree: `c846739e5f60`; Rust source tree: `c60e3c5b0da8`. Rust module rows 
 | `src/model-redecision.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/model-routing.ts` | 4 | 4 | 0 | 1 | 4 |
 | `src/outcome-review.ts` | 5 | 5 | 0 | 2 | 2 |
-| `src/owned-process.ts` | 5 | 5 | 0 | 1 | 18 |
+| `src/owned-process.ts` | 5 | 5 | 0 | 1 | 19 |
 | `src/planner-child-recovery.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/planner-runtime.ts` | 7 | 7 | 0 | 4 | 5 |
 | `src/planner.ts` | 22 | 20 | 0 | 2 | 7 |
@@ -103,7 +101,7 @@ Source tree: `c846739e5f60`; Rust source tree: `c60e3c5b0da8`. Rust module rows 
 | `src/reconcile-coordinator.ts` | 7 | 7 | 0 | 2 | 5 |
 | `src/reconciler-context.ts` | 3 | 3 | 0 | 0 | 0 |
 | `src/reconciler-review.ts` | 1 | 1 | 0 | 1 | 3 |
-| `src/reconciler-runtime.ts` | 10 | 10 | 0 | 2 | 2 |
+| `src/reconciler-runtime.ts` | 10 | 10 | 0 | 2 | 3 |
 | `src/reconciler.ts` | 8 | 8 | 0 | 6 | 6 |
 | `src/relay-store-discovery.ts` | 3 | 3 | 0 | 0 | 4 |
 | `src/relay-store.ts` | 46 | 45 | 0 | 8 | 20 |
