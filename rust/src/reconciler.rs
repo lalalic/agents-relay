@@ -460,6 +460,42 @@ impl Reconciler{
         self.reconciling.remove(&job_id);
         result
     }
+    /// Node Reconciler.planJob: native Graph and generation-checked SQLite
+    /// mutation, with Planner launch and settlement owned by the host.
+    pub async fn plan_job<Load,LFut,Mutate,Append,AFut,Save,SFut,Launch,PFut>(
+        &mut self,job_id:&str,guidance:Option<&str>,force_restate:bool,
+        has_atomic_store:bool,load:Load,mutate:Mutate,append_plan:Append,
+        save_job:Save,launch:Launch,
+    )->Result<(Value,Value),String>
+    where
+        Load:FnMut()->LFut,LFut:std::future::Future<Output=Result<Value,String>>,
+        Mutate:FnMut(&mut dyn FnMut(Value)->Result<Value,String>)->Result<Value,String>,
+        Append:FnMut(Value)->AFut,AFut:std::future::Future<Output=Result<(),String>>,
+        Save:FnMut(Value)->SFut,SFut:std::future::Future<Output=Result<(),String>>,
+        Launch:FnMut(Value,Value)->PFut,PFut:std::future::Future<Output=Result<(),String>>,
+    {
+        let timeout=self.options.get("plannerTimeoutMs")
+            .and_then(Value::as_u64)
+            .unwrap_or(crate::types::story_size_timeout_ms(crate::types::StorySize::M));
+        crate::reconciler_manual_plan_public::plan_job(
+            &self.graph_directory,job_id,guidance,force_restate,timeout,
+            has_atomic_store,load,mutate,append_plan,save_job,launch).await
+    }
+    /// Node Reconciler.recoverLostExecutions delegates to the canonical
+    /// generation-fenced lease recovery. Caller supplies authoritative SQLite
+    /// loads, OS process-group reclamation, and Graph task persistence ports.
+    pub async fn recover_lost_executions<Load,LFut,Reclaim,RFut,Recover,OFut>(
+        &mut self,job:&Value,now_ms:i64,load:Load,reclaim:Reclaim,recover:Recover,
+    )->Result<(),String>
+    where
+        Load:FnMut()->LFut, LFut:std::future::Future<Output=Result<Value,String>>,
+        Reclaim:FnMut(Value)->RFut, RFut:std::future::Future<Output=Result<bool,String>>,
+        Recover:FnMut(Value,String,String)->OFut,
+        OFut:std::future::Future<Output=Result<(),String>>,
+    {
+        crate::execution_recovery::recover_expired_executions(
+            job,now_ms,load,reclaim,recover).await
+    }
     pub fn recover_startup_orphans(
         &mut self,job:&Value,now:i64,
     )->Vec<Value>{

@@ -28,6 +28,8 @@ mod closure;
 mod pool_public;
 #[path = "relay-rust2-parity/cli_runtime_public.rs"]
 mod cli_runtime_public;
+#[path = "relay-rust2-parity/reconciler_recovery_public.rs"]
+mod reconciler_recovery_public;
 #[path = "relay-rust2-parity/control_factory.rs"]
 mod control_factory;
 #[path = "relay-rust2-parity/dashboard_factory.rs"]
@@ -518,6 +520,8 @@ fn invoke(request: &Value) -> Result<String, String> {
                 Err(error)=>json!({"ok":false,"error":error}),
             },"calls":client.calls}).to_string())
         }
+        "apiReconcilerPlanJob" => reconciler_recovery_public::plan(request),
+        "apiReconcilerRecovery" => reconciler_recovery_public::invoke(request),
         "apiCliRuntimePublic" => cli_runtime_public::invoke(request),
         "apiPoolLocal" => pool_public::local(request),
         "apiPoolWatch" => pool_public::watch(request),

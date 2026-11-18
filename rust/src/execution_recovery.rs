@@ -19,8 +19,11 @@ fn generation_equal(stale: &Value, current: &Value) -> bool {
 }
 fn lease_expired(task: &Value, now_ms: i64) -> bool {
     let Some(stamp) = task.get("leaseExpiresAt").and_then(Value::as_str) else { return false; };
+    // Node compares new Date(stamp).getTime() > now: invalid dates
+    // produce NaN, which is not greater than now, so the lease is
+    // conservatively eligible for generation-fenced recovery.
     DateTime::parse_from_rfc3339(stamp)
-        .map(|value| value.timestamp_millis() <= now_ms).unwrap_or(false)
+        .map(|value| value.timestamp_millis() <= now_ms).unwrap_or(true)
 }
 fn owner_mismatch(task: &Value, current_owner: &str) -> bool {
     task.get("leaseOwner").and_then(Value::as_str)
