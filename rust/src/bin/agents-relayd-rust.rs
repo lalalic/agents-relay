@@ -6,6 +6,7 @@ use agents_relay_rust2::{
     relayd::{run_daemon,DaemonConfig},
     relayd_sqlite_observer::ReadOnlySQLiteHost,
     relayd_sqlite_write::IsolatedSQLiteWriteHost,
+    reconciler::Reconciler,
 };
 use serde_json::json;
 use std::{path::Path,sync::atomic::{AtomicBool,Ordering}};
@@ -57,8 +58,19 @@ fn execute(args:&[String])->Result<(),String>{
     }
     eprintln!("Native Relay isolated {} observer on 127.0.0.1:{}",if writable{"write"}else{"read-only"},config.port);
     if writable{
-        run_daemon(config.clone(),IsolatedSQLiteWriteHost::new(config),&STOP,|_|{
-            Err("Isolated native write daemon: Worker execution adapter not yet bound".into())
+        // This is the original production Reconciler Graph, not a fake timer
+        // that directly edits Task status. Worker effects remain explicitly
+        // unbound until a lifecycle-owned process/provider adapter is proven.
+        let runtime=config.clone();
+        run_daemon(config.clone(),IsolatedSQLiteWriteHost::new(config),&STOP,move |_|{
+            Ok(Reconciler::new(
+                runtime.graph_directory.clone(),runtime.store_directory.clone(),
+                runtime.profile_home.clone(),runtime.policy_path.clone(),
+                runtime.router_rules_path.clone(),
+                json!({"owner":format!("isolated-rust-daemon-{}",std::process::id()),
+                    "maxConcurrent":runtime.concurrency,"leaseMs":runtime.lease_ms,
+                    "noGitHub":true,"productionReady":false})
+            ))
         })
     }else{
         run_daemon(config.clone(),ReadOnlySQLiteHost::new(config),&STOP,|_|{

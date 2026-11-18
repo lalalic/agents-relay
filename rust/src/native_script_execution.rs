@@ -1,0 +1,146 @@
+//! Correlated Script Worker lifecycle: one leased Task, one source-declared
+//! Shortcut JS module, one native owned process group and Graph/SQLite events.
+//! A Worker's stdout or exit code is never sufficient to complete a Task;
+//! only the exact source-execution Event enters the canonical Graph.
+use crate::{
+    native_script_worker::invoke_trusted_script_recorded,
+    process_identity::capture_process_record,
+    reconciler_runtime::ReconcilerRuntime,
+    relay_store::SQLiteRelayStore,
+    script_task_adapter::launch_script_task,
+    events::event_for,
+    execution_event_identity::execution_event_source,
+};
+use serde_json::{json,Value};
+use std::{path::Path,sync::atomic::AtomicBool};
+fn field<'a>(v:&'a Value,key:&str)->&'a str{
+    v.get(key).and_then(Value::as_str).unwrap_or("")
+}
+
+/// All events are applied to the current, execution-correlated SQLite Job by
+/// the exact shared Task Graph. No direct Task.state writes exist here.
+pub fn persist_native_script_event(
+    db_path:&Path,graph_directory:&Path,
+    job_id:&str,task_id:&str,execution_id:&str,event:&Value,
+)->Result<Value,String>{
+    let scope=SQLiteRelayStore::open_without_claim_reset(db_path,Some(job_id))?;
+    let before=scope.load_job(job_id)?.ok_or("Script Task's Job disappeared")?;
+    let current=before.get("tasks").and_then(Value::as_array)
+        .into_iter().flatten().find(|task|field(task,"id")==task_id)
+        .ok_or("Script Task generation disappeared")?;
+    if field(current,"executionId")!=execution_id
+        ||field(event,"job_id")!=job_id
+        ||field(event,"task_id")!=task_id{
+        return Err("Script Task event belongs to a stale or different execution".into());
+    }
+    let expected=execution_event_source(job_id,task_id,execution_id);
+    if event.pointer("/source/id").and_then(Value::as_str)!=Some(expected.as_str()){
+        return Err("Script Task event source identity mismatch".into());
+    }
+    let mut runtime=ReconcilerRuntime::new("native-script-worker",15_000);
+    let output=runtime.apply_event(graph_directory,&before,event,None)?;
+    if !output.applied{
+        return Err(format!("Script Task Graph rejected {}: {}",
+            field(event,"type"),output.reason));
+    }
+    let candidate=output.job;
+    let expected=before.clone();
+    let durable_event=json!({
+        "key":format!("script-event/{job_id}/{task_id}/{execution_id}/{}",field(event,"type")),
+        "event":event,
+    });
+    let recorded=scope.commit_workflow_mutation_and_events(job_id,move |fresh|{
+        if fresh!=expected{return Err("Script Task generation changed during SQLite CAS".into());}
+        Ok(candidate)
+    },&[durable_event])?;
+    Ok(recorded)
+}
+/// Exactly one isolated asynchronous Worker invocation. The daemon grants
+/// execution only after committing its unique lease to SQLite; this runner
+/// never claims a Task or overrides a replacement generation.
+pub fn run_claimed_script_task(
+    db_path:&Path,graph_directory:&Path,job:&Value,task:&Value,
+    interpreter:&Path,timeout_ms:u64,
+)->Result<Value,String>{
+    let job_id=field(job,"id");
+    let task_id=field(task,"id");
+    let execution_id=field(task,"executionId");
+    if job_id.is_empty()||task_id.is_empty()||execution_id.is_empty()
+        ||field(task,"leaseOwner").is_empty()||field(task,"state")!="QUEUED"{
+        return Err("Native Script requires a committed queued execution lease".into());
+    }
+    let project=Path::new(field(job,"projectRoot"));
+    if !project.is_absolute()||!project.is_dir(){
+        return Err("Native Script requires the Job's canonical projectRoot".into());
+    }
+    let roots=json!({"workspaceRoot":project.parent().unwrap_or(project)});
+    let context=json!({"executionContext":{"project":{"path":project,"gitRoot":project}}});
+    let cancelled=AtomicBool::new(false);
+    let mut publish=|event:&Value|{
+        persist_native_script_event(db_path,graph_directory,
+            job_id,task_id,execution_id,event).map(|_|())
+    };
+    let mut invoke=|script:&Path,input:&Value,signal:&AtomicBool|{
+        let run=invoke_trusted_script_recorded(interpreter,script,input,signal,timeout_ms,
+            |pid|{
+                let store=SQLiteRelayStore::open_without_claim_reset(db_path,Some(job_id))?;
+                let fresh=store.load_job(job_id)?.ok_or("Script execution Job not found")?;
+                let current=fresh.get("tasks").and_then(Value::as_array).into_iter().flatten()
+                    .find(|task|field(task,"id")==task_id)
+                    .ok_or("Script execution Task not found")?;
+                if field(current,"executionId")!=execution_id
+                    ||field(current,"leaseOwner")!=field(task,"leaseOwner")
+                    ||field(current,"state")!="RUNNING"{
+                    return Err("Script process belongs to stale Task lease".into());
+                }
+                let record=capture_process_record(job_id,task_id,execution_id,
+                    field(task,"leaseOwner"),pid as i64)
+                    .ok_or("Cannot prove fresh owned Script Worker process identity")?;
+                store.record_execution_process(&record)
+            });
+        if let Ok(store)=SQLiteRelayStore::open_without_claim_reset(db_path,Some(job_id)){
+            let _=store.finish_execution_process(job_id,task_id,execution_id,None);
+        }
+        run
+    };
+    let result=launch_script_task(task,&context,&roots,&cancelled,&mut invoke,&mut publish);
+    match result{
+        Ok(launch) if launch.result["status"]=="WAITING_REVIEW"=>{
+            // The provider requires the host-owned Review Graph, which is not
+            // connected to this isolated Worker path. Fail closed rather than
+            // leave a phantom interactive review behind.
+            let error="Native Script WAITING_REVIEW requires a verified human review invocation";
+            let failure=event_for(job_id,task_id,
+                task.get("parentTaskId").and_then(Value::as_str),
+                "task.failed","failed",error,Some("orchestrator"),
+                Some(json!({"reason":"interactive_review_not_bound"})),
+                Some(json!({"id":execution_event_source(job_id,task_id,execution_id),
+                    "agent":field(task,"agentName"),"component":"agents-relay"})));
+            let _=persist_native_script_event(db_path,graph_directory,
+                job_id,task_id,execution_id,&failure);
+            Err(error.into())
+        },
+        Ok(launch)=>Ok(launch.result),
+        Err(error)=>{
+            // Source discovery or early JS bridge failures may happen before
+            // launch_script_task emits task.failed. Emit exactly one correlated
+            // failure only if this original generation is still leased.
+            let store=SQLiteRelayStore::open_without_claim_reset(db_path,Some(job_id))?;
+            let original=store.load_job(job_id)?.ok_or("Job vanished during script failure")?;
+            if original.get("tasks").and_then(Value::as_array).into_iter().flatten()
+                .any(|current|field(current,"id")==task_id
+                    &&field(current,"executionId")==execution_id
+                    &&matches!(field(current,"state"),"QUEUED"|"RUNNING")){
+                let failure=event_for(job_id,task_id,
+                    task.get("parentTaskId").and_then(Value::as_str),
+                    "task.failed","failed",&error,Some("orchestrator"),
+                    Some(json!({"reason":"script_execution_failed"})),
+                    Some(json!({"id":execution_event_source(job_id,task_id,execution_id),
+                        "agent":field(task,"agentName"),"component":"agents-relay"})));
+                let _=persist_native_script_event(db_path,graph_directory,
+                    job_id,task_id,execution_id,&failure);
+            }
+            Err(error)
+        }
+    }
+}

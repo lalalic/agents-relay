@@ -55,8 +55,8 @@ fn active(job:&Value)->bool{field(job,"state")=="ACTIVE"}
 fn graph_action(decision:&Value,action:&str)->bool{
     decision.get("accepted")==Some(&Value::Bool(true))
         &&decision.get("actions").and_then(Value::as_array)
-            .is_some_and(|actions|actions.iter()
-                .any(|entry|field(entry,"id")==action))
+            .is_some_and(|actions|actions.iter().any(|entry|
+                entry.as_str()==Some(action) || field(entry,"id")==action))
 }
 fn priority(task:&Value,job:&Value)->u8{
     let name=task.get("priority").and_then(Value::as_str)

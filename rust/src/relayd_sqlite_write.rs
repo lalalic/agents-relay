@@ -5,6 +5,10 @@
 use crate::{
     dashboard_actions::dashboard_job_set_state,
     git_delivery::source_commit_sha,
+    agent_script_discovery::discover_script_agent,
+    native_script_execution::run_claimed_script_task,
+    native_script_worker::configured_script_interpreter,
+    reconciler::Reconciler,
     interactive_request::fail_interactive_review,
     relay_store::SQLiteRelayStore,
     relay_store_discovery::relay_unified_store_path,
@@ -20,11 +24,12 @@ pub struct IsolatedSQLiteWriteHost {
     config:DaemonConfig,
     subscriptions:Vec<Sender<String>>,
     wake_count:u64,
+    reconcile_attempts:u64,
     connections:RefCell<HashMap<String,SQLiteRelayStore>>,
 }
 impl IsolatedSQLiteWriteHost {
     pub fn new(config:DaemonConfig)->Self{
-        Self{config,subscriptions:Vec::new(),wake_count:0,connections:RefCell::new(HashMap::new())}
+        Self{config,subscriptions:Vec::new(),wake_count:0,reconcile_attempts:0,connections:RefCell::new(HashMap::new())}
     }
     fn path(&self)->PathBuf{relay_unified_store_path(&self.config.store_directory)}
     fn ensure_scoped(&self,id:&str,allow_create:bool)->Result<(),String>{
@@ -174,12 +179,14 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         match self.all(){
             Ok(jobs)=>json!({"runtime":"native-rust","mode":"isolated-write",
                 "productionReady":false,"jobCount":jobs.len(),"wakeCount":self.wake_count,
+                "reconcileAttempts":self.reconcile_attempts,
                 "reason":"Worker and external Event providers not yet bound"}),
             Err(error)=>json!({"runtime":"native-rust","mode":"isolated-write",
                 "productionReady":false,"error":error}),
         }
     }
     fn registered_agents(&mut self)->Result<Vec<Value>,String>{
+        self.reconcile_attempts+=1;
         let mut seen=HashSet::new();let mut agents=Vec::new();
         for job in self.all()?{
             for agent in WorkspaceControlBackend::list_agents(self,field(&job,"id"))?{
@@ -189,7 +196,64 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         }
         Ok(agents)
     }
-    fn effect(&mut self,_:&Value)->Result<(),String>{
-        Err(denied("Worker or remote delivery effect"))
+    fn effect(&mut self,action:&Value)->Result<(),String>{
+        eprintln!("native isolated Worker effect: {}",field(action,"action"));
+        if field(action,"action")!="effect.launchTask"{
+            return Err(denied("Planner, remote delivery or unsupported Worker effect"));
+        }
+        let id=field(action,"jobId");
+        let task_id=field(action,"taskId");
+        let original=WorkspaceControlBackend::load_job(self,id)?;
+        let task=original.get("tasks").and_then(Value::as_array).into_iter().flatten()
+            .find(|task|field(task,"id")==task_id)
+            .ok_or("Unregistered Worker Task")?;
+        // Only Script Shortcut Workers are installed in this isolated host.
+        // All other adapters remain fail-closed and cannot reserve a lease.
+        if field(task,"adapter")!="script"{
+            return Err(denied("non-Script Worker adapter"));
+        }
+        let project=Path::new(field(&original,"projectRoot"));
+        if !project.is_absolute()||!project.is_dir(){
+            return Err("Source Worker requires canonical absolute Job projectRoot".into());
+        }
+        let script=discover_script_agent(field(task,"agentName"),
+            field(&original,"projectRoot"),None,
+            self.config.workspace_root.to_str(),None)?
+            .ok_or("Source Worker has no declared trusted Shortcut")?;
+        if !Path::new(&script).is_file(){return Err("Script Agent module is absent".into());}
+        if task.pointer("/output/kind")!=Some(&json!("file"))
+            ||!task.pointer("/output/path").and_then(Value::as_str)
+                .is_some_and(|path|Path::new(path).is_absolute()){
+            return Err("Native Script Worker requires a declared absolute file output".into());
+        }
+        let runtime=configured_script_interpreter()?;
+        let mut reconciler=Reconciler::new(
+            self.config.graph_directory.clone(),self.config.store_directory.clone(),
+            self.config.profile_home.clone(),self.config.policy_path.clone(),
+            self.config.router_rules_path.clone(),
+            json!({"owner":format!("isolated-rust-daemon-{}",std::process::id()),
+                "maxConcurrent":self.config.concurrency,"leaseMs":self.config.lease_ms}),
+        );
+        let claimed=reconciler.claim_task_execution(&original,task_id,
+            self.config.lease_ms)?.ok_or("Script Task no longer eligible for launch")?;
+        // One immutable generation claim, committed via same transactional CAS.
+        self.persist_exact(id,&original,&claimed)?;
+        let task=claimed.get("tasks").and_then(Value::as_array).into_iter().flatten()
+            .find(|task|field(task,"id")==task_id).cloned()
+            .ok_or("Script Task vanished during lease claim")?;
+        let path=self.path();
+        let graph=self.config.graph_directory.clone();
+        let runtime=PathBuf::from(runtime);
+        let timeout=task.get("timeoutMs").and_then(Value::as_u64)
+            .unwrap_or(900_000).clamp(100,86_400_000);
+        let job_id=id.to_string();let task_id=task_id.to_string();
+        std::thread::Builder::new().name(format!("rust-script-task-{task_id}"))
+            .spawn(move||{
+                if let Err(error)=run_claimed_script_task(
+                    &path,&graph,&claimed,&task,&runtime,timeout){
+                    eprintln!("Rust Script Worker {job_id}/{task_id}: {error}");
+                }
+            }).map_err(|e|format!("Cannot launch owned Script Worker executor: {e}"))?;
+        Ok(())
     }
 }

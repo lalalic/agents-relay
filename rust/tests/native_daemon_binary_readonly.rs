@@ -39,7 +39,8 @@ fn start_mode(root:&Path,port:u16,store_flag:&str)->Guard{
         .arg("--port").arg(port.to_string())
         .arg("--interval").arg("100")
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::from(
+            fs::File::create(root.join("native-daemon.log")).unwrap()))
         .spawn().unwrap();
     let mut guard=Guard(child);
     for _ in 0..50{
@@ -160,5 +161,179 @@ fn native_write_mode_mutations_use_one_sqlite_cas_and_survive_process_restart(){
         assert_eq!(persisted["title"],"After native write");
         assert_eq!(persisted["tasks"][0]["state"],"DRAFT");
     }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn native_write_daemon_reconciles_real_active_sqlite_job_but_never_fakes_worker_completion(){
+    let root=root();
+    let project=root.join("project");fs::create_dir_all(&project).unwrap();
+    let init=Command::new("git").arg("-C").arg(&project).args(["init","-q","-b","main"]).output().unwrap();
+    assert!(init.status.success(),"{}",String::from_utf8_lossy(&init.stderr));
+    let path=root.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&path,Some("27")).unwrap();
+    let job=json!({"id":"27","repository":"project","projectRoot":project,
+        "title":"Real Graph reconciliation without worker","state":"ACTIVE","prNumber":0,
+        "reviewEnabled":false,"priority":"P2",
+        "createdAt":"2026-11-18T00:00:00.000Z","updatedAt":"2026-11-18T00:00:00.000Z",
+        "tasks":[{"id":"2","jobId":"27","kind":"work","adapter":"script",
+            "agentName":"implementation","title":"Single fixture task","state":"QUEUED",
+            "attempt":0,"maxAttempts":3,"priority":"P2", "dependencies":[],
+            "output":{"kind":"file","path":root.join("out/result.json")},
+            "input":"{}","createdAt":"2026-11-18T00:00:00.000Z",
+            "updatedAt":"2026-11-18T00:00:00.000Z"}],"plans":[]});
+    store.save_job(&job).unwrap();store.close().unwrap();
+    let port=socket_port();let daemon=start_mode(&root,port,"--isolated-write-store-dir");
+    let mut attempts=0;
+    for _ in 0..35{
+        let status=body(&request(port,"GET","/api/status","").unwrap());
+        attempts=status["reconcileAttempts"].as_u64().unwrap_or(0);
+        if attempts>0{break}
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(attempts>0,"Actual Reconciler was never called from the daemon Pool");
+    let observed=body(&request(port,"GET","/api/job?id=27","").unwrap());
+    assert_eq!(observed["id"],"27");
+    assert_ne!(observed["tasks"][0]["state"],"SUCCEEDED",
+        "missing Worker effect cannot complete a Task");
+    drop(daemon);
+    let durable=SQLiteRelayStore::open_without_claim_reset(&path,Some("27"))
+        .unwrap().load_job("27").unwrap().unwrap();
+    assert_eq!(durable["tasks"][0]["state"],"QUEUED", "Worker launch failure must preserve queued Task state, not claim execution");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn real_native_daemon_claims_and_completes_shortcut_through_owned_process_graph_and_sqlite(){
+    let node=std::env::var("AGENTS_RELAY_SCRIPT_NODE")
+        .expect("Set AGENTS_RELAY_SCRIPT_NODE for real native Script E2E");
+    assert!(Path::new(&node).is_absolute(),"Script runtime must be an absolute executable");
+    let root=root();let project=root.join("project");
+    fs::create_dir_all(project.join("agents/.shortcut")).unwrap();
+    fs::write(project.join("agents/fixture.agent.md"),
+        "---\nname: fixture\ncapabilities: [script]\n---\n# Real Worker\n").unwrap();
+    fs::write(project.join("agents/.shortcut/fixture.agent.mjs"),
+        "export async function run({input}) { return {status:'COMPLETED',output:{realWorker:true,execution:input.executionId},artifacts:{}} }\n").unwrap();
+    let git=Command::new("git").arg("-C").arg(&project).args(["init","-q","-b","main"])
+        .output().unwrap();assert!(git.status.success());
+    let output=root.join("worker-result.json");
+    let store_path=root.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&store_path,Some("37")).unwrap();
+    store.save_job(&json!({
+        "id":"37","repository":"project","projectRoot":project,
+        "title":"Native Rust Script Job","state":"ACTIVE","prNumber":0,
+        "reviewEnabled":false,"priority":"P2",
+        "createdAt":"2026-11-18T00:00:00.000Z","updatedAt":"2026-11-18T00:00:00.000Z",
+        "tasks":[{"id":"2","jobId":"37","kind":"work","adapter":"script",
+            "agentName":"fixture","title":"Real Script Worker","state":"QUEUED",
+            "attempt":0,"maxAttempts":2,"priority":"P2","dependencies":[],
+            "input":"{}", "output":{"kind":"file","path":output},
+            "createdAt":"2026-11-18T00:00:00.000Z","updatedAt":"2026-11-18T00:00:00.000Z"}],
+        "plans":[],
+    })).unwrap();store.close().unwrap();
+    let port=socket_port();
+    let daemon=start_mode(&root,port,"--isolated-write-store-dir");
+    let mut current=Value::Null;
+    for _ in 0..90{
+        let result=request(port,"GET","/api/job?id=37","").unwrap();
+        current=body(&result);
+        if matches!(current["tasks"][0]["state"].as_str(),Some("SUCCEEDED"|"FAILED")){
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(current["tasks"][0]["state"],"SUCCEEDED",
+        "Native Worker did not reach verified Graph completion: {current};\nstatus={:?};\nlogs={}",
+        body(&request(port,"GET","/api/status","").unwrap()),
+        fs::read_to_string(root.join("native-daemon.log")).unwrap_or_default());
+    assert_eq!(current["tasks"][0]["result"]["data"]["output"]["realWorker"],true);
+    assert!(current["tasks"][0]["executionId"].is_null());
+    assert_eq!(current["tasks"][0]["attempt"],1,
+        "one legitimate Script effect must reserve exactly one leased execution");
+    let file:Value=serde_json::from_str(&fs::read_to_string(&output).unwrap()).unwrap();
+    assert_eq!(file["output"]["realWorker"],true);
+    let after=SQLiteRelayStore::open_without_claim_reset(&store_path,Some("37")).unwrap();
+    let pending_count:i64=after.db.query_row(
+        "SELECT COUNT(*) FROM workflow_event_outbox WHERE event_key LIKE 'script-event/37/2/%'",
+        [],|row|row.get(0)).unwrap();
+    assert_eq!(pending_count,2,"Task started and completed must be durable events");
+    let owned=current["tasks"][0]["executionHistory"].as_array().unwrap()[0]["id"]
+        .as_str().unwrap().to_owned();
+    let identity=after.load_execution_process("37","2",&owned)
+        .unwrap().expect("Real daemon Script Worker POSIX identity must be durable");
+    assert_eq!(identity["pid"],identity["pgid"]);
+    assert!(identity["endedAt"].is_string());
+    drop(daemon);
+    let restart=start_mode(&root,port,"--isolated-write-store-dir");
+    thread::sleep(Duration::from_millis(200));
+    let persisted=body(&request(port,"GET","/api/job?id=37","").unwrap());
+    assert_eq!(persisted["tasks"][0]["state"],"SUCCEEDED");
+    assert_eq!(persisted["tasks"][0]["attempt"],1,
+        "Reboot must never relaunch a completed Script Task");
+    drop(restart);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn native_daemon_runs_two_dependent_script_workers_once_in_graph_order(){
+    let root=root();let project=root.join("project");
+    fs::create_dir_all(project.join("agents/.shortcut")).unwrap();
+    for name in ["first","second"]{
+        fs::write(project.join(format!("agents/{name}.agent.md")),
+            format!("---\nname: {name}\ncapabilities: [script]\n---\n# {name}\n")).unwrap();
+        fs::write(project.join(format!("agents/.shortcut/{name}.agent.mjs")),
+            format!("export async function run({{input}}) {{ return {{status:'COMPLETED',output:{{agent:'{name}',execution:input.executionId}},artifacts:{{}}}} }}\n")).unwrap();
+    }
+    let initialized=Command::new("git").arg("-C").arg(&project)
+        .args(["init","-q","-b","main"]).output().unwrap();
+    assert!(initialized.status.success());
+    let path=root.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&path,Some("42")).unwrap();
+    let task=|id:&str,agent:&str,state:&str,deps:Vec<&str>|{
+        json!({"id":id,"jobId":"42","kind":"work","adapter":"script",
+            "agentName":agent,"title":agent,"state":state,
+            "attempt":0,"maxAttempts":1,"priority":"P2","dependencies":deps,
+            "executionId":null,"leaseOwner":null,"leaseExpiresAt":null,
+            "input":"{}","output":{"kind":"file","path":root.join(format!("{agent}.json"))},
+            "createdAt":"2026-11-18T00:00:00.000Z","updatedAt":"2026-11-18T00:00:00.000Z"})
+    };
+    store.save_job(&json!({"id":"42","repository":"project","projectRoot":project,
+        "title":"Script dependency Graph", "state":"ACTIVE","prNumber":0,
+        "reviewEnabled":false,"priority":"P2",
+        "createdAt":"2026-11-18T00:00:00.000Z","updatedAt":"2026-11-18T00:00:00.000Z",
+        "tasks":[task("2","first","QUEUED",vec![]),
+            task("3","second","DRAFT",vec!["2"])],"plans":[]})).unwrap();
+    let snapshot=store.load_job("42").unwrap().unwrap();
+    let mut diagnostic=agents_relay_rust2::reconciler::Reconciler::new(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
+        root.join("stores"),root.join("profiles"),root.join("routing.json"),
+        root.join("rules.md"),json!({"maxConcurrent":4,"owner":"diagnostic"}));
+    let result=diagnostic.reconcile_snapshot(&snapshot,None,&project,
+        &json!({"workspaceRoot":root}),&[],&[],None);
+    let preflight=result.expect("canonical Graph must accept a valid two-Task dependency fixture");
+    assert!(preflight.effects.iter().any(|effect|effect["action"]=="effect.launchTask"),
+        "First Task should be ready while its dependent remains DRAFT");
+    store.close().unwrap();
+    let port=socket_port();let daemon=start_mode(&root,port,"--isolated-write-store-dir");
+    let mut job=Value::Null;
+    for _ in 0..125{
+        job=body(&request(port,"GET","/api/job?id=42","").unwrap());
+        if job["tasks"][0]["state"]=="SUCCEEDED"
+            &&job["tasks"][1]["state"]=="SUCCEEDED"{break;}
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(job["tasks"][0]["state"],"SUCCEEDED","{job}");
+    assert_eq!(job["tasks"][1]["state"],"SUCCEEDED","{job}");
+    for (idx,agent) in ["first","second"].iter().enumerate(){
+        assert_eq!(job["tasks"][idx]["attempt"],1,"{job}");
+        let output:Value=serde_json::from_str(&fs::read_to_string(root.join(format!("{agent}.json"))).unwrap()).unwrap();
+        assert_eq!(output["output"]["agent"],*agent);
+    }
+    let observed=SQLiteRelayStore::open_without_claim_reset(&path,Some("42")).unwrap();
+    let outbox:i64=observed.db.query_row(
+        "SELECT COUNT(*) FROM workflow_event_outbox WHERE event_key LIKE 'script-event/42/%'",
+        [],|row|row.get(0)).unwrap();
+    assert_eq!(outbox,4,"Two Workers require started and completed events each");
+    drop(daemon);
     fs::remove_dir_all(root).unwrap();
 }

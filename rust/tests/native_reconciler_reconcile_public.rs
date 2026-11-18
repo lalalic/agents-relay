@@ -4,7 +4,7 @@ use agents_relay_rust2::{reconciler::Reconciler,
     reconciler_durable::ReconcileHost,relay_store::SQLiteRelayStore};
 use serde_json::{json,Value};
 use std::{path::{Path,PathBuf},time::{SystemTime,UNIX_EPOCH}};
-struct Host{store:SQLiteRelayStore,persisted:usize,launched:usize,
+struct Host{store:SQLiteRelayStore,root:PathBuf,persisted:usize,launched:usize,
     emitted:usize,inject_race:bool}
 impl ReconcileHost for Host{
  fn load(&mut self,id:&str)->Result<Value,String>{
@@ -26,7 +26,20 @@ impl ReconcileHost for Host{
          Ok(next.clone())
      })
  }
- fn launch(&mut self,_action:&Value)->Result<(),String>{
+ fn launch(&mut self,action:&Value)->Result<(),String>{
+     if action["action"]!="effect.launchTask"{
+         return Err("Unexpected external effect in recovery fixture".into());
+     }
+     let job_id=action["jobId"].as_str().ok_or("Job ID missing")?;
+     let task_id=action["taskId"].as_str().ok_or("Task ID missing")?;
+     let current=self.store.load_job(job_id)?.ok_or("Job missing")?;
+     let mut rec=rec(&self.root);
+     let claimed=rec.claim_task_execution(&current,task_id,300000)?
+         .ok_or("Task execution already claimed")?;
+     self.store.mutate_job(job_id,|fresh|{
+         if fresh!=current{return Err("Task lease CAS conflict".into());}
+         Ok(claimed)
+     })?;
      self.launched+=1;Ok(())
  }
  fn broadcast(&mut self,_event:&Value)->Result<(),String>{
@@ -44,7 +57,7 @@ fn fixture(state:&str,paused:bool)->(PathBuf,Host){
      "tasks":[],"plans":[],"reviewEnabled":false,
      "pause":if paused{json!({"reason":"operator"})}else{Value::Null},
      "headSha":"old-head"})).unwrap();
- (root,Host{store,persisted:0,launched:0,emitted:0,inject_race:false})
+ (root.clone(),Host{store,root,persisted:0,launched:0,emitted:0,inject_race:false})
 }
 fn rec(root:&Path)->Reconciler{
  Reconciler::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
@@ -100,17 +113,23 @@ fn expired_fixture()->(PathBuf,Host){
 fn expired_generation_recovered_through_graph_and_exact_sqlite_cas(){
     let (root,mut host)=expired_fixture();
     let mut reconciler=rec(&root);
-    let result=reconciler.reconcile("1",None,&root,&json!({}),
-        &[],&[],None,&mut host).unwrap();
-    assert_eq!(result["tasks"][0]["state"],"FAILED");
-    assert_eq!(result["tasks"][0]["failureReason"],"worker_outcome_unknown");
-    assert!(result["tasks"][0]["executionId"].is_null());
-    assert!(result["tasks"].as_array().unwrap().iter().any(|task|
+    // The recovered Task is real and queued, but this legacy fixture has no
+    // routing metadata or installed provider. Graph launch is now visible;
+    // the production-equivalent claim must fail CLOSED, not fabricate a worker.
+    let error=reconciler.reconcile("1",None,&root,&json!({}),
+        &[],&[],None,&mut host).unwrap_err();
+    assert!(error.contains("requires routing metadata"),"{error}");
+    let persisted=host.load("1").unwrap();
+    assert_eq!(persisted["tasks"][0]["state"],"FAILED");
+    assert_eq!(persisted["tasks"][0]["failureReason"],"worker_outcome_unknown");
+    assert!(persisted["tasks"][0]["executionId"].is_null());
+    assert!(persisted["tasks"].as_array().unwrap().iter().any(|task|
         task["agentName"]=="troubleshooter"
-        &&task["parentTaskId"]=="task-a"));
-    assert_eq!(host.load("1").unwrap(),result);
+        &&task["parentTaskId"]=="task-a"
+        &&task["state"]=="QUEUED"
+        &&task["executionId"].is_null()));
     assert!(host.emitted>=2);
-    assert_eq!(host.launched,0);
+    assert_eq!(host.launched,0,"No Worker may start without a proven routing receipt");
     std::fs::remove_dir_all(root).unwrap();
 }
 #[test]
