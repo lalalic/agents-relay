@@ -347,3 +347,97 @@ pub fn activate_committed_planner_work(
     }
     Ok(true)
 }
+
+/// Node drainPlannerUnblocks: preserve every unacknowledged cross-Job unblock
+/// intent in the authoritative SQLite Plan. External registration is injected
+/// and must be idempotent; success is acknowledged only by a fresh atomic
+/// mutateJob transaction, never by replacing a possibly stale Plan snapshot.
+pub fn drain_planner_unblocks(
+    store:&crate::relay_store::SQLiteRelayStore,
+    job_id:&str,plan_id:&str,
+    mut register:Option<&mut dyn FnMut(&str,&Value)->Result<(),String>>,
+    mutate_available:bool,
+)->Result<Vec<String>,String>{
+    let job=store.load_job(job_id)?
+        .ok_or_else(||format!("Job {job_id} not found"))?;
+    let pending=job.get("plans").and_then(Value::as_array)
+        .into_iter().flatten().find(|plan|field(plan,"id")==plan_id)
+        .and_then(|plan|plan.get("pendingUnblocks"))
+        .and_then(Value::as_array).cloned().unwrap_or_default();
+    if pending.is_empty(){return Ok(Vec::new());}
+    let registrar=register.as_mut().ok_or("Blocker registration unavailable")?;
+    let mut acknowledged=HashSet::new();
+    for item in &pending {
+        if registrar(job_id,item).is_ok(){
+            acknowledged.insert(serde_json::to_string(item).map_err(|e|e.to_string())?);
+        }
+    }
+    if !acknowledged.is_empty(){
+        if !mutate_available{
+            return Err("Atomic SQLite mutation is required to acknowledge planner unblocks".into());
+        }
+        store.mutate_job(job_id,|mut current|{
+            let fresh=current.get_mut("plans").and_then(Value::as_array_mut)
+                .and_then(|plans|plans.iter_mut().find(|plan|field(plan,"id")==plan_id));
+            if let Some(fresh)=fresh{
+                if let Some(pending)=fresh.get("pendingUnblocks")
+                    .and_then(Value::as_array).filter(|pending|!pending.is_empty()){
+                    let remaining=pending.iter().filter(|item|
+                        serde_json::to_string(item).ok().as_ref()
+                            .is_none_or(|key|!acknowledged.contains(key)))
+                        .cloned().collect::<Vec<_>>();
+                    if remaining.is_empty(){
+                        if let Some(object)=fresh.as_object_mut(){
+                            object.remove("pendingUnblocks");
+                        }
+                    }else{
+                        fresh["pendingUnblocks"]=json!(remaining);
+                    }
+                    fresh["updatedAt"]=json!(iso8601_now());
+                }
+            }
+            Ok(current)
+        })?;
+    }
+    let refreshed=store.load_job(job_id)?
+        .ok_or_else(||format!("Job {job_id} not found"))?;
+    let remaining=refreshed.get("plans").and_then(Value::as_array)
+        .into_iter().flatten().find(|plan|field(plan,"id")==plan_id)
+        .and_then(|plan|plan.get("pendingUnblocks"))
+        .and_then(Value::as_array).cloned().unwrap_or_default();
+    fn js_text(value:Option<&Value>)->String{
+        match value{
+            None=>"undefined".into(),Some(Value::Null)=>"null".into(),
+            Some(Value::String(value))=>value.clone(),
+            Some(value)=>value.to_string(),
+        }
+    }
+    Ok(remaining.iter().map(|item|format!("{}#{}:{}:{}",
+        js_text(item.get("repository")),js_text(item.get("prNumber")),
+        js_text(item.get("jobId")),js_text(item.get("taskId"))))
+        .collect())
+}
+
+/// Node retryPendingPlannerUnblocks: visit only succeeded Plans with pending
+/// intents, and apply the same durable acknowledgment operation per Plan.
+pub fn retry_pending_planner_unblocks(
+    store:&crate::relay_store::SQLiteRelayStore,
+    job_id:&str,
+    mut register:Option<&mut dyn FnMut(&str,&Value)->Result<(),String>>,
+    mutate_available:bool,
+)->Result<(),String>{
+    let job=store.load_job(job_id)?
+        .ok_or_else(||format!("Job {job_id} not found"))?;
+    let plans=job.get("plans").and_then(Value::as_array).into_iter().flatten()
+        .filter(|plan|field(plan,"status")=="SUCCEEDED"
+            &&plan.get("pendingUnblocks").and_then(Value::as_array)
+                .is_some_and(|items|!items.is_empty()))
+        .filter_map(|plan|plan.get("id").and_then(Value::as_str))
+        .map(str::to_owned).collect::<Vec<_>>();
+    for plan_id in plans{
+        let registrar=register.as_mut().map(|register|&mut **register
+            as &mut dyn FnMut(&str,&Value)->Result<(),String>);
+        drain_planner_unblocks(store,job_id,&plan_id,registrar,mutate_available)?;
+    }
+    Ok(())
+}

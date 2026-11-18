@@ -6,6 +6,63 @@ use serde_json::{json,Value};
 pub(super) fn invoke(request:&Value)->Result<Option<String>,String>{
     let op=request["op"].as_str().unwrap_or("");
     let result:Result<String,String>=match op{
+        // Public PlannerRuntime cross-Job unblock acknowledgments. Every
+        // registration is injected, and SQLite mutateJob owns acknowledgment.
+        "plannerUnblocksParity"=>{
+            use agents_relay_rust2::{
+                planner_runtime::{drain_planner_unblocks,retry_pending_planner_unblocks},
+                relay_store::SQLiteRelayStore,
+            };
+            let store=SQLiteRelayStore::open(std::path::Path::new(":memory:"),None)?;
+            store.save_job(&request["job"])?;
+            let job_id=request["job"]["id"].as_str().unwrap_or("");
+            let plan_id=request["planId"].as_str().unwrap_or("");
+            let mut registered=Vec::<Value>::new();
+            let mut injected=false;
+            let mut register=|_:&str,item:&Value|->Result<(),String>{
+                registered.push(item.clone());
+                if !injected&&request.get("concurrentAdd").is_some_and(|v|v.is_object()){
+                    injected=true;
+                    store.mutate_job(job_id,|mut current|{
+                        if let Some(plan)=current["plans"].as_array_mut()
+                            .and_then(|plans|plans.iter_mut().find(|p|
+                                p["id"].as_str()==Some(plan_id))){
+                            let pending=plan.get_mut("pendingUnblocks")
+                                .and_then(Value::as_array_mut)
+                                .ok_or("Concurrent Plan lacks pendingUnblocks")?;
+                            pending.push(request["concurrentAdd"].clone());
+                        }
+                        Ok(current)
+                    })?;
+                }
+                if request["failTaskIds"].as_array().is_some_and(|ids|
+                    ids.iter().any(|id|id==&item["taskId"])){
+                    return Err("injected dependent registration failure".into());
+                }
+                Ok(())
+            };
+            let missing=request["missingRegistration"]==true;
+            let registrar=if missing{None}else{
+                Some(&mut register as &mut dyn FnMut(&str,&Value)->Result<(),String>)
+            };
+            let mutation=request["missingMutation"]!=true;
+            let result:Result<Value,String>=if request["method"]=="retry"{
+                retry_pending_planner_unblocks(&store,job_id,registrar,mutation)
+                    .map(|_|Value::Null)
+            }else{
+                drain_planner_unblocks(&store,job_id,plan_id,registrar,mutation)
+                    .map(|remaining|json!(remaining))
+            };
+            let current=store.load_job(job_id)?.ok_or("Job disappeared")?;
+            let plans=current["plans"].as_array().into_iter().flatten()
+                .map(|plan|json!({"id":plan.get("id"),
+                    "status":plan.get("status"),
+                    "pending":plan.get("pendingUnblocks")})).collect::<Vec<_>>();
+            Ok(json!({"outcome":match result{
+                Ok(value)=>json!({"ok":true,"value":value}),
+                Err(error)=>json!({"ok":false,"error":error}),
+            },"plans":plans,"registered":registered}).to_string())
+        }
         // Public PlannerRuntime activation and typed validation errors.
         // Graph lifecycle selects the activation; failed guards don't mutate.
         "plannerRuntimePublicParity"=>{
