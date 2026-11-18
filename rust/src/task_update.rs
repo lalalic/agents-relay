@@ -1,6 +1,11 @@
 // Node provenance: src/task-update.ts. Validate managed Task preflight and
 // prepare a one-Task atomic SQLite mutation with canonical Graph lifecycle actions.
-use crate::local_merge_lock::iso8601_now;
+use crate::{
+    local_merge_lock::iso8601_now,
+    relay_store::SQLiteRelayStore,
+    task_actions::{apply_task_hold_action, apply_task_queue_action},
+};
+use std::path::Path;
 use serde_json::{json, Value};
 
 const CANONICAL_EDITABLE: [&str; 16] = [
@@ -72,4 +77,45 @@ where Transition: FnMut(&mut Value, &str) -> bool {
     next["updatedAt"] = json!(iso8601_now());
     *current = next;
     Ok(job)
+}
+
+
+/// Managed Task updates use the same Graph actions as the CLI, atomically
+/// persisted to the authoritative SQLite store.
+pub fn apply_managed_task_update(
+    graph_directory: &Path, store: &SQLiteRelayStore, job_id: &str,
+    task_id: &str, proposed: &Value, expected_updated_at: &str,
+) -> Result<Value, String> {
+    store.mutate_job(job_id, |job| {
+        apply_managed_task_update_snapshot(
+            &job, job_id, task_id, proposed, expected_updated_at,
+            |task, action| {
+                let now = iso8601_now();
+                match action {
+                    "hold" => apply_task_hold_action(graph_directory, task, &now),
+                    "queue" => apply_task_queue_action(graph_directory, &job, task, &now),
+                    _ => Err(format!("Unsupported Task update transition {action}")),
+                }.is_ok()
+            },
+        )
+    })
+}
+
+/// Typed daemon lookup and wake ports. A wake is emitted only after the
+/// authoritative SQLite transaction succeeds.
+pub fn managed_task_update_handler<'a, Locate, Wake>(
+    graph_directory: &'a Path, mut locate: Locate, mut wake: Wake,
+) -> impl FnMut(&str, &str, &Value, &str) -> Result<Value, String> + 'a
+where
+    Locate: FnMut(&str) -> Result<(SQLiteRelayStore, String, u64), String> + 'a,
+    Wake: FnMut(&str, u64, &str) -> Result<(), String> + 'a,
+{
+    move |job_id, task_id, proposed, expected_updated_at| {
+        let (store, repository, pr_number) = locate(job_id)?;
+        let result = apply_managed_task_update(
+            graph_directory, &store, job_id, task_id, proposed, expected_updated_at,
+        )?;
+        wake(&repository, pr_number, job_id)?;
+        Ok(result)
+    }
 }

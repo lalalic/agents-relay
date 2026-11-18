@@ -2,6 +2,7 @@
 // durable baseline evidence. Only SQLite owns the mutation; no Dashboard JS.
 use crate::{
     local_merge_lock::iso8601_now,
+    relay_store::SQLiteRelayStore,
     task_transitions::try_transition_task_event,
     workflow::authoritative_unblock_v2::decide_authoritative_unblock,
 };
@@ -170,4 +171,26 @@ pub fn unblock_task_snapshot(
     updated["updatedAt"]=json!(now);
     current["updatedAt"]=json!(now);
     Ok((current,json!({"replanning":false})))
+}
+
+
+/// Graph-authorized unblock and its baseline evidence commit as one SQLite
+/// transaction. Rejections never persist a partially unblocked Task.
+pub fn unblock_task(
+    graph_directory: &Path, store: &SQLiteRelayStore, job_id: &str,
+    task_id: &str, source: &str, reason: &str,
+    blocker_job_id: Option<&str>, resolution: Option<&str>,
+    current_head: Option<&str>,
+) -> Result<Value, String> {
+    let mut outcome = None;
+    store.mutate_job(job_id, |job| {
+        let head = current_head.or_else(||job.get("headSha").and_then(Value::as_str));
+        let (next, result) = unblock_task_snapshot(
+            graph_directory, &job, task_id, source, reason,
+            blocker_job_id, resolution, head, None,
+        )?;
+        outcome = Some(result);
+        Ok(next)
+    })?;
+    outcome.ok_or_else(||"Authoritative unblock completed without an action result".into())
 }

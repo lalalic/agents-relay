@@ -3,6 +3,7 @@
 // the daemon must use an atomic SQLite mutateJob transaction.
 use crate::{
     local_merge_lock::iso8601_now,
+    relay_store::SQLiteRelayStore,
     task_transitions::{extend_retry_budget, transition_task_event, try_transition_task_event},
     workflow::{
         task_action_policy::select_related_task_mutations,
@@ -330,4 +331,71 @@ pub fn dispatch_task_action_snapshot(
     }
     let task=find_task(&updated,task_id).expect("task from original").clone();
     Ok((updated,task))
+}
+
+
+/// Node's fixed-Job unblock helper has no separate workflow policy. The
+/// canonical Task Graph decides the transition and validates the snapshot.
+pub fn apply_task_unblock_retry_snapshot(
+    directory: &Path, task: &mut Value,
+) -> Result<(), String> {
+    apply_task_unblock_retry_action(directory, task, &iso8601_now())
+}
+
+/// Resolve a failed Task's next owner and classification in one local
+/// authoritative transaction. The result contains the actually committed Task.
+pub fn classify_failed_task(
+    directory: &Path, store: &SQLiteRelayStore, job_id: &str,
+    task_id: &str, classification: &Value,
+) -> Result<Value, String> {
+    let mut changed = None;
+    let job = store.mutate_job(job_id, |current| {
+        let updated = classify_failed_task_snapshot(
+            directory, &current, task_id, classification, None,
+        )?;
+        changed = updated.get("tasks").and_then(Value::as_array)
+            .and_then(|items| items.iter().find(|task| field(task,"id")==task_id))
+            .cloned();
+        Ok(updated)
+    })?;
+    Ok(json!({"job": job, "task": changed.ok_or_else(||
+        format!("Task {task_id} classification was not committed"))?}))
+}
+
+/// Record a supersession only after the Task is durably cancelled and the
+/// Task Resolution Graph permits its cancellation annotation.
+pub fn supersede_cancelled_task(
+    directory: &Path, store: &SQLiteRelayStore, job_id: &str,
+    task_id: &str, reason: &str,
+) -> Result<Value, String> {
+    let mut changed = None;
+    let job = store.mutate_job(job_id, |current| {
+        let updated = supersede_cancelled_task_snapshot(
+            directory, &current, task_id, reason, None,
+        )?;
+        changed = updated.get("tasks").and_then(Value::as_array)
+            .and_then(|items| items.iter().find(|task|field(task,"id")==task_id))
+            .cloned();
+        Ok(updated)
+    })?;
+    Ok(json!({"job":job,"task":changed.ok_or_else(||
+        format!("Task {task_id} was not updated"))?}))
+}
+
+/// Full Task Action public entrypoint: both the requested Task and Graph-
+/// selected related Task effects commit in the same SQLite transaction.
+pub fn dispatch_task_action(
+    directory: &Path, store: &SQLiteRelayStore, request: &Value,
+) -> Result<Value, String> {
+    let job_id=field(request,"jobId");
+    let mut changed = None;
+    let job = store.mutate_job(job_id, |current| {
+        let (updated, task) = dispatch_task_action_snapshot(
+            directory, &current, request, None,
+        )?;
+        changed = Some(task);
+        Ok(updated)
+    })?;
+    Ok(json!({"job":job,"task":changed.ok_or_else(||
+        format!("Task {} was not updated",field(request,"taskId")))?}))
 }

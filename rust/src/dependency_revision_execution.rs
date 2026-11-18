@@ -2,6 +2,8 @@
 // dependency evidence vectors through the canonical Dependency Revision Graph.
 use crate::{
     final_review_role::is_final_review_agent,
+    job_task_id_sequence::allocate_entity_id,
+    relay_store::SQLiteRelayStore,
     local_merge_lock::iso8601_now,
     review_revision_model::{
         dependency_revision_vector, dependency_validity, same_dependency_revision_vector,
@@ -237,5 +239,40 @@ pub fn reconcile_dependency_revision_facts(
     if !created.is_empty() || !changed_stale.is_empty() {
         job["updatedAt"]=json!(iso8601_now());
     }
+    Ok(created)
+}
+
+
+/// Only Graph-approved dependency revisions allocate global numeric Task IDs.
+/// The final mutation is an authoritative SQLite transaction, not an EventBus
+/// or ephemeral in-memory plan.
+pub fn reconcile_dependency_revisions(
+    graph_directory: &Path, store_directory: &Path,
+    store: &SQLiteRelayStore, job_id: &str,
+) -> Result<Vec<String>, String> {
+    let snapshot = store.load_job(job_id)?
+        .ok_or_else(||format!("Local authoritative Job {job_id} not found"))?;
+    let preview_ids = (0..snapshot.get("tasks").and_then(Value::as_array)
+        .map_or(0, Vec::len)).map(|index|
+            format!("preview-dependency-{index}")).collect::<Vec<_>>();
+    let mut preview = snapshot.clone();
+    let planned = reconcile_dependency_revision_facts(
+        graph_directory, &mut preview, &preview_ids,
+    )?;
+    let repository = snapshot.get("repository").and_then(Value::as_str).unwrap_or("");
+    let mut reserved = Vec::with_capacity(planned.len());
+    let occupied = HashSet::new();
+    for _ in &planned {
+        reserved.push(allocate_entity_id(
+            store_directory, repository, "task", None, &occupied,
+        )?);
+    }
+    let mut created = Vec::new();
+    store.mutate_job(job_id, |mut job| {
+        created = reconcile_dependency_revision_facts(
+            graph_directory, &mut job, &reserved,
+        )?;
+        Ok(job)
+    })?;
     Ok(created)
 }

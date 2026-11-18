@@ -1,6 +1,10 @@
 // Node provenance: src/interactive-resume.ts. Atomic, identity-fenced
 // Graph-authorized continuation after an accepted human decision.
 use crate::local_merge_lock::iso8601_now;
+use crate::relay_store::SQLiteRelayStore;
+use crate::interactive_invocation::should_recover_interactive_decision;
+use crate::task_transitions::try_transition_task_event;
+use std::path::Path;
 use crate::task_comments::append_task_comment;
 use serde_json::{json, Value};
 
@@ -72,4 +76,38 @@ pub fn recoverable_interactive_decisions(job: &Value) -> Vec<(String, String, St
                 status.into(),
             ))
         }).collect()
+}
+
+
+/// Restart-safe recovery of decisions already persisted in SQLite. The
+/// EventBus wake may be lost; the Graph determines eligibility on replay.
+pub fn recover_interactive_decisions(
+    directory: &Path, store: &SQLiteRelayStore, job_id: &str,
+) -> Result<bool, String> {
+    let snapshot = store.load_job(job_id)?
+        .ok_or_else(||format!("Local authoritative Job {job_id} not found"))?;
+    let mut recovered = false;
+    for (task_id, invocation_id, revision, status) in
+        recoverable_interactive_decisions(&snapshot)
+    {
+        if !should_recover_interactive_decision(directory, &status)? {continue;}
+        let mut resumed = false;
+        store.mutate_job(job_id, |job| {
+            let mut transition_error = None;
+            let (next, did_resume) = resume_interactive_task(
+                &job, &task_id, &invocation_id, &revision, &status,
+                |task, event| match try_transition_task_event(
+                    directory, task, event, &json!({}), &iso8601_now(),
+                ) {
+                    Ok(decision) => decision.get("accepted") == Some(&Value::Bool(true)),
+                    Err(error) => { transition_error = Some(error); false }
+                },
+            )?;
+            if let Some(error) = transition_error {return Err(error);}
+            resumed = did_resume;
+            Ok(next)
+        })?;
+        recovered |= resumed;
+    }
+    Ok(recovered)
 }

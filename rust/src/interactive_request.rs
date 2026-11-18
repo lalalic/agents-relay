@@ -2,6 +2,11 @@
 // and execution-fenced task invocation; SQLite writer is supplied by caller.
 use crate::events::event_for;
 use crate::local_merge_lock::iso8601_now;
+use crate::relay_store::SQLiteRelayStore;
+use crate::task_actions::apply_task_unblock_retry_action;
+use crate::task_comments::append_task_comment;
+use crate::task_transitions::try_transition_task_event;
+use std::path::Path;
 use serde_json::{json, Value};
 
 pub fn interactive_waiting_event(
@@ -73,4 +78,59 @@ pub fn abort_interactive_review(
         }
     }
     job
+}
+
+
+/// Review delivery failures are not approvals. This performs the same
+/// identity-fenced Graph resume and durable Task mutation as Node.
+pub fn fail_interactive_review(
+    graph_directory: &Path, store: &SQLiteRelayStore, job_id: &str,
+    task_id: &str, execution_id: &str, reason: &str,
+) -> Result<Value, String> {
+    let mut requeued = false;
+    store.mutate_job(job_id, |mut job| {
+        let index = job.get("tasks").and_then(Value::as_array)
+            .and_then(|items| items.iter().position(|task|
+                task.get("id").and_then(Value::as_str) == Some(task_id)));
+        let Some(index) = index else { return Ok(job); };
+        let task = &mut job["tasks"][index];
+        let invocation = task.get("interactiveInvocation");
+        if invocation.and_then(|v|v.get("executionId")).and_then(Value::as_str)
+                != Some(execution_id)
+            || invocation.and_then(|v|v.get("status")).and_then(Value::as_str)
+                != Some("awaiting_decision") {
+            return Ok(job);
+        }
+        let state = task.get("state").and_then(Value::as_str).unwrap_or("").to_owned();
+        if state == "AWAITING_DECISION" {
+            let now = iso8601_now();
+            let decision = try_transition_task_event(
+                graph_directory, task, "interactive.resume", &json!({}), &now,
+            )?;
+            if decision.get("accepted") != Some(&Value::Bool(true)) {
+                return Err("Graph rejected review delivery failure recovery".into());
+            }
+            apply_task_unblock_retry_action(graph_directory, task, &now)?;
+            if let Some(map) = task.as_object_mut() {
+                map.remove("interactiveInvocation");
+                map.remove("failureReason");
+            }
+            task["error"] = Value::Null;
+            task["updatedAt"] = json!(now);
+            let truncated: String = reason.chars().take(500).collect();
+            append_task_comment(
+                &mut job, task_id,
+                &format!("Interactive review delivery failed; rerun review request: {truncated}"),
+                &json!({"author":"cli"}),
+            )?;
+            requeued = true;
+        } else if state == "RUNNING"
+            && task.get("executionId").and_then(Value::as_str) == Some(execution_id) {
+            if let Some(map) = task.as_object_mut() {
+                map.remove("interactiveInvocation");
+            }
+        }
+        Ok(job)
+    })?;
+    Ok(json!({"requeued": requeued}))
 }
