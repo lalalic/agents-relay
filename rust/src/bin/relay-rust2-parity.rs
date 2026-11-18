@@ -360,6 +360,26 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=closure::invoke(request)?{return Ok(output);}
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "apiEscalationConfigured" => {
+            let env = request["env"].as_object().into_iter().flatten()
+                .filter_map(|(key, value)| value.as_str().map(|value| (key.clone(), value.to_owned())))
+                .collect::<std::collections::HashMap<_,_>>();
+            let timeout = std::time::Duration::from_millis(
+                request["timeoutMs"].as_u64().unwrap_or(600_000));
+            Ok(agents_relay_rust2::cli_escalation::run_configured_escalation_with_timeout(
+                &request["request"], &env, timeout).to_string())
+        }
+        "apiEscalationCommand" => {
+            let env = request["env"].as_object().into_iter().flatten()
+                .filter_map(|(key, value)| value.as_str().map(|value| (key.clone(), value.to_owned())))
+                .collect::<std::collections::HashMap<_,_>>();
+            let args = request["args"].as_array().into_iter().flatten()
+                .filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>();
+            Ok(agents_relay_rust2::cli_escalation::run_escalation_command(
+                &args, &env,
+                std::path::Path::new(request["graphDirectory"].as_str().unwrap_or("workflow")),
+            )?.to_string())
+        }
         // Newly closed API surfaces live in an isolated parity fixture module.
         // Node src/adapters.ts: exact public worker argument and submitted receipt contracts.
         "stage2BuildCodexArgs" => Ok(json!(agents_relay_rust2::adapters::build_codex_args(
