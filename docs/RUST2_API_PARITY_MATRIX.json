@@ -2,15 +2,15 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity.",
   "summary": {
     "sourceTree": "a7fabd653a006bcd33b84d3eb7ac4c28b085f9dd",
-    "rustTree": "4d0f535228aeb4002b9da7b8b25075b49f280090",
+    "rustTree": "5e5f54d9064e0cd75de6dc9672a134135ee3f925",
     "sourceCount": 107,
     "runtimeExportSymbols": 734,
-    "directNameMatches": 620,
-    "unmappedRuntimeSymbols": 98,
-    "runtimeConstructorReviews": 16,
-    "typeOrShapeReviewSymbols": 285,
-    "filesWithUnmappedRuntime": 45,
-    "filesWithoutDirectDiffImport": 70,
+    "directNameMatches": 646,
+    "unmappedRuntimeSymbols": 74,
+    "runtimeConstructorReviews": 14,
+    "typeOrShapeReviewSymbols": 283,
+    "filesWithUnmappedRuntime": 30,
+    "filesWithoutDirectDiffImport": 66,
     "filesWithoutOtherRustReferences": 41
   },
   "files": [
@@ -19,12 +19,8 @@
       "target": "rust/src/adapters.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 12,
-      "directNameMatches": 9,
-      "unmappedRuntime": [
-        "LaunchFailure",
-        "StartAckTimeout",
-        "ensureChatGptWebHelmReady"
-      ],
+      "directNameMatches": 12,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "Execution",
         "LaunchContext",
@@ -42,10 +38,14 @@
         "ChatGptAdapter.tabClosePolicy"
       ],
       "directDiffImports": [
-        "rust/tests/head_to_head_stage2_pool_adapters.mjs"
+        "rust/tests/head_to_head_stage2_pool_adapters.mjs",
+        "rust/tests/head_to_head_webhelm_preflight.mjs"
       ],
       "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity.rs"
+        "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/script_task_adapter.rs",
+        "rust/src/z_adapter.rs"
       ],
       "exports": [
         {
@@ -136,12 +136,12 @@
         {
           "name": "LaunchFailure",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "StartAckTimeout",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "parseDriverJson",
@@ -151,7 +151,7 @@
         {
           "name": "ensureChatGptWebHelmReady",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "ChatGptAdapter",
@@ -270,10 +270,8 @@
       "target": "rust/src/browser_worker_pool.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 15,
-      "directNameMatches": 14,
-      "unmappedRuntime": [
-        "BrowserWorkerPoolManager.close"
-      ],
+      "directNameMatches": 15,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "BrowserProvider",
         "BrowserPoolState",
@@ -345,7 +343,7 @@
           "name": "close",
           "kind": "class-method",
           "parent": "BrowserWorkerPoolManager",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "snapshot",
@@ -432,10 +430,8 @@
       "target": "rust/src/browser_worker_runtime.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 2,
-      "directNameMatches": 1,
-      "unmappedRuntime": [
-        "browserWorkerPool"
-      ],
+      "directNameMatches": 2,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "BrowserReceipt",
         "PoolSubmission",
@@ -464,7 +460,7 @@
         {
           "name": "browserWorkerPool",
           "kind": "variable",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "pooledWebHelmRun",
@@ -2101,10 +2097,8 @@
       "target": "rust/src/execution_routing.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 6,
-      "directNameMatches": 5,
-      "unmappedRuntime": [
-        "routeExecution"
-      ],
+      "directNameMatches": 6,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "ExecutionRouteCandidate",
         "ExecutionRouteEvaluation",
@@ -2112,8 +2106,11 @@
         "ExecutionRoutingDecision",
         "ExecutionRoutingOptions"
       ],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_route_facades.mjs"
+      ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
         "rust/src/reconciler_review.rs"
       ],
       "exports": [
@@ -2170,7 +2167,7 @@
         {
           "name": "routeExecution",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -2918,7 +2915,9 @@
         "rust/tests/head_to_head_store_facade_closure.mjs"
       ],
       "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity/closure.rs"
+        "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/local_job_registry.rs",
+        "rust/src/local_managed_store.rs"
       ],
       "exports": [
         {
@@ -3188,10 +3187,8 @@
       "target": "rust/src/local_job_registry.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 2,
-      "directNameMatches": 1,
-      "unmappedRuntime": [
-        "createJobIdRegistryResolver"
-      ],
+      "directNameMatches": 2,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [],
       "directDiffImports": [],
       "otherRustModuleReferences": [
@@ -3206,7 +3203,7 @@
         {
           "name": "createJobIdRegistryResolver",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -3215,10 +3212,8 @@
       "target": "rust/src/local_managed_store.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 1,
-      "directNameMatches": 0,
-      "unmappedRuntime": [
-        "openLocalManagedStore"
-      ],
+      "directNameMatches": 1,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "LocalManagedStore"
       ],
@@ -3233,7 +3228,7 @@
         {
           "name": "openLocalManagedStore",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -3379,17 +3374,18 @@
       "target": "rust/src/model_routing.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 4,
-      "directNameMatches": 3,
-      "unmappedRuntime": [
-        "routeModel"
-      ],
+      "directNameMatches": 4,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "ModelCandidate",
         "ModelRoutingDecision",
         "ModelRoutingOptions"
       ],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_route_facades.mjs"
+      ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
         "rust/src/decision_audit.rs",
         "rust/src/execution_routing.rs"
       ],
@@ -3427,7 +3423,7 @@
         {
           "name": "routeModel",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -3495,10 +3491,8 @@
       "target": "rust/src/owned_process.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 5,
-      "directNameMatches": 4,
-      "unmappedRuntime": [
-        "ownedProcessTerminationReason"
-      ],
+      "directNameMatches": 5,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "OwnedProcessTerminationReason"
       ],
@@ -3535,7 +3529,7 @@
         {
           "name": "ownedProcessTerminationReason",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "spawnOwnedProcess",
@@ -3653,15 +3647,8 @@
       "target": "rust/src/planner.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 22,
-      "directNameMatches": 14,
-      "unmappedRuntime": [
-        "planningSpec",
-        "CommandObjectivePlanner",
-        "CommandObjectivePlanner.plan",
-        "buildPlannerExecutionPrompt",
-        "AgentObjectivePlanner",
-        "AgentObjectivePlanner.plan"
-      ],
+      "directNameMatches": 20,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "ObjectiveStatus",
         "PlannerTaskSpec",
@@ -3675,8 +3662,12 @@
         "CommandObjectivePlanner.constructor",
         "AgentObjectivePlanner.constructor"
       ],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_planner_public_ports.mjs"
+      ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/planner_adapters.rs",
         "rust/src/planner_runtime.rs",
         "rust/src/pool.rs",
         "rust/src/reconciler.rs"
@@ -3750,7 +3741,7 @@
         {
           "name": "planningSpec",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "normalizePlannerPriority",
@@ -3800,7 +3791,7 @@
         {
           "name": "CommandObjectivePlanner",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "constructor",
@@ -3812,7 +3803,7 @@
           "name": "plan",
           "kind": "class-method",
           "parent": "CommandObjectivePlanner",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "buildPlannerCodexArgs",
@@ -3822,12 +3813,12 @@
         {
           "name": "buildPlannerExecutionPrompt",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "AgentObjectivePlanner",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "constructor",
@@ -3839,7 +3830,7 @@
           "name": "plan",
           "kind": "class-method",
           "parent": "AgentObjectivePlanner",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -4486,10 +4477,8 @@
       "target": "rust/src/reconciler_context.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 3,
-      "directNameMatches": 2,
-      "unmappedRuntime": [
-        "resolvePlannerContext"
-      ],
+      "directNameMatches": 3,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [],
       "directDiffImports": [],
       "otherRustModuleReferences": [],
@@ -4507,7 +4496,7 @@
         {
           "name": "resolvePlannerContext",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -4768,10 +4757,8 @@
       "target": "rust/src/relay_store.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 46,
-      "directNameMatches": 44,
-      "unmappedRuntime": [
-        "SQLiteRelayStore.close"
-      ],
+      "directNameMatches": 45,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "mergeInboundJobSnapshot",
         "ProjectionConflictDiagnostic",
@@ -4797,6 +4784,8 @@
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/closure.rs",
         "rust/src/local_authority_store.rs",
+        "rust/src/local_job_registry.rs",
+        "rust/src/local_managed_store.rs",
         "rust/src/projected_store.rs",
         "rust/src/relayd.rs"
       ],
@@ -5129,7 +5118,7 @@
           "name": "close",
           "kind": "class-method",
           "parent": "SQLiteRelayStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "relayStoreDirectory",
@@ -5706,16 +5695,12 @@
       "target": "rust/src/script_task_adapter.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 3,
-      "directNameMatches": 0,
-      "unmappedRuntime": [
-        "ScriptTaskAdapter",
-        "ScriptTaskAdapter.launch"
-      ],
+      "directNameMatches": 3,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "ScriptTaskAdapter.name",
         "ScriptTaskAdapter.id",
-        "ScriptTaskAdapter.capabilities",
-        "ScriptTaskAdapter.constructor"
+        "ScriptTaskAdapter.capabilities"
       ],
       "directDiffImports": [],
       "otherRustModuleReferences": [],
@@ -5723,7 +5708,7 @@
         {
           "name": "ScriptTaskAdapter",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "name",
@@ -5747,13 +5732,13 @@
           "name": "constructor",
           "kind": "class-constructor",
           "parent": "ScriptTaskAdapter",
-          "static": "review"
+          "static": "name-match"
         },
         {
           "name": "launch",
           "kind": "class-method",
           "parent": "ScriptTaskAdapter",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -6327,11 +6312,8 @@
       "target": "rust/src/task_inactivity_watchdog.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 6,
-      "directNameMatches": 4,
-      "unmappedRuntime": [
-        "armInactivityWatchdog",
-        "acceptTaskProgress"
-      ],
+      "directNameMatches": 6,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [],
       "directDiffImports": [
         "rust/tests/head_to_head_process_browser_worker.mjs",
@@ -6366,12 +6348,12 @@
         {
           "name": "armInactivityWatchdog",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "acceptTaskProgress",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -7321,18 +7303,19 @@
       "target": "rust/src/worker_routing.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 8,
-      "directNameMatches": 7,
-      "unmappedRuntime": [
-        "routeWorker"
-      ],
+      "directNameMatches": 8,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "WorkerCandidate",
         "WorkerRoutingDecision",
         "WorkerRoutingOptions",
         "WorkerEligibilityOptions"
       ],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_route_facades.mjs"
+      ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
         "rust/src/execution_routing.rs",
         "rust/src/model_routing.rs",
         "rust/src/reconciler_review.rs"
@@ -7396,7 +7379,7 @@
         {
           "name": "routeWorker",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -7761,15 +7744,12 @@
       "target": "rust/src/z_adapter.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 5,
-      "directNameMatches": 3,
-      "unmappedRuntime": [
-        "ZAdapter"
-      ],
+      "directNameMatches": 5,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "ZAdapter.name",
         "ZAdapter.id",
-        "ZAdapter.capabilities",
-        "ZAdapter.constructor"
+        "ZAdapter.capabilities"
       ],
       "directDiffImports": [],
       "otherRustModuleReferences": [],
@@ -7792,7 +7772,7 @@
         {
           "name": "ZAdapter",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "name",
@@ -7816,7 +7796,7 @@
           "name": "constructor",
           "kind": "class-constructor",
           "parent": "ZAdapter",
-          "static": "review"
+          "static": "name-match"
         }
       ]
     },
