@@ -16,15 +16,15 @@ A listed direct differential import only means a head-to-head test imports the c
 |---|---:|
 | sourceCount | 107 |
 | runtimeExportSymbols | 734 |
-| directNameMatches | 684 |
-| unmappedRuntimeSymbols | 36 |
-| runtimeConstructorReviews | 14 |
-| typeOrShapeReviewSymbols | 283 |
-| filesWithUnmappedRuntime | 12 |
-| filesWithoutDirectDiffImport | 55 |
-| filesWithoutOtherRustReferences | 33 |
+| directNameMatches | 695 |
+| unmappedRuntimeSymbols | 26 |
+| runtimeConstructorReviews | 13 |
+| typeOrShapeReviewSymbols | 282 |
+| filesWithUnmappedRuntime | 8 |
+| filesWithoutDirectDiffImport | 51 |
+| filesWithoutOtherRustReferences | 31 |
 
-Source tree: `a7fabd653a00`; Rust source tree: `7a928f4ec92e`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `a7fabd653a00`; Rust source tree: `5f573e5dbb09`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Per-file candidate surface (all 107 PORTING files)
 
@@ -86,12 +86,12 @@ Source tree: `a7fabd653a00`; Rust source tree: `7a928f4ec92e`. Rust module rows 
 | `src/model-redecision.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/model-routing.ts` | 4 | 4 | 0 | 1 | 4 |
 | `src/outcome-review.ts` | 5 | 5 | 0 | 2 | 2 |
-| `src/owned-process.ts` | 5 | 5 | 0 | 1 | 15 |
+| `src/owned-process.ts` | 5 | 5 | 0 | 1 | 16 |
 | `src/planner-child-recovery.ts` | 1 | 1 | 0 | 0 | 0 |
-| `src/planner-runtime.ts` | 7 | 0 | 6 | 0 | 0 |
+| `src/planner-runtime.ts` | 7 | 5 | 2 | 2 | 1 |
 | `src/planner.ts` | 22 | 20 | 0 | 1 | 5 |
 | `src/pool.ts` | 15 | 9 | 6 | 1 | 2 |
-| `src/projected-store.ts` | 34 | 33 | 1 | 1 | 1 |
+| `src/projected-store.ts` | 34 | 34 | 0 | 2 | 1 |
 | `src/projection-outbox.ts` | 25 | 25 | 0 | 2 | 1 |
 | `src/reconcile-coordinator.ts` | 7 | 7 | 0 | 2 | 1 |
 | `src/reconciler-context.ts` | 3 | 3 | 0 | 0 | 0 |
@@ -99,8 +99,8 @@ Source tree: `a7fabd653a00`; Rust source tree: `7a928f4ec92e`. Rust module rows 
 | `src/reconciler-runtime.ts` | 10 | 4 | 6 | 0 | 1 |
 | `src/reconciler.ts` | 8 | 4 | 4 | 0 | 1 |
 | `src/relay-store-discovery.ts` | 3 | 3 | 0 | 0 | 4 |
-| `src/relay-store.ts` | 46 | 45 | 0 | 6 | 18 |
-| `src/relayd-control.ts` | 1 | 0 | 1 | 0 | 0 |
+| `src/relay-store.ts` | 46 | 45 | 0 | 8 | 19 |
+| `src/relayd-control.ts` | 1 | 1 | 0 | 1 | 1 |
 | `src/relayd-dashboard-actions.ts` | 1 | 0 | 1 | 0 | 0 |
 | `src/relayd-main.ts` | 0 | 0 | 0 | 0 | 0 |
 | `src/relayd-utilities.ts` | 10 | 10 | 0 | 1 | 2 |
@@ -116,7 +116,7 @@ Source tree: `a7fabd653a00`; Rust source tree: `7a928f4ec92e`. Rust module rows 
 | `src/script-task-adapter.ts` | 3 | 3 | 0 | 0 | 0 |
 | `src/service-external-actions.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/single-job-task-control.ts` | 1 | 1 | 0 | 0 | 0 |
-| `src/store-github.ts` | 21 | 21 | 0 | 0 | 3 |
+| `src/store-github.ts` | 21 | 21 | 0 | 1 | 5 |
 | `src/store.ts` | 22 | 22 | 0 | 6 | 3 |
 | `src/task-actions.ts` | 18 | 18 | 0 | 1 | 8 |
 | `src/task-inactivity-watchdog.ts` | 6 | 6 | 0 | 3 | 2 |
@@ -127,31 +127,27 @@ Source tree: `a7fabd653a00`; Rust source tree: `7a928f4ec92e`. Rust module rows 
 | `src/troubleshooter.ts` | 6 | 6 | 0 | 0 | 2 |
 | `src/types.ts` | 7 | 7 | 0 | 1 | 4 |
 | `src/unblock.ts` | 4 | 4 | 0 | 1 | 4 |
-| `src/usage.ts` | 26 | 15 | 3 | 2 | 4 |
+| `src/usage.ts` | 26 | 18 | 0 | 3 | 5 |
 | `src/worker-failure-recovery.ts` | 1 | 0 | 1 | 0 | 0 |
 | `src/worker-routing.ts` | 8 | 8 | 0 | 1 | 4 |
 | `src/workflow-effect-failures.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/workflow/durable-transition.ts` | 4 | 4 | 0 | 1 | 0 |
 | `src/workflow/planner-orchestration-v2.ts` | 4 | 4 | 0 | 3 | 3 |
 | `src/workflow/task-resolution.ts` | 12 | 12 | 0 | 3 | 8 |
-| `src/workspace.ts` | 21 | 20 | 1 | 0 | 2 |
+| `src/workspace.ts` | 21 | 21 | 0 | 1 | 3 |
 | `src/z-adapter.ts` | 5 | 5 | 0 | 0 | 0 |
 | `src/z-oauth.ts` | 2 | 2 | 0 | 0 | 1 |
 
 ## Priority review: unmapped exported runtime symbols
 
-- **src/planner-runtime.ts** (6): PlannerApplyValidationError, activateCommittedPlannerWork, drainPlannerUnblocks, retryPendingPlannerUnblocks, finishPlanner, launchPlanExecution
 - **src/pool.ts** (6): aggregateManagedGitHubJobs, RepositoryWorkerPool.reconcileLocalJob, RepositoryWorkerPool.reconcileKnown, RepositoryWorkerPool.watch, RepositoryWorkerPool.webhookSignal, RepositoryWorkerPool.webhookWake
 - **src/reconciler-runtime.ts** (6): ReconcilerRuntimeBase, ReconcilerRuntimeBase.reconcile, ReconcilerRuntimeBase.bindInteractiveInvocation, ReconcilerRuntimeBase.handleEvent, ReconcilerRuntimeBase.watch, ReconcilerRuntimeBase.wake
 - **src/cli.ts** (5): runtimePlanner, runtime, dashboardJobAction, createService, startService
 - **src/reconciler.ts** (4): Reconciler.reconcile, Reconciler.recoverLostExecutions, Reconciler.planJob, Reconciler.applyPlannerTree
-- **src/usage.ts** (3): CodexApiUsageReader, CodexApiUsageReader.read, codexAndZaiUsageRegistry
-- **src/projected-store.ts** (1): ProjectedDurableStore.comments
+- **src/planner-runtime.ts** (2): finishPlanner, launchPlanExecution
 - **src/reconciler-review.ts** (1): ReconcilerReviewBase
-- **src/relayd-control.ts** (1): createWorkspaceControl
 - **src/relayd-dashboard-actions.ts** (1): createDashboardActions
 - **src/worker-failure-recovery.ts** (1): handleWorkerLaunchFailure
-- **src/workspace.ts** (1): prepareManagedExecutionWorktree
 
 ## Required next verification
 

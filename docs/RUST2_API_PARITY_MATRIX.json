@@ -2,16 +2,16 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity.",
   "summary": {
     "sourceTree": "a7fabd653a006bcd33b84d3eb7ac4c28b085f9dd",
-    "rustTree": "7a928f4ec92e924e8bc7382df3bd62ca10870d84",
+    "rustTree": "5f573e5dbb099953a07d7f5e066197389460ce3c",
     "sourceCount": 107,
     "runtimeExportSymbols": 734,
-    "directNameMatches": 684,
-    "unmappedRuntimeSymbols": 36,
-    "runtimeConstructorReviews": 14,
-    "typeOrShapeReviewSymbols": 283,
-    "filesWithUnmappedRuntime": 12,
-    "filesWithoutDirectDiffImport": 55,
-    "filesWithoutOtherRustReferences": 33
+    "directNameMatches": 695,
+    "unmappedRuntimeSymbols": 26,
+    "runtimeConstructorReviews": 13,
+    "typeOrShapeReviewSymbols": 282,
+    "filesWithUnmappedRuntime": 8,
+    "filesWithoutDirectDiffImport": 51,
+    "filesWithoutOtherRustReferences": 31
   },
   "files": [
     {
@@ -3524,6 +3524,7 @@
         "rust/src/process_worker_parity_harness.rs",
         "rust/src/script_task_adapter.rs",
         "rust/src/usage.rs",
+        "rust/src/usage_codex_api.rs",
         "rust/src/workspace.rs"
       ],
       "exports": [
@@ -3587,27 +3588,27 @@
       "target": "rust/src/planner_runtime.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 7,
-      "directNameMatches": 0,
+      "directNameMatches": 5,
       "unmappedRuntime": [
-        "PlannerApplyValidationError",
-        "activateCommittedPlannerWork",
-        "drainPlannerUnblocks",
-        "retryPendingPlannerUnblocks",
         "finishPlanner",
         "launchPlanExecution"
       ],
       "typeOrShapeReview": [
         "PlannerApplyValidationError.code",
-        "PlannerApplyValidationError.constructor",
         "PlannerRuntimePorts"
       ],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_planner_activation.mjs",
+        "rust/tests/head_to_head_planner_unblocks.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs"
+      ],
       "exports": [
         {
           "name": "PlannerApplyValidationError",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "code",
@@ -3619,12 +3620,12 @@
           "name": "constructor",
           "kind": "class-constructor",
           "parent": "PlannerApplyValidationError",
-          "static": "review"
+          "static": "name-match"
         },
         {
           "name": "activateCommittedPlannerWork",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "PlannerRuntimePorts",
@@ -3634,12 +3635,12 @@
         {
           "name": "drainPlannerUnblocks",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "retryPendingPlannerUnblocks",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "finishPlanner",
@@ -3958,16 +3959,15 @@
       "target": "rust/src/projected_store.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 34,
-      "directNameMatches": 33,
-      "unmappedRuntime": [
-        "ProjectedDurableStore.comments"
-      ],
+      "directNameMatches": 34,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "ProjectionConflictEvent",
         "ProjectionConflictObserver",
         "ProjectedDurableStore.projection"
       ],
       "directDiffImports": [
+        "rust/tests/head_to_head_projected_comments.mjs",
         "rust/tests/head_to_head_store_facade_closure.mjs"
       ],
       "otherRustModuleReferences": [
@@ -4134,7 +4134,7 @@
           "name": "comments",
           "kind": "class-method",
           "parent": "ProjectedDurableStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "applyPullRequestFacts",
@@ -4793,6 +4793,8 @@
         "rust/tests/head_to_head_coordinator_cli.mjs",
         "rust/tests/head_to_head_host_invocation_ports.mjs",
         "rust/tests/head_to_head_local_blocker_port.mjs",
+        "rust/tests/head_to_head_planner_unblocks.mjs",
+        "rust/tests/head_to_head_projected_comments.mjs",
         "rust/tests/head_to_head_store_facade_closure.mjs"
       ],
       "otherRustModuleReferences": [
@@ -4809,6 +4811,7 @@
         "rust/src/local_authority_store.rs",
         "rust/src/local_job_registry.rs",
         "rust/src/local_managed_store.rs",
+        "rust/src/planner_runtime.rs",
         "rust/src/projected_store.rs",
         "rust/src/relayd.rs",
         "rust/src/task_actions.rs",
@@ -5178,18 +5181,20 @@
       "target": "rust/src/relayd_control.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 1,
-      "directNameMatches": 0,
-      "unmappedRuntime": [
-        "createWorkspaceControl"
-      ],
+      "directNameMatches": 1,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_workspace_control_factory.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/control_factory.rs"
+      ],
       "exports": [
         {
           "name": "createWorkspaceControl",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -5817,9 +5822,13 @@
       "directNameMatches": 21,
       "unmappedRuntime": [],
       "typeOrShapeReview": [],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_projected_comments.mjs"
+      ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
         "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/projected_store.rs",
         "rust/src/store.rs",
         "rust/src/store_pull_request.rs"
       ],
@@ -7063,12 +7072,8 @@
       "target": "rust/src/usage.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 26,
-      "directNameMatches": 15,
-      "unmappedRuntime": [
-        "CodexApiUsageReader",
-        "CodexApiUsageReader.read",
-        "codexAndZaiUsageRegistry"
-      ],
+      "directNameMatches": 18,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "AccountUsageWindow",
         "AccountUsageSnapshot",
@@ -7090,6 +7095,7 @@
         "UnavailableUsageReader.constructor"
       ],
       "directDiffImports": [
+        "rust/tests/head_to_head_codex_api_usage.mjs",
         "rust/tests/head_to_head_usage_readers_mitigation.mjs",
         "rust/tests/head_to_head_usage_registry_closure.mjs"
       ],
@@ -7097,6 +7103,7 @@
         "rust/src/bin/relay-rust2-parity/closure.rs",
         "rust/src/bin/relay-rust2-parity.rs",
         "rust/src/model_redecision.rs",
+        "rust/src/usage_codex_api.rs",
         "rust/src/usage_readers.rs"
       ],
       "exports": [
@@ -7180,7 +7187,7 @@
         {
           "name": "CodexApiUsageReader",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "constructor",
@@ -7192,7 +7199,7 @@
           "name": "read",
           "kind": "class-method",
           "parent": "CodexApiUsageReader",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "CodexSessionUsageReader",
@@ -7304,7 +7311,7 @@
         {
           "name": "codexAndZaiUsageRegistry",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -7640,17 +7647,18 @@
       "target": "rust/src/workspace.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 21,
-      "directNameMatches": 20,
-      "unmappedRuntime": [
-        "prepareManagedExecutionWorktree"
-      ],
+      "directNameMatches": 21,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "DiscoveredRepository",
         "ManagedPullRequestHead",
         "ManagedWorktreeCleanupResult"
       ],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_managed_workspace.mjs"
+      ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
         "rust/src/cli_coordinator.rs",
         "rust/src/relayd.rs"
       ],
@@ -7728,7 +7736,7 @@
         {
           "name": "prepareManagedExecutionWorktree",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "managedJobWorktreePath",
