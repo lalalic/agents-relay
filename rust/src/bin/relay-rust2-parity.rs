@@ -360,6 +360,31 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=closure::invoke(request)?{return Ok(output);}
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "apiModelRedecision" => {
+            struct StubUsage(Value);
+            impl agents_relay_rust2::usage::UsageSnapshotProvider for StubUsage {
+                fn snapshot(&self)->Result<Value,String>{Ok(self.0.clone())}
+            }
+            let registered=request["registered"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+            let mut updated=Value::Null;
+            let mut audits=Vec::<Value>::new();
+            let result=agents_relay_rust2::model_redecision::redecide_failed_task(
+                &request["task"],&request["worker"],registered,
+                &StubUsage(request["usage"].clone()),&request["evidence"],
+                std::path::Path::new(request["codexHome"].as_str().unwrap_or("/tmp/nonexistent-rust2-home")),
+                request["nowMs"].as_i64().unwrap_or(1_794_938_400_000),
+                request["policyPath"].as_str().unwrap_or("/tmp/nonexistent-rust2-policy"),
+                request["rulesPath"].as_str().unwrap_or("/tmp/nonexistent-rust2-rules"),
+                request["decisionMode"].as_str(),
+                request["choice"].as_str(),request.get("decisionEvidence"),
+                request["withAudit"].as_bool().unwrap_or(false),
+                |_,route|{updated=route.clone();Ok(())},
+                |record|{audits.push(record.clone());Ok(())});
+            Ok(json!({"outcome":match result{
+                Ok(value)=>json!({"ok":true,"value":value}),
+                Err(error)=>json!({"ok":false,"error":error}),
+            },"updated":updated,"audits":audits}).to_string())
+        }
         "apiCliReview" => {
             use agents_relay_rust2::cli_review::run_review_command;
             let action=request["action"].as_str().unwrap_or("interactive");
