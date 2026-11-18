@@ -144,8 +144,10 @@ pub fn launch_failure_event(
     }else if queued{"worker.pre_submission_rejected"}else{"task.failed"};
     let reason=task.get("failureReason").filter(|v|!v.is_null()).cloned()
         .or_else(||proposal.failure_reason.as_ref().map(|s|json!(s)));
-    let mut data=json!({"phase":proposal.phase,"reason":reason,
-        "workflowEvent":proposal.event});
+    // Node leaves optional `reason` undefined when no failure reason was
+    // classified; JSON events omit it rather than serializing `null`.
+    let mut data=json!({"phase":proposal.phase,"workflowEvent":proposal.event});
+    if let Some(reason)=reason{data["reason"]=reason;}
     if task.get("noStartFallback").is_some_and(|v|!v.is_null()){
         data["noStartFallback"]=task["noStartFallback"].clone();
     }
@@ -158,4 +160,14 @@ pub fn launch_failure_event(
         task.get("error").and_then(Value::as_str).unwrap_or(&fallback),
         Some("user"),Some(data),
         Some(json!({"agent":"relay","component":"agents-relay","watchdog":true})))
+}
+
+/// Public Node handleWorkerLaunchFailure: ordered, execution-fenced
+/// orchestration through one injected Graph/SQLite authoritative runtime.
+pub fn handle_worker_launch_failure<P:crate::worker_failure_orchestration::WorkerFailurePorts>(
+    ports:&mut P,job_id:&str,task_id:&str,execution_id:Option<&str>,
+    failure:&Value,phase:&str,
+)->Result<(),String>{
+    crate::worker_failure_orchestration::handle_worker_launch_failure_impl(
+        ports,job_id,task_id,execution_id,failure,phase)
 }

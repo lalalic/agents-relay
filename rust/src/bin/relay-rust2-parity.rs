@@ -28,6 +28,8 @@ mod closure;
 mod control_factory;
 #[path = "relay-rust2-parity/dashboard_factory.rs"]
 mod dashboard_factory;
+#[path = "relay-rust2-parity/worker_failure_parity.rs"]
+mod worker_failure_parity;
 use serde_json::{json, Value};
 use std::io::{self, BufRead};
 
@@ -361,6 +363,7 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 }
 
 fn invoke(request: &Value) -> Result<String, String> {
+    if let Some(output)=worker_failure_parity::invoke(request)?{return Ok(output);}
     if let Some(output)=dashboard_factory::invoke(request)?{return Ok(output);}
     if let Some(output)=closure::invoke(request)?{return Ok(output);}
     let op = request["op"].as_str().ok_or("missing op")?;

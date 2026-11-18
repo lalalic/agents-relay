@@ -303,6 +303,7 @@ pub mod dependency_revision_execution;
 pub mod manual_plan;
 pub mod task_recovery;
 pub mod worker_failure_recovery;
+pub mod worker_failure_orchestration;
 pub mod cli_worker_task;
 pub mod dashboard_actions;
 pub mod relayd_utilities;
