@@ -2,14 +2,14 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity.",
   "summary": {
     "sourceTree": "a7fabd653a006bcd33b84d3eb7ac4c28b085f9dd",
-    "rustTree": "d52314421a01e8a490b4401a697034225bd85626",
+    "rustTree": "4d0f535228aeb4002b9da7b8b25075b49f280090",
     "sourceCount": 107,
     "runtimeExportSymbols": 734,
-    "directNameMatches": 595,
-    "unmappedRuntimeSymbols": 122,
-    "runtimeConstructorReviews": 17,
-    "typeOrShapeReviewSymbols": 286,
-    "filesWithUnmappedRuntime": 46,
+    "directNameMatches": 620,
+    "unmappedRuntimeSymbols": 98,
+    "runtimeConstructorReviews": 16,
+    "typeOrShapeReviewSymbols": 285,
+    "filesWithUnmappedRuntime": 45,
     "filesWithoutDirectDiffImport": 70,
     "filesWithoutOtherRustReferences": 41
   },
@@ -726,12 +726,8 @@
       "target": "rust/src/cli_support.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 38,
-      "directNameMatches": 30,
+      "directNameMatches": 34,
       "unmappedRuntime": [
-        "ServiceEventBus.publish",
-        "ServiceEventBus.subscribe",
-        "ServiceEventBus.subscribeAll",
-        "ServiceEventBus.close",
         "storeFor",
         "eventBus",
         "withEventBus"
@@ -770,25 +766,25 @@
           "name": "publish",
           "kind": "class-method",
           "parent": "ServiceEventBus",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "subscribe",
           "kind": "class-method",
           "parent": "ServiceEventBus",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "subscribeAll",
           "kind": "class-method",
           "parent": "ServiceEventBus",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "close",
           "kind": "class-method",
           "parent": "ServiceEventBus",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "arg",
@@ -1125,19 +1121,11 @@
       "target": "rust/src/continuation.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 7,
-      "directNameMatches": 0,
-      "unmappedRuntime": [
-        "CodexThreadContinuation",
-        "CodexThreadContinuation.continue",
-        "CommandContinuation",
-        "CommandContinuation.continue",
-        "WebhookContinuation",
-        "WebhookContinuation.continue"
-      ],
+      "directNameMatches": 7,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "ContinuationAdapter",
         "CodexThreadContinuation.kind",
-        "CodexThreadContinuation.constructor",
         "CommandContinuation.kind",
         "WebhookContinuation.kind"
       ],
@@ -1166,7 +1154,7 @@
         {
           "name": "CodexThreadContinuation",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "kind",
@@ -1178,18 +1166,18 @@
           "name": "constructor",
           "kind": "class-constructor",
           "parent": "CodexThreadContinuation",
-          "static": "review"
+          "static": "name-match"
         },
         {
           "name": "continue",
           "kind": "class-method",
           "parent": "CodexThreadContinuation",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "CommandContinuation",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "kind",
@@ -1201,12 +1189,12 @@
           "name": "continue",
           "kind": "class-method",
           "parent": "CommandContinuation",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "WebhookContinuation",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "kind",
@@ -1218,7 +1206,7 @@
           "name": "continue",
           "kind": "class-method",
           "parent": "WebhookContinuation",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
@@ -5956,12 +5944,10 @@
       "target": "rust/src/store.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 22,
-      "directNameMatches": 15,
+      "directNameMatches": 17,
       "unmappedRuntime": [
         "loadManagedGitHubPullRequestGraphql",
         "loadManagedGitHubJobGraphql",
-        "InMemoryStore.closePullRequest",
-        "InMemoryStore.updatePullRequestBody",
         "withGitHubRequestContext",
         "resolvePullRequest",
         "listManagedGitHubJobs"
@@ -6103,13 +6089,13 @@
           "name": "closePullRequest",
           "kind": "class-method",
           "parent": "InMemoryStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "updatePullRequestBody",
           "kind": "class-method",
           "parent": "InMemoryStore",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "headSha",
@@ -7060,22 +7046,10 @@
       "target": "rust/src/usage.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 26,
-      "directNameMatches": 3,
+      "directNameMatches": 15,
       "unmappedRuntime": [
-        "BrowserWorkspaceUsageReader",
-        "BrowserWorkspaceUsageReader.read",
         "CodexApiUsageReader",
         "CodexApiUsageReader.read",
-        "CodexSessionUsageReader",
-        "CodexSessionUsageReader.read",
-        "ZaiUsageReader",
-        "ZaiUsageReader.read",
-        "DeepSeekCreditReader",
-        "DeepSeekCreditReader.read",
-        "OpenRouterCreditReader",
-        "OpenRouterCreditReader.read",
-        "UsageRegistry.snapshot",
-        "UnavailableUsageReader.read",
         "codexAndZaiUsageRegistry"
       ],
       "typeOrShapeReview": [
@@ -7099,10 +7073,12 @@
         "UnavailableUsageReader.constructor"
       ],
       "directDiffImports": [
+        "rust/tests/head_to_head_usage_readers_mitigation.mjs",
         "rust/tests/head_to_head_usage_registry_closure.mjs"
       ],
       "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity/closure.rs"
+        "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/usage_readers.rs"
       ],
       "exports": [
         {
@@ -7168,7 +7144,7 @@
         {
           "name": "BrowserWorkspaceUsageReader",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "constructor",
@@ -7180,7 +7156,7 @@
           "name": "read",
           "kind": "class-method",
           "parent": "BrowserWorkspaceUsageReader",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "CodexApiUsageReader",
@@ -7202,7 +7178,7 @@
         {
           "name": "CodexSessionUsageReader",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "constructor",
@@ -7214,12 +7190,12 @@
           "name": "read",
           "kind": "class-method",
           "parent": "CodexSessionUsageReader",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "ZaiUsageReader",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "constructor",
@@ -7231,12 +7207,12 @@
           "name": "read",
           "kind": "class-method",
           "parent": "ZaiUsageReader",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "DeepSeekCreditReader",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "constructor",
@@ -7248,12 +7224,12 @@
           "name": "read",
           "kind": "class-method",
           "parent": "DeepSeekCreditReader",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "OpenRouterCreditReader",
           "kind": "class",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "constructor",
@@ -7265,7 +7241,7 @@
           "name": "read",
           "kind": "class-method",
           "parent": "OpenRouterCreditReader",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "UsageRegistry",
@@ -7282,7 +7258,7 @@
           "name": "snapshot",
           "kind": "class-method",
           "parent": "UsageRegistry",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "readUsageSnapshot",
@@ -7304,7 +7280,7 @@
           "name": "read",
           "kind": "class-method",
           "parent": "UnavailableUsageReader",
-          "static": "unmapped"
+          "static": "name-match"
         },
         {
           "name": "codexAndZaiUsageRegistry",

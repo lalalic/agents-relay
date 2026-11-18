@@ -16,15 +16,15 @@ A listed direct differential import only means a head-to-head test imports the c
 |---|---:|
 | sourceCount | 107 |
 | runtimeExportSymbols | 734 |
-| directNameMatches | 595 |
-| unmappedRuntimeSymbols | 122 |
-| runtimeConstructorReviews | 17 |
-| typeOrShapeReviewSymbols | 286 |
-| filesWithUnmappedRuntime | 46 |
+| directNameMatches | 620 |
+| unmappedRuntimeSymbols | 98 |
+| runtimeConstructorReviews | 16 |
+| typeOrShapeReviewSymbols | 285 |
+| filesWithUnmappedRuntime | 45 |
 | filesWithoutDirectDiffImport | 70 |
 | filesWithoutOtherRustReferences | 41 |
 
-Source tree: `a7fabd653a00`; Rust source tree: `d52314421a01`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `a7fabd653a00`; Rust source tree: `4d0f535228ae`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Per-file candidate surface (all 107 PORTING files)
 
@@ -44,11 +44,11 @@ Source tree: `a7fabd653a00`; Rust source tree: `d52314421a01`. Rust module rows 
 | `src/cli-job-create.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/cli-prompt.ts` | 5 | 5 | 0 | 0 | 0 |
 | `src/cli-review.ts` | 3 | 1 | 2 | 0 | 0 |
-| `src/cli-support.ts` | 38 | 30 | 7 | 3 | 2 |
+| `src/cli-support.ts` | 38 | 34 | 3 | 3 | 2 |
 | `src/cli-unblock.ts` | 2 | 0 | 2 | 0 | 0 |
 | `src/cli-worker-task.ts` | 3 | 3 | 0 | 0 | 1 |
 | `src/cli.ts` | 6 | 1 | 5 | 0 | 1 |
-| `src/continuation.ts` | 7 | 0 | 6 | 1 | 11 |
+| `src/continuation.ts` | 7 | 7 | 0 | 1 | 11 |
 | `src/dag-result-contract.ts` | 1 | 1 | 0 | 1 | 3 |
 | `src/dag-task-runtime.ts` | 5 | 5 | 0 | 0 | 2 |
 | `src/dashboard-actions.ts` | 3 | 3 | 0 | 0 | 1 |
@@ -117,7 +117,7 @@ Source tree: `a7fabd653a00`; Rust source tree: `d52314421a01`. Rust module rows 
 | `src/service-external-actions.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/single-job-task-control.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/store-github.ts` | 21 | 19 | 2 | 0 | 0 |
-| `src/store.ts` | 22 | 15 | 7 | 1 | 1 |
+| `src/store.ts` | 22 | 17 | 5 | 1 | 1 |
 | `src/task-actions.ts` | 18 | 14 | 4 | 0 | 5 |
 | `src/task-inactivity-watchdog.ts` | 6 | 4 | 2 | 3 | 2 |
 | `src/task-recovery.ts` | 4 | 4 | 0 | 0 | 1 |
@@ -127,7 +127,7 @@ Source tree: `a7fabd653a00`; Rust source tree: `d52314421a01`. Rust module rows 
 | `src/troubleshooter.ts` | 6 | 6 | 0 | 0 | 2 |
 | `src/types.ts` | 7 | 7 | 0 | 1 | 4 |
 | `src/unblock.ts` | 4 | 3 | 1 | 0 | 2 |
-| `src/usage.ts` | 26 | 3 | 15 | 1 | 1 |
+| `src/usage.ts` | 26 | 15 | 3 | 2 | 2 |
 | `src/worker-failure-recovery.ts` | 1 | 0 | 1 | 0 | 0 |
 | `src/worker-routing.ts` | 8 | 7 | 1 | 0 | 3 |
 | `src/workflow-effect-failures.ts` | 2 | 2 | 0 | 0 | 0 |
@@ -140,19 +140,18 @@ Source tree: `a7fabd653a00`; Rust source tree: `d52314421a01`. Rust module rows 
 
 ## Priority review: unmapped exported runtime symbols
 
-- **src/usage.ts** (15): BrowserWorkspaceUsageReader, BrowserWorkspaceUsageReader.read, CodexApiUsageReader, CodexApiUsageReader.read, CodexSessionUsageReader, CodexSessionUsageReader.read, ZaiUsageReader, ZaiUsageReader.read, DeepSeekCreditReader, DeepSeekCreditReader.read, OpenRouterCreditReader, OpenRouterCreditReader.read, UsageRegistry.snapshot, UnavailableUsageReader.read, codexAndZaiUsageRegistry
-- **src/cli-support.ts** (7): ServiceEventBus.publish, ServiceEventBus.subscribe, ServiceEventBus.subscribeAll, ServiceEventBus.close, storeFor, eventBus, withEventBus
-- **src/store.ts** (7): loadManagedGitHubPullRequestGraphql, loadManagedGitHubJobGraphql, InMemoryStore.closePullRequest, InMemoryStore.updatePullRequestBody, withGitHubRequestContext, resolvePullRequest, listManagedGitHubJobs
-- **src/continuation.ts** (6): CodexThreadContinuation, CodexThreadContinuation.continue, CommandContinuation, CommandContinuation.continue, WebhookContinuation, WebhookContinuation.continue
 - **src/planner-runtime.ts** (6): PlannerApplyValidationError, activateCommittedPlannerWork, drainPlannerUnblocks, retryPendingPlannerUnblocks, finishPlanner, launchPlanExecution
 - **src/planner.ts** (6): planningSpec, CommandObjectivePlanner, CommandObjectivePlanner.plan, buildPlannerExecutionPrompt, AgentObjectivePlanner, AgentObjectivePlanner.plan
 - **src/pool.ts** (6): aggregateManagedGitHubJobs, RepositoryWorkerPool.reconcileLocalJob, RepositoryWorkerPool.reconcileKnown, RepositoryWorkerPool.watch, RepositoryWorkerPool.webhookSignal, RepositoryWorkerPool.webhookWake
 - **src/reconciler-runtime.ts** (6): ReconcilerRuntimeBase, ReconcilerRuntimeBase.reconcile, ReconcilerRuntimeBase.bindInteractiveInvocation, ReconcilerRuntimeBase.handleEvent, ReconcilerRuntimeBase.watch, ReconcilerRuntimeBase.wake
 - **src/cli.ts** (5): runtimePlanner, runtime, dashboardJobAction, createService, startService
+- **src/store.ts** (5): loadManagedGitHubPullRequestGraphql, loadManagedGitHubJobGraphql, withGitHubRequestContext, resolvePullRequest, listManagedGitHubJobs
 - **src/reconciler.ts** (4): Reconciler.reconcile, Reconciler.recoverLostExecutions, Reconciler.planJob, Reconciler.applyPlannerTree
 - **src/task-actions.ts** (4): classifyFailedTask, applyTaskUnblockRetrySnapshot, supersedeCancelledTask, dispatchTaskAction
 - **src/adapters.ts** (3): LaunchFailure, StartAckTimeout, ensureChatGptWebHelmReady
+- **src/cli-support.ts** (3): storeFor, eventBus, withEventBus
 - **src/projected-store.ts** (3): ProjectedDurableStore.comments, ProjectedDurableStore.registerBlockerDependent, ProjectedDurableStore.resolveBlockerDependents
+- **src/usage.ts** (3): CodexApiUsageReader, CodexApiUsageReader.read, codexAndZaiUsageRegistry
 - **src/cli-escalation.ts** (2): runConfiguredEscalation, runEscalationCommand
 - **src/cli-review.ts** (2): runInteractiveReviewCommand, runReviewCommand
 - **src/cli-unblock.ts** (2): runTaskUnblockCommand, runJobUnblockCommand
