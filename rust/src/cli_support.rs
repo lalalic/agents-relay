@@ -2,6 +2,10 @@
 // Job binding and HTTP control transport. No Dashboard browser code.
 use crate::{
     events_bus_runtime::resolve_events_bus_runtime,
+    events::NatsEventBus,
+    local_authority_store::LocalAuthorityDurableStore,
+    relay_store::SQLiteRelayStore,
+    store::InMemoryStore,
     local_job_registry::find_job_id_snapshot,
     relay_job_snapshot_reads::normalize_relay_job,
 };
@@ -13,7 +17,7 @@ pub use crate::cli_support_events::{
     publish_wake,publish_task_unblocked,publish_task_blocked,
     publish_dependent_unblocked,request_managed_reconciliation,
 };
-use std::{fs,path::Path};
+use std::{fs,path::{Path,PathBuf}};
 use url::Url;
 
 pub const SERVICE_PORT:u16=8787;
@@ -338,4 +342,145 @@ pub fn event_bus_resolution_message(resolution:&Value)->String{
         Some("local")=>"event transport: none (local mode)".into(),
         _=>"event transport: none (NATS unavailable)".into()
     }
+}
+
+
+/// An immutable --file/read-only fixture must never construct a writable
+/// SQLite store (which would run schema migrations and reclaim outbox rows).
+/// Only mutable Job bindings open a scoped SQLite authority.
+pub enum CliBoundStore {
+    InMemory(InMemoryStore),
+    Authoritative(LocalAuthorityDurableStore),
+}
+impl CliBoundStore {
+    pub fn load(&self,job_id:&str)->Result<Value,String>{
+        match self {
+            Self::InMemory(store)=>store.load(job_id),
+            Self::Authoritative(store)=>store.load(job_id),
+        }
+    }
+    pub fn is_writable_sqlite(&self)->bool{matches!(self,Self::Authoritative(_))}
+}
+pub struct CliStoreBinding {
+    pub store:CliBoundStore,
+    pub job:Value,
+    pub local_file:Option<PathBuf>,
+}
+
+/// Node storeFor API: resolve immutable identity before requesting a scoped
+/// SQLite connection, and never hydrate authoritative Tasks from GitHub.
+pub fn store_for(
+    args:&[String],directory:&Path,allow_id_only:bool,optional_repo:bool,
+)->Result<CliStoreBinding,String>{
+    if allow_id_only{validate_read_only_job_binding(args)?;}
+    let file=arg(args,"--file","");
+    if !file.is_empty(){
+        let source=fs::read_to_string(file).map_err(|e|e.to_string())?;
+        let job:Value=serde_json::from_str(&source).map_err(|e|e.to_string())?;
+        let id=job.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+        let store=InMemoryStore::new(Some(&job));
+        let read=store.load(&id)?;
+        if allow_id_only||optional_repo{
+            if arg(args,"--id","")!=id{return Err("Local --file Job ID binding mismatch".into());}
+            let repository=arg(args,"--repo","");
+            if !repository.is_empty() && field(&read,"repository")!=repository{
+                return Err("Local --file repository binding mismatch".into());
+            }
+            if has_arg(args,"--pr"){
+                let pr=read.get("prNumber").and_then(Value::as_f64).unwrap_or(0.0).max(0.0);
+                if pr!=js_number(arg(args,"--pr","")){
+                    return Err("Local --file PR binding mismatch".into());
+                }
+            }
+        }
+        return Ok(CliStoreBinding{store:CliBoundStore::InMemory(store),
+            job:read,local_file:Some(PathBuf::from(file))});
+    }
+    let repository=arg(args,"--repo","");
+    let job_id=arg(args,"--id","");
+    if !allow_id_only&&!optional_repo&&repository.is_empty(){
+        return Err("--repo must name the local Git root directory".into());
+    }
+    if job_id.is_empty(){
+        return Err("Local Job requires --id and, for this operation, --repo (or explicit --file)".into());
+    }
+    let requested_dir=arg(args,"--store-dir","");
+    let directory=if requested_dir.is_empty(){directory}else{Path::new(requested_dir)};
+    let selected=find_job_id_snapshot(directory,job_id)?
+        .ok_or_else(||format!("Immutable local Job not found for repository: {job_id}"))?;
+    if !repository.is_empty()&&field(&selected.job,"repository")!=repository{
+        return Err(format!("Immutable local Job not found for repository: {job_id}"));
+    }
+    let supplied_pr=arg(args,"--pr","");
+    if !supplied_pr.is_empty(){
+        let bound=selected.job.get("prNumber").and_then(Value::as_f64)
+            .unwrap_or(0.0).max(0.0);
+        if bound!=js_number(supplied_pr){
+            return Err("Local Job/PR binding mismatch".into());
+        }
+    }
+    if allow_id_only{
+        let job=normalize_relay_job(&selected.job.to_string())?;
+        let store=InMemoryStore::new(Some(&job));
+        return Ok(CliStoreBinding{store:CliBoundStore::InMemory(store),
+            job,local_file:None});
+    }
+    let sqlite=SQLiteRelayStore::open(&selected.snapshot.path,Some(job_id))?;
+    let store=LocalAuthorityDurableStore::new(sqlite,true);
+    let job=store.load(job_id)?;
+    Ok(CliStoreBinding{store:CliBoundStore::Authoritative(store),
+        job,local_file:None})
+}
+fn field<'a>(value:&'a Value,key:&str)->&'a str{
+    value.get(key).and_then(Value::as_str).unwrap_or("")
+}
+
+/// Actual NATS transport selection. Auto detection checks a bounded PING;
+/// an explicit --events nats selection is not conflated with reachable.
+pub fn event_bus(
+    args:&[String],environment:&Value,
+    probe:Option<&dyn Fn(&NatsEventBus)->bool>,
+)->Result<Option<NatsEventBus>,String>{
+    let config=resolve_event_bus(args,environment,true)?;
+    let transport=config.get("transport").and_then(Value::as_str).unwrap_or("none");
+    if transport=="none"{
+        eprintln!("{}",event_bus_resolution_message(&config));
+        return Ok(None);
+    }
+    let bus=NatsEventBus::new(config.get("natsUrl").and_then(Value::as_str),
+        config.get("subjectPrefix").and_then(Value::as_str))?;
+    if has_arg(args,"--events"){
+        eprintln!("{}",event_bus_resolution_message(&config));
+        return Ok(Some(bus));
+    }
+    let reachable=probe.map(|fn_|fn_(&bus)).unwrap_or_else(||bus.ping().is_ok());
+    let resolution=resolve_event_bus(args,environment,reachable)?;
+    eprintln!("{}",event_bus_resolution_message(&resolution));
+    if !reachable{
+        let _=bus.close();
+        return Ok(None);
+    }
+    // The auto-probe connection is closed before returning a fresh transport,
+    // like Node resolveEventBus. A stale PING is not an execution receipt.
+    let _=bus.close();
+    Ok(Some(NatsEventBus::new(
+        resolution.get("natsUrl").and_then(Value::as_str),
+        resolution.get("subjectPrefix").and_then(Value::as_str))?))
+}
+
+/// Event bus lifetime is owned by this function, including on Work errors.
+/// Delivery errors cannot be converted into durable Task success.
+pub fn with_event_bus<B,Resolve,Work,T>(
+    args:&[String],resolve:Resolve,work:Work,
+)->Result<T,String>
+where B:ServiceEventBusPort,
+    Resolve:FnOnce(&[String])->Result<Option<B>,String>,
+    Work:FnOnce(Option<&B>)->Result<T,String>,
+{
+    let bus=resolve(args)?;
+    let result=work(bus.as_ref());
+    if let Some(bus)=bus.as_ref(){
+        if let Err(error)=bus.close(){eprintln!("warning: event bus close failed: {error}");}
+    }
+    result
 }
