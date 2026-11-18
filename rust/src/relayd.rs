@@ -205,6 +205,10 @@ pub fn reconcile_durable_job(
         }
         fn launch(&mut self,action:&Value)->Result<(),String>{(self.0.launch)(action)}
         fn broadcast(&mut self,event:&Value)->Result<(),String>{(self.0.broadcast)(event)}
+        fn load_execution_process(&mut self,_job_id:&str,_task_id:&str,
+            _execution_id:&str)->Result<Option<Value>,String>{
+            Err("DaemonWorkPort requires execution process SQLite binding".into())
+        }
     }
     reconciler.reconcile(job_id,verified_head,project,roots,
         adapters,registered,usage,&mut Adapter(ports))
@@ -229,6 +233,10 @@ pub fn remote_delivery_candidates(config:&DaemonConfig)
 pub trait DaemonServices:Send{
     fn control(&mut self,body:&Value)->Result<Value,String>;
     fn load(&mut self,id:&str)->Result<Value,String>;
+    fn load_execution_process(&mut self,_job_id:&str,_task_id:&str,
+        _execution_id:&str)->Result<Option<Value>,String>{
+        Err("Daemon Store execution process lookup is not wired".into())
+    }
     fn save_exact(&mut self,id:&str,prior:&Value,next:&Value)
         ->Result<Value,String>;
     fn job_action(&mut self,id:&str,action:&str)->Result<Value,String>;
@@ -321,6 +329,10 @@ impl<S:DaemonServices> ReconcileHost for DaemonReconcileHost<'_,S>{
     }
     fn launch(&mut self,action:&Value)->Result<(),String>{self.0.effect(action)}
     fn broadcast(&mut self,event:&Value)->Result<(),String>{self.0.publish_event(event)}
+    fn load_execution_process(&mut self,job_id:&str,task_id:&str,
+        execution_id:&str)->Result<Option<Value>,String>{
+        self.0.load_execution_process(job_id,task_id,execution_id)
+    }
 }
 /// Runtime host explicit opt-in: one server, one Pool, SQLite inventory only.
 pub fn run_daemon<S:DaemonServices+'static>(

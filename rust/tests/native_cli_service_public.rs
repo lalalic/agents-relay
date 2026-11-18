@@ -25,6 +25,10 @@ impl DaemonServices for Local{
         if self.fault_initial&&number>1{return Err("injected SQLite read error".into());}
         self.store.load_job(id)?.ok_or_else(||format!("Job {id} missing"))
     }
+    fn load_execution_process(&mut self,job_id:&str,task_id:&str,
+        execution_id:&str)->Result<Option<Value>,String>{
+        self.store.load_execution_process(job_id,task_id,execution_id)
+    }
     fn save_exact(&mut self,id:&str,prior:&Value,next:&Value)->Result<Value,String>{
         self.store.mutate_job(id,|current|{
             if &current!=prior{return Err("Stale local SQLite candidate".into())}

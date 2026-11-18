@@ -8,6 +8,7 @@ use crate::{
     final_review_role::is_final_review_agent,
     job_execution_slot::job_has_conflicting_execution,
     local_merge_lock::iso8601_now,
+    process_identity::{active_relay_lease_owner,probe_process_record,stop_orphaned_process_group},
     planner::{create_plan_round,pending_plan},
     planner_recovery::create_failed_plan_recovery,
     reconciler_review::{
@@ -106,23 +107,114 @@ impl Reconciler{
     /// Graph planner/review/DAG/Job decisions, fenced SQLite write, then
     /// observable events and selected external effects. Any CAS rejection
     /// stops execution before launching new workers.
+    /// The expired generation is verified against the *current* Job and the
+    /// exact recorded POSIX identity before any Graph mutation. A stale
+    /// candidate cannot overwrite a replacement execution: every recovery
+    /// Task transition is committed through an authoritative whole-Job CAS.
+    fn recover_expired_generations<P:crate::reconciler_durable::ReconcileHost>(
+        &mut self,job_id:&str,host:&mut P,
+    )->Result<(),String>{
+        let initial=host.load(job_id)?;
+        if !active(&initial)||initial.get("pause").is_some_and(|v|!v.is_null()){
+            return Ok(());
+        }
+        let now=self.options.get("now").and_then(Value::as_str)
+            .and_then(|value|DateTime::parse_from_rfc3339(value).ok())
+            .map(|value|value.timestamp_millis())
+            .or_else(||self.options.get("now").and_then(Value::as_i64))
+            .unwrap_or_else(||Utc::now().timestamp_millis());
+        for stale in tasks(&initial).iter().filter(|task|{
+            if field(task,"kind")=="planner"{return false;}
+            let state=field(task,"state");
+            let eligible=state=="RUNNING"
+                ||state=="QUEUED"&&task.get("executionId").is_some_and(|v|!v.is_null());
+            let lease=task.get("leaseExpiresAt").and_then(Value::as_str);
+            eligible&&lease.is_some_and(|lease|DateTime::parse_from_rfc3339(lease)
+                .map(|time|time.timestamp_millis()<=now).unwrap_or(true))
+        }){
+            let task_id=field(stale,"id");
+            let fresh=host.load(job_id)?;
+            let Some(index)=tasks(&fresh).iter().position(|task|
+                field(task,"id")==task_id)else{continue;};
+            let current=&fresh["tasks"][index];
+            if !["executionId","leaseOwner","leaseExpiresAt"].iter()
+                .all(|key|current.get(*key)==stale.get(*key)){
+                continue;
+            }
+            let state=field(current,"state");
+            if state!="RUNNING"&&!(state=="QUEUED"
+                &&current.get("executionId").is_some_and(|v|!v.is_null())){
+                continue;
+            }
+            if !current.get("leaseExpiresAt").and_then(Value::as_str)
+                .is_some_and(|lease|DateTime::parse_from_rfc3339(lease)
+                    .map(|time|time.timestamp_millis()<=now).unwrap_or(true)){
+                continue;
+            }
+            let generation=current.get("executionId").and_then(Value::as_str);
+            let owner=current.get("leaseOwner").and_then(Value::as_str);
+            if owner.is_some_and(|owner|!owner.is_empty()
+                &&owner!=self.runtime.owner&&active_relay_lease_owner(owner)){
+                continue;
+            }
+            if let Some(generation)=generation{
+                let recorded=host.load_execution_process(job_id,task_id,generation)?;
+                if let Some(record)=recorded{
+                    if !record.get("endedAt").is_some_and(|v|!v.is_null()){
+                        let status=probe_process_record(&record);
+                        if status!="gone"&&status!="reused"{
+                            if status!="alive"||!stop_orphaned_process_group(
+                                &record,std::time::Duration::from_millis(750)){
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+            let mut candidate=fresh.clone();
+            let task=&mut candidate["tasks"][index];
+            let retry_available=task.get("attempt").and_then(Value::as_u64)
+                .unwrap_or(0)<task.get("maxAttempts").and_then(Value::as_u64)
+                .unwrap_or(0);
+            let decision=try_transition_task_event(&self.graph_directory,
+                task,"lease.expired",&json!({"retryAvailable":retry_available}),
+                &iso8601_now())?;
+            if decision.get("accepted")!=Some(&Value::Bool(true)){
+                continue;
+            }
+            let failed=field(task,"state")=="FAILED";
+            let parent=task.get("parentTaskId").and_then(Value::as_str)
+                .map(str::to_owned);
+            let message=task.get("error").and_then(Value::as_str)
+                .unwrap_or("Execution lease expired").to_owned();
+            host.persist(job_id,&fresh,&candidate)?;
+            if let Some(generation)=generation{
+                self.runtime.cancel_execution_generation(job_id,task_id,generation);
+            }
+            if failed{
+                host.broadcast(&event_for(job_id,task_id,parent.as_deref(),
+                    "task.failed","failed",&message,Some("user"),
+                    Some(json!({"reason":"lease_expired"})),None))?;
+            }
+        }
+        Ok(())
+    }
     pub fn reconcile<P:crate::reconciler_durable::ReconcileHost>(
         &mut self,job_id:&str,verified_head:Option<&str>,
         project:&Path,roots:&Value,adapters:&[Value],registered:&[Value],
         usage:Option<&Value>,host:&mut P,
     )->Result<Value,String>{
+        self.recover_expired_generations(job_id,host)?;
         let before=host.load(job_id)?;
         let outcome=self.reconcile_snapshot(&before,verified_head,
             project,roots,adapters,registered,usage)?;
         let after=if outcome.changed{
             host.persist(job_id,&before,&outcome.job)?
         }else{before.clone()};
-        // A transport failure never reverses a committed Graph transition.
-        for event in &outcome.events{
-            if let Err(error)=host.broadcast(event){
-                eprintln!("warning: Relay event transport unavailable: {error}");
-            }
-        }
+        // Never publish before a successful SQLite commit. A transport
+        // failure does not roll back the transaction, but remains visible to
+        // the caller so the durable outbox can retry the observation.
+        for event in &outcome.events{host.broadcast(event)?;}
         // Lost/blocked generations are cancelled using exact execution IDs,
         // never process-name matching or a global kill operation.
         for generation in &outcome.cancel_generations{

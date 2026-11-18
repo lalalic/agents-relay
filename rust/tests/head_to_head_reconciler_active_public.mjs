@@ -10,11 +10,14 @@ const task=(state)=>({id:'t-1',jobId:'1',kind:'work',agentName:'worker',adapter:
  title:'Safe no-command fixture',input:'test fixture',state,
  createdAt:at,updatedAt:at,attempt:state==='SUCCEEDED'?1:0,maxAttempts:2,
  dependencies:[],executionId:null,leaseOwner:null,leaseExpiresAt:null,timeoutMs:10000});
-const job=(tasks=[])=>({id:'1',repository:'fixture',prNumber:0,title:'Graph without providers',
+const job=(tasks=[])=>({id:'1',repository:'fixture',projectRoot:root,prNumber:0,title:'Graph without providers',
  objective:'Finish',state:'ACTIVE',createdAt:at,updatedAt:at,
  tasks,plans:[],reviewEnabled:false,pause:null,headSha:null});
+const expired={...task('RUNNING'),attempt:1,executionId:'e-1',leaseOwner:'fixture',
+ leaseExpiresAt:'2026-11-01T00:00:00.000Z',executionHistory:[{id:'e-1',attempt:1,startedAt:at}]};
 const cases=[{job:job()}, {job:job([task('QUEUED')])},
- {job:job([task('SUCCEEDED')])}, {job:job([task('DRAFT')])}];
+ {job:job([task('SUCCEEDED')])}, {job:job([task('DRAFT')])},
+ {job:job([expired])}];
 function normalized(x){
  if(Array.isArray(x))return x.map(normalized);
  if(x&&typeof x==='object')return Object.fromEntries(Object.entries(x)
@@ -22,6 +25,18 @@ function normalized(x){
  return x;
 }
 function wire(value){return JSON.parse(JSON.stringify(normalized(value)));}
+function stableGenerated(value){
+ const copy=structuredClone(value);
+ const generated=copy.job?.tasks?.filter(t=>t.agentName==='troubleshooter'&&t.parentTaskId==='t-1')??[];
+ const ids=generated.map(t=>t.id).filter(Boolean);
+ function replace(v){
+  if(typeof v==='string')for(const id of ids)v=v.replaceAll(String(id),'<recovery-id>');
+  if(Array.isArray(v))return v.map(replace);
+  if(v&&typeof v==='object')return Object.fromEntries(Object.entries(v).map(([k,val])=>[k,replace(val)]));
+  return v;
+ }
+ return replace(copy);
+}
 function rust(){
  const child=spawnSync(bin,[],{cwd:root,encoding:'utf8',timeout:120000,
  input:cases.map(f=>JSON.stringify({op:'apiReconcilerReconcile',root,jobId:'1',...f})).join('\n')+'\n',maxBuffer:8*1024*1024});
@@ -62,7 +77,7 @@ test('Reconciler ACTIVE Graph decisions with safe intercepted provider effects N
  const differences=[];
  for(let i=0;i<cases.length;i++){
   const comparison={outcome:actual[i].outcome,job:actual[i].job};
-  const first=diff({outcome:expected[i].outcome,job:expected[i].job},comparison);
+  const first=diff(stableGenerated({outcome:expected[i].outcome,job:expected[i].job}),stableGenerated(comparison));
   if(first)differences.push({case:i,...first});
  }
  assert.deepEqual(differences,[],JSON.stringify(differences,null,2));

@@ -11,4 +11,10 @@ pub trait ReconcileHost {
     fn persist(&mut self,id:&str,prior:&Value,next:&Value)->Result<Value,String>;
     fn launch(&mut self,action:&Value)->Result<(),String>;
     fn broadcast(&mut self,event:&Value)->Result<(),String>;
+    /// Read the immutable generation's POSIX identity from the same SQLite
+    /// Store. Missing infrastructure MUST fail closed, not mean no process.
+    fn load_execution_process(&mut self,_job_id:&str,_task_id:&str,
+        _execution_id:&str)->Result<Option<Value>,String>{
+        Err("Execution process SQLite lookup is not wired".into())
+    }
 }

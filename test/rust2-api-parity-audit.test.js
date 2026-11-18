@@ -64,9 +64,27 @@ test('cross-module reexports and Rust raw-keyword methods have grounded public f
     lookup('src/usage.ts',owner);
     lookup('src/usage.ts','read',owner);
   }
+  // The previous unmapped startService must only become a static name-match
+  // alongside a real native wiring surface and direct Node/Rust behavior
+  // evidence. A matching name alone still does not establish parity.
   const cli=report.files.find(f=>f.source==='src/cli.ts');
-  assert(cli.unmappedRuntime.includes('startService'),
-    'The audit must not convert unverified runtime wiring into parity');
+  for(const name of ['runtime','createService','startService'])
+    lookup('src/cli.ts',name);
+  assert.deepEqual(cli.unmappedRuntime,[]);
+  for(const file of [
+    'rust/tests/head_to_head_cli_runtime_factory.mjs',
+    'rust/tests/head_to_head_cli_service_public.mjs',
+  ]){
+    assert(cli.directDiffImports.includes(file),`Missing original Node/Rust differential: ${file}`);
+    assert(existsSync(join(root,file)),file);
+  }
+  assert(existsSync(join(root,'rust/tests/native_cli_service_public.rs')));
+  const implementation=read('rust/src/cli_service_public.rs');
+  for(const proof of [
+    'pub fn create_service','pub fn start_service',
+    'serve_dashboard(listener,api,server_stop)',
+    'runner.reconcile(',
+  ])assert(implementation.includes(proof),`Missing runtime implementation boundary: ${proof}`);
 });
 test('generated report is deterministic against the current source trees',()=>{
   assert.equal(report.summary.sourceTree,execFileSync('git',['rev-parse','HEAD:src'],{cwd:root,encoding:'utf8'}).trim());

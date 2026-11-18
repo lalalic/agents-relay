@@ -10,6 +10,10 @@ impl ReconcileHost for Host{
  fn load(&mut self,id:&str)->Result<Value,String>{
      self.store.load_job(id)?.ok_or_else(||"Job missing".into())
  }
+ fn load_execution_process(&mut self,job_id:&str,task_id:&str,
+     execution_id:&str)->Result<Option<Value>,String>{
+     self.store.load_execution_process(job_id,task_id,execution_id)
+ }
  fn persist(&mut self,id:&str,prior:&Value,next:&Value)->Result<Value,String>{
      self.persisted+=1;
      if self.inject_race{
@@ -34,7 +38,7 @@ fn fixture(state:&str,paused:bool)->(PathBuf,Host){
  let root=std::env::temp_dir().join(format!("rust2-reconcile-{}-{suffix}",std::process::id()));
  std::fs::create_dir_all(&root).unwrap();
  let store=SQLiteRelayStore::open(&root.join("relay.sqlite"),Some("1")).unwrap();
- store.save_job(&json!({"id":"1","repository":"fixture","prNumber":0,
+ store.save_job(&json!({"id":"1","repository":"fixture","projectRoot":root,"prNumber":0,
      "title":"Reconcile","objective":"No work","state":state,
      "createdAt":"2026-11-18T09:00:00.000Z","updatedAt":"2026-11-18T09:00:00.000Z",
      "tasks":[],"plans":[],"reviewEnabled":false,
@@ -73,4 +77,70 @@ fn concurrent_sqlite_mutation_rejects_stale_candidate_before_any_effect(){
  assert_eq!(host.load("1").unwrap()["headSha"],"concurrent-writer");
  assert_eq!(host.launched,0);assert_eq!(host.emitted,0);
  std::fs::remove_dir_all(root).unwrap();
+}
+fn expired_fixture()->(PathBuf,Host){
+    let (root,host)=fixture("ACTIVE",false);
+    host.store.mutate_job("1",|mut job|{
+        let expired="2026-11-01T00:00:00.000Z";
+        job["tasks"]=json!([{
+            "id":"task-a","jobId":"1","kind":"work","agentName":"worker",
+            "adapter":"script","title":"Expired without a running process",
+            "input":"never execute","state":"RUNNING",
+            "createdAt":expired,"updatedAt":expired,
+            "attempt":1,"maxAttempts":2,"dependencies":[],
+            "executionId":"execution-old","leaseOwner":"fixture",
+            "leaseExpiresAt":expired,"timeoutMs":10000,
+            "executionHistory":[{"id":"execution-old","attempt":1,
+                "startedAt":expired}]
+        }]);Ok(job)
+    }).unwrap();
+    (root,host)
+}
+#[test]
+fn expired_generation_recovered_through_graph_and_exact_sqlite_cas(){
+    let (root,mut host)=expired_fixture();
+    let mut reconciler=rec(&root);
+    let result=reconciler.reconcile("1",None,&root,&json!({}),
+        &[],&[],None,&mut host).unwrap();
+    assert_eq!(result["tasks"][0]["state"],"FAILED");
+    assert_eq!(result["tasks"][0]["failureReason"],"worker_outcome_unknown");
+    assert!(result["tasks"][0]["executionId"].is_null());
+    assert!(result["tasks"].as_array().unwrap().iter().any(|task|
+        task["agentName"]=="troubleshooter"
+        &&task["parentTaskId"]=="task-a"));
+    assert_eq!(host.load("1").unwrap(),result);
+    assert!(host.emitted>=2);
+    assert_eq!(host.launched,0);
+    std::fs::remove_dir_all(root).unwrap();
+}
+#[test]
+fn unverified_recorded_process_identity_fails_closed_without_mutation(){
+    let (root,mut host)=expired_fixture();
+    host.store.record_execution_process(&json!({
+        "jobId":"1","taskId":"task-a","executionId":"execution-old",
+        "leaseOwner":"fixture","host":"unknown-foreign-host",
+        "pid":9999999,"pgid":9999999,"startToken":"not-matching",
+        "observedAt":"2026-11-01T00:00:00Z"
+    })).unwrap();
+    let mut reconciler=rec(&root);
+    let result=reconciler.reconcile("1",None,&root,&json!({}),
+        &[],&[],None,&mut host).unwrap();
+    assert_eq!(result["tasks"][0]["state"],"RUNNING");
+    assert_eq!(result["tasks"][0]["executionId"],"execution-old");
+    assert_eq!(host.emitted,0);
+    assert_eq!(host.launched,0);
+    std::fs::remove_dir_all(root).unwrap();
+}
+#[test]
+fn expired_generation_cas_race_refuses_transition_and_external_effects(){
+    let (root,mut host)=expired_fixture();
+    host.inject_race=true;
+    let mut reconciler=rec(&root);
+    let error=reconciler.reconcile("1",None,&root,&json!({}),
+        &[],&[],None,&mut host).unwrap_err();
+    assert!(error.contains("CAS conflict"),"{error}");
+    assert_eq!(host.load("1").unwrap()["tasks"][0]["state"],"RUNNING");
+    assert_eq!(host.emitted,0);
+    assert_eq!(host.launched,0);
+    std::fs::remove_dir_all(root).unwrap();
 }

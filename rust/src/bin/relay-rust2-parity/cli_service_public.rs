@@ -19,6 +19,10 @@ impl DaemonServices for Host{
      self.loads.fetch_add(1,Ordering::SeqCst);
      self.store.load_job(id)?.ok_or_else(||format!("Job {id} not found"))
  }
+ fn load_execution_process(&mut self,job_id:&str,task_id:&str,
+     execution_id:&str)->Result<Option<Value>,String>{
+     self.store.load_execution_process(job_id,task_id,execution_id)
+ }
  fn save_exact(&mut self,id:&str,old:&Value,new:&Value)->Result<Value,String>{
      self.store.mutate_job(id,|existing|{
          if &existing!=old{return Err("SQLite generation CAS conflict".into())}

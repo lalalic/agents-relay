@@ -28,6 +28,10 @@ impl<S:DaemonServices> ReconcileHost for ServiceReconcileHost<'_,S>{
     }
     fn launch(&mut self,effect:&Value)->Result<(),String>{self.0.effect(effect)}
     fn broadcast(&mut self,event:&Value)->Result<(),String>{self.0.publish_event(event)}
+    fn load_execution_process(&mut self,job_id:&str,task_id:&str,
+        execution_id:&str)->Result<Option<Value>,String>{
+        self.0.load_execution_process(job_id,task_id,execution_id)
+    }
 }
 fn reconcile_one<S:DaemonServices>(
     store:&Arc<Mutex<S>>,reconciler:&Arc<Mutex<Reconciler>>,

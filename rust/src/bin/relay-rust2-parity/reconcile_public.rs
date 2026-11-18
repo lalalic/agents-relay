@@ -7,6 +7,8 @@ impl ReconcileHost for Host{
  fn load(&mut self,id:&str)->Result<Value,String>{
      self.calls.push(json!(["load",id]));Ok(self.job.clone())
  }
+ fn load_execution_process(&mut self,_job_id:&str,_task_id:&str,
+     _execution_id:&str)->Result<Option<Value>,String>{Ok(None)}
  fn persist(&mut self,id:&str,prior:&Value,next:&Value)->Result<Value,String>{
      self.calls.push(json!(["persist",id]));
      if self.reject_write{return Err("SQLite generation changed".into());}
