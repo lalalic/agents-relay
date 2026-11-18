@@ -44,7 +44,32 @@ fn execute(args:&[String])->Result<(),String>{
     let canonical=std::fs::canonicalize(store).map_err(|e|e.to_string())?;
     let live=agents_relay_rust2::relay_store::relay_store_directory();
     if std::fs::canonicalize(&live).ok().as_deref()==Some(canonical.as_path()){
-        return Err("Refusing to run the native read-only preview on the live Relay store".into());
+        return Err("Refusing to run the native preview on the live Relay store".into());
+    }
+    let database=agents_relay_rust2::relay_store_discovery::relay_unified_store_path(&canonical);
+    let live_database=agents_relay_rust2::relay_store_discovery::relay_unified_store_path(&live);
+    if writable {
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            let selected=database.with_file_name(format!("relay.sqlite{suffix}"));
+            if !selected.exists() && !selected.is_symlink(){continue;}
+            let meta=std::fs::symlink_metadata(&selected).map_err(|e|e.to_string())?;
+            if meta.file_type().is_symlink(){
+                return Err("Refusing native isolated writes through a linked SQLite database".into());
+            }
+            let live_file=live_database.with_file_name(format!("relay.sqlite{suffix}"));
+            if let (Ok(selected_meta),Ok(live_meta))=(
+                std::fs::metadata(&selected),std::fs::metadata(&live_file)){
+                // Hard links share the same inode even with different paths;
+                // protect the database and WAL/journal components alike.
+                #[cfg(unix)] {
+                    use std::os::unix::fs::MetadataExt;
+                    if selected_meta.dev()==live_meta.dev()
+                        &&selected_meta.ino()==live_meta.ino(){
+                        return Err("Refusing native isolated writes to the live SQLite database".into());
+                    }
+                }
+            }
+        }
     }
     let cwd=std::env::current_dir().map_err(|e|e.to_string())?;
     let options=json!({

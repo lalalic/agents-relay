@@ -24,6 +24,9 @@ fn request(port:u16,method:&str,path:&str,body:&str)->Result<String,String>{
 struct Guard(Child);
 impl Drop for Guard{
     fn drop(&mut self){
+        // Never signal a PID already reaped by the test. PID reuse could
+        // otherwise terminate an unrelated process on a busy test host.
+        if self.0.try_wait().ok().flatten().is_some(){return;}
         unsafe{libc::kill(self.0.id() as i32,libc::SIGTERM);}
         for _ in 0..35{
             if self.0.try_wait().ok().flatten().is_some(){return;}
@@ -33,12 +36,18 @@ impl Drop for Guard{
     }
 }
 fn start_mode(root:&Path,port:u16,store_flag:&str)->Guard{
-    let child=Command::new(binary())
-        .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
+    start_mode_with_lease(root,port,store_flag,None)
+}
+fn start_mode_with_lease(root:&Path,port:u16,store_flag:&str,lease_ms:Option<u64>)->Guard{
+    let mut command=Command::new(binary());
+    command.current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
         .arg(store_flag).arg(root.join("stores"))
         .arg("--port").arg(port.to_string())
-        .arg("--interval").arg("100")
-        .stdout(std::process::Stdio::null())
+        .arg("--interval").arg("100");
+    if let Some(lease)=lease_ms{
+        command.arg("--lease-ms").arg(lease.to_string());
+    }
+    let child=command.stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::from(
             fs::File::create(root.join("native-daemon.log")).unwrap()))
         .spawn().unwrap();
@@ -125,6 +134,23 @@ fn native_write_mode_mutations_use_one_sqlite_cas_and_survive_process_restart(){
         assert_eq!(status["mode"],"isolated-write");
         assert_eq!(status["productionReady"],false);
         assert_eq!(status["jobCount"],1);
+        // Real native CLI users see the exact durable SQLite records served
+        // by the native daemon; no legacy Node CLI or duplicated store.
+        for (args,key,expected) in [
+            (vec!["job","show","--id","17"],"id","17"),
+            (vec!["task","show","--id","17","--task-id","2"],"id","2"),
+        ]{
+            let result=Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
+                .args(args).args(["--port",&port.to_string()]).output().unwrap();
+            assert!(result.status.success(),"{}",String::from_utf8_lossy(&result.stderr));
+            assert_eq!(serde_json::from_slice::<Value>(&result.stdout).unwrap()[key],expected);
+        }
+        let list=Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
+            .args(["job","list","--port",&port.to_string()]).output().unwrap();
+        assert!(list.status.success(),"{}",String::from_utf8_lossy(&list.stderr));
+        let rows:Value=serde_json::from_slice(&list.stdout).unwrap();
+        assert_eq!(rows.as_array().unwrap().len(),1);
+        assert_eq!(rows[0]["id"],"17");
         if attempt==0{
             let cli=Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
                 .args(["job","update","--id","17","--title","After native write",
@@ -335,5 +361,111 @@ fn native_daemon_runs_two_dependent_script_workers_once_in_graph_order(){
         [],|row|row.get(0)).unwrap();
     assert_eq!(outbox,4,"Two Workers require started and completed events each");
     drop(daemon);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn isolated_write_flag_rejects_live_sqlite_symlink_hardlink_and_sidecars(){
+    let root=root();
+    let live=root.join("live");let isolated=root.join("isolated");
+    fs::create_dir_all(live.join("stores")).unwrap();
+    fs::create_dir_all(isolated.join("stores")).unwrap();
+    let database=live.join("relay.sqlite");
+    fs::write(&database,b"pretend live SQLite - must not open").unwrap();
+    let candidate=isolated.join("relay.sqlite");
+    let run=||{
+        Command::new(binary())
+            .env("AGENTS_RELAY_STORE_DIR",live.join("stores"))
+            .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
+            .arg("--isolated-write-store-dir")
+            .arg(isolated.join("stores"))
+            .arg("--port").arg("0")
+            .output().unwrap()
+    };
+    std::os::unix::fs::symlink(&database,&candidate).unwrap();
+    let result=run();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("linked SQLite"));
+    fs::remove_file(&candidate).unwrap();
+    fs::hard_link(&database,&candidate).unwrap();
+    let result=run();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("live SQLite"));
+    fs::remove_file(&candidate).unwrap();
+    let sidecar=isolated.join("relay.sqlite-wal");
+    std::os::unix::fs::symlink(live.join("relay.sqlite-wal"),&sidecar).unwrap();
+    let result=run();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("linked SQLite"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn killed_native_daemon_never_accepts_orphaned_script_completion_after_restart(){
+    let runtime=std::env::var("AGENTS_RELAY_SCRIPT_NODE")
+        .expect("Crash lifecycle test requires an absolute isolated Script runtime");
+    assert!(Path::new(&runtime).is_absolute());
+    let root=root();let project=root.join("project");
+    fs::create_dir_all(project.join("agents/.shortcut")).unwrap();
+    fs::write(project.join("agents/delayed.agent.md"),
+        "---\nname: delayed\ncapabilities: [script]\n---\n# Delayed Script\n").unwrap();
+    fs::write(project.join("agents/.shortcut/delayed.agent.mjs"),
+        "import {writeFile} from 'node:fs/promises';\nexport async function run({input}){\n  await writeFile(input.marker, 'started');\n  await new Promise(resolve=>setTimeout(resolve,2400));\n  await writeFile(input.late, 'unexpected after daemon SIGKILL');\n  return {status:'COMPLETED',output:{ok:true},artifacts:{}};\n}\n").unwrap();
+    let git=Command::new("git").arg("-C").arg(&project)
+        .args(["init","-q","-b","main"]).output().unwrap();
+    assert!(git.status.success());
+    let marker=root.join("worker.started");let late=root.join("worker.late");
+    let data=root.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&data,Some("77")).unwrap();
+    store.save_job(&json!({"id":"77","repository":"project","projectRoot":project,
+        "title":"Crash recovery Source Task","state":"ACTIVE","prNumber":0,
+        "priority":"P2","reviewEnabled":false,
+        "createdAt":"2026-11-18T00:00:00.000Z","updatedAt":"2026-11-18T00:00:00.000Z",
+        "tasks":[{"id":"5","jobId":"77","kind":"work","adapter":"script",
+            "agentName":"delayed","title":"Delayed Task","state":"QUEUED",
+            "executionId":null,"leaseOwner":null,"leaseExpiresAt":null,
+            "attempt":0,"maxAttempts":1,"priority":"P2","dependencies":[],
+            "input":json!({"marker":marker,"late":late}).to_string(),
+            "output":{"kind":"file","path":root.join("out.json")},
+            "createdAt":"2026-11-18T00:00:00.000Z",
+            "updatedAt":"2026-11-18T00:00:00.000Z"}],"plans":[]})).unwrap();
+    store.close().unwrap();
+    let port=socket_port();let mut daemon=start_mode_with_lease(&root,port,
+        "--isolated-write-store-dir",Some(400));
+    let mut leased=Value::Null;
+    for _ in 0..70{
+        let reply=request(port,"GET","/api/job?id=77","").unwrap();
+        leased=body(&reply);
+        if marker.exists() && leased["tasks"][0]["state"]=="RUNNING"{break;}
+        thread::sleep(Duration::from_millis(35));
+    }
+    assert!(marker.exists(),"Script Worker never entered source module");
+    assert_eq!(leased["tasks"][0]["state"],"RUNNING");
+    let execution=leased["tasks"][0]["executionId"].as_str().unwrap().to_owned();
+    let persisted=SQLiteRelayStore::open_without_claim_reset(&data,Some("77")).unwrap();
+    let record=persisted.load_execution_process("77","5",&execution)
+        .unwrap().expect("Owned Script Worker must record PID/PGID before crash");
+    assert!(record["pid"].as_i64().is_some_and(|pid|pid>0));
+    drop(persisted);
+    // Deliberately kill ONLY the Child handle spawned by this test. The
+    // owned-process supervisor is responsible for the Task's subprocess group.
+    daemon.0.kill().unwrap();daemon.0.wait().unwrap();
+    drop(daemon);
+    thread::sleep(Duration::from_millis(2600));
+    assert!(!late.exists(),"Orphaned Script kept writing after daemon SIGKILL");
+    let restart=start_mode_with_lease(&root,port,"--isolated-write-store-dir",Some(400));
+    let mut restored=Value::Null;
+    for _ in 0..50{
+        restored=body(&request(port,"GET","/api/job?id=77","").unwrap());
+        if restored["tasks"][0]["state"]=="FAILED"{break;}
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(restored["tasks"][0]["state"],"FAILED",
+        "Crash recovery must fail closed for orphaned execution: {restored}");
+    assert_eq!(restored["tasks"][0]["attempt"],1,
+        "Crash must not relaunch a task with exhausted attempt budget");
+    assert!(!root.join("out.json").exists(),"Orphaned Script result was accepted");
+    drop(restart);
     fs::remove_dir_all(root).unwrap();
 }
