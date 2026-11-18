@@ -16,15 +16,15 @@ A listed direct differential import only means a head-to-head test imports the c
 |---|---:|
 | sourceCount | 107 |
 | runtimeExportSymbols | 734 |
-| directNameMatches | 696 |
-| unmappedRuntimeSymbols | 25 |
+| directNameMatches | 697 |
+| unmappedRuntimeSymbols | 24 |
 | runtimeConstructorReviews | 13 |
 | typeOrShapeReviewSymbols | 282 |
-| filesWithUnmappedRuntime | 7 |
-| filesWithoutDirectDiffImport | 50 |
-| filesWithoutOtherRustReferences | 30 |
+| filesWithUnmappedRuntime | 6 |
+| filesWithoutDirectDiffImport | 49 |
+| filesWithoutOtherRustReferences | 29 |
 
-Source tree: `a7fabd653a00`; Rust source tree: `b85a1de7ab81`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `a7fabd653a00`; Rust source tree: `f6d5c8bed730`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Per-file candidate surface (all 107 PORTING files)
 
@@ -58,7 +58,7 @@ Source tree: `a7fabd653a00`; Rust source tree: `b85a1de7ab81`. Rust module rows 
 | `src/decision.ts` | 11 | 11 | 0 | 2 | 1 |
 | `src/dependency-revision-execution.ts` | 3 | 3 | 0 | 0 | 1 |
 | `src/escalation-notifier.ts` | 2 | 2 | 0 | 0 | 0 |
-| `src/events.ts` | 13 | 13 | 0 | 3 | 28 |
+| `src/events.ts` | 13 | 13 | 0 | 3 | 29 |
 | `src/execution-context.ts` | 6 | 6 | 0 | 1 | 0 |
 | `src/execution-process-tracker.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/execution-recovery.ts` | 2 | 2 | 0 | 0 | 0 |
@@ -128,7 +128,7 @@ Source tree: `a7fabd653a00`; Rust source tree: `b85a1de7ab81`. Rust module rows 
 | `src/types.ts` | 7 | 7 | 0 | 1 | 4 |
 | `src/unblock.ts` | 4 | 4 | 0 | 1 | 4 |
 | `src/usage.ts` | 26 | 18 | 0 | 3 | 5 |
-| `src/worker-failure-recovery.ts` | 1 | 0 | 1 | 0 | 0 |
+| `src/worker-failure-recovery.ts` | 1 | 1 | 0 | 1 | 2 |
 | `src/worker-routing.ts` | 8 | 8 | 0 | 1 | 4 |
 | `src/workflow-effect-failures.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/workflow/durable-transition.ts` | 4 | 4 | 0 | 1 | 0 |
@@ -146,7 +146,6 @@ Source tree: `a7fabd653a00`; Rust source tree: `b85a1de7ab81`. Rust module rows 
 - **src/reconciler.ts** (4): Reconciler.reconcile, Reconciler.recoverLostExecutions, Reconciler.planJob, Reconciler.applyPlannerTree
 - **src/planner-runtime.ts** (2): finishPlanner, launchPlanExecution
 - **src/reconciler-review.ts** (1): ReconcilerReviewBase
-- **src/worker-failure-recovery.ts** (1): handleWorkerLaunchFailure
 
 ## Required next verification
 

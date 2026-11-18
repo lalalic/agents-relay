@@ -2,16 +2,16 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity.",
   "summary": {
     "sourceTree": "a7fabd653a006bcd33b84d3eb7ac4c28b085f9dd",
-    "rustTree": "b85a1de7ab81161638f466396ea67e63553f82db",
+    "rustTree": "f6d5c8bed7306c032fc60f1d619c620695789e0a",
     "sourceCount": 107,
     "runtimeExportSymbols": 734,
-    "directNameMatches": 696,
-    "unmappedRuntimeSymbols": 25,
+    "directNameMatches": 697,
+    "unmappedRuntimeSymbols": 24,
     "runtimeConstructorReviews": 13,
     "typeOrShapeReviewSymbols": 282,
-    "filesWithUnmappedRuntime": 7,
-    "filesWithoutDirectDiffImport": 50,
-    "filesWithoutOtherRustReferences": 30
+    "filesWithUnmappedRuntime": 6,
+    "filesWithoutDirectDiffImport": 49,
+    "filesWithoutOtherRustReferences": 29
   },
   "files": [
     {
@@ -1854,6 +1854,7 @@
         "rust/src/service_publication.rs",
         "rust/src/task_recovery.rs",
         "rust/src/troubleshooter_fallback.rs",
+        "rust/src/worker_failure_orchestration.rs",
         "rust/src/worker_failure_recovery.rs",
         "rust/src/workflow_effect_failures.rs"
       ],
@@ -7322,15 +7323,18 @@
       "target": "rust/src/worker_failure_recovery.rs",
       "ledgerStatus": "PORTING",
       "runtimeExports": 1,
-      "directNameMatches": 0,
-      "unmappedRuntime": [
-        "handleWorkerLaunchFailure"
-      ],
+      "directNameMatches": 1,
+      "unmappedRuntime": [],
       "typeOrShapeReview": [
         "WorkerFailurePorts"
       ],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_worker_failure_orchestration.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/worker_failure_parity.rs",
+        "rust/src/worker_failure_orchestration.rs"
+      ],
       "exports": [
         {
           "name": "WorkerFailurePorts",
@@ -7340,7 +7344,7 @@
         {
           "name": "handleWorkerLaunchFailure",
           "kind": "function",
-          "static": "unmapped"
+          "static": "name-match"
         }
       ]
     },
