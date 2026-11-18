@@ -1,6 +1,9 @@
 import { submitTargetedRevisionRequest } from './review-revision-model.js';
 import {beginInteractiveReview,abortInteractiveReview,failInteractiveReview,interactiveWaitingEvent} from './interactive-request.js';
 import { localSourceHead, localWorkingHead } from './local-git-merge.js';
+import { verifySourceCommit } from './git-delivery.js';
+import { eventFor } from './events.js';
+import { executionEventSource } from './execution-event-identity.js';
 import type { RevisionFinding } from './types.js';
 import { appendTaskComment } from './task-comments.js';
 import type { Job, Task } from './types.js';
@@ -213,6 +216,42 @@ export function createWorkspaceControl(deps: any) {
       // Reviewer is still RUNNING: verdict event will wake the reconciler.
       // The committed receipt must not be obscured by an unrelated wake failure.
       return response;
+    }
+    if (command === 'task.complete') {
+      const taskId = typeof body.taskId === 'string' ? body.taskId : '';
+      const executionId = typeof body.executionId === 'string' ? body.executionId : '';
+      const commitSha = typeof body.commitSha === 'string' ? body.commitSha : '';
+      const repository = typeof body.repository === 'string' ? body.repository : '';
+      const summary = typeof body.summary === 'string' ? body.summary.trim() : '';
+      if (!taskId || !executionId || !commitSha || !summary || repository !== job.repository || summary.length > 4000)
+        throw new Error('task.complete requires matching repository, Task/Execution IDs, commit SHA and bounded summary');
+      const original = job.tasks.find((item: Task) => item.id === taskId);
+      if (!original || !original.gitDeliveryRequired) throw new Error('task.complete is for commit-required source Tasks only');
+      if (original.state === 'SUCCEEDED' && original.gitDelivery?.executionId === executionId && original.gitDelivery.commitSha === commitSha)
+        return { accepted: true, idempotent: true, task: original };
+      const receipt = verifySourceCommit(job, original, executionId, commitSha);
+      await store.mutateJob(jobId, (current: Job) => {
+        const task = current.tasks.find((item: Task) => item.id === taskId);
+        if (!task || !task.gitDeliveryRequired || task.state !== 'RUNNING' || task.executionId !== executionId
+          || task.gitDeliveryBaseline?.executionId !== receipt.executionId || task.gitDeliveryBaseline.sha !== receipt.baseSha)
+          throw new Error('task.complete refused: stale or replaced source Task execution');
+        task.gitDelivery = receipt;
+        task.updatedAt = new Date().toISOString();
+        return current;
+      });
+      const reconciler = makeReconciler(store, concurrency);
+      const event = eventFor(jobId, taskId, original.parentTaskId, 'task.completed', 'succeeded', summary, 'worker',
+        { commit_sha: commitSha, verified_git_delivery: true },
+        { id: executionEventSource(jobId, taskId, executionId), agent: original.agentName ?? 'worker', component: 'agents-relay-cli' });
+      try {
+        const outcome = await reconciler.applyEvent(event);
+        if (!outcome.applied) throw new Error('task.complete rejected by Task Graph: ' + outcome.reason);
+        try { await bus?.publish(event); } catch (error) {
+          process.stderr.write(`warning: task.complete event transport: ${String(error)}\n`);
+        }
+      } finally { await reconciler.close(); }
+      await pool.reconcileLocalJob(jobId, 'control.task.complete');
+      return { accepted: true, task: (await store.load(jobId)).tasks.find((item: Task) => item.id === taskId) };
     }
     if (command === 'task.comment') {
       const taskId = typeof body.taskId === 'string' ? body.taskId : '';

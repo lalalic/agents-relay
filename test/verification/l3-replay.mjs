@@ -18,6 +18,7 @@ import {createPlanRound} from '../../dist/planner.js';
 import {recordTargetedRevisionRequest} from '../../dist/review-revision-model.js';
 import {decideRevisionLifecycle} from '../../dist/workflow/revision-v2.js';
 const stamp='2026-10-17T12:00:00.000Z';
+// Pre-existing mock Tasks are legacy Event-driven jobs; Review fixtures simulate their revision outputs as files.
 const task=(jobId,id,deps=[],initialState)=>{const state=initialState??(deps.length?'DRAFT':'RUNNING');const running=state==='RUNNING';return {jobId,id,kind:'work',agentName:'implementation',adapter:'chatgpt',input:'mock agent',output:{kind:'task_pr'},parentTaskId:null,dependencies:deps,capabilities:[],state,attempt:state==='QUEUED'||deps.length?0:1,maxAttempts:3,leaseOwner:running?'mock':null,leaseExpiresAt:running?'2099-01-01T00:00:00.000Z':null,executionId:running?'exec-a':null,executionHistory:running?[{id:'exec-a',attempt:1,startedAt:stamp}]:[],threadId:null,result:null,error:null,timeoutMs:900000,createdAt:stamp,updatedAt:stamp};};
 const fingerprint=value=>JSON.stringify({job:value.state,merge:value.localMerge?.status??null,tasks:value.tasks.map(({id,state,attempt,executionId,result,error,escalation})=>({id,state,attempt,executionId,result:result??null,error:error??null,escalation:escalation?{id:escalation.id,status:escalation.status,notification:escalation.notification?.status??null}:null}))});
 export async function runReplay(scenario) {
@@ -73,7 +74,11 @@ export async function runReplay(scenario) {
  let runtime=new Reconciler(store,runtimeOptions);
  const trace=[];let stop;
  try {
-  const tasks=configuredTasks.map(item=>task(jobId,aliases.get(item.id),(item.dependencies??[]).map(id=>aliases.get(id)??id),item.state));
+  const tasks=configuredTasks.map(item=>{
+    const assigned=task(jobId,aliases.get(item.id),(item.dependencies??[]).map(id=>aliases.get(id)??id),item.state);
+    if(scenario.reviewEnabled) assigned.output={kind:'file',path:'fixtures/review-worker-output.json'};
+    return assigned;
+  });
   if(new Set(tasks.map(item=>item.id)).size!==tasks.length || tasks.some(item=>item.dependencies.some(dep=>!tasks.some(other=>other.id===dep)))) throw Error('invalid task dependencies');
   const initialJob={id:jobId,title:scenario.id,objective:scenario.plannerScript?'Verify complete multi-stage objective':undefined,repository:env.repository,projectRoot:env.root,prNumber:0,state:'ACTIVE',autoMerge:scenario.autoMerge===true,reviewEnabled:scenario.reviewEnabled===true,
    ...(scenario.headSha?{headSha:scenario.headSha}:{}),

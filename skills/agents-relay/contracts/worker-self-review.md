@@ -10,3 +10,7 @@ For every Task that implements or changes code, configuration, documentation, me
 This worker self-review **does not replace** Relay's independent SHA-bound final Reviewer, required human approvals, Graph-managed review/revision, or delivery/merge gates. A worker must not approve its own final review, merge, or invent verification evidence.
 
 For read-only research or diagnostic Tasks, validate findings and evidence; do not invent artifact modifications or review rounds.
+
+## Commit-required source Tasks
+
+If the authoritative Task Context says `gitDeliveryRequired: true`, the final self-review is followed by a **real Git commit** on the Task's Job source branch, before completion. Include exact `Relay-Task: TASK_ID` and `Relay-Execution: EXECUTION_ID` commit trailers; verify no untracked or modified source files remain. Call the same-version `agents-relay task complete` CLI with the full commit SHA and bound execution ID. This CLI is the only authorized success path for the Task. A direct `task.completed` Event Bus message is not acceptable. Missing output, dirty source, wrong commit ancestry, stale execution or failed checks are not success; keep working or report an evidenced blocker.

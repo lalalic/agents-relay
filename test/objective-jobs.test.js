@@ -373,7 +373,7 @@ test('planner result with a formatting-only priority variation creates a child t
   const bus = new MemoryEventBus();
   const store = new InMemoryStore(startedObjectiveJob());
   let calls = 0;
-  const planner = { plan: async () => ++calls === 1 ? ({ objective_status:'satisfied', assessment:'work', next_tasks:[{title: 'Implement and verify durable task outputs',  ...spec('work-1'), priority:'p1' }] }) : ({ objective_status:'satisfied', assessment:'done', next_tasks:[] }) };
+  const planner = { plan: async () => ++calls === 1 ? ({ objective_status:'satisfied', assessment:'work', next_tasks:[{title: 'Implement and verify durable task outputs', ...spec('work-1'), output:{kind:'file',path:'simulated/result.txt'}, priority:'p1' }] }) : ({ objective_status:'satisfied', assessment:'done', next_tasks:[] }) };
   const reconciler = managedReconciler(store, { owner:'test', adapters:[executionHarness(bus)], planner, eventBus:bus });
   const stop = await reconciler.watch('auto');
   await settle(reconciler, 8);

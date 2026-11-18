@@ -60,6 +60,7 @@ export async function managedWorkerInput(job: Job, task: Task, context?: Executi
     skillPath:join(packageRoot, 'skills/agents-relay/SKILL.md'),
     taskTitle:task.title,
     workerSelfReview:role === 'worker',
+    sourceCommitRequired:task.gitDeliveryRequired === true,
     jobId:job.id,
     taskId:task.id,
     executionId:task.executionId,

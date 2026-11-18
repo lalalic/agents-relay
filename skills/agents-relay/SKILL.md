@@ -15,6 +15,10 @@ Relay owns durable Jobs and Tasks; do one-shot work directly. On Neo Master, **u
 - Deliver: optional verified non-force origin/main push after completion; never changes Job state.
 - Daemon: no Workspace scan and no `--workspace` requirement. Neo's `package.published` watcher restarts package-backed PM2 services after npm `latest` is confirmed.
 
+## Source Worker completion
+
+New source Tasks (`gitDeliveryRequired: true`) must commit with `Relay-Task: ID` and `Relay-Execution: EXECUTION_ID` trailers, then run the matching `agents-relay task complete` CLI with `--repo --id --task-id --execution-id --commit-sha --summary`. Relay verifies clean Git HEAD and execution before emitting completion. **Never directly emit `task.completed`**. File, Reviewer, Troubleshooter and legacy Tasks retain normal events.
+
 ## Job Execution Lifecycle (JEL)
 
 **JEL:** Create → [Plan] → Execute → Final Review → local Merge → Completed. Plan-free Coordinator uses the same lifecycle. PASS merges; CHANGES_REQUIRED records findings and starts Planner N+1 for minimal fixes, then re-reviews. No post-success Plan. Planner/Workers use **ponytail** (YAGNI, reuse, minimal Tasks) without bypassing safety gates.

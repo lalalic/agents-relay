@@ -82,6 +82,7 @@ const taskRuntime = new GraphRuntime(taskSource, {
     runnable: boolGuard('runnable'),
     dispatchable: boolGuard('dispatchable'),
     recoverableExecution: boolGuard('recoverableExecution'),
+    sourceDeliveryVerified: ({durableFacts}) => durableFacts.sourceDeliveryVerified !== false, // legacy Tasks need no source commit
     troubleshooterRecovery: boolGuard('troubleshooterRecovery'),
     troubleshooterTask: boolGuard('troubleshooterTask'),
     awaitingInteractiveDecision: boolGuard('awaitingInteractiveDecision'),

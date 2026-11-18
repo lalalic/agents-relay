@@ -42,7 +42,7 @@ export function decideTaskLifecycle(
   event: string,
   facts: WorkflowContext = {},
 ): WorkflowDecision<TaskState> {
-  return v2WorkflowDecision(taskLifecycleV2, task.state, event, { ...facts, troubleshooterTask: task.agentName === 'troubleshooter' });
+  return v2WorkflowDecision(taskLifecycleV2, task.state, event, { ...facts, troubleshooterTask: task.agentName === 'troubleshooter', sourceDeliveryVerified: facts.sourceDeliveryVerified !== false });
 }
 
 export function decideJobLifecycle(
@@ -64,7 +64,7 @@ export function dispatchTaskLifecycleSync(
   const result = dispatchWorkflowGraphSync(taskLifecycleV2, {
     initialState: task.state,
     input: { transport: 'event', id: event, payload: {} },
-    durableFacts: { ...facts, troubleshooterTask: task.agentName === 'troubleshooter' },
+    durableFacts: { ...facts, troubleshooterTask: task.agentName === 'troubleshooter', sourceDeliveryVerified: task.gitDeliveryRequired !== true || facts.sourceDeliveryVerified === true },
     graphName: 'task-lifecycle',
     persistTransition: (_source, target) => applyTaskGraphTarget(task as never, target as TaskState, new Date().toISOString(), event === 'task.unblocked' && task.agentName === 'troubleshooter'),
     executeAction: actionId => { actions.push(actionId); if (actionId.startsWith('mutation.')) applyTaskMutation(task as never, actionId as WorkflowMutationName); return {}; },
@@ -82,7 +82,7 @@ export async function dispatchTaskLifecycle(
 ): Promise<WorkflowDecision<TaskState>> {
   const actions: string[] = [];
   const result = await dispatchWorkflowGraph(taskLifecycleV2, {
-    initialState: task.state, input: { transport: 'event', id: event, payload: {} }, durableFacts: { ...facts, troubleshooterTask: task.agentName === 'troubleshooter' },
+    initialState: task.state, input: { transport: 'event', id: event, payload: {} }, durableFacts: { ...facts, troubleshooterTask: task.agentName === 'troubleshooter', sourceDeliveryVerified: task.gitDeliveryRequired !== true || facts.sourceDeliveryVerified === true },
     graphName: 'task-lifecycle',
     persistTransition: async (_source, target) => { applyTaskGraphTarget(task as never, target as TaskState, new Date().toISOString(), event === 'task.unblocked' && task.agentName === 'troubleshooter'); await persist?.(); },
     executeAction: async actionId => {

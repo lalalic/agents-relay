@@ -25,6 +25,8 @@ depUnsat["guard: dependenciesUnsatisfied"]
 runnable["guard: runnable"]
 dispatchable["guard: dispatchable"]
 recoverStart["guard: recoverableExecution"]
+sourceDeliveryReady["guard: sourceDeliveryVerified"]
+recoverSourceDeliveryReady["guard: sourceDeliveryVerified"]
 recoverComplete["guard: recoverableExecution"]
 recoverBlocked["guard: recoverableExecution"]
 recoverFailed["guard: recoverableExecution"]
@@ -173,7 +175,8 @@ running -->|on: review.changes_required| reviewChangesRunningClearError
 reviewChangesRunningClearError --> reviewChangesRunningClearReason
 reviewChangesRunningClearReason --> succeeded
 running -->|on: review.blocked| runningBlockAllowed
-running -->|on: task.completed| completeClearError
+running -->|on: task.completed| sourceDeliveryReady
+sourceDeliveryReady -->|true| completeClearError
 completeClearError --> completeClearReason
 completeClearReason --> succeeded
 running -->|on: task.failed| failed
@@ -213,7 +216,8 @@ failed -->|on: task.started| recoverStart
 recoverStart -->|true| recoverStartClearError
 recoverStartClearError --> recoverStartClearReason
 recoverStartClearReason --> running
-failed -->|on: task.completed| recoverComplete
+failed -->|on: task.completed| recoverSourceDeliveryReady
+recoverSourceDeliveryReady -->|true| recoverComplete
 recoverComplete -->|true| recoverCompleteClearError
 recoverCompleteClearError --> recoverCompleteClearReason
 recoverCompleteClearReason --> succeeded

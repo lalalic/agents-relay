@@ -25,8 +25,8 @@ export function reviewNeedsReplan(job: Job): boolean {
     plan.trigger.source === 'review' && plan.trigger.reviewTaskId === review.taskId && plan.status !== 'FAILED');
 }
 
-/** An immutable re-review must wait for the finding-driven Plan and its work to settle. */
-export function reviewPlanReady(job: Job): boolean {
+/** Re-review a new committed head after work/planning settles, regardless of Planner bookkeeping. */
+export function reviewPlanReady(job: Job, currentHeadSha: string | null = job.headSha ?? null): boolean {
   if ((job.plans ?? []).some(plan => plan.status === 'PLANNING')) return false;
   const latest = (job.plans ?? []).at(-1);
   const legacy = !latest && job.tasks.some(task => task.kind === 'planner' && task.state === 'SUCCEEDED');
@@ -40,11 +40,8 @@ export function reviewPlanReady(job: Job): boolean {
     || (review.outcome === 'stale' && (job.reviewRevisionRounds ?? []).some(round =>
       round.reviewTaskId === review.taskId && round.status === 'changes_required'));
   if (!requiresRevision) return true;
-  // A Review-driven Plan with no actual fix cannot authorize another Review at
-  // the same immutable head. Otherwise satisfied/empty Planner responses loop
-  // indefinitely through Final Review -> Plan -> Final Review.
-  return (job.plans ?? []).some(plan => plan.status === 'SUCCEEDED'
-    && plan.trigger.source === 'review' && plan.trigger.reviewTaskId === review.taskId
-    && plan.generatedTaskIds.length > 0
-    && plan.generatedTaskIds.every(id => job.tasks.some(task => task.id === id && task.state === 'SUCCEEDED')));
+  // Re-review requires a changed immutable source ref. Planner provenance
+  // may be incomplete (an initial Plan can own a valid repair), so it is audit
+  // data rather than an additional eligibility gate.
+  return Boolean(currentHeadSha && review.headSha && currentHeadSha !== review.headSha);
 }

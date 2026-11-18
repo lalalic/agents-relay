@@ -52,7 +52,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       jobActive: job.state === 'ACTIVE',
       reviewWorkSettled: reviewWorkSettled(job),
       headAvailable: Boolean(headSha),
-      reviewPlanReady: reviewPlanReady(job),
+      reviewPlanReady: reviewPlanReady(job, headSha),
       noActiveReviewTask: !reviewTasks.some(task => ['DRAFT', 'QUEUED', 'RUNNING'].includes(task.state)),
       currentReviewCancelled: currentReviewTask?.reviewHeadSha === headSha && currentReviewTask.state === 'CANCELLED',
       noApprovedCurrentReview: !reviewTasks.some(task => task.state === 'SUCCEEDED' && job.review?.headSha === headSha && job.review.outcome === 'approved'),
