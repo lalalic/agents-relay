@@ -1,9 +1,11 @@
 {
-  "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity.",
+  "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
-    "sourceTree": "a7fabd653a006bcd33b84d3eb7ac4c28b085f9dd",
-    "rustTree": "af1308e56977247772775392b074669fe5d9e551",
+    "sourceTree": "c846739e5f60e6bc73cb3000cfab466855655462",
+    "rustTree": "c60e3c5b0da834460b8cb1d394e4bcb13d36378a",
     "sourceCount": 107,
+    "pendingSourceModules": 2,
+    "pendingRuntimeExportSymbols": 7,
     "runtimeExportSymbols": 734,
     "directNameMatches": 721,
     "unmappedRuntimeSymbols": 0,
@@ -13,6 +15,27 @@
     "filesWithoutDirectDiffImport": 45,
     "filesWithoutOtherRustReferences": 25
   },
+  "pendingModules": [
+    {
+      "source": "src/cli-task-complete.ts",
+      "target": "rust/src/cli_task_complete.rs",
+      "runtimeExports": [
+        "runTaskCompleteCommand"
+      ]
+    },
+    {
+      "source": "src/git-delivery.ts",
+      "target": "rust/src/git_delivery.rs",
+      "runtimeExports": [
+        "sourceCommitRequired",
+        "sourceCommitSha",
+        "startedSourceBaseline",
+        "bindSourceBaseline",
+        "verifySourceCommit",
+        "sourceCompletionVerified"
+      ]
+    }
+  ],
   "files": [
     {
       "source": "src/adapters.ts",

@@ -37,6 +37,10 @@ The first independently audited API closure added actual Rust equivalents of Nod
 - `rust/tests/native_api_parity_closure.rs` proves Agent + Outbox rollback together on forced enqueue failure and idempotent duplicate saves.
 - This is a verified **subset** of the 107 PORTING module surfaces, not final per-file API parity. Real provider readers, external GitHub/Git operations, cross-Job Blocker persistence, complete CLI/Daemon runtime bindings, all negative/restart cases and live delivery still require independent testing and wiring. Retain `PORTING` for all those modules; do not upgrade based on exported symbol matches or synthetic provider fixtures.
 
+## Main branch source additions — 2026-11-18
+
+After locally merging main into rust2, `src/cli-task-complete.ts` and `src/git-delivery.ts` add seven runtime exports absent from the historical 228-file checklist. They are deliberately marked **PENDING**, not omitted or counted as matched. Rust now matches the immutable new-Task flag, source-completion Graph guard, CLI help, and re-review SHA gate, but the full Git receipt and native CLI integration require their own original Node/Rust differential and real isolated-Git/SQLite tests before these modules can become PASS.
+
 ## Source-by-source ledger
 
 Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = port + Node/Rust differential tests passed; `EXCLUDED` = explicit documented semantic removal. A Rust file existing is not PASS.
@@ -62,7 +66,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/cli-coordinator.ts` | `rust/src/cli_coordinator.rs` | PORTING | Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure. |
 | `src/cli-escalation.ts` | `rust/src/cli_escalation.rs` | PORTING | Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure. |
 | `src/cli-foreground.ts` | `rust/src/cli_foreground.rs` | PORTING | Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure. |
-| `src/cli-help.ts` | `rust/src/cli_help.rs` | PASS | Rebased to current main: all 47 CLI help keys, obsolete PR/projection/merge commands removed; direct Node/Rust byte-level CLI help and fallback differential (`rust/tests/head_to_head_cli_help.mjs`, `rust/tests/native_cli_help.rs`) |
+| `src/cli-help.ts` | `rust/src/cli_help.rs` | PASS | Rebased to current main: all 48 CLI help keys, obsolete PR/projection/merge commands removed; direct Node/Rust byte-level CLI help and fallback differential (`rust/tests/head_to_head_cli_help.mjs`, `rust/tests/native_cli_help.rs`) |
 | `src/cli-job-create.ts` | `rust/src/cli_job_create.rs` | PORTING | Serial Phase1 native SQLite Job creation and bounded/redacted JSONL routing audit port; uncompiled/untested, Stage2 bindings+differential pending. |
 | `src/cli-local-merge-config.ts` | `rust/src/cli_local_merge_config.rs` | PASS | 626 shared differential fixtures across 14 ports; merge success and validation errors compared (`rust/tests/head_to_head.mjs`) |
 | `src/cli-projection.ts` | `rust/src/cli_projection.rs` | EXCLUDED | Removed by main local-Git-only CLI lifecycle; PR projection commands and their Rust mirror/differential tests are retired, no longer an executable public CLI surface. |
@@ -71,6 +75,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/cli-revision.ts` | `rust/src/cli_revision.rs` | PASS | Findings/receipt/input bounds and native HTTP request parity in 98-case shared CLI suite; rust/tests/head_to_head_cli_core.mjs, cli_http_native.rs |
 | `src/cli-shutdown.ts` | `rust/src/cli_shutdown.rs` | PASS | Batch 5: exit status precedence, serving mode, delayed default/custom grace and injected force-exit callback verified without terminating the test process (`rust/tests/native_batch5.rs`, `rust/tests/head_to_head_batch5.mjs`). |
 | `src/cli-support.ts` | `rust/src/cli_support.rs` | PORTING | Phase1 native CLI immutable Job bindings, HTTP control, Git workspace identity/worktree port; no compilation/tests; Stage2 head-to-head pending. |
+| `src/cli-task-complete.ts` | `rust/src/cli_task_complete.rs` | PENDING | Added on main: Node daemon task.complete calls an execution-bound Git receipt and durable Task Graph; no native Rust CLI entrypoint or original-Node differential test yet. |
 | `src/cli-unblock.ts` | `rust/src/cli_unblock.rs` | PORTING | Phase1 serial native Rust draft; uncompiled, untested and not production-wired; parity pending. |
 | `src/cli-worker-task.ts` | `rust/src/cli_worker_task.rs` | PORTING | Phase1 serial native Rust draft; uncompiled and untested, production API/binding and differential to close in Phase2. |
 | `src/cli-workflow-action.ts` | `rust/src/cli_workflow_action.rs` | PASS | Batch 5: direct Node/Rust mapping and unsupported/missing argument errors; Rust exposes async delegated effect (`rust/tests/head_to_head_batch5.mjs`) |
@@ -104,6 +109,7 @@ Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = 
 | `src/final-review-role.ts` | `rust/src/final_review_role.rs` | PASS | 587 shared differential fixtures across 7 ports; Rust native tests 8/8; Node focused regression 18/18; clippy clean (`rust/tests/head_to_head.mjs`) |
 | `src/force-restate-validation.ts` | `rust/src/force_restate_validation.rs` | PORTING | Phase1 serial native Rust source port; uncompiled/unverified, production integration and head-to-head differential pending Phase2. |
 | `src/force-restate.ts` | `rust/src/force_restate.rs` | PORTING | Wave3 A retained tested forceRestate forwarding; actual manual plan apply/store/launch effects still require a Rust production binding (native_wave2_graph.rs). |
+| `src/git-delivery.ts` | `rust/src/git_delivery.rs` | PENDING | Added on main: real Git source baseline, commit SHA/trailer/worktree checks and terminal verification are not ported; Rust constructor and Graph guard cover only the pure-policy subset. |
 | `src/github-auth.ts` | `rust/src/github_auth.rs` | PORTING | Wave3 C 102 Node/Rust identity/probe cases with injected GhApiClient pass; real App Auth client, provider login probe and runtime factory not yet ported (head_to_head_wave3_delivery.mjs). |
 | `src/github-binding-order.ts` | `rust/src/github_binding_order.rs` | PASS | 626 shared differential fixtures across 14 ports; stable ordering and priority groups compared (`rust/tests/head_to_head.mjs`) |
 | `src/github-branch-projection.ts` | `rust/src/github_branch_projection.rs` | PASS | 626 shared differential fixtures across 14 ports; normal and force-with-lease argv compared (`rust/tests/head_to_head.mjs`) |

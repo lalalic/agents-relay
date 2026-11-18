@@ -10,12 +10,15 @@ const mainBaseline = 'ba22e4cbdfa68cdd4ccb08dc7e02df49b57e7a90';
 const inventory = ref => execFileSync('git', ['ls-tree', '-r', '--name-only', ref, 'src'], {cwd: root, encoding: 'utf8'})
   .split('\n').filter(x => /\.(?:ts|js)$/.test(x));
 const historicalSources = inventory(baseline);
-const currentSources = inventory(mainBaseline);
-const sources = [...new Set([...historicalSources,...currentSources])];
+const pinnedMainSources = inventory(mainBaseline);
+const currentSources = inventory('HEAD');
+// Keep historical baseline exclusions, but never silently omit current main
+// additions after a local main->rust2 merge.
+const sources = [...new Set([...historicalSources,...pinnedMainSources,...currentSources])];
 const doc = readFileSync(resolve(root, 'docs/RUST2_HEAD_TO_HEAD_CHECKLIST.md'), 'utf8');
 const rows = [...doc.matchAll(/^\| `(src\/[^`]+\.(?:ts|js))` \| `(rust\/src\/[^`]+\.rs)` \| (PENDING|PORTING|PASS|EXCLUDED) \| ([^\n]+) \|$/gm)]
   .map(([,source,target,status,evidence])=>({source,target,status,evidence}));
-assert.equal(rows.length,sources.length,'Checklist row count does not match pinned Node baseline');
+assert.equal(rows.length,sources.length,'Checklist row count does not cover historical and current Node sources');
 const seen = new Set();
 for(const row of rows){
  assert(sources.includes(row.source),`Unrecognized Node file in checklist: ${row.source}`);
@@ -67,4 +70,4 @@ for(const row of rows){
 }
 for(const source of sources) assert(seen.has(source),`Missing source from checklist: ${source}`);
 const counts=rows.reduce((acc,row)=>(acc[row.status]++,acc),{PASS:0,PORTING:0,PENDING:0,EXCLUDED:0});
-console.log(`Rust2 migration ledger validated: ${rows.length} baseline files; PASS=${counts.PASS} PORTING=${counts.PORTING} PENDING=${counts.PENDING} EXCLUDED=${counts.EXCLUDED}`);
+console.log(`Rust2 migration ledger validated: ${rows.length} tracked source files; PASS=${counts.PASS} PORTING=${counts.PORTING} PENDING=${counts.PENDING} EXCLUDED=${counts.EXCLUDED}`);

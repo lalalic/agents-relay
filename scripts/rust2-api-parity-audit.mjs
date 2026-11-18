@@ -12,7 +12,12 @@ const read = path => readFileSync(join(root, path), 'utf8');
 const ledger = read('docs/RUST2_HEAD_TO_HEAD_CHECKLIST.md');
 const rows = [...ledger.matchAll(/^\| `(src\/[^\x60]+\.(?:ts|js))` \| `(rust\/src\/[^\x60]+\.rs)` \| (PENDING|PORTING|PASS|EXCLUDED) \| ([^\n]+) \|$/gm)]
   .map(([,node, rust, status, evidence]) => ({node, rust, status, evidence}));
-assert.equal(rows.length, 228, 'Unexpected Rust2 baseline ledger; do not silently skip sources');
+assert(rows.length >= 228, 'Unexpected Rust2 historical ledger shrink');
+const currentSources = execFileSync('git',['ls-tree','-r','--name-only','HEAD','src'],{cwd:root,encoding:'utf8'})
+  .split('\n').filter(path => /\.(?:ts|js)$/.test(path));
+const knownSources = new Set(rows.map(row => row.node));
+for (const source of currentSources) assert(knownSources.has(source), `Missing current Node source from migration ledger: ${source}`);
+const pending = rows.filter(row => row.status === 'PENDING');
 const target = rows.filter(row => row.status === 'PORTING');
 // The scope is always the current PORTING rows; do not freeze the count as PASS progresses.
 for (const row of target) assert(existsSync(join(root,row.rust)), 'Missing Rust source for '+row.node);
@@ -206,10 +211,18 @@ const inventory = target.map(row => {
     exports: api,
   };
 });
+const pendingInventory = pending.map(row => ({
+  source: row.node, target: row.rust,
+  runtimeExports: collectNodeExports(row.node).filter(symbol =>
+    ['function','class','class-method','class-constructor','variable','enum'].includes(symbol.kind))
+    .map(symbol => (symbol.parent ? symbol.parent+'.' : '')+symbol.name),
+}));
 const summary = {
   sourceTree: execFileSync('git',['rev-parse','HEAD:src'],{cwd:root,encoding:'utf8'}).trim(),
   rustTree: execFileSync('git',['rev-parse','HEAD:rust/src'],{cwd:root,encoding:'utf8'}).trim(),
   sourceCount: inventory.length,
+  pendingSourceModules: pendingInventory.length,
+  pendingRuntimeExportSymbols: pendingInventory.reduce((sum,source) => sum+source.runtimeExports.length,0),
   runtimeExportSymbols: inventory.reduce((sum,r) => sum+r.runtimeExports,0),
   directNameMatches: inventory.reduce((sum,r) => sum+r.directNameMatches,0),
   unmappedRuntimeSymbols: inventory.reduce((sum,r) => sum+r.unmappedRuntime.length,0),
@@ -219,7 +232,7 @@ const summary = {
   filesWithoutDirectDiffImport: inventory.filter(r => !r.directDiffImports.length).length,
   filesWithoutOtherRustReferences: inventory.filter(r => !r.otherRustModuleReferences.length).length,
 };
-const output = {disclaimer: 'Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity.',summary,files:inventory};
+const output = {disclaimer: 'Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.',summary,pendingModules:pendingInventory,files:inventory};
 function markdownEscape(s) {return String(s).replaceAll('|','\\|').replaceAll('\n',' ');}
 const report = [
  '# Rust2 PORTING API surface audit',
@@ -242,6 +255,10 @@ const report = [
    .map(([key,val]) => `| ${key} | ${val} |`),
  '',
  `Source tree: \`${summary.sourceTree.slice(0,12)}\`; Rust source tree: \`${summary.rustTree.slice(0,12)}\`. Rust module rows in scope: ${summary.sourceCount}. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).`,
+ '',
+ '## Pending source modules (not included in PORTING name-match counts)',
+ '',
+ ...pendingInventory.map(row => `- **${row.source}** (${row.runtimeExports.length} Node runtime exports): ${markdownEscape(row.runtimeExports.join(', '))}. Rust target: ${row.target}.`),
  '',
  `## Per-file candidate surface (all ${summary.sourceCount} PORTING files)`,
  '',

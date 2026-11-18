@@ -15,6 +15,8 @@ A listed direct differential import only means a head-to-head test imports the c
 | Metric | Count |
 |---|---:|
 | sourceCount | 107 |
+| pendingSourceModules | 2 |
+| pendingRuntimeExportSymbols | 7 |
 | runtimeExportSymbols | 734 |
 | directNameMatches | 721 |
 | unmappedRuntimeSymbols | 0 |
@@ -24,7 +26,12 @@ A listed direct differential import only means a head-to-head test imports the c
 | filesWithoutDirectDiffImport | 45 |
 | filesWithoutOtherRustReferences | 25 |
 
-Source tree: `a7fabd653a00`; Rust source tree: `af1308e56977`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `c846739e5f60`; Rust source tree: `c60e3c5b0da8`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+
+## Pending source modules (not included in PORTING name-match counts)
+
+- **src/cli-task-complete.ts** (1 Node runtime exports): runTaskCompleteCommand. Rust target: rust/src/cli_task_complete.rs.
+- **src/git-delivery.ts** (6 Node runtime exports): sourceCommitRequired, sourceCommitSha, startedSourceBaseline, bindSourceBaseline, verifySourceCommit, sourceCompletionVerified. Rust target: rust/src/git_delivery.rs.
 
 ## Per-file candidate surface (all 107 PORTING files)
 
