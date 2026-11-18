@@ -21,6 +21,7 @@ export { dashboardWorkflowGraphs, githubPrUrl, searchDashboardJobs } from './das
 const dashboardStaticAssets: Readonly<Record<string, [string, string]>> = {
   '/dashboard.css': ['dashboard.css', 'text/css; charset=utf-8'],
   '/dashboard.js': ['dashboard.js', 'text/javascript; charset=utf-8'],
+  '/vendor/markdown-it.min.js': ['vendor/markdown-it.min.js', 'text/javascript; charset=utf-8'],
   '/pwa.js': ['pwa.js', 'text/javascript; charset=utf-8'],
   '/service-worker.js': ['service-worker.js', 'text/javascript; charset=utf-8'],
   '/manifest.webmanifest': ['manifest.webmanifest', 'application/manifest+json; charset=utf-8'],

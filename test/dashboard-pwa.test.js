@@ -23,6 +23,7 @@ test('PWA frontend assets load independently and real-time API remains uncached'
 
   for (const [path, name, type] of [
     ['/dashboard.js', 'dashboard.js', 'text/javascript'],
+    ['/vendor/markdown-it.min.js', 'vendor/markdown-it.min.js', 'text/javascript'],
     ['/dashboard.css', 'dashboard.css', 'text/css'],
     ['/pwa.js', 'pwa.js', 'text/javascript'],
     ['/service-worker.js', 'service-worker.js', 'text/javascript'],
@@ -65,6 +66,7 @@ test('PWA frontend assets load independently and real-time API remains uncached'
 test('PWA service worker excludes durable job data and SSE from caching', () => {
   const sw = asset('service-worker.js').toString();
   assert.match(sw, /new Set\(ASSETS\)/);
+  assert.match(sw, /vendor\/markdown-it.min.js/);
   assert.match(sw, /ALLOWED\.has\(url\.pathname\)/);
   assert.doesNotMatch(sw, /['"]\/api\//);
   assert.doesNotMatch(sw, /['"]\/events['"]/);

@@ -4,8 +4,8 @@ import {readFileSync,readdirSync} from 'node:fs';
 const read = path => readFileSync(new URL('../../'+path,import.meta.url),'utf8');
 const main=read('workflow/main.mmd');
 const graphIds=new Set(readdirSync(new URL('../../workflow/',import.meta.url)).filter(x=>x.endsWith('.mmd')));
-const html=read('src/dashboard-html.ts');
-const css=read('src/dashboard-style.ts');
+const html=read('src/dashboard-html.ts')+read('dashboard/index.html')+read('dashboard/dashboard.js');
+const css=read('src/dashboard-style.ts')+read('dashboard/dashboard.css');
 test('presentation graph references only existing canonical Mermaid files',()=>{
  assert.match(main,/(?:dashboard:\s*)?presentation[ -]only/i);
  const targets=[...main.matchAll(/^\s*click\s+\w+\s+href\s+"([\w-]+\.mmd)"/gm)].map(m=>m[1]);

@@ -188,38 +188,130 @@ async function setTaskState(task,state,select){const job=selected();if(!job||sta
 function taskStateField(task){const box=element('div','detail-group');box.append(element('p','detail-label',text('State')));const select=document.createElement('select');select.className='job-filter task-state-select';select.setAttribute('aria-label','Task state');for(const state of TASK_STATES)select.append(new Option(state,state));select.value=task.state;select.addEventListener('change',()=>void setTaskState(task,select.value,select));box.append(select);return box;}
 function manualOverrideField(task){const rows=Array.isArray(task.manualStateOverrides)?task.manualStateOverrides:[];const last=rows.at(-1);return field('Manual override',last?last.from+' → '+last.to+' · '+relativeTime(last.at):'—');}
 function iconSvg(name){const paths={close:'M5 5l14 14M19 5 5 19',detail:'M7 3h7l4 4v14H7zM14 3v5h4M10 12h5m-5 4h5'};const ns='http://www.w3.org/2000/svg';const svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('aria-hidden','true');const path=document.createElementNS(ns,'path');path.setAttribute('d',paths[name]);svg.append(path);return svg;}
-function detailContentText(input){
-  if(input===undefined||input===null||input==='')return '';
-  if(typeof input==='string')return input;
-  return JSON.stringify(input,null,2);
+// Content-only dialogs: durable Job/Task intent, original inputs and actual review feedback.
+// No lifecycle state, transport details, or raw runtime diagnostics belong here.
+const detailMarkdownRenderer=typeof window.markdownit==='function'?window.markdownit({html:false,linkify:false,breaks:true}):null;
+function detailMarkdownTokens(tokens,parent){
+  const allowed=new Set(['p','h1','h2','h3','h4','h5','h6','ul','ol','li','blockquote','table','thead','tbody','tr','td','th','em','strong','s','a']);
+  const stack=[parent];
+  for(const token of tokens||[]){
+    const current=stack[stack.length-1];
+    if(token.type==='inline'){detailMarkdownTokens(token.children,current);continue;}
+    if(token.type==='text'||token.type==='html_inline'||token.type==='text_special'){
+      current.append(document.createTextNode(token.content||''));continue;
+    }
+    if(token.type==='softbreak'||token.type==='hardbreak'){
+      current.append(document.createElement('br'));continue;
+    }
+    if(token.type==='code_inline'){
+      current.append(element('code','',document.createTextNode(token.content||'')));continue;
+    }
+    if(token.type==='fence'||token.type==='code_block'){
+      const pre=document.createElement('pre');
+      pre.append(element('code','',document.createTextNode(token.content||'')));
+      current.append(pre);continue;
+    }
+    if(token.type==='image'){
+      // Intent is reading job instructions, not requesting remote image loads.
+      current.append(document.createTextNode(token.content||''));continue;
+    }
+    if(token.type==='hr'){current.append(document.createElement('hr'));continue;}
+    if(token.nesting===-1){if(stack.length>1)stack.pop();continue;}
+    if(token.nesting===1){
+      const tag=String(token.tag||'').toLowerCase();
+      if(!allowed.has(tag)){stack.push(current);continue;}
+      const next=document.createElement(tag);
+      if(tag==='a'){
+        const href=token.attrGet('href')||'';
+        // No javascript:, data:, file:, or protocol-relative links.
+        if(/^(https?:\/\/|mailto:|#|\/(?!\/)|\.\.?\/)/i.test(href)){
+          next.href=href;next.target='_blank';next.rel='noopener noreferrer';
+        }
+      }
+      current.append(next);stack.push(next);
+    }
+  }
 }
-function detailContentSection(label,content,emptyMessage){
+function detailMarkdown(source){
+  const container=element('div','dialog-markdown');
+  const content=String(source||'');
+  if(detailMarkdownRenderer)detailMarkdownTokens(detailMarkdownRenderer.parse(content,{}),container);
+  else container.append(element('p','',text(content)));
+  return container;
+}
+function detailText(value){return typeof value==='string'?value.trim():'';}
+function detailKey(value){return detailText(value).replace(/\s+/g,' ').toLowerCase();}
+function uniqueInputs(items,objective){
+  const seen=new Set([detailKey(objective)]);
+  const objectiveBlocks=new Set(detailText(objective).split(/\n\s*\n/).map(detailKey).filter(block=>block.length>45));
+  const inputs=[];
+  for(const item of items){
+    let content=detailText(item.content);
+    if(!content||seen.has(detailKey(content)))continue;
+    // An input can include the complete objective as contextual boilerplate; remove only
+    // duplicated standalone paragraphs, preserving any distinct instructions.
+    content=content.split(/\n\s*\n/).filter(block=>!objectiveBlocks.has(detailKey(block))).join('\n\n').trim();
+    const key=detailKey(content);
+    if(!key||seen.has(key))continue;
+    seen.add(key);
+    inputs.push({...item,content});
+  }
+  return inputs;
+}
+function readerReviewComments(job,task){
+  const comments=[];
+  const seen=new Set();
+  function add(content,author,createdAt,taskId){
+    const message=detailText(content);
+    const key=detailKey(message);
+    if(!message||seen.has(key))return;
+    seen.add(key);
+    comments.push({text:message,author,createdAt,taskId});
+  }
+  const tasks=task?[task]:(job?.tasks||[]);
+  for(const item of tasks)for(const comment of item.comments||[]){
+    // The append-only stream also holds automatic recovery/state-change events.
+    // Those are not comments about the work and do not belong in this reader.
+    if(comment.kind&&comment.kind!=='human'&&comment.kind!=='review.feedback'&&comment.kind!=='escalation.responded')continue;
+    if(comment.author==='relay'&&comment.kind!=='review.feedback')continue;
+    add(comment.text,comment.author,comment.createdAt,task?undefined:item.id);
+  }
+  for(const request of job?.reviewRevisionRequests||[]){
+    if(task&&request.originalTaskId!==task.id)continue;
+    for(const finding of request.findings||[]){
+      add([finding.summary,finding.evidence].filter(Boolean).join('\n\n'),'Reviewer',request.createdAt,task?undefined:request.originalTaskId);
+    }
+  }
+  if(!task){
+    const verdict=job?.review?.evidence?.data||{};
+    for(const finding of verdict.findings||[])add(typeof finding==='string'?finding:[finding.summary,finding.evidence].filter(Boolean).join('\n\n'),'Final Review',job.review?.updatedAt);
+    for(const observation of verdict.non_blocking_observations||[])add(typeof observation==='string'?observation:[observation.summary,observation.evidence].filter(Boolean).join('\n\n'),'Final Review',job.review?.updatedAt);
+  }
+  return comments.sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
+}
+function readerInputSection(item){
   const section=element('section','dialog-content-section');
-  section.append(element('h3','',text(label)));
+  section.append(element('h3','',text('Input')));
   const body=element('div','dialog-content-body');
-  const rendered=detailContentText(content);
-  if(rendered.trim())body.append(element('pre','dialog-content-text',text(rendered)));
-  else body.append(element('p','dialog-empty',text(emptyMessage||'Not recorded')));
+  if(item.source)body.append(element('p','dialog-input-source',text(item.source)));
+  body.append(detailMarkdown(item.content));
   section.append(body);
   return section;
 }
-function detailCommentsSection(comments){
+function readerCommentsSection(comments){
   const section=element('section','dialog-content-section dialog-comments');
-  section.append(element('h3','',text('Comments')));
+  section.append(element('h3','',text('Review comments')));
   const body=element('div','dialog-content-body');
-  const all=comments.slice().sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
-  if(!all.length)body.append(element('p','dialog-empty',text('No comments recorded')));
+  if(!comments.length)body.append(element('p','dialog-empty',text('No review comments recorded')));
   else{
-    const visible=all.slice(0,50);
-    if(all.length>visible.length)body.append(element('p','dialog-empty',text('Showing the latest '+visible.length+' of '+all.length+' comments')));
     const list=element('ol','dialog-comment-list');
-    for(const comment of visible){
+    for(const comment of comments){
       const item=element('li','dialog-comment');
       const meta=element('div','dialog-comment-meta');
-      meta.append(element('strong','',text(comment.author||'Unknown')));
+      if(comment.author)meta.append(element('strong','',text(comment.author)));
       if(comment.taskId)meta.append(element('span','',text('Task '+comment.taskId)));
       if(comment.createdAt){const when=element('time','',text(comment.createdAt));when.dateTime=comment.createdAt;meta.append(when);}
-      item.append(meta,element('p','dialog-comment-text',text(comment.text||'—')));
+      item.append(meta,detailMarkdown(comment.text));
       list.append(item);
     }
     body.append(list);
@@ -227,66 +319,58 @@ function detailCommentsSection(comments){
   section.append(body);
   return section;
 }
-function showDetailsDialog(kind,id,title,state,sections,comments,metadata){
+function showDetailsDialog(kind,id,title,objective,inputs,comments){
   const dialog=element('dialog','details-dialog');
   const headingId='details-dialog-heading';
   dialog.setAttribute('aria-labelledby',headingId);
   const head=element('div','details-dialog-head');
   const heading=element('div','dialog-heading');
-  const eyebrow=element('div','dialog-eyebrow');
-  eyebrow.append(element('span','',text(kind+' '+id)),element('span','badge '+value(state),text(state||'UNKNOWN')));
-  const name=element('h2','',text(title||kind+' '+id));
-  name.id=headingId;
+  const eyebrow=element('div','dialog-eyebrow',text(kind+' '+id));
+  const name=element('h2','',text(kind==='Task'&&detailKey(title)===detailKey(objective)?'Task details':title||kind+' '+id));name.id=headingId;
   heading.append(eyebrow,name);
   const close=element('button','icon-button');
-  close.append(iconSvg('close'));
-  close.type='button';
-  close.setAttribute('aria-label','Close details');
-  close.title='Close details';
-  close.addEventListener('click',()=>dialog.close());
+  close.append(iconSvg('close'));close.type='button';close.setAttribute('aria-label','Close details');
+  close.title='Close details';close.addEventListener('click',()=>dialog.close());
   head.append(heading,close);
   const body=element('div','details-dialog-body');
-  for(const [label,content,emptyMessage] of sections)body.append(detailContentSection(label,content,emptyMessage));
-  body.append(detailCommentsSection(comments));
-  const extra=element('details','dialog-metadata');
-  extra.append(element('summary','',text('Execution & diagnostics')));
-  for(const [label,content] of metadata){
-    if(content===undefined||content===null||content==='')continue;
-    extra.append(detailContentSection(label,content));
-  }
-  body.append(extra);
+  const objectiveSection=element('section','dialog-content-section dialog-objective');
+  objectiveSection.append(element('h3','',text(kind==='Task'?'Task objective':'Objective')));
+  objectiveSection.append(element('div','dialog-content-body',detailMarkdown(objective||title)));
+  body.append(objectiveSection);
+  for(const item of inputs)body.append(readerInputSection(item));
+  body.append(readerCommentsSection(comments));
   dialog.append(head,body);
   dialog.addEventListener('close',()=>dialog.remove());
-  document.body.append(dialog);
-  dialog.showModal();
-  close.focus();
+  document.body.append(dialog);dialog.showModal();close.focus();
 }
 function openJobDetails(){
-  const job=selected();
-  if(!job)return;
-  const comments=(job.tasks||[]).flatMap(task=>(task.comments||[]).map(comment=>({...comment,taskId:task.id})));
-  showDetailsDialog('Job',job.id,job.title,job.state,[
-    ['Objective',job.objective||job.title,'No Job objective recorded'],
-    ['Content',job.description,'No Job description recorded'],
-    ['Input',job.continuation?.input,'Job-level input not recorded; select a Task to see its input']
-  ],comments,[
-    ['Plans',job.plans?.map(p=>({id:p.id,status:p.status,assessment:p.assessment,error:p.error,generatedTaskIds:p.generatedTaskIds}))],
-    ['Review',job.review],['Outcome',job.result],['Publication',job.publication],['Failure',job.error]
-  ]);
+  const job=selected();if(!job)return;
+  const objective=job.objective||job.description||job.title;
+  const candidates=[];
+  if(job.continuation?.input)candidates.push({source:'Job',content:job.continuation.input});
+  for(const task of job.tasks||[]){
+    if(task.parentTaskId||task.kind==='planner'||['Final Review','Troubleshooter'].includes(task.title)||['reviewer','job-acceptance-reviewer','troubleshooter'].includes(task.agentName))continue;
+    candidates.push({source:task.title||'Task '+task.id,content:task.input});
+  }
+  for(const plan of job.plans||[])if(plan.source==='initial'&&plan.guidance)candidates.push({source:'Planning guidance',content:plan.guidance});
+  const inputs=uniqueInputs(candidates,objective);
+  showDetailsDialog('Job',job.id,job.title,objective,inputs,readerReviewComments(job));
+}
+function taskReaderObjective(task){
+  const title=detailText(task.title);
+  // Generic agent/role names are identifiers, not meaningful objectives.
+  if(title&&/\s/.test(title))return title;
+  const paragraphs=detailText(task.input).split(/\n\s*\n/).map(item=>item.trim());
+  const first=paragraphs.find(item=>item&&!/^(Job ID|Task ID|Review head SHA|Execution ID):/i.test(item));
+  return first||title||'Task '+task.id;
 }
 function openTaskDetails(task){
-  const result=task.result?.data??task.result;
-  const summary=task.result?.summary;
-  const content=summary&&result?summary+'\n\n'+detailContentText(result):summary||result;
-  showDetailsDialog('Task',task.id,task.title,task.state,[
-    ['Objective',task.title,'No Task title recorded'],
-    ['Content',content,'No Task result recorded yet'],
-    ['Input',task.input,'No Task input recorded']
-  ],task.comments||[],[
-    ['Planner assessment',task.plannerResult?.assessment],['Resolution',task.resolution],
-    ['Resolution classification',task.resolutionClassification],
-    ['Failure',task.failureReason||task.error],['Dependencies',task.dependencies]
-  ]);
+  const job=selected();
+  const objective=taskReaderObjective(task);
+  const candidates=[{content:task.input}];
+  for(const attachment of task.attachments||[])candidates.push({source:'Attachment',content:attachment});
+  const inputs=uniqueInputs(candidates,objective);
+  showDetailsDialog('Task',task.id,task.title,objective,inputs,readerReviewComments(job,task));
 }
 document.querySelector('#job-content-open').addEventListener('click',openJobDetails);function renderTaskDetail(task){taskDetailRoot.replaceChildren();if(!task){taskDetailRoot.append(element('p','empty',text('Select a task to inspect execution details.')));return;}const routing=task.routing||{};const groups=element('div','detail-groups');groups.append(field('Title',task.title||'—'),field('Task ID',task.id),field('Kind',task.kind||'work'),taskStateField(task),...(task.state==='FAILED'&&task.resolution?.state?[field('Resolution state',task.resolution.state),field('Resolution path',task.resolution.path||'—'),field('Resolution target',task.resolution.targetTaskId||'—')]:[]),manualOverrideField(task),field('Planning decision',task.planningDecisionId||'—'),field('Planning source',task.planningSource||'—'),field('Planning round',task.planningRound===undefined?'—':String(task.planningRound)),field('Project / agent',value(task.projectName)+' / '+value(task.agentName)),field('Parent task',task.parentTaskId||'root'),...(task.resolutionClassification?[field('Resolution classification',task.resolutionClassification.kind),field('Resolution target',task.resolutionClassification.targetTaskId),field('Resolution evidence',task.resolutionClassification.evidence),field('Resolution reason',task.resolutionClassification.reason)]:[]),field('Adapter',task.adapter),field('Provider / model',value(routing.provider)+' / '+value(routing.model)),field('Reasoning / profile',value(routing.reasoning||routing.profile)),field('Attempt',attemptBudget(task)),field('Dependencies',Array.isArray(task.dependencies)&&task.dependencies.length?task.dependencies.join(', '):'none'),taskCommentField(task),chatField(task));const job=selected();if(task.reviewHeadSha&&job)groups.append(commitField('HEAD commit',job,task.reviewHeadSha));const graph=agentGraphField(task);if(graph)groups.append(graph);if(task.plannerResult)groups.append(field('Objective status',task.plannerResult.objective_status),markdownField('Assessment',task.plannerResult.assessment));if(task.error)groups.append(field('Error',task.error));const result=task.result?.data??task.result;if(result){groups.append(field('Conclusion',result.verdict||result.outcome?.verdict||task.result?.summary||'Available'));}taskDetailRoot.append(groups);const details=element('button','icon-button');details.append(iconSvg('detail'));details.type='button';details.setAttribute('aria-label','Task details and conclusion');details.title='Task details and conclusion';details.addEventListener('click',()=>openTaskDetails(task));taskDetailRoot.append(details);}
 function reviewStatus(job){const review=job?.review;if(!review)return 'Not started';if(review.outcome==='approved'&&review.headSha===job.headSha)return 'MERGE READY · approved';const stale=Array.isArray(job?.tasks)&&job.tasks.some(task=>['reviewer','job-acceptance-reviewer'].includes(task.agentName)&&task.reviewHeadSha&&job.headSha&&task.reviewHeadSha!==job.headSha);if(stale)return 'STALE · awaiting review';return String(review.outcome||'pending').replace('_',' ').toUpperCase();}function renderSelectedJob(){jobDetail.replaceChildren();const job=selected();if(!job){selectedJobTitle.textContent='';jobContentButton.disabled=true;jobContentButton.dataset.state='IDLE';jobDetail.append(element('div','empty',text('No durable jobs discovered.')));buildTree([]);renderTaskDetail(null);return;}selectedJobTitle.textContent=value(job.title||job.id);jobContentButton.disabled=false;jobContentButton.dataset.state=JOB_STATES.includes(job.state)?job.state:'IDLE';jobContentButton.setAttribute('aria-label','Job details · '+value(job.state));jobContentButton.title='Job details · '+value(job.state);if(jobSelectionKey(job)!==selectedJob){selectedJob=jobSelectionKey(job);selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}const summary=element('div','job-summary');summary.append(field('PR state',Number(job.prNumber||0)===0?'Not applicable':job.githubState||'UNKNOWN'),jobStateField(job),field('Runtime status',job.runtimeStatus||'IDLE'),field('Review',job.reviewEnabled===false?'Not required':reviewStatus(job)),field('Creator thread',job.creatorThreadId||'—'),threadField('Implementation thread',job.implementationThreadId),threadField('Reviewer thread',job.reviewerThreadId),commitField('Review head SHA',job,job.review?.headSha||job.headSha||''),prField(job),field('Repository',job.repository||'—'),field('Project root',job.projectRoot||'—'),field('Last activity',relativeTime(job.updatedAt)),field('Task states',compactCounts(job.tasks)),jelField(job));jobDetail.append(summary);const selectedTask=(job.tasks||[]).find(task=>task.id===selectedTaskId)||null;if(selectedTaskId&&!selectedTask){selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}buildTree(job.tasks||[]);renderTaskDetail(selectedTask);renderEventScope();}function renderAll(){jobs.sort(compareJobs);syncFilters();renderJobList();renderSelectedJob();syncMobileJobsView();}
