@@ -282,6 +282,11 @@ fn job_params(args:&[String],id:&str)->Result<Vec<(&'static str,String)>,String>
     if let Some(pr)=optional_legacy_pr(args)?{params.push(("pr",pr.to_string()));}
     Ok(params)
 }
+/// Read-only live daemon status. A native CLI never infers success from an
+/// unreachable service, nor falls back to Node or a second SQLite store.
+pub fn relay_service_status(args:&[String])->Result<Value,String>{
+    http(args,"/api/status","GET",&[],None,"status request")
+}
 pub fn relay_control_job(args:&[String],id:&str)->Result<Value,String>{
     http(args,"/api/job","GET",&job_params(args,id)?,None,"job request")
 }
