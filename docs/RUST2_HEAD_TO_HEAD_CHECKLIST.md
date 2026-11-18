@@ -29,6 +29,14 @@ The reproducible static export inventory is in [RUST2_API_PARITY_AUDIT.md](RUST2
 
 For the 107 `PORTING` files: 734 Node runtime export symbols/methods, 549 plausible Rust declaration names, 168 without a direct name match, and 17 constructor shape reviews. These are **candidate mapping gaps, not proven functional differences**. Type/field structure, signatures, negative/restart cases, durable side effects and actual caller wiring are not established by a static name match. The ledger statuses remain unchanged until each specific surface has independently verified head-to-head tests and production binding evidence.
 
+## API parity closure tranche: CLI, Store, EventBus and usage (2026-11-17)
+
+The first independently audited API closure added actual Rust equivalents of Node CLI numeric/option parsing, ServiceEventBus subscription lifecycle and Graph-selected wake publication, SQLite LocalAuthority/ProjectedDurableStore delegated APIs, atomic Agent + Projection Outbox writes, and injected UsageRegistry snapshot orchestration. These live in `rust/src/cli_support.rs`, `cli_support_events.rs`, `local_authority_store.rs`, `projected_store.rs`, `relay_store.rs`, `usage.rs`, and `usage_registry.rs`; Graph policy remains unchanged.
+
+- Exact Node/Rust direct comparisons: 668 CLI arguments and rejection cases; 100 × 24 EventBus subscribe/unsubscribe/close operations; 95 × 18 Graph-selected publication actions; 24 × 22 real isolated SQLite Store method calls, including duplicate Agent save/Outbox counts; 170 UsageRegistry/UnavailableUsageReader injected-provider scenarios. Five standalone differential suites in `rust/tests/head_to_head_*closure.mjs`.
+- `rust/tests/native_api_parity_closure.rs` proves Agent + Outbox rollback together on forced enqueue failure and idempotent duplicate saves.
+- This is a verified **subset** of the 107 PORTING module surfaces, not final per-file API parity. Real provider readers, external GitHub/Git operations, cross-Job Blocker persistence, complete CLI/Daemon runtime bindings, all negative/restart cases and live delivery still require independent testing and wiring. Retain `PORTING` for all those modules; do not upgrade based on exported symbol matches or synthetic provider fixtures.
+
 ## Source-by-source ledger
 
 Status meanings: `PENDING` = not implemented; `PORTING` = in progress; `PASS` = port + Node/Rust differential tests passed; `EXCLUDED` = explicit documented semantic removal. A Rust file existing is not PASS.

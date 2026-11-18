@@ -91,24 +91,35 @@ function collectRustSurface(path) {
   // The result is a candidate match, NOT an AST-level semantic proof.
   const text = read(path).replace(/^\s*\/\/[^\n]*$/gm, '');
   const collect = re => [...text.matchAll(re)].map(match => match[1]);
+  // Named pub-use declarations provide a real Rust module API even when the
+  // implementation was extracted into a separate SRP module. This remains a
+  // *candidate* mapping, not behavioral proof or a complete Rust parser.
+  const reexports=[...text.matchAll(/\bpub\s+use\s+([^;]+);/gs)].flatMap(match=>{
+    const clause=match[1];
+    const group=clause.match(/\{([^{}]+)\}/s);
+    const items=group?group[1].split(','):[clause.split('::').at(-1)];
+    return items.map(item=>item.trim().split(/\s+as\s+/).at(-1)?.trim())
+      .filter(item=>item && /^[A-Za-z_]\w*$/.test(item));
+  });
   return {
     functions: collect(/\bpub(?:\([^)]*\))?\s+(?:(?:async|unsafe)\s+)*fn\s+([A-Za-z_]\w*)\b/g),
     methods: collect(/\b(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|unsafe)\s+)*fn\s+([A-Za-z_]\w*)\b/g),
     types: collect(/\bpub(?:\([^)]*\))?\s+(?:(?:struct|enum|trait|type|union))\s+([A-Za-z_]\w*)\b/g),
     values: collect(/\bpub(?:\([^)]*\))?\s+(?:const|static)\s+([A-Za-z_]\w*)\b/g),
+    reexports,
     source: text,
   };
 }
 function classification(api, rust) {
   const name = api.name;
-  if (['function'].includes(api.kind)) return has(rust.functions, name) ? 'name-match' : 'unmapped';
-  if (api.kind === 'variable') return has([...rust.functions,...rust.values], name) ? 'name-match' : 'unmapped';
-  if (api.kind === 'class') return has(rust.types, name) ? 'name-match' : 'unmapped';
-  if (api.kind === 'enum') return has(rust.types, name) ? 'name-match' : 'unmapped';
+  if (['function'].includes(api.kind)) return has([...rust.functions,...rust.reexports], name) ? 'name-match' : 'unmapped';
+  if (api.kind === 'variable') return has([...rust.functions,...rust.values,...rust.reexports], name) ? 'name-match' : 'unmapped';
+  if (api.kind === 'class') return has([...rust.types,...rust.reexports], name) ? 'name-match' : 'unmapped';
+  if (api.kind === 'enum') return has([...rust.types,...rust.reexports], name) ? 'name-match' : 'unmapped';
   if (api.kind === 'class-method') return has(rust.methods, name) ? 'name-match' : 'unmapped';
   if (api.kind === 'class-constructor') return has(rust.methods,'new') || has(rust.methods,'default') ? 'name-match' : 'review';
   if (api.kind === 'class-property') return 'review';
-  if (api.kind === 'type' || api.kind === 'interface') return has(rust.types, name) ? 'name-match' : 'review';
+  if (api.kind === 'type' || api.kind === 'interface') return has([...rust.types,...rust.reexports], name) ? 'name-match' : 'review';
   return 'review';
 }
 const testDir = join(root, 'rust/tests');

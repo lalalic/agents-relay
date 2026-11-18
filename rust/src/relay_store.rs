@@ -279,6 +279,23 @@ impl SQLiteRelayStore {
             .map_err(sql)?;
         result
     }
+    /// Atomic Node saveAgentWithProjection parity: Agent and retryable
+    /// outbox row are one SQLite transaction, never two independent writes.
+    pub fn save_agent_with_projection(
+        &self,agent:&Value,request:&Value,
+    )->Result<(),String>{
+        self.db.execute_batch("BEGIN IMMEDIATE").map_err(sql)?;
+        let result=(||{
+            let now=iso8601_now();
+            self.upsert_agent_in_transaction(agent,&now)?;
+            ProjectionOutbox::new(&self.db,self.scope_job_id.as_deref())
+                .enqueue(request,&now)?;
+            Ok(())
+        })();
+        self.db.execute_batch(if result.is_ok(){"COMMIT"}else{"ROLLBACK"})
+            .map_err(sql)?;
+        result
+    }
     fn agent_observed(&self)->Result<bool,String>{
         let scope=self.scope_job_id.as_deref();
         let found:Option<String>=if let Some(scope)=scope{

@@ -6,6 +6,8 @@ use crate::{
     local_merge_lock::iso8601_now,
     owned_process::OwnedProcessManager,
 };
+pub use crate::usage_registry::{UsageReader,UsageRegistry,UsageSnapshotProvider,
+    UnavailableUsageReader,read_usage_snapshot};
 use chrono::{DateTime,Utc};
 use serde_json::{json,Value};
 use std::{fs,path::{Path,PathBuf},time::Duration};

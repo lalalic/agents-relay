@@ -22,6 +22,8 @@ use agents_relay_rust2::{
         terminal_recovery_eligible, terminal_recovery_prompt, TerminalRecoveryFacts,
     },
 };
+#[path = "relay-rust2-parity/closure.rs"]
+mod closure;
 use serde_json::{json, Value};
 use std::io::{self, BufRead};
 
@@ -355,8 +357,10 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 }
 
 fn invoke(request: &Value) -> Result<String, String> {
+    if let Some(output)=closure::invoke(request)?{return Ok(output);}
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        // Newly closed API surfaces live in an isolated parity fixture module.
         // Node src/adapters.ts: exact public worker argument and submitted receipt contracts.
         "stage2BuildCodexArgs" => Ok(json!(agents_relay_rust2::adapters::build_codex_args(
             &request["route"],request["input"].as_str().unwrap_or(""))).to_string()),

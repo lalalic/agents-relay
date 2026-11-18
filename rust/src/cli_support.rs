@@ -1,13 +1,18 @@
 // Node provenance: src/cli-support.ts. Public Relay CLI options, immutable
 // Job binding and HTTP control transport. No Dashboard browser code.
 use crate::{
-    cli_core_support::{arg,has_arg,text_option},
     events_bus_runtime::resolve_events_bus_runtime,
     local_job_registry::find_job_id_snapshot,
     relay_job_snapshot_reads::normalize_relay_job,
 };
 use regex::Regex;
 use serde_json::{json,Value};
+pub use crate::cli_core_support::{arg,has_arg,text_option};
+pub use crate::cli_support_events::{
+    ServiceEventBus,ServiceEventBusPort,ServiceSubscription,
+    publish_wake,publish_task_unblocked,publish_task_blocked,
+    publish_dependent_unblocked,request_managed_reconciliation,
+};
 use std::{fs,path::Path};
 use url::Url;
 
@@ -17,10 +22,101 @@ pub const SERVICE_WEBHOOK_WATCHDOG_MS:u64=300_000;
 pub const SERVICE_DASHBOARD_REFRESH_MS:u64=300_000;
 pub const SERVICE_PROJECTION_FLUSH_MS:u64=1_000;
 
+// Exact Node SERVICE_DEFAULTS public shape, without a mutable singleton.
+#[derive(Clone,Copy,Debug,serde::Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct ServiceDefaults {
+    pub port:u16,
+    pub watchdog_ms:u64,
+    pub webhook_watchdog_ms:u64,
+    pub dashboard_refresh_ms:u64,
+    pub projection_flush_ms:u64,
+}
+pub const SERVICE_DEFAULTS:ServiceDefaults=ServiceDefaults{
+    port:SERVICE_PORT,watchdog_ms:SERVICE_WATCHDOG_MS,
+    webhook_watchdog_ms:SERVICE_WEBHOOK_WATCHDOG_MS,
+    dashboard_refresh_ms:SERVICE_DASHBOARD_REFRESH_MS,
+    projection_flush_ms:SERVICE_PROJECTION_FLUSH_MS,
+};
+
+// All options below are mechanical CLI parsing. Workflow decisions remain
+// in Graph and the durable SQLite Reconciler.
+pub fn priority(args:&[String],fallback:&str)->Result<String,String>{
+    let value=arg(args,"--priority",fallback);
+    if matches!(value,"P0"|"P1"|"P2"|"P3") {Ok(value.into())}
+    else{Err("--priority must be P0, P1, P2, or P3".into())}
+}
+pub fn story_size(args:&[String],fallback:&str)->Result<String,String>{
+    let value=arg(args,"--story-size",fallback).to_uppercase();
+    if matches!(value.as_str(),"S"|"M"|"L") {Ok(value)}
+    else{Err("--story-size must be S, M, or L".into())}
+}
+pub fn chatgpt_tab_close_policy(args:&[String],env:Option<&str>)
+    ->Result<String,String>{
+    let fallback=env.filter(|s|!s.is_empty()).unwrap_or("after-terminal");
+    let value=arg(args,"--chatgpt-tab-close-policy",fallback);
+    if matches!(value,"after-start"|"never"|"after-terminal"){
+        Ok(value.into())
+    }else{Err("--chatgpt-tab-close-policy must be after-start, never, or after-terminal".into())}
+}
+pub fn job_tag_from_args(args:&[String])->Result<Value,String>{
+    crate::task_tag::parse_job_tag_json(arg(args,"--tag",""))
+}
+pub fn continuation(args:&[String])->Value{
+    let kind=arg(args,"--continue-kind","");
+    let target=arg(args,"--continue-target","");
+    if kind.is_empty()||target.is_empty(){return Value::Null;}
+    let input=arg(args,"--continue-input","");
+    let mut item=json!({"kind":kind,"target":target});
+    if !input.is_empty(){item["input"]=json!(input);}
+    item
+}
+pub fn reject_removed_job_options(args:&[String])->Result<(),String>{
+    let obsolete=["--mode","--execution-mode","--schedule",
+        "--schedule-next-run","--schedule-timezone","--missed-run-policy",
+        "--schedule-concurrency","--cron","--schedule-cron"];
+    if let Some(flag)=obsolete.into_iter().find(|flag|has_arg(args,flag)){
+        return Err(format!("Unsupported Job option {flag}: every Job replans to objective satisfaction and scheduling is unavailable"));
+    }
+    Ok(())
+}
+pub fn reject_remote_lifecycle_options(args:&[String])->Result<(),String>{
+    let obsolete=["--github-repo","--pr","--no-github","--dependent-pr",
+        "--head","--base","--body","--github-app-id",
+        "--github-app-installation-id","--github-app-private-key-file",
+        "--github-webhook-secret","--github-webhook-secret-file",
+        "--github-token","--github-token-file","--projection-ms"];
+    if let Some(flag)=obsolete.into_iter().find(|flag|args.iter().any(|arg|
+        arg==flag||arg.starts_with(&format!("{flag}=")))){
+        return Err(format!("Unsupported option {flag}: Jobs use local Git identity and SQLite lifecycle state"));
+    }
+    Ok(())
+}
+
+// JS Number(value) accepts blank/whitespace and 0x/0b/0o literals;
+// from_str::<u64> silently diverges for valid Node CLI options.
+fn js_number(raw:&str)->f64{
+    let text=raw.trim_matches(|c:char|c.is_whitespace()||c=='\u{feff}');
+    if text.is_empty(){return 0.0;}
+    for (prefix,radix) in [("0x",16),("0X",16),("0b",2),("0B",2),("0o",8),("0O",8)]{
+        if let Some(value)=text.strip_prefix(prefix){
+            return u128::from_str_radix(value,radix)
+                .map(|n|n as f64).unwrap_or(f64::NAN);
+        }
+    }
+    text.parse::<f64>().unwrap_or(f64::NAN)
+}
+fn number_is_integer(n:f64)->bool{n.is_finite()&&n.fract()==0.0}
+fn number_is_safe_positive_integer(n:f64)->bool{
+    number_is_integer(n)&&n>0.0&&n<=9_007_199_254_740_991.0
+}
 pub fn integer_arg(args:&[String],flag:&str,default:u64)->Result<u64,String>{
     if !has_arg(args,flag){return Ok(default);}
-    arg(args,flag,"").parse::<u64>()
-        .map_err(|_|format!("{flag} must be a non-negative integer"))
+    let number=js_number(arg(args,flag,""));
+    if !number_is_integer(number)||number<0.0||number>u64::MAX as f64{
+        return Err(format!("{flag} must be a non-negative integer"));
+    }
+    Ok(number as u64)
 }
 pub fn repository(args:&[String])->Result<&str,String>{
     let repo=arg(args,"--repo","");
@@ -37,9 +133,11 @@ pub fn new_local_repository(args:&[String])->Result<&str,String>{
 }
 pub fn pull_request(args:&[String])->Result<u64,String>{
     let raw=arg(args,"--pr","");
-    let pr=raw.parse::<u64>().unwrap_or(0);
-    if pr==0{return Err("--pr is required for GitHub-backed operation".into());}
-    Ok(pr)
+    let pr=js_number(raw);
+    if !number_is_integer(pr)||pr<=0.0||pr>u64::MAX as f64{
+        return Err("--pr is required for GitHub-backed operation".into());
+    }
+    Ok(pr as u64)
 }
 pub fn validate_read_only_job_binding(args:&[String])->Result<(),String>{
     for flag in [
@@ -59,8 +157,8 @@ pub fn validate_read_only_job_binding(args:&[String])->Result<(),String>{
         return Err("--id is required for read-only Relay commands".into());
     }
     if has_arg(args,"--pr"){
-        let pr=arg(args,"--pr","").parse::<u64>().unwrap_or(0);
-        if pr==0||pr>9_007_199_254_740_991{
+        let pr=js_number(arg(args,"--pr",""));
+        if !number_is_safe_positive_integer(pr){
             return Err("--pr must be a positive integer".into());
         }
     }
@@ -126,11 +224,11 @@ pub fn save_local(file:Option<&Path>,job:&Value)->Result<(),String>{
 }
 pub fn optional_legacy_pr(args:&[String])->Result<Option<u64>,String>{
     if !has_arg(args,"--pr"){return Ok(None);}
-    let value=arg(args,"--pr","").parse::<u64>().unwrap_or(0);
-    if value==0||value>9_007_199_254_740_991{
+    let value=js_number(arg(args,"--pr",""));
+    if !number_is_safe_positive_integer(value){
         return Err("--pr must be a positive integer (deprecated; use --id for normal operations)".into());
     }
-    Ok(Some(value))
+    Ok(Some(value as u64))
 }
 pub fn endpoint(args:&[String])->Result<(String,u16),String>{
     let host=arg(args,"--host","127.0.0.1");

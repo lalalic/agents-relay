@@ -166,6 +166,69 @@ impl LocalAuthorityDurableStore {
         })?;
         Ok(())
     }
+    // Public DurableStore delegation: Graph selects the mutation, the SQLite
+    // transaction is the sole durable authority. A failed write never emits
+    // a local-commit wake or a false completion receipt.
+    pub fn reserve_workflow_launch(&self,identity:&Value)->Result<bool,String>{
+        self.authority.reserve_workflow_launch(identity)
+    }
+    pub fn verify_workflow_launch(
+        &self,job_id:&str,task_id:&str,execution_id:&str,
+    )->Result<String,String>{
+        self.authority.verify_workflow_launch(job_id,task_id,execution_id)
+    }
+    pub fn commit_workflow_mutation_and_events<F>(
+        &self,job_id:&str,mutate:F,events:&[Value],
+    )->Result<Value,String>
+    where F:FnOnce(Value)->Result<Value,String>{
+        let committed=self.authority.commit_workflow_mutation_and_events(
+            job_id,mutate,events)?;
+        publish_local_commit(&committed);
+        Ok(committed)
+    }
+    pub fn commit_workflow_mutation_with_events<F>(
+        &self,job_id:&str,mutate:F,
+    )->Result<Value,String>
+    where F:FnOnce(Value)->Result<(Value,Vec<Value>),String>{
+        let committed=self.authority.commit_workflow_mutation_with_events(job_id,mutate)?;
+        publish_local_commit(&committed);
+        Ok(committed)
+    }
+    pub async fn drain_workflow_events<Publish,Fut>(
+        &self,publish:Publish,
+    )->Result<usize,String>
+    where Publish:FnMut(Value)->Fut,Fut:std::future::Future<Output=Result<(),String>>{
+        self.authority.drain_workflow_events(publish).await
+    }
+    pub fn record_host_invocation_event(
+        &self,delivery:&Value,outcome:&str,fingerprint:&str,
+    )->Result<(),String>{
+        self.authority.record_host_invocation_event(delivery,outcome,fingerprint)
+    }
+    pub fn has_host_invocation_decision(
+        &self,job_id:&str,task_id:&str,invocation_id:&str,
+        fingerprint:Option<&str>,
+    )->Result<bool,String>{
+        self.authority.has_host_invocation_decision(
+            job_id,task_id,invocation_id,fingerprint)
+    }
+    pub fn record_execution_process(&self,record:&Value)->Result<(),String>{
+        self.authority.record_execution_process(record)
+    }
+    pub fn load_execution_process(
+        &self,job_id:&str,task_id:&str,execution_id:&str,
+    )->Result<Option<Value>,String>{
+        self.authority.load_execution_process(job_id,task_id,execution_id)
+    }
+    pub fn finish_execution_process(
+        &self,job_id:&str,task_id:&str,execution_id:&str,
+    )->Result<(),String>{
+        self.authority.finish_execution_process(job_id,task_id,execution_id,None)
+    }
+    pub fn apply_pull_request_facts(&self,facts:&Value)->Result<(),String>{
+        self.authority.save_pull_request_facts(facts)
+    }
+    pub fn list_agents(&self)->Result<Vec<Value>,String>{self.load_agents()}
     pub fn load_agents(&self)->Result<Vec<Value>,String>{
         Ok(self.authority.load_agents()?.unwrap_or_default())
     }

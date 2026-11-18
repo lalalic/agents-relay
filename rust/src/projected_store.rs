@@ -183,6 +183,88 @@ impl ProjectedDurableStore{
         if let Some(facts)=seed.as_ref(){let _=relay.save_pull_request_facts(facts);}
         Self{relay,seeded_facts:seed}
     }
+    // SQLite-first DurableStore API parity. These are exact delegations
+    // to the canonical transaction/receipt store, not remote PR projections.
+    pub fn mutate_job<F>(&self,job_id:&str,mutate:F)->Result<Value,String>
+    where F:FnOnce(Value)->Result<Value,String>{
+        self.relay.mutate_job(job_id,mutate)
+    }
+    pub fn mark_event_processed(&self,event_id:&str,stream:Option<&str>,
+        sequence:Option<i64>)->Result<bool,String>{
+        self.relay.mark_event_processed(event_id,stream,sequence)
+    }
+    pub fn record_host_invocation_event(
+        &self,delivery:&Value,outcome:&str,fingerprint:&str,
+    )->Result<(),String>{
+        self.relay.record_host_invocation_event(delivery,outcome,fingerprint)
+    }
+    pub fn has_host_invocation_decision(
+        &self,job_id:&str,task_id:&str,invocation_id:&str,
+        fingerprint:Option<&str>,
+    )->Result<bool,String>{
+        self.relay.has_host_invocation_decision(job_id,task_id,
+            invocation_id,fingerprint)
+    }
+    pub fn record_host_invocation_decision(
+        &mut self,delivery:&Value,fingerprint:&str,
+    )->Result<Value,String>{
+        self.relay.record_host_invocation_decision(delivery,fingerprint)
+    }
+    pub fn record_execution_process(&self,record:&Value)->Result<(),String>{
+        self.relay.record_execution_process(record)
+    }
+    pub fn load_execution_process(
+        &self,job_id:&str,task_id:&str,execution_id:&str,
+    )->Result<Option<Value>,String>{
+        self.relay.load_execution_process(job_id,task_id,execution_id)
+    }
+    pub fn finish_execution_process(
+        &self,job_id:&str,task_id:&str,execution_id:&str,
+    )->Result<(),String>{
+        self.relay.finish_execution_process(job_id,task_id,execution_id,None)
+    }
+    pub fn list_agents_with_remote<Load>(&self,mut load:Load)->Result<Vec<Value>,String>
+    where Load:FnMut()->Result<Vec<Value>,String>{
+        if let Some(local)=self.relay.load_agents()?{return Ok(local);}
+        let remote=load()?;
+        self.relay.save_agents(&remote)?;
+        Ok(remote)
+    }
+    pub fn list_agents(&self)->Result<Vec<Value>,String>{
+        self.list_agents_with_remote(||Err(
+            "Projected agent registry requires an explicit remote store".into()))
+    }
+    pub fn save_agent_with_remote<Load>(
+        &self,agent:&Value,load:Load,
+    )->Result<(),String>
+    where Load:FnMut()->Result<Vec<Value>,String>{
+        // Preserve unseen historical agents before first local upsert.
+        self.list_agents_with_remote(load)?;
+        let id=field(agent,"id");
+        self.relay.save_agent_with_projection(agent,&json!({
+            "idempotencyKey":format!("save_agent:{id}"),
+            "coalesceKey":format!("agent:{id}"),
+            "operation":"save_agent",
+            "payload":{"operation":"save_agent","value":agent},
+            "priority":10
+        }))
+    }
+    pub fn save_agent(&self,agent:&Value)->Result<(),String>{
+        self.save_agent_with_remote(agent,||Err(
+            "Projected agent registry requires an explicit remote store".into()))
+    }
+    pub fn apply_pull_request_facts(&self,facts:&Value)->Result<(),String>{
+        self.relay.save_pull_request_facts(facts)
+    }
+    pub fn pull_request_state(&self)->Result<String,String>{
+        Ok(self.relay.load_pull_request_facts()?.as_ref()
+            .and_then(|facts|facts.get("state")).and_then(Value::as_str)
+            .unwrap_or("UNKNOWN").into())
+    }
+    pub fn pull_request_head(&self)->Result<Option<Value>,String>{
+        Ok(self.relay.load_pull_request_facts()?.and_then(|facts|
+            facts.get("head").filter(|v|!v.is_null()).cloned()))
+    }
     pub fn hydrate(&self,job:&Value)->Result<(),String>{
         self.relay.ingest_job_snapshot(job).map(|_|())
     }
