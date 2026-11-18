@@ -28,8 +28,12 @@ mod closure;
 mod pool_public;
 #[path = "relay-rust2-parity/cli_runtime_public.rs"]
 mod cli_runtime_public;
+#[path = "relay-rust2-parity/cli_service_public.rs"]
+mod cli_service_public;
 #[path = "relay-rust2-parity/reconciler_recovery_public.rs"]
 mod reconciler_recovery_public;
+#[path = "relay-rust2-parity/reconcile_public.rs"]
+mod reconcile_public;
 #[path = "relay-rust2-parity/runtime_base_public.rs"]
 mod runtime_base_public;
 #[path = "relay-rust2-parity/review_base_public.rs"]
@@ -535,7 +539,10 @@ fn invoke(request: &Value) -> Result<String, String> {
         "apiRuntimeBase" => runtime_base_public::invoke(request),
         "apiReconcilerPlanJob" => reconciler_recovery_public::plan(request),
         "apiReconcilerRecovery" => reconciler_recovery_public::invoke(request),
+        "apiReconcilerReconcile" => reconcile_public::invoke(request),
         "apiCliRuntimePublic" => cli_runtime_public::invoke(request),
+        "apiCliRuntimeFactory" => cli_runtime_public::factory(request),
+        "apiCliService" => cli_service_public::invoke(request),
         "apiPoolLocal" => pool_public::local(request),
         "apiPoolWatch" => pool_public::watch(request),
         "apiPoolWebhook" => {

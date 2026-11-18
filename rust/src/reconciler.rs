@@ -102,6 +102,42 @@ pub struct Reconciler{
     reconciling:HashSet<String>,
 }
 impl Reconciler{
+    /// Node Reconciler.reconcile core durable pass: one read, canonical
+    /// Graph planner/review/DAG/Job decisions, fenced SQLite write, then
+    /// observable events and selected external effects. Any CAS rejection
+    /// stops execution before launching new workers.
+    pub fn reconcile<P:crate::reconciler_durable::ReconcileHost>(
+        &mut self,job_id:&str,verified_head:Option<&str>,
+        project:&Path,roots:&Value,adapters:&[Value],registered:&[Value],
+        usage:Option<&Value>,host:&mut P,
+    )->Result<Value,String>{
+        let before=host.load(job_id)?;
+        let outcome=self.reconcile_snapshot(&before,verified_head,
+            project,roots,adapters,registered,usage)?;
+        let after=if outcome.changed{
+            host.persist(job_id,&before,&outcome.job)?
+        }else{before.clone()};
+        // A transport failure never reverses a committed Graph transition.
+        for event in &outcome.events{
+            if let Err(error)=host.broadcast(event){
+                eprintln!("warning: Relay event transport unavailable: {error}");
+            }
+        }
+        // Lost/blocked generations are cancelled using exact execution IDs,
+        // never process-name matching or a global kill operation.
+        for generation in &outcome.cancel_generations{
+            if let Some(task)=before.get("tasks").and_then(Value::as_array)
+                .into_iter().flatten().find(|task|
+                    task.get("executionId").and_then(Value::as_str)
+                        ==Some(generation.as_str())){
+                self.runtime.cancel_execution_generation(job_id,
+                    task.get("id").and_then(Value::as_str).unwrap_or(""),
+                    generation);
+            }
+        }
+        for action in &outcome.effects{host.launch(action)?;}
+        Ok(after)
+    }
     pub fn new(graph_directory:impl Into<PathBuf>,
         store_directory:impl Into<PathBuf>,profile_home:impl Into<PathBuf>,
         policy_path:impl Into<PathBuf>,rules_path:impl Into<PathBuf>,
@@ -399,9 +435,13 @@ impl Reconciler{
                         }
                     }
                 }
+                result.changed|=result.job!=*job;
                 return Ok(result);
             }
-            if !active(&result.job){return Ok(result);}
+            if !active(&result.job){
+                result.changed|=result.job!=*job;
+                return Ok(result);
+            }
             for task in tasks(&result.job){
                 if field(task,"state")=="BLOCKED"{
                     if let Some(execution)=task.get("executionId")

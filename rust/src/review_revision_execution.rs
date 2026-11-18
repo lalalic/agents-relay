@@ -51,7 +51,7 @@ fn accepted(
 pub fn reconcile_review_revision_facts(graph_dir: &Path, job: &mut Value) -> Result<bool, String> {
     let tasks = items(job, "tasks").to_vec();
     let review = job["review"].clone();
-    let Some(requests) = job["reviewRevisionRequests"].as_array_mut() else {
+    let Some(requests) = job.get_mut("reviewRevisionRequests").and_then(Value::as_array_mut) else {
         return Ok(false);
     };
     let mut changed = false;

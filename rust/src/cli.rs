@@ -1,3 +1,5 @@
+pub use crate::cli_runtime_public::{runtime,RuntimePaths,RuntimeReconciler};
+pub use crate::cli_service_public::{create_service,start_service,Service};
 // Head-to-head Phase1 port: src/cli.ts
 // Standalone and daemon-backed CLI use the same immutable SQLite Job ID.
 // The daemon owns workflow execution; a CLI command is a synchronous client.

@@ -58,3 +58,28 @@ pub fn invoke(request:&Value)->Result<String,String>{
         Err(error)=>json!({"ok":false,"error":error}),
     },"calls":fixture.calls,"job":fixture.job}).to_string())
 }
+
+/// The actual native CLI runtime factory constructs typed Planner and
+/// Reconciler. Differential fixtures inspect its public configuration only.
+pub fn factory(request:&Value)->Result<String,String>{
+    use agents_relay_rust2::cli_runtime_public::RuntimePaths;
+    let args=request["args"].as_array().into_iter().flatten()
+        .filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>();
+    let root=PathBuf::from(request["root"].as_str().unwrap_or("."));
+    let result=agents_relay_rust2::cli_runtime_public::runtime(&args,
+        RuntimePaths::for_fixture(&root));
+    Ok(match result{
+        Ok(runtime)=>{
+            let mut selected=runtime.configured.clone();
+            selected["plannerName"]=json!(match runtime.planner{
+                RuntimePlanner::Agent(_)=>"AgentObjectivePlanner",
+                RuntimePlanner::Command(_)=>"CommandObjectivePlanner",
+            });
+            selected["usageSnapshotProvider"]=json!("fn");
+            selected["cwdForJob"]=json!("fn");
+            selected["emit"]=json!("fn");
+            json!({"ok":true,"value":selected}).to_string()
+        },
+        Err(error)=>json!({"ok":false,"error":error}).to_string()
+    })
+}

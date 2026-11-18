@@ -8,7 +8,8 @@ use crate::{
     dashboard_api::{DashboardApiOptions,DashboardApiServices,NativeDashboardApi},
     local_merge_projection::reconcile_completed_local_delivery,
     pool::{RepositoryWorkerPool,runnable_managed_jobs},
-    reconciler::{Reconciler,ReconcileResult},
+    reconciler::Reconciler,
+    reconciler_durable::ReconcileHost,
     relay_store::SQLiteRelayStore,
     relay_store_discovery::{
         discover_local_relay_store_snapshots,relay_unified_store_path,
@@ -188,40 +189,25 @@ pub struct DaemonWorkPort<'a>{
     pub launch:&'a mut dyn FnMut(&Value)->Result<(),String>,
     pub broadcast:&'a mut dyn FnMut(&Value)->Result<(),String>,
 }
-/// Two-stage reconcile: first compute a version-fenced candidate; only
-/// after a successful SQLite transaction execute the selected effect IDs.
+/// The workspace daemon and single-Job CLI run the same Reconciler Graph
+/// and SQLite persistence path; neither owns a second Job state machine.
 pub fn reconcile_durable_job(
     reconciler:&mut Reconciler,job_id:&str,
     verified_head:Option<&str>,project:&Path,roots:&Value,
     adapters:&[Value],registered:&[Value],usage:Option<&Value>,
     ports:&mut DaemonWorkPort<'_>,
 )->Result<Value,String>{
-    let snapshot=(ports.load)(job_id)?;
-    let result=reconciler.reconcile_snapshot(&snapshot,verified_head,
-        project,roots,adapters,registered,usage)?;
-    let job=if result.changed{
-        (ports.persist)(job_id,&snapshot,&result.job)?
-    }else{snapshot.clone()};
-    for event in &result.events{
-        // External transports are telemetry; a publish outage must never
-        // reverse a successfully committed authoritative snapshot.
-        if let Err(error)=(ports.broadcast)(event){
-            eprintln!("warning: Relay event transport unavailable: {error}");
+    struct Adapter<'a,'b>(&'a mut DaemonWorkPort<'b>);
+    impl ReconcileHost for Adapter<'_,'_>{
+        fn load(&mut self,id:&str)->Result<Value,String>{(self.0.load)(id)}
+        fn persist(&mut self,id:&str,prior:&Value,next:&Value)->Result<Value,String>{
+            (self.0.persist)(id,prior,next)
         }
+        fn launch(&mut self,action:&Value)->Result<(),String>{(self.0.launch)(action)}
+        fn broadcast(&mut self,event:&Value)->Result<(),String>{(self.0.broadcast)(event)}
     }
-    for action in &result.effects{
-        (ports.launch)(action)?;
-    }
-    for execution in &result.cancel_generations{
-        if let Some(task)=snapshot.get("tasks").and_then(Value::as_array)
-            .into_iter().flatten().find(|task|
-                task.get("executionId").and_then(Value::as_str)
-                    ==Some(execution.as_str())){
-            reconciler.runtime.cancel_execution_generation(
-                job_id,field(task,"id"),execution);
-        }
-    }
-    Ok(job)
+    reconciler.reconcile(job_id,verified_head,project,roots,
+        adapters,registered,usage,&mut Adapter(ports))
 }
 /// Only an explicit marker grants optional remote delivery. Historical
 /// COMPLETED Jobs without markers are not even opened writable.
@@ -325,6 +311,17 @@ impl<S:DaemonServices+'static> DashboardApiServices for DaemonDashboardBackend<S
             .unwrap_or_else(|_|std::sync::mpsc::channel().1)
     }
 }
+// The production daemon implements the same real SQLite CAS and Graph effect
+// ports as the standalone CLI. No fixture-only persistence path is involved.
+struct DaemonReconcileHost<'a,S:DaemonServices>(&'a mut S);
+impl<S:DaemonServices> ReconcileHost for DaemonReconcileHost<'_,S>{
+    fn load(&mut self,id:&str)->Result<Value,String>{self.0.load(id)}
+    fn persist(&mut self,id:&str,prior:&Value,next:&Value)->Result<Value,String>{
+        self.0.save_exact(id,prior,next)
+    }
+    fn launch(&mut self,action:&Value)->Result<(),String>{self.0.effect(action)}
+    fn broadcast(&mut self,event:&Value)->Result<(),String>{self.0.publish_event(event)}
+}
 /// Runtime host explicit opt-in: one server, one Pool, SQLite inventory only.
 pub fn run_daemon<S:DaemonServices+'static>(
     config:DaemonConfig,services:S,
@@ -380,30 +377,11 @@ pub fn run_daemon<S:DaemonServices+'static>(
                         let mut reconciler=make_reconciler(&snapshot)?;
                         reconciler.options["maxConcurrent"]=json!(capacity);
                         let roots=json!({"workspaceRoot":config.workspace_root});
-                        let output=reconciler.reconcile_snapshot(
-                            &snapshot,snapshot.get("headSha").and_then(Value::as_str),
+                        let updated=reconciler.reconcile(id,
+                            snapshot.get("headSha").and_then(Value::as_str),
                             &project,&roots,adapters.as_array().ok_or("Adapters invalid")?,
-                            &registered,usage.as_ref())?;
-                        let updated=if output.changed{
-                            guard.save_exact(id,&snapshot,&output.job)?
-                        }else{snapshot.clone()};
-                        for event in &output.events{
-                            if let Err(error)=guard.publish_event(event){
-                                eprintln!("warning: Relay event transport unavailable: {error}");
-                            }
-                        }
-                        for execution in &output.cancel_generations{
-                            if let Some(task)=snapshot.get("tasks").and_then(Value::as_array)
-                                .into_iter().flatten().find(|task|
-                                    task.get("executionId").and_then(Value::as_str)
-                                        ==Some(execution.as_str())){
-                                reconciler.runtime.cancel_execution_generation(
-                                    id,field(task,"id"),execution);
-                            }
-                        }
-                        for effect in &output.effects{
-                            guard.effect(effect)?;
-                        }
+                            &registered,usage.as_ref(),
+                            &mut DaemonReconcileHost(&mut *guard))?;
                         Ok(updated)
                     })?;
                 // Optional remote push is a distinct, durable projection.

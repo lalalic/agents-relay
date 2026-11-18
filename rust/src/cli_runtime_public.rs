@@ -1,10 +1,12 @@
 // Node src/cli.ts public host factories. This module holds no lifecycle
 // policy; the native Graph actions and SQLite Store own each effect.
 use crate::{cli_core_support::arg,
+    decision::decision_mode,reviewer_thread::runtime_reviewer,
+    reconciler::Reconciler,
     job_actions::{apply_job_activate_action,apply_job_cancel_action},
     planner_adapters::{CommandObjectivePlanner,AgentObjectivePlanner}};
-use serde_json::Value;
-use std::path::Path;
+use serde_json::{json,Value};
+use std::path::{Path,PathBuf};
 
 /// The concrete ObjectivePlanner implementation selected by CLI flags.
 /// Neither constructor starts a child process; execution uses owned runner.
@@ -20,6 +22,91 @@ pub fn runtime_planner(args:&[String])->Result<RuntimePlanner,String>{
     }
     let model=arg(args,"--codex","codex");
     Ok(RuntimePlanner::Agent(AgentObjectivePlanner::new(Some(model),None)))
+}
+
+/// Store and event transport are caller-owned. `runtime` constructs the
+/// concrete Planner strategy, provider metadata and one native Reconciler;
+/// the host injects the actual SQLite Store and owned provider execution when
+/// it processes the Graph-selected effects (never from this constructor).
+pub struct RuntimeReconciler {
+    pub reconciler:Reconciler,
+    pub planner:RuntimePlanner,
+    pub configured:Value,
+}
+#[derive(Clone,Debug)]
+pub struct RuntimePaths {
+    pub graph:PathBuf,
+    pub store:PathBuf,
+    pub profile:PathBuf,
+    pub policy:PathBuf,
+    pub rules:PathBuf,
+}
+impl RuntimePaths{
+    pub fn for_fixture(root:&Path)->Self{
+        Self{graph:root.join("workflow"),store:root.join("stores"),
+            profile:root.join(".codex"),policy:root.join("policy.json"),
+            rules:root.join("rules.md")}
+    }
+}
+pub fn runtime(args:&[String],paths:RuntimePaths)->Result<RuntimeReconciler,String>{
+    let planner=runtime_planner(args)?;
+    let model=arg(args,"--codex","codex").to_string();
+    let policy=arg(args,"--chatgpt-tab-close-policy","");
+    let policy=if policy.is_empty(){
+        std::env::var("AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY")
+            .unwrap_or_else(|_|"after-terminal".into())
+    }else{policy.into()};
+    if !matches!(policy.as_str(),"after-start"|"never"|"after-terminal"){
+        return Err("--chatgpt-tab-close-policy must be after-start, never, or after-terminal".into());
+    }
+    let reviewer=runtime_reviewer(args)?;
+    let owner=arg(args,"--owner","");
+    let owner=if owner.is_empty(){format!("cli-{}",std::process::id())}else{owner.into()};
+    let count=arg(args,"--concurrency","4").parse::<f64>()
+        .ok().filter(|n|n.is_finite()).unwrap_or(f64::NAN);
+    let lease=arg(args,"--lease-ms","300000").parse::<f64>()
+        .ok().filter(|n|n.is_finite()).unwrap_or(f64::NAN);
+    let option=|name:&str,env:&str|{
+        let requested=arg(args,name,"");
+        if !requested.is_empty(){Some(requested.to_owned())}
+        else{std::env::var(env).ok().filter(|s|!s.is_empty())}
+    };
+    let mut roots=json!({});
+    if let Some(v)=option("--workspace-root","AGENTS_RELAY_WORKSPACE_ROOT"){
+        roots["workspaceRoot"]=json!(v);
+    }
+    if let Some(v)=option("--shared-root","AGENTS_RELAY_SHARED_ROOT"){
+        roots["sharedRoot"]=json!(v);
+    }
+    if let Some(v)=option("--global-root","AGENTS_HOME"){
+        roots["globalRoot"]=json!(v);
+    }
+    let configured=json!({
+        "noGitHub":true,"owner":owner,
+        "maxConcurrent":if count.is_nan(){Value::Null}else{json!(count)},
+        "leaseMs":if lease.is_nan(){Value::Null}else{json!(lease)},
+        "adapters":[
+            {"id":"codex","name":"codex","command":model,"capabilities":["model","codex"]},
+            {"id":"chatgpt/browser-worker","name":"chatgpt",
+                "capabilities":["model","chatgpt","webhelm"],"tabClosePolicy":policy},
+            {"id":"z/webhelm","name":"z",
+                "capabilities":["model","z","webhelm","coding","filesystem","mcp"],
+                "tabClosePolicy":"after-terminal"}
+        ],
+        "continuations":[
+            {"kind":"codex-thread","command":model},
+            {"kind":"command"},{"kind":"webhook"}],
+        "planner":match &planner{
+            RuntimePlanner::Command(_)=>json!({"kind":"CommandObjectivePlanner",
+                "command":arg(args,"--planner-command","")}),
+            RuntimePlanner::Agent(_)=>json!({"kind":"AgentObjectivePlanner","command":model})},
+        "reviewer":reviewer,"chatgptTabClosePolicy":policy,
+        "executionContextRoots":roots,"decisionMode":decision_mode(),
+        "decisionEngine":{"name":"openrouter-jev"},
+    });
+    let reconciler=Reconciler::new(paths.graph,paths.store,paths.profile,
+        paths.policy,paths.rules,configured.clone());
+    Ok(RuntimeReconciler{reconciler,planner,configured})
 }
 
 /// All effects are delegated to one caller-owned Store/reconciler, never a
