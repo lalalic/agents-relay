@@ -14,24 +14,24 @@ A listed direct differential import only means a head-to-head test imports the c
 
 | Metric | Count |
 |---|---:|
-| sourceCount | 107 |
+| sourceCount | 104 |
 | pendingSourceModules | 0 |
 | pendingRuntimeExportSymbols | 0 |
-| runtimeExportSymbols | 734 |
-| directNameMatches | 721 |
+| runtimeExportSymbols | 715 |
+| directNameMatches | 702 |
 | unmappedRuntimeSymbols | 0 |
 | runtimeConstructorReviews | 13 |
-| typeOrShapeReviewSymbols | 281 |
+| typeOrShapeReviewSymbols | 278 |
 | filesWithUnmappedRuntime | 0 |
 | filesWithoutDirectDiffImport | 45 |
 | filesWithoutOtherRustReferences | 25 |
 
-Source tree: `c846739e5f60`; Rust source tree: `0dfcef18305b`. Rust module rows in scope: 107. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `c846739e5f60`; Rust source tree: `49f340b26143`. Rust module rows in scope: 104. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
 
-## Per-file candidate surface (all 107 PORTING files)
+## Per-file candidate surface (all 104 PORTING files)
 
 | Node source | Runtime exports | Named Rust candidates | Unmapped runtime names | Direct diff imports | Other Rust refs |
 |---|---:|---:|---:|---:|---:|
@@ -110,7 +110,6 @@ Source tree: `c846739e5f60`; Rust source tree: `0dfcef18305b`. Rust module rows 
 | `src/relayd-main.ts` | 0 | 0 | 0 | 0 | 0 |
 | `src/relayd-utilities.ts` | 10 | 10 | 0 | 1 | 2 |
 | `src/relayd.ts` | 1 | 1 | 0 | 0 | 2 |
-| `src/review-replan.ts` | 3 | 3 | 0 | 3 | 4 |
 | `src/review-revision-execution.ts` | 3 | 3 | 0 | 3 | 2 |
 | `src/review-revision-model.ts` | 7 | 7 | 0 | 3 | 3 |
 | `src/review-revision-settlement.ts` | 1 | 1 | 0 | 1 | 3 |
@@ -137,8 +136,6 @@ Source tree: `c846739e5f60`; Rust source tree: `0dfcef18305b`. Rust module rows 
 | `src/worker-routing.ts` | 8 | 8 | 0 | 1 | 4 |
 | `src/workflow-effect-failures.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/workflow/durable-transition.ts` | 4 | 4 | 0 | 1 | 0 |
-| `src/workflow/planner-orchestration-v2.ts` | 4 | 4 | 0 | 3 | 3 |
-| `src/workflow/task-resolution.ts` | 12 | 12 | 0 | 3 | 9 |
 | `src/workspace.ts` | 21 | 21 | 0 | 1 | 4 |
 | `src/z-adapter.ts` | 5 | 5 | 0 | 0 | 0 |
 | `src/z-oauth.ts` | 2 | 2 | 0 | 0 | 1 |
