@@ -299,3 +299,37 @@ impl LocalAuthorityDurableStore {
     pub fn comments(&self)->Vec<Value>{Vec::new()}
     pub fn hydrate(&self,_job:&Value){} // never hydrate from GitHub
 }
+
+impl crate::blocker_store_port::CrossJobBlockerStore for LocalAuthorityDurableStore{
+    fn load_job(&mut self,id:&str)->Result<Value,String>{self.load(id)}
+    fn save_job(&mut self,job:&Value)->Result<(),String>{
+        LocalAuthorityDurableStore::save_job(self,job).map(|_|())
+    }
+    fn save_task(&mut self,task:&Value)->Result<(),String>{
+        LocalAuthorityDurableStore::save_task(self,task)
+    }
+    fn mutate_job(&mut self,id:&str,
+        update:&mut dyn FnMut(Value)->Result<Value,String>)
+        ->Result<Value,String>{
+        LocalAuthorityDurableStore::mutate_job(self,id,update)
+    }
+}
+impl LocalAuthorityDurableStore{
+    pub fn register_blocker_dependent(
+        &mut self,directory:&std::path::Path,job_id:&str,dependent:&Value,
+        related:Option<&mut dyn crate::blocker_store_port::CrossJobBlockerStore>,
+        now:Option<&str>,
+    )->Result<(),String>{
+        crate::blocker_store_port::register_blocker_dependent(
+            directory,self,job_id,dependent,related,now).map(|_|())
+    }
+    pub fn resolve_blocker_dependents(
+        &mut self,directory:&std::path::Path,job_id:&str,resolution:&str,
+        related:Option<&mut dyn FnMut(&str,u64)->Result<
+            Box<dyn crate::blocker_store_port::CrossJobBlockerStore>,String>>,
+        now:Option<&str>,
+    )->Result<Value,String>{
+        crate::blocker_store_port::resolve_blocker_dependents(
+            directory,self,job_id,resolution,related,now)
+    }
+}

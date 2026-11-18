@@ -360,6 +360,84 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=closure::invoke(request)?{return Ok(output);}
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "apiLocalBlockerPorts" => {
+            use agents_relay_rust2::{
+                local_authority_store::LocalAuthorityDurableStore,
+                blocker_store_port::CrossJobBlockerStore,
+                relay_store::SQLiteRelayStore,
+            };
+            use std::time::{SystemTime,UNIX_EPOCH};
+            let base=std::env::temp_dir().join(format!(
+                "rust2-blocker-api-{}-{}",
+                std::process::id(),
+                SystemTime::now().duration_since(UNIX_EPOCH)
+                    .map_err(|e|e.to_string())?.as_nanos()
+            ));
+            std::fs::create_dir_all(&base).map_err(|e|e.to_string())?;
+            let dependent_path=base.join("dependent.sqlite");
+            let result=(|| ->Result<Value,String>{
+                let mut blocking=LocalAuthorityDurableStore::new(
+                    SQLiteRelayStore::open(&base.join("blocker.sqlite"),None)?,true);
+                let mut dependent=LocalAuthorityDurableStore::new(
+                    SQLiteRelayStore::open(&dependent_path,None)?,true);
+                blocking.save_job(&request["blocker"])?;
+                dependent.save_job(&request["dependent"])?;
+                let graph=std::path::Path::new(
+                    request["graphDirectory"].as_str().unwrap_or("workflow"));
+                let blocker_id=request["blocker"]["id"].as_str().unwrap_or("");
+                let dependent_id=request["dependent"]["id"].as_str().unwrap_or("");
+                let target=request["target"].clone();
+                let mut stages=Vec::<Value>::new();
+                for (step_index,step) in request["steps"].as_array()
+                    .into_iter().flatten().enumerate(){
+                    let step_stamp=request["now"].as_str().and_then(|stamp|
+                        chrono::DateTime::parse_from_rfc3339(stamp).ok())
+                        .map(|stamp|(stamp+chrono::Duration::milliseconds(
+                            step_index as i64+1)).to_rfc3339_opts(
+                            chrono::SecondsFormat::Millis,true));
+                    let effect=match step.as_str().unwrap_or(""){
+                        "register"=>blocking.register_blocker_dependent(
+                            graph,blocker_id,&target,Some(&mut dependent),
+                            step_stamp.as_deref()).map(|_|Value::Null),
+                        "resolve-merge"|"resolve-verified"=>{
+                            let resolution=if step=="resolve-merge"{"merge"}else{"verified"};
+                            let mut related_factory=|repository:&str,pr_number:u64|
+                                ->Result<Box<dyn CrossJobBlockerStore>,String>{
+                                if repository!=request["dependent"]["repository"]
+                                    .as_str().unwrap_or("")
+                                    ||pr_number!=request["dependent"]["prNumber"]
+                                        .as_u64().unwrap_or(0){
+                                    return Err("Related Job store fixture missing".into());
+                                }
+                                Ok(Box::new(LocalAuthorityDurableStore::new(
+                                    SQLiteRelayStore::open(&dependent_path,None)?,true)))
+                            };
+                            blocking.resolve_blocker_dependents(
+                                graph,blocker_id,resolution,Some(&mut related_factory),
+                                step_stamp.as_deref())
+                        },
+                        "advance-attempt"=>{
+                            let current=dependent.load(dependent_id)?;
+                            let mut task=current["tasks"][0].clone();
+                            task["attempt"]=json!(task["attempt"].as_i64().unwrap_or(0)+1);
+                            task["updatedAt"]=json!("2099-01-01T00:00:00.000Z");
+                            dependent.save_task(&task)?;
+                            Ok(Value::Null)
+                        },
+                        other=>Err(format!("Unknown fixture blocker step {other}"))
+                    };
+                    stages.push(json!({"step":step,"outcome":match effect{
+                        Ok(value)=>json!({"ok":true,"value":value}),
+                        Err(error)=>json!({"ok":false,"error":error}),
+                    }}));
+                }
+                Ok(json!({"stages":stages,
+                    "blocker":blocking.load(blocker_id)?,
+                    "dependent":dependent.load(dependent_id)?}))
+            })();
+            let _=std::fs::remove_dir_all(base);
+            result.map(|value|value.to_string())
+        }
         "apiOutcomeReview" => {
             use agents_relay_rust2::outcome_review::evaluate_outcome;
             let role=std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -502,3 +502,44 @@ impl<C:GitHubApi> GitHubStore<C>{
         Ok(())
     }
 }
+
+impl<C:GitHubApi> crate::blocker_store_port::CrossJobBlockerStore for GitHubStore<C>{
+    fn load_job(&mut self,id:&str)->Result<Value,String>{
+        GitHubStore::load(self,id)
+    }
+    fn save_job(&mut self,job:&Value)->Result<(),String>{
+        GitHubStore::save_job(self,job)
+    }
+    fn save_task(&mut self,task:&Value)->Result<(),String>{
+        GitHubStore::save_task(self,task)
+    }
+    fn mutate_job(&mut self,id:&str,
+        update:&mut dyn FnMut(Value)->Result<Value,String>)
+        ->Result<Value,String>{
+        // Node GitHub DurableStore has no native atomic mutateJob.
+        // It uses exactly the read -> computed update -> write fallback.
+        let current=GitHubStore::load(self,id)?;
+        let next=update(current)?;
+        GitHubStore::save_job(self,&next)?;
+        Ok(next)
+    }
+}
+impl<C:GitHubApi> GitHubStore<C>{
+    pub fn register_blocker_dependent(
+        &mut self,directory:&std::path::Path,job_id:&str,dependent:&Value,
+        related:Option<&mut dyn crate::blocker_store_port::CrossJobBlockerStore>,
+        now:Option<&str>,
+    )->Result<(),String>{
+        crate::blocker_store_port::register_blocker_dependent(
+            directory,self,job_id,dependent,related,now).map(|_|())
+    }
+    pub fn resolve_blocker_dependents(
+        &mut self,directory:&std::path::Path,job_id:&str,resolution:&str,
+        related:Option<&mut dyn FnMut(&str,u64)->Result<
+            Box<dyn crate::blocker_store_port::CrossJobBlockerStore>,String>>,
+        now:Option<&str>,
+    )->Result<Value,String>{
+        crate::blocker_store_port::resolve_blocker_dependents(
+            directory,self,job_id,resolution,related,now)
+    }
+}
