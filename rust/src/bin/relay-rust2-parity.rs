@@ -34,6 +34,8 @@ mod reconciler_recovery_public;
 mod runtime_base_public;
 #[path = "relay-rust2-parity/review_base_public.rs"]
 mod review_base_public;
+#[path = "relay-rust2-parity/planner_finish_public.rs"]
+mod planner_finish_public;
 #[path = "relay-rust2-parity/control_factory.rs"]
 mod control_factory;
 #[path = "relay-rust2-parity/dashboard_factory.rs"]
@@ -524,6 +526,7 @@ fn invoke(request: &Value) -> Result<String, String> {
                 Err(error)=>json!({"ok":false,"error":error}),
             },"calls":client.calls}).to_string())
         }
+        "apiPlannerFinish" => planner_finish_public::invoke(request),
         "apiReviewBase" => review_base_public::invoke(request),
         "apiRuntimeBase" => runtime_base_public::invoke(request),
         "apiReconcilerPlanJob" => reconciler_recovery_public::plan(request),

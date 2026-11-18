@@ -352,8 +352,12 @@ pub fn parse_planner_result(value:&Value)->Result<Value,String>{
             return Err(format!("Planner unblocks contains duplicate dependent {key}"));
         }
     }
-    let cleanup=parse_planner_history_cleanup(
-        value.get("history_cleanup").unwrap_or(&Value::Null))?;
+    // Node treats an absent history_cleanup as undefined (no cleanup), but
+    // an explicitly supplied null is invalid. Do not conflate the two.
+    let cleanup=match value.get("history_cleanup"){
+        Some(value)=>parse_planner_history_cleanup(value)?,
+        None=>None,
+    };
     let mut result=json!({
         "objective_status":status,"assessment":assessment,
         "next_tasks":next,"unblocks":unblocks

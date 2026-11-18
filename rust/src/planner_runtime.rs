@@ -441,3 +441,7 @@ pub fn retry_pending_planner_unblocks(
     }
     Ok(())
 }
+
+// Node public host invocation while shared native policy methods remain in
+// this module. Store effects are supplied by the active runtime owner.
+pub use crate::planner_runtime_public::{finish_planner,PlannerFinishPorts};
