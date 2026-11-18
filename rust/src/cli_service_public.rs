@@ -54,7 +54,9 @@ fn reconcile_one<S:DaemonServices>(
     let adapters=runner.options.get("adapters").and_then(Value::as_array)
         .cloned().unwrap_or_default();
     let roots=json!({"workspaceRoot":config.workspace_root});
-    runner.reconcile(job_id,snapshot.get("headSha").and_then(Value::as_str),
+    let current_head=crate::reconciler_git_head::verified_local_head(
+        &snapshot,&project,true);
+    runner.reconcile(job_id,current_head.as_deref(),
         &project,&roots,&adapters,&registered,usage.as_ref(),
         &mut ServiceReconcileHost(&mut *host))
 }

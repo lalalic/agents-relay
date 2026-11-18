@@ -389,8 +389,10 @@ pub fn run_daemon<S:DaemonServices+'static>(
                         let mut reconciler=make_reconciler(&snapshot)?;
                         reconciler.options["maxConcurrent"]=json!(capacity);
                         let roots=json!({"workspaceRoot":config.workspace_root});
+                        let current_head=crate::reconciler_git_head::verified_local_head(
+                            &snapshot,&project,true);
                         let updated=reconciler.reconcile(id,
-                            snapshot.get("headSha").and_then(Value::as_str),
+                            current_head.as_deref(),
                             &project,&roots,adapters.as_array().ok_or("Adapters invalid")?,
                             &registered,usage.as_ref(),
                             &mut DaemonReconcileHost(&mut *guard))?;

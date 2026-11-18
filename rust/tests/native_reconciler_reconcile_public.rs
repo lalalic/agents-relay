@@ -144,3 +144,41 @@ fn expired_generation_cas_race_refuses_transition_and_external_effects(){
     assert_eq!(host.launched,0);
     std::fs::remove_dir_all(root).unwrap();
 }
+#[test]
+fn actual_git_head_change_refreshes_sqlite_without_reusing_cached_sha(){
+    use agents_relay_rust2::reconciler_git_head::verified_local_head;
+    let (root,mut host)=fixture("COMPLETED",false);
+    let git=|args:&[&str]|->String{
+        let output=std::process::Command::new("git").arg("-C").arg(&root)
+            .args(args).output().unwrap();
+        assert!(output.status.success(),"{}: {}",args.join(" "),
+            String::from_utf8_lossy(&output.stderr));
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    };
+    git(&["init","--quiet"]);
+    let commit=|message:&str|{
+        git(&["-c","user.name=Fixture","-c","user.email=fixture@example.invalid",
+            "commit","--allow-empty","--quiet","-m",message]);
+        git(&["rev-parse","HEAD"])
+    };
+    let first=commit("first");
+    let mut rec=rec(&root);
+    let job=host.load("1").unwrap();
+    let observed=verified_local_head(&job,&root,true);
+    assert_eq!(observed.as_deref(),Some(first.as_str()));
+    let first_result=rec.reconcile("1",observed.as_deref(),&root,&json!({}),
+        &[],&[],None,&mut host).unwrap();
+    assert_eq!(first_result["headSha"],first);
+    assert_eq!(host.load("1").unwrap()["headSha"],first);
+    let second=commit("second");
+    assert_ne!(first,second);
+    let observed=verified_local_head(&host.load("1").unwrap(),&root,true);
+    assert_eq!(observed.as_deref(),Some(second.as_str()));
+    let second_result=rec.reconcile("1",observed.as_deref(),&root,&json!({}),
+        &[],&[],None,&mut host).unwrap();
+    assert_eq!(second_result["headSha"],second);
+    assert_eq!(host.load("1").unwrap()["headSha"],second);
+    assert_eq!(host.persisted,2);
+    assert_eq!(host.launched,0);
+    std::fs::remove_dir_all(root).unwrap();
+}

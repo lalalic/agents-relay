@@ -34,6 +34,8 @@ mod cli_service_public;
 mod reconciler_recovery_public;
 #[path = "relay-rust2-parity/reconcile_public.rs"]
 mod reconcile_public;
+#[path = "relay-rust2-parity/reconciler_git_head_public.rs"]
+mod reconciler_git_head_public;
 #[path = "relay-rust2-parity/runtime_base_public.rs"]
 mod runtime_base_public;
 #[path = "relay-rust2-parity/review_base_public.rs"]
@@ -540,6 +542,7 @@ fn invoke(request: &Value) -> Result<String, String> {
         "apiReconcilerPlanJob" => reconciler_recovery_public::plan(request),
         "apiReconcilerRecovery" => reconciler_recovery_public::invoke(request),
         "apiReconcilerReconcile" => reconcile_public::invoke(request),
+        "apiReconcilerCurrentGitHead" => reconciler_git_head_public::invoke(request),
         "apiCliRuntimePublic" => cli_runtime_public::invoke(request),
         "apiCliRuntimeFactory" => cli_runtime_public::factory(request),
         "apiCliService" => cli_service_public::invoke(request),

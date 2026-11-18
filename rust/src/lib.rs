@@ -352,6 +352,7 @@ pub mod reconciler_review;
 pub mod reconciler_runtime;
 pub mod reconciler;
 pub mod reconciler_durable;
+pub mod reconciler_git_head;
 pub mod relayd_control;
 pub mod relayd;
 pub mod cli;
