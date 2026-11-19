@@ -5,6 +5,28 @@ use std::path::Path;
 
 pub fn invoke(req:&Value)->Option<Result<String,String>>{
     match req["op"].as_str()?{
+        "certWorkerRouterPublic"=>Some((||{
+            use agents_relay_rust2::worker_routing as w;
+            let candidates=req["candidates"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+            let adapters=req["adapters"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+            let registered=req["registered"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+            let requirements=&req["requirements"];
+            let strict=req["strict"].as_bool().unwrap_or(false);
+            let value=match req["action"].as_str().unwrap_or(""){
+                "defaults"=>json!({"preferred":w::DEFAULT_CHATGPT_PREFERRED_CONCURRENCY,
+                    "principles":w::DEFAULT_WORKER_ROUTER_PRINCIPLES}),
+                "usage"=>w::usage_for_provider(req.get("usage"),
+                    req["provider"].as_str().unwrap_or("openai"),
+                    req["nowMs"].as_i64().unwrap_or(1795000000000)),
+                "candidates"=>json!(w::worker_candidates(adapters,registered,req.get("usage"),
+                    req["nowMs"].as_i64().unwrap_or(1795000000000))),
+                "satisfies"=>json!(w::satisfies_worker(&req["candidate"],requirements,strict)),
+                "eligible"=>json!(w::eligible_worker_candidates(candidates,requirements,strict)),
+                "select"=>w::select_worker(candidates,requirements)?,
+                _=>return Err("Unknown worker routing API".into()),
+            };
+            Ok(value.to_string())
+        })()),
         "certCliWorkerTask"=>Some((||{
             use agents_relay_rust2::cli_worker_task as t;
             let args=req["args"].as_array().into_iter().flatten()

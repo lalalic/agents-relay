@@ -2,7 +2,7 @@
 
 > 本表是逐文件的真实审计清单，不是所有模块均通过。**PASS** 需公开 API 原始 Node/Rust 直接差分、Rust 原生负面测试和实际生产调用绑定；只通过静态 API 名称匹配，不能晋级。**HOLD** 指存在尚未关闭的证据缺口，不等同于未实现。
 
-- 原始检查范围：107 个源模块。已认证 **34 PASS**，保留 **73 HOLD/PORTING**。
+- 原始检查范围：107 个源模块。已认证 **35 PASS**，保留 **72 HOLD/PORTING**。
 - 本轮仅跑 Rust 原生测试与必要的 Node/Rust 差分；未重跑独立 Node 全量测试。
 - 这份报告对应上次全量 Node/Rust 230/230 PASS 后的逐项认证。全量 230/230 不等于 107 个模块逐一通过。
 - `directDiffTests` 与 `otherRustModuleReferences` 基于静态文本检索；测试文件出现导入或 Rust 源文件出现引用，仅说明有线索，不表示覆盖了每个公开 API 或进入生产。
@@ -87,6 +87,8 @@
 | `src/force-restate-validation.ts` | `head_to_head_force_restate_validation_public.mjs` | `native_planner_finish_public.rs` | `rust/src/planner_runtime_public.rs` |
 
 ## 2026-11-18 逐项证据补充
+
+- `src/worker-routing.ts` — 原始 Node 差分 `rust/tests/head_to_head_worker_routing_public.mjs`；Rust 原生 `rust/tests/native_model_redecision.rs`；生产调用 `rust/src/model_routing.rs`；148 direct original Node/Rust worker defaults/quota/discovery/capability/eligibility/selection fixtures, plus 105 public Worker/Model/Execution routing hard-gate cases; Rust native model and Browser Pool integration。
 
 - `src/cli-worker-task.ts` — 原始 Node 差分 `rust/tests/head_to_head_cli_worker_task_public.mjs`；Rust 原生 `rust/tests/native_cli_binary.rs`；生产调用 `rust/src/cli.rs`；44 exact original Node/Rust public recovery diagnosis, dependency validity and Task creation test fixtures; fixed Rust omission of undefined routing/requirements; native CLI and SQLite Graph tests pass。
 
@@ -218,7 +220,7 @@
 | 97 | `src/unblock.ts` | **PASS** | 4 | 1 | 4 | 1 | 结构审核、模块特定场景／生产门禁 |
 | 98 | `src/usage.ts` | **HOLD** | 26 | 3 | 5 | 18 | 结构审核、模块特定场景／生产门禁 |
 | 99 | `src/worker-failure-recovery.ts` | **PASS** | 1 | 1 | 2 | 1 | 直接差分、原生和生产调用证据已关闭 |
-| 100 | `src/worker-routing.ts` | **HOLD** | 8 | 1 | 4 | 4 | 结构审核、模块特定场景／生产门禁 |
+| 100 | `src/worker-routing.ts` | **PASS** | 8 | 1 | 4 | 4 | 结构审核、模块特定场景／生产门禁 |
 | 101 | `src/workflow-effect-failures.ts` | **HOLD** | 2 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 102 | `src/workflow/durable-transition.ts` | **HOLD** | 4 | 1 | 0 | 1 | 运行调用、结构审核、模块特定场景／生产门禁 |
 | 103 | `src/workflow/planner-orchestration-v2.ts` | **PASS** | 4 | 3 | 3 | 1 | 认证已完成 |

@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 34,
-    "HOLD": 73
+    "PASS": 35,
+    "HOLD": 72
   },
   "records": [
     {
@@ -2664,7 +2664,7 @@
       "source": "src/worker-routing.ts",
       "target": "rust/src/worker_routing.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 8,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -2682,12 +2682,14 @@
         "WorkerRoutingOptions",
         "WorkerEligibilityOptions"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 4 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "Original Node public API direct differential: rust/tests/head_to_head_worker_routing_public.mjs",
+        "Rust native negative/recovery/integration: rust/tests/native_model_redecision.rs",
+        "Authoritative non-parity production caller: rust/src/model_routing.rs",
+        "148 direct original Node/Rust worker defaults/quota/discovery/capability/eligibility/selection fixtures, plus 105 public Worker/Model/Execution routing hard-gate cases; Rust native model and Browser Pool integration"
       ],
-      "legacyLedgerNote": "Serial Phase1 native Rust wire contract and Worker Router first port; uncompiled and unverified, differential/binding Phase2."
+      "openGates": [],
+      "legacyLedgerNote": "Certified with explicit direct original API differential, native tests and production call entry."
     },
     {
       "source": "src/workflow-effect-failures.ts",
