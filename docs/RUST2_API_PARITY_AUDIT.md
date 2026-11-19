@@ -14,33 +14,33 @@ A listed direct differential import only means a head-to-head test imports the c
 
 | Metric | Count |
 |---|---:|
-| sourceCount | 102 |
+| sourceCount | 91 |
 | pendingSourceModules | 0 |
 | pendingRuntimeExportSymbols | 0 |
-| runtimeExportSymbols | 713 |
-| directNameMatches | 700 |
+| runtimeExportSymbols | 677 |
+| directNameMatches | 664 |
 | unmappedRuntimeSymbols | 0 |
 | runtimeConstructorReviews | 13 |
-| typeOrShapeReviewSymbols | 277 |
+| typeOrShapeReviewSymbols | 271 |
 | filesWithUnmappedRuntime | 0 |
 | filesWithoutDirectDiffImport | 43 |
 | filesWithoutOtherRustReferences | 23 |
 
-Source tree: `c846739e5f60`; Rust source tree: `491054583d3a`. Rust module rows in scope: 102. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `c846739e5f60`; Rust source tree: `155c0256d028`. Rust module rows in scope: 91. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
 
-## Per-file candidate surface (all 102 PORTING files)
+## Per-file candidate surface (all 91 PORTING files)
 
 | Node source | Runtime exports | Named Rust candidates | Unmapped runtime names | Direct diff imports | Other Rust refs |
 |---|---:|---:|---:|---:|---:|
-| `src/adapters.ts` | 12 | 12 | 0 | 2 | 4 |
+| `src/adapters.ts` | 12 | 12 | 0 | 2 | 5 |
 | `src/blocker-recovery.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/blockers.ts` | 2 | 2 | 0 | 0 | 3 |
-| `src/browser-worker-pool.ts` | 15 | 15 | 0 | 1 | 3 |
+| `src/browser-worker-pool.ts` | 15 | 15 | 0 | 1 | 4 |
 | `src/browser-worker-routing.ts` | 1 | 1 | 0 | 0 | 0 |
-| `src/browser-worker-runtime.ts` | 2 | 2 | 0 | 0 | 1 |
+| `src/browser-worker-runtime.ts` | 2 | 2 | 0 | 0 | 2 |
 | `src/chatgpt-platform-fallback.ts` | 5 | 5 | 0 | 0 | 1 |
 | `src/cli-artifact.ts` | 2 | 2 | 0 | 4 | 1 |
 | `src/cli-coordinator.ts` | 1 | 1 | 0 | 1 | 1 |
@@ -54,7 +54,6 @@ Source tree: `c846739e5f60`; Rust source tree: `491054583d3a`. Rust module rows 
 | `src/cli-worker-task.ts` | 3 | 3 | 0 | 0 | 1 |
 | `src/cli.ts` | 6 | 6 | 0 | 3 | 4 |
 | `src/continuation.ts` | 7 | 7 | 0 | 1 | 11 |
-| `src/dag-result-contract.ts` | 1 | 1 | 0 | 1 | 3 |
 | `src/dag-task-runtime.ts` | 5 | 5 | 0 | 0 | 2 |
 | `src/dashboard-actions.ts` | 3 | 3 | 0 | 0 | 2 |
 | `src/dashboard-data.ts` | 8 | 8 | 0 | 1 | 3 |
@@ -63,7 +62,7 @@ Source tree: `c846739e5f60`; Rust source tree: `491054583d3a`. Rust module rows 
 | `src/decision.ts` | 11 | 11 | 0 | 2 | 2 |
 | `src/dependency-revision-execution.ts` | 3 | 3 | 0 | 0 | 1 |
 | `src/escalation-notifier.ts` | 2 | 2 | 0 | 0 | 0 |
-| `src/events.ts` | 13 | 13 | 0 | 3 | 37 |
+| `src/events.ts` | 13 | 13 | 0 | 3 | 38 |
 | `src/execution-context.ts` | 6 | 6 | 0 | 1 | 0 |
 | `src/execution-process-tracker.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/execution-recovery.ts` | 2 | 2 | 0 | 0 | 1 |
@@ -81,37 +80,30 @@ Source tree: `c846739e5f60`; Rust source tree: `491054583d3a`. Rust module rows 
 | `src/job-worktree-cleanup.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/legacy-orchestrator-repair.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/local-authority-store.ts` | 33 | 33 | 0 | 4 | 5 |
-| `src/local-git-merge.ts` | 6 | 6 | 0 | 1 | 6 |
 | `src/local-job-registry.ts` | 2 | 2 | 0 | 0 | 1 |
 | `src/local-managed-store.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/managed-worker-input.ts` | 1 | 1 | 0 | 0 | 1 |
-| `src/manual-plan.ts` | 1 | 1 | 0 | 0 | 1 |
+| `src/manual-plan.ts` | 1 | 1 | 0 | 0 | 2 |
 | `src/model-redecision.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/model-routing.ts` | 4 | 4 | 0 | 1 | 4 |
 | `src/outcome-review.ts` | 5 | 5 | 0 | 2 | 2 |
-| `src/owned-process.ts` | 5 | 5 | 0 | 1 | 20 |
 | `src/planner-child-recovery.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/planner-runtime.ts` | 7 | 7 | 0 | 4 | 5 |
-| `src/planner.ts` | 22 | 20 | 0 | 2 | 7 |
+| `src/planner.ts` | 22 | 20 | 0 | 2 | 9 |
 | `src/pool.ts` | 15 | 15 | 0 | 5 | 3 |
 | `src/projected-store.ts` | 34 | 34 | 0 | 2 | 1 |
 | `src/projection-outbox.ts` | 25 | 25 | 0 | 2 | 1 |
-| `src/reconcile-coordinator.ts` | 7 | 7 | 0 | 2 | 5 |
 | `src/reconciler-context.ts` | 3 | 3 | 0 | 0 | 0 |
-| `src/reconciler-review.ts` | 1 | 1 | 0 | 1 | 3 |
-| `src/reconciler-runtime.ts` | 10 | 10 | 0 | 2 | 4 |
+| `src/reconciler-runtime.ts` | 10 | 10 | 0 | 2 | 5 |
 | `src/reconciler.ts` | 8 | 8 | 0 | 6 | 8 |
 | `src/relay-store-discovery.ts` | 3 | 3 | 0 | 0 | 6 |
-| `src/relay-store.ts` | 46 | 45 | 0 | 8 | 23 |
-| `src/relayd-control.ts` | 1 | 1 | 0 | 1 | 2 |
+| `src/relay-store.ts` | 46 | 45 | 0 | 8 | 26 |
 | `src/relayd-dashboard-actions.ts` | 1 | 1 | 0 | 1 | 1 |
 | `src/relayd-main.ts` | 0 | 0 | 0 | 0 | 0 |
 | `src/relayd-utilities.ts` | 10 | 10 | 0 | 1 | 2 |
 | `src/relayd.ts` | 1 | 1 | 0 | 0 | 5 |
 | `src/review-revision-execution.ts` | 3 | 3 | 0 | 3 | 2 |
 | `src/review-revision-model.ts` | 7 | 7 | 0 | 3 | 4 |
-| `src/review-revision-settlement.ts` | 1 | 1 | 0 | 1 | 3 |
-| `src/review-revision-stale.ts` | 1 | 1 | 0 | 1 | 2 |
 | `src/reviewer-thread.ts` | 9 | 9 | 0 | 2 | 6 |
 | `src/route-outcome-recording.ts` | 5 | 5 | 0 | 1 | 2 |
 | `src/router-evals.ts` | 2 | 2 | 0 | 0 | 0 |
@@ -121,16 +113,13 @@ Source tree: `c846739e5f60`; Rust source tree: `491054583d3a`. Rust module rows 
 | `src/store-github.ts` | 21 | 21 | 0 | 1 | 6 |
 | `src/store.ts` | 22 | 22 | 0 | 8 | 4 |
 | `src/task-actions.ts` | 18 | 18 | 0 | 1 | 8 |
-| `src/task-inactivity-watchdog.ts` | 6 | 6 | 0 | 3 | 2 |
 | `src/task-recovery.ts` | 4 | 4 | 0 | 0 | 2 |
-| `src/task-transitions.ts` | 6 | 6 | 0 | 2 | 21 |
 | `src/task-update.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/troubleshooter-fallback.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/troubleshooter.ts` | 6 | 6 | 0 | 0 | 2 |
 | `src/types.ts` | 7 | 7 | 0 | 1 | 6 |
 | `src/unblock.ts` | 4 | 4 | 0 | 1 | 4 |
 | `src/usage.ts` | 26 | 18 | 0 | 3 | 5 |
-| `src/worker-failure-recovery.ts` | 1 | 1 | 0 | 1 | 2 |
 | `src/worker-routing.ts` | 8 | 8 | 0 | 1 | 4 |
 | `src/workflow-effect-failures.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/workflow/durable-transition.ts` | 4 | 4 | 0 | 1 | 0 |

@@ -2,15 +2,15 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "c846739e5f60e6bc73cb3000cfab466855655462",
-    "rustTree": "491054583d3a7598add59908036b08e30dc70cb2",
-    "sourceCount": 102,
+    "rustTree": "155c0256d0286ed9e895d2e332d0219d059bca64",
+    "sourceCount": 91,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 713,
-    "directNameMatches": 700,
+    "runtimeExportSymbols": 677,
+    "directNameMatches": 664,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 13,
-    "typeOrShapeReviewSymbols": 277,
+    "typeOrShapeReviewSymbols": 271,
     "filesWithUnmappedRuntime": 0,
     "filesWithoutDirectDiffImport": 43,
     "filesWithoutOtherRustReferences": 23
@@ -47,6 +47,7 @@
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/closure.rs",
         "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/native_browser_execution.rs",
         "rust/src/script_task_adapter.rs",
         "rust/src/z_adapter.rs"
       ],
@@ -287,6 +288,7 @@
       "otherRustModuleReferences": [
         "rust/src/adapters.rs",
         "rust/src/browser_worker_runtime.rs",
+        "rust/src/native_browser_execution.rs",
         "rust/src/process_worker_parity_harness.rs"
       ],
       "exports": [
@@ -443,7 +445,8 @@
       ],
       "directDiffImports": [],
       "otherRustModuleReferences": [
-        "rust/src/adapters.rs"
+        "rust/src/adapters.rs",
+        "rust/src/native_browser_execution.rs"
       ],
       "exports": [
         {
@@ -1218,30 +1221,6 @@
       ]
     },
     {
-      "source": "src/dag-result-contract.ts",
-      "target": "rust/src/dag_result_contract.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 1,
-      "directNameMatches": 1,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [
-        "rust/tests/head_to_head_wave4_delivery.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity.rs",
-        "rust/src/delivery_parity_harness.rs",
-        "rust/src/reconciler_runtime.rs"
-      ],
-      "exports": [
-        {
-          "name": "dagCompletionError",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
       "source": "src/dag-task-runtime.ts",
       "target": "rust/src/dag_task_runtime.rs",
       "ledgerStatus": "PORTING",
@@ -1855,6 +1834,7 @@
         "rust/src/local_merge_delivery.rs",
         "rust/src/local_merge_projection.rs",
         "rust/src/native_script_execution.rs",
+        "rust/src/native_script_planner.rs",
         "rust/src/planner_launch_public.rs",
         "rust/src/planner_runtime.rs",
         "rust/src/planner_runtime_public.rs",
@@ -3161,65 +3141,6 @@
       ]
     },
     {
-      "source": "src/local-git-merge.ts",
-      "target": "rust/src/local_git_merge.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 6,
-      "directNameMatches": 6,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "LocalMergeReceipt"
-      ],
-      "directDiffImports": [
-        "rust/tests/head_to_head_wave4_delivery_git.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity.rs",
-        "rust/src/cli_job_create.rs",
-        "rust/src/job_worktree_cleanup.rs",
-        "rust/src/local_merge_delivery.rs",
-        "rust/src/reconciler_git_head.rs",
-        "rust/src/relayd_sqlite_write.rs"
-      ],
-      "exports": [
-        {
-          "name": "LocalMergeReceipt",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "localWorkingHead",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "localSourceHead",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "requiresLocalGitMerge",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "localMergeFacts",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "localMergeCommitMessage",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "deliverLocalMerge",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
       "source": "src/local-job-registry.ts",
       "target": "rust/src/local_job_registry.rs",
       "ledgerStatus": "PORTING",
@@ -3299,7 +3220,8 @@
       "typeOrShapeReview": [],
       "directDiffImports": [],
       "otherRustModuleReferences": [
-        "rust/src/reconciler_manual_plan_public.rs"
+        "rust/src/reconciler_manual_plan_public.rs",
+        "rust/src/relayd_sqlite_write.rs"
       ],
       "exports": [
         {
@@ -3482,79 +3404,6 @@
       ]
     },
     {
-      "source": "src/owned-process.ts",
-      "target": "rust/src/owned_process.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 5,
-      "directNameMatches": 5,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "OwnedProcessTerminationReason"
-      ],
-      "directDiffImports": [
-        "rust/tests/head_to_head_process_browser_worker.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/adapters.rs",
-        "rust/src/bin/owned-process-supervisor.rs",
-        "rust/src/bin/relay-rust2-parity/cli_service_public.rs",
-        "rust/src/bin/relay-rust2-parity.rs",
-        "rust/src/browser_worker_runtime.rs",
-        "rust/src/cli_escalation.rs",
-        "rust/src/cli_service_public.rs",
-        "rust/src/continuation.rs",
-        "rust/src/dag_result_contract.rs",
-        "rust/src/decision.rs",
-        "rust/src/git_delivery.rs",
-        "rust/src/github_client.rs",
-        "rust/src/local_git_merge.rs",
-        "rust/src/local_merge_projection.rs",
-        "rust/src/native_script_worker.rs",
-        "rust/src/process_worker_parity_harness.rs",
-        "rust/src/script_task_adapter.rs",
-        "rust/src/usage.rs",
-        "rust/src/usage_codex_api.rs",
-        "rust/src/workspace.rs"
-      ],
-      "exports": [
-        {
-          "name": "OwnedProcessTerminationReason",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "OwnedProcessOptions",
-          "kind": "type",
-          "static": "name-match"
-        },
-        {
-          "name": "ownedProcessTerminationReason",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "spawnOwnedProcess",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "terminateOwnedProcess",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "shutdownOwnedProcesses",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "ownedProcessSnapshot",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
       "source": "src/planner-child-recovery.ts",
       "target": "rust/src/planner_child_recovery.rs",
       "ledgerStatus": "PORTING",
@@ -3672,12 +3521,14 @@
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/native_script_planner.rs",
         "rust/src/planner_adapters.rs",
         "rust/src/planner_runtime.rs",
         "rust/src/planner_runtime_public.rs",
         "rust/src/pool.rs",
         "rust/src/reconciler.rs",
-        "rust/src/reconciler_manual_plan_public.rs"
+        "rust/src/reconciler_manual_plan_public.rs",
+        "rust/src/relayd_sqlite_write.rs"
       ],
       "exports": [
         {
@@ -4409,76 +4260,6 @@
       ]
     },
     {
-      "source": "src/reconcile-coordinator.ts",
-      "target": "rust/src/reconcile_coordinator.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 7,
-      "directNameMatches": 7,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "ReconcileSignal"
-      ],
-      "directDiffImports": [
-        "rust/tests/head_to_head_wave2_coordinator.mjs",
-        "rust/tests/head_to_head_wave3_graph.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity/pool_public.rs",
-        "rust/src/bin/relay-rust2-parity.rs",
-        "rust/src/pool.rs",
-        "rust/src/pool_public_ports.rs",
-        "rust/src/reconciler_runtime_base.rs"
-      ],
-      "exports": [
-        {
-          "name": "ReconcileSignal",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "ReconcileCoordinator",
-          "kind": "class",
-          "static": "name-match"
-        },
-        {
-          "name": "constructor",
-          "kind": "class-constructor",
-          "parent": "ReconcileCoordinator",
-          "static": "name-match"
-        },
-        {
-          "name": "accept",
-          "kind": "class-method",
-          "parent": "ReconcileCoordinator",
-          "static": "name-match"
-        },
-        {
-          "name": "acceptTransport",
-          "kind": "class-method",
-          "parent": "ReconcileCoordinator",
-          "static": "name-match"
-        },
-        {
-          "name": "acceptObserved",
-          "kind": "class-method",
-          "parent": "ReconcileCoordinator",
-          "static": "name-match"
-        },
-        {
-          "name": "isIdle",
-          "kind": "class-method",
-          "parent": "ReconcileCoordinator",
-          "static": "name-match"
-        },
-        {
-          "name": "settle",
-          "kind": "class-method",
-          "parent": "ReconcileCoordinator",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
       "source": "src/reconciler-context.ts",
       "target": "rust/src/reconciler_context.rs",
       "ledgerStatus": "PORTING",
@@ -4507,30 +4288,6 @@
       ]
     },
     {
-      "source": "src/reconciler-review.ts",
-      "target": "rust/src/reconciler_review.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 1,
-      "directNameMatches": 1,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [
-        "rust/tests/head_to_head_reconciler_review_base.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/reconciler.rs",
-        "rust/src/reconciler_review_base.rs",
-        "rust/src/reconciler_runtime.rs"
-      ],
-      "exports": [
-        {
-          "name": "ReconcilerReviewBase",
-          "kind": "class",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
       "source": "src/reconciler-runtime.ts",
       "target": "rust/src/reconciler_runtime.rs",
       "ledgerStatus": "PORTING",
@@ -4549,6 +4306,7 @@
       ],
       "otherRustModuleReferences": [
         "rust/src/native_script_execution.rs",
+        "rust/src/native_worker_event_ingress.rs",
         "rust/src/reconciler.rs",
         "rust/src/reconciler_runtime_base.rs",
         "rust/src/relayd_control.rs"
@@ -4821,7 +4579,10 @@
         "rust/src/local_authority_store.rs",
         "rust/src/local_job_registry.rs",
         "rust/src/local_managed_store.rs",
+        "rust/src/native_browser_execution.rs",
         "rust/src/native_script_execution.rs",
+        "rust/src/native_script_planner.rs",
+        "rust/src/native_worker_event_ingress.rs",
         "rust/src/planner_runtime.rs",
         "rust/src/projected_store.rs",
         "rust/src/relayd.rs",
@@ -5189,29 +4950,6 @@
       ]
     },
     {
-      "source": "src/relayd-control.ts",
-      "target": "rust/src/relayd_control.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 1,
-      "directNameMatches": 1,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [
-        "rust/tests/head_to_head_workspace_control_factory.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity/control_factory.rs",
-        "rust/src/relayd_sqlite_write.rs"
-      ],
-      "exports": [
-        {
-          "name": "createWorkspaceControl",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
       "source": "src/relayd-dashboard-actions.ts",
       "target": "rust/src/relayd_dashboard_actions.rs",
       "ledgerStatus": "PORTING",
@@ -5492,53 +5230,6 @@
         },
         {
           "name": "sameDependencyRevisionVector",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/review-revision-settlement.ts",
-      "target": "rust/src/review_revision_settlement.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 1,
-      "directNameMatches": 1,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [
-        "rust/tests/head_to_head_wave2_review_effects.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity.rs",
-        "rust/src/reconciler.rs",
-        "rust/src/reconciler_review.rs"
-      ],
-      "exports": [
-        {
-          "name": "settleReviewRevisionRound",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/review-revision-stale.ts",
-      "target": "rust/src/review_revision_stale.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 1,
-      "directNameMatches": 1,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [
-        "rust/tests/head_to_head_wave2_review_effects.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity.rs",
-        "rust/src/reconciler_review.rs"
-      ],
-      "exports": [
-        {
-          "name": "staleReviewRevisions",
           "kind": "function",
           "static": "name-match"
         }
@@ -6337,56 +6028,6 @@
       ]
     },
     {
-      "source": "src/task-inactivity-watchdog.ts",
-      "target": "rust/src/task_inactivity_watchdog.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 6,
-      "directNameMatches": 6,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [
-        "rust/tests/head_to_head_process_browser_worker.mjs",
-        "rust/tests/head_to_head_wave3_graph.mjs",
-        "rust/tests/head_to_head_wave4_watchdog.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity.rs",
-        "rust/src/reconciler_runtime.rs"
-      ],
-      "exports": [
-        {
-          "name": "requiresWorkerInactivityWatchdog",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "isRecoverableWatchdogFailure",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "isCorrelatedWorkerEvent",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "inactivityDeadline",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "armInactivityWatchdog",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "acceptTaskProgress",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
       "source": "src/task-recovery.ts",
       "target": "rust/src/task_recovery.rs",
       "ledgerStatus": "PORTING",
@@ -6424,87 +6065,6 @@
         },
         {
           "name": "recordEscalationNotificationDelivery",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/task-transitions.ts",
-      "target": "rust/src/task_transitions.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 6,
-      "directNameMatches": 6,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "dependencyReady",
-        "detectCycles"
-      ],
-      "directDiffImports": [
-        "rust/tests/head_to_head_wave2_graph.mjs",
-        "rust/tests/head_to_head_wave3_graph.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity/reconciler_recovery_public.rs",
-        "rust/src/bin/relay-rust2-parity.rs",
-        "rust/src/cli_coordinator.rs",
-        "rust/src/dag_task_runtime.rs",
-        "rust/src/dependency_revision_execution.rs",
-        "rust/src/force_restate_validation.rs",
-        "rust/src/interactive_request.rs",
-        "rust/src/interactive_resume.rs",
-        "rust/src/job_actions.rs",
-        "rust/src/local_git_merge.rs",
-        "rust/src/local_merge_delivery.rs",
-        "rust/src/planner_runtime_public.rs",
-        "rust/src/reconciler.rs",
-        "rust/src/reconciler_review.rs",
-        "rust/src/reconciler_runtime.rs",
-        "rust/src/task_actions.rs",
-        "rust/src/task_inactivity_watchdog.rs",
-        "rust/src/task_recovery.rs",
-        "rust/src/unblock.rs",
-        "rust/src/workflow/authoritative_conditions.rs",
-        "rust/src/workflow/durable_transition.rs"
-      ],
-      "exports": [
-        {
-          "name": "dependencyReady",
-          "kind": "reexport",
-          "static": "review"
-        },
-        {
-          "name": "detectCycles",
-          "kind": "reexport",
-          "static": "review"
-        },
-        {
-          "name": "completionGateSatisfied",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "refreshTaskDependencies",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "extendRetryBudget",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "tryTransitionTaskEvent",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "transitionTaskEvent",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "transitionJobEvent",
           "kind": "function",
           "static": "name-match"
         }
@@ -7306,36 +6866,6 @@
         },
         {
           "name": "codexAndZaiUsageRegistry",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/worker-failure-recovery.ts",
-      "target": "rust/src/worker_failure_recovery.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 1,
-      "directNameMatches": 1,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "WorkerFailurePorts"
-      ],
-      "directDiffImports": [
-        "rust/tests/head_to_head_worker_failure_orchestration.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity/worker_failure_parity.rs",
-        "rust/src/worker_failure_orchestration.rs"
-      ],
-      "exports": [
-        {
-          "name": "WorkerFailurePorts",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "handleWorkerLaunchFailure",
           "kind": "function",
           "static": "name-match"
         }
