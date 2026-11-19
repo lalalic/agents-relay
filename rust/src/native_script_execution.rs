@@ -4,7 +4,7 @@
 //! only the exact source-execution Event enters the canonical Graph.
 use crate::{
     native_script_worker::invoke_trusted_script_recorded,
-    process_identity::capture_process_record,
+    execution_process_tracker::monitor_execution_process,
     reconciler_runtime::ReconcilerRuntime,
     relay_store::SQLiteRelayStore,
     script_task_adapter::launch_script_task,
@@ -93,10 +93,23 @@ pub fn run_claimed_script_task(
                     ||field(current,"state")!="RUNNING"{
                     return Err("Script process belongs to stale Task lease".into());
                 }
-                let record=capture_process_record(job_id,task_id,execution_id,
-                    field(task,"leaseOwner"),pid as i64)
-                    .ok_or("Cannot prove fresh owned Script Worker process identity")?;
-                store.record_execution_process(&record)
+                // Original execution-process-tracker public monitor port:
+                // exact owned PID identity first, authoritative SQLite
+                // registration second, before accepting any worker receipt.
+                let future=monitor_execution_process(
+                    job_id,task_id,execution_id,field(task,"leaseOwner"),
+                    Some(pid as i64),
+                    |record|std::future::ready(store.record_execution_process(&record)));
+                let mut future=std::pin::pin!(future);
+                let mut context=std::task::Context::from_waker(std::task::Waker::noop());
+                match std::future::Future::poll(future.as_mut(),&mut context){
+                    std::task::Poll::Ready(result)=>{
+                        result?.ok_or("Cannot prove fresh owned Script Worker process identity")?;
+                        Ok(())
+                    },
+                    std::task::Poll::Pending=>Err(
+                        "Native Script process registration unexpectedly suspended".into()),
+                }
             });
         if let Ok(store)=SQLiteRelayStore::open_without_claim_reset(db_path,Some(job_id)){
             let _=store.finish_execution_process(job_id,task_id,execution_id,None);

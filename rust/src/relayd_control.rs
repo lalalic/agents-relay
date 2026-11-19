@@ -13,6 +13,7 @@ use crate::{
     git_delivery::verify_source_commit,
     events::event_for,
     execution_event_identity::execution_event_source,
+    force_restate::execute_force_restate,
     reconciler_runtime::ReconcilerRuntime,
     registry::discover_agents,
     task_actions::{dispatch_task_action_snapshot,classify_failed_task_snapshot,supersede_cancelled_task_snapshot},
@@ -305,8 +306,25 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
             Ok(updated)
         },
         "job.plan"=>{
-            let result=backend.manual_plan(&job_id,text(body,"guidance"),
-                body.get("forceRestate")==Some(&Value::Bool(true)))?;
+            let result=if body.get("forceRestate")==Some(&Value::Bool(true)){
+                // Same canonical manual Plan Apply as normal planning. This
+                // public wrapper forwards exactly forceRestate=true and
+                // must never introduce a second planning/scheduling policy.
+                let future=execute_force_restate(
+                    (),&job_id,text(body,"guidance"),60_000,(),
+                    |_,id,guidance,_timeout,_,force|std::future::ready(
+                        backend.manual_plan(id,guidance,force)),
+                );
+                let mut future=std::pin::pin!(future);
+                let mut context=std::task::Context::from_waker(std::task::Waker::noop());
+                match std::future::Future::poll(future.as_mut(),&mut context){
+                    std::task::Poll::Ready(value)=>value?,
+                    std::task::Poll::Pending=>return Err(
+                        "Native Force Restate unexpectedly suspended the synchronous Plan action".into()),
+                }
+            }else{
+                backend.manual_plan(&job_id,text(body,"guidance"),false)?
+            };
             backend.wake(&job_id,"control.job.plan")?;
             Ok(result.get("round").cloned().unwrap_or(result))
         },

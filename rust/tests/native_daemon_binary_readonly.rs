@@ -952,3 +952,95 @@ fn native_cli_pause_resume_round_trip_is_durable_after_daemon_restart(){
     assert_eq!(saved,resumed);
     fs::remove_dir_all(root).unwrap();
 }
+
+// Public original force-restate adapter must enter the same authoritative
+// manual Planner Graph/SQLite and owned Script planner as normal job.plan.
+// This is the real installed native daemon, no Node Relay, no model provider.
+#[test]
+fn real_daemon_force_restate_creates_verified_work_and_survives_restart(){
+    use std::os::unix::{net::UnixListener,fs::PermissionsExt};
+    // AF_UNIX paths must be short on macOS, and the fixture must be beneath
+    // the exact isolated store parent rather than the user's WebHelm socket.
+    let root=PathBuf::from("/tmp").join(format!("r2force-{}",
+        std::process::id()));
+    let _=fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("stores")).unwrap();
+    let project=root.join("project");
+    fs::create_dir_all(project.join("agents/.shortcut")).unwrap();
+    let script=r#"export async function run({input}){
+      if(input.objective!=='Validate force-restate graph')throw Error('Wrong objective');
+      return {objective_status:'in_progress',assessment:'Needs a new verified browser task',
+        next_tasks:[{id:'draft-auditor',title:'Verify force restate',
+          agentName:'auditor',adapter:'chatgpt',priority:'P2',storySize:'S',
+          routing:{provider:'chatgpt',model:'isolated-fixture',decidedBy:'planner',
+            decidedAt:'2026-11-18T00:00:00.000Z'},input:'Verify this new task',
+          output:{kind:'file',path:input.job.projectRoot+'/proof.json'},
+          dependencies:['2']}],unblocks:[]};
+    }"#;
+    fs::write(project.join("agents/.shortcut/planner.agent.mjs"),script).unwrap();
+    let socket=root.join("webhelm.sock");
+    let _listener=UnixListener::bind(&socket).unwrap();
+    let webhelm=root.join("fake-webhelm");
+    fs::write(&webhelm,"#!/bin/sh\nif [ \"$1\" = \"platform\" ]; then echo '{\"platform\":\"chatgpt\"}'; else echo '{\"ok\":true}'; fi\n").unwrap();
+    fs::set_permissions(&webhelm,fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(Command::new("git").arg("-C").arg(&project)
+        .args(["init","-q","-b","main"]).status().unwrap().success());
+    let path=root.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&path,Some("117")).unwrap();
+    store.save_job(&json!({
+        "id":"117","repository":"project","projectRoot":project,"state":"DRAFT",
+        "title":"Force restate isolated","objective":"Validate force-restate graph",
+        "prNumber":0,"reviewEnabled":false,"priority":"P2",
+        "createdAt":"2026-11-18T00:00:00.000Z","updatedAt":"2026-11-18T00:00:00.000Z",
+        "tasks":[{"id":"2","jobId":"117","kind":"work","adapter":"script",
+            "agentName":"implementation","title":"Verified existing work","state":"SUCCEEDED",
+            "attempt":1,"maxAttempts":1,"result":{"summary":"Done"},
+            "output":{"kind":"file","path":root.join("old.json")},
+            "createdAt":"2026-11-18T00:00:00.000Z",
+            "updatedAt":"2026-11-18T00:00:00.000Z"}],"plans":[]
+    })).unwrap();
+    store.close().unwrap();
+    let port=socket_port();
+    let previous_socket=std::env::var_os("AGENTS_RELAY_WEBHELM_SOCKET");
+    let previous_exe=std::env::var_os("AGENTS_RELAY_WEBHELM_EXECUTABLE");
+    unsafe{
+        std::env::set_var("AGENTS_RELAY_WEBHELM_SOCKET",&socket);
+        std::env::set_var("AGENTS_RELAY_WEBHELM_EXECUTABLE",&webhelm);
+    }
+    let daemon=start_mode(&root,port,"--isolated-write-store-dir");
+    unsafe{
+        if let Some(v)=previous_socket{std::env::set_var("AGENTS_RELAY_WEBHELM_SOCKET",v);}
+        else{std::env::remove_var("AGENTS_RELAY_WEBHELM_SOCKET");}
+        if let Some(v)=previous_exe{std::env::set_var("AGENTS_RELAY_WEBHELM_EXECUTABLE",v);}
+        else{std::env::remove_var("AGENTS_RELAY_WEBHELM_EXECUTABLE");}
+    }
+    let request_body=json!({"command":"job.plan","jobId":"117",
+        "guidance":"Reconsider the complete objective","forceRestate":true});
+    let response=request_to_json(port,"/api/control",&request_body);
+    assert!(response["forceRestate"]==true || response["round"]==1,
+        "Native Force Restate did not create a Plan: {response}");
+    let mut snapshot=Value::Null;
+    for _ in 0..100{
+        snapshot=body(&request(port,"GET","/api/job?id=117","").unwrap());
+        if snapshot["plans"][0]["status"]=="SUCCEEDED"{break;}
+        thread::sleep(Duration::from_millis(60));
+    }
+    assert_eq!(snapshot["plans"][0]["status"],"SUCCEEDED","{snapshot}");
+    assert_eq!(snapshot["plans"][0]["forceRestate"],true);
+    assert_eq!(snapshot["plans"][0]["restateTaskIds"],json!([]));
+    assert!(snapshot["plans"][0]["appliedExecutionId"].is_string());
+    assert_eq!(snapshot["plans"][0]["objectiveStatus"],"in_progress");
+    assert_eq!(snapshot["tasks"].as_array().unwrap().len(),2);
+    assert_eq!(snapshot["tasks"][1]["agentName"],"auditor");
+    assert_ne!(snapshot["state"],"COMPLETED",
+        "A verified new work Task cannot instantly complete the Job");
+    drop(daemon);
+    let restart=start_mode(&root,port,"--isolated-write-store-dir");
+    let after=body(&request(port,"GET","/api/job?id=117","").unwrap());
+    assert_eq!(after["plans"][0]["forceRestate"],true);
+    assert_eq!(after["plans"][0]["appliedExecutionId"],
+        snapshot["plans"][0]["appliedExecutionId"]);
+    assert_eq!(after["tasks"].as_array().unwrap().len(),2);
+    drop(restart);
+    fs::remove_dir_all(root).unwrap();
+}

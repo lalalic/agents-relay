@@ -391,6 +391,78 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=closure::invoke(request)?{return Ok(output);}
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "certExecutionTracker" => {
+            use agents_relay_rust2::execution_process_tracker::{
+                monitor_execution_process,reclaim_stale_execution_process,
+            };
+            let method=request["method"].as_str().ok_or("method required")?;
+            let result=if method=="monitor"{
+                let mut saved=Vec::<Value>::new();
+                let pid=request["pid"].as_i64();
+                {
+                let future=monitor_execution_process(
+                    request["jobId"].as_str().unwrap_or("17"),
+                    request["taskId"].as_str().unwrap_or("2"),
+                    request["executionId"].as_str().unwrap_or("ex-1"),
+                    request["owner"].as_str().unwrap_or("fixture"),
+                    pid,|record|{saved.push(record);std::future::ready(Ok(()))});
+                let mut future=std::pin::pin!(future);
+                let _result=loop{
+                    let mut ctx=std::task::Context::from_waker(std::task::Waker::noop());
+                    if let std::task::Poll::Ready(done)=std::future::Future::poll(
+                        future.as_mut(),&mut ctx){break done?;}
+                    std::thread::yield_now();
+                };
+                }
+                json!({"saved":saved})
+            }else if method=="reclaim"{
+                let record=request.get("record").cloned().filter(|v|!v.is_null());
+                let mut calls=0;
+                let reclaimed={
+                let future=reclaim_stale_execution_process(
+                    &request["task"],
+                    request["currentOwner"].as_str(),
+                    |_,_,_|{calls+=1;std::future::ready(Ok(record))});
+                let mut future=std::pin::pin!(future);
+                let reclaimed=loop{
+                    let mut ctx=std::task::Context::from_waker(std::task::Waker::noop());
+                    if let std::task::Poll::Ready(done)=std::future::Future::poll(
+                        future.as_mut(),&mut ctx){break done?;}
+                    std::thread::yield_now();
+                };
+                reclaimed
+                };
+                json!({"reclaim":reclaimed,"loadCalls":calls})
+            }else{return Err("Unknown Execution Tracker method".into());};
+            Ok(result.to_string())
+        },
+        "certForceRestate" => {
+            let guidance=request["guidance"].as_str().map(str::to_owned);
+            let job_id=request["jobId"].as_str().ok_or("jobId required")?.to_owned();
+            let timeout=request["timeoutMs"].as_u64().unwrap_or(0);
+            let marker=request["marker"].as_str().unwrap_or("").to_owned();
+            let fail=request["fail"].as_str().map(str::to_owned);
+            let future=agents_relay_rust2::force_restate::execute_force_restate(
+                marker,&job_id,guidance.as_deref(),timeout,(),
+                |store,id,guidance,timeout,_,force| {
+                    let id=id.to_owned();let guidance=guidance.map(str::to_owned);
+                    async move {
+                        if let Some(error)=fail{return Err(error);}
+                        Ok(json!({"store":store,"jobId":id,"guidance":guidance,
+                            "timeoutMs":timeout,"forceRestate":force,
+                            "launcherInvoked":true}))
+                    }
+                },
+            );
+            let mut future=std::pin::pin!(future);
+            let output=loop {
+                let mut ctx=std::task::Context::from_waker(std::task::Waker::noop());
+                if let std::task::Poll::Ready(value)=std::future::Future::poll(
+                    future.as_mut(),&mut ctx){break value?;}
+                std::thread::yield_now();
+            };
+            Ok(output.to_string())
+        },
         "certRelaydMain" => {
             let argv=request["argv"].as_array().ok_or("argv array required")?
                 .iter().map(|v|v.as_str().ok_or("argv item must be string")

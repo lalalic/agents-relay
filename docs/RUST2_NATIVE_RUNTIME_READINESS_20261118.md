@@ -24,6 +24,12 @@ The same Graph selects actions for the Rust Reconciler. A real integration test 
 
 ## 2026-11-19 追加证据（保持 NOT production-ready）
 
+- Execution Process Tracker 的 monitor + stale-reclaim 已接入真实原生 Script Worker/SQLite 和 Reconciler 原生进程回收，180 个原始 Node/Rust 差异场景及 test-owned POSIX process/crash/restart 证据通过，空执行代误回收已修复。
+
+
+- Force Restate 已通过 65 组 original Node/Rust facade 差分和实际 Rust `job.plan` → SQLite Graph → owned Script Planner → 有效 dependent browser Task 的 E2E，重启复核，没有跳过 Graph forward convergence。整体生产切换门禁不变。
+
+
 - 仅隔离 Rust 原生模型 Worker terminal 的 Route Outcome Audit 已接入真正的 post-commit SQLite Graph 路径（180 个原始 Node/Rust JSONL 对照、失败/重复回执拒绝和递归脱敏）；launch/watchdog caller 仍未认证，`route-outcome-recording.ts` 维持 PORTING。
 
 

@@ -8,7 +8,7 @@ use crate::{
     final_review_role::is_final_review_agent,
     job_execution_slot::job_has_conflicting_execution,
     local_merge_lock::iso8601_now,
-    process_identity::{active_relay_lease_owner,probe_process_record,stop_orphaned_process_group},
+    execution_process_tracker::reclaim_stale_execution_process,
     planner::{create_plan_round,pending_plan},
     planner_recovery::create_failed_plan_recovery,
     reconciler_review::{
@@ -152,25 +152,22 @@ impl Reconciler{
                 continue;
             }
             let generation=current.get("executionId").and_then(Value::as_str);
-            let owner=current.get("leaseOwner").and_then(Value::as_str);
-            if owner.is_some_and(|owner|!owner.is_empty()
-                &&owner!=self.runtime.owner&&active_relay_lease_owner(owner)){
-                continue;
-            }
-            if let Some(generation)=generation{
-                let recorded=host.load_execution_process(job_id,task_id,generation)?;
-                if let Some(record)=recorded{
-                    if !record.get("endedAt").is_some_and(|v|!v.is_null()){
-                        let status=probe_process_record(&record);
-                        if status!="gone"&&status!="reused"{
-                            if status!="alive"||!stop_orphaned_process_group(
-                                &record,std::time::Duration::from_millis(750)){
-                                continue;
-                            }
-                        }
-                    }
+            let safe={
+                // Scope the synchronous Future so all borrowed host/owner
+                // state is released BEFORE Graph persistence or wake effects.
+                let future=reclaim_stale_execution_process(
+                    current,Some(&self.runtime.owner),|j,t,e|{
+                        std::future::ready(host.load_execution_process(&j,&t,&e))
+                    });
+                let mut future=std::pin::pin!(future);
+                let mut context=std::task::Context::from_waker(std::task::Waker::noop());
+                match std::future::Future::poll(future.as_mut(),&mut context){
+                    std::task::Poll::Ready(result)=>result?,
+                    std::task::Poll::Pending=>return Err(
+                        "Native execution process reclaim unexpectedly suspended".into()),
                 }
-            }
+            };
+            if !safe{continue;}
             let mut candidate=fresh.clone();
             let task=&mut candidate["tasks"][index];
             let retry_available=task.get("attempt").and_then(Value::as_u64)

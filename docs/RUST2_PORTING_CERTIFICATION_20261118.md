@@ -2,7 +2,7 @@
 
 > 本表是逐文件的真实审计清单，不是所有模块均通过。**PASS** 需公开 API 原始 Node/Rust 直接差分、Rust 原生负面测试和实际生产调用绑定；只通过静态 API 名称匹配，不能晋级。**HOLD** 指存在尚未关闭的证据缺口，不等同于未实现。
 
-- 原始检查范围：107 个源模块。已认证 **48 PASS**，保留 **59 HOLD/PORTING**。
+- 原始检查范围：107 个源模块。已认证 **50 PASS**，保留 **57 HOLD/PORTING**。
 - 本轮仅跑 Rust 原生测试与必要的 Node/Rust 差分；未重跑独立 Node 全量测试。
 - 这份报告对应上次全量 Node/Rust 230/230 PASS 后的逐项认证。全量 230/230 不等于 107 个模块逐一通过。
 - `directDiffTests` 与 `otherRustModuleReferences` 基于静态文本检索；测试文件出现导入或 Rust 源文件出现引用，仅说明有线索，不表示覆盖了每个公开 API 或进入生产。
@@ -34,6 +34,14 @@
 ### `src/local-merge-projection.ts`
 - 原 Node/Rust 远端投影的 17 个直接差分场景通过：普通成功、无 origin、失败重试门禁、过期 lease、已完成、远端冲突及有效隔离 bare origin。
 - Rust 原生测试证明 SQLite Graph 幂等性、实际非强制推送、错误 SHA 和外部远端拒绝；正式 daemon 已接通 `effect.remoteDelivery`。真实生产远端与模型 L4 尚未验收。
+
+## 2026-11-19 Execution Process Tracker 认证
+
+- **`src/execution-process-tracker.ts` — PASS**：180 组原始 Node/Rust 公开登记和过期回收对照，含 test-owned POSIX 真实 PID/PGID、空执行代和误杀防护；修复 Rust 空字符串 executionId 与原 Node truthiness 偏差。实际 Rust Script Worker 按原模块保存 SQLite 进程身份，Reconciler 回收路径按该模块核验旧进程，真实 daemon SIGKILL/restart 及 Script Task 依赖顺序测试通过。
+
+## 2026-11-19 Force Restate 认证
+
+- **`src/force-restate.ts` — PASS**：65 组原始 Node/Rust public facade 差分验证 optional guidance/timeout/force 标志及错误转发。正式 Rust `job.plan --force-restate` 接线到唯一的 `manual_plan` Graph/SQLite/受控 Planner；真实隔离 daemon E2E 生成有效新 Browser Task，守住前向收敛门禁、Plan 唯一 ID 和重启不可重复应用。
 
 ## 2026-11-19 Relayd Main 入口认证
 
@@ -205,12 +213,12 @@
 | 28 | `src/escalation-notifier.ts` | **HOLD** | 2 | 0 | 0 | 3 | 直接差分、运行调用、结构审核、模块特定场景／生产门禁 |
 | 29 | `src/events.ts` | **HOLD** | 13 | 3 | 36 | 1 | 结构审核、模块特定场景／生产门禁 |
 | 30 | `src/execution-context.ts` | **HOLD** | 6 | 1 | 0 | 10 | 运行调用、结构审核、模块特定场景／生产门禁 |
-| 31 | `src/execution-process-tracker.ts` | **HOLD** | 2 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
+| 31 | `src/execution-process-tracker.ts` | **PASS** | 2 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 32 | `src/execution-recovery.ts` | **PASS** | 2 | 0 | 1 | 1 | 直接差分、结构审核、模块特定场景／生产门禁 |
 | 33 | `src/execution-routing.ts` | **PASS** | 6 | 1 | 2 | 5 | 结构审核、模块特定场景／生产门禁 |
 | 34 | `src/feedback.ts` | **HOLD** | 23 | 2 | 0 | 12 | 运行调用、结构审核、模块特定场景／生产门禁 |
 | 35 | `src/force-restate-validation.ts` | **PASS** | 6 | 0 | 1 | 1 | 直接差分、结构审核、模块特定场景／生产门禁 |
-| 36 | `src/force-restate.ts` | **HOLD** | 1 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
+| 36 | `src/force-restate.ts` | **PASS** | 1 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 37 | `src/github-auth.ts` | **HOLD** | 2 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 38 | `src/github-client.ts` | **HOLD** | 10 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 39 | `src/interactive-invocation.ts` | **HOLD** | 12 | 1 | 5 | 12 | 结构审核、模块特定场景／生产门禁 |

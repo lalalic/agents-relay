@@ -33,8 +33,12 @@ where
     Load: FnOnce(String, String, String) -> Fut,
     Fut: Future<Output = Result<Option<Value>, String>>,
 {
-    let execution_id = task.get("executionId").and_then(Value::as_str);
-    let job_id = task.get("jobId").and_then(Value::as_str);
+    // Node's if (!task.executionId || !task.jobId) treats empty strings as
+    // absent; never load or reclaim a process for an empty generation.
+    let execution_id = task.get("executionId").and_then(Value::as_str)
+        .filter(|value|!value.is_empty());
+    let job_id = task.get("jobId").and_then(Value::as_str)
+        .filter(|value|!value.is_empty());
     let task_id = task.get("id").and_then(Value::as_str);
     let (Some(job_id), Some(task_id), Some(execution_id)) =
         (job_id, task_id, execution_id) else { return Ok(true); };
