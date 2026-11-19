@@ -752,3 +752,12 @@
   - `classifyFailureEvidence`：四类关键词全集（model/provider/laya/launch/auth/credential/configuration/incompatible/rate-limit/quota/unavailable；worker/tool/daemon/relay/network/socket/nats/checkout/filesystem；assert/test-failed/implementation/compile/typescript/syntax/semantic；timeout/timed-out/deadline）、model+infra 组合优先级、空证据的两种 summary、嵌套 data 载荷检索、大小写不敏感、部分词匹配、taskError 仅作提示不参与分类。
   - `redecideFailedTask` 准入门卫：非 model 证据在任何路由副作用之前被拒（两侧 canonical 错误文本一致）。
 - **回归**：lib 89/89、model_redecision 16、model_routing、worker_routing、wave2_decision 全绿。
+
+## 2026-11-19 outcome-review 认证 PASS（resolver 缺口关闭）
+
+- **补充差分**：25 个原创 Node/Rust 用例（`head_to_head_outcome_review_resolver.mjs`）：
+  - `reviewerContract` 真实文件系统分层：内置 reviewer、project > workspace 优先级（同名文件内容验证）、缺失 reviewer 的 canonical 错误。
+  - `parseOutcomeReviewArgs` 15 种形状：prompt/prompt-file 互斥、reviewer 名字语法（小写开头+小写字母数字连字符）、agents 去重、output 解析、未知 flag、缺值、空 prompt、相对 project-path 解析。
+  - `combineOutcomeReviews` 优先级：BLOCKED > CHANGE_REQUIRED > PASS。
+- **既有证据**：wave4 500 randomized args/aggregate + native 注入 runner/exit-code 效果；9 个 evaluateOutcome 注入 runner 场景（子进程错误/非 JSON/verdict 校验）。
+- owned reviewer 子进程（codex exec）两侧均为注入，从不访问真实模型。

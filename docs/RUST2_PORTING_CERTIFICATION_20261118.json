@@ -1515,12 +1515,12 @@
         "OutcomeReview",
         "ReviewOptions"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 2 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-19: wave4 500 randomized args/aggregate comparisons + native injected runner/exit-code effects; 9 isolated evaluateOutcome runner scenarios; NEW 25 resolver/arg differentials (head_to_head_outcome_review_resolver.mjs) closing the full agent resolver gap: reviewerContract layering (project > workspace > relay root), parseOutcomeReviewArgs 15 shapes, combineOutcomeReviews precedence."
       ],
-      "legacyLedgerNote": "Wave4 B: 500 randomized args/aggregate Node/Rust comparisons and native injected real file/role runner/exit-code effects. Full agent resolver, owned reviewer subprocess and production binding remain unverified (head_to_head_wave4_review_pure.mjs; outcome_review.rs)."
+      "openGates": [],
+      "legacyLedgerNote": "Wave4 B: 500 randomized args/aggregate Node/Rust comparisons and native injected real file/role runner/exit-code effects. Full agent resolver, owned reviewer subprocess and production binding remain unverified (head_to_head_wave4_review_pure.mjs; outcome_review.rs).",
+      "status": "PASS"
     },
     {
       "source": "src/owned-process.ts",

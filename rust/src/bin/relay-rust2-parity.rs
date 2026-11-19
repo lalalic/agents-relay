@@ -62,6 +62,8 @@ mod script_task_adapter_public;
 mod dependency_revision_execution_public;
 #[path = "relay-rust2-parity/browser_worker_routing_public.rs"]
 mod browser_worker_routing_public;
+#[path = "relay-rust2-parity/outcome_review_resolver_public.rs"]
+mod outcome_review_resolver_public;
 #[path = "relay-rust2-parity/model_redecision_public.rs"]
 mod model_redecision_public;
 #[path = "relay-rust2-parity/planner_child_recovery_public.rs"]
@@ -420,6 +422,7 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=execution_context_public::invoke(request){return output;}
     if let Some(output)=dependency_revision_execution_public::invoke(request){return output;}
     if let Some(output)=browser_worker_routing_public::invoke(request){return output;}
+    if let Some(output)=outcome_review_resolver_public::invoke(request){return output;}
     if let Some(output)=model_redecision_public::invoke(request){return output;}
     if let Some(output)=planner_child_recovery_public::invoke(request){return output;}
     if let Some(output)=local_managed_store_public::invoke(request){return output;}
