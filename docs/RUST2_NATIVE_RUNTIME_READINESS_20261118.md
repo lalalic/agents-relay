@@ -24,6 +24,17 @@ The same Graph selects actions for the Rust Reconciler. A real integration test 
 
 ## 2026-11-19 追加证据（保持 NOT production-ready）
 
+- **ScriptTaskAdapter 公开 API**：75 个原始 Node/native Rust 差异执行场景和类身份验证；真实本地 Script Worker `runCommand`、输出、PID、Graph/SQLite 终结与复制禁止通过。缺失 Agent Shortcut 的早期失败使用执行标识栅栏映射到 Graph `worker.delivery_failed`，不伪造开始事件；相关 5 个 Graph/SQLite E2E 与 18 个 daemon 测试通过。所有数据均为隔离 fixture，非线上自动切换授权。
+
+
+
+- **只读 CLI 原始兼容**：Rust `prompt --eval-file` 对原 Node 41 组二进制差分通过；真实隔离 SQLite/daemon 上的 `prompt` Task/Plan、`plan context`、`task context`、`task show/comments` 原 Node JSON 对照通过。`task events` 使用真实 Test-owned HTTP EventBus 上下游 asc/desc + cursor 对照，拒绝未知 Task；100 个 `plannerInput` 公开 JSON 差分通过。仅证明只读 CLI，不等于完整 daemon cutover。
+
+
+
+- Original Node/Rust `execution-context.ts` 155 cases and `reconciler-context.ts` 98 public API cases pass. Rust SQLite Agent registration is merged BEFORE explicit Agent filtering (previous wrong order fixed), and runtime missing-name defaults/Node realpath ENOTDIR errors match. Actual Rust isolated Planner and WebHelm Worker now use shared Context wrapper, with real Graph/SQLite restart + fake-provider E2E proving Planner role, registered Agent visibility and named browser runtime. Production model providers still NOT_RUN.
+
+
 - Route Outcome 已补齐 original Node/Rust 180 个 JSONL 直接差分与真实原生模型终态、启动失败、watchdog 过期的 post-Graph/SQLite 审计入口；真实 daemon 启动失败/重启无重复审计、自定义路径及嵌套凭据脱敏通过。Provider L4 仍独立于该单模块认证。
 
 

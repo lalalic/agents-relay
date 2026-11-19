@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 53,
-    "HOLD": 54
+    "PASS": 57,
+    "HOLD": 50
   },
   "records": [
     {
@@ -305,18 +305,24 @@
       "source": "src/cli-prompt.ts",
       "target": "rust/src/cli_prompt.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 5,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
-      "otherRustModuleReferences": [],
-      "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "directDiffTests": [
+        "rust/tests/head_to_head_cli_prompt_eval_public.mjs"
       ],
+      "otherRustModuleReferences": [
+        "rust/src/cli.rs",
+        "rust/src/bin/agents-relay-rust.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [
+        "41 exact original compiled Node vs installed native Rust prompt --eval-file CLI cases: production/evaluation prompt byte equality, real layered Agent Markdown reference, invalid adapter/agent/project/task, forbidden durable Job/task binding and no secret output: rust/tests/head_to_head_cli_prompt_eval_public.mjs",
+        "Real isolated Rust daemon SQLite read-only Job and original compiled Node CLI using that SAME Job snapshot: prompt --task-id and --plan-id byte equality; plan context, task context, task show and task comments exact JSON public equality; authorized generation checks, no Task effects and owner restart preflight: rust/tests/native_daemon_binary_readonly.rs (native_cli_prompt_plan_and_task_context_reads_are_real_daemon_read_only)",
+        "Actual original Node/Rust events bus HTTP cursor API differential: asc/desc with nextCursor and two real fixture Events, malicious or missing Task denied prior to provider access; request URLs and exact input flags checked: rust/tests/native_daemon_binary_readonly.rs (native_task_events_cli_matches_original_node_real_event_history_and_rejects_stale_ids)",
+        "Canonical Planner input public wire additionally matched in 100 original Node/Rust direct fixtures: rust/tests/head_to_head_planner_input_public.mjs. Production CLI dispatch invokes native cli_prompt APIs directly, SQLite live daemon GET and bounded Events Bus, never launches Node Relay or external model. Native internal Planner Script lifecycle production gate remains independent."
+      ],
+      "openGates": [],
       "legacyLedgerNote": "Phase1 serial native Rust Script Agent and read-only CLI Prompt port; uncompiled/untested, API integration Phase2."
     },
     {
@@ -795,13 +801,18 @@
       "source": "src/execution-context.ts",
       "target": "rust/src/execution_context.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 6,
       "staticNameMismatch": 0,
       "directDiffTests": [
-        "rust/tests/head_to_head_agent_graph.mjs"
+        "rust/tests/head_to_head_agent_graph.mjs",
+        "rust/tests/head_to_head_execution_context_public.mjs"
       ],
-      "otherRustModuleReferences": [],
+      "otherRustModuleReferences": [
+        "rust/src/native_browser_execution.rs",
+        "rust/src/native_script_planner.rs",
+        "rust/src/reconciler_context.rs"
+      ],
       "typeOrShapeReviews": [
         "ExecutionRole",
         "ContextSource",
@@ -814,12 +825,12 @@
         "ExecutionContextRoots",
         "ExecutionContextOptions"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
-        "仍有 10 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "155 original Node/Rust direct public API cases for resolveExecutionContext, resolveAgentModelPreference, resolveAgentContract, agentContractPrompt, executionContextPrompt across 6 real roles and hierarchical project/shared/global Agent/Skill/Instructions; registered Agents, explicit Agent filters, provider instructions, runtime missing-name defaults and invalid path errors: rust/tests/head_to_head_execution_context_public.mjs",
+        "Fixed actual registered Agent explicit filtering ordering: Rust cannot filter built-in Agent list before merging SQLite registered Agents; fixed native Agent Runtime name null/unknown semantics and Node ENOTDIR filesystem realpath error parity: rust/src/execution_context.rs and rust/src/agent_content_resolver.rs",
+        "Actual native WebHelm Worker submits authentic layered selected Agent Markdown with Worker context through AF_UNIX; native owned Planner Script receives resolved Planner Agent/Runtime registration context after SQLite persistence and restart; these are real daemon Graph/SQLite E2E in rust/tests/native_daemon_binary_readonly.rs. No live external model or user data touched."
       ],
+      "openGates": [],
       "legacyLedgerNote": "Serial Phase1 native interactive invocation Graph/Host and layered execution context port; uncompiled/untested, store integration Stage2."
     },
     {
@@ -1732,18 +1743,23 @@
       "source": "src/reconciler-context.ts",
       "target": "rust/src/reconciler_context.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 3,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
-      "otherRustModuleReferences": [],
-      "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "directDiffTests": [
+        "rust/tests/head_to_head_reconciler_context_public.mjs"
       ],
+      "otherRustModuleReferences": [
+        "rust/src/native_browser_execution.rs",
+        "rust/src/native_script_planner.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [
+        "98 direct original Node/Rust public agentModelPreferenceForJob, resolveTaskContext and resolvePlannerContext across real project/parent/shared/global Markdown, registered agent, runtime discovery, role-specific and malformed missing Agents/Skills/runtime cases: rust/tests/head_to_head_reconciler_context_public.mjs",
+        "Production Rust PlannerPorts::execution_context now calls reconciler_context::resolve_planner_context with real SQLite registered Agent snapshot and actual installed WebHelm runtime; Production Rust WebHelm worker calls resolve_task_context with real store Agents and Runtime rather than context stub: rust/src/native_script_planner.rs and rust/src/native_browser_execution.rs",
+        "Isolated native daemon Force Restate Script Planner asserts role planner, registered-fixture Agent and named ChatGPT Browser Runtime; native browser AF_UNIX fake-provider Graph/SQLite E2E passes with exact selected Agent Task prompt: rust/tests/native_daemon_binary_readonly.rs. Missing/advisory preference remains nonfatal and never creates a worktree."
+      ],
+      "openGates": [],
       "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
     },
     {
@@ -2262,24 +2278,25 @@
       "source": "src/script-task-adapter.ts",
       "target": "rust/src/script_task_adapter.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 3,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
-      "otherRustModuleReferences": [],
-      "typeOrShapeReviews": [
-        "ScriptTaskAdapter.name",
-        "ScriptTaskAdapter.id",
-        "ScriptTaskAdapter.capabilities"
+      "directDiffTests": [
+        "rust/tests/head_to_head_script_task_adapter_public.mjs"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺独立公开 API 差分和生产 Rust 调用引用；需要真实 Script Worker 子进程、回执、终止/超时、结果持久化门禁",
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
-        "仍有 3 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "otherRustModuleReferences": [
+        "rust/src/native_script_execution.rs",
+        "rust/src/relayd_sqlite_write.rs",
+        "rust/src/cli.rs"
       ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [
+        "75 original compiled Node vs canonical production Rust ScriptTaskAdapter public launch cases, plus class identity/capabilities: leased Task validation, JSON/plain input, DAG source/nodeID fences, review decision, missing Script/Agent/project, no leased execution, invalid output, waiting review, worker exceptions, failure lifecycle events, real isolated output JSON and input receipt; rust/tests/head_to_head_script_task_adapter_public.mjs.",
+        "Real Rust-owned child Script Shortcut process, exact PID/PGID/start-token stored in test-owned SQLite before terminal, canonical Graph task.started/completed and atomic outbox, original execution replay refusal, owned subprocess runCommand JSON receipt: rust/tests/native_script_graph_sqlite.rs (five E2E tests).",
+        "Corrected pre-start missing Shortcut: original ScriptTaskAdapter publishes task.failed without task.started; native Event ingress now selects exact Graph worker.delivery_failed transition on QUEUED with execution-correlated SQLite CAS, never fabricates task.started. Verified one failed terminal event and no stale replay.",
+        "Real native daemon Script Task and 2-node dependent DAG, local Git merge, native startup/killed daemon restart, terminal review failure, invalid execution and no external model effects: rust/tests/native_daemon_binary_readonly.rs (18/18). Production calls rust/src/native_script_execution.rs => script_task_adapter::launch_script_task; no Node Relay daemon."
+      ],
+      "openGates": [],
       "legacyLedgerNote": "Phase1 serial native Rust Script Agent and read-only CLI Prompt port; uncompiled/untested, API integration Phase2."
     },
     {

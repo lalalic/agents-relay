@@ -52,8 +52,10 @@ fn start_mode_with_lease(root:&Path,port:u16,store_flag:&str,lease_ms:Option<u64
             fs::File::create(root.join("native-daemon.log")).unwrap()))
         .spawn().unwrap();
     let mut guard=Guard(child);
-    for _ in 0..50{
+    for _ in 0..300{
         // A successful TCP connect alone is not proof the daemon is ready.
+        // Under simultaneous all-target Rust builds, macOS process scheduling
+        // can delay the isolated daemon beyond a 2.5s fixed polling window.
         // A startup probe must observe the actual HTTP status response.
         if request(port,"GET","/api/status","")
             .is_ok_and(|response|response.starts_with("HTTP/1.1 200")){
@@ -989,6 +991,11 @@ fn real_daemon_force_restate_creates_verified_work_and_survives_restart(){
     fs::create_dir_all(project.join("agents/.shortcut")).unwrap();
     let script=r#"export async function run({input}){
       if(input.objective!=='Validate force-restate graph')throw Error('Wrong objective');
+      const context=input.executionContext;
+      if(context?.role!=='planner' ||
+         !context?.agents?.some(a=>a.name==='registered-fixture') ||
+         !context?.runtimes?.some(r=>r.name==='chatgpt/browser-worker'))
+        throw Error('Planner did not get the real resolved Agent/Runtime context');
       return {objective_status:'in_progress',assessment:'Needs a new verified browser task',
         next_tasks:[{id:'draft-auditor',title:'Verify force restate',
           agentName:'auditor',adapter:'chatgpt',priority:'P2',storySize:'S',
@@ -1019,6 +1026,10 @@ fn real_daemon_force_restate_creates_verified_work_and_survives_restart(){
             "createdAt":"2026-11-18T00:00:00.000Z",
             "updatedAt":"2026-11-18T00:00:00.000Z"}],"plans":[]
     })).unwrap();
+    store.save_agents(&[json!({"id":"registered-fixture", "name":"registered-fixture",
+        "capabilities":["test"],"responsibility":"Isolated registered Agent",
+        "runtime":{"adapter":"chatgpt"},"routing":{"trustDomains":[]},
+        "boundaries":[]})]).unwrap();
     store.close().unwrap();
     let port=socket_port();
     let previous_socket=std::env::var_os("AGENTS_RELAY_WEBHELM_SOCKET");
@@ -1128,5 +1139,320 @@ fn native_daemon_failed_script_launch_is_durable_graph_failure_after_restart(){
         "Restart must not duplicate settled launch failure audit");
     assert!(!project.join("uncreated.json").exists());
     drop(restart);
+    fs::remove_dir_all(root).unwrap();
+}
+
+// The same installed native CLI public src/cli-prompt.ts functions must read
+// the real SQLite Job through the actual daemon, render the real managed
+// Agent/Planner contract, and refuse stale-generation context. Read-only
+// observer mode is intentional: no model session or Task writes.
+#[test]
+fn native_cli_prompt_plan_and_task_context_reads_are_real_daemon_read_only(){
+    use std::os::unix::fs::PermissionsExt;
+    let root=root();
+    let project=root.join("fixture");
+    fs::create_dir_all(project.join("agents")).unwrap();
+    fs::write(project.join("agents/implementation.agent.md"),
+        "---\nname: implementation\n---\n# Real fixture Agent Contract\nBounded repository-only work.\n").unwrap();
+    let init=Command::new("git").args(["init","-q","-b","main"])
+        .current_dir(&project).output().unwrap();
+    assert!(init.status.success());
+    let home=root.join("home");let globals=root.join("global");
+    fs::create_dir_all(&home).unwrap();fs::create_dir_all(&globals).unwrap();
+    let store=SQLiteRelayStore::open(&root.join("relay.sqlite"),Some("17")).unwrap();
+    store.save_job(&json!({
+        "id":"17","repository":"fixture","projectRoot":project,
+        "title":"Read-only CLI Prompt Job","objective":"Verify real Prompt provenance",
+        "state":"ACTIVE","prNumber":0,"reviewEnabled":false,
+        "createdAt":"2026-11-18T00:00:00.000Z",
+        "updatedAt":"2026-11-18T00:00:00.000Z",
+        "tasks":[{
+            "id":"2","jobId":"17","kind":"work","adapter":"chatgpt",
+            "agentName":"implementation","title":"Real Task Contract",
+            "state":"RUNNING","attempt":1,"maxAttempts":1,
+            "executionId":"execution-17-2","leaseOwner":"isolated-reporter",
+            "dependencies":[],"input":"Ensure prompt references immutable Task",
+            "output":{"kind":"file","path":root.join("proof.json")},
+            "createdAt":"2026-11-18T00:00:00.000Z",
+            "updatedAt":"2026-11-18T00:00:00.000Z"
+        }],
+        "plans":[{
+            "jobId":"17","id":"plan-1","round":1,"status":"PLANNING",
+            "executionId":"plan-generation-1","source":"model-planner",
+            "trigger":{"source":"manual","taskIds":[],"reason":"Isolated test"},
+            "assessment":"Read-only fixture","generatedTaskIds":[],
+            "createdAt":"2026-11-18T00:00:01.000Z",
+            "updatedAt":"2026-11-18T00:00:01.000Z"
+        }]
+    })).unwrap();store.close().unwrap();
+    let port=socket_port();let _daemon=start(&root,port);
+    let port=port.to_string();
+    let run=|args:&[&str]|{
+        let execute=||Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
+            .args(args).env("HOME",&home).env("AGENTS_HOME",&globals)
+            .env("AGENTS_RELAY_WORKSPACE_ROOT",&root)
+            .env_remove("AGENTS_RELAY_SHARED_ROOT")
+            .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
+            .output().unwrap();
+        let mut output=execute();
+        // An isolated macOS TCP listener may transiently return EAGAIN.
+        // Retry that transport error only, never semantic CLI rejections.
+        for _ in 0..5{
+            if output.status.success(){break;}
+            let stderr=String::from_utf8_lossy(&output.stderr);
+            if !stderr.contains("Resource temporarily unavailable")
+                &&!stderr.contains("os error 35")
+                &&!stderr.contains("Broken pipe") {break;}
+            thread::sleep(Duration::from_millis(120));
+            output=execute();
+        }
+        output
+    };
+    let args=["prompt","--id","17","--task-id","2","--port",&port];
+    let source_root=Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let stores=root.join("stores").to_string_lossy().to_string();
+    let run_original=|args:&[&str]|{
+        Command::new("node").arg(source_root.join("dist/cli.js"))
+            .args(args).args(["--store-dir",&stores])
+            .env("HOME",&home).env("AGENTS_HOME",&globals)
+            .env("AGENTS_RELAY_WORKSPACE_ROOT",&root)
+            .env_remove("AGENTS_RELAY_SHARED_ROOT")
+            .current_dir(source_root).output().unwrap()
+    };
+    let expected_task=run_original(&["prompt","--id","17","--task-id","2"]);
+    assert!(expected_task.status.success(),"{}",
+        String::from_utf8_lossy(&expected_task.stderr));
+    let task=run(&args);
+    assert!(task.status.success(),"{}",String::from_utf8_lossy(&task.stderr));
+    assert_eq!(task.stdout,expected_task.stdout,"Native prompt Task diverges from original Node CLI");
+    let task=String::from_utf8(task.stdout).unwrap();
+    assert!(task.contains("You are implementation with responsibility at "),"{task}");
+    assert!(task.contains("Job: 17"),"{task}");
+    assert!(task.contains("Task: 2"),"{task}");
+    assert!(task.contains("Execution: execution-17-2"),"{task}");
+    let filepath=task.split("You are implementation with responsibility at ")
+        .nth(1).unwrap().split_whitespace().next().unwrap()
+        .trim_end_matches('.');
+    assert!(fs::read_to_string(filepath).unwrap().contains("Real fixture Agent Contract"));
+    let file=root.join("prompt-export.txt");
+    let file_arg=file.to_string_lossy().to_string();
+    let saved=run(&["prompt","--id","17","--task-id","2","--output",
+        &file_arg,"--port",&port]);
+    assert!(saved.status.success(),"{}",String::from_utf8_lossy(&saved.stderr));
+    assert!(saved.stdout.is_empty(),"Writing --output must not echo secret Prompt");
+    assert_eq!(fs::read_to_string(&file).unwrap(),task);
+    assert_eq!(fs::metadata(&file).unwrap().permissions().mode()&0o777,0o600);
+    let plan=run(&["prompt","--id","17","--plan-id","plan-1","--port",&port]);
+    assert!(plan.status.success(),"{}",String::from_utf8_lossy(&plan.stderr));
+    let expected_plan=run_original(&["prompt","--id","17","--plan-id","plan-1"]);
+    assert!(expected_plan.status.success(),"{}",
+        String::from_utf8_lossy(&expected_plan.stderr));
+    assert_eq!(plan.stdout,expected_plan.stdout,"Native Planner Prompt differs from original Node CLI");
+    let plan=String::from_utf8(plan.stdout).unwrap();
+    assert!(plan.contains("You are planner"),"{plan}");
+    assert!(plan.contains("plan-1")&&plan.contains("plan-generation-1"));
+    let current=run(&["plan","context","--id","17","--plan-id","plan-1",
+        "--execution-id","plan-generation-1","--port",&port]);
+    assert!(current.status.success(),"{}",String::from_utf8_lossy(&current.stderr));
+    let plan_context:Value=serde_json::from_slice(&current.stdout).unwrap();
+    assert_eq!(plan_context["plan_execution"]["planId"],"plan-1");
+    assert_eq!(plan_context["plan_execution"]["executionId"],"plan-generation-1");
+    let expected_context=run_original(&["plan","context","--id","17",
+        "--plan-id","plan-1","--execution-id","plan-generation-1"]);
+    assert!(expected_context.status.success(),"{}",
+        String::from_utf8_lossy(&expected_context.stderr));
+    assert_eq!(plan_context,serde_json::from_slice::<Value>(&expected_context.stdout).unwrap(),
+        "Native Plan Context differs from original Node authoritative SQLite Context");
+    let task_context=run(&["task","context","--id","17","--task-id","2",
+        "--execution-id","execution-17-2","--port",&port]);
+    assert!(task_context.status.success(),"{}",String::from_utf8_lossy(&task_context.stderr));
+    let task_json:Value=serde_json::from_slice(&task_context.stdout).unwrap();
+    assert_eq!(task_json["job"]["id"],"17");
+    assert_eq!(task_json["task"]["executionId"],"execution-17-2");
+    let expected_context=run_original(&["task","context","--id","17",
+        "--task-id","2","--execution-id","execution-17-2"]);
+    assert!(expected_context.status.success(),"{}",
+        String::from_utf8_lossy(&expected_context.stderr));
+    assert_eq!(task_json,serde_json::from_slice::<Value>(&expected_context.stdout).unwrap(),
+        "Native Task Context differs from original Node authoritative SQLite Context");
+    for action in ["show","comments"]{
+        let native=run(&["task",action,"--id","17","--task-id","2","--port",&port]);
+        let original=run_original(&["task",action,"--id","17","--task-id","2"]);
+        assert!(native.status.success()&&original.status.success(),
+            "{action} Node/Rust: native={}, original={}",
+            String::from_utf8_lossy(&native.stderr),
+            String::from_utf8_lossy(&original.stderr));
+        assert_eq!(serde_json::from_slice::<Value>(&native.stdout).unwrap(),
+            serde_json::from_slice::<Value>(&original.stdout).unwrap(),
+            "Node/Rust Task {action} value mismatch");
+    }
+    for arguments in [
+        vec!["plan","context","--id","17","--plan-id","plan-1",
+            "--execution-id","stale","--port",&port],
+        vec!["task","context","--id","17","--task-id","2",
+            "--execution-id","stale","--port",&port],
+        vec!["prompt","--id","17","--task-id","nonexistent","--port",&port],
+    ] {
+        let rejected=run(&arguments);
+        assert!(!rejected.status.success(),"Stale/fabricated CLI Context accepted");
+        assert!(rejected.stdout.is_empty(),"Denied Context cannot leak Task content");
+    }
+    let persisted=SQLiteRelayStore::open_without_claim_reset(&root.join("relay.sqlite"),Some("17"))
+        .unwrap().load_job("17").unwrap().unwrap();
+    assert_eq!(persisted["tasks"][0]["executionId"],"execution-17-2");
+    assert_eq!(persisted["plans"][0]["executionId"],"plan-generation-1");
+    // The original compiled src/cli-prompt.ts is the oracle for all four
+    // durable read-only entry points, not a duplicate hand-written expectation.
+    // Both read the same persisted snapshot and layered Agent contracts;
+    // Node uses only a disposable --file snapshot while native Rust uses the
+    // actual isolated daemon GET /api/job endpoint.
+    let fixture=root.join("original-node-job.json");
+    fs::write(&fixture,serde_json::to_vec(&persisted).unwrap()).unwrap();
+    let source_root=Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let file=fixture.to_string_lossy().to_string();
+    for (command,action,flags) in [
+        ("task","show",vec!["--task-id","2"]),
+        ("task","comments",vec!["--task-id","2"]),
+        ("task","context",vec!["--task-id","2","--execution-id","execution-17-2"]),
+        ("plan","context",vec!["--plan-id","plan-1","--execution-id","plan-generation-1"]),
+    ]{
+        let node=Command::new("node")
+            .arg(source_root.join("dist/cli.js"))
+            .args([command,action,"--id","17","--file",&file])
+            .args(&flags)
+            .env("HOME",&home).env("AGENTS_HOME",&globals)
+            .env("AGENTS_RELAY_WORKSPACE_ROOT",&root)
+            .env_remove("AGENTS_RELAY_SHARED_ROOT")
+            .current_dir(source_root).output().unwrap();
+        let native=Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
+            .args([command,action,"--id","17","--port",&port])
+            .args(&flags)
+            .env("HOME",&home).env("AGENTS_HOME",&globals)
+            .env("AGENTS_RELAY_WORKSPACE_ROOT",&root)
+            .env_remove("AGENTS_RELAY_SHARED_ROOT")
+            .current_dir(source_root).output().unwrap();
+        assert!(node.status.success(),"Original Node {command} {action}: {}",
+            String::from_utf8_lossy(&node.stderr));
+        assert!(native.status.success(),"Rust {command} {action}: {}",
+            String::from_utf8_lossy(&native.stderr));
+        let expected:Value=serde_json::from_slice(&node.stdout).unwrap();
+        let actual:Value=serde_json::from_slice(&native.stdout).unwrap();
+        assert_eq!(actual,expected,"Original Node/Rust {command} {action} context diverged");
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+// Public original Node CLI task-events reader and installed native CLI must
+// consume the same test-owned Events Bus HTTP cursor API with the same
+// authoritative read-only Job/Task binding; never query a live EventBus.
+#[test]
+fn native_task_events_cli_matches_original_node_real_event_history_and_rejects_stale_ids(){
+    use std::sync::mpsc;
+    let root=root();
+    let project=root.join("fixture");
+    fs::create_dir_all(&project).unwrap();
+    assert!(Command::new("git").args(["init","-q","-b","main"])
+        .current_dir(&project).status().unwrap().success());
+    let store=SQLiteRelayStore::open(&root.join("relay.sqlite"),Some("17")).unwrap();
+    store.save_job(&json!({
+        "id":"17","repository":"fixture","projectRoot":project,
+        "title":"Read-only Task Events", "state":"ACTIVE","prNumber":0,
+        "tasks":[{"id":"2","jobId":"17","state":"RUNNING",
+            "agentName":"implementation","adapter":"chatgpt",
+            "executionId":"execution-17-2","dependencies":[],
+            "input":"Read-only Task event cursor","comments":[]}],"plans":[],
+        "createdAt":"2026-11-18T00:00:00.000Z",
+        "updatedAt":"2026-11-18T00:00:00.000Z"
+    })).unwrap();store.close().unwrap();
+    let daemon_port=socket_port();let _daemon=start(&root,daemon_port);
+    let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+    let event_port=listener.local_addr().unwrap().port();
+    let (query_tx,query_rx)=mpsc::channel::<String>();
+    let handler=thread::spawn(move||{
+        for _ in 0..4{
+            let (mut stream,_)=listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(4))).unwrap();
+            let mut bytes=[0u8;4096];
+            let size=stream.read(&mut bytes).unwrap();
+            let request=String::from_utf8_lossy(&bytes[..size]);
+            let query=request.lines().next().unwrap_or("").to_string();
+            query_tx.send(query.clone()).unwrap();
+            let asc=query.contains("order=asc");
+            let event=|cursor:i64|json!({"cursor":cursor,"event":{
+                "event_id":format!("event-{cursor}"),"job_id":"17",
+                "task_id":"2","type":"task.progress","status":"running",
+                "message":format!("Fixture event {cursor}"),
+                "timestamp":"2026-11-18T00:00:00.000Z"}});
+            let rows=if asc{vec![event(4),event(5)]}
+                else{vec![event(5),event(4)]};
+            let body=json!({"job_id":"17","order":if asc{"asc"}else{"desc"},
+                "events":rows,"next_cursor":if asc{5}else{5}}).to_string();
+            let response=format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body);
+            stream.write_all(response.as_bytes()).unwrap();
+        }
+    });
+    let native_port=daemon_port.to_string();
+    let event_url=format!("http://127.0.0.1:{event_port}");
+    let project_root=Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let stores=root.join("stores").to_string_lossy().to_string();
+    let run=|node:bool,order:&str|{
+        let invoke=||{
+            let mut c=if node{
+                let mut c=Command::new("node");c.arg(project_root.join("dist/cli.js"));c
+            }else{Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))};
+            c.current_dir(project_root)
+                .args(["task","events","--id","17","--task-id","2",
+                    "--store-dir",&stores,"--port",&native_port,
+                    "--limit","2","--order",order]);
+            if order=="asc"{c.args(["--after","0"]);}
+            c.env("EVENTS_BUS_API_URL",&event_url)
+                .env("EVENTS_BUS_CONFIG",root.join("missing-events-runtime.json"))
+                .env("HOME",&root)
+                .env("AGENTS_HOME",root.join("nonexistent-home"));
+            c.output().unwrap()
+        };
+        let mut output=invoke();
+        if !node{
+            for _ in 0..5{
+                if output.status.success(){break;}
+                let stderr=String::from_utf8_lossy(&output.stderr);
+                // A failed immutable Job GET under macOS transient EAGAIN
+                // has not queried or consumed any EventBus cursor.
+                if !(stderr.contains("Agents Relay job request failed:")
+                    &&(stderr.contains("Resource temporarily unavailable")
+                    ||stderr.contains("os error 35"))){break;}
+                thread::sleep(Duration::from_millis(120));
+                output=invoke();
+            }
+        }
+        output
+    };
+    for order in ["asc","desc"]{
+        let node=run(true,order);
+        assert!(node.status.success(),"{}",String::from_utf8_lossy(&node.stderr));
+        let rust=run(false,order);
+        assert!(rust.status.success(),"{}",String::from_utf8_lossy(&rust.stderr));
+        let expected:Value=serde_json::from_slice(&node.stdout).unwrap();
+        let observed:Value=serde_json::from_slice(&rust.stdout).unwrap();
+        assert_eq!(observed,expected,"Read-only native CLI EventBus cursor diverges");
+        assert_eq!(observed["events"].as_array().unwrap().len(),2);
+        assert_eq!(observed["jobId"],"17");
+        assert_eq!(observed["taskId"],"2");
+        assert_eq!(observed["order"],if order=="asc"{"oldest-first"}else{"newest-first"});
+    }
+    handler.join().unwrap();
+    let observed_requests=query_rx.try_iter().collect::<Vec<_>>();
+    assert_eq!(observed_requests.len(),4);
+    for query in &observed_requests{
+        assert!(query.contains("/events?job=17&task=2&limit=2&order="),"{query}");
+    }
+    // Preflight rejects stale/unbound Task without touching Events Bus.
+    let missing=Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
+        .current_dir(project_root)
+        .args(["task","events","--id","17","--task-id","999",
+            "--port",&native_port,"--store-dir",&stores])
+        .env("EVENTS_BUS_API_URL",&event_url).output().unwrap();
+    assert!(!missing.status.success());
+    assert!(missing.stdout.is_empty());
     fs::remove_dir_all(root).unwrap();
 }

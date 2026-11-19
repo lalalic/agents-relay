@@ -43,11 +43,14 @@ pub fn resolve_execution_context(
     }
     let skills=strings(options,"explicitSkills");
     let agents=strings(options,"explicitAgents");
+    // Selected registered Agents are merged below, so restricting built-in
+    // discovery by explicitAgents here would incorrectly reject an Agent
+    // registered only in SQLite. Apply that filter AFTER the merged list.
     let mut context=resolve_context(project_path,role,
         options.get("workspaceRoot").and_then(Value::as_str),
         options.get("globalRoot").and_then(Value::as_str),
         options.get("sharedRoot").and_then(Value::as_str),
-        &skills,&agents)?;
+        &skills,&[])?;
     let mut agent_map:Vec<Value>=values(&context,"agents").to_vec();
     let registered=values(options,"registeredAgents");
     for registration in registered{
@@ -79,7 +82,9 @@ pub fn resolve_execution_context(
     agent_map.sort_by(|a,b|field(a,"name").cmp(field(b,"name")));
     context["agents"]=json!(select_by_name(&agent_map,&agents,"agent")?);
     let runtimes:Vec<Value>=values(options,"runtimes").iter().map(|r|{
-        json!({"name":r.get("name").or_else(||r.get("adapter")),
+        json!({"name":r.get("name").filter(|name|!name.is_null())
+            .or_else(||r.get("adapter").filter(|name|!name.is_null()))
+            .unwrap_or(&json!("unknown")),
             "id":r.get("id"),"capabilities":r.get("capabilities"),
             "source":"runtime"})
     }).collect();

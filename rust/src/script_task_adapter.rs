@@ -152,20 +152,43 @@ where
     Invoke:FnMut(&Path,&Value,&AtomicBool)->Result<Value,String>,
     Emit:FnMut(&Value)->Result<(),String>,
 {
-    let (mut input,output_path,execution_id)=prepare_script_input(task)?;
-    let project_path=context.pointer("/executionContext/project/path")
-        .and_then(Value::as_str)
-        .or_else(||input.get("projectPath").and_then(Value::as_str))
-        .ok_or("No trusted Script Project context")?;
-    if !Path::new(project_path).is_absolute(){
-        return Err("No trusted Script Project context".into());
-    }
+    // The original Node ScriptTaskAdapter only throws synchronously for an
+    // invalid lease/absolute output. DAG input validation happens inside
+    // its asynchronous Worker and emits one task.failed receipt. Preserve
+    // that observable contract rather than silently dropping the event.
+    let (mut input,output_path,execution_id)=match prepare_script_input(task){
+        Ok(prepared)=>prepared,
+        Err(error)=>{
+            if error=="Script Task is not bound to its declared DAG node"{
+                emit(&script_event(task,"task.failed","failed",&error,
+                    json!({"reason":"script_execution_failed"})))?;
+            }
+            return Err(error);
+        }
+    };
     let agent=field(task,"agentName");
-    let script=discover_script_agent(agent,project_path,
-        roots.get("sharedRoot").and_then(Value::as_str),
-        roots.get("workspaceRoot").and_then(Value::as_str),
-        roots.get("globalRoot").and_then(Value::as_str))?
-        .ok_or_else(||format!("Declared Agent Shortcut is unavailable: {agent}"))?;
+    let discovered=(||->Result<String,String>{
+        let project_path=context.pointer("/executionContext/project/path")
+            .and_then(Value::as_str)
+            .or_else(||input.get("projectPath").and_then(Value::as_str))
+            .ok_or("No trusted Script Project context")?;
+        if !Path::new(project_path).is_absolute(){
+            return Err("No trusted Script Project context".into());
+        }
+        discover_script_agent(agent,project_path,
+            roots.get("sharedRoot").and_then(Value::as_str),
+            roots.get("workspaceRoot").and_then(Value::as_str),
+            roots.get("globalRoot").and_then(Value::as_str))?
+            .ok_or_else(||format!("Declared Agent Shortcut is unavailable: {agent}"))
+    })();
+    let script=match discovered{
+        Ok(script)=>script,
+        Err(error)=>{
+            emit(&script_event(task,"task.failed","failed",&error,
+                json!({"reason":"script_execution_failed"})))?;
+            return Err(error);
+        }
+    };
     let script=Path::new(&script);
     let review=task.get("interactiveInvocation");
     if review.is_some_and(|review|review.get("decidedAt").is_some_and(|v|!v.is_null())

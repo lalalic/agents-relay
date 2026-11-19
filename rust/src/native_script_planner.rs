@@ -3,6 +3,8 @@
 //! This never substitutes for an unconnected production model Planner.
 use crate::{
     events::event_for,
+    execution_context::resolve_execution_context,
+    reconciler_context::resolve_planner_context,
     local_merge_lock::iso8601_now,
     native_script_worker::invoke_trusted_script_recorded,
     planner_launch_public::{launch_plan_execution,PlannerLaunchPorts},
@@ -36,9 +38,31 @@ impl PlannerFinishPorts for PlannerPorts {
         store(&self.db,id)?.mutate_job(id,callback)
     }
     fn execution_context(&mut self,job:&Value,_plan:&Value)->Result<Value,String>{
-        Ok(json!({"project":{"path":job.get("projectRoot"),
-            "gitRoot":job.get("projectRoot"),
-            "repository":job.get("repository")}}))
+        // Node resolvePlannerContext: selected Agent/Runtime registrations and
+        // authoritative shared/project instructions must travel with the
+        // Planner Script. A synthetic 3-field project object is insufficient
+        // for a Worker/Planner that must select the real Markdown contract.
+        let project=job.get("projectRoot").and_then(Value::as_str)
+            .filter(|project|!project.is_empty())
+            .ok_or("Native Planner Job missing immutable projectRoot")?;
+        let base=self.store_directory.parent()
+            .ok_or("Native Planner isolated Store has no parent")?;
+        let roots=json!({
+            "workspaceRoot":base,"globalRoot":base,"sharedRoot":base
+        });
+        let agents=store(&self.db,field(job,"id"))?
+            .load_agents()?.unwrap_or_default();
+        let adapters=self.registered_workers()?;
+        let future=resolve_planner_context(project,&roots,&agents,&adapters,
+            |project,role,options|std::future::ready(
+                resolve_execution_context(&project,&role,&options)));
+        let mut future=std::pin::pin!(future);
+        let mut context=std::task::Context::from_waker(std::task::Waker::noop());
+        match std::future::Future::poll(future.as_mut(),&mut context){
+            std::task::Poll::Ready(result)=>result,
+            std::task::Poll::Pending=>Err(
+                "Native Planner context resolution unexpectedly suspended".into()),
+        }
     }
     fn registered_workers(&mut self)->Result<Vec<Value>,String>{
         // A Planner cannot promise a Codex/Z worker while those production
@@ -47,7 +71,8 @@ impl PlannerFinishPorts for PlannerPorts {
         let mut workers=Vec::new();
         if crate::native_browser_execution::IsolatedWebHelmConfig::from_test_store(
             &self.store_directory).is_ok(){
-            workers.push(json!({"adapter":"chatgpt","id":"chatgpt/browser-worker",
+            workers.push(json!({"adapter":"chatgpt",
+                "name":"chatgpt/browser-worker","id":"chatgpt/browser-worker",
                 "capabilities":["model","chatgpt","webhelm"]}));
         }
         Ok(workers)

@@ -43,6 +43,8 @@ where
     Fut: Future<Output = Result<Value, String>>,
 {
     let runtimes: Vec<Value> = adapters.iter().map(|adapter| json!({
+        // The original Reconciler wrapper forwards adapter.name only;
+        // execution_context decides whether absent name becomes 'unknown'.
         "name": adapter.get("name"),
         "id": adapter.get("id"),
         "capabilities": adapter.get("capabilities").cloned().unwrap_or_else(|| json!([])),

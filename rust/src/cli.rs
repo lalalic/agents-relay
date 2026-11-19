@@ -390,10 +390,11 @@ pub fn run_task_command<P:CliRuntimePort>(
     if action!="create"&&selected.is_none(){
         return Err(format!("Task {task_id} not found"));
     }
-    if action=="show"{return Ok(selected.cloned().unwrap_or(Value::Null));}
-    if action=="comments"{
-        return Ok(selected.and_then(|v|v.get("comments"))
-            .cloned().unwrap_or(json!([])));
+    if action=="show"||action=="comments"{
+        // The same public read-only Task accessor as Node cli-prompt.ts
+        // owns the Job/Task identity and optional comment semantics.
+        let rendered=crate::cli_prompt::run_task_read_command(action,args,&job)?;
+        return serde_json::from_str(&rendered).map_err(|error|error.to_string());
     }
     if action=="create"{
         let options=json!({"idempotencyKey":arg(args,"--idempotency-key","")});
@@ -484,7 +485,11 @@ pub fn run_cli<P:CliRuntimePort>(
         // Original Node escalation receives ALL flag arguments. It does not
         // have an action subcommand and must not discard --intent.
         "escalation"=>port.execute("escalation","",args),
-        "review"|"artifact"|"prompt"|"context"|"blocker"=>
+        // `prompt` has no action subcommand: its first token is a flag.
+        // Never discard --id/--eval-file when forwarding to the production
+        // Builder, unlike the action-bearing context/review commands.
+        "prompt"=>port.execute("prompt","",args),
+        "review"|"artifact"|"context"|"blocker"=>
             port.execute(command,args.first().map(String::as_str).unwrap_or(""),
                 &args[args.len().min(1)..]),
         "workflow"=>{

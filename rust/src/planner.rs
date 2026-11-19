@@ -505,55 +505,131 @@ pub fn materialize_planner_child(
     let _=context; // Agent selection uses context resolver during full wiring
     create_task_entity(directory,job,&fields,false,&now)
 }
+// Original Node PlannerContext JSON wire. The CLI Plan Context command reads
+// this exact public payload; omitting undefined JS fields is critical because
+// Worker resumes must not pretend future or absent Planner facts were known.
 pub fn planner_input(context:&Value)->String{
+    use serde_json::Map;
+    fn put(map:&mut Map<String,Value>,key:&str,value:Option<&Value>){
+        if let Some(v)=value{map.insert(key.into(),v.clone());}
+    }
+    fn bounded(value:Option<&Value>,limit:usize)->Option<Value>{
+        match value{
+            Some(Value::String(raw)) if raw.encode_utf16().count()>limit=>{
+                let code_units:Vec<u16>=raw.encode_utf16().collect();
+                let head=String::from_utf16_lossy(&code_units[..limit]);
+                Some(json!(format!("{head}\\n...[truncated {} chars]",
+                    code_units.len()-limit).replace("\\n","\n")))
+            },
+            Some(other)=>Some(other.clone()),None=>None,
+        }
+    }
     let job=&context["job"];
     let tasks=arr(context,"tasks");
-    let context_project=context.pointer("/executionContext/project");
-    let plan=context.get("planExecution");
-    let plan_id=plan.and_then(|p|p.get("planId"));
-    let execution_id=plan.and_then(|p|p.get("executionId"));
-    let tree=semantic_task_tree(tasks);
-    let plans:Vec<Value>=arr(job,"plans").iter().map(|p|json!({
-        "id":p.get("id"),"round":p.get("round"),"status":p.get("status"),
-        "source":p.get("source"),"previous_plan_id":p.get("previousPlanId"),
-        "trigger":p.get("trigger"),"objective_status":p.get("objectiveStatus"),
-        "assessment":p.get("assessment"),"generated_task_ids":p.get("generatedTaskIds"),
-        "error":p.get("error")
-    })).collect();
-    let mapped:Vec<Value>=tasks.iter().map(|task|{
+    let mut output=Map::new();
+    put(&mut output,"objective",context.get("objective"));
+    if let Some(execution)=context.get("planExecution").filter(|v|!v.is_null()){
+        let root=Path::new(env!("CARGO_MANIFEST_DIR")).parent()
+            .expect("Cargo manifest has repository root");
+        let cli=root.join("dist/cli.js");
+        let path=serde_json::to_string(&cli.to_string_lossy().to_string())
+            .unwrap_or_else(|_|"\"dist/cli.js\"".into());
+        let pr=job.get("prNumber").and_then(Value::as_i64)
+            .filter(|n|*n>0).map(|n|format!("--pr {n} ")).unwrap_or_default();
+        output.insert("apply_cli".into(),json!(format!(
+            "node {path} plan apply --repo {} {pr}--id {} --plan-id {} --execution-id {} --file PATH",
+            field(job,"repository"),field(job,"id"),field(execution,"planId"),
+            field(execution,"executionId"))));
+    }
+    for (out,source) in [
+        ("plan_execution","planExecution"),("retry_feedback","retryFeedback"),
+        ("caller_prompt","guidance"),("previous_planner_task_id","previousPlannerTaskId"),
+        ("plan_trigger","trigger")
+    ]{put(&mut output,out,context.get(source));}
+    output.insert("force_restate".into(),json!(context.get("forceRestate")==Some(&json!(true))));
+    output.insert("restate_task_ids".into(),context.get("restateTaskIds")
+        .filter(|value|!value.is_null()).cloned().unwrap_or(json!([])));
+    put(&mut output,"legacy_change_cycle",job.get("changeCycle"));
+    if let Some(review)=job.get("review").filter(|v|!v.is_null()){
+        if context.pointer("/trigger/source").and_then(Value::as_str)==Some("review")
+            ||field(review,"outcome")=="changes_required"{
+            let mut feedback=Map::new();
+            put(&mut feedback,"task_id",review.get("taskId"));
+            put(&mut feedback,"head_sha",review.get("headSha"));
+            let evidence=review.pointer("/evidence/data")
+                .filter(|v|!v.is_null()).cloned().unwrap_or(json!({}));
+            feedback.insert("findings".into(),bounded(Some(&json!(evidence.to_string())),6000)
+                .unwrap_or(Value::Null));
+            output.insert("review_feedback".into(),Value::Object(feedback));
+        }
+    }
+    // Node omits parent_task_id entirely when Task.parentTaskId is undefined,
+    // but retains an explicitly recorded null parent.
+    let mut tree=semantic_task_tree(tasks);
+    if let Some(entries)=tree.get_mut("tasks").and_then(Value::as_array_mut){
+        for (tree_task,task) in entries.iter_mut().zip(tasks.iter().filter(|task|
+            field(task,"kind")!="planner")){
+            if task.get("parentTaskId").is_none(){
+                tree_task.as_object_mut().expect("semantic Task object")
+                    .remove("parent_task_id");
+            }
+            for (dest,source) in [("id","id"),("title","title"),("state","state")]{
+                if task.get(source).is_none(){
+                    tree_task.as_object_mut().expect("semantic Task object").remove(dest);
+                }
+            }
+        }
+    }
+    output.insert("semantic_task_tree".into(),tree);
+    let plans=arr(job,"plans").iter().map(|plan|{
+        let mut mapped=Map::new();
+        for (out,source) in [
+            ("id","id"),("round","round"),("status","status"),
+            ("source","source"),("previous_plan_id","previousPlanId"),
+            ("trigger","trigger"),("objective_status","objectiveStatus"),
+            ("generated_task_ids","generatedTaskIds")
+        ]{put(&mut mapped,out,plan.get(source));}
+        for (out,source,max) in [
+            ("assessment","assessment",4000),("error","error",2000)
+        ]{put(&mut mapped,out,bounded(plan.get(source),max).as_ref());}
+        Value::Object(mapped)
+    }).collect::<Vec<_>>();
+    output.insert("plans".into(),json!(plans));
+    if let Some(project)=context.pointer("/executionContext/project")
+        .filter(|v|!v.is_null()){
+        let mut mapped=Map::new();
+        put(&mut mapped,"name",project.get("name"));
+        put(&mut mapped,"path",project.get("path"));
+        output.insert("project".into(),Value::Object(mapped));
+    }
+    let visible=context.pointer("/executionContext/agents").and_then(Value::as_array)
+        .into_iter().flatten().map(|agent|{
+            let mut mapped=Map::new();
+            for key in ["name","capabilities"]{put(&mut mapped,key,agent.get(key));}
+            put(&mut mapped,"description",bounded(agent.get("description"),1000).as_ref());
+            put(&mut mapped,"boundaries",agent.get("restrictions"));
+            put(&mut mapped,"runtime",agent.get("runtime"));
+            Value::Object(mapped)
+        }).collect::<Vec<_>>();
+    output.insert("visible_agents".into(),json!(visible));
+    let mapped=tasks.iter().map(|task|{
         let mut out=planner_task_context(task);
-        if let Some(result)=task.get("plannerResult"){
-            out["planner_result"]=json!({
-                "objective_status":result.get("objective_status"),
-                "assessment":result.get("assessment"),
-                "next_task_ids":result.get("next_tasks").and_then(Value::as_array)
-                    .into_iter().flatten().filter_map(|t|t.get("id"))
-                    .collect::<Vec<_>>()
-            });
+        if let Some(result)=task.get("plannerResult").filter(|v|!v.is_null()){
+            let mut plan=Map::new();
+            put(&mut plan,"objective_status",result.get("objective_status"));
+            put(&mut plan,"assessment",bounded(result.get("assessment"),4000).as_ref());
+            if let Some(specs)=result.get("next_tasks").and_then(Value::as_array){
+                plan.insert("next_task_ids".into(),json!(specs.iter().map(|item|
+                    item.get("id").cloned().unwrap_or(Value::Null)).collect::<Vec<_>>()));
+            }
+            out["planner_result"]=Value::Object(plan);
         }
         out
-    }).collect();
-    json!({
-        "schema_version":4,
-        "job_id":job.get("id"),
-        "plan_id":plan_id,"execution_id":execution_id,
-        "objective":context.get("objective"),
-        "force_restate":context.get("forceRestate"),
-        "restate_task_ids":context.get("restateTaskIds"),
-        "previous_planner_task_id":context.get("previousPlannerTaskId"),
-        "trigger":context.get("trigger"),
-        "guidance":context.get("guidance"),
-        "retry_feedback":context.get("retryFeedback"),
-        "head_sha":job.get("headSha"),
-        "review":job.get("review"),
-        "semantic_task_tree":tree,
-        "plans":plans,
-        "project":context_project,
-        "visible_agents":context.pointer("/executionContext/agents")
-            .cloned().unwrap_or(json!([])),
-        "tasks":mapped
-    }).to_string()
+    }).collect::<Vec<_>>();
+    output.insert("tasks".into(),json!(mapped));
+    Value::Object(output).to_string()
 }
+
 pub fn build_planner_codex_args(store_dir:&Path,input:&str)->Vec<String>{
     let parent=store_dir.parent().unwrap_or(store_dir).to_string_lossy();
     ["exec","--json","--sandbox","workspace-write","--add-dir",

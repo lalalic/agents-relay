@@ -54,6 +54,12 @@ mod worker_failure_parity;
 mod additional_40;
 #[path = "relay-rust2-parity/workflow_effect_failures_public.rs"]
 mod workflow_effect_failures_public;
+#[path = "relay-rust2-parity/reconciler_context_public.rs"]
+mod reconciler_context_public;
+#[path = "relay-rust2-parity/script_task_adapter_public.rs"]
+mod script_task_adapter_public;
+#[path = "relay-rust2-parity/execution_context_public.rs"]
+mod execution_context_public;
 use serde_json::{json, Value};
 use std::io::{self, BufRead};
 
@@ -387,6 +393,9 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 }
 
 fn invoke(request: &Value) -> Result<String, String> {
+    if let Some(output)=execution_context_public::invoke(request){return output;}
+    if let Some(output)=script_task_adapter_public::invoke(request){return output;}
+    if let Some(output)=reconciler_context_public::invoke(request){return output;}
     if let Some(output)=workflow_effect_failures_public::invoke(request){return output;}
     if let Some(output)=worker_failure_parity::invoke(request)?{return Ok(output);}
     if let Some(output)=additional_40::invoke(request){return output;}
@@ -394,6 +403,9 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=closure::invoke(request)?{return Ok(output);}
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "certPlannerInput" => {
+            Ok(agents_relay_rust2::planner::planner_input(&request["context"]))
+        },
         "certExecutionTracker" => {
             use agents_relay_rust2::execution_process_tracker::{
                 monitor_execution_process,reclaim_stale_execution_process,

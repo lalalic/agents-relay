@@ -364,6 +364,12 @@ fn load(path: &Path, root: &Path, expected_name: Option<&str>) -> Result<Documen
     let canonical = fs::canonicalize(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             LoadError::Missing
+        } else if error.raw_os_error() == Some(20) {
+            // fs.realpath is the original Node API boundary. Darwin/Linux
+            // ENOTDIR (20) must retain the attempted Agent file path;
+            // a generic OS error loses the evidence needed for parity.
+            LoadError::Other(format!("ENOTDIR: not a directory, realpath '{}'",
+                path.display()))
         } else {
             LoadError::Other(error.to_string())
         }

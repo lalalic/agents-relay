@@ -2,18 +2,18 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "c846739e5f60e6bc73cb3000cfab466855655462",
-    "rustTree": "ee381689a6becc1b357bcc723a11aadb1b968ef0",
-    "sourceCount": 54,
+    "rustTree": "23a6ad97874ad188b944da3918f045ee4eab2222",
+    "sourceCount": 50,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 444,
-    "directNameMatches": 431,
+    "runtimeExportSymbols": 427,
+    "directNameMatches": 414,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 13,
-    "typeOrShapeReviewSymbols": 212,
+    "typeOrShapeReviewSymbols": 199,
     "filesWithUnmappedRuntime": 0,
-    "filesWithoutDirectDiffImport": 27,
-    "filesWithoutOtherRustReferences": 17
+    "filesWithoutDirectDiffImport": 24,
+    "filesWithoutOtherRustReferences": 15
   },
   "pendingModules": [],
   "files": [
@@ -46,6 +46,7 @@
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/bin/relay-rust2-parity/script_task_adapter_public.rs",
         "rust/src/bin/relay-rust2-parity.rs",
         "rust/src/native_browser_execution.rs",
         "rust/src/script_task_adapter.rs",
@@ -436,44 +437,6 @@
       ]
     },
     {
-      "source": "src/cli-prompt.ts",
-      "target": "rust/src/cli_prompt.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 5,
-      "directNameMatches": 5,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
-      "exports": [
-        {
-          "name": "runPromptCommand",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "runPlanContextCommand",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "runTaskContextCommand",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "runTaskEventsCommand",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "runTaskReadCommand",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
       "source": "src/cli-support.ts",
       "target": "rust/src/cli_support.rs",
       "ledgerStatus": "PORTING",
@@ -720,6 +683,7 @@
         "ensureManagedGitHubJob"
       ],
       "directDiffImports": [
+        "rust/tests/head_to_head_cli_prompt_eval_public.mjs",
         "rust/tests/head_to_head_cli_runtime_factory.mjs",
         "rust/tests/head_to_head_cli_runtime_public.mjs",
         "rust/tests/head_to_head_cli_service_public.mjs"
@@ -1278,114 +1242,6 @@
         },
         {
           "name": "eventFor",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/execution-context.ts",
-      "target": "rust/src/execution_context.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 6,
-      "directNameMatches": 6,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "ExecutionRole",
-        "ContextSource",
-        "ResolvedInstruction",
-        "ResolvedSkill",
-        "ResolvedAgent",
-        "ResolvedRuntime",
-        "ExecutionContext",
-        "ProviderInstructions",
-        "ExecutionContextRoots",
-        "ExecutionContextOptions"
-      ],
-      "directDiffImports": [
-        "rust/tests/head_to_head_agent_graph.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/native_browser_execution.rs"
-      ],
-      "exports": [
-        {
-          "name": "ExecutionRole",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "ContextSource",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "ResolvedInstruction",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "ResolvedSkill",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "ResolvedAgent",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "ResolvedRuntime",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "ExecutionContext",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "ProviderInstructions",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "ExecutionContextRoots",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "ExecutionContextOptions",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "BUNDLED_AGENTS_ROOT",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "resolveExecutionContext",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "resolveAgentModelPreference",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "resolveAgentContract",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "agentContractPrompt",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "executionContextPrompt",
           "kind": "function",
           "static": "name-match"
         }
@@ -2231,11 +2087,14 @@
       ],
       "directDiffImports": [
         "rust/tests/head_to_head_planner_finish_public.mjs",
+        "rust/tests/head_to_head_planner_input_public.mjs",
         "rust/tests/head_to_head_planner_public_ports.mjs"
       ],
       "otherRustModuleReferences": [
+        "rust/src/bin/agents-relay-rust.rs",
         "rust/src/bin/relay-rust2-parity/additional_40.rs",
         "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/bin/relay-rust2-parity.rs",
         "rust/src/native_script_planner.rs",
         "rust/src/planner_adapters.rs",
         "rust/src/planner_runtime.rs",
@@ -2641,34 +2500,6 @@
           "name": "resolveBlockerDependents",
           "kind": "class-method",
           "parent": "ProjectedDurableStore",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/reconciler-context.ts",
-      "target": "rust/src/reconciler_context.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 3,
-      "directNameMatches": 3,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
-      "exports": [
-        {
-          "name": "agentModelPreferenceForJob",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "resolveTaskContext",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "resolvePlannerContext",
-          "kind": "function",
           "static": "name-match"
         }
       ]
@@ -3325,60 +3156,6 @@
         {
           "name": "runRouterEvals",
           "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/script-task-adapter.ts",
-      "target": "rust/src/script_task_adapter.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 3,
-      "directNameMatches": 3,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "ScriptTaskAdapter.name",
-        "ScriptTaskAdapter.id",
-        "ScriptTaskAdapter.capabilities"
-      ],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [
-        "rust/src/native_script_execution.rs"
-      ],
-      "exports": [
-        {
-          "name": "ScriptTaskAdapter",
-          "kind": "class",
-          "static": "name-match"
-        },
-        {
-          "name": "name",
-          "kind": "class-property",
-          "parent": "ScriptTaskAdapter",
-          "static": "review"
-        },
-        {
-          "name": "id",
-          "kind": "class-property",
-          "parent": "ScriptTaskAdapter",
-          "static": "review"
-        },
-        {
-          "name": "capabilities",
-          "kind": "class-property",
-          "parent": "ScriptTaskAdapter",
-          "static": "review"
-        },
-        {
-          "name": "constructor",
-          "kind": "class-constructor",
-          "parent": "ScriptTaskAdapter",
-          "static": "name-match"
-        },
-        {
-          "name": "launch",
-          "kind": "class-method",
-          "parent": "ScriptTaskAdapter",
           "static": "name-match"
         }
       ]

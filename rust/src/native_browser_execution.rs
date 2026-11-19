@@ -7,6 +7,7 @@ use crate::{
     browser_worker_pool::{BrowserPoolOptions,BrowserWorkerPoolManager},
     browser_worker_runtime::relay_workspace_name,
     execution_context::resolve_execution_context,
+    reconciler_context::resolve_task_context,
     managed_worker_input::managed_worker_input_resolved,
     relay_store::SQLiteRelayStore,
 };
@@ -129,7 +130,22 @@ pub fn submit_claimed_chatgpt_worker(
         "workspaceRoot":fixture_root,"sharedRoot":fixture_root,
         "globalRoot":fixture_root
     });
-    let context=resolve_execution_context(project,"worker",&options)?;
+    let agents=store.load_agents()?.unwrap_or_default();
+    let adapters=vec![serde_json::json!({
+        "name":"chatgpt/browser-worker", "id":"chatgpt/browser-worker",
+        "capabilities":["model","chatgpt","webhelm"]
+    })];
+    let future=resolve_task_context(
+        project,"worker",&options,&agents,&adapters,
+        |project,role,options|std::future::ready(
+            resolve_execution_context(&project,&role,&options)));
+    let mut future=std::pin::pin!(future);
+    let mut context=std::task::Context::from_waker(std::task::Waker::noop());
+    let context=match std::future::Future::poll(future.as_mut(),&mut context){
+        std::task::Poll::Ready(result)=>result?,
+        std::task::Poll::Pending=>return Err(
+            "Native Worker context resolution unexpectedly suspended".into()),
+    };
     let package_root=Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent().ok_or("Rust package root missing")?;
     let prompt=managed_worker_input_resolved(

@@ -211,10 +211,15 @@ where
         "job":job,"tasks":job.get("tasks"),
         "objective":job.get("objective").or_else(||job.get("description"))
             .or_else(||job.get("title")),
-        "previousPlannerTaskId":selected.get("previousPlanId"),
         "planExecution":{"planId":plan_id,"executionId":execution},
-        "trigger":selected.get("trigger"),"executionContext":context
+        "executionContext":context
     });
+    if let Some(value)=selected.get("previousPlanId"){
+        input["previousPlannerTaskId"]=value.clone();
+    }
+    if let Some(value)=selected.get("trigger"){
+        input["trigger"]=value.clone();
+    }
     for key in ["guidance","retryFeedback","forceRestate","restateTaskIds"]{
         if let Some(v)=selected.get(key){input[key]=v.clone();}
     }

@@ -2,11 +2,21 @@
 
 > 本表是逐文件的真实审计清单，不是所有模块均通过。**PASS** 需公开 API 原始 Node/Rust 直接差分、Rust 原生负面测试和实际生产调用绑定；只通过静态 API 名称匹配，不能晋级。**HOLD** 指存在尚未关闭的证据缺口，不等同于未实现。
 
-- 原始检查范围：107 个源模块。已认证 **53 PASS**，保留 **54 HOLD/PORTING**。
+- 原始检查范围：107 个源模块。已认证 **57 PASS**，保留 **50 HOLD/PORTING**。
 - 本轮仅跑 Rust 原生测试与必要的 Node/Rust 差分；未重跑独立 Node 全量测试。
 - 这份报告对应上次全量 Node/Rust 230/230 PASS 后的逐项认证。全量 230/230 不等于 107 个模块逐一通过。
 - `directDiffTests` 与 `otherRustModuleReferences` 基于静态文本检索；测试文件出现导入或 Rust 源文件出现引用，仅说明有线索，不表示覆盖了每个公开 API 或进入生产。
 - `typeOrShapeReviews` 是待审计结构标记，不代表发现了实际类型错误。
+
+## 2026-11-19 CLI Prompt / Planner 只读对照认证
+
+- **`src/cli-prompt.ts` — PASS**：全部 5 个公开入口均由正式 native CLI 连接并与原 Node CLI 进行隔离只读对照。41 组 `prompt --eval-file` 逐字节对照；真实 SQLite/daemon 对 `prompt` Task/Plan、`plan context`、`task context`、`task show/comments` 进行原始 Node 输出对照；`task events` 对真实 HTTP 事件分页 asc/desc、nextCursor 和缺失 Task 拒绝进行差分。修复原生 `plan context` 与 Node 的 JSON 结构差异，但未调用生产外部模型。测试：`head_to_head_cli_prompt_eval_public.mjs`、`head_to_head_planner_input_public.mjs`、`native_daemon_binary_readonly.rs`。
+- 本次 Rust `plannerInput` 公共 JSON 严格对照 100 个原 Node Fixture；`src/planner.ts` 全模块其他公开 API 暂不晋级，仍属 HOLD。保持 Test-owned Graph/SQLite 的完整性，不替代真实模型 L4 验收。
+
+### `src/script-task-adapter.ts` — 2026-11-19 认证 PASS
+- 75 组原 Node/Rust Worker Adapter 公开启动与错误事件差分 + `name/id/capabilities` 结构一致；真实 Shortcut JS 子进程和 `runCommand` 归属、输出落盘、PID/PGID、SQLite CAS 与 DAG 图状态实测。
+- 修复缺失 Shortcut 时异步 Worker 失败在原生 QUEUED Graph 中被拒收的问题：由该租约独有且执行 ID 一致的 `task.failed` 证据，驱动 Graph `worker.delivery_failed` 合法边，原子提交一个失败事件；不伪造 `task.started`，不接受旧 generation 重放。5 个原生 Script Graph E2E 和 18 个隔离 daemon 测试通过。
+- 测试证据：`rust/tests/head_to_head_script_task_adapter_public.mjs`、`rust/tests/native_script_graph_sqlite.rs`、`rust/tests/native_daemon_binary_readonly.rs`。真实模型与 live 服务验证仍是独立生产门禁。
 
 ## 已认证为 PASS
 
@@ -34,6 +44,11 @@
 ### `src/local-merge-projection.ts`
 - 原 Node/Rust 远端投影的 17 个直接差分场景通过：普通成功、无 origin、失败重试门禁、过期 lease、已完成、远端冲突及有效隔离 bare origin。
 - Rust 原生测试证明 SQLite Graph 幂等性、实际非强制推送、错误 SHA 和外部远端拒绝；正式 daemon 已接通 `effect.remoteDelivery`。真实生产远端与模型 L4 尚未验收。
+
+## 2026-11-19 Execution/Reconciler Context 认证
+
+- **`src/execution-context.ts` — PASS**：155 组真实原始 Node/Rust public API 差分，覆盖 6 种 Role、分层 Agent/Skill/Instructions、注册 Agent、显式 Agent 选择、Runtime fallback、真实文件系统路径错误、模型建议与 Agent/Context Prompt。修复了 SQLite 注册 Agent 在合并前被过早过滤以及 ENOTDIR realpath 不等价。
+- **`src/reconciler-context.ts` — PASS**：98 组原始 Node/Rust 直接对照，覆盖 3 个公开接口及 Layered Project/Runtime/Agents。正式 Rust Planner 与 WebHelm Worker 均已调用本模块；真实隔离 daemon Planner E2E 验证 SQLite 真实注册 Agent、`planner` Role、`chatgpt/browser-worker` 命名 Runtime，AF_UNIX Worker's verified Task/Job/Agent contract 也经过原生 Graph/SQLite。
 
 ## 2026-11-19 Route Outcome 认证
 
@@ -224,7 +239,7 @@
 | 27 | `src/dependency-revision-execution.ts` | **HOLD** | 3 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 28 | `src/escalation-notifier.ts` | **HOLD** | 2 | 0 | 0 | 3 | 直接差分、运行调用、结构审核、模块特定场景／生产门禁 |
 | 29 | `src/events.ts` | **HOLD** | 13 | 3 | 36 | 1 | 结构审核、模块特定场景／生产门禁 |
-| 30 | `src/execution-context.ts` | **HOLD** | 6 | 1 | 0 | 10 | 运行调用、结构审核、模块特定场景／生产门禁 |
+| 30 | `src/execution-context.ts` | **PASS** | 6 | 1 | 0 | 10 | 运行调用、结构审核、模块特定场景／生产门禁 |
 | 31 | `src/execution-process-tracker.ts` | **PASS** | 2 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 32 | `src/execution-recovery.ts` | **PASS** | 2 | 0 | 1 | 1 | 直接差分、结构审核、模块特定场景／生产门禁 |
 | 33 | `src/execution-routing.ts` | **PASS** | 6 | 1 | 2 | 5 | 结构审核、模块特定场景／生产门禁 |
@@ -259,7 +274,7 @@
 | 62 | `src/projected-store.ts` | **HOLD** | 34 | 2 | 1 | 3 | 结构审核、模块特定场景／生产门禁 |
 | 63 | `src/projection-outbox.ts` | **PASS** | 25 | 2 | 1 | 9 | 直接差分、原生和生产调用证据已关闭 |
 | 64 | `src/reconcile-coordinator.ts` | **PASS** | 7 | 2 | 5 | 1 | 直接差分、原生和生产调用证据已关闭 |
-| 65 | `src/reconciler-context.ts` | **HOLD** | 3 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
+| 65 | `src/reconciler-context.ts` | **PASS** | 3 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 66 | `src/reconciler-review.ts` | **PASS** | 1 | 1 | 3 | 0 | 直接差分、原生和生产调用证据已关闭 |
 | 67 | `src/reconciler-runtime.ts` | **HOLD** | 10 | 2 | 3 | 4 | 结构审核、模块特定场景／生产门禁 |
 | 68 | `src/reconciler.ts` | **PASS** | 8 | 6 | 6 | 3 | 直接差分、原生和生产调用证据已关闭 |
