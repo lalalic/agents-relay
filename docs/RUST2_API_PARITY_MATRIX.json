@@ -2,15 +2,15 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "45723f5e0c92937e3d3ff97a246f8cafdd526ebe",
-    "rustTree": "d4246b7e29a74fe5779a42401f7342ad6528c1e8",
-    "sourceCount": 42,
+    "rustTree": "82d62352a22094fe537aab67784b2e3fd55057c8",
+    "sourceCount": 41,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 381,
-    "directNameMatches": 368,
+    "runtimeExportSymbols": 379,
+    "directNameMatches": 366,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 13,
-    "typeOrShapeReviewSymbols": 182,
+    "typeOrShapeReviewSymbols": 179,
     "filesWithUnmappedRuntime": 0,
     "filesWithoutDirectDiffImport": 15,
     "filesWithoutOtherRustReferences": 8
@@ -1379,62 +1379,6 @@
         },
         {
           "name": "createJobIdRegistryResolver",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/model-redecision.ts",
-      "target": "rust/src/model_redecision.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 2,
-      "directNameMatches": 2,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "FailureEvidenceInput",
-        "ModelRedecisionOptions",
-        "ModelRedecisionResult"
-      ],
-      "directDiffImports": [
-        "rust/tests/head_to_head_model_redecision.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity.rs"
-      ],
-      "exports": [
-        {
-          "name": "FailureClassification",
-          "kind": "type",
-          "static": "name-match"
-        },
-        {
-          "name": "FailureEvidence",
-          "kind": "type",
-          "static": "name-match"
-        },
-        {
-          "name": "FailureEvidenceInput",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "classifyFailureEvidence",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "ModelRedecisionOptions",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "ModelRedecisionResult",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "redecideFailedTask",
           "kind": "function",
           "static": "name-match"
         }

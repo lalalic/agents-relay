@@ -1459,13 +1459,12 @@
         "ModelRedecisionOptions",
         "ModelRedecisionResult"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "redecide_failed_task 目前只发现 parity harness 引用，缺实际 Worker 恢复执行入口与提交/回滚的原生证据",
-        "仍有 3 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-19: 33 original Node/Rust direct differential cases (rust/tests/head_to_head_model_redecision_public.mjs) covering classifyFailureEvidence keyword precedence (33 fixtures incl. combined-keyword precedence, nested data payloads, case insensitivity, ignored taskError) and the redecideFailedTask admission guard. Regressions: lib 89/89 + model/worker routing suites."
       ],
-      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
+      "openGates": [],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure.",
+      "status": "PASS"
     },
     {
       "source": "src/model-routing.ts",

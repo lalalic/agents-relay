@@ -745,3 +745,10 @@
 - **差分认证**：11 个原创 Node/Rust 用例（`rust/tests/head_to_head_planner_child_recovery_public.mjs`），两侧都走**真实** materialize 路径（Rust `planner::materialize_planner_child` vs Node `materializePlannerChild`）并记录 store 回调序列：plan 驱动的缺失子任务恢复、已存在子任务跳过、非 SUCCEEDED/空 plan 忽略、带 resolution 的 spec、历史 planner Task 的 plan 合成（round/source/trigger/headSha/attempt 默认值）、已存在 plan 跳过但子任务仍恢复、组合恢复、无 plans 的 Job。
 - **真实差异修复**：Rust `materialize_planner_child` 缺少 Node 的 resolution-target 校验（`Planner resolution for <id> must target one unresolved durable Task`），已对齐 `rust/src/planner.rs`。
 - **回归**：lib 89/89、planner_input 100、planner_child、planner 公开 API 152、unblocks、activation 全绿。
+
+## 2026-11-19 model-redecision 认证 PASS
+
+- **差分认证**：33 个原创 Node/Rust 用例（`rust/tests/head_to_head_model_redecision_public.mjs`）覆盖两个公开导出：
+  - `classifyFailureEvidence`：四类关键词全集（model/provider/laya/launch/auth/credential/configuration/incompatible/rate-limit/quota/unavailable；worker/tool/daemon/relay/network/socket/nats/checkout/filesystem；assert/test-failed/implementation/compile/typescript/syntax/semantic；timeout/timed-out/deadline）、model+infra 组合优先级、空证据的两种 summary、嵌套 data 载荷检索、大小写不敏感、部分词匹配、taskError 仅作提示不参与分类。
+  - `redecideFailedTask` 准入门卫：非 model 证据在任何路由副作用之前被拒（两侧 canonical 错误文本一致）。
+- **回归**：lib 89/89、model_redecision 16、model_routing、worker_routing、wave2_decision 全绿。
