@@ -53,7 +53,12 @@ fn start_mode_with_lease(root:&Path,port:u16,store_flag:&str,lease_ms:Option<u64
         .spawn().unwrap();
     let mut guard=Guard(child);
     for _ in 0..50{
-        if request(port,"GET","/api/status","").is_ok(){return guard;}
+        // A successful TCP connect alone is not proof the daemon is ready.
+        // A startup probe must observe the actual HTTP status response.
+        if request(port,"GET","/api/status","")
+            .is_ok_and(|response|response.starts_with("HTTP/1.1 200")){
+            return guard;
+        }
         if let Some(status)=guard.0.try_wait().unwrap(){panic!("native daemon exited before serving: {status}");}
         thread::sleep(Duration::from_millis(50));
     }
@@ -83,8 +88,22 @@ fn real_native_daemon_reads_isolated_sqlite_rejects_mutation_and_survives_restar
         assert_eq!(value["productionReady"],false);
         assert_eq!(value["jobCount"],1);
         // Real native CLI connects to the actual native daemon, not a mock.
-        let cli=Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
+        // A port may briefly recover from a listener restart (Darwin
+        // EAGAIN/os error 35). Retry only this transient transport failure;
+        // every other CLI error is an immediate test failure.
+        let mut cli=Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
             .args(["status","--port",&port.to_string()]).output().unwrap();
+        for _ in 0..5{
+            if cli.status.success(){break;}
+            let error=String::from_utf8_lossy(&cli.stderr);
+            if !error.contains("Resource temporarily unavailable")
+                && !error.contains("os error 35"){
+                break;
+            }
+            thread::sleep(Duration::from_millis(120));
+            cli=Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
+                .args(["status","--port",&port.to_string()]).output().unwrap();
+        }
         assert!(cli.status.success(),"{}",String::from_utf8_lossy(&cli.stderr));
         let view:Value=serde_json::from_slice(&cli.stdout).unwrap();
         assert_eq!(view["jobCount"],1);
@@ -736,4 +755,68 @@ fn isolated_native_daemon_submits_chatgpt_through_webhelm_and_waits_for_real_gra
     assert_eq!(ops,vec!["workspace-create","start","platform-run","stop"]);
     drop(daemon);
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn native_daemon_job_plan_uses_real_isolated_planner_shortcut_and_graph_apply(){
+    let root=root();let project=root.join("project");
+    fs::create_dir_all(project.join("agents/.shortcut")).unwrap();
+    fs::write(project.join("agents/.shortcut/planner.agent.mjs"),
+        "export async function run({input}){\n if(input.objective!=='Complete already verified work')throw Error('Wrong Job objective');\n return {objective_status:'satisfied',assessment:'Existing Task verified',next_tasks:[],unblocks:[]};\n}\n").unwrap();
+    let git=Command::new("git").arg("-C").arg(&project)
+        .args(["init","-q","-b","main"]).output().unwrap();
+    assert!(git.status.success());
+    let db=root.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&db,Some("91")).unwrap();
+    store.save_job(&json!({"id":"91","repository":"project","projectRoot":project,
+        "title":"Manual Planner Shortcut","objective":"Complete already verified work",
+        "state":"ACTIVE","prNumber":0,"priority":"P2","reviewEnabled":false,
+        "createdAt":"2026-11-18T00:00:00.000Z","updatedAt":"2026-11-18T00:00:00.000Z",
+        "tasks":[{"id":"2","jobId":"91","kind":"work","adapter":"script",
+            "agentName":"implementation","title":"Already verified Task","state":"SUCCEEDED",
+            "attempt":1,"maxAttempts":1,"result":{"summary":"Verified"},
+            "output":{"kind":"file","path":root.join("old-result.json")},
+            "createdAt":"2026-11-18T00:00:00.000Z",
+            "updatedAt":"2026-11-18T00:00:00.000Z"}],"plans":[]})).unwrap();
+    store.close().unwrap();
+    let port=socket_port();let daemon=start_mode(&root,port,"--isolated-write-store-dir");
+    let plan_request=json!({"command":"job.plan","jobId":"91","repository":"project",
+        "guidance":"Verify the existing result"});
+    let response=request_to_json(port,"/api/control",&plan_request);
+    assert!(response["round"]==1 || response["status"]=="PLANNING", "{response}");
+    let mut completed=Value::Null;
+    for _ in 0..100{
+        completed=body(&request(port,"GET","/api/job?id=91","").unwrap());
+        if completed["plans"][0]["status"]=="SUCCEEDED"
+            &&completed["state"]=="COMPLETED"{break;}
+        thread::sleep(Duration::from_millis(70));
+    }
+    assert_eq!(completed["plans"][0]["status"],"SUCCEEDED",
+        "Native Planner did not commit canonical Plan Graph: {completed}; logs: {}",
+        fs::read_to_string(root.join("native-daemon.log")).unwrap_or_default());
+    assert_eq!(completed["state"],"COMPLETED");
+    assert_eq!(completed["plans"][0]["objectiveStatus"],"satisfied");
+    assert!(completed["plans"][0]["appliedExecutionId"].is_string());
+    assert_eq!(completed["tasks"].as_array().unwrap().len(),1);
+    assert_eq!(completed["tasks"][0]["state"],"SUCCEEDED");
+    let saved=SQLiteRelayStore::open_without_claim_reset(&db,Some("91")).unwrap();
+    let count:i64=saved.db.query_row(
+        "SELECT COUNT(*) FROM workflow_event_outbox WHERE event_key LIKE 'isolated-planner/91/%'",
+        [],|row|row.get(0)).unwrap();
+    assert_eq!(count,2,"Planner started and completion are durable, not only process exit");
+    drop(daemon);
+    let restart=start_mode(&root,port,"--isolated-write-store-dir");
+    thread::sleep(Duration::from_millis(150));
+    let actual=body(&request(port,"GET","/api/job?id=91","").unwrap());
+    assert_eq!(actual["plans"][0]["status"],"SUCCEEDED");
+    assert_eq!(actual["state"],"COMPLETED");
+    assert_eq!(actual["plans"].as_array().unwrap().len(),1);
+    drop(restart);
+    fs::remove_dir_all(root).unwrap();
+}
+fn request_to_json(port:u16,path:&str,payload:&Value)->Value{
+    let body=payload.to_string();
+    let response=request(port,"POST",path,&body).unwrap();
+    assert!(response.starts_with("HTTP/1.1 200"),"Native daemon rejected request: {response}");
+    self::body(&response)
 }

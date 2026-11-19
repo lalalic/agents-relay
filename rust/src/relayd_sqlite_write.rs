@@ -12,6 +12,9 @@ use crate::{
     native_script_execution::run_claimed_script_task,
     native_worker_event_ingress::apply_verified_worker_event,
     native_browser_execution::{IsolatedWebHelmConfig,submit_claimed_chatgpt_worker},
+    native_script_planner::run_isolated_script_planner,
+    manual_plan::prepare_manual_plan,
+    planner::create_plan_round,
     native_script_worker::configured_script_interpreter,
     reconciler::Reconciler,
     interactive_request::fail_interactive_review,
@@ -257,8 +260,40 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
         // execution fact and never advances Task state.
         self.emit(event.clone());Ok(())
     }
-    fn manual_plan(&mut self,_:&str,_:Option<&str>,_:bool)->Result<Value,String>{
-        Err(denied("manual_plan"))
+    fn manual_plan(&mut self,id:&str,guidance:Option<&str>,force:bool)
+        ->Result<Value,String>{
+        let current=self.scoped(id)?.load_job(id)?
+            .ok_or_else(||format!("SQLite Job {id} not found"))?;
+        let project=self.isolated_project(&current)?;
+        let declared=project.join("agents/.shortcut/planner.agent.mjs");
+        let script=std::fs::canonicalize(&declared).map_err(|e|
+            format!("Isolated Planner has no declared Shortcut: {e}"))?;
+        if !script.starts_with(&project) || !script.is_file(){
+            return Err("Isolated Planner Shortcut escapes the Job project".into());
+        }
+        let interpreter=PathBuf::from(configured_script_interpreter()?);
+        let timeout=60_000u64;
+        let graph=self.config.graph_directory.clone();
+        let mut scheduled_round=None;
+        let committed=self.scoped(id)?.mutate_job(id,|job|{
+            let (next,round)=prepare_manual_plan(&graph,&job,guidance,timeout,
+                force,|job,guidance,timeout|create_plan_round(&graph,job,guidance,
+                    true,Some(timeout),None))?;
+            scheduled_round=Some(round);
+            Ok(next)
+        })?;
+        let round=scheduled_round.ok_or("Durable Planner did not create a round")?;
+        let plan_id=field(&round,"id").to_owned();
+        let job_id=id.to_string();
+        let db=self.path();let store=self.config.store_directory.clone();
+        std::thread::Builder::new().name(format!("rust-planner-{plan_id}"))
+            .spawn(move||{
+                if let Err(error)=run_isolated_script_planner(&db,&store,&graph,
+                    &job_id,&plan_id,&script,&interpreter,timeout){
+                    eprintln!("Native Planner {job_id}/{plan_id}: {error}");
+                }
+            }).map_err(|e|format!("Cannot launch isolated Planner worker: {e}"))?;
+        Ok(json!({"job":committed,"round":round}))
     }
     fn review_targeted(&mut self,id:&str,request:&Value)->Result<Value,String>{
         // Only the exact reviewer execution and immutable reviewed HEAD can
