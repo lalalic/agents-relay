@@ -154,6 +154,10 @@ pub fn worker_task_from_args(
         "threadId":null,"result":null,"error":null,"timeoutMs":timeout,
         "createdAt":now,"updatedAt":now
     });
+    // Original Node omits an unspecified optional routing field; serializing
+    // it as null changes the public Task API and future routing facts.
+    if routing.is_null(){fields.as_object_mut().expect("Task fields").remove("routing");}
+    if requirements.is_null(){fields.as_object_mut().expect("Task fields").remove("workerRequirements");}
     if let Some(policy)=tab_close_policy{fields["chatgptTabClosePolicy"]=json!(policy);}
     if let Some(validity)=validity{fields["dependencyValidity"]=validity;}
     if let Some(graph)=graph{fields["agentGraph"]=json!(graph);}

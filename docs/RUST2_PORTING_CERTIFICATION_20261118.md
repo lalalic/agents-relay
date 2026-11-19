@@ -2,7 +2,7 @@
 
 > 本表是逐文件的真实审计清单，不是所有模块均通过。**PASS** 需公开 API 原始 Node/Rust 直接差分、Rust 原生负面测试和实际生产调用绑定；只通过静态 API 名称匹配，不能晋级。**HOLD** 指存在尚未关闭的证据缺口，不等同于未实现。
 
-- 原始检查范围：107 个源模块。已认证 **33 PASS**，保留 **74 HOLD/PORTING**。
+- 原始检查范围：107 个源模块。已认证 **34 PASS**，保留 **73 HOLD/PORTING**。
 - 本轮仅跑 Rust 原生测试与必要的 Node/Rust 差分；未重跑独立 Node 全量测试。
 - 这份报告对应上次全量 Node/Rust 230/230 PASS 后的逐项认证。全量 230/230 不等于 107 个模块逐一通过。
 - `directDiffTests` 与 `otherRustModuleReferences` 基于静态文本检索；测试文件出现导入或 Rust 源文件出现引用，仅说明有线索，不表示覆盖了每个公开 API 或进入生产。
@@ -88,6 +88,8 @@
 
 ## 2026-11-18 逐项证据补充
 
+- `src/cli-worker-task.ts` — 原始 Node 差分 `rust/tests/head_to_head_cli_worker_task_public.mjs`；Rust 原生 `rust/tests/native_cli_binary.rs`；生产调用 `rust/src/cli.rs`；44 exact original Node/Rust public recovery diagnosis, dependency validity and Task creation test fixtures; fixed Rust omission of undefined routing/requirements; native CLI and SQLite Graph tests pass。
+
 - `src/model-routing.ts` — 原始 Node 差分 `rust/tests/head_to_head_model_routing_public.mjs`；Rust 原生 `rust/tests/native_model_redecision.rs`；生产调用 `rust/src/model_redecision.rs`；4 public API exports: 36 exact Node/Rust choice/default/profile/catalog discovery and 30 routeModel hard-gate fixtures; Rust native reroute, exclusions, failure/restart; routes called by production model_redecision and execution_routing。
 
 - `src/unblock.ts` — 原始 Node 差分 `rust/tests/head_to_head_unblock_facts.mjs`；Rust 原生 `rust/tests/native_cli_unblock.rs`；生产调用 `rust/src/relayd_control.rs`；3 pure helpers across 120 original Node/Rust cases plus actual durable unblockTask through head_to_head_atomic_public_apis.mjs; native SQLite Graph no false human unblock and no duplicate retries。
@@ -133,7 +135,7 @@
 | 14 | `src/cli-review.ts` | **HOLD** | 3 | 1 | 1 | 0 | 模块特定场景／生产门禁 |
 | 15 | `src/cli-support.ts` | **HOLD** | 38 | 4 | 5 | 2 | 结构审核、模块特定场景／生产门禁 |
 | 16 | `src/cli-unblock.ts` | **HOLD** | 2 | 1 | 1 | 0 | 模块特定场景／生产门禁 |
-| 17 | `src/cli-worker-task.ts` | **HOLD** | 3 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
+| 17 | `src/cli-worker-task.ts` | **PASS** | 3 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 18 | `src/cli.ts` | **HOLD** | 6 | 3 | 3 | 9 | 结构审核、模块特定场景／生产门禁 |
 | 19 | `src/continuation.ts` | **PASS** | 7 | 1 | 11 | 4 | 直接差分、原生和生产调用证据已关闭 |
 | 20 | `src/dag-result-contract.ts` | **PASS** | 1 | 1 | 3 | 0 | 直接差分、原生和生产调用证据已关闭 |

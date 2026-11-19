@@ -5,6 +5,23 @@ use std::path::Path;
 
 pub fn invoke(req:&Value)->Option<Result<String,String>>{
     match req["op"].as_str()?{
+        "certCliWorkerTask"=>Some((||{
+            use agents_relay_rust2::cli_worker_task as t;
+            let args=req["args"].as_array().into_iter().flatten()
+                .filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>();
+            let op=req["action"].as_str().unwrap_or("diagnosis");
+            let out=match op{
+                "diagnosis"=>json!(t::recovery_diagnosis_from_args(&args)?),
+                "validity"=>json!(t::dependency_validity_from_args(&args,
+                    &req["dependencies"].as_array().into_iter().flatten()
+                        .filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>())?),
+                "create"=>t::worker_task_from_args(Path::new("workflow"),&req["job"],&args,
+                    req["now"].as_str().unwrap_or("2026-11-18T20:00:00.000Z"),
+                    Path::new(req["storeDir"].as_str().ok_or("storeDir missing")?),None)?,
+                _=>return Err("Unsupported CLI worker task operation".into()),
+            };
+            Ok(out.to_string())
+        })()),
         "certModelPublic"=>Some((||{
             use agents_relay_rust2::model_routing as m;
             let result=match req["action"].as_str().unwrap_or(""){
