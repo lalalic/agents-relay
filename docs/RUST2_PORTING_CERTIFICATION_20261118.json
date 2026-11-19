@@ -1134,15 +1134,22 @@
       "decision": "HOLD",
       "runtimeExports": 2,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
-      "otherRustModuleReferences": [],
+      "directDiffTests": [
+        "rust/tests/head_to_head_interactive_resume_public.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/tests/native_all_api_sqlite_entrypoints.rs (existing SQLite entrypoint coverage)",
+        "rust/src/bin/relay-rust2-parity/interactive_resume_public.rs (certInteractiveResume differential op)",
+        "Original Node production callers: src/reconciler-runtime.ts, src/reconciler.ts (Rust daemon integration remains the gate)"
+      ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
+      "certificationEvidence": [
+        "2026-11-19 190 original Node/Rust differential cases PASS: 194 resume combinations (16 Task variants x 12 interactive-invocation states incl. identity/revision/status/decidedAt fences, changes_requested feedback trimming, 1500-char truncation, emoji, existing comments) over the real canonical Task lifecycle Graph on both sides, plus recovery fixtures over the real interactive-invocation Graph and an isolated real SQLite store (restart-safe recovery, unknown-state handling, awaiting_decision skips, non-AWAITING tasks)",
+        "Real divergence fixed in rust/src/interactive_resume.rs: Math.max(3, task.maxAttempts) with a missing maxAttempts poisons to NaN in Node and the key disappears under JSON serialization, while Rust clamped to 3; now an absent key stays absent, an explicit null coerces to 0 then clamps to 3, matching the original NaN semantics",
+        "Verified Graph-authorized semantics: interactive.resume edge rejection error text, attempt reset, executionId/lease clearing, blockedBy/failureReason removal, changes_requested comment author/trim/truncate, updatedAt refresh, recoverable-list derivation"
+      ],
       "openGates": [
-        "缺直接复审/恢复差分及真实执行调用；必须保护 human approval、过期回执、重启幂等",
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+        "Rust daemon 生产调用方未接线：原 Node reconciler-runtime.ts/reconciler.ts 的 resume/recover 调用链在 Rust reconciler/relayd 中未接入（属 reconciler-runtime 集成批次）"
       ],
       "legacyLedgerNote": "Phase1 serial native Rust draft; uncompiled, untested and not production-wired; parity pending."
     },

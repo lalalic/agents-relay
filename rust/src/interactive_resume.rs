@@ -42,8 +42,22 @@ where
         return Err(format!("Task {task_id} is not retryable after unblock ({state})"));
     }
     task["attempt"] = json!(0);
-    let max_attempts = task.get("maxAttempts").and_then(Value::as_i64).unwrap_or(0).max(3);
-    task["maxAttempts"] = json!(max_attempts);
+    // Node: Math.max(3, task.maxAttempts). A missing/undefined maxAttempts
+    // poisons the maximum to NaN, and assigning NaN leaves the key absent
+    // after JSON serialization; an explicit null coerces to 0 first.
+    let bound = match task.get("maxAttempts") {
+        None => None,
+        Some(Value::Null) => Some(3.0),
+        Some(value) => value.as_f64().map(|max| 3.0f64.max(max)),
+    };
+    match bound {
+        Some(value) => { task["maxAttempts"] = json!(value); }
+        None => {
+            if let Some(object) = task.as_object_mut() {
+                object.remove("maxAttempts");
+            }
+        }
+    };
     task["executionId"] = Value::Null;
     task["leaseOwner"] = Value::Null;
     task["leaseExpiresAt"] = Value::Null;

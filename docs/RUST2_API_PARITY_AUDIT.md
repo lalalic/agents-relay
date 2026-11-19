@@ -23,10 +23,10 @@ A listed direct differential import only means a head-to-head test imports the c
 | runtimeConstructorReviews | 13 |
 | typeOrShapeReviewSymbols | 199 |
 | filesWithUnmappedRuntime | 0 |
-| filesWithoutDirectDiffImport | 19 |
-| filesWithoutOtherRustReferences | 13 |
+| filesWithoutDirectDiffImport | 18 |
+| filesWithoutOtherRustReferences | 12 |
 
-Source tree: `c846739e5f60`; Rust source tree: `18f40836f29c`. Rust module rows in scope: 49. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `c846739e5f60`; Rust source tree: `6e003f237d0d`. Rust module rows in scope: 49. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
@@ -56,7 +56,7 @@ Source tree: `c846739e5f60`; Rust source tree: `18f40836f29c`. Rust module rows 
 | `src/github-auth.ts` | 2 | 2 | 0 | 0 | 1 |
 | `src/github-client.ts` | 10 | 10 | 0 | 0 | 0 |
 | `src/interactive-invocation.ts` | 12 | 11 | 0 | 1 | 5 |
-| `src/interactive-resume.ts` | 2 | 2 | 0 | 0 | 0 |
+| `src/interactive-resume.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/job-worktree-cleanup.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/legacy-orchestrator-repair.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/local-job-registry.ts` | 2 | 2 | 0 | 1 | 2 |
@@ -68,7 +68,7 @@ Source tree: `c846739e5f60`; Rust source tree: `18f40836f29c`. Rust module rows 
 | `src/planner.ts` | 22 | 20 | 0 | 3 | 12 |
 | `src/projected-store.ts` | 34 | 34 | 0 | 2 | 1 |
 | `src/reconciler-runtime.ts` | 10 | 10 | 0 | 2 | 5 |
-| `src/relay-store.ts` | 46 | 45 | 0 | 9 | 26 |
+| `src/relay-store.ts` | 46 | 45 | 0 | 9 | 27 |
 | `src/relayd-dashboard-actions.ts` | 1 | 1 | 0 | 1 | 1 |
 | `src/relayd.ts` | 1 | 1 | 0 | 0 | 5 |
 | `src/router-evals.ts` | 2 | 2 | 0 | 0 | 0 |

@@ -62,6 +62,8 @@ mod script_task_adapter_public;
 mod dependency_revision_execution_public;
 #[path = "relay-rust2-parity/browser_worker_routing_public.rs"]
 mod browser_worker_routing_public;
+#[path = "relay-rust2-parity/interactive_resume_public.rs"]
+mod interactive_resume_public;
 #[path = "relay-rust2-parity/escalation_notifier_public.rs"]
 mod escalation_notifier_public;
 #[path = "relay-rust2-parity/chatgpt_platform_fallback_public.rs"]
@@ -406,6 +408,7 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=execution_context_public::invoke(request){return output;}
     if let Some(output)=dependency_revision_execution_public::invoke(request){return output;}
     if let Some(output)=browser_worker_routing_public::invoke(request){return output;}
+    if let Some(output)=interactive_resume_public::invoke(request){return output;}
     if let Some(output)=escalation_notifier_public::invoke(request){return output;}
     if let Some(output)=chatgpt_platform_fallback_public::invoke(request){return output;}
     if let Some(output)=types_public::invoke(request){return output;}

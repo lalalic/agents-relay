@@ -2,7 +2,7 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "c846739e5f60e6bc73cb3000cfab466855655462",
-    "rustTree": "18f40836f29c603bbeb7d4936ab3bab97496b3b4",
+    "rustTree": "6e003f237d0de7d38e2fd929587e78fcf20359b0",
     "sourceCount": 49,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
@@ -12,8 +12,8 @@
     "runtimeConstructorReviews": 13,
     "typeOrShapeReviewSymbols": 199,
     "filesWithUnmappedRuntime": 0,
-    "filesWithoutDirectDiffImport": 19,
-    "filesWithoutOtherRustReferences": 13
+    "filesWithoutDirectDiffImport": 18,
+    "filesWithoutOtherRustReferences": 12
   },
   "pendingModules": [],
   "files": [
@@ -1730,8 +1730,12 @@
       "directNameMatches": 2,
       "unmappedRuntime": [],
       "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_interactive_resume_public.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/interactive_resume_public.rs"
+      ],
       "exports": [
         {
           "name": "resumeInteractiveTask",
@@ -2634,6 +2638,7 @@
         "rust/src/bin/agents-relayd-rust.rs",
         "rust/src/bin/relay-rust2-parity/cli_service_public.rs",
         "rust/src/bin/relay-rust2-parity/closure.rs",
+        "rust/src/bin/relay-rust2-parity/interactive_resume_public.rs",
         "rust/src/bin/relay-rust2-parity/sqlite_api.rs",
         "rust/src/bin/relay-rust2-parity.rs",
         "rust/src/cli_coordinator.rs",

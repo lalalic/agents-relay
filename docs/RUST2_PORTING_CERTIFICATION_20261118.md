@@ -701,3 +701,10 @@
 - 差分同时验证了账本语义：未来 nextAttemptAt 的 pending 计数、missing-channel lastError 幂等、attempts+1/退避/nextAttemptAt 变更内容、delivered 回执围栏、`escalation/<id>` idempotencyKey 请求形状、原子变更强制错误。
 - 回归：lib 87/87；fallback 4661、types 1237、browser-worker-routing 3192、worker-routing 差分全绿；原生套件全绿。
 - 仍 HOLD 的缺口：Rust daemon 生产调用方（原 Node `reconciler.ts:71` 每轮调用 `deliverPendingEscalations`；Rust reconciler/relayd 需要接入 store 原子 mutateJob 适配器与 `NotificationMutation` 提交），属 reconciler-runtime/relayd 集成批次。生产 HTTPS 端点与 token 配置未做外部调用（符合约束）。
+
+## 2026-11-19 Interactive Resume 差分与 maxAttempts NaN 语义修复（仍 HOLD）
+
+- **`src/interactive-resume.ts`**：190 组原始 Node/Rust 差分全部一致（`rust/tests/head_to_head_interactive_resume_public.mjs`）。覆盖：身份围栏 resume 的 16 种 Task 变体 × 12 种 invocation 状态（invocationId/revision/status/decidedAt 围栏、changes_requested 的 feedback trim/1000 截断/emoji、已有 comments 追加），两侧都走真实 Task lifecycle Graph；recovery fixture 走真实 interactive-invocation Graph 与隔离真实 SQLite store（restart-safe 恢复、未知状态、awaiting_decision 跳过、非 AWAITING 任务）。
+- 修复 `rust/src/interactive_resume.rs` 的真实差异：Node `Math.max(3, task.maxAttempts)` 在 maxAttempts 缺失时产生 NaN 且键在 JSON 序列化下消失，Rust 原来钳到 3；现在缺失键保持缺失、显式 null 先按 0 钳到 3，与原 NaN 语义一致。
+- 同时验证：interactive.resume 边拒绝错误文本、attempt 重置、executionId/lease 清空、blockedBy/failureReason 移除、changes_requested 评论 author/trim/截断、updatedAt 刷新、可恢复列表推导。
+- 仍 HOLD 的缺口：Rust daemon 生产调用方（原 Node reconciler-runtime.ts / reconciler.ts 的 resume/recover 调用链）未接入，属 reconciler-runtime 集成批次。
