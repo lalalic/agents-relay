@@ -2,7 +2,7 @@
 
 > 本表是逐文件的真实审计清单，不是所有模块均通过。**PASS** 需公开 API 原始 Node/Rust 直接差分、Rust 原生负面测试和实际生产调用绑定；只通过静态 API 名称匹配，不能晋级。**HOLD** 指存在尚未关闭的证据缺口，不等同于未实现。
 
-- 原始检查范围：107 个源模块。已认证 **25 PASS**，保留 **82 HOLD/PORTING**。
+- 原始检查范围：107 个源模块。已认证 **27 PASS**，保留 **80 HOLD/PORTING**。
 - 本轮仅跑 Rust 原生测试与必要的 Node/Rust 差分；未重跑独立 Node 全量测试。
 - 这份报告对应上次全量 Node/Rust 230/230 PASS 后的逐项认证。全量 230/230 不等于 107 个模块逐一通过。
 - `directDiffTests` 与 `otherRustModuleReferences` 基于静态文本检索；测试文件出现导入或 Rust 源文件出现引用，仅说明有线索，不表示覆盖了每个公开 API 或进入生产。
@@ -69,6 +69,15 @@
 | `src/reviewer-thread.ts` | `head_to_head_wave4_review_pure.mjs` | `native_wave3_review_store.rs` | `rust/src/reconciler_review.rs` |
 | `src/local-authority-store.ts` | `head_to_head_store_facade_closure.mjs` | `native_cross_job_blocker_store.rs` | `rust/src/cli_support.rs` |
 
+## 2026-11-18 认证第三批（严格逐模块）
+
+本批只认证经过 Node 原始导出直接对照、Rust 原生负面/SQLite/Graph 测试和实际运行调用复核的模块。组合门禁是 71 个差分文件，115 PASS / 0 FAIL；Rust `cargo test --all-targets` PASS。未执行独立 Node 全量测试；真实多节点/模型 L4 未验收。
+
+| 源模块 | 直接 Node/Rust 差分 | Rust 原生验证 | 生产调用 |
+|---|---|---|---|
+| `src/dashboard-data.ts` | `head_to_head_worker_c.mjs` | `native_stage2_dashboard.rs` | `rust/src/dashboard_api.rs` |
+| `src/projection-outbox.ts` | `head_to_head_projection_outbox_strict.mjs` | `native_graph_outbox_batch.rs` | `rust/src/relay_store.rs` |
+
 ## 已有局部验证、但不能升级的关键模块
 
 - **`src/cli-coordinator.ts`**：11 个真实 Git/SQLite Head-to-Head 场景及 4 个 Rust 原生测试已通过，但 run_coordinator_job_command 只发现 parity harness 引用，正式 CLI 生产分发尚未直接绑定本端口
@@ -110,7 +119,7 @@
 | 20 | `src/dag-result-contract.ts` | **PASS** | 1 | 1 | 3 | 0 | 直接差分、原生和生产调用证据已关闭 |
 | 21 | `src/dag-task-runtime.ts` | **HOLD** | 5 | 0 | 2 | 2 | 直接差分、结构审核、模块特定场景／生产门禁 |
 | 22 | `src/dashboard-actions.ts` | **HOLD** | 3 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
-| 23 | `src/dashboard-data.ts` | **HOLD** | 8 | 1 | 3 | 4 | 结构审核、模块特定场景／生产门禁 |
+| 23 | `src/dashboard-data.ts` | **PASS** | 8 | 1 | 3 | 4 | 直接差分、原生和生产调用证据已关闭 |
 | 24 | `src/dashboard.ts` | **HOLD** | 1 | 0 | 3 | 6 | 直接差分、结构审核、模块特定场景／生产门禁 |
 | 25 | `src/decision-audit.ts` | **HOLD** | 13 | 1 | 1 | 5 | 结构审核、模块特定场景／生产门禁 |
 | 26 | `src/decision.ts` | **PASS** | 11 | 2 | 2 | 12 | 直接差分、原生和生产调用证据已关闭 |
@@ -150,7 +159,7 @@
 | 60 | `src/planner.ts` | **HOLD** | 22 | 2 | 7 | 11 | 结构审核、模块特定场景／生产门禁 |
 | 61 | `src/pool.ts` | **PASS** | 15 | 5 | 3 | 0 | 直接差分、原生和生产调用证据已关闭 |
 | 62 | `src/projected-store.ts` | **HOLD** | 34 | 2 | 1 | 3 | 结构审核、模块特定场景／生产门禁 |
-| 63 | `src/projection-outbox.ts` | **HOLD** | 25 | 2 | 1 | 9 | 结构审核、模块特定场景／生产门禁 |
+| 63 | `src/projection-outbox.ts` | **PASS** | 25 | 2 | 1 | 9 | 直接差分、原生和生产调用证据已关闭 |
 | 64 | `src/reconcile-coordinator.ts` | **PASS** | 7 | 2 | 5 | 1 | 直接差分、原生和生产调用证据已关闭 |
 | 65 | `src/reconciler-context.ts` | **HOLD** | 3 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 66 | `src/reconciler-review.ts` | **PASS** | 1 | 1 | 3 | 0 | 直接差分、原生和生产调用证据已关闭 |

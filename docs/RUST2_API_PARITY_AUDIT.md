@@ -14,24 +14,24 @@ A listed direct differential import only means a head-to-head test imports the c
 
 | Metric | Count |
 |---|---:|
-| sourceCount | 82 |
+| sourceCount | 80 |
 | pendingSourceModules | 0 |
 | pendingRuntimeExportSymbols | 0 |
-| runtimeExportSymbols | 569 |
-| directNameMatches | 556 |
+| runtimeExportSymbols | 536 |
+| directNameMatches | 523 |
 | unmappedRuntimeSymbols | 0 |
 | runtimeConstructorReviews | 13 |
-| typeOrShapeReviewSymbols | 246 |
+| typeOrShapeReviewSymbols | 233 |
 | filesWithUnmappedRuntime | 0 |
 | filesWithoutDirectDiffImport | 43 |
 | filesWithoutOtherRustReferences | 23 |
 
-Source tree: `c846739e5f60`; Rust source tree: `155c0256d028`. Rust module rows in scope: 82. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `c846739e5f60`; Rust source tree: `155c0256d028`. Rust module rows in scope: 80. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
 
-## Per-file candidate surface (all 82 PORTING files)
+## Per-file candidate surface (all 80 PORTING files)
 
 | Node source | Runtime exports | Named Rust candidates | Unmapped runtime names | Direct diff imports | Other Rust refs |
 |---|---:|---:|---:|---:|---:|
@@ -54,7 +54,6 @@ Source tree: `c846739e5f60`; Rust source tree: `155c0256d028`. Rust module rows 
 | `src/cli.ts` | 6 | 6 | 0 | 3 | 4 |
 | `src/dag-task-runtime.ts` | 5 | 5 | 0 | 0 | 2 |
 | `src/dashboard-actions.ts` | 3 | 3 | 0 | 0 | 2 |
-| `src/dashboard-data.ts` | 8 | 8 | 0 | 1 | 3 |
 | `src/dashboard.ts` | 1 | 1 | 0 | 0 | 3 |
 | `src/decision-audit.ts` | 13 | 13 | 0 | 1 | 1 |
 | `src/dependency-revision-execution.ts` | 3 | 3 | 0 | 0 | 1 |
@@ -87,7 +86,6 @@ Source tree: `c846739e5f60`; Rust source tree: `155c0256d028`. Rust module rows 
 | `src/planner-runtime.ts` | 7 | 7 | 0 | 4 | 5 |
 | `src/planner.ts` | 22 | 20 | 0 | 2 | 9 |
 | `src/projected-store.ts` | 34 | 34 | 0 | 2 | 1 |
-| `src/projection-outbox.ts` | 25 | 25 | 0 | 2 | 1 |
 | `src/reconciler-context.ts` | 3 | 3 | 0 | 0 | 0 |
 | `src/reconciler-runtime.ts` | 10 | 10 | 0 | 2 | 5 |
 | `src/relay-store-discovery.ts` | 3 | 3 | 0 | 0 | 6 |

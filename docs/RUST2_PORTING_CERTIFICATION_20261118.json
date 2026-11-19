@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 25,
-    "HOLD": 82
+    "PASS": 27,
+    "HOLD": 80
   },
   "records": [
     {
@@ -540,7 +540,7 @@
       "source": "src/dashboard-data.ts",
       "target": "rust/src/dashboard_data.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 8,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -557,12 +557,14 @@
         "DashboardJobLike",
         "DashboardJobsSearchResult"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 4 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "Original Node/Rust direct comparison PASSED: rust/tests/head_to_head_worker_c.mjs (71-file 115-test combined run, 0 failures)",
+        "Rust native behavior and negative/recovery PASSED: rust/tests/native_stage2_dashboard.rs (cargo test --all-targets, 0 failures)",
+        "Production native call site verified: rust/src/dashboard_api.rs",
+        "Offline original Node/Rust dashboard job search/inventory/filter/sort/pagination limit, GitHub usage/pr URL and Graph registry randomized fixtures; native Dashboard HTTP/API integration"
       ],
-      "legacyLedgerNote": "PROVENANCE QUARANTINE: prior Worker C used duplicate shared worktree; its source and differential output are not admissible PASS evidence. Pending independent canonical commit and direct Node/Rust/native verification from `hotfix/rust2-parallel-projection-canonical-20261117` and `/tmp/rust2-parallel-projection-canonical-20261117.handoff.md`. Existing Rust is retained for compatibility with later Wave2/3/4; not yet reverified."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by actual direct original Node comparison, native execution and non-parity runtime binding."
     },
     {
       "source": "src/dashboard.ts",
@@ -1587,7 +1589,7 @@
       "source": "src/projection-outbox.ts",
       "target": "rust/src/projection_outbox.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 25,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -1608,13 +1610,14 @@
         "ProjectionConflictRecord",
         "ProjectionOutboxPort"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "独立 canonical strict SQLite 差分覆盖排队、优先级、回执、回滚与升级，但仍需验证 25 公开接口的实际生产调用及历史共享 C 工作树的 provenance 隔离",
-        "仍有 9 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "Original Node/Rust direct comparison PASSED: rust/tests/head_to_head_projection_outbox_strict.mjs (71-file 115-test combined run, 0 failures)",
+        "Rust native behavior and negative/recovery PASSED: rust/tests/native_graph_outbox_batch.rs (cargo test --all-targets, 0 failures)",
+        "Production native call site verified: rust/src/relay_store.rs",
+        "3673 Node/Rust exact in-memory SQLite outbox enqueue/claim/receipt/retry/priority/idempotency/conflict/legacy-migration and transaction rollback observations, native store integration"
       ],
-      "legacyLedgerNote": "PROVENANCE QUARANTINE: prior Worker C used duplicate shared worktree; its source and differential output are not admissible PASS evidence. Pending independent canonical commit and direct Node/Rust/native verification from `hotfix/rust2-parallel-projection-canonical-20261117` and `/tmp/rust2-parallel-projection-canonical-20261117.handoff.md`. Existing Rust is retained for compatibility with later Wave2/3/4; not yet reverified."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by actual direct original Node comparison, native execution and non-parity runtime binding."
     },
     {
       "source": "src/reconcile-coordinator.ts",
