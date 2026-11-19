@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 29,
-    "HOLD": 78
+    "PASS": 30,
+    "HOLD": 77
   },
   "records": [
     {
@@ -1765,7 +1765,7 @@
       "source": "src/relay-store-discovery.ts",
       "target": "rust/src/relay_store_discovery.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 3,
       "staticNameMismatch": 0,
       "directDiffTests": [],
@@ -1776,12 +1776,14 @@
         "rust/src/relayd.rs"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "Original Node public API direct differential: rust/tests/head_to_head_relay_store_discovery_public.mjs",
+        "Rust native negative/recovery/integration: rust/tests/native_unified_job_registry.rs",
+        "Authoritative non-parity production caller: rust/src/local_job_registry.rs",
+        "19 exact original Node/Rust read-only SQLite inventory, immutable Job scope, legacy-DB refusal and ambiguous binding cases; native unified registry/restart verification"
       ],
-      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
+      "openGates": [],
+      "legacyLedgerNote": "Certified with explicit direct original API differential, native tests and production call entry."
     },
     {
       "source": "src/relay-store.ts",

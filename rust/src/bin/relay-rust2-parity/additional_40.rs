@@ -5,6 +5,24 @@ use std::path::Path;
 
 pub fn invoke(req:&Value)->Option<Result<String,String>>{
     match req["op"].as_str()?{
+        "certRelayStoreDiscovery"=>Some((||{
+            use agents_relay_rust2::relay_store_discovery as d;
+            let directory=Path::new(req["directory"].as_str().ok_or("directory missing")?);
+            let value=match req["action"].as_str().unwrap_or("inventory"){
+                "path"=>json!(d::relay_unified_store_path(directory).to_string_lossy()),
+                "scope"=>json!(d::resolve_unified_job_scope(
+                    directory,req["repository"].as_str().unwrap_or(""),
+                    req["prNumber"].as_i64().unwrap_or(0),req["hintId"].as_str())?),
+                "inventory"=>{
+                    let rows=d::discover_local_relay_store_snapshots(directory)?;
+                    json!(rows.into_iter().map(|row|json!({
+                        "path":row.path,"jobs":row.jobs,"facts":row.facts,
+                        "publications":row.publications})).collect::<Vec<_>>())
+                },
+                _=>return Err("Unknown discovery action".into()),
+            };
+            Ok(value.to_string())
+        })()),
         "certJobActions"=>Some((||{
             use agents_relay_rust2::job_actions as a;
             let job=&req["job"];

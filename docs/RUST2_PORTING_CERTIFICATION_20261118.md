@@ -2,7 +2,7 @@
 
 > 本表是逐文件的真实审计清单，不是所有模块均通过。**PASS** 需公开 API 原始 Node/Rust 直接差分、Rust 原生负面测试和实际生产调用绑定；只通过静态 API 名称匹配，不能晋级。**HOLD** 指存在尚未关闭的证据缺口，不等同于未实现。
 
-- 原始检查范围：107 个源模块。已认证 **29 PASS**，保留 **78 HOLD/PORTING**。
+- 原始检查范围：107 个源模块。已认证 **30 PASS**，保留 **77 HOLD/PORTING**。
 - 本轮仅跑 Rust 原生测试与必要的 Node/Rust 差分；未重跑独立 Node 全量测试。
 - 这份报告对应上次全量 Node/Rust 230/230 PASS 后的逐项认证。全量 230/230 不等于 107 个模块逐一通过。
 - `directDiffTests` 与 `otherRustModuleReferences` 基于静态文本检索；测试文件出现导入或 Rust 源文件出现引用，仅说明有线索，不表示覆盖了每个公开 API 或进入生产。
@@ -87,6 +87,8 @@
 | `src/force-restate-validation.ts` | `head_to_head_force_restate_validation_public.mjs` | `native_planner_finish_public.rs` | `rust/src/planner_runtime_public.rs` |
 
 ## 2026-11-18 逐项证据补充
+
+- `src/relay-store-discovery.ts` — 原始 Node 差分 `rust/tests/head_to_head_relay_store_discovery_public.mjs`；Rust 原生 `rust/tests/native_unified_job_registry.rs`；生产调用 `rust/src/local_job_registry.rs`；19 exact original Node/Rust read-only SQLite inventory, immutable Job scope, legacy-DB refusal and ambiguous binding cases; native unified registry/restart verification。
 
 - `src/job-actions.ts` — 原始 Node 差分 `rust/tests/head_to_head_job_actions_public.mjs`；Rust 原生 `rust/tests/native_reconciler_plan_job.rs`；生产调用 `rust/src/dashboard_actions.rs`；144 original Node/Rust Graph activate/cancel Task/Plan mutation/failure cases, with two durable public action IDs。
 
@@ -177,7 +179,7 @@
 | 66 | `src/reconciler-review.ts` | **PASS** | 1 | 1 | 3 | 0 | 直接差分、原生和生产调用证据已关闭 |
 | 67 | `src/reconciler-runtime.ts` | **HOLD** | 10 | 2 | 3 | 4 | 结构审核、模块特定场景／生产门禁 |
 | 68 | `src/reconciler.ts` | **PASS** | 8 | 6 | 6 | 3 | 直接差分、原生和生产调用证据已关闭 |
-| 69 | `src/relay-store-discovery.ts` | **HOLD** | 3 | 0 | 4 | 0 | 直接差分、模块特定场景／生产门禁 |
+| 69 | `src/relay-store-discovery.ts` | **PASS** | 3 | 0 | 4 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 70 | `src/relay-store.ts` | **HOLD** | 46 | 8 | 20 | 17 | 结构审核、模块特定场景／生产门禁 |
 | 71 | `src/relayd-control.ts` | **PASS** | 1 | 1 | 1 | 0 | 直接差分、原生和生产调用证据已关闭 |
 | 72 | `src/relayd-dashboard-actions.ts` | **HOLD** | 1 | 1 | 1 | 0 | 模块特定场景／生产门禁 |
