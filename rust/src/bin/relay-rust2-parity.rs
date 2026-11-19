@@ -659,7 +659,7 @@ fn invoke(request: &Value) -> Result<String, String> {
             let role=std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent().unwrap().join("agents/outcome-reviewer.agent.md");
             let mut inputs=Vec::<Value>::new();
-            let run=evaluate_outcome(&request["options"],
+            let run=agents_relay_rust2::outcome_review::evaluate_outcome_with_runner(&request["options"],
                 |reviewer,_|{
                     if reviewer!="reviewer" {
                         return Err(format!("professional reviewer not found: {reviewer}"));
