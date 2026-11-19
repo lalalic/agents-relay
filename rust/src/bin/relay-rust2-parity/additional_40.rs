@@ -79,6 +79,81 @@ pub fn invoke(req:&Value)->Option<Result<String,String>>{
                 .filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>();
             Ok(json!(agents_relay_rust2::cli_review::review_request_thread_override(&args)?).to_string())
         })()),
+        "certExecutionRouterPublic"=>Some((||{
+            use agents_relay_rust2::execution_routing as e;
+            let value=match req["action"].as_str().unwrap_or(""){
+                "shape"=>e::execution_task_shape(&req["taskFacts"]),
+                "capabilities"=>json!(e::task_capability_facts(&req["taskFacts"])),
+                "principles"=>json!(e::EXECUTION_ROUTING_PRINCIPLES),
+                "label"=>json!(e::execution_choice_label(&req["route"],
+                    req["isDefault"].as_bool().unwrap_or(false))),
+                "discover"=>{
+                    let routes=e::discover_execution_routes(
+                        req["workers"].as_array().map(Vec::as_slice).unwrap_or(&[]),
+                        &req["requirements"],&req["options"],
+                        Path::new(req["home"].as_str().ok_or("home missing")?),
+                        Path::new(req["policyPath"].as_str().ok_or("policy missing")?),
+                        Path::new(req["rulesPath"].as_str().ok_or("rules missing")?),
+                        req["nowMs"].as_i64().unwrap_or(1795000000000))?;
+                    json!({"routes":routes.routes,"evaluations":routes.evaluations,
+                        "workerGateEvaluations":routes.worker_gate_evaluations,
+                        "policy":routes.policy,"choices":routes.choices,
+                        "routingInstruction":routes.routing_instruction})
+                },
+                _=>return Err("Unknown execution routing API".into()),
+            };
+            Ok(value.to_string())
+        })()),
+        "certManualPlan"=>Some((||{
+            use std::{cell::RefCell,rc::Rc,future::{ready,Future},pin::pin,task::{Context,Poll,Waker}};
+            use agents_relay_rust2::{manual_plan::execute_manual_plan,planner::create_plan_round};
+            let state=Rc::new(RefCell::new(req["job"].clone()));
+            let created=Rc::new(RefCell::new(Vec::<Value>::new()));
+            let loaded=state.clone();let committed=state.clone();
+            let launched=state.clone();let launch_records=created.clone();
+            let timeout=req["timeoutMs"].as_u64().unwrap_or(5000);
+            let future=execute_manual_plan(Path::new("workflow"),
+                req["jobId"].as_str().unwrap_or("17"),
+                req["guidance"].as_str(),timeout,
+                req["forceRestate"].as_bool().unwrap_or(false),
+                req["atomic"].as_bool().unwrap_or(true),
+                move||ready(Ok::<_,String>(loaded.borrow().clone())),
+                move|next:Value|{
+                    *committed.borrow_mut()=next.clone();
+                    ready(Ok::<_,String>(next))
+                },
+                |job,guidance,timeout|create_plan_round(Path::new("workflow"),
+                    job,guidance,true,Some(timeout),Some("2026-11-18T20:00:00.000Z")),
+                move|job,round|{
+                    launch_records.borrow_mut().push(round.clone());
+                    let mut current=job.clone();
+                    if req["failLaunch"]==true {
+                        return ready(Err("injected Planner transport failure".into()));
+                    }
+                    let plan_id=round["id"].clone();
+                    if let Some(plans)=current["plans"].as_array_mut(){
+                        if let Some(p)=plans.iter_mut().find(|p|p["id"]==plan_id){
+                            p["status"]=json!(req["terminalStatus"].as_str().unwrap_or("SUCCEEDED"));
+                            if req["terminalStatus"]=="FAILED"{
+                                p["error"]=json!("injected Planner failure");
+                            }
+                        }
+                    }
+                    *launched.borrow_mut()=current;
+                    ready(Ok(()))
+                });
+            let mut pinned=pin!(future);let mut cx=Context::from_waker(Waker::noop());
+            let result=match pinned.as_mut().poll(&mut cx){
+                Poll::Ready(value)=>value,
+                Poll::Pending=>return Err("Injected manual Planner cannot suspend".into()),
+            };
+            // Difference report transport shape keeps original Node errors.
+            let output=match result {
+                Ok((job,round))=>json!({"job":job,"round":round,"launched":created.borrow().len()}),
+                Err(error)=>return Err(error),
+            };
+            Ok(output.to_string())
+        })()),
         "certWorkerRouterPublic"=>Some((||{
             use agents_relay_rust2::worker_routing as w;
             let candidates=req["candidates"].as_array().map(Vec::as_slice).unwrap_or(&[]);

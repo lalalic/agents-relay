@@ -197,6 +197,11 @@ pub fn create_plan_round(
         "manualPlanning":manual,"createdAt":now,"updatedAt":now
     });
     if let Some(guidance)=guidance{result["guidance"]=json!(guidance);}
+    // JSON.stringify omits undefined Node Plan fields rather than storing
+    // JSON null. A missing initial Git HEAD must remain absent.
+    if result["headSha"].is_null(){
+        if let Some(map)=result.as_object_mut(){map.remove("headSha");}
+    }
     Ok(result)
 }
 pub fn normalize_planner_priority(value:&Value,field:&str)

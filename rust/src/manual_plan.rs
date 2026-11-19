@@ -40,11 +40,13 @@ where Create: FnMut(&Value,Option<&str>,u64)->Result<Value,String>,
     let mut current=job.clone();
     let previous=pending_plan(&current);
     if let Some(ref pending)=previous {
-        if force_restate {
-            return Err(format!("--force-restate requires no pending Plan ({})",field(pending,"id")));
-        }
+        // Node's initial preflight rejects a leased PLANNING round before
+        // the mutation-time --force-restate exclusion is evaluated.
         if pending.get("executionId").is_some_and(|v|!v.is_null()) {
             return Err(format!("Planning round {} is already PLANNING",field(pending,"id")));
+        }
+        if force_restate {
+            return Err(format!("--force-restate requires no pending Plan ({})",field(pending,"id")));
         }
     }
     let round=if let Some(pending)=previous {pending}

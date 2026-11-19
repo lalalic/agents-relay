@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 38,
-    "HOLD": 69
+    "PASS": 40,
+    "HOLD": 67
   },
   "records": [
     {
@@ -846,10 +846,11 @@
       "source": "src/execution-routing.ts",
       "target": "rust/src/execution_routing.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 6,
       "staticNameMismatch": 0,
       "directDiffTests": [
+        "rust/tests/head_to_head_execution_routing_public.mjs",
         "rust/tests/head_to_head_route_facades.mjs"
       ],
       "otherRustModuleReferences": [
@@ -863,12 +864,15 @@
         "ExecutionRoutingDecision",
         "ExecutionRoutingOptions"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 5 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "591 direct original Node/Rust shape, capability, principles, label and full route discovery comparisons plus 105 existing Worker/Model/Execution public routeExecution hard-gate fixtures",
+        "Fixed Rust nullish storySize override to honor nested Task as the Node API does; native tests confirm no invented offline model, exact route label, and actual Final Review Reconciler hard gates",
+        "Direct original Node/Rust tests: rust/tests/head_to_head_execution_routing_public.mjs, rust/tests/head_to_head_route_facades.mjs",
+        "Native Rust negative/runtime tests: rust/tests/native_execution_routing_public.rs, rust/tests/native_reconciler_review_base.rs",
+        "Actual non-parity runtime callers: rust/src/reconciler_review.rs"
       ],
-      "legacyLedgerNote": "Serial Phase1 native Worker+Model routing policy, hard gates and source profile discovery port; uncompiled/unverified, decision audit/service binding Phase2."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by direct Node/Rust behavioral comparisons, native tests and real runtime caller."
     },
     {
       "source": "src/feedback.ts",
@@ -1320,20 +1324,27 @@
       "source": "src/manual-plan.ts",
       "target": "rust/src/manual_plan.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 1,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
+      "directDiffTests": [
+        "rust/tests/head_to_head_manual_plan_public.mjs",
+        "rust/tests/head_to_head_planner_finish_public.mjs"
+      ],
       "otherRustModuleReferences": [
-        "rust/src/reconciler_manual_plan_public.rs"
+        "rust/src/reconciler_manual_plan_public.rs",
+        "rust/src/relayd_sqlite_write.rs"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "64 directly compared original Node/Rust manual Plan admission, previous pending/leased Plan, terminal rejection, forceRestate, Plan launch success and failure scenarios; 19 finishPlanner Graph generation tests",
+        "Corrected native Plan leased-before-forceRestate validation order and missing Git headSha serialization; real isolated Planner Shortcut PID/Graph/SQLite plan apply, DAG generation, failed proposal, daemon job.plan, restart and process receipt tests pass",
+        "Direct original Node/Rust tests: rust/tests/head_to_head_manual_plan_public.mjs, rust/tests/head_to_head_planner_finish_public.mjs",
+        "Native Rust negative/runtime tests: rust/tests/native_script_planner.rs, rust/tests/native_reconciler_plan_job.rs, rust/tests/native_planner_finish_public.rs",
+        "Actual non-parity runtime callers: rust/src/relayd_sqlite_write.rs, rust/src/reconciler_manual_plan_public.rs"
       ],
-      "legacyLedgerNote": "Phase1 serial native Rust draft; uncompiled and untested, production API/binding and differential to close in Phase2."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by direct Node/Rust behavioral comparisons, native tests and real runtime caller."
     },
     {
       "source": "src/model-redecision.ts",

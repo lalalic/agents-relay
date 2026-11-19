@@ -32,7 +32,9 @@ fn unique(items:impl Iterator<Item=String>)->Vec<String>{
     items.filter(|item|seen.insert(item.clone())).collect()
 }
 pub fn execution_task_shape(task_facts:&Value)->Value{
-    let raw=task_facts.get("storySize")
+    // Original Node uses `storySize ?? task.storySize`: a null outer
+    // override must fall back to the nested Task, unlike object key presence.
+    let raw=task_facts.get("storySize").filter(|v|!v.is_null())
         .or_else(||task_facts.pointer("/task/storySize"))
         .and_then(Value::as_str).unwrap_or("M");
     let size=if matches!(raw,"S"|"L"){raw}else{"M"};

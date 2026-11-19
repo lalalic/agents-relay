@@ -2,7 +2,7 @@
 
 > 本表是逐文件的真实审计清单，不是所有模块均通过。**PASS** 需公开 API 原始 Node/Rust 直接差分、Rust 原生负面测试和实际生产调用绑定；只通过静态 API 名称匹配，不能晋级。**HOLD** 指存在尚未关闭的证据缺口，不等同于未实现。
 
-- 原始检查范围：107 个源模块。已认证 **38 PASS**，保留 **69 HOLD/PORTING**。
+- 原始检查范围：107 个源模块。已认证 **40 PASS**，保留 **67 HOLD/PORTING**。
 - 本轮仅跑 Rust 原生测试与必要的 Node/Rust 差分；未重跑独立 Node 全量测试。
 - 这份报告对应上次全量 Node/Rust 230/230 PASS 后的逐项认证。全量 230/230 不等于 107 个模块逐一通过。
 - `directDiffTests` 与 `otherRustModuleReferences` 基于静态文本检索；测试文件出现导入或 Rust 源文件出现引用，仅说明有线索，不表示覆盖了每个公开 API 或进入生产。
@@ -114,6 +114,14 @@
 - 250 original Node/Rust valid-input daemon CLI argument, first-stage, refresh coalescing, inventory merge, recovery scan, overview hydration, value and help API cases, plus 46 observability/router-rule configuration comparisons
 - Real native daemon HTTP/SQLite restart and negative production-binding tests pass (12/12) and native daemon smoke test passes; finite EAGAIN-only CLI test retries prevent platform startup race without changing functional assertions
 
+### `src/execution-routing.ts`
+- 591 direct original Node/Rust shape, capability, principles, label and full route discovery comparisons plus 105 existing Worker/Model/Execution public routeExecution hard-gate fixtures
+- Fixed Rust nullish storySize override to honor nested Task as the Node API does; native tests confirm no invented offline model, exact route label, and actual Final Review Reconciler hard gates
+
+### `src/manual-plan.ts`
+- 64 directly compared original Node/Rust manual Plan admission, previous pending/leased Plan, terminal rejection, forceRestate, Plan launch success and failure scenarios; 19 finishPlanner Graph generation tests
+- Corrected native Plan leased-before-forceRestate validation order and missing Git headSha serialization; real isolated Planner Shortcut PID/Graph/SQLite plan apply, DAG generation, failed proposal, daemon job.plan, restart and process receipt tests pass
+
 ## 已有局部验证、但不能升级的关键模块
 
 - **`src/cli-coordinator.ts`**：11 个真实 Git/SQLite Head-to-Head 场景及 4 个 Rust 原生测试已通过，但 run_coordinator_job_command 只发现 parity harness 引用，正式 CLI 生产分发尚未直接绑定本端口
@@ -165,7 +173,7 @@
 | 30 | `src/execution-context.ts` | **HOLD** | 6 | 1 | 0 | 10 | 运行调用、结构审核、模块特定场景／生产门禁 |
 | 31 | `src/execution-process-tracker.ts` | **HOLD** | 2 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 32 | `src/execution-recovery.ts` | **HOLD** | 2 | 0 | 1 | 1 | 直接差分、结构审核、模块特定场景／生产门禁 |
-| 33 | `src/execution-routing.ts` | **HOLD** | 6 | 1 | 2 | 5 | 结构审核、模块特定场景／生产门禁 |
+| 33 | `src/execution-routing.ts` | **PASS** | 6 | 1 | 2 | 5 | 结构审核、模块特定场景／生产门禁 |
 | 34 | `src/feedback.ts` | **HOLD** | 23 | 2 | 0 | 12 | 运行调用、结构审核、模块特定场景／生产门禁 |
 | 35 | `src/force-restate-validation.ts` | **PASS** | 6 | 0 | 1 | 1 | 直接差分、结构审核、模块特定场景／生产门禁 |
 | 36 | `src/force-restate.ts` | **HOLD** | 1 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
@@ -185,7 +193,7 @@
 | 50 | `src/local-merge-delivery.ts` | **PASS** | 1 | 1 | 1 | 1 | 认证已完成 |
 | 51 | `src/local-merge-projection.ts` | **PASS** | 1 | 1 | 2 | 0 | 认证已完成
 | 52 | `src/managed-worker-input.ts` | **HOLD** | 1 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
-| 53 | `src/manual-plan.ts` | **HOLD** | 1 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
+| 53 | `src/manual-plan.ts` | **PASS** | 1 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 54 | `src/model-redecision.ts` | **HOLD** | 2 | 1 | 1 | 3 | 结构审核、模块特定场景／生产门禁 |
 | 55 | `src/model-routing.ts` | **PASS** | 4 | 1 | 4 | 3 | 结构审核、模块特定场景／生产门禁 |
 | 56 | `src/outcome-review.ts` | **HOLD** | 5 | 2 | 2 | 2 | 结构审核、模块特定场景／生产门禁 |
