@@ -326,6 +326,7 @@ pub mod script_task_adapter;
 pub mod native_script_worker;
 pub mod native_script_execution;
 pub mod native_worker_event_ingress;
+pub mod native_browser_execution;
 pub mod cli_prompt;
 pub mod dag_task_runtime;
 pub mod troubleshooter;

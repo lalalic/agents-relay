@@ -585,3 +585,155 @@ fn native_daemon_merges_verified_source_branch_and_persists_job_terminal_state()
     drop(restart);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn isolated_native_daemon_submits_chatgpt_through_webhelm_and_waits_for_real_graph_terminal(){
+    use agents_relay_rust2::{
+        native_worker_event_ingress::apply_verified_worker_event,
+        execution_event_identity::execution_event_source,
+        events::event_for,
+        browser_worker_pool::{BrowserPoolOptions,BrowserWorkerPoolManager},
+    };
+    use std::{io::{BufRead,BufReader},os::unix::{net::UnixListener,fs::PermissionsExt},
+        sync::{Arc,atomic::{AtomicBool,Ordering}}};
+    // A short AF_UNIX path, a disposable fake WebHelm daemon, and a fake
+    // CLI profile; absolutely no user browser Session/ChatGPT/Codex calls.
+    let root=PathBuf::from("/tmp").join(format!("r2b-{}-{}",std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+            .unwrap().as_nanos()));
+    let project=root.join("project");
+    fs::create_dir_all(root.join("stores")).unwrap();
+    fs::create_dir_all(&project).unwrap();
+    let cli=root.join("fake-webhelm");
+    fs::write(&cli,"#!/bin/sh\nif [ \"$1\" = \"platform\" ]; then printf '{\"platform\":\"chatgpt\"}\\n'; else printf '{\"ok\":true}\\n'; fi\n").unwrap();
+    fs::set_permissions(&cli,fs::Permissions::from_mode(0o700)).unwrap();
+    let socket=root.join("webhelm.sock");
+    let listener=UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let submitted=Arc::new(AtomicBool::new(false));
+    let got_submission=Arc::clone(&submitted);
+    let socket_worker=thread::spawn(move||{
+        let deadline=std::time::Instant::now()+Duration::from_secs(12);
+        let mut ops=Vec::new();
+        loop{
+            if std::time::Instant::now()>deadline{break;}
+            let (mut stream,_)=match listener.accept(){
+                Ok(value)=>value,
+                Err(error) if error.kind()==std::io::ErrorKind::WouldBlock=>{
+                    thread::sleep(Duration::from_millis(5));continue;
+                },
+                Err(error)=>panic!("fake WebHelm accept: {error}"),
+            };
+            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let mut line=String::new();
+            BufReader::new(&stream).read_line(&mut line).unwrap();
+            let command:Value=serde_json::from_str(&line).unwrap();
+            let op=command["op"].as_str().unwrap().to_string();
+            ops.push(op.clone());
+            let response=match op.as_str(){
+                "workspace-create"=>json!({"ok":true}),
+                "start"=>json!({"ok":true,"workspace":"Relay",
+                    "workspace_supported":true,"session_id":"fixture-session-23"}),
+                "platform-run"=>{
+                    assert_eq!(command["platform"],"chatgpt");
+                    assert_eq!(command["action"],"new-thread");
+                    assert_eq!(command["config"]["temporary"],false);
+                    assert!(command["config"]["message"].is_string());
+                    got_submission.store(true,Ordering::Release);
+                    json!({"ok":true,"status":"submitted","verified_by":"test-fixture",
+                        "temporary":false,"thread_id":"fixturethread4321",
+                        "thread_url":"https://chatgpt.com/c/fixturethread4321"})
+                },
+                "stop"=>{
+                    assert_eq!(command["session_id"],"fixture-session-23");
+                    json!({"ok":true,"returned_to_idle":true})
+                },
+                other=>panic!("unexpected isolated WebHelm operation {other}"),
+            };
+            stream.write_all(format!("{response}\n").as_bytes()).unwrap();
+            if op=="stop"{break;}
+        }
+        ops
+    });
+    let initialized=Command::new("git").arg("-C").arg(&project)
+        .args(["init","-q","-b","main"]).status().unwrap();
+    assert!(initialized.success());
+    let path=root.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&path,Some("83")).unwrap();
+    store.save_job(&json!({"id":"83","repository":"project","projectRoot":project,
+        "title":"Real native WebHelm IPC with fake browser", "state":"ACTIVE",
+        "prNumber":0,"priority":"P2","reviewEnabled":false,
+        "createdAt":"2026-11-18T00:00:00.000Z","updatedAt":"2026-11-18T00:00:00.000Z",
+        "tasks":[{"id":"2","jobId":"83","kind":"work","adapter":"chatgpt",
+            "agentName":"implementation","title":"Model Task","state":"QUEUED",
+            "executionId":null,"leaseOwner":null,"leaseExpiresAt":null,
+            "attempt":0,"maxAttempts":1,"priority":"P2","dependencies":[],
+            "routing":{"adapter":"chatgpt","projectId":"isolated"},
+            "input":"[Relay agent: worker; adapter: chatgpt]\nExecute real task and send genuine events",
+            "chatgptTabClosePolicy":"after-terminal","timeoutMs":8000,
+            "output":{"kind":"file","path":root.join("out.json")},
+            "createdAt":"2026-11-18T00:00:00.000Z",
+            "updatedAt":"2026-11-18T00:00:00.000Z"}],"plans":[]})).unwrap();
+    store.close().unwrap();
+    let port=socket_port();
+    let child=Command::new(binary())
+        .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
+        .args(["--isolated-write-store-dir",root.join("stores").to_str().unwrap(),
+            "--port",&port.to_string(),"--interval","100"])
+        .env("AGENTS_RELAY_WEBHELM_SOCKET",&socket)
+        .env("AGENTS_RELAY_WEBHELM_EXECUTABLE",&cli)
+        .env("AGENTS_RELAY_WEBHELM_WORKSPACE","Relay")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::from(
+            fs::File::create(root.join("native-daemon.log")).unwrap()))
+        .spawn().unwrap();
+    let daemon=Guard(child);
+    let mut current=Value::Null;
+    let mut seen=false;
+    for _ in 0..100{
+        if let Ok(result)=request(port,"GET","/api/job?id=83",""){
+            current=body(&result);
+            if submitted.load(Ordering::Acquire)
+                &&current["tasks"][0]["executionId"].is_string(){seen=true;break;}
+        }
+        thread::sleep(Duration::from_millis(40));
+    }
+    assert!(seen,"Native daemon never submitted through its own isolated WebHelm port. Job={current}, Log={}",
+        fs::read_to_string(root.join("native-daemon.log")).unwrap_or_default());
+    assert_eq!(current["tasks"][0]["state"],"QUEUED",
+        "WebHelm submitted receipt must not change the Task state");
+    let execution=current["tasks"][0]["executionId"].as_str().unwrap().to_owned();
+    let source=json!({"id":execution_event_source("83","2",&execution),
+        "agent":"implementation","component":"agents-relay"});
+    let event=|kind,status,message:&str|{
+        event_for("83","2",None,kind,status,message,Some("orchestrator"),
+            Some(json!({"fixture":true})),Some(source.clone()))
+    };
+    let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+    apply_verified_worker_event(&path,&graph,"83","2",&execution,
+        &event("task.started","started","actual start from test-authenticated provider")).unwrap();
+    apply_verified_worker_event(&path,&graph,"83","2",&execution,
+        &event("task.completed","completed","actual test provider terminal")).unwrap();
+    let mut complete=false;
+    for _ in 0..75{
+        current=body(&request(port,"GET","/api/job?id=83","").unwrap());
+        let pool=BrowserWorkerPoolManager::open(BrowserPoolOptions{
+            path:Some(root.join("stores/browser-worker-pool.sqlite")),..Default::default()});
+        if let Ok(pool)=pool{
+            let snapshot=pool.snapshot("chatgpt").unwrap();
+            if current["tasks"][0]["state"]=="SUCCEEDED"
+                &&snapshot.leased==0&&snapshot.quarantined==0{
+                complete=true;break;
+            }
+        }
+        thread::sleep(Duration::from_millis(80));
+    }
+    assert!(complete,"Native WebHelm Worker submission wasn't released after real terminal: {current}; Log={}",
+        fs::read_to_string(root.join("native-daemon.log")).unwrap_or_default());
+    assert_eq!(current["tasks"][0]["attempt"],1);
+    assert_eq!(current["tasks"][0]["result"]["summary"],"actual test provider terminal");
+    let ops=socket_worker.join().unwrap();
+    assert_eq!(ops,vec!["workspace-create","start","platform-run","stop"]);
+    drop(daemon);
+    fs::remove_dir_all(root).unwrap();
+}

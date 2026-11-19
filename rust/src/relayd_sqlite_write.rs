@@ -11,6 +11,7 @@ use crate::{
     agent_script_discovery::discover_script_agent,
     native_script_execution::run_claimed_script_task,
     native_worker_event_ingress::apply_verified_worker_event,
+    native_browser_execution::{IsolatedWebHelmConfig,submit_claimed_chatgpt_worker},
     native_script_worker::configured_script_interpreter,
     reconciler::Reconciler,
     interactive_request::fail_interactive_review,
@@ -321,7 +322,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             Ok(jobs)=>json!({"runtime":"native-rust","mode":"isolated-write",
                 "productionReady":false,"jobCount":jobs.len(),"wakeCount":self.wake_count,
                 "reconcileAttempts":self.reconcile_attempts,
-                "reason":"Worker and external Event providers not yet bound"}),
+                "reason":"Script and test-only ChatGPT WebHelm submission bound; authenticated external EventBus and production providers not bound"}),
             Err(error)=>json!({"runtime":"native-rust","mode":"isolated-write",
                 "productionReady":false,"error":error}),
         }
@@ -354,12 +355,43 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         let task=original.get("tasks").and_then(Value::as_array).into_iter().flatten()
             .find(|task|field(task,"id")==task_id)
             .ok_or("Unregistered Worker Task")?;
-        // Only Script Shortcut Workers are installed in this isolated host.
-        // All other adapters remain fail-closed and cannot reserve a lease.
-        if field(task,"adapter")!="script"{
-            return Err(denied("non-Script Worker adapter"));
+        // Each adapter must have a real, explicitly isolated source and
+        // transport before a Task generation can be reserved. No Node Relay
+        // fallback, no implicit production WebHelm, no receipt-based success.
+        let adapter=field(task,"adapter");
+        if adapter!="script"&&adapter!="chatgpt"{
+            return Err(denied("unsupported model Worker adapter"));
         }
-        let project=self.isolated_project(&original)?;
+        let _project_root=self.isolated_project(&original)?;
+        if adapter=="chatgpt"{
+            let config=IsolatedWebHelmConfig::from_test_store(&self.config.store_directory)?;
+            if task.get("routing").is_none_or(Value::is_null){
+                return Err("Native ChatGPT Worker requires verified routing metadata".into());
+            }
+            let mut reconciler=Reconciler::new(
+                self.config.graph_directory.clone(),self.config.store_directory.clone(),
+                self.config.profile_home.clone(),self.config.policy_path.clone(),
+                self.config.router_rules_path.clone(),
+                json!({"owner":format!("isolated-rust-daemon-{}",std::process::id()),
+                    "maxConcurrent":self.config.concurrency,"leaseMs":self.config.lease_ms}),
+            );
+            let claimed=reconciler.claim_task_execution(&original,task_id,
+                self.config.lease_ms)?.ok_or("ChatGPT Task no longer eligible for launch")?;
+            self.persist_exact(id,&original,&claimed)?;
+            let task=claimed.get("tasks").and_then(Value::as_array).into_iter().flatten()
+                .find(|task|field(task,"id")==task_id).cloned()
+                .ok_or("ChatGPT Task vanished during lease claim")?;
+            let db=self.path();let job_id=id.to_string();let task_id=task_id.to_string();
+            std::thread::Builder::new().name(format!("rust-chatgpt-task-{task_id}"))
+                .spawn(move||{
+                    let cancelled=std::sync::atomic::AtomicBool::new(false);
+                    if let Err(error)=submit_claimed_chatgpt_worker(
+                        &db,&job_id,&task,&config,&cancelled){
+                        eprintln!("Native ChatGPT Worker {job_id}/{task_id}: {error}");
+                    }
+                }).map_err(|e|format!("Cannot launch isolated WebHelm Worker executor: {e}"))?;
+            return Ok(());
+        }
         let script=discover_script_agent(field(task,"agentName"),
             field(&original,"projectRoot"),None,
             self.config.workspace_root.to_str(),None)?

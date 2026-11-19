@@ -421,13 +421,23 @@ impl ChatGptAdapter{
             execution_id,cancelled,||Ok(json!({
                 "action":action,"config":config
             })))?;
-        let parsed=parse_browser_worker_response(
+        let parsed=match parse_browser_worker_response(
             &json!({"operation":action,"status":"submitted",
                 "mode":action,"thread_id":receipt.receipt.get("thread_id"),
                 "thread_url":receipt.receipt.get("thread_url"),
                 "temporary":receipt.receipt.get("temporary"),
                 "verified_by":receipt.receipt.get("verified_by")}).to_string(),
-            provider)?;
+            provider){
+            Ok(parsed)=>parsed,
+            Err(error)=>{
+                // WebHelm reports a submitted request, but does not prove a
+                // durable thread. Do not leave its SQLite pool slot leased
+                // or permit another execution to reuse an uncertain Session.
+                state.uncertain=true;
+                let _=state.release(pool,socket);
+                return Err(error);
+            }
+        };
         if let Some(expected)=delivery.filter(|v|!v.is_null())
             .and_then(|v|v.get("threadId")).and_then(Value::as_str){
             if parsed.get("thread_id").and_then(Value::as_str)!=Some(expected){
@@ -435,10 +445,18 @@ impl ChatGptAdapter{
                 return Err("browser-worker submitted to an unexpected ChatGPT thread".into());
             }
         }
-        match policy.as_str(){
-            "after-start"=>await_barrier("worker-start")?,
-            "after-terminal"=>await_barrier("terminal")?,
-            _=>{},
+        let barrier_result=match policy.as_str(){
+            "after-start"=>await_barrier("worker-start"),
+            "after-terminal"=>await_barrier("terminal"),
+            _=>Ok(()),
+        };
+        if let Err(error)=barrier_result{
+            // A verified submission can still outlive a missing start or
+            // terminal Graph event. The exact Session is now uncertain and
+            // must be quarantined before returning an adapter failure.
+            state.uncertain=true;
+            let _=state.release(pool,socket);
+            return Err(error);
         }
         if policy!="never"{state.release(pool,socket)?;}
         if cancelled.load(Ordering::Acquire){
