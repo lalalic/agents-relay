@@ -14,24 +14,24 @@ A listed direct differential import only means a head-to-head test imports the c
 
 | Metric | Count |
 |---|---:|
-| sourceCount | 72 |
+| sourceCount | 69 |
 | pendingSourceModules | 0 |
 | pendingRuntimeExportSymbols | 0 |
-| runtimeExportSymbols | 498 |
-| directNameMatches | 485 |
+| runtimeExportSymbols | 480 |
+| directNameMatches | 467 |
 | unmappedRuntimeSymbols | 0 |
 | runtimeConstructorReviews | 13 |
-| typeOrShapeReviewSymbols | 224 |
+| typeOrShapeReviewSymbols | 222 |
 | filesWithUnmappedRuntime | 0 |
-| filesWithoutDirectDiffImport | 38 |
+| filesWithoutDirectDiffImport | 37 |
 | filesWithoutOtherRustReferences | 23 |
 
-Source tree: `c846739e5f60`; Rust source tree: `3e731309a09c`. Rust module rows in scope: 72. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `c846739e5f60`; Rust source tree: `22aaebf530c5`. Rust module rows in scope: 69. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
 
-## Per-file candidate surface (all 72 PORTING files)
+## Per-file candidate surface (all 69 PORTING files)
 
 | Node source | Runtime exports | Named Rust candidates | Unmapped runtime names | Direct diff imports | Other Rust refs |
 |---|---:|---:|---:|---:|---:|
@@ -47,7 +47,6 @@ Source tree: `c846739e5f60`; Rust source tree: `3e731309a09c`. Rust module rows 
 | `src/cli-foreground.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/cli-job-create.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/cli-prompt.ts` | 5 | 5 | 0 | 0 | 0 |
-| `src/cli-review.ts` | 3 | 3 | 0 | 1 | 2 |
 | `src/cli-support.ts` | 38 | 37 | 0 | 4 | 6 |
 | `src/cli-unblock.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/cli.ts` | 6 | 6 | 0 | 3 | 4 |
@@ -67,12 +66,11 @@ Source tree: `c846739e5f60`; Rust source tree: `3e731309a09c`. Rust module rows 
 | `src/github-auth.ts` | 2 | 2 | 0 | 0 | 1 |
 | `src/github-client.ts` | 10 | 10 | 0 | 0 | 0 |
 | `src/interactive-invocation.ts` | 12 | 11 | 0 | 1 | 5 |
-| `src/interactive-request.ts` | 5 | 5 | 0 | 1 | 3 |
 | `src/interactive-resume.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/job-pause.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/job-worktree-cleanup.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/legacy-orchestrator-repair.ts` | 1 | 1 | 0 | 0 | 0 |
-| `src/local-job-registry.ts` | 2 | 2 | 0 | 0 | 1 |
+| `src/local-job-registry.ts` | 2 | 2 | 0 | 1 | 2 |
 | `src/local-managed-store.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/managed-worker-input.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/manual-plan.ts` | 1 | 1 | 0 | 0 | 2 |
@@ -84,10 +82,9 @@ Source tree: `c846739e5f60`; Rust source tree: `3e731309a09c`. Rust module rows 
 | `src/projected-store.ts` | 34 | 34 | 0 | 2 | 1 |
 | `src/reconciler-context.ts` | 3 | 3 | 0 | 0 | 0 |
 | `src/reconciler-runtime.ts` | 10 | 10 | 0 | 2 | 5 |
-| `src/relay-store.ts` | 46 | 45 | 0 | 8 | 26 |
+| `src/relay-store.ts` | 46 | 45 | 0 | 9 | 26 |
 | `src/relayd-dashboard-actions.ts` | 1 | 1 | 0 | 1 | 1 |
 | `src/relayd-main.ts` | 0 | 0 | 0 | 0 | 0 |
-| `src/relayd-utilities.ts` | 10 | 10 | 0 | 1 | 2 |
 | `src/relayd.ts` | 1 | 1 | 0 | 0 | 5 |
 | `src/route-outcome-recording.ts` | 5 | 5 | 0 | 1 | 2 |
 | `src/router-evals.ts` | 2 | 2 | 0 | 0 | 0 |

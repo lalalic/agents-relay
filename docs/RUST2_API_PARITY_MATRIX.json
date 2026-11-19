@@ -2,17 +2,17 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "c846739e5f60e6bc73cb3000cfab466855655462",
-    "rustTree": "3e731309a09cd8fc26d1baa6babf065a6d388d60",
-    "sourceCount": 72,
+    "rustTree": "22aaebf530c5bccd6a778aa870234b236546d9a2",
+    "sourceCount": 69,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 498,
-    "directNameMatches": 485,
+    "runtimeExportSymbols": 480,
+    "directNameMatches": 467,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 13,
-    "typeOrShapeReviewSymbols": 224,
+    "typeOrShapeReviewSymbols": 222,
     "filesWithUnmappedRuntime": 0,
-    "filesWithoutDirectDiffImport": 38,
+    "filesWithoutDirectDiffImport": 37,
     "filesWithoutOtherRustReferences": 23
   },
   "pendingModules": [],
@@ -548,39 +548,6 @@
         },
         {
           "name": "runTaskReadCommand",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/cli-review.ts",
-      "target": "rust/src/cli_review.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 3,
-      "directNameMatches": 3,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [
-        "rust/tests/head_to_head_cli_review.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity.rs",
-        "rust/src/cli.rs"
-      ],
-      "exports": [
-        {
-          "name": "reviewRequestThreadOverride",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "runInteractiveReviewCommand",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "runReviewCommand",
           "kind": "function",
           "static": "name-match"
         }
@@ -2174,50 +2141,6 @@
       ]
     },
     {
-      "source": "src/interactive-request.ts",
-      "target": "rust/src/interactive_request.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 5,
-      "directNameMatches": 5,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [
-        "rust/tests/head_to_head_atomic_public_apis.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity/sqlite_api.rs",
-        "rust/src/relayd_control.rs",
-        "rust/src/relayd_sqlite_write.rs"
-      ],
-      "exports": [
-        {
-          "name": "interactiveWaitingEvent",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "interactiveTemplate",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "beginInteractiveReview",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "abortInteractiveReview",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "failInteractiveReview",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
       "source": "src/interactive-resume.ts",
       "target": "rust/src/interactive_resume.rs",
       "ledgerStatus": "PORTING",
@@ -2316,8 +2239,11 @@
       "directNameMatches": 2,
       "unmappedRuntime": [],
       "typeOrShapeReview": [],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_local_job_registry_public.mjs"
+      ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/additional_40.rs",
         "rust/src/cli_support.rs"
       ],
       "exports": [
@@ -3205,6 +3131,7 @@
         "rust/tests/head_to_head_coordinator_cli.mjs",
         "rust/tests/head_to_head_host_invocation_ports.mjs",
         "rust/tests/head_to_head_local_blocker_port.mjs",
+        "rust/tests/head_to_head_local_job_registry_public.mjs",
         "rust/tests/head_to_head_planner_unblocks.mjs",
         "rust/tests/head_to_head_projected_comments.mjs",
         "rust/tests/head_to_head_store_facade_closure.mjs"
@@ -3628,92 +3555,6 @@
       "directDiffImports": [],
       "otherRustModuleReferences": [],
       "exports": []
-    },
-    {
-      "source": "src/relayd-utilities.ts",
-      "target": "rust/src/relayd_utilities.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 10,
-      "directNameMatches": 10,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "PullRequestRefreshTrigger",
-        "GitHubReadPathDiagnostics"
-      ],
-      "directDiffImports": [
-        "rust/tests/head_to_head_daemon_public_setup.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity.rs",
-        "rust/src/relayd.rs"
-      ],
-      "exports": [
-        {
-          "name": "DaemonArguments",
-          "kind": "interface",
-          "static": "name-match"
-        },
-        {
-          "name": "configureDaemonObservability",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "PullRequestRefreshTrigger",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "overlayOperationalOverviews",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "mergeOperationalInventory",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "GitHubReadPathDiagnostics",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "shouldCoalescePullRequestRefresh",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "daemonHelp",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "firstStageChoices",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "value",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "normalizeDaemonArguments",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "recoveryScanRepositories",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "configureExecutionRouterRulesPath",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
     },
     {
       "source": "src/relayd.ts",

@@ -135,6 +135,25 @@ fn native_daemon_refuses_missing_or_live_store_bindings(){
     assert!(String::from_utf8_lossy(&denied.stderr).contains("requires --isolated-store-dir"));
 }
 
+// A Darwin listener can momentarily return EAGAIN/os error 35 just after
+// restart. Retry only that transport error; all unexpected CLI failures and
+// persistent EAGAIN remain fatal to the exact native integration test.
+fn native_cli_transient_retry(args:&[&str])->std::process::Output{
+    let mut output=Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
+        .args(args).output().unwrap();
+    for _ in 0..5{
+        if output.status.success(){break;}
+        let stderr=String::from_utf8_lossy(&output.stderr);
+        if !stderr.contains("Resource temporarily unavailable")
+            && !stderr.contains("os error 35"){
+            break;
+        }
+        thread::sleep(Duration::from_millis(120));
+        output=Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
+            .args(args).output().unwrap();
+    }
+    output
+}
 #[test]
 fn native_write_mode_mutations_use_one_sqlite_cas_and_survive_process_restart(){
     let root=root();let path=root.join("relay.sqlite");
@@ -159,21 +178,21 @@ fn native_write_mode_mutations_use_one_sqlite_cas_and_survive_process_restart(){
             (vec!["job","show","--id","17"],"id","17"),
             (vec!["task","show","--id","17","--task-id","2"],"id","2"),
         ]{
-            let result=Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
-                .args(args).args(["--port",&port.to_string()]).output().unwrap();
+            let mut cli_args=args.clone();
+            let port_arg=port.to_string();
+            cli_args.extend_from_slice(&["--port",port_arg.as_str()]);
+            let result=native_cli_transient_retry(&cli_args);
             assert!(result.status.success(),"{}",String::from_utf8_lossy(&result.stderr));
             assert_eq!(serde_json::from_slice::<Value>(&result.stdout).unwrap()[key],expected);
         }
-        let list=Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
-            .args(["job","list","--port",&port.to_string()]).output().unwrap();
+        let list=native_cli_transient_retry(&["job","list","--port",&port.to_string()]);
         assert!(list.status.success(),"{}",String::from_utf8_lossy(&list.stderr));
         let rows:Value=serde_json::from_slice(&list.stdout).unwrap();
         assert_eq!(rows.as_array().unwrap().len(),1);
         assert_eq!(rows[0]["id"],"17");
         if attempt==0{
-            let cli=Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
-                .args(["job","update","--id","17","--title","After native write",
-                    "--port",&port.to_string()]).output().unwrap();
+            let cli=native_cli_transient_retry(&["job","update","--id","17",
+                "--title","After native write","--port",&port.to_string()]);
             assert!(cli.status.success(),"{}",String::from_utf8_lossy(&cli.stderr));
             assert_eq!(serde_json::from_slice::<Value>(&cli.stdout).unwrap()["title"],"After native write");
             let comment=request(port,"POST","/api/control",

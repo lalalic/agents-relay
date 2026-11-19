@@ -26,6 +26,9 @@ Examples:
 
 No recursive Workspace search: persisted Job projectRoot in SQLite
 are authoritative. Changing Workspace directory layout does not select Jobs."#;
+/// Original JavaScript public constant export preserved for exact API parity.
+#[allow(non_upper_case_globals)]
+pub const daemonHelp:&str=DAEMON_HELP;
 
 #[derive(Debug,Clone,PartialEq,Eq)]
 pub struct DaemonArguments {

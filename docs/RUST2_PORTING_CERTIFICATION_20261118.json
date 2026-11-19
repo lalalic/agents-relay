@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 35,
-    "HOLD": 72
+    "PASS": 38,
+    "HOLD": 69
   },
   "records": [
     {
@@ -308,21 +308,27 @@
       "source": "src/cli-review.ts",
       "target": "rust/src/cli_review.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 3,
       "staticNameMismatch": 0,
       "directDiffTests": [
-        "rust/tests/head_to_head_cli_review.mjs"
+        "rust/tests/head_to_head_cli_review.mjs",
+        "rust/tests/head_to_head_interactive_lifecycle_public.mjs"
       ],
       "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity.rs"
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/cli.rs"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "Original Node/Rust CLI job/interactive request/preview rejection and 10 caller thread-override inputs match; actual fake Neo review.preview receipt is never treated as approval",
+        "Native CLI real daemon HTTP review.request and interactive review-host validation, negative missing IDs, exact thread source and failure receipts tested; rust/src/cli.rs dispatches live CLI review ports",
+        "Direct original Node/Rust tests: rust/tests/head_to_head_cli_review.mjs, rust/tests/head_to_head_interactive_lifecycle_public.mjs",
+        "Native Rust negative/runtime tests: rust/tests/native_cli_review.rs, rust/tests/native_cli_binary.rs",
+        "Actual non-parity runtime callers: rust/src/cli.rs"
       ],
-      "legacyLedgerNote": "Phase1 serial native Rust draft; uncompiled, untested and not production-wired; parity pending."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by direct Node/Rust behavioral comparisons, native tests and real runtime caller."
     },
     {
       "source": "src/cli-support.ts",
@@ -1019,22 +1025,28 @@
       "source": "src/interactive-request.ts",
       "target": "rust/src/interactive_request.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 5,
       "staticNameMismatch": 0,
       "directDiffTests": [
-        "rust/tests/head_to_head_atomic_public_apis.mjs"
+        "rust/tests/head_to_head_atomic_public_apis.mjs",
+        "rust/tests/head_to_head_interactive_lifecycle_public.mjs"
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/sqlite_api.rs",
-        "rust/src/relayd_control.rs"
+        "rust/src/relayd_control.rs",
+        "rust/src/relayd_sqlite_write.rs"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "94 direct original Node/Rust lifecycle cases for begin, abort, waiting event and decision template, plus original Node/Rust durable failInteractiveReview SQLite cases",
+        "Graph-execution fenced failure/requeue/rollback and native SQLite mutations pass; real daemon review.interactive control callers bind native API, not a test-only shim",
+        "Direct original Node/Rust tests: rust/tests/head_to_head_interactive_lifecycle_public.mjs, rust/tests/head_to_head_atomic_public_apis.mjs",
+        "Native Rust negative/runtime tests: rust/tests/native_all_api_sqlite_entrypoints.rs, rust/tests/native_cli_review.rs",
+        "Actual non-parity runtime callers: rust/src/relayd_control.rs, rust/src/relayd_sqlite_write.rs"
       ],
-      "legacyLedgerNote": "Phase1 serial native Rust draft; uncompiled, untested and not production-wired; parity pending."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by direct Node/Rust behavioral comparisons, native tests and real runtime caller."
     },
     {
       "source": "src/interactive-resume.ts",
@@ -1920,11 +1932,12 @@
       "source": "src/relayd-utilities.ts",
       "target": "rust/src/relayd_utilities.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 10,
       "staticNameMismatch": 0,
       "directDiffTests": [
-        "rust/tests/head_to_head_daemon_public_setup.mjs"
+        "rust/tests/head_to_head_daemon_public_setup.mjs",
+        "rust/tests/head_to_head_relayd_utilities_public.mjs"
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity.rs",
@@ -1934,12 +1947,15 @@
         "PullRequestRefreshTrigger",
         "GitHubReadPathDiagnostics"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 2 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "250 original Node/Rust valid-input daemon CLI argument, first-stage, refresh coalescing, inventory merge, recovery scan, overview hydration, value and help API cases, plus 46 observability/router-rule configuration comparisons",
+        "Real native daemon HTTP/SQLite restart and negative production-binding tests pass (12/12) and native daemon smoke test passes; finite EAGAIN-only CLI test retries prevent platform startup race without changing functional assertions",
+        "Direct original Node/Rust tests: rust/tests/head_to_head_relayd_utilities_public.mjs, rust/tests/head_to_head_daemon_public_setup.mjs",
+        "Native Rust negative/runtime tests: rust/tests/native_daemon_binary_readonly.rs, rust/tests/native_stage2_daemon_smoke.rs",
+        "Actual non-parity runtime callers: rust/src/relayd.rs"
       ],
-      "legacyLedgerNote": "Phase1 serial Rust SERVER-only source draft; uncompiled/unverified; preserve original Dashboard client HTML/CSS/JS."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by direct Node/Rust behavioral comparisons, native tests and real runtime caller."
     },
     {
       "source": "src/relayd.ts",

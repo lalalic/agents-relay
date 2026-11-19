@@ -5,6 +5,80 @@ use std::path::Path;
 
 pub fn invoke(req:&Value)->Option<Result<String,String>>{
     match req["op"].as_str()?{
+        "certInteractiveLifecycle"=>Some((||{
+            use agents_relay_rust2::interactive_request as i;
+            let job_id=req["jobId"].as_str().unwrap_or("25");
+            let task_id=req["taskId"].as_str().unwrap_or("11");
+            let execution_id=req["executionId"].as_str().unwrap_or("gen-1");
+            let result=match req["action"].as_str().unwrap_or(""){
+                "begin"=>{
+                    let (job,receipt)=i::begin_interactive_review(
+                        &req["job"],job_id,task_id,execution_id)?;
+                    json!({"job":job,"receipt":receipt})
+                },
+                "abort"=>json!({"job":i::abort_interactive_review(
+                    &req["job"],task_id,execution_id)}),
+                "template"=>i::interactive_template(job_id,task_id,execution_id),
+                "waiting"=>i::interactive_waiting_event(job_id,task_id,
+                    req["parentTaskId"].as_str(),execution_id),
+                _=>return Err("Unknown interactive lifecycle API".into())
+            };
+            Ok(result.to_string())
+        })()),
+        "certDaemonUtilities"=>Some((||{
+            use agents_relay_rust2::relayd_utilities as d;
+            let args=req["args"].as_array().into_iter().flatten()
+                .filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>();
+            let result=match req["action"].as_str().unwrap_or(""){
+                "help"=>json!(d::DAEMON_HELP),
+                "value"=>json!(d::value(&args,
+                    req["name"].as_str().unwrap_or("--id"),
+                    req["fallback"].as_str().unwrap_or(""))),
+                "choices"=>json!(d::first_stage_choices(req.get("decision"))),
+                "coalesce"=>json!(d::should_coalesce_pull_request_refresh(
+                    req["completedAt"].as_i64(),req["now"].as_i64().unwrap_or(1000),
+                    req["force"].as_bool().unwrap_or(false))),
+                "merge"=>json!(d::merge_operational_inventory(
+                    req["current"].as_array().map(Vec::as_slice).unwrap_or(&[]),
+                    req["discovered"].as_array().map(Vec::as_slice).unwrap_or(&[]))),
+                "recovery"=>json!(d::recovery_scan_repositories(
+                    &req["repositories"].as_array().into_iter().flatten()
+                        .filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>(),
+                    req["cached"].as_array().map(Vec::as_slice).unwrap_or(&[]),
+                    req["index"].as_i64().unwrap_or(0))),
+                "normalize"=>{
+                    let parsed=d::normalize_daemon_arguments(&args,
+                        req["workspaceEnv"].as_str())?;
+                    json!({"repository":parsed.repository,
+                        "workspaceRoot":parsed.workspace_root,
+                        "pullRequest":parsed.pull_request,"jobId":parsed.job_id,
+                        "serviceArguments":parsed.service_arguments})
+                },
+                "overlay"=>{
+                    use std::{future::{Future,ready},pin::pin,task::{Context,Poll,Waker}};
+                    let overviews=req["overviews"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+                    let mut f=pin!(d::overlay_operational_overviews(overviews,|repo,pr,mut job|{
+                        let injected=req["updates"].get(&repo)
+                            .and_then(|r|r.get(pr.to_string())).cloned();
+                        if let Some(v)=injected{job=v;}
+                        ready(Ok::<_,String>(job))
+                    }));
+                    let mut cx=Context::from_waker(Waker::noop());
+                    match f.as_mut().poll(&mut cx){
+                        Poll::Ready(Ok(x))=>json!(x),
+                        Poll::Ready(Err(e))=>return Err(e),
+                        Poll::Pending=>return Err("Injected overview hydrator suspended".into()),
+                    }
+                },
+                _=>return Err("Unknown daemon utilities API".into()),
+            };
+            Ok(result.to_string())
+        })()),
+        "certCliReviewThread"=>Some((||{
+            let args=req["args"].as_array().into_iter().flatten()
+                .filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>();
+            Ok(json!(agents_relay_rust2::cli_review::review_request_thread_override(&args)?).to_string())
+        })()),
         "certWorkerRouterPublic"=>Some((||{
             use agents_relay_rust2::worker_routing as w;
             let candidates=req["candidates"].as_array().map(Vec::as_slice).unwrap_or(&[]);
