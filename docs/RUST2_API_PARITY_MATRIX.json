@@ -2,17 +2,17 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "c846739e5f60e6bc73cb3000cfab466855655462",
-    "rustTree": "155c0256d0286ed9e895d2e332d0219d059bca64",
-    "sourceCount": 79,
+    "rustTree": "a686b830094e4bba9b81b69ea10e34da72bf150d",
+    "sourceCount": 78,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 530,
-    "directNameMatches": 517,
+    "runtimeExportSymbols": 526,
+    "directNameMatches": 513,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 13,
     "typeOrShapeReviewSymbols": 232,
     "filesWithUnmappedRuntime": 0,
-    "filesWithoutDirectDiffImport": 42,
+    "filesWithoutDirectDiffImport": 41,
     "filesWithoutOtherRustReferences": 23
   },
   "pendingModules": [],
@@ -2265,43 +2265,6 @@
         },
         {
           "name": "recoverInteractiveDecisions",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/job-actions.ts",
-      "target": "rust/src/job_actions.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 4,
-      "directNameMatches": 4,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [
-        "rust/src/cli_runtime_public.rs",
-        "rust/src/dashboard_actions.rs",
-        "rust/src/reconciler_manual_plan_public.rs"
-      ],
-      "exports": [
-        {
-          "name": "JOB_ACTIVATE_ACTION",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "JOB_CANCEL_ACTION",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "applyJobActivateAction",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "applyJobCancelAction",
           "kind": "function",
           "static": "name-match"
         }

@@ -2,7 +2,7 @@
 
 > 本表是逐文件的真实审计清单，不是所有模块均通过。**PASS** 需公开 API 原始 Node/Rust 直接差分、Rust 原生负面测试和实际生产调用绑定；只通过静态 API 名称匹配，不能晋级。**HOLD** 指存在尚未关闭的证据缺口，不等同于未实现。
 
-- 原始检查范围：107 个源模块。已认证 **28 PASS**，保留 **79 HOLD/PORTING**。
+- 原始检查范围：107 个源模块。已认证 **29 PASS**，保留 **78 HOLD/PORTING**。
 - 本轮仅跑 Rust 原生测试与必要的 Node/Rust 差分；未重跑独立 Node 全量测试。
 - 这份报告对应上次全量 Node/Rust 230/230 PASS 后的逐项认证。全量 230/230 不等于 107 个模块逐一通过。
 - `directDiffTests` 与 `otherRustModuleReferences` 基于静态文本检索；测试文件出现导入或 Rust 源文件出现引用，仅说明有线索，不表示覆盖了每个公开 API 或进入生产。
@@ -86,6 +86,10 @@
 |---|---|---|---|
 | `src/force-restate-validation.ts` | `head_to_head_force_restate_validation_public.mjs` | `native_planner_finish_public.rs` | `rust/src/planner_runtime_public.rs` |
 
+## 2026-11-18 逐项证据补充
+
+- `src/job-actions.ts` — 原始 Node 差分 `rust/tests/head_to_head_job_actions_public.mjs`；Rust 原生 `rust/tests/native_reconciler_plan_job.rs`；生产调用 `rust/src/dashboard_actions.rs`；144 original Node/Rust Graph activate/cancel Task/Plan mutation/failure cases, with two durable public action IDs。
+
 ## 已有局部验证、但不能升级的关键模块
 
 - **`src/cli-coordinator.ts`**：11 个真实 Git/SQLite Head-to-Head 场景及 4 个 Rust 原生测试已通过，但 run_coordinator_job_command 只发现 parity harness 引用，正式 CLI 生产分发尚未直接绑定本端口
@@ -146,7 +150,7 @@
 | 39 | `src/interactive-invocation.ts` | **HOLD** | 12 | 1 | 5 | 12 | 结构审核、模块特定场景／生产门禁 |
 | 40 | `src/interactive-request.ts` | **HOLD** | 5 | 1 | 2 | 0 | 模块特定场景／生产门禁 |
 | 41 | `src/interactive-resume.ts` | **HOLD** | 2 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
-| 42 | `src/job-actions.ts` | **HOLD** | 4 | 0 | 3 | 0 | 直接差分、模块特定场景／生产门禁 |
+| 42 | `src/job-actions.ts` | **PASS** | 4 | 0 | 3 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 43 | `src/job-pause.ts` | **HOLD** | 2 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 44 | `src/job-worktree-cleanup.ts` | **HOLD** | 1 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 45 | `src/legacy-orchestrator-repair.ts` | **HOLD** | 1 | 0 | 0 | 1 | 直接差分、运行调用、结构审核、模块特定场景／生产门禁 |

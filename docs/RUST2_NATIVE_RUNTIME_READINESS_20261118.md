@@ -32,7 +32,7 @@ The same Graph selects actions for the Rust Reconciler. A real integration test 
 - Original Node/Rust **focused** Task/Job Lifecycle and Planner/Task Resolution Graph differential (`head_to_head_lifecycle_batch.mjs`, `head_to_head_wave4_graph.mjs`): **13/13**.
 - Original Node/Rust `reconcileLocalGitCompletion` direct (20 scenarios, all gates, successful/failed/denied merge) and original Node/Rust real isolated Git merge (40 scenarios), **PASS**; see `rust/tests/head_to_head_local_merge_completion.mjs`, `rust/tests/head_to_head_wave4_delivery_git.mjs`.
 - Additional Rust native isolated Graph/SQLite and local bare-origin delivery tests, nonforce push/idempotency/approval and remote-escape denial (`native_sqlite_write_host.rs`, `native_daemon_binary_readonly.rs`), **PASS**.
-- Ledger integrity: 230 source modules, **147 PASS / 79 PORTING / 4 EXCLUDED / 0 PENDING**. Static unmatched Runtime API names are zero **within the PORTING audit scope**, not blanket behavior equivalence.
+- Ledger integrity: 230 source modules, **148 PASS / 78 PORTING / 4 EXCLUDED / 0 PENDING**. Static unmatched Runtime API names are zero **within the PORTING audit scope**, not blanket behavior equivalence.
 
 After source edits that did not change Node/TypeScript production code, **no standalone Node full-test suite was run**. Direct Node/Rust behavioral differentials use Node only as the original reference implementation.
 
@@ -46,7 +46,7 @@ After source edits that did not change Node/TypeScript production code, **no sta
 2. **Planning and Review** — concrete Planner model launch/apply, user review gate/preview and human approval, re-review after Git HEAD changes, Troubleshooter routing/fallback, all enforced by the canonical Graph.
 3. **Job terminal & delivery** — native isolated Planned Job completion and verified source merge are done; remaining gate is complete Final Review/Job completion with real model Worker, server Dashboard action receipts, origin delivery under real deployment and multi-node restart.
 4. **Production runtime** — service binding and install/publish/version synchronization, single-owner daemon startup, event transport, process group/provenance recovery, Dashboard/PWA and all CLI actions.
-5. **Certification** — independently resolve or explicitly exclude the **79 remaining `PORTING`** modules with source-specific original Node/Rust differentials and actual production callers; run L1/L2/L3 plus separate real L4 provider E2E and cross-node acceptance. Avoid repeating the standalone Node full suite if only Rust changed.
+5. **Certification** — independently resolve or explicitly exclude the **78 remaining `PORTING`** modules with source-specific original Node/Rust differentials and actual production callers; run L1/L2/L3 plus separate real L4 provider E2E and cross-node acceptance. Avoid repeating the standalone Node full suite if only Rust changed.
 6. **Cutover** — backup and restore proof on disposable but structurally equivalent SQLite data, reversible single-owner migration, offline/isolated rollout, live E2E evidence and explicit production approval before pushing/publishing/switching.
 
 ## Native isolated launch contract

@@ -5,6 +5,17 @@ use std::path::Path;
 
 pub fn invoke(req:&Value)->Option<Result<String,String>>{
     match req["op"].as_str()?{
+        "certJobActions"=>Some((||{
+            use agents_relay_rust2::job_actions as a;
+            let job=&req["job"];
+            let output=match req["action"].as_str().unwrap_or("activate"){
+                "activate"=>a::apply_job_activate_action(Path::new("workflow"),job),
+                "cancel"=>a::apply_job_cancel_action(Path::new("workflow"),job,
+                    req["reason"].as_str()),
+                _=>return Err("Unknown Job action".into()),
+            }?;
+            Ok(output.to_string())
+        })()),
         "certForceRestateValidation"=>Some((||{
             use agents_relay_rust2::force_restate_validation as v;
             let mut job=req["job"].clone();
