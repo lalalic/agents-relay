@@ -715,3 +715,9 @@
 - 修复 `rust/src/single_job_task_control.rs` 的真实准入门禁差异：原实现 `as_str()` 拒绝数组/对象 command 且错误类别不同；现按原始 `?? '' + String()` 语义精确复刻。
 - 包装层拒绝按错误文本精确对照；被接受的命令必须到达同一 canonical 结果类别（ok/error）。差分记录了 10 条 canonical 路径错误文本/校验顺序差异（taskId/必填字段校验次序与措辞），已按范围归属 relayd-control 批次，不阻塞本模块包装层契约。
 - 仍 HOLD 的缺口：Rust daemon 生产调用方（原 Node 单 Job relayd HTTP 适配器，需真实 Reconciler/store/bus 注入）未接入，属 relayd/reconciler-runtime 集成批次。
+
+## 2026-11-19 relayd-control canonical admission 对齐与三模块升级 PASS
+
+- **canonical admission 对齐**（`rust/src/relayd_control.rs`）：六个 task 命令的校验顺序与错误文本逐字对齐原 Node：`task.supersede/classify/recover/revise` 单守卫组合消息；`task.unblock` 先查 Task（`Task <id> not found`，含空 id 的 `Task  not found`）；`task.resume-troubleshooter` 直进 resumeTroubleshooter（先校验 response）；`task.escalate` 传字符串默认值进 validateRequest。`head_to_head_single_job_task_control_public.mjs` 31/31，canonical 差异 10→0。
+- **三模块升级 PASS**：escalation-notifier（56 差分）、interactive-resume（190 差分）、single-job-task-control（31 差分）——API 面全导出、差分证据、回归全绿齐备；生产接线责任归属 reconciler-runtime/relayd 行，不阻塞本模块（与 dashboard-data/projection-outbox/worker-routing 等 PASS 行的口径一致）。
+- 回归：lib 87/87、relayd_main 48、relayd_utilities、workspace_control_factory、interactive_resume 190、escalation 56、native_git_delivery_control 4/4、native_all_api_sqlite_entrypoints 6/6 全绿。

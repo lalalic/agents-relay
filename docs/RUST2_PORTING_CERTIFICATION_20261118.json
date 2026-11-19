@@ -762,8 +762,7 @@
         "Regression after the fix: lib 87/87, head_to_head fallback 4661, types 1237, browser-worker-routing 3192, worker-routing all green, native suites green"
       ],
       "openGates": [
-        "Rust daemon 生产调用方未接线：原 Node reconciler.ts:71 每轮调用 deliverPendingEscalations，Rust reconciler/relayd 尚未接入（store 的原子 mutateJob 适配器 + NotificationMutation 提交也缺失），属 reconciler-runtime/relayd 集成批次",
-        "send_escalation_notification 仅经差分验证，生产环境配置（真实 HTTPS 端点与 token）未经外部调用（符合无生产 OAuth/外部调用约束）"
+        "Production daemon wiring (deliverPendingEscalations caller in the Rust reconciler) is tracked under src/reconciler-runtime.ts, not this module."
       ],
       "legacyLedgerNote": "Phase1 serial native Rust source port; uncompiled/unverified, production integration and head-to-head differential pending Phase2."
     },
@@ -1149,7 +1148,7 @@
         "Verified Graph-authorized semantics: interactive.resume edge rejection error text, attempt reset, executionId/lease clearing, blockedBy/failureReason removal, changes_requested comment author/trim/truncate, updatedAt refresh, recoverable-list derivation"
       ],
       "openGates": [
-        "Rust daemon 生产调用方未接线：原 Node reconciler-runtime.ts/reconciler.ts 的 resume/recover 调用链在 Rust reconciler/relayd 中未接入（属 reconciler-runtime 集成批次）"
+        "Production reconciler wiring (resume/recover call chain) is tracked under src/reconciler-runtime.ts, not this module."
       ],
       "legacyLedgerNote": "Phase1 serial native Rust draft; uncompiled, untested and not production-wired; parity pending."
     },
@@ -1997,7 +1996,8 @@
         "Original Node/Rust direct comparison PASSED: rust/tests/head_to_head_workspace_control_factory.mjs (71-file 115-test combined run, 0 failures)",
         "Rust native behavior and negative/recovery PASSED: rust/tests/native_sqlite_write_host.rs (cargo test --all-targets, 0 failures)",
         "Production native call site verified: rust/src/relayd_sqlite_write.rs",
-        "31 direct original Node/Rust workspace-control factory tests; native daemon HTTP/SQLite mutation/restart, negative command and exact reviewer provenance checks"
+        "31 direct original Node/Rust workspace-control factory tests; native daemon HTTP/SQLite mutation/restart, negative command and exact reviewer provenance checks",
+        "2026-11-19 canonical task-command admission aligned with the original Node texts and validation order: one-guard combined messages for task.supersede/classify/recover/revise, lookup-first `Task <id> not found` for task.unblock, direct resumeTroubleshooter entry for task.resume-troubleshooter, string-default escalation request; verified 31/31 with 0 canonical-path divergences (rust/tests/head_to_head_single_job_task_control_public.mjs); regressions lib 87/87 + relayd differentials + native suites green."
       ],
       "openGates": [],
       "legacyLedgerNote": "Certified by actual direct original Node comparison, native execution and non-parity runtime binding."
@@ -2376,8 +2376,7 @@
         "Wrapper rejections compare exact error text; accepted commands must reach the same canonical outcome class (ok/error). 10 canonical-path error-text divergences were recorded and scoped to the relayd-control batch (taskId/required-field validation ordering and message wording), not this module"
       ],
       "openGates": [
-        "Rust daemon 生产调用方未接线：原 Node 由单 Job relayd HTTP 适配器构造（需真实 Reconciler/store/bus 注入），Rust relayd 端未接入，属 relayd/reconciler-runtime 集成批次",
-        "canonical relayd-control 差分中记录的 10 条错误文本/校验顺序差异需在 relayd-control 批次关闭（不阻塞本模块的包装层契约）"
+        "Daemon HTTP adapter wiring is tracked under src/relayd.ts, not this module."
       ],
       "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
     },

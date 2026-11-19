@@ -34,6 +34,11 @@ fn field<'a>(v:&'a Value,key:&str)->&'a str{
 fn text<'a>(v:&'a Value,key:&str)->Option<&'a str>{
     v.get(key).and_then(Value::as_str).filter(|s|!s.trim().is_empty())
 }
+/// Original Node guard coercion: `typeof body.<key> === 'string' ? body.<key>
+/// : ''`. Missing, null and non-string fields all read as the empty string.
+fn js_text<'a>(v:&'a Value,key:&str)->&'a str{
+    v.get(key).and_then(Value::as_str).unwrap_or("")
+}
 fn required<'a>(v:&'a Value,key:&str,description:&str)->Result<&'a str,String>{
     text(v,key).ok_or_else(||format!("{description} requires {key}"))
 }
@@ -426,16 +431,43 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
             Ok(recorded)
         },
         "task.supersede"|"task.classify"|"task.recover"=>{
-            let id=required(body,"taskId",command)?;
+            // Node validates the complete field set in one guard with the
+            // combined message before any Task lookup (src/relayd-control.ts
+            // 'task supersede requires taskId and reason' /
+            // 'task classify requires taskId, classification, targetTaskId,
+            // evidence, and reason' / 'task recover requires taskId and
+            // recoveryTaskId').
+            let id=js_text(body,"taskId");
+            let reason=js_text(body,"reason");
+            if command=="task.supersede"{
+                if id.is_empty()||reason.trim().is_empty(){
+                    return Err("task supersede requires taskId and reason".into());
+                }
+            }else if command=="task.classify"{
+                let raw=body.get("classification");
+                let shape=raw.is_some_and(|raw|
+                    raw.get("kind").and_then(Value::as_str)
+                        .is_some_and(|kind|kind=="superseded"||kind=="invalid")
+                    &&raw.get("targetTaskId").and_then(Value::as_str)
+                        .is_some_and(|v|!v.is_empty())
+                    &&raw.get("evidence").and_then(Value::as_str)
+                        .is_some_and(|v|!v.is_empty())
+                    &&raw.get("reason").and_then(Value::as_str)
+                        .is_some_and(|v|!v.is_empty()));
+                if id.is_empty()||!shape{
+                    return Err("task classify requires taskId, classification, targetTaskId, evidence, and reason".into());
+                }
+            }else if id.is_empty()||js_text(body,"recoveryTaskId").is_empty(){
+                return Err("task recover requires taskId and recoveryTaskId".into());
+            }
             let snapshot=if command=="task.supersede"{
-                supersede_cancelled_task_snapshot(&graph,&job,id,
-                    required(body,"reason",command)?,None)?
+                supersede_cancelled_task_snapshot(&graph,&job,id,&reason,None)?
             }else if command=="task.classify"{
                 classify_failed_task_snapshot(&graph,&job,id,
                     body.get("classification").ok_or(
                         "task classify requires classification")?,None)?
             }else{
-                let recovery=required(body,"recoveryTaskId",command)?;
+                let recovery=js_text(body,"recoveryTaskId");
                 let request=json!({"id":"task.recover","taskId":id,
                     "recoveryTaskId":recovery,
                     "recoveryDiagnosis":body.get("recoveryDiagnosis")});
@@ -444,17 +476,31 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
             persist_candidate(backend,&job_id,&job,&snapshot)?;
             waking(backend,&job_id,&format!("control.{command}"),snapshot)
         },
-        "task.unblock"|"task.resume-troubleshooter"=>{
-            let id=required(body,"taskId",command)?;
-            let original=task(&job,id).ok_or("Task not found")?;
-            let response=text(body,"response");
-            let snapshot=if command=="task.resume-troubleshooter"
-                ||(field(original,"agentName")=="troubleshooter"
-                    &&original.pointer("/escalation/status")
-                        .and_then(Value::as_str)==Some("pending")
-                    &&response.is_some()){
-                resume_troubleshooter(&graph,&job,id,response
-                    .ok_or("Human response required")?,None)?
+        "task.resume-troubleshooter"=>{
+            // Node forwards the raw taskId and response straight into
+            // resumeTroubleshooter: the trimmed-response check ('Troubleshooter
+            // response is required') fires before any Task lookup.
+            let id=body.get("taskId").and_then(Value::as_str).unwrap_or("");
+            let response=body.get("response").and_then(Value::as_str).unwrap_or("");
+            let snapshot=resume_troubleshooter(&graph,&job,id,response,None)?;
+            persist_candidate(backend,&job_id,&job,&snapshot)?;
+            backend.publish(&event_for_unblock(&job_id,id,
+                "Human response recorded"))?;
+            waking(backend,&job_id,"control.task.resume-troubleshooter",snapshot)
+        },
+        "task.unblock"=>{
+            // Node looks the Task up FIRST: `Task ${taskId} not found` with
+            // the raw (possibly empty) id, then routes to the troubleshooter
+            // resume only when a response string exists.
+            let id=body.get("taskId").and_then(Value::as_str).unwrap_or("");
+            let original=task(&job,id)
+                .ok_or_else(||format!("Task {id} not found"))?;
+            let response=body.get("response").and_then(Value::as_str);
+            let snapshot=if field(original,"agentName")=="troubleshooter"
+                &&original.pointer("/escalation/status")
+                    .and_then(Value::as_str)==Some("pending")
+                &&response.is_some(){
+                resume_troubleshooter(&graph,&job,id,response.unwrap_or(""),None)?
             }else{
                 unblock_task_snapshot(&graph,&job,id,"cli",
                     field(body,"reason"),None,None,None,None)?.0
@@ -462,13 +508,21 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
             persist_candidate(backend,&job_id,&job,&snapshot)?;
             backend.publish(&event_for_unblock(&job_id,id,
                 text(body,"reason").unwrap_or("Human response recorded")))?;
-            waking(backend,&job_id,&format!("control.{command}"),snapshot)
+            waking(backend,&job_id,"control.task.unblock",snapshot)
         },
         "task.escalate"=>{
-            let id=required(body,"taskId","task.escalate")?;
-            let request=json!({"requiredAction":body.get("requiredAction"),
-                "resolutionCondition":body.get("resolutionCondition"),
-                "context":body.get("context")});
+            // Node passes the raw (possibly empty/missing) taskId and
+            // empty-string defaults into requestTroubleshooterEscalation;
+            // its validateRequest throws 'Escalation requires a concrete
+            // required action' before any Task lookup.
+            let id=body.get("taskId").and_then(Value::as_str).unwrap_or("");
+            let string_or_empty=|key:&str|match body.get(key){
+                Some(Value::String(value))=>value.as_str(),
+                _=>"",
+            };
+            let request=json!({"requiredAction":string_or_empty("requiredAction"),
+                "resolutionCondition":string_or_empty("resolutionCondition"),
+                "context":string_or_empty("context")});
             let receipt=request_troubleshooter_escalation(
                 &graph,&job,id,&request,None)?;
             let snapshot=receipt.get("job").cloned()
@@ -496,19 +550,23 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
             backend.load_job(&job_id)
         },
         "task.revise"=>{
+            // Node validates the whole guard in one throw: 'task.revise
+            // requires matching repository, original/reviewer IDs, active
+            // execution ID, valid SHA, stable request ID and nonempty
+            // findings'.
             let request=body.clone();
-            for key in ["taskId","reviewTaskId","reviewExecutionId",
-                "headSha","requestId"]{
-                required(&request,key,"task.revise")?;
-            }
-            if field(&request,"repository")!=field(&job,"repository"){
-                return Err("task.revise requires matching immutable repository".into());
-            }
-            if !Regex::new(r"(?i)^[a-f0-9]{40,64}$").unwrap()
-                .is_match(field(&request,"headSha"))
-                ||request.get("findings").and_then(Value::as_array)
-                    .is_none_or(|items|items.is_empty()||items.len()>200){
-                return Err("task.revise requires valid SHA and findings".into());
+            let revise_guard=
+                js_text(&request,"repository")!=""&&field(&request,"repository")==field(&job,"repository")
+                &&js_text(&request,"taskId")!=""
+                &&js_text(&request,"reviewTaskId")!=""
+                &&js_text(&request,"reviewExecutionId")!=""
+                &&js_text(&request,"requestId")!=""
+                &&Regex::new(r"(?i)^[a-f0-9]{40,64}$").unwrap()
+                    .is_match(js_text(&request,"headSha"))
+                &&request.get("findings").and_then(Value::as_array)
+                    .is_some_and(|items|!items.is_empty()&&items.len()<=200);
+            if !revise_guard{
+                return Err("task.revise requires matching repository, original/reviewer IDs, active execution ID, valid SHA, stable request ID and nonempty findings".into());
             }
             if backend.local_head(&job)?!=field(&request,"headSha"){
                 return Err("task.revise rejected: local Git source SHA changed".into());

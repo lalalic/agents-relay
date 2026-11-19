@@ -14,24 +14,24 @@ A listed direct differential import only means a head-to-head test imports the c
 
 | Metric | Count |
 |---|---:|
-| sourceCount | 49 |
+| sourceCount | 46 |
 | pendingSourceModules | 0 |
 | pendingRuntimeExportSymbols | 0 |
-| runtimeExportSymbols | 424 |
-| directNameMatches | 411 |
+| runtimeExportSymbols | 419 |
+| directNameMatches | 406 |
 | unmappedRuntimeSymbols | 0 |
 | runtimeConstructorReviews | 13 |
-| typeOrShapeReviewSymbols | 199 |
+| typeOrShapeReviewSymbols | 196 |
 | filesWithUnmappedRuntime | 0 |
 | filesWithoutDirectDiffImport | 17 |
 | filesWithoutOtherRustReferences | 11 |
 
-Source tree: `c846739e5f60`; Rust source tree: `541ee175db21`. Rust module rows in scope: 49. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `c846739e5f60`; Rust source tree: `984883ed30a6`. Rust module rows in scope: 46. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
 
-## Per-file candidate surface (all 49 PORTING files)
+## Per-file candidate surface (all 46 PORTING files)
 
 | Node source | Runtime exports | Named Rust candidates | Unmapped runtime names | Direct diff imports | Other Rust refs |
 |---|---:|---:|---:|---:|---:|
@@ -50,13 +50,11 @@ Source tree: `c846739e5f60`; Rust source tree: `541ee175db21`. Rust module rows 
 | `src/dashboard-actions.ts` | 3 | 3 | 0 | 0 | 2 |
 | `src/dashboard.ts` | 1 | 1 | 0 | 0 | 3 |
 | `src/decision-audit.ts` | 13 | 13 | 0 | 1 | 1 |
-| `src/escalation-notifier.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/events.ts` | 13 | 13 | 0 | 3 | 38 |
 | `src/feedback.ts` | 23 | 23 | 0 | 2 | 0 |
 | `src/github-auth.ts` | 2 | 2 | 0 | 0 | 1 |
 | `src/github-client.ts` | 10 | 10 | 0 | 0 | 0 |
 | `src/interactive-invocation.ts` | 12 | 11 | 0 | 1 | 5 |
-| `src/interactive-resume.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/job-worktree-cleanup.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/legacy-orchestrator-repair.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/local-job-registry.ts` | 2 | 2 | 0 | 1 | 2 |
@@ -73,7 +71,6 @@ Source tree: `c846739e5f60`; Rust source tree: `541ee175db21`. Rust module rows 
 | `src/relayd.ts` | 1 | 1 | 0 | 0 | 5 |
 | `src/router-evals.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/service-external-actions.ts` | 2 | 2 | 0 | 0 | 0 |
-| `src/single-job-task-control.ts` | 1 | 1 | 0 | 1 | 1 |
 | `src/store-github.ts` | 21 | 21 | 0 | 1 | 6 |
 | `src/store.ts` | 22 | 22 | 0 | 8 | 4 |
 | `src/task-actions.ts` | 18 | 18 | 0 | 1 | 8 |
