@@ -2,18 +2,18 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "c846739e5f60e6bc73cb3000cfab466855655462",
-    "rustTree": "f2325b9cb5a97280c5d67e72d7099584c6434d87",
-    "sourceCount": 44,
+    "rustTree": "bc0bf45caaeeca0622aac72e71edb8aca7e0f7e2",
+    "sourceCount": 43,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 383,
-    "directNameMatches": 370,
+    "runtimeExportSymbols": 382,
+    "directNameMatches": 369,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 13,
-    "typeOrShapeReviewSymbols": 183,
+    "typeOrShapeReviewSymbols": 182,
     "filesWithUnmappedRuntime": 0,
-    "filesWithoutDirectDiffImport": 17,
-    "filesWithoutOtherRustReferences": 10
+    "filesWithoutDirectDiffImport": 16,
+    "filesWithoutOtherRustReferences": 9
   },
   "pendingModules": [],
   "files": [
@@ -1385,31 +1385,6 @@
       ]
     },
     {
-      "source": "src/local-managed-store.ts",
-      "target": "rust/src/local_managed_store.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 1,
-      "directNameMatches": 1,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "LocalManagedStore"
-      ],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
-      "exports": [
-        {
-          "name": "LocalManagedStore",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "openLocalManagedStore",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
       "source": "src/model-redecision.ts",
       "target": "rust/src/model_redecision.rs",
       "ledgerStatus": "PORTING",
@@ -2192,6 +2167,7 @@
         "rust/tests/head_to_head_host_invocation_ports.mjs",
         "rust/tests/head_to_head_local_blocker_port.mjs",
         "rust/tests/head_to_head_local_job_registry_public.mjs",
+        "rust/tests/head_to_head_local_managed_store_public.mjs",
         "rust/tests/head_to_head_planner_unblocks.mjs",
         "rust/tests/head_to_head_projected_comments.mjs",
         "rust/tests/head_to_head_store_facade_closure.mjs"

@@ -33,18 +33,17 @@ Illustrative caller-side contract, **not** a new persisted Relay JSON schema:
 ```json
 {
   "projectPath": "/home/user/Workspace/vlog",
-  "sharedRoot": "/path/to/installed/harness",
-  "workspaceBoundary": "/home/user/Workspace",
+    "workspaceBoundary": "/home/user/Workspace",
   "agent": "vlog-visioner",
   "runtime": "codex"
 }
 ```
 
 `resolveExecutionContext(projectPath, role, options)` currently takes generic
-`sharedRoot`, `globalRoot`, and `workspaceRoot` options. Its `workspaceRoot` is
+`workspaceRoot`, `globalRoot`, and `workspaceRoot` options. Its `workspaceRoot` is
 **Relay's bounded instruction/discovery context**, not the removed Neo
 `workspaceRoot` configuration field. Never reconstruct `<workspaceRoot>/neo` to
-find shared capabilities. In CLI paths, `AGENTS_RELAY_SHARED_ROOT` can select
+find shared capabilities. In CLI paths, `AGENTS_RELAY_WORKSPACE_ROOT` can select
 an installed shared root; the invoking Harness is responsible for passing it.
 
 ## Hierarchy and Shortcut provenance

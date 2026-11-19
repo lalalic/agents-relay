@@ -1337,14 +1337,12 @@
       "typeOrShapeReviews": [
         "LocalManagedStore"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
-        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-19: 18 original Node/Rust direct differential cases (rust/tests/head_to_head_local_managed_store_public.mjs) covering the single public export openLocalManagedStore: admission shapes (repository/PR/jobId), unified scope resolution, and a real SQLite authority round-trip (createJobIfAbsent/saveTask/load) in noGitHub mode."
       ],
-      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure."
+      "openGates": [],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure.",
+      "status": "PASS"
     },
     {
       "source": "src/local-merge-delivery.ts",

@@ -734,3 +734,8 @@
   - 52 纯函数用例覆盖全部 12 个公开导出：marker 的 JSON 序列化与 `>` 转义、parseFeedbackMarker 往返/错误 schema/版本/垃圾串、redactSensitiveText 的 Bearer/sk_/pk_/api-key/token/secret 形状、createFeedbackRecord 的完整校验面（文本边界、4 种图片类型、sizeBytes 安全整数/零/负/小数、reference ?#/凭据、11 附件上限、public 可见性 sanitize 栅栏、provenance product/submittedAt/contact/长度守卫、options id/receivedAt/sanitize）、workProvenance/fingerprint/renderFeedbackMarkdown。
   - 25 真实文件系统用例：FileFeedbackStore submit 正常路径、文件名消毒、文本/媒体/大小/附件数限制、自定义 limits、IMAGE/PNG 大小写不敏感、provenance 失败传播、幂等键重放、storeRead 校验、readFeedbackAttachment 完整性/越界检查。
 - **回归**：lib 87/87、events 50 全绿。
+
+## 2026-11-19 local-managed-store 认证 PASS
+
+- **差分认证**：18 个原创 Node/Rust 用例（`rust/tests/head_to_head_local_managed_store_public.mjs`）覆盖唯一公开导出 `openLocalManagedStore` 的完整行为：repository 形状（`..`/`.`/空格/斜杠/空串/unicode/120 长度等 9 种）、PR/jobId 形状（pr 0 带/不带 jobId、负数、小数）、统一 scope 解析（`relayUnifiedStorePath` 的 dirname 语义两侧一致），以及 noGitHub 模式下真实 SQLite authority 的可用性（createJobIfAbsent + saveTask + load 回读可见）。
+- 差分中对 rusqlite 与 node:sqlite 的 io 错误消息差异（路径后缀）做了归一化——这是传输层差异而非行为差异。

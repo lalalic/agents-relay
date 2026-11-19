@@ -14,24 +14,24 @@ A listed direct differential import only means a head-to-head test imports the c
 
 | Metric | Count |
 |---|---:|
-| sourceCount | 44 |
+| sourceCount | 43 |
 | pendingSourceModules | 0 |
 | pendingRuntimeExportSymbols | 0 |
-| runtimeExportSymbols | 383 |
-| directNameMatches | 370 |
+| runtimeExportSymbols | 382 |
+| directNameMatches | 369 |
 | unmappedRuntimeSymbols | 0 |
 | runtimeConstructorReviews | 13 |
-| typeOrShapeReviewSymbols | 183 |
+| typeOrShapeReviewSymbols | 182 |
 | filesWithUnmappedRuntime | 0 |
-| filesWithoutDirectDiffImport | 17 |
-| filesWithoutOtherRustReferences | 10 |
+| filesWithoutDirectDiffImport | 16 |
+| filesWithoutOtherRustReferences | 9 |
 
-Source tree: `c846739e5f60`; Rust source tree: `f2325b9cb5a9`. Rust module rows in scope: 44. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `c846739e5f60`; Rust source tree: `bc0bf45caaee`. Rust module rows in scope: 43. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
 
-## Per-file candidate surface (all 44 PORTING files)
+## Per-file candidate surface (all 43 PORTING files)
 
 | Node source | Runtime exports | Named Rust candidates | Unmapped runtime names | Direct diff imports | Other Rust refs |
 |---|---:|---:|---:|---:|---:|
@@ -56,7 +56,6 @@ Source tree: `c846739e5f60`; Rust source tree: `f2325b9cb5a9`. Rust module rows 
 | `src/job-worktree-cleanup.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/legacy-orchestrator-repair.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/local-job-registry.ts` | 2 | 2 | 0 | 1 | 2 |
-| `src/local-managed-store.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/model-redecision.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/outcome-review.ts` | 5 | 5 | 0 | 2 | 2 |
 | `src/planner-child-recovery.ts` | 1 | 1 | 0 | 0 | 0 |
@@ -64,7 +63,7 @@ Source tree: `c846739e5f60`; Rust source tree: `f2325b9cb5a9`. Rust module rows 
 | `src/planner.ts` | 22 | 20 | 0 | 3 | 12 |
 | `src/projected-store.ts` | 34 | 34 | 0 | 2 | 1 |
 | `src/reconciler-runtime.ts` | 10 | 10 | 0 | 2 | 5 |
-| `src/relay-store.ts` | 46 | 45 | 0 | 9 | 27 |
+| `src/relay-store.ts` | 46 | 45 | 0 | 10 | 27 |
 | `src/relayd-dashboard-actions.ts` | 1 | 1 | 0 | 1 | 1 |
 | `src/relayd.ts` | 1 | 1 | 0 | 0 | 5 |
 | `src/router-evals.ts` | 2 | 2 | 0 | 0 | 0 |
