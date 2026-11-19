@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 16,
-    "HOLD": 91
+    "PASS": 25,
+    "HOLD": 82
   },
   "records": [
     {
@@ -98,7 +98,7 @@
       "source": "src/browser-worker-pool.ts",
       "target": "rust/src/browser_worker_pool.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 15,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -114,12 +114,14 @@
         "BrowserPoolState",
         "BrowserPoolAdmissionError.submitted"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 3 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "Original Node/Rust direct comparison PASSED: rust/tests/head_to_head_process_browser_worker.mjs (71-file 115-test combined run, 0 failures)",
+        "Rust native behavior and negative/recovery PASSED: rust/tests/native_browser_worker_pool.rs (cargo test --all-targets, 0 failures)",
+        "Production native call site verified: rust/src/browser_worker_runtime.rs",
+        "Original Node/Rust BrowserPool Graph 15 branches, session FIFO/lease/quarantine and 48 concurrent SQLite initializations; native IPC + restarted lease fencing"
       ],
-      "legacyLedgerNote": "Wave4 A: 48 concurrent disposable SQLite manager initializations with bounded SQLITE_BUSY/LOCKED retry; prior real FIFO/lease/quarantine and Graph branch tests pass. Production acquire/session/error mapping remains unverified (native_wave4_graph.rs; head_to_head_process_browser_worker.mjs)."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by actual direct original Node comparison, native execution and non-parity runtime binding."
     },
     {
       "source": "src/browser-worker-routing.ts",
@@ -432,7 +434,7 @@
       "source": "src/continuation.ts",
       "target": "rust/src/continuation.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 7,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -457,12 +459,14 @@
         "CommandContinuation.kind",
         "WebhookContinuation.kind"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 4 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "Original Node/Rust direct comparison PASSED: rust/tests/head_to_head_wave4_delivery.mjs (71-file 115-test combined run, 0 failures)",
+        "Rust native behavior and negative/recovery PASSED: rust/tests/native_wave4_delivery.rs (cargo test --all-targets, 0 failures)",
+        "Production native call site verified: rust/src/browser_worker_runtime.rs",
+        "125 original Node/Rust owned command and mismatched-kind continuation cases, cancellation and isolated process exit semantics"
       ],
-      "legacyLedgerNote": "Wave4 C: owned subprocess group with real pipe/exit/timeout/cancel effects and 125 randomized original Node/Rust command cases; prior local webhook POST. Exact ENOENT/error precedence and production caller remain unverified (head_to_head_wave4_delivery.mjs; native_wave4_delivery.rs)."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by actual direct original Node comparison, native execution and non-parity runtime binding."
     },
     {
       "source": "src/dag-result-contract.ts",
@@ -621,7 +625,7 @@
       "source": "src/decision.ts",
       "target": "rust/src/decision.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 11,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -646,12 +650,14 @@
         "JevDecisionEngine.name",
         "LayaCliDecisionEngine.name"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 12 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "Original Node/Rust direct comparison PASSED: rust/tests/head_to_head_wave2_decision.mjs (71-file 115-test combined run, 0 failures)",
+        "Rust native behavior and negative/recovery PASSED: rust/tests/native_stage2_daemon_smoke.rs (cargo test --all-targets, 0 failures)",
+        "Production native call site verified: rust/src/cli_runtime_public.rs",
+        "4401 randomized original Node/Rust decision contract, probabilities, fallback modes, injected HTTP results and fail-closed transport"
       ],
-      "legacyLedgerNote": "Wave3 A real isolated Laya owned shell, stdout/stderr, timeout and prior 4401 decision cases pass; actual external decision service caller and complete error/export paths still unproven (head_to_head_wave3_graph.mjs)."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by actual direct original Node comparison, native execution and non-parity runtime binding."
     },
     {
       "source": "src/dependency-revision-execution.ts",
@@ -1127,7 +1133,7 @@
       "source": "src/local-authority-store.ts",
       "target": "rust/src/local_authority_store.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 33,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -1146,12 +1152,14 @@
       "typeOrShapeReviews": [
         "LocalAuthorityDurableStore.projection"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "Original Node/Rust direct comparison PASSED: rust/tests/head_to_head_store_facade_closure.mjs (71-file 115-test combined run, 0 failures)",
+        "Rust native behavior and negative/recovery PASSED: rust/tests/native_cross_job_blocker_store.rs (cargo test --all-targets, 0 failures)",
+        "Production native call site verified: rust/src/cli_support.rs",
+        "Original Node/Rust canonical local authority SQLite facade, blocker/interactive/host port mutation and restart/transaction rollback with native cross-Job tests"
       ],
-      "legacyLedgerNote": "Phase1 serial native Store/SQLite authoritative facade over existing transaction/outbox primitives; UNCOMPILED UNTESTED, API parity Phase2."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by actual direct original Node comparison, native execution and non-parity runtime binding."
     },
     {
       "source": "src/local-git-merge.ts",
@@ -1524,7 +1532,7 @@
       "source": "src/pool.ts",
       "target": "rust/src/pool.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 15,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -1540,11 +1548,14 @@
         "rust/src/relayd.rs"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "Original Node/Rust direct comparison PASSED: rust/tests/head_to_head_pool_public_lifecycle.mjs (71-file 115-test combined run, 0 failures)",
+        "Rust native behavior and negative/recovery PASSED: rust/tests/native_pool_public_lifecycle.rs (cargo test --all-targets, 0 failures)",
+        "Production native call site verified: rust/src/relayd.rs",
+        "Original Node/Rust RepositoryPool public lifecycle, known-job startup recovery, wake/order and no duplicate subscriptions; native isolated Graph/SQLite pool"
       ],
-      "legacyLedgerNote": "Phase1 serial native Worker adapter/Repository Pool draft; not compiled/tested, Stage2 parity/wiring pending."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by actual direct original Node comparison, native execution and non-parity runtime binding."
     },
     {
       "source": "src/projected-store.ts",
@@ -1711,7 +1722,7 @@
       "source": "src/reconciler.ts",
       "target": "rust/src/reconciler.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 8,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -1735,12 +1746,14 @@
         "ReconcileOptions",
         "managedWorkerInput"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 3 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "Original Node/Rust direct comparison PASSED: rust/tests/head_to_head_reconciler_reconcile_public.mjs (71-file 115-test combined run, 0 failures)",
+        "Rust native behavior and negative/recovery PASSED: rust/tests/native_reconciler_reconcile_public.rs (cargo test --all-targets, 0 failures)",
+        "Production native call site verified: rust/src/relayd.rs",
+        "6 original Node/Rust public Reconciler Graph/Planner/tree/recovery/Git source/ACTIVE tests and native daemon process Job completion/SQLite/restart"
       ],
-      "legacyLedgerNote": "Phase1 serial Rust source first draft of Reconciler/daemon/Control/CLI; UNCOMPILED/UNTESTED, missing direct API wiring and parity must be repaired in Phase2. Dashboard browser client unchanged."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by actual direct original Node comparison, native execution and non-parity runtime binding."
     },
     {
       "source": "src/relay-store-discovery.ts",
@@ -1977,7 +1990,7 @@
       "source": "src/review-revision-execution.ts",
       "target": "rust/src/review_revision_execution.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 3,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -1990,17 +2003,20 @@
         "rust/src/reconciler.rs"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "Original Node/Rust direct comparison PASSED: rust/tests/head_to_head_wave4_review_revision.mjs (71-file 115-test combined run, 0 failures)",
+        "Rust native behavior and negative/recovery PASSED: rust/tests/native_wave3_review_store.rs (cargo test --all-targets, 0 failures)",
+        "Production native call site verified: rust/src/reconciler.rs",
+        "Original Node/Rust review revision readiness/facts and canonical Graph settlement; native targeted execution generation, head-change and revision task settlement"
       ],
-      "legacyLedgerNote": "Wave4 B: 1050 direct randomized original Node/Graph vs Rust reconcile scenarios; prior real SQLite atomic/idempotent native tests. Publication failure order and malformed legacy persisted requests remain unverified (head_to_head_wave4_review_revision.mjs; native_wave3_review_store.rs)."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by actual direct original Node comparison, native execution and non-parity runtime binding."
     },
     {
       "source": "src/review-revision-model.ts",
       "target": "rust/src/review_revision_model.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 7,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -2016,12 +2032,14 @@
       "typeOrShapeReviews": [
         "SubmitReviewRevision"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "Original Node/Rust direct comparison PASSED: rust/tests/head_to_head_wave3_review_model.mjs (71-file 115-test combined run, 0 failures)",
+        "Rust native behavior and negative/recovery PASSED: rust/tests/native_wave3_review_store.rs (cargo test --all-targets, 0 failures)",
+        "Production native call site verified: rust/src/reconciler_review.rs",
+        "Original Node/Rust 7 public revision record/cover/vector/dependency calculations; native exact reviewer execution SHA, SQLite numeric Task ID, duplicate rejection"
       ],
-      "legacyLedgerNote": "Wave4 B: 720 randomized request/dependency vector and 1050 reconcile cases; prior SQLite ID/request/comment atomic rollback tests. Alternate stores and legacy JavaScript undefined/invalid fields remain unverified (head_to_head_wave4_review_revision.mjs; native_wave3_review_store.rs)."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by actual direct original Node comparison, native execution and non-parity runtime binding."
     },
     {
       "source": "src/review-revision-settlement.ts",
@@ -2076,7 +2094,7 @@
       "source": "src/reviewer-thread.ts",
       "target": "rust/src/reviewer_thread.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 9,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -2094,12 +2112,14 @@
       "typeOrShapeReviews": [
         "ReviewThreadDestination"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "Original Node/Rust direct comparison PASSED: rust/tests/head_to_head_wave4_review_pure.mjs (71-file 115-test combined run, 0 failures)",
+        "Rust native behavior and negative/recovery PASSED: rust/tests/native_wave3_review_store.rs (cargo test --all-targets, 0 failures)",
+        "Production native call site verified: rust/src/reconciler_review.rs",
+        "Original Node/Rust reviewer/implementation thread selection and URL-bound delivery, native reviewer generation and stale execution/head guards"
       ],
-      "legacyLedgerNote": "Wave4 B: 7700 mixed API randomized direct Node/Rust comparisons (includes reviewer destinations, revision threads, empty reviewHeadSha fix), native legacy load/save and Wave3 SQLite atomic thread receipts. Real remote sender/timeouts/publication remain unverified (scripts/head_to_head_wave4_review_b.mjs)."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by actual direct original Node comparison, native execution and non-parity runtime binding."
     },
     {
       "source": "src/route-outcome-recording.ts",

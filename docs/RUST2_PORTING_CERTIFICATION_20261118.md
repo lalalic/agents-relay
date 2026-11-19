@@ -2,7 +2,7 @@
 
 > 本表是逐文件的真实审计清单，不是所有模块均通过。**PASS** 需公开 API 原始 Node/Rust 直接差分、Rust 原生负面测试和实际生产调用绑定；只通过静态 API 名称匹配，不能晋级。**HOLD** 指存在尚未关闭的证据缺口，不等同于未实现。
 
-- 原始检查范围：107 个源模块。已认证 **16 PASS**，保留 **91 HOLD/PORTING**。
+- 原始检查范围：107 个源模块。已认证 **25 PASS**，保留 **82 HOLD/PORTING**。
 - 本轮仅跑 Rust 原生测试与必要的 Node/Rust 差分；未重跑独立 Node 全量测试。
 - 这份报告对应上次全量 Node/Rust 230/230 PASS 后的逐项认证。全量 230/230 不等于 107 个模块逐一通过。
 - `directDiffTests` 与 `otherRustModuleReferences` 基于静态文本检索；测试文件出现导入或 Rust 源文件出现引用，仅说明有线索，不表示覆盖了每个公开 API 或进入生产。
@@ -53,6 +53,22 @@
 | `src/reconciler-review.ts` | `head_to_head_reconciler_review_base.mjs` | `native_reconciler_review_base.rs` | `rust/src/reconciler.rs` |
 | `src/relayd-control.ts` | `head_to_head_workspace_control_factory.mjs` | `native_sqlite_write_host.rs` | `rust/src/relayd_sqlite_write.rs` |
 
+## 2026-11-18 认证第二批（严格逐模块）
+
+本批只认证经过 Node 原始导出直接对照、Rust 原生负面/SQLite/Graph 测试和实际运行调用复核的模块。组合门禁是 71 个差分文件，115 PASS / 0 FAIL；Rust `cargo test --all-targets` PASS。未执行独立 Node 全量测试；真实多节点/模型 L4 未验收。
+
+| 源模块 | 直接 Node/Rust 差分 | Rust 原生验证 | 生产调用 |
+|---|---|---|---|
+| `src/browser-worker-pool.ts` | `head_to_head_process_browser_worker.mjs` | `native_browser_worker_pool.rs` | `rust/src/browser_worker_runtime.rs` |
+| `src/continuation.ts` | `head_to_head_wave4_delivery.mjs` | `native_wave4_delivery.rs` | `rust/src/browser_worker_runtime.rs` |
+| `src/decision.ts` | `head_to_head_wave2_decision.mjs` | `native_stage2_daemon_smoke.rs` | `rust/src/cli_runtime_public.rs` |
+| `src/pool.ts` | `head_to_head_pool_public_lifecycle.mjs` | `native_pool_public_lifecycle.rs` | `rust/src/relayd.rs` |
+| `src/reconciler.ts` | `head_to_head_reconciler_reconcile_public.mjs` | `native_reconciler_reconcile_public.rs` | `rust/src/relayd.rs` |
+| `src/review-revision-execution.ts` | `head_to_head_wave4_review_revision.mjs` | `native_wave3_review_store.rs` | `rust/src/reconciler.rs` |
+| `src/review-revision-model.ts` | `head_to_head_wave3_review_model.mjs` | `native_wave3_review_store.rs` | `rust/src/reconciler_review.rs` |
+| `src/reviewer-thread.ts` | `head_to_head_wave4_review_pure.mjs` | `native_wave3_review_store.rs` | `rust/src/reconciler_review.rs` |
+| `src/local-authority-store.ts` | `head_to_head_store_facade_closure.mjs` | `native_cross_job_blocker_store.rs` | `rust/src/cli_support.rs` |
+
 ## 已有局部验证、但不能升级的关键模块
 
 - **`src/cli-coordinator.ts`**：11 个真实 Git/SQLite Head-to-Head 场景及 4 个 Rust 原生测试已通过，但 run_coordinator_job_command 只发现 parity harness 引用，正式 CLI 生产分发尚未直接绑定本端口
@@ -75,7 +91,7 @@
 | 1 | `src/adapters.ts` | **HOLD** | 12 | 2 | 4 | 14 | 结构审核、模块特定场景／生产门禁 |
 | 2 | `src/blocker-recovery.ts` | **HOLD** | 1 | 0 | 0 | 1 | 直接差分、运行调用、结构审核、模块特定场景／生产门禁 |
 | 3 | `src/blockers.ts` | **HOLD** | 2 | 0 | 3 | 2 | 直接差分、结构审核、模块特定场景／生产门禁 |
-| 4 | `src/browser-worker-pool.ts` | **HOLD** | 15 | 1 | 3 | 3 | 结构审核、模块特定场景／生产门禁 |
+| 4 | `src/browser-worker-pool.ts` | **PASS** | 15 | 1 | 3 | 3 | 直接差分、原生和生产调用证据已关闭 |
 | 5 | `src/browser-worker-routing.ts` | **HOLD** | 1 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 6 | `src/browser-worker-runtime.ts` | **HOLD** | 2 | 0 | 1 | 3 | 直接差分、结构审核、模块特定场景／生产门禁 |
 | 7 | `src/chatgpt-platform-fallback.ts` | **HOLD** | 5 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
@@ -90,14 +106,14 @@
 | 16 | `src/cli-unblock.ts` | **HOLD** | 2 | 1 | 1 | 0 | 模块特定场景／生产门禁 |
 | 17 | `src/cli-worker-task.ts` | **HOLD** | 3 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 18 | `src/cli.ts` | **HOLD** | 6 | 3 | 3 | 9 | 结构审核、模块特定场景／生产门禁 |
-| 19 | `src/continuation.ts` | **HOLD** | 7 | 1 | 11 | 4 | 结构审核、模块特定场景／生产门禁 |
+| 19 | `src/continuation.ts` | **PASS** | 7 | 1 | 11 | 4 | 直接差分、原生和生产调用证据已关闭 |
 | 20 | `src/dag-result-contract.ts` | **PASS** | 1 | 1 | 3 | 0 | 直接差分、原生和生产调用证据已关闭 |
 | 21 | `src/dag-task-runtime.ts` | **HOLD** | 5 | 0 | 2 | 2 | 直接差分、结构审核、模块特定场景／生产门禁 |
 | 22 | `src/dashboard-actions.ts` | **HOLD** | 3 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 23 | `src/dashboard-data.ts` | **HOLD** | 8 | 1 | 3 | 4 | 结构审核、模块特定场景／生产门禁 |
 | 24 | `src/dashboard.ts` | **HOLD** | 1 | 0 | 3 | 6 | 直接差分、结构审核、模块特定场景／生产门禁 |
 | 25 | `src/decision-audit.ts` | **HOLD** | 13 | 1 | 1 | 5 | 结构审核、模块特定场景／生产门禁 |
-| 26 | `src/decision.ts` | **HOLD** | 11 | 2 | 2 | 12 | 结构审核、模块特定场景／生产门禁 |
+| 26 | `src/decision.ts` | **PASS** | 11 | 2 | 2 | 12 | 直接差分、原生和生产调用证据已关闭 |
 | 27 | `src/dependency-revision-execution.ts` | **HOLD** | 3 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 28 | `src/escalation-notifier.ts` | **HOLD** | 2 | 0 | 0 | 3 | 直接差分、运行调用、结构审核、模块特定场景／生产门禁 |
 | 29 | `src/events.ts` | **HOLD** | 13 | 3 | 36 | 1 | 结构审核、模块特定场景／生产门禁 |
@@ -117,7 +133,7 @@
 | 43 | `src/job-pause.ts` | **HOLD** | 2 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 44 | `src/job-worktree-cleanup.ts` | **HOLD** | 1 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 45 | `src/legacy-orchestrator-repair.ts` | **HOLD** | 1 | 0 | 0 | 1 | 直接差分、运行调用、结构审核、模块特定场景／生产门禁 |
-| 46 | `src/local-authority-store.ts` | **HOLD** | 33 | 4 | 5 | 1 | 结构审核、模块特定场景／生产门禁 |
+| 46 | `src/local-authority-store.ts` | **PASS** | 33 | 4 | 5 | 1 | 直接差分、原生和生产调用证据已关闭 |
 | 47 | `src/local-git-merge.ts` | **PASS** | 6 | 1 | 5 | 1 | 直接差分、原生和生产调用证据已关闭 |
 | 48 | `src/local-job-registry.ts` | **HOLD** | 2 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 49 | `src/local-managed-store.ts` | **HOLD** | 1 | 0 | 0 | 1 | 直接差分、运行调用、结构审核、模块特定场景／生产门禁 |
@@ -132,14 +148,14 @@
 | 58 | `src/planner-child-recovery.ts` | **HOLD** | 1 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 59 | `src/planner-runtime.ts` | **HOLD** | 7 | 4 | 5 | 2 | 结构审核、模块特定场景／生产门禁 |
 | 60 | `src/planner.ts` | **HOLD** | 22 | 2 | 7 | 11 | 结构审核、模块特定场景／生产门禁 |
-| 61 | `src/pool.ts` | **HOLD** | 15 | 5 | 3 | 0 | 模块特定场景／生产门禁 |
+| 61 | `src/pool.ts` | **PASS** | 15 | 5 | 3 | 0 | 直接差分、原生和生产调用证据已关闭 |
 | 62 | `src/projected-store.ts` | **HOLD** | 34 | 2 | 1 | 3 | 结构审核、模块特定场景／生产门禁 |
 | 63 | `src/projection-outbox.ts` | **HOLD** | 25 | 2 | 1 | 9 | 结构审核、模块特定场景／生产门禁 |
 | 64 | `src/reconcile-coordinator.ts` | **PASS** | 7 | 2 | 5 | 1 | 直接差分、原生和生产调用证据已关闭 |
 | 65 | `src/reconciler-context.ts` | **HOLD** | 3 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 66 | `src/reconciler-review.ts` | **PASS** | 1 | 1 | 3 | 0 | 直接差分、原生和生产调用证据已关闭 |
 | 67 | `src/reconciler-runtime.ts` | **HOLD** | 10 | 2 | 3 | 4 | 结构审核、模块特定场景／生产门禁 |
-| 68 | `src/reconciler.ts` | **HOLD** | 8 | 6 | 6 | 3 | 结构审核、模块特定场景／生产门禁 |
+| 68 | `src/reconciler.ts` | **PASS** | 8 | 6 | 6 | 3 | 直接差分、原生和生产调用证据已关闭 |
 | 69 | `src/relay-store-discovery.ts` | **HOLD** | 3 | 0 | 4 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 70 | `src/relay-store.ts` | **HOLD** | 46 | 8 | 20 | 17 | 结构审核、模块特定场景／生产门禁 |
 | 71 | `src/relayd-control.ts` | **PASS** | 1 | 1 | 1 | 0 | 直接差分、原生和生产调用证据已关闭 |
@@ -148,11 +164,11 @@
 | 74 | `src/relayd-utilities.ts` | **HOLD** | 10 | 1 | 2 | 2 | 结构审核、模块特定场景／生产门禁 |
 | 75 | `src/relayd.ts` | **HOLD** | 1 | 0 | 2 | 7 | 直接差分、结构审核、模块特定场景／生产门禁 |
 | 76 | `src/review-replan.ts` | **PASS** | 3 | 3 | 4 | 0 | 认证已完成 |
-| 77 | `src/review-revision-execution.ts` | **HOLD** | 3 | 3 | 2 | 0 | 模块特定场景／生产门禁 |
-| 78 | `src/review-revision-model.ts` | **HOLD** | 7 | 3 | 3 | 1 | 结构审核、模块特定场景／生产门禁 |
+| 77 | `src/review-revision-execution.ts` | **PASS** | 3 | 3 | 2 | 0 | 直接差分、原生和生产调用证据已关闭 |
+| 78 | `src/review-revision-model.ts` | **PASS** | 7 | 3 | 3 | 1 | 直接差分、原生和生产调用证据已关闭 |
 | 79 | `src/review-revision-settlement.ts` | **PASS** | 1 | 1 | 3 | 0 | 直接差分、原生和生产调用证据已关闭 |
 | 80 | `src/review-revision-stale.ts` | **PASS** | 1 | 1 | 2 | 0 | 直接差分、原生和生产调用证据已关闭 |
-| 81 | `src/reviewer-thread.ts` | **HOLD** | 9 | 2 | 6 | 1 | 结构审核、模块特定场景／生产门禁 |
+| 81 | `src/reviewer-thread.ts` | **PASS** | 9 | 2 | 6 | 1 | 直接差分、原生和生产调用证据已关闭 |
 | 82 | `src/route-outcome-recording.ts` | **HOLD** | 5 | 1 | 2 | 1 | 结构审核、模块特定场景／生产门禁 |
 | 83 | `src/router-evals.ts` | **HOLD** | 2 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 84 | `src/script-task-adapter.ts` | **HOLD** | 3 | 0 | 0 | 3 | 直接差分、运行调用、结构审核、模块特定场景／生产门禁 |
