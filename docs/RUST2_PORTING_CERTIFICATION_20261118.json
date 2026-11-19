@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 32,
-    "HOLD": 75
+    "PASS": 33,
+    "HOLD": 74
   },
   "records": [
     {
@@ -1351,7 +1351,7 @@
       "source": "src/model-routing.ts",
       "target": "rust/src/model_routing.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 4,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -1368,12 +1368,14 @@
         "ModelRoutingDecision",
         "ModelRoutingOptions"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 3 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "Original Node public API direct differential: rust/tests/head_to_head_model_routing_public.mjs",
+        "Rust native negative/recovery/integration: rust/tests/native_model_redecision.rs",
+        "Authoritative non-parity production caller: rust/src/model_redecision.rs",
+        "4 public API exports: 36 exact Node/Rust choice/default/profile/catalog discovery and 30 routeModel hard-gate fixtures; Rust native reroute, exclusions, failure/restart; routes called by production model_redecision and execution_routing"
       ],
-      "legacyLedgerNote": "Serial Phase1 native Worker+Model routing policy, hard gates and source profile discovery port; uncompiled/unverified, decision audit/service binding Phase2."
+      "openGates": [],
+      "legacyLedgerNote": "Certified with explicit direct original API differential, native tests and production call entry."
     },
     {
       "source": "src/outcome-review.ts",

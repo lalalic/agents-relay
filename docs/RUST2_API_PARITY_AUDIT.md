@@ -14,24 +14,24 @@ A listed direct differential import only means a head-to-head test imports the c
 
 | Metric | Count |
 |---|---:|
-| sourceCount | 75 |
+| sourceCount | 74 |
 | pendingSourceModules | 0 |
 | pendingRuntimeExportSymbols | 0 |
-| runtimeExportSymbols | 513 |
-| directNameMatches | 500 |
+| runtimeExportSymbols | 509 |
+| directNameMatches | 496 |
 | unmappedRuntimeSymbols | 0 |
 | runtimeConstructorReviews | 13 |
-| typeOrShapeReviewSymbols | 231 |
+| typeOrShapeReviewSymbols | 228 |
 | filesWithUnmappedRuntime | 0 |
 | filesWithoutDirectDiffImport | 39 |
 | filesWithoutOtherRustReferences | 23 |
 
-Source tree: `c846739e5f60`; Rust source tree: `448d41680036`. Rust module rows in scope: 75. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `c846739e5f60`; Rust source tree: `d90ba556a5ba`. Rust module rows in scope: 74. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
 
-## Per-file candidate surface (all 75 PORTING files)
+## Per-file candidate surface (all 74 PORTING files)
 
 | Node source | Runtime exports | Named Rust candidates | Unmapped runtime names | Direct diff imports | Other Rust refs |
 |---|---:|---:|---:|---:|---:|
@@ -78,7 +78,6 @@ Source tree: `c846739e5f60`; Rust source tree: `448d41680036`. Rust module rows 
 | `src/managed-worker-input.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/manual-plan.ts` | 1 | 1 | 0 | 0 | 2 |
 | `src/model-redecision.ts` | 2 | 2 | 0 | 1 | 1 |
-| `src/model-routing.ts` | 4 | 4 | 0 | 1 | 4 |
 | `src/outcome-review.ts` | 5 | 5 | 0 | 2 | 2 |
 | `src/planner-child-recovery.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/planner-runtime.ts` | 7 | 7 | 0 | 4 | 5 |

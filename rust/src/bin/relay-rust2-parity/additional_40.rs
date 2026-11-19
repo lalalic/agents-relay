@@ -5,6 +5,20 @@ use std::path::Path;
 
 pub fn invoke(req:&Value)->Option<Result<String,String>>{
     match req["op"].as_str()?{
+        "certModelPublic"=>Some((||{
+            use agents_relay_rust2::model_routing as m;
+            let result=match req["action"].as_str().unwrap_or(""){
+                "choice"=>json!(m::model_choice_id(&req["candidate"])),
+                "configured"=>json!(m::configured_codex_default(Path::new(
+                    req["home"].as_str().ok_or("home missing")?))),
+                "discover"=>json!(m::discover_model_candidates(
+                    &req["worker"],req["registered"].as_array().map(Vec::as_slice).unwrap_or(&[]),
+                    None,Path::new(req["home"].as_str().ok_or("home missing")?),
+                    req["nowMs"].as_i64().unwrap_or(1795000000000))),
+                _=>return Err("Invalid model API operation".into()),
+            };
+            Ok(result.to_string())
+        })()),
         "certUnblockFacts"=>Some((||{
             use agents_relay_rust2::unblock as u;
             let job=&req["job"];
