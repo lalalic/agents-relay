@@ -13,7 +13,7 @@ These fields are **advisory**, never requirements:
 ```yaml
 ---
 name: vlog-editor
-extends: shared/vlog-editor
+extends: editor
 skills: [markcut, shotcraft]
 model: openai/gpt-6
 reasoning: high

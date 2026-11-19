@@ -54,30 +54,25 @@ pub fn agent_source_layers(project_path: &str, options: &Value) -> Value {
     if let Some(root) = truthy_str(options.get("globalRoot")) {
         layers.push(json!({"root":string_path(&absolute(root)),"source":"global"}));
     }
-    if let Some(root) = truthy_str(options.get("sharedRoot")) {
-        layers.push(json!({"root":string_path(&absolute(root)),"source":"shared"}));
-    }
     if let Some(root) = truthy_str(options.get("workspaceRoot")) {
         let workspace = absolute(root);
+        if workspace != project {
+            layers.push(json!({"root":string_path(&workspace),"source":"parent"}));
+        }
         if let Ok(relative) = project.strip_prefix(&workspace) {
             let mut cursor = workspace;
-            layers.push(json!({"root":string_path(&cursor),"source":"parent"}));
             let parts = relative.components().collect::<Vec<_>>();
-            for part in parts
-                .into_iter()
-                .take(relative.components().count().saturating_sub(1))
-            {
+            for part in parts.iter().take(parts.len().saturating_sub(1)) {
                 cursor.push(part.as_os_str());
-                layers.push(json!({"root":string_path(&cursor),"source":"parent"}));
+                if cursor != project {
+                    layers.push(json!({"root":string_path(&cursor),"source":"parent"}));
+                }
             }
         }
     }
     layers.push(json!({"root":string_path(&project),"source":"project"}));
     let mut seen = std::collections::HashSet::<String>::new();
-    json!(layers
-        .into_iter()
-        .filter(|layer| seen.insert(read_string(layer, "root")))
-        .collect::<Vec<_>>())
+    json!(layers.into_iter().filter(|layer| seen.insert(read_string(layer,"root"))).collect::<Vec<_>>())
 }
 
 #[derive(Clone, Debug)]
@@ -425,161 +420,119 @@ fn assigned_metadata(into: &mut Map<String, Value>, from: &Map<String, Value>) {
     }
 }
 
+/** Resolve Agent Markdown by name (workspace / project layers) or an absolute
+ * Markdown base path. The workspace is explicitly supplied by the caller; no
+ * additional capability root is defined or inferred. */
 pub fn resolve_agent_markdown(
     name: &str,
     builtins_root: &str,
     context_root: &str,
-    shared_root: Option<&str>,
     layers: Option<&Value>,
 ) -> Result<Value, String> {
+    let defaults = agent_source_layers(context_root, &json!({}));
+    let selected = layers.unwrap_or(&defaults).as_array().cloned().unwrap_or_default();
+    resolve_name(name,builtins_root,&selected,&mut Vec::new())
+}
+
+fn resolve_name(
+    name: &str,
+    builtins_root: &str,
+    layers: &[Value],
+    stack: &mut Vec<String>,
+) -> Result<Value, String> {
     let allowed = Regex::new(r"^[a-zA-Z0-9_-]+$").expect("fixed Agent identifier grammar");
-    if !allowed.is_match(name) {
-        return Err(format!("Invalid agent name {name}"));
+    if !allowed.is_match(name) { return Err(format!("Invalid agent name {name}")); }
+    if stack.iter().any(|old| old == name) {
+        return Err(format!("Agent extends cycle: {} -> {name}",stack.join(" -> ")));
     }
-    let base = load_layer(Path::new(builtins_root), name)?;
-    let mut effective = base.clone();
-    let mut shared: Option<Document> = None;
-    let mut shared_sources = Vec::<String>::new();
-    let mut sources = base
-        .as_ref()
-        .map(|value| vec![value.path.clone()])
-        .unwrap_or_default();
-    let mut metadata = base
-        .as_ref()
-        .map(|value| value.metadata.clone())
-        .unwrap_or_default();
-    let defaults = agent_source_layers(context_root, &json!({"sharedRoot":shared_root}));
-    let layers = layers
-        .unwrap_or(&defaults)
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    let shared_re =
-        Regex::new(r"^shared/([A-Za-z0-9_-]+)$").expect("fixed shared Agent parent syntax");
+    stack.push(name.into());
+    let mut effective = load_layer(Path::new(builtins_root), name)?;
+    let mut sources = effective.as_ref().map(|a|vec![a.path.clone()]).unwrap_or_default();
+    let mut metadata = effective.as_ref().map(|a|a.metadata.clone()).unwrap_or_default();
     for layer in layers {
-        let root = read_string(&layer, "root");
-        let layer_name = read_string(&layer, "source");
-        if root.is_empty() {
-            continue;
-        }
-        let Some(mut overlay) = load_layer(&Path::new(&root).join("agents"), name)? else {
-            continue;
-        };
-        let extends = overlay.extends_agent.as_deref();
-        if (!overlay.replace.is_empty() || !overlay.extend.is_empty()) && extends.is_none() {
+        let root = read_string(layer,"root");
+        if root.is_empty() { continue; }
+        let Some(mut overlay) = load_layer(&Path::new(&root).join("agents"), name)? else {continue;};
+        if (!overlay.replace.is_empty() || !overlay.extend.is_empty()) && overlay.extends_agent.is_none() {
             return Err("Section operations require extends".into());
         }
-        let shared_base = extends
-            .and_then(|value| shared_re.captures(value))
-            .map(|capture| capture[1].to_string());
-        if let Some(parent) = extends {
-            if !Path::new(parent).is_absolute()
-                && parent != format!("relay/{name}")
-                && shared_base.is_none()
-            {
-                return Err(format!("Only extends: relay/{name}, shared/<agent>, or an absolute Markdown path is supported"));
-            }
-        }
-        if layer_name == "shared" && shared_base.as_deref() == Some(name) {
-            return Err(format!("Missing shared base for agent {name}"));
-        }
-        if extends == Some(format!("relay/{name}").as_str()) && base.is_none() {
-            return Err(format!("Missing Relay base for agent {name}"));
-        }
-        if shared_base.as_deref() == Some(name) && shared.is_none() {
-            return Err(format!("Missing shared base for agent {name}"));
-        }
-        if extends.is_none() {
-            metadata = Map::new();
+        let Some(parent_name) = overlay.extends_agent.clone() else {
+            metadata = overlay.metadata.clone();
             sources = vec![overlay.path.clone()];
-            effective = Some(overlay.clone());
-        } else {
-            let mut external: Option<Document> = None;
-            if let Some(shared_name) = shared_base.as_deref().filter(|other| *other != name) {
-                let Some(shared_root) = shared_root else {
-                    return Err(format!(
-                        "Missing shared base for agent {name}: {shared_name}"
-                    ));
-                };
-                external = load_layer(&Path::new(shared_root).join("agents"), shared_name)?;
-                if external.is_none() {
-                    return Err(format!(
-                        "Missing shared base for agent {name}: {shared_name}"
-                    ));
-                }
-                if external
-                    .as_ref()
-                    .is_some_and(|value| value.body.is_empty() || value.extends_agent.is_some())
-                {
-                    return Err(format!(
-                        "Cross-name shared base must be a standalone Agent: {shared_name}"
-                    ));
-                }
+            effective = Some(overlay);
+            continue;
+        };
+        let (parent_content,parent_metadata,parent_sources) = if Path::new(&parent_name).is_absolute() {
+            if !parent_name.ends_with(".md") {return Err("Absolute Agent base must be a Markdown file".into());}
+            let external = load(Path::new(&parent_name),Path::new(&parent_name).parent().unwrap_or(Path::new("/")),None)
+                .map_err(|error| match error {LoadError::Missing=>format!("ENOENT: {parent_name}"),LoadError::Other(e)=>e})?;
+            if external.name.as_deref().unwrap_or("").is_empty() || external.body.is_empty() {
+                return Err("Absolute Agent base requires name frontmatter and nonempty body".into());
             }
-            if let Some(parent) = extends.filter(|parent| Path::new(parent).is_absolute()) {
-                if !parent.ends_with(".md") {
-                    return Err("Absolute Agent base must be a Markdown file".into());
-                }
-                external = Some(
-                    load(
-                        Path::new(parent),
-                        Path::new(parent).parent().unwrap_or(Path::new("/")),
-                        None,
-                    )
-                    .map_err(|error| match error {
-                        LoadError::Missing => format!("ENOENT: {parent}"),
-                        LoadError::Other(error) => error,
-                    })?,
-                );
-                if external.as_ref().is_some_and(|value| {
-                    value.name.as_deref().unwrap_or("").is_empty() || value.body.is_empty()
-                }) {
-                    return Err(
-                        "Absolute Agent base requires name frontmatter and nonempty body".into(),
-                    );
-                }
-                if external
-                    .as_ref()
-                    .is_some_and(|value| value.extends_agent.is_some())
-                {
-                    return Err("Absolute Agent base must be a standalone definition".into());
-                }
-            }
-            let parent = external
-                .as_ref()
-                .or_else(|| {
-                    if extends == Some(format!("relay/{name}").as_str()) {
-                        base.as_ref()
-                    } else if shared_base.as_deref() == Some(name) {
-                        shared.as_ref()
-                    } else {
-                        effective.as_ref()
-                    }
-                })
-                .ok_or_else(|| "Missing Agent parent".to_string())?;
-            overlay.body = merge_sections(&parent.body, &overlay)?;
-            metadata = parent.metadata.clone();
-            sources = if let Some(external) = &external {
-                vec![external.path.clone()]
-            } else if extends == Some(format!("relay/{name}").as_str()) {
-                base.as_ref()
-                    .map(|value| vec![value.path.clone()])
-                    .unwrap_or_default()
-            } else if shared_base.as_deref() == Some(name) {
-                shared_sources.clone()
+            if external.extends_agent.is_some() {return Err("Absolute Agent base must be a standalone definition".into());}
+            (external.body,external.metadata,vec![external.path])
+        } else if allowed.is_match(&parent_name) {
+            if parent_name == name {
+                let base=effective.as_ref().ok_or_else(||format!("Missing base for agent {name}"))?;
+                (base.body.clone(),metadata.clone(),sources.clone())
             } else {
-                sources
-            };
-            sources.push(overlay.path.clone());
-            effective = Some(overlay.clone());
-        }
-        assigned_metadata(&mut metadata, &overlay.metadata);
-        if layer_name == "shared" {
-            shared = effective.clone();
-            shared_sources = sources.clone();
-        }
+                let resolved=resolve_name(&parent_name,builtins_root,layers,stack)
+                    .map_err(|error| if error==format!("Unknown agent {parent_name}"){
+                        format!("Missing base agent {parent_name} for {name}")
+                    }else{error})?;
+                (read_string(&resolved,"content"),resolved.get("metadata").and_then(Value::as_object).cloned().unwrap_or_default(),
+                 resolved.get("sources").and_then(Value::as_array).map(|a|a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default())
+            }
+        } else {
+            return Err(format!("Only extends: Agent name or absolute Markdown path is supported: {parent_name}"));
+        };
+        overlay.body=merge_sections(&parent_content,&overlay)?;
+        metadata=parent_metadata;
+        assigned_metadata(&mut metadata,&overlay.metadata);
+        sources=parent_sources;
+        sources.push(overlay.path.clone());
+        effective=Some(overlay);
     }
-    let effective = effective.ok_or_else(|| format!("Unknown agent {name}"))?;
-    let content = effective.body;
+    stack.pop();
+    let effective=effective.ok_or_else(||format!("Unknown agent {name}"))?;
+    let content=effective.body;
     Ok(json!({"content":content,"hash":sha(&content),"sources":sources,"metadata":metadata}))
+}
+
+#[cfg(test)]
+mod name_inheritance_tests {
+    use super::*;
+    use std::{time::{SystemTime,UNIX_EPOCH},fs};
+    fn fixture() -> PathBuf {
+        let n=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root=std::env::temp_dir().join(format!("relay-extends-name-{}-{n}",std::process::id()));
+        fs::create_dir_all(&root).unwrap();root
+    }
+    fn write(path:&Path,body:&str){fs::create_dir_all(path.parent().unwrap()).unwrap();fs::write(path,body).unwrap();}
+    #[test]
+    fn detached_worktree_inherits_named_workspace_general_agent() {
+        let root=fixture();let workspace=root.join("neo");let project=root.join("elsewhere/job/project");
+        let builtin=root.join("builtin");fs::create_dir_all(&builtin).unwrap();
+        write(&workspace.join("agents/editor.agent.md"),"---\nname: editor\n---\n# General\nGeneral guidance");
+        write(&project.join("agents/growth-editor.agent.md"),"---\nname: growth-editor\nextends: editor\n---\n# Growth\nLocal guidance");
+        let layers=agent_source_layers(&string_path(&project),&json!({"workspaceRoot":string_path(&workspace)}));
+        let result=resolve_agent_markdown("growth-editor",&string_path(&builtin),&string_path(&project),Some(&layers)).unwrap();
+        assert!(read_string(&result,"content").contains("General guidance"));
+        assert!(read_string(&result,"content").contains("Local guidance"));
+        assert_eq!(result["sources"].as_array().unwrap().len(),2);
+        assert_eq!(layers.as_array().unwrap()[0]["root"],string_path(&workspace));
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn unsupported_prefixes_and_cycles_rejected_without_extra_root() {
+        let root=fixture();let builtin=root.join("builtin");let project=root.join("project");
+        fs::create_dir_all(&builtin).unwrap();
+        let main=project.join("agents/alpha.agent.md");
+        write(&main,"---\nname: alpha\nextends: shared/alpha\n---\n# Invalid");
+        assert!(resolve_agent_markdown("alpha",&string_path(&builtin),&string_path(&project),None).unwrap_err().contains("Only extends:"));
+        write(&main,"---\nname: alpha\nextends: beta\n---\n# Alpha");
+        write(&project.join("agents/beta.agent.md"),"---\nname: beta\nextends: alpha\n---\n# Beta");
+        assert!(resolve_agent_markdown("alpha",&string_path(&builtin),&string_path(&project),None).unwrap_err().contains("cycle"));
+        fs::remove_dir_all(root).unwrap();
+    }
 }

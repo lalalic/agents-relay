@@ -86,7 +86,7 @@ test('ChatGptAdapter uses the Relay-owned chatgpt-worker agent contract, not a r
     },
   });
   const executionContext = {
-    project:{name:'project',path:'.',workspaceRoot:'.',sharedRoot:null,globalRoot:'.'}, role:'worker', instructions:[],
+    project:{name:'project',path:'.',workspaceRoot:'.',globalRoot:'.'}, role:'worker', instructions:[],
     skills:[], agents:[], runtimes:[], delegation:{mode:'relay-child-task',parentTaskIdRequired:false}
   };
   await adapter.launch(task(), new AbortController().signal, { executionContext }).promise;

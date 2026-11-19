@@ -285,7 +285,6 @@ pub fn discover_dag_script(agent:&str,project:&Path,roots:&Value)
     ->Result<bool,String>{
     let project=project.to_string_lossy();
     Ok(discover_script_agent(agent,&project,
-        roots.get("sharedRoot").and_then(Value::as_str),
         roots.get("workspaceRoot").and_then(Value::as_str),
         roots.get("globalRoot").and_then(Value::as_str))?.is_some())
 }

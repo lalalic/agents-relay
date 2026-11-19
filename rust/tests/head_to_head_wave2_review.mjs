@@ -180,8 +180,8 @@ test('outcome-review: CLI options/contract and highest-severity verdict, no Code
       ['--prompt','ok','--output','review/out.json']
     ]) compare('parseOutcomeReviewArgs',{args,cwd:project},()=>outcome.parseOutcomeReviewArgs(args,project));
     for(const name of ['reviewer','security','missing']){
-      compare('reviewerContract',{name,projectPath:project,root,sharedRoot:null},
-        ()=>outcome.reviewerContract(name,project,null,root));
+      compare('reviewerContract',{name,projectPath:project,root,workspaceRoot:project},
+        ()=>outcome.reviewerContract(name,project,project,root));
     }
     for(let i=0;i<80;i++){
       const reviews=Array.from({length:1+Math.floor(rand()*5)},()=>({verdict:choose(['BLOCKED','PASS','CHANGE_REQUIRED'])}));

@@ -38,7 +38,7 @@ async function graphNodeOutput(task:Task):Promise<Record<string,unknown>|null> {
  * Task graph owns dispatch and dependencies for every materialized child. */
 export async function reconcileDAGTasks(options:{store:DurableStore;jobId:string;
   cwdForTask:(job:Job,task:Task)=>Promise<string>;
-  roots?:{sharedRoot?:string|null;workspaceRoot?:string|null;globalRoot?:string|null};
+  roots?:{workspaceRoot?:string|null;globalRoot?:string|null};
 }):Promise<void>{
  const {store,jobId}=options;
  if(!store.mutateJob)throw Error('DAG Tasks require an atomic SQLite store');
@@ -79,7 +79,7 @@ export async function reconcileDAGTasks(options:{store:DurableStore;jobId:string
          predecessorOutputs[parents[i]]=value;
        }
        const node=graph.nodes.find(n=>n.id===nodeId)!;
-       const script=await discoverScriptAgent(node.agent,projectPath,options.roots?.sharedRoot??undefined,options.roots?.workspaceRoot??undefined,options.roots?.globalRoot??undefined);
+       const script=await discoverScriptAgent(node.agent,projectPath,options.roots?.workspaceRoot??undefined,options.roots?.globalRoot??undefined);
        const childId=allocateEntityId(relayStoreDirectory(),currentJob.repository,'task',`dag:${jobId}:${parent.id}:${graphHash}:${nodeId}`);
        const childOut=join(root,'.dag-node-results',childId+'.json');
        let supplied:Record<string,unknown>={taskInput:parent.input};
@@ -160,7 +160,7 @@ export async function selectDAGReviewExecutors(store:DurableStore,jobId:string):
 /** Run the DAG projection at the ordinary Reconciler scheduling boundary. */
 export async function reconcileDAGSchedule(options:{store:DurableStore;jobId:string;job:Job;
   cwdForTask:(job:Job,task:Task)=>Promise<string>;
-  roots?:{sharedRoot?:string|null;workspaceRoot?:string|null;globalRoot?:string|null};
+  roots?:{workspaceRoot?:string|null;globalRoot?:string|null};
 }):Promise<Job>{
  if(!options.job.tasks.some(t=>unifiedDAG(options.job,t))){
    return options.job;

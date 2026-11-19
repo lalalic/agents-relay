@@ -30,7 +30,7 @@ export class ScriptTaskAdapter implements WorkerAdapter {
  readonly id='script';
  readonly capabilities=['script'] as const;
  constructor(private readonly onEvent:(event:EventRecord)=>Promise<unknown>,
-   private readonly roots:{sharedRoot?:string|null;workspaceRoot?:string|null;globalRoot?:string|null}={}){}
+   private readonly roots:{workspaceRoot?:string|null;globalRoot?:string|null}={}){}
  launch(task:Task,signal:AbortSignal,context:LaunchContext={}):Execution{
    const dag=task.dagNode;
    if((dag&&dag.executor!=='script')||!task.executionId||!task.jobId||!task.agentName)
@@ -60,7 +60,7 @@ export class ScriptTaskAdapter implements WorkerAdapter {
        }
        const projectPath=context.executionContext?.project.path ?? input.projectPath;
        if(typeof projectPath!=='string'||!isAbsolute(projectPath))throw Error('No trusted Script Project context');
-       const script=await discoverScriptAgent(task.agentName!,projectPath,this.roots.sharedRoot??undefined,this.roots.workspaceRoot??undefined,this.roots.globalRoot??undefined);
+       const script=await discoverScriptAgent(task.agentName!,projectPath,this.roots.workspaceRoot??undefined,this.roots.globalRoot??undefined);
        if(!script)throw Error(`Declared Agent Shortcut is unavailable: ${task.agentName}`);
        await send('task.started','running','Script Worker started');
        const module=await import(pathToFileURL(script).href) as {run(ctx:{input:Record<string,unknown>;signal:AbortSignal;runCommand:(args:string[],cwd:string)=>Promise<{stdout:string;stderr:string;code:number}>}):Promise<unknown>};

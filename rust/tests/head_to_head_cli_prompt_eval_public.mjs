@@ -21,7 +21,7 @@ writeFileSync(join(project,'agents','implementation.agent.md'),
   '---\nname: implementation\n---\n# Isolated implementation Agent\nProof of fixture only.\n');
 writeFileSync(join(project,'skills','local','SKILL.md'),'# Local skill\n');
 const env={...process.env,HOME:join(dir,'home'),AGENTS_HOME:join(dir,'homeagents'),
- AGENTS_RELAY_WORKSPACE_ROOT:join(dir,'workspace'),AGENTS_RELAY_SHARED_ROOT:''};
+ AGENTS_RELAY_WORKSPACE_ROOT:join(dir,'workspace'),AGENTS_RELAY_WORKSPACE_ROOT:''};
 function processCall(binary,args){
  return spawnSync(binary===cli?cli:process.execPath,
    binary===cli?['prompt',...args]:[nodeCli,'prompt',...args],

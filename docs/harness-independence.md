@@ -33,18 +33,17 @@ Illustrative caller-side contract, **not** a new persisted Relay JSON schema:
 ```json
 {
   "projectPath": "/home/user/Workspace/vlog",
-    "workspaceBoundary": "/home/user/Workspace",
+  "workspaceRoot": "/home/user/Workspace",
   "agent": "vlog-visioner",
   "runtime": "codex"
 }
 ```
 
-`resolveExecutionContext(projectPath, role, options)` currently takes generic
-`workspaceRoot`, `globalRoot`, and `workspaceRoot` options. Its `workspaceRoot` is
-**Relay's bounded instruction/discovery context**, not the removed Neo
-`workspaceRoot` configuration field. Never reconstruct `<workspaceRoot>/neo` to
-find shared capabilities. In CLI paths, `AGENTS_RELAY_WORKSPACE_ROOT` can select
-an installed shared root; the invoking Harness is responsible for passing it.
+`resolveExecutionContext(projectPath, role, options)` uses `workspaceRoot` and
+`globalRoot`. The workspace supplies General Agents and Skills to independent
+projects, including managed worktrees outside its physical directory. There is
+no additional capability-root configuration. Relay never infers a specific
+client's installation directory; callers provide their workspace root.
 
 ## Hierarchy and Shortcut provenance
 
@@ -52,15 +51,15 @@ Effective Agent/Skill precedence, low to high:
 
 1. Relay built-ins (for Agent roles provided by Relay);
 2. global sources, normally `~/.agents`;
-3. explicitly configured shared sources;
-4. each ancestor directory within the configured workspace boundary;
-5. project-local source.
+3. the configured workspace and ancestor directories when applicable;
+4. project-local source.
 
 `AGENTS.md` instruction inheritance is separate from Agent definition
 selection: it follows the bounded directory ancestry and applies instructions
 in order; Agent Markdown must not be implicitly concatenated across names.
-Agent inheritance through `extends:` is explicit, including `relay/<name>` and
-`shared/<name>` (the shared base name may differ from the local Agent name).
+Agent inheritance through `extends:` supports a visible Agent **name** or an
+absolute Markdown path. Same-name inheritance extends the less-specific layer;
+differently named inheritance resolves through the same source layers.
 A Shortcut is looked up **only through the effective Agent's source and
 explicit inheritance chain**: `agents/<name>.agent.md` pairs with
 `agents/.shortcut/<name>.agent.mjs` in that *same source*. A local Agent override
@@ -108,7 +107,7 @@ bindings require a separate verified migration decision.
 | `src/agent-shortcut.ts` | Vlog-specific validation removed; generic artifact hashing and stage gate retained | Project Vlog Shortcut and Stage contract now own Visioner checks; verify when migrating durable waits |
 | `src/relayd-control.ts`, `src/interactive-request.ts` | Generic lifecycle and `interactive-review` event component | Host-owned media/notification integrations remain outside Relay; no new Preview adapter needed |
 | `src/managed-worker-input.ts`, `src/agent-prompt-builder.ts` | Worker prompts now accept provider guidance from execution context | Repo Git root is supplied as cwd; verify each adapter's actual workspace execution |
-| `src/cli-help.ts`, `src/relayd-utilities.ts` | Some CLI descriptions still claim implicit Neo shared roots | Align help text with explicit shared-root contract |
+| `src/agent-content-resolver.ts`, `src/cli-help.ts` | Legacy multiple-root inheritance was removed | Verify name/absolute-path inheritance against explicit workspace roots |
 
 ### Implementation order
 

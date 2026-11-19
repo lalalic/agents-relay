@@ -43,7 +43,7 @@ capabilities: [view, read]
 # Shared fixture Agent\n`);
 const init=spawnSync('git',['init','-q','-b','main'],{cwd:project});
 assert.equal(init.status,0,init.stderr?.toString());
-const base={workspaceRoot:workspace,globalRoot:global,sharedRoot:shared};
+const base={workspaceRoot:workspace,globalRoot:global};
 const registry={name:'registered-fixture',id:'r1',responsibility:'Registrar',
   capabilities:['tool'],runtime:{adapter:'chatgpt'},routing:{trustDomains:[]},boundaries:[]};
 const fixtures=[];

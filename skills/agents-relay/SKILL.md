@@ -69,9 +69,8 @@ npx --yes --package agents-relay@latest agents-relay job create --repo LOCAL_ROO
   --coordinator-output-path /absolute/run/neo-project-run.result.json \
   --coordinator-project-root /absolute/project \
   --coordinator-workspace-root /absolute/workspace \
-  --coordinator-shared-root /absolute/shared
 npx --yes --package agents-relay@latest agents-relay job run --repo LOCAL_ROOT_NAME --id JOB_ID --task-id NUMERIC_TASK_ID \
-  --workspace-root /absolute/workspace --shared-root /absolute/shared
+  --workspace-root /absolute/workspace
 # Immediate CLI execution and live events (no background scheduling wait):
 # append --foreground to the `job run` invocation.
 ```

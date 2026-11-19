@@ -14,7 +14,7 @@ const args=[
  ['--owner','fixture','--planner-command','/bin/true'],
  ['--owner','fixture','--thread-id','thread-123'],
  ['--owner','fixture','--workspace-root','/tmp/foo'],
- ['--owner','fixture','--shared-root','/tmp/shared','--global-root','/tmp/global'],
+ ['--owner','fixture','--workspace-root','/tmp/shared','--global-root','/tmp/global'],
  ['--owner','fixture','--chatgpt-tab-close-policy','never'],
  ['--owner','fixture','--chatgpt-tab-close-policy','after-start'],
  ['--owner','fixture','--chatgpt-tab-close-policy','after-terminal'],

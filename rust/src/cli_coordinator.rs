@@ -20,7 +20,7 @@ pub fn validate_coordinator_args(
 pub fn bind_coordinator_start<Queue, Activate>(
     job: &Value, task_id: &str, agent_graph: &str,
     project_root: &str, workspace_root: &str,
-    shared_root: Option<&str>, global_root: Option<&str>,
+    global_root: Option<&str>,
     no_github: bool, foreground: bool,
     mut queue_task: Queue, mut activate_job: Activate,
 ) -> Result<Value, String>
@@ -62,10 +62,9 @@ where
         "projectRoot": project_root, "workspaceRoot": workspace_root,
         "noGitHub": no_github,
     });
-    if let Some(root) = shared_root { binding["sharedRoot"] = json!(root); }
     if let Some(root) = global_root { binding["globalRoot"] = json!(root); }
     if let Some(existing) = current.get("graphStartContext").filter(|v| !v.is_null()) {
-        for key in ["projectRoot", "workspaceRoot", "sharedRoot", "globalRoot", "noGitHub"] {
+        for key in ["projectRoot", "workspaceRoot", "globalRoot", "noGitHub"] {
             if existing.get(key) != binding.get(key) {
                 return Err("Coordinator start context differs from original binding".into());
             }
@@ -97,7 +96,7 @@ use std::path::Path;
 pub fn run_coordinator_job_command(
     graph_directory:&Path,args:&[String],id:&str,store:&SQLiteRelayStore,
     job:&Value,local_file:Option<&Path>,
-    env_global_root:Option<&str>,env_shared_root:Option<&str>,
+    env_global_root:Option<&str>,
     mut foreground:Option<&mut dyn FnMut(&SQLiteRelayStore,&str,&str)->Result<(),String>>,
     bus:Option<&dyn ServiceEventBusPort>,
 )->Result<Option<Value>,String>{
@@ -138,15 +137,13 @@ pub fn run_coordinator_job_command(
     }
     let global_root=Some(arg(args,"--global-root",""))
         .filter(|value|!value.is_empty()).or(env_global_root);
-    let shared_root=Some(arg(args,"--shared-root",""))
-        .filter(|value|!value.is_empty()).or(env_shared_root);
     let now=iso8601_now();
     let no_github=true;
     store.mutate_job(id,|current|{
         bind_coordinator_start(
             &current,task_id,graph,
             &project.to_string_lossy(),&workspace.to_string_lossy(),
-            shared_root,global_root,no_github,in_foreground,
+            global_root,no_github,in_foreground,
             |task|try_transition_task_event(
                 graph_directory,task,"queue",
                 &json!({"dependenciesSatisfied":true}),&now)

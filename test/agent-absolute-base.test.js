@@ -41,7 +41,7 @@ test('absolute base rejects missing and malformed references', async t => {
   await assert.rejects(resolveAgentMarkdown('role',builtin,project),/requires name frontmatter/);
   await writeFile(source,'---\nname: specialist\n---\n');
   await assert.rejects(resolveAgentMarkdown('role',builtin,project),/nonempty body/);
-  await writeFile(source,'---\nname: specialist\nextends: relay/specialist\n---\n# Specialist');
+  await writeFile(source,'---\nname: specialist\nextends: specialist\n---\n# Specialist');
   await assert.rejects(resolveAgentMarkdown('role',builtin,project),/standalone definition/);
   await writeFile(target,'---\nname: role\nextends: ../role.md\n---\n# Role');
   await assert.rejects(resolveAgentMarkdown('role',builtin,project),/absolute Markdown path/);

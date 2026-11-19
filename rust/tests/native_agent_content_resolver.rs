@@ -30,7 +30,7 @@ fn put(base: &Path, filename: &str, content: &str) -> PathBuf {
 fn source_layers_deduplicate_duplicate_roots_and_keep_parent_order() {
     let roots = agent_source_layers(
         "/tmp/work/project/sub",
-        &json!({"globalRoot":"/tmp/global","workspaceRoot":"/tmp/work","sharedRoot":"/tmp/shared"}),
+        &json!({"globalRoot":"/tmp/global","workspaceRoot":"/tmp/work"}),
     );
     let result = roots.as_array().unwrap();
     assert_eq!(
@@ -38,11 +38,11 @@ fn source_layers_deduplicate_duplicate_roots_and_keep_parent_order() {
             .iter()
             .map(|layer| layer["source"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        ["global", "shared", "parent", "parent", "project"]
+        ["global", "parent", "parent", "project"]
     );
-    assert_eq!(result[2]["root"], "/tmp/work");
-    assert_eq!(result[3]["root"], "/tmp/work/project");
-    assert_eq!(result[4]["root"], "/tmp/work/project/sub");
+    assert_eq!(result[1]["root"], "/tmp/work");
+    assert_eq!(result[2]["root"], "/tmp/work/project");
+    assert_eq!(result[3]["root"], "/tmp/work/project/sub");
 }
 #[test]
 fn nested_heading_replace_and_extend_preserve_untouched_siblings() {
@@ -50,12 +50,11 @@ fn nested_heading_replace_and_extend_preserve_untouched_siblings() {
     let builtin = root.join("builtin");
     let project = root.join("project");
     put(&builtin,"planner.agent.md","---\nname: planner\nrole: builtin\n---\n# Planner\n## A\nOriginal A\n### G\nOriginal G\n## B\nOriginal B\n## C\nOriginal C");
-    put(&project,"agents/planner.agent.md","---\nname: planner\nextends: relay/planner\nrole: project\nsections:\n  replace: [Planner/A/G]\n  extend: [Planner/B]\n---\n# Planner\n## A\n### G\nChanged G\n## B\nAdded B");
+    put(&project,"agents/planner.agent.md","---\nname: planner\nextends: planner\nrole: project\nsections:\n  replace: [Planner/A/G]\n  extend: [Planner/B]\n---\n# Planner\n## A\n### G\nChanged G\n## B\nAdded B");
     let output = resolve_agent_markdown(
         "planner",
         builtin.to_str().unwrap(),
         project.to_str().unwrap(),
-        None,
         None,
     )
     .unwrap();
@@ -78,12 +77,11 @@ fn relative_links_are_anchored_to_their_real_source_without_inlining_content() {
         "planner.agent.md",
         "---\nname: planner\n---\n# Base\nRead [docs](./reference.md)",
     );
-    put(&project,"agents/planner.agent.md","---\nname: planner\nextends: relay/planner\n---\n# Project\n[child](../docs/a.md#part)\n```md\n[example](../docs/leave.md)\n```");
+    put(&project,"agents/planner.agent.md","---\nname: planner\nextends: planner\n---\n# Project\n[child](../docs/a.md#part)\n```md\n[example](../docs/leave.md)\n```");
     let result = resolve_agent_markdown(
         "planner",
         builtin.to_str().unwrap(),
         project.to_str().unwrap(),
-        None,
         None,
     )
     .unwrap();
@@ -114,7 +112,6 @@ fn symlink_escape_and_invalid_parent_fail_closed() {
         builtin.to_str().unwrap(),
         project.to_str().unwrap(),
         None,
-        None,
     )
     .unwrap_err();
     assert_eq!(error, "Agent file escapes context root");
@@ -122,17 +119,16 @@ fn symlink_escape_and_invalid_parent_fail_closed() {
     put(
         &project,
         "agents/planner.agent.md",
-        "---\nname: planner\nextends: relay/other\n---\n# Invalid",
+        "---\nname: planner\nextends: other\n---\n# Invalid",
     );
     assert!(resolve_agent_markdown(
         "planner",
         builtin.to_str().unwrap(),
         project.to_str().unwrap(),
-        None,
         None
     )
     .unwrap_err()
-    .contains("Only extends:"));
+    .contains("Missing base agent other"));
     fs::remove_dir_all(root).unwrap();
 }
 #[test]
@@ -150,14 +146,13 @@ fn shared_base_from_differently_named_agent_and_unknown_agent() {
     put(
         &project,
         "agents/special.agent.md",
-        "---\nname: special\nextends: shared/common\n---\n# Local\nSpecific rules",
+        "---\nname: special\nextends: common\n---\n# Local\nSpecific rules",
     );
     let result = resolve_agent_markdown(
         "special",
         builtin.to_str().unwrap(),
         project.to_str().unwrap(),
-        Some(shared.to_str().unwrap()),
-        None,
+        Some(&agent_source_layers(project.to_str().unwrap(),&json!({"workspaceRoot":shared.to_str().unwrap()}))),
     )
     .unwrap();
     assert!(result["content"]
@@ -174,7 +169,6 @@ fn shared_base_from_differently_named_agent_and_unknown_agent() {
             "does-not-exist",
             builtin.to_str().unwrap(),
             project.to_str().unwrap(),
-            None,
             None
         )
         .unwrap_err(),

@@ -257,8 +257,6 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
                 body.get("workspaceRoot").and_then(Value::as_str)
                     .filter(|value|!value.is_empty()))?;
             let project_root=resolve_job_project_root(&job)?;
-            let shared_root=body.get("sharedRoot").and_then(Value::as_str)
-                .filter(|value|!value.is_empty());
             let global_root=body.get("globalRoot").and_then(Value::as_str)
                 .filter(|value|!value.is_empty());
             let now=iso8601_now();
@@ -267,7 +265,7 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
                 let updated=bind_coordinator_start(
                     current,task_id,source,
                     &project_root.to_string_lossy(),&workspace_root.to_string_lossy(),
-                    shared_root,global_root,true,false,
+                    global_root,true,false,
                     |task|try_transition_task_event(
                         &graph,task,"queue",
                         &json!({"dependenciesSatisfied":true}),&now)

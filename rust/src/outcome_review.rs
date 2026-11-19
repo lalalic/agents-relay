@@ -96,16 +96,14 @@ pub fn parse_outcome_review_args(args: &[String], cwd: &Path) -> Result<Value, S
 pub fn reviewer_contract(
     name: &str,
     project: &Path,
-    shared: Option<&Path>,
+    workspace: &Path,
     root: &Path,
 ) -> Result<PathBuf, String> {
     if name == "reviewer" {
         return Ok(root.join("agents/outcome-reviewer.agent.md"));
     }
     let mut candidates = vec![project.join("agents").join(format!("{name}.agent.md"))];
-    if let Some(shared) = shared {
-        candidates.push(shared.join("agents").join(format!("{name}.agent.md")));
-    }
+    candidates.push(workspace.join("agents").join(format!("{name}.agent.md")));
     candidates.push(root.join("agents").join(format!("{name}.agent.md")));
     candidates
         .into_iter()

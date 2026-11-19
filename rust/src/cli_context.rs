@@ -214,7 +214,6 @@ fn named_filter(list: Vec<Value>, names: &[String], kind: &str) -> Result<Vec<Va
 fn instructions(
     project: &Path,
     workspace: &Path,
-    shared: Option<&Path>,
     global: &Path,
 ) -> Vec<Value> {
     let mut found = Vec::<Value>::new();
@@ -230,22 +229,10 @@ fn instructions(
     add(global.join("AGENTS.md"), "global");
     if let Ok(relative) = project.strip_prefix(workspace) {
         let mut cursor = workspace.to_path_buf();
-        add(
-            cursor.join("AGENTS.md"),
-            if shared.is_some_and(|r| cursor.starts_with(r)) {
-                "shared"
-            } else {
-                "project"
-            },
-        );
+        add(cursor.join("AGENTS.md"),if cursor==project{"project"}else{"parent"});
         for part in relative.components() {
             cursor.push(part.as_os_str());
-            let is_shared =
-                shared.is_some_and(|r| cursor.starts_with(r)) && !project.starts_with(&cursor);
-            add(
-                cursor.join("AGENTS.md"),
-                if is_shared { "shared" } else { "project" },
-            );
+            add(cursor.join("AGENTS.md"),if cursor==project{"project"}else{"parent"});
         }
     } else {
         add(project.join("AGENTS.md"), "project");
@@ -258,7 +245,6 @@ pub fn resolve_context(
     role: &str,
     workspace_root: Option<&str>,
     global_root: Option<&str>,
-    shared_root: Option<&str>,
     explicit_skills: &[String],
     explicit_agents: &[String],
 ) -> Result<Value, String> {
@@ -282,31 +268,13 @@ pub fn resolve_context(
         .and_then(|p| fs::canonicalize(p.trim()).ok())
         .unwrap_or_else(|| project.clone());
     let workspace = workspace(workspace_root)?;
-    let provided_shared = shared_root
-        .map(str::to_string)
-        .or_else(|| std::env::var("AGENTS_RELAY_SHARED_ROOT").ok());
-    let shared = provided_shared
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .map(|raw| {
-            let path = fs::canonicalize(absolute(raw))
-                .map_err(|_| format!("Shared capability root does not exist: {raw}"))?;
-            if !fs::metadata(&path).is_ok_and(|m| m.is_dir()) {
-                return Err(format!(
-                    "Shared capability root is not a directory: {}",
-                    path.display()
-                ));
-            }
-            Ok(path)
-        })
-        .transpose()?;
     let global = absolute(&env_or(global_root, "AGENTS_HOME", home_agents()));
     let global = fs::canonicalize(&global).unwrap_or(global);
     let workspace_path = PathBuf::from(workspace.clone());
     let layer_roots = agent_source_layers(
         &project_string,
         &json!({
-            "workspaceRoot":workspace,"sharedRoot":shared.as_ref().map(|s|as_str(s)),"globalRoot":as_str(&global)
+            "workspaceRoot":workspace,"globalRoot":as_str(&global)
         }),
     );
     let layers = layer_roots
@@ -349,10 +317,6 @@ pub fn resolve_context(
             &name,
             &as_str(&builtin),
             &project_string,
-            shared
-                .as_deref()
-                .map(|s| s.to_string_lossy().into_owned())
-                .as_deref(),
             Some(&layer_roots),
         )?;
         let Some(sources) = resolved["sources"].as_array() else {
@@ -398,9 +362,9 @@ pub fn resolve_context(
     Ok(json!({
         "project":{"name":project.file_name().unwrap_or_default().to_string_lossy(),
           "path":project_string,"gitRoot":as_str(&git_root),"workspaceRoot":workspace,
-          "sharedRoot":shared.as_ref().map(|p|as_str(p)),"globalRoot":as_str(&global)},
+          "globalRoot":as_str(&global)},
         "role":role,
-        "instructions":instructions(&project,&workspace_path,shared.as_deref(),&global),
+        "instructions":instructions(&project,&workspace_path,&global),
         "skills":skills,"agents":agents,"runtimes":[],
         "delegation":{"mode":"relay-child-task","parentTaskIdRequired":role=="nested-worker"}
     }))
@@ -442,7 +406,6 @@ pub fn run_context_command(action: &str, args: &[String]) -> Result<Value, Strin
         role,
         value("--workspace-root"),
         value("--global-root"),
-        value("--shared-root"),
         &split("--skills"),
         &split("--agents"),
     )

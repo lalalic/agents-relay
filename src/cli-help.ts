@@ -55,7 +55,7 @@ Coordinator/DAG creation and activation (no initial Planner required):
   agents-relay job create --repo LOCAL_ROOT_NAME --project-root /absolute/git/root --objective-file job.md
     --coordinator-graph-file /abs/graph.mmd --coordinator-input-file /abs/input.md
     --coordinator-output-path /abs/result.json --coordinator-project-root /abs/project
-    --coordinator-workspace-root /abs/workspace [--coordinator-shared-root /abs/shared]
+    --coordinator-workspace-root /abs/workspace
   agents-relay job run --id JOB --task-id NUMERIC_TASK_ID
     [--project-path /abs/project] [--workspace-root /abs/workspace]
     [--foreground] [--concurrency 4]
@@ -119,7 +119,7 @@ Optional local Git branch binding: --local-merge-source refs/heads/FEATURE --loc
 Creation enables auto-merge and Final Review by default. For plan-free DAG
 jobs, pass --coordinator-graph-file GRAPH --coordinator-input-file INPUT
 --coordinator-output-path ABS --coordinator-project-root ABS
---coordinator-workspace-root ABS [--coordinator-shared-root ABS] to atomically
+--coordinator-workspace-root ABS to atomically
 persist the Job plus one Coordinator Task. Use job run to activate it.
 Without a Coordinator, create-only DRAFT Jobs can start the Planner with
 --initial-plan. Final Review and Git Merge are independent of how work starts.
@@ -297,7 +297,7 @@ Actions:
 
 Required: --project-path PATH.
 Common: --role orchestrator|planner|reviewer|worker|nested-worker, --skills a,b, --agents a,b.
-Root overrides: --workspace-root PATH (or AGENTS_RELAY_WORKSPACE_ROOT), --global-root PATH, --shared-root PATH (or AGENTS_RELAY_SHARED_ROOT). Shared capabilities have no implicit Neo directory.
+Root overrides: --workspace-root PATH (or AGENTS_RELAY_WORKSPACE_ROOT), --global-root PATH. Agent names resolve through the workspace and project layers.
 
 Example:
   npx agents-relay context resolve --project-path ~/Workspace/agents-relay --role orchestrator`,

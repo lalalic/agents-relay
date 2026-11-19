@@ -93,8 +93,7 @@ pub fn build_planner_execution_prompt(
         let selected=crate::agent_content_resolver::resolve_agent_markdown(
             "planner",
             &repository_root.join("skills/agents-relay/agents").to_string_lossy(),
-            path,project.get("sharedRoot").and_then(Value::as_str),
-            Some(&crate::agent_content_resolver::agent_source_layers(path,project)),
+            path,Some(&crate::agent_content_resolver::agent_source_layers(path,project)),
         )?;
         match selected.get("content").and_then(Value::as_str){
             Some(content)=>content.into(),

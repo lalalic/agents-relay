@@ -48,7 +48,7 @@ impl PlannerFinishPorts for PlannerPorts {
         let base=self.store_directory.parent()
             .ok_or("Native Planner isolated Store has no parent")?;
         let roots=json!({
-            "workspaceRoot":base,"globalRoot":base,"sharedRoot":base
+            "workspaceRoot":base,"globalRoot":base
         });
         let agents=store(&self.db,field(job,"id"))?
             .load_agents()?.unwrap_or_default();

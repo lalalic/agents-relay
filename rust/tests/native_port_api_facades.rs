@@ -53,14 +53,14 @@ fn local_managed_store_opens_a_scoped_canonical_sqlite_connection(){
 }
 #[test]
 fn planner_context_resolves_with_same_registered_agents_and_runtime_ports(){
-    let root=json!({"sharedRoot":"/shared"});
+    let root=json!({"workspaceRoot":"/workspace"});
     let agents=vec![json!({"name":"planner"})];
     let adapters=vec![json!({"name":"script","id":"script","capabilities":["filesystem"]})];
     let resolved=run_ready(resolve_planner_context("/fixture",&root,&agents,&adapters,
         |cwd,role,options|async move{Ok::<Value,String>(json!({"cwd":cwd,"role":role,"options":options}))})).unwrap();
     assert_eq!(resolved["cwd"],"/fixture");
     assert_eq!(resolved["role"],"planner");
-    assert_eq!(resolved["options"]["sharedRoot"],"/shared");
+    assert_eq!(resolved["options"]["workspaceRoot"],"/workspace");
     assert_eq!(resolved["options"]["registeredAgents"],json!(agents));
     assert_eq!(resolved["options"]["runtimes"],json!([{"name":"script","id":"script","capabilities":["filesystem"]}]));
 }

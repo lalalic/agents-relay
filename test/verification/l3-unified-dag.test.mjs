@@ -182,14 +182,14 @@ test('L3-U14: duplicate normal Job start is idempotent and rejects changed trust
  const cli=fileURLToPath(new URL('../../dist/cli.js',import.meta.url));
  const result=spawnSync(process.execPath,[cli,'job','run','--id',f.id,'--task-id',f.coordinatorId,
    '--store-dir',join(f.root,'stores'),
-   '--workspace-root',f.root,'--shared-root',join(f.root,'other-agents')],
+   '--workspace-root',f.root,'--global-root',join(f.root,'changed-global-agents')],
    {encoding:'utf8',timeout:15000,env:{...process.env,AGENTS_RELAY_STORE_DIR:f.root}});
  assert.notEqual(result.status,0);
  assert.match(result.stderr,/Coordinator start context differs/);
  const after=await f.load();
  assert.equal(after.state,'ACTIVE');
  assert.equal(after.tasks.length,1);
- assert.equal(after.graphStartContext.sharedRoot,undefined);
+ assert.deepEqual(Object.keys(after.graphStartContext).sort(),['globalRoot','noGitHub','projectRoot','workspaceRoot'].filter(k=>k in after.graphStartContext).sort());
 });
 
 // Live regression: DAG completion resolves the immutable local projectRoot for every Job.

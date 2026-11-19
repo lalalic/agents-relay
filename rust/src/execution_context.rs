@@ -49,7 +49,6 @@ pub fn resolve_execution_context(
     let mut context=resolve_context(project_path,role,
         options.get("workspaceRoot").and_then(Value::as_str),
         options.get("globalRoot").and_then(Value::as_str),
-        options.get("sharedRoot").and_then(Value::as_str),
         &skills,&[])?;
     let mut agent_map:Vec<Value>=values(&context,"agents").to_vec();
     let registered=values(options,"registeredAgents");
@@ -102,12 +101,11 @@ pub fn resolve_agent_model_preference(
         .or_else(||None);
     let global=options.get("globalRoot").and_then(Value::as_str)
         .or_else(||None);
-    let shared=options.get("sharedRoot").and_then(Value::as_str);
     let layers=agent_source_layers(project_path,&json!({
-        "workspaceRoot":workspace,"globalRoot":global,"sharedRoot":shared
+        "workspaceRoot":workspace,"globalRoot":global
     }));
     let agent=resolve_agent_markdown(agent_name,&bundled_agents_root(),
-        project_path,shared,Some(&layers))?;
+        project_path,Some(&layers))?;
     let model=agent.pointer("/metadata/model").and_then(Value::as_str)
         .filter(|s|!s.is_empty());
     let reasoning=agent.pointer("/metadata/reasoning").and_then(Value::as_str)
@@ -129,10 +127,9 @@ pub fn resolve_agent_contract(
         return Err(format!("Agent {agent_name} has no readable Markdown contract"));
     }
     let project=field(&context["project"],"path");
-    let shared=context.pointer("/project/sharedRoot").and_then(Value::as_str);
     let layers=agent_source_layers(project,&context["project"]);
     let resolved=resolve_agent_markdown(agent_name,&bundled_agents_root(),
-        project,shared,Some(&layers))?;
+        project,Some(&layers))?;
     if field(&resolved,"content").trim().is_empty(){
         return Err(format!("Agent {agent_name} Markdown contract is empty"));
     }

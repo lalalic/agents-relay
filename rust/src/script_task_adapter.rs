@@ -176,7 +176,6 @@ where
             return Err("No trusted Script Project context".into());
         }
         discover_script_agent(agent,project_path,
-            roots.get("sharedRoot").and_then(Value::as_str),
             roots.get("workspaceRoot").and_then(Value::as_str),
             roots.get("globalRoot").and_then(Value::as_str))?
             .ok_or_else(||format!("Declared Agent Shortcut is unavailable: {agent}"))

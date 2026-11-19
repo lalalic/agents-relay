@@ -315,8 +315,7 @@ ready successors; the global pool still enforces total Worker capacity.
 A human Preview is Task-bound and never auto-commits Git. The retired
 Shortcut runtime and receipt path are no longer executable or displayed as
 a separate Job mode; normalized historical metadata is ignored. Child Agent
-resolution receives configured `--workspace-root` and `--shared-root` roots
-identically for Script and Model execution.
+resolution uses the configured `--workspace-root` identically for Script and Model execution.
 
 
 Relay has no orchestrator worker adapter for new work. Orchestrators are external clients that create/plan durable Tasks; Execution Router selects a real worker route (`codex` or `chatgpt`). The CLI and dashboard do not expose manual orchestrator-only `task start`, `task complete`, or synthetic `record` paths.
@@ -392,7 +391,7 @@ The caller must report only a release it has actually verified. For local-first 
 
 ### Project-scoped agent Markdown inheritance
 
-Agent lookup has exactly two layers: Relay built-in `skills/agents-relay/agents/` and `<job-context-root>/agents/`. `job.projectRoot` selects the independent Git repository context root; no workspace/global agent fallback is searched. Project agent frontmatter can specify `extends: relay/planner`, `mode: extend`, and `sections: { replace: [Heading/Subheading], extend: [Other Heading] }` using heading paths, or `mode: replace` for a full behavioral replacement. Relay-owned lifecycle, Job/Task and events contracts are injected separately and cannot be replaced by a project agent. An unextended local agent is a standalone definition. The resolver emits a deterministic SHA-256 of composed Markdown; a missing section or unsupported parent fails instead of silently dropping instructions.
+Agent lookup checks Relay built-ins, the global `~/.agents` directory, the configured workspace (and applicable ancestor directories), and the project-local `agents/`. A detached project worktree still inherits General Agents from its explicitly configured workspace. Project agent frontmatter can specify `extends: planner` (Agent name), `extends: /absolute/path/to/base.md`, `mode: extend`, and `sections: { replace: [Heading/Subheading], extend: [Other Heading] }` using heading paths, or `mode: replace` for a full behavioral replacement. Relay-owned lifecycle, Job/Task and events contracts are injected separately and cannot be replaced by a project agent. An unextended local agent is a standalone definition. The resolver emits a deterministic SHA-256 of composed Markdown; a missing section or unsupported parent fails instead of silently dropping instructions.
 
 ### Plan-free Graph Jobs (unified start)
 

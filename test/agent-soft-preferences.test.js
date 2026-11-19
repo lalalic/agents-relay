@@ -15,10 +15,10 @@ test('agent frontmatter is advisory in worker prompt and model routing, includin
     await Promise.all([mkdir(join(project, 'agents'), { recursive: true }), mkdir(join(shared, 'agents'), { recursive: true }), mkdir(globalRoot)]);
     await writeFile(join(shared, 'agents', 'vlog-editor.agent.md'), '---\nname: vlog-editor\nmodel: zai/glm-old\nreasoning: medium\n---\nShared editor role.');
     await writeFile(join(project, 'agents', 'vlog-editor.agent.md'), [
-      '---', 'name: vlog-editor', 'extends: shared/vlog-editor',
+      '---', 'name: vlog-editor', 'extends: vlog-editor',
       'skills: [shotcraft, markcut]', 'model: openai/gpt-6', 'reasoning: high', '---', 'Project editor guidance.',
     ].join('\n'));
-    const roots = { workspaceRoot: root, sharedRoot: shared, globalRoot };
+    const roots = { workspaceRoot: shared, globalRoot };
     const context = await resolveExecutionContext(project, 'worker', roots);
     const editor = context.agents.find(agent => agent.name === 'vlog-editor');
     assert.deepEqual(editor.suggestedSkills, ['shotcraft', 'markcut']);
@@ -153,7 +153,7 @@ test('Planner Agent skill suggestions appear in Planner User Assignment without 
     const project = join(root, 'project'), globalRoot = join(root, 'global');
     await Promise.all([mkdir(join(project, 'agents'), { recursive: true }), mkdir(globalRoot)]);
     await writeFile(join(project, 'agents', 'planner.agent.md'),
-      '---\nname: planner\nextends: relay/planner\nskills: [ponytail, spec-kit]\nmodel: openai/gpt-6\nreasoning: high\n---\nUse a focused Plan.');
+      '---\nname: planner\nextends: planner\nskills: [ponytail, spec-kit]\nmodel: openai/gpt-6\nreasoning: high\n---\nUse a focused Plan.');
     const context = await resolveExecutionContext(project, 'planner', { workspaceRoot: root, globalRoot });
     const { buildPlannerExecutionPrompt } = await import('../dist/planner.js');
     const prompt = await buildPlannerExecutionPrompt({

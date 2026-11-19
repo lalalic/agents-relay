@@ -75,9 +75,6 @@ pub fn runtime(args:&[String],paths:RuntimePaths)->Result<RuntimeReconciler,Stri
     if let Some(v)=option("--workspace-root","AGENTS_RELAY_WORKSPACE_ROOT"){
         roots["workspaceRoot"]=json!(v);
     }
-    if let Some(v)=option("--shared-root","AGENTS_RELAY_SHARED_ROOT"){
-        roots["sharedRoot"]=json!(v);
-    }
     if let Some(v)=option("--global-root","AGENTS_HOME"){
         roots["globalRoot"]=json!(v);
     }

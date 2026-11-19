@@ -46,7 +46,7 @@ fn require_coordinator(coordinator:&Value)->Result<(),String>{
             return Err("Coordinator paths must be absolute".into());
         }
     }
-    for key in ["sharedRoot","globalRoot"]{
+    for key in ["globalRoot"]{
         if let Some(value)=optional(coordinator,key){
             if !Path::new(value).is_absolute(){
                 return Err("Coordinator paths must be absolute".into());
@@ -192,7 +192,7 @@ where
             "workspaceRoot":coordinator.get("workspaceRoot"),
             "noGitHub":options.get("noGitHub")==Some(&Value::Bool(true))
         });
-        for key in ["sharedRoot","globalRoot"]{
+        for key in ["globalRoot"]{
             if let Some(value)=coordinator.get(key).filter(|v|!v.is_null()){
                 graph[key]=value.clone();
             }

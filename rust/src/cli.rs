@@ -127,8 +127,7 @@ pub fn job_create_request(args:&[String],stdin:Option<&str>)
             "graph":graph,"input":input,
             "outputPath":arg(args,"--coordinator-output-path",""),
             "projectRoot":arg(args,"--coordinator-project-root",""),
-            "workspaceRoot":arg(args,"--coordinator-workspace-root",""),
-            "sharedRoot":arg(args,"--coordinator-shared-root","")
+            "workspaceRoot":arg(args,"--coordinator-workspace-root","")
         }))
     }else{None};
     let source=arg(args,"--local-merge-source","");

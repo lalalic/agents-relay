@@ -106,17 +106,13 @@ impl CliRuntimePort for DaemonClient {
                 }
                 let workspace=arg(args,"--workspace-root","");
                 let global=arg(args,"--global-root","");
-                let shared=arg(args,"--shared-root","");
                 relay_control_command(args,&json!({
                     "command":"job.run","jobId":id,"taskId":task_id,
                     "graphOverride":override_graph,
                     "workspaceRoot":if workspace.is_empty(){None}else{Some(workspace)},
                     "globalRoot":if global.is_empty(){
                         std::env::var("AGENTS_HOME").ok()
-                    }else{Some(global.into())},
-                    "sharedRoot":if shared.is_empty(){
-                        std::env::var("AGENTS_RELAY_SHARED_ROOT").ok()
-                    }else{Some(shared.into())}
+                    }else{Some(global.into())}
                 }))
             },
             // --foreground, background worker scheduling, local job

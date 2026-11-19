@@ -31,7 +31,6 @@ export async function runCoordinatorJobCommand(args:string[],id:string, foregrou
    return;
  }
  const globalRoot=arg(args,'--global-root')||process.env.AGENTS_HOME||undefined;
- const sharedRoot=arg(args,'--shared-root')||process.env.AGENTS_RELAY_SHARED_ROOT||undefined;
  await loaded.store.mutateJob(id,current=>{
    const root=current.tasks.find(t=>t.id===taskId);
    if(!root)throw Error('Coordinator Task disappeared');
@@ -44,9 +43,9 @@ export async function runCoordinatorJobCommand(args:string[],id:string, foregrou
      const transition=tryTransitionTaskEvent(root,'queue',{dependenciesSatisfied:true});
      if(!transition.accepted||transition.target!=='QUEUED')throw Error('Coordinator Task queue denied');
    }
-   const ctx={projectRoot,workspaceRoot,...(sharedRoot?{sharedRoot}:{}),...(globalRoot?{globalRoot}:{}),noGitHub:noGitHubMode(args)};
+   const ctx={projectRoot,workspaceRoot,...(globalRoot?{globalRoot}:{}),noGitHub:noGitHubMode(args)};
    const existing=current.graphStartContext;
-   if(existing&&(['projectRoot','workspaceRoot','sharedRoot','globalRoot','noGitHub'] as const).some(k=>existing[k]!==ctx[k]))
+   if(existing&&(['projectRoot','workspaceRoot','globalRoot','noGitHub'] as const).some(k=>existing[k]!==ctx[k]))
      throw Error('Coordinator start context differs from original binding');
    if(!existing)current.graphStartContext=ctx;
    if(current.state==='DRAFT'){

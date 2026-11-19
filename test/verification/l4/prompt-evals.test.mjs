@@ -16,7 +16,7 @@ const exec = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '../../..');
 const vlog = process.env.RELAY_L4_VLOG_PROJECT ?? '/Users/chengli/Workspace/neo/vlog';
-const sharedRoot = process.env.RELAY_L4_SHARED_ROOT ?? resolve(vlog, '..');
+const workspaceRoot = process.env.RELAY_L4_WORKSPACE_ROOT ?? resolve(vlog, '..');
 const sha = data => createHash('sha256').update(data).digest('hex');
 const adapters = ['codex','chatgpt','z'];
 const roles = ['planner','implementation','reviewer','troubleshooter','vlog-producer','vlog-final-qa'];
@@ -61,7 +61,7 @@ async function validateReferences(prompt) {
 }
 
 let contextPromise;
-const context=()=>contextPromise??=resolveExecutionContext(vlog,'worker',{sharedRoot});
+const context=()=>contextPromise??=resolveExecutionContext(vlog,'worker',{workspaceRoot});
 
 for(const adapter of adapters)for(const role of roles) {
   test(`L4 generated prompt: ${role} × ${adapter}`,async()=>{
@@ -93,7 +93,7 @@ for(const adapter of adapters)for(const role of roles) {
       const fixture=join(cliRoot,'job.json');
       await writeFile(fixture,JSON.stringify({...job,plans:plan,projectPath:vlog}));
       const arg=role==='planner'?['--plan-id','plan-1']:['--task-id','L4-TASK'];
-      const result=await exec(process.execPath,['dist/cli.js','prompt','--file',fixture,'--id',jobId,'--project-path',vlog,'--adapter',adapter,...arg],{cwd:repo,timeout:20000,env:{...process.env,AGENTS_RELAY_SHARED_ROOT:sharedRoot}});
+      const result=await exec(process.execPath,['dist/cli.js','prompt','--file',fixture,'--id',jobId,'--project-path',vlog,'--adapter',adapter,...arg],{cwd:repo,timeout:20000,env:{...process.env,AGENTS_RELAY_WORKSPACE_ROOT:workspaceRoot}});
       assert.equal(result.stdout.trimEnd(),prompt,'CLI and actual Graph Action must use identical builder output');
     }finally{await rm(cliRoot,{recursive:true,force:true});}
     const parsed=parsePrompt(prompt);
@@ -231,7 +231,7 @@ test('L4 execution-scoped CLI loads a real isolated SQLite Plan and Task, reject
     createdAt:at,updatedAt:at,tasks:[task],plans:[plan],projectPath:vlog};
   try {
     await store.saveJob(job);
-    const env={...process.env,AGENTS_RELAY_SHARED_ROOT:sharedRoot,AGENTS_RELAY_STORE_DIR:join(dir,'stores')};
+    const env={...process.env,AGENTS_RELAY_WORKSPACE_ROOT:workspaceRoot,AGENTS_RELAY_STORE_DIR:join(dir,'stores')};
     for(const [kind,args] of [
       ['task',['task','context','--id',jobId,'--task-id','L4-TASK','--execution-id',execution]],
       ['plan',['plan','context','--id',jobId,'--plan-id','plan-1','--execution-id',execution]],

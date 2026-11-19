@@ -6,11 +6,11 @@ import {BUNDLED_AGENTS_ROOT} from './execution-context.js';
 
 /** Resolve a local Script Agent using the same Agent inheritance/source rules
  * as the regular Model Task executor. This is not a Shortcut Job runner. */
-export async function discoverScriptAgent(agent: string, projectPath: string, sharedRoot?: string, workspaceRoot?: string, globalRoot?: string): Promise<string | null> {
+export async function discoverScriptAgent(agent: string, projectPath: string, workspaceRoot?: string, globalRoot?: string): Promise<string | null> {
   let sources: string[];
   try {
-    ({ sources } = await resolveAgentMarkdown(agent, BUNDLED_AGENTS_ROOT, projectPath, sharedRoot,
-      agentSourceLayers(projectPath, { sharedRoot, workspaceRoot, globalRoot: globalRoot ?? process.env.AGENTS_HOME ?? join(homedir(), '.agents') })));
+    ({ sources } = await resolveAgentMarkdown(agent, BUNDLED_AGENTS_ROOT, projectPath,
+      agentSourceLayers(projectPath, { workspaceRoot, globalRoot: globalRoot ?? process.env.AGENTS_HOME ?? join(homedir(), '.agents') })));
   } catch (error) {
     if (error instanceof Error && error.message === `Unknown agent ${agent}`) return null;
     throw error;
@@ -40,9 +40,9 @@ export async function discoverScriptAgent(agent: string, projectPath: string, sh
   return null;
 }
 
-export async function missingScriptAgents(graph: string, projectPath:string, sharedRoot?:string,workspaceRoot?:string,globalRoot?:string):Promise<string[]>{
+export async function missingScriptAgents(graph: string, projectPath:string,workspaceRoot?:string,globalRoot?:string):Promise<string[]>{
  const {parseAgentGraph}=await import('./agent-graph.js');
  const nodes=parseAgentGraph(graph).nodes;
- const choices=await Promise.all(nodes.map(async n=>({id:n.id,path:await discoverScriptAgent(n.agent,projectPath,sharedRoot,workspaceRoot,globalRoot)})));
+ const choices=await Promise.all(nodes.map(async n=>({id:n.id,path:await discoverScriptAgent(n.agent,projectPath,workspaceRoot,globalRoot)})));
  return choices.filter(n=>!n.path).map(n=>n.id);
 }

@@ -33,7 +33,7 @@ Isolated Agent with model preference.\n`);
 writeFileSync(join(project,'skills','fixture','SKILL.md'),'# Fixture Skill\n');
 const initialized=spawnSync('git',['init','-q','-b','main'],{cwd:project});
 assert.equal(initialized.status,0,initialized.stderr?.toString());
-const roots={workspaceRoot:workspace,globalRoot:global,sharedRoot:shared};
+const roots={workspaceRoot:shared,globalRoot:global};
 const regist={id:'reg-id',name:'registered-fixture',responsibility:'Registered fixture only',
   capabilities:['tools'],runtime:{adapter:'chatgpt'},routing:{trustDomains:[]},boundaries:[]};
 const adapters=[{name:'chatgpt/browser-worker',id:'chatgpt/browser-worker',

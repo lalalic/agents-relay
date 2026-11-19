@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { AgentRegistration } from './types.js';
 
 export type ExecutionRole = 'orchestrator' | 'planner' | 'reviewer' | 'troubleshooter' | 'worker' | 'nested-worker';
-export type ContextSource = 'project' | 'parent' | 'shared' | 'global' | 'builtin' | 'registry' | 'runtime';
+export type ContextSource = 'project' | 'parent' | 'global' | 'builtin' | 'registry' | 'runtime';
 
 export type ResolvedInstruction = { path: string; source: Exclude<ContextSource, 'builtin' | 'registry' | 'runtime'> };
 export type ResolvedSkill = { name: string; path: string; source: Exclude<ContextSource, 'builtin' | 'registry' | 'runtime'>; description?: string };
@@ -30,7 +30,7 @@ export type ResolvedAgent = {
 };
 export type ResolvedRuntime = { name: string; id?: string; capabilities: string[]; source: 'runtime' };
 export type ExecutionContext = {
-  project: { name: string; path: string; gitRoot: string; workspaceRoot: string; sharedRoot: string | null; globalRoot: string };
+  project: { name: string; path: string; gitRoot: string; workspaceRoot: string; globalRoot: string };
   role: ExecutionRole;
   providerInstructions?: ProviderInstructions;
   instructions: ResolvedInstruction[];
@@ -41,7 +41,7 @@ export type ExecutionContext = {
 };
 
 export type ProviderInstructions = Partial<Record<'codex' | 'chatgpt' | 'z', readonly string[]>>;
-export type ExecutionContextRoots = { workspaceRoot?: string; globalRoot?: string; sharedRoot?: string | null; providerInstructions?: ProviderInstructions };
+export type ExecutionContextRoots = { workspaceRoot?: string; globalRoot?: string; providerInstructions?: ProviderInstructions };
 
 export type ExecutionContextOptions = ExecutionContextRoots & {
   explicitSkills?: readonly string[];
@@ -90,7 +90,7 @@ async function metadata(path: string): Promise<{ fields: Frontmatter; content: s
   return { fields: parseFrontmatter(content), content };
 }
 
-async function instructionPaths(projectPath: string, workspaceRoot: string, sharedRoot: string | null, globalRoot: string): Promise<ResolvedInstruction[]> {
+async function instructionPaths(projectPath: string, workspaceRoot: string, globalRoot: string): Promise<ResolvedInstruction[]> {
   const found: ResolvedInstruction[] = [];
   const add = async (path: string, source: ResolvedInstruction['source']): Promise<void> => {
     if (await exists(path)) { const concrete = await realpath(path); if (!found.some(item => item.path === concrete)) found.push({ path: concrete, source }); }
@@ -99,10 +99,10 @@ async function instructionPaths(projectPath: string, workspaceRoot: string, shar
   if (isWithin(projectPath, workspaceRoot)) {
     const segments = relative(workspaceRoot, projectPath).split(sep).filter(Boolean);
     let cursor = workspaceRoot;
-    await add(join(cursor, 'AGENTS.md'), sharedRoot && isWithin(cursor, sharedRoot) ? 'shared' : 'project');
+    await add(join(cursor, 'AGENTS.md'), cursor === projectPath ? 'project' : 'parent');
     for (const segment of segments) {
       cursor = join(cursor, segment);
-      const source: ResolvedInstruction['source'] = sharedRoot && isWithin(cursor, sharedRoot) && !isWithin(cursor, projectPath) ? 'shared' : 'project';
+      const source: ResolvedInstruction['source'] = cursor === projectPath ? 'project' : 'parent';
       await add(join(cursor, 'AGENTS.md'), source);
     }
   } else {
@@ -177,15 +177,10 @@ export async function resolveExecutionContext(projectPath: string, role: Executi
   const git = spawnSync('git', ['-C', project, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 5000 });
   const gitRoot = git.status === 0 && git.stdout?.trim() ? await realpath(git.stdout.trim()) : project;
   const workspaceRoot = await resolveWorkspaceRoot(options.workspaceRoot);
-  const configuredSharedRoot = options.sharedRoot !== undefined ? options.sharedRoot : process.env.AGENTS_RELAY_SHARED_ROOT;
-  const sharedRoot = configuredSharedRoot ? await realpath(resolve(configuredSharedRoot)).catch(() => {
-    throw new Error(`Shared capability root does not exist: ${configuredSharedRoot}`);
-  }) : null;
-  if (sharedRoot && !await directory(sharedRoot)) throw new Error(`Shared capability root is not a directory: ${sharedRoot}`);
   const globalCandidate = configuredGlobalRoot(options.globalRoot);
   const globalRoot = await realpath(globalCandidate).catch(() => globalCandidate);
 
-  const layerRoots = agentSourceLayers(project, { globalRoot, sharedRoot, workspaceRoot });
+  const layerRoots = agentSourceLayers(project, {globalRoot, workspaceRoot});
   const uniqueLayers = layerRoots.filter((layer, index, list) => list.findIndex(item => resolve(item.root) === resolve(layer.root)) === index);
 
   const skillMap = new Map<string, ResolvedSkill>();
@@ -205,7 +200,7 @@ export async function resolveExecutionContext(projectPath: string, role: Executi
     for (const agent of await agentFiles(layer.root, layer.source, matchingSkills)) agentNames.add(agent.name);
   }
   for (const name of agentNames) {
-    const resolved = await resolveAgentMarkdown(name, BUNDLED_AGENTS_ROOT, project, sharedRoot, layerRoots);
+    const resolved = await resolveAgentMarkdown(name, BUNDLED_AGENTS_ROOT, project, layerRoots);
     const fields = resolved.metadata;
     const sourcePath = resolved.sources[resolved.sources.length - 1];
     const source: ResolvedAgent['source'] = [...layerRoots].sort((a, b) => b.root.length - a.root.length).find(layer =>
@@ -240,10 +235,10 @@ export async function resolveExecutionContext(projectPath: string, role: Executi
   const agents = selectByName([...agentMap.values()].sort((a, b) => a.name.localeCompare(b.name)), options.explicitAgents, 'agent');
 
   return {
-    project: { name: basename(project), path: project, gitRoot, workspaceRoot, sharedRoot, globalRoot },
+    project: { name: basename(project), path: project, gitRoot, workspaceRoot, globalRoot },
     providerInstructions: options.providerInstructions,
     role,
-    instructions: await instructionPaths(project, workspaceRoot, sharedRoot, globalRoot),
+    instructions: await instructionPaths(project, workspaceRoot, globalRoot),
     skills,
     agents,
     runtimes: (options.runtimes ?? []).map(runtime => ({ name: runtime.name ?? runtime.adapter ?? 'unknown', id: runtime.id, capabilities: [...runtime.capabilities], source: 'runtime' })),
@@ -258,10 +253,8 @@ export async function resolveAgentModelPreference(
 ): Promise<{ model?: string; reasoning?: string } | undefined> {
   const workspaceRoot = await resolveWorkspaceRoot(options.workspaceRoot);
   const globalRoot = configuredGlobalRoot(options.globalRoot);
-  const configuredSharedRoot = options.sharedRoot !== undefined ? options.sharedRoot : process.env.AGENTS_RELAY_SHARED_ROOT;
-  const sharedRoot = configuredSharedRoot ? resolve(configuredSharedRoot) : null;
-  const agent = await resolveAgentMarkdown(agentName, BUNDLED_AGENTS_ROOT, projectPath, sharedRoot,
-    agentSourceLayers(projectPath, { workspaceRoot, globalRoot, sharedRoot }));
+  const agent = await resolveAgentMarkdown(agentName, BUNDLED_AGENTS_ROOT, projectPath,
+    agentSourceLayers(projectPath, {workspaceRoot, globalRoot}));
   const model = agent.metadata.model || undefined;
   const reasoning = agent.metadata.reasoning || undefined;
   return model || reasoning ? { model, reasoning } : undefined;
@@ -272,7 +265,7 @@ export async function resolveAgentContract(context: ExecutionContext, agentName:
   if (!agent) throw new Error(`Agent ${agentName} is not visible in the resolved execution context`);
   if (!agent.path) throw new Error(`Agent ${agentName} has no readable Markdown contract`);
   const resolved = await resolveAgentMarkdown(agentName, BUNDLED_AGENTS_ROOT, context.project.path,
-    context.project.sharedRoot, agentSourceLayers(context.project.path, context.project));
+    agentSourceLayers(context.project.path, context.project));
   const definition = resolved.content;
   if (!definition.trim()) throw new Error(`Agent ${agentName} Markdown contract is empty`);
   return { agent, definition, hash: resolved.hash, sources: resolved.sources };

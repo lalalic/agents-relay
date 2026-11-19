@@ -30,7 +30,6 @@ fn builtins_root() -> String {
 pub fn discover_script_agent(
     agent: &str,
     project_path: &str,
-    shared_root: Option<&str>,
     workspace_root: Option<&str>,
     global_root_option: Option<&str>,
 ) -> Result<Option<String>, String> {
@@ -38,14 +37,13 @@ pub fn discover_script_agent(
     let layers = agent_source_layers(
         project_path,
         &json!({
-            "sharedRoot":shared_root,"workspaceRoot":workspace_root,"globalRoot":global
+"workspaceRoot":workspace_root,"globalRoot":global
         }),
     );
     let resolved = match resolve_agent_markdown(
         agent,
         &builtins_root(),
         project_path,
-        shared_root,
         Some(&layers),
     ) {
         Ok(value) => value,
@@ -103,7 +101,6 @@ pub fn discover_script_agent(
 pub fn missing_script_agents(
     graph: &str,
     project_path: &str,
-    shared_root: Option<&str>,
     workspace_root: Option<&str>,
     global_root: Option<&str>,
 ) -> Result<Vec<String>, String> {
@@ -113,8 +110,7 @@ pub fn missing_script_agents(
         if discover_script_agent(
             &agent,
             project_path,
-            shared_root,
-            workspace_root,
+                workspace_root,
             global_root,
         )?
         .is_none()
@@ -151,7 +147,7 @@ mod tests {
         fs::write(&script, "export default () => {}").unwrap();
         let project = root.to_string_lossy();
         assert_eq!(
-            discover_script_agent("builder", &project, None, None, Some("/nonexistent")).unwrap(),
+            discover_script_agent("builder", &project, None, Some("/nonexistent")).unwrap(),
             Some(
                 fs::canonicalize(&script)
                     .unwrap()
@@ -160,14 +156,13 @@ mod tests {
             )
         );
         assert_eq!(
-            discover_script_agent("unknown", &project, None, None, Some("/nonexistent")).unwrap(),
+            discover_script_agent("unknown", &project, None, Some("/nonexistent")).unwrap(),
             None
         );
         assert_eq!(
             missing_script_agents(
                 "flowchart TD\nBuild[agent:builder]\nTest[agent:unknown]",
                 &project,
-                None,
                 None,
                 Some("/nonexistent")
             )
@@ -178,7 +173,7 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(agents.join("builder.agent.md"), &script).unwrap();
         assert!(
-            discover_script_agent("builder", &project, None, None, Some("/nonexistent"))
+            discover_script_agent("builder", &project, None, Some("/nonexistent"))
                 .unwrap_err()
                 .contains("symlink escapes")
         );

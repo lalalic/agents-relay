@@ -25,7 +25,7 @@ export async function run({input}) {
  return {status:'COMPLETED',output:{caseId:input.caseId??'plain',verified:true},artifacts:[{name:'fixture'}]};
 }
 `);
-const roots={workspaceRoot:fixture,globalRoot:fixture,sharedRoot:null};
+const roots={workspaceRoot:fixture,globalRoot:fixture,};
 function normalizedEvent(e){const value=structuredClone(e);delete value.timestamp;delete value.event_id;return value;}
 const cases=[];
 for(let i=0;i<75;i++){

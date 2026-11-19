@@ -89,7 +89,7 @@ export function createWorkspaceControl(deps: any) {
         localMergeSource: typeof options.localMergeSource === 'string' ? options.localMergeSource : undefined,
         localMergeTarget: typeof options.localMergeTarget === 'string' ? options.localMergeTarget : undefined,
         noGitHub: noGitHub || options.noGitHub === true,
-        coordinator: options.coordinator as {graph:string;input:string;outputPath:string;projectRoot:string;workspaceRoot:string;sharedRoot?:string;globalRoot?:string}|undefined,
+        coordinator: options.coordinator as {graph:string;input:string;outputPath:string;projectRoot:string;workspaceRoot:string;globalRoot?:string}|undefined,
         persist: body.initialPlan !== true,
       });
       if (!repositories.includes(repository)) repositories.push(repository);

@@ -19,7 +19,7 @@ export async function ensureManagedGitHubJob(
     id?: string; idempotencyKey?: string; title?: string; objective?: string; projectRoot?: string;
     priority?: Priority;
     tag?: Job['tag']; reviewEnabled?: boolean; autoMerge?: boolean; continuation?: Job['continuation'];
-    coordinator?: { graph: string; input: string; outputPath: string; projectRoot: string; workspaceRoot: string; sharedRoot?: string; globalRoot?: string };
+    coordinator?: { graph: string; input: string; outputPath: string; projectRoot: string; workspaceRoot: string; globalRoot?: string };
     prNumber?: number; head?: string; base?: string; body?: string;
     reviewerThreadId?: string; creatorThreadId?: string; implementationThreadId?: string;
     storeDirectory?: string; noGitHub?: boolean; persist?: boolean; localMergeSource?: string; localMergeTarget?: string;
@@ -31,7 +31,6 @@ export async function ensureManagedGitHubJob(
     if(!c.graph?.trim()||!c.input?.trim())throw Error('Coordinator requires nonempty graph and input');
     parseAgentGraph(c.graph);
     if(!isAbsolute(c.outputPath)||!isAbsolute(c.projectRoot)||!isAbsolute(c.workspaceRoot) ||
-      (c.sharedRoot!==undefined&&!isAbsolute(c.sharedRoot)) ||
       (c.globalRoot!==undefined&&!isAbsolute(c.globalRoot)))
       throw Error('Coordinator paths must be absolute');
   }
@@ -101,7 +100,6 @@ export async function ensureManagedGitHubJob(
       tasks: [],
       ...(options.coordinator ? {graphStartContext:{projectRoot:options.coordinator.projectRoot,
         workspaceRoot:options.coordinator.workspaceRoot,
-        ...(options.coordinator.sharedRoot?{sharedRoot:options.coordinator.sharedRoot}:{}),
         ...(options.coordinator.globalRoot?{globalRoot:options.coordinator.globalRoot}:{}),
         noGitHub:options.noGitHub===true}} : {}),
     });

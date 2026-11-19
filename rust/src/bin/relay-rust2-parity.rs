@@ -873,7 +873,7 @@ fn invoke(request: &Value) -> Result<String, String> {
             };
             let result=run_coordinator_job_command(
                 std::path::Path::new(request["graphDirectory"].as_str().unwrap_or("workflow")),
-                &args,id,&store,&job,None,None,None,
+                &args,id,&store,&job,None,None,
                 if request["hasForeground"]==true{Some(&mut foreground)}else{None},
                 None);
             let after=store.load_job(id)?.ok_or("Fixture Job vanished")?;
@@ -1426,7 +1426,7 @@ fn invoke(request: &Value) -> Result<String, String> {
                     .as_str()
                     .ok_or("projectPath required")?
             ),
-            request["sharedRoot"].as_str().map(std::path::Path::new),
+            std::path::Path::new(request["workspaceRoot"].as_str().unwrap_or("")),
             std::path::Path::new(request["root"].as_str().ok_or("root required")?)
         )?
         .to_string_lossy())
@@ -2370,7 +2370,6 @@ fn invoke(request: &Value) -> Result<String, String> {
             agents_relay_rust2::agent_script_discovery::discover_script_agent(
                 request["agent"].as_str().unwrap_or(""),
                 request["projectPath"].as_str().unwrap_or(""),
-                request["sharedRoot"].as_str(),
                 request["workspaceRoot"].as_str(),
                 request["globalRoot"].as_str()
             )?
@@ -2380,7 +2379,6 @@ fn invoke(request: &Value) -> Result<String, String> {
             agents_relay_rust2::agent_script_discovery::missing_script_agents(
                 request["graph"].as_str().unwrap_or(""),
                 request["projectPath"].as_str().unwrap_or(""),
-                request["sharedRoot"].as_str(),
                 request["workspaceRoot"].as_str(),
                 request["globalRoot"].as_str()
             )?
@@ -3879,7 +3877,6 @@ fn invoke(request: &Value) -> Result<String, String> {
                 request["name"].as_str().unwrap_or(""),
                 request["builtinsRoot"].as_str().unwrap_or(""),
                 request["contextRoot"].as_str().unwrap_or(""),
-                request["sharedRoot"].as_str(),
                 request.get("layers"),
             )?
             .to_string(),

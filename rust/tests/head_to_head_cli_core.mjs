@@ -94,19 +94,19 @@ try {
  for(const [label,source] of [
   ['missing','not-there'],['normal','builder'],['plain','plain'],
  ]) {
-  const n=await node(()=>discoverScriptAgent(source,project,shared,workspace,global));
-  const r=rust('discoverScriptAgent',{agent:source,projectPath:project,sharedRoot:shared,workspaceRoot:workspace,globalRoot:global});
+  const n=await node(()=>discoverScriptAgent(source,project,workspace,global));
+  const r=rust('discoverScriptAgent',{agent:source,projectPath:project,workspaceRoot:workspace,globalRoot:global});
   compare('script '+label,n,r);
  }
  const graph='flowchart TD\nBuild[agent:builder]\nTest[agent:missing]';
- compare('missing scripts',await node(()=>missingScriptAgents(graph,project,shared,workspace,global)),
-   rust('missingScriptAgents',{graph,projectPath:project,sharedRoot:shared,workspaceRoot:workspace,globalRoot:global}));
+ compare('missing scripts',await node(()=>missingScriptAgents(graph,project,workspace,global)),
+   rust('missingScriptAgents',{graph,projectPath:project,workspaceRoot:workspace,globalRoot:global}));
  await symlink(join(project,'agents','builder.agent.md'),join(project,'agents','.shortcut','linked.agent.mjs'));
  // A real malicious symlink on the expected name, not a fabricated exception.
  await rm(join(project,'agents','.shortcut','builder.agent.mjs'));
  await symlink(join(project,'agents','builder.agent.md'),join(project,'agents','.shortcut','builder.agent.mjs'));
- compare('script symlink rejection',await node(()=>discoverScriptAgent('builder',project,shared,workspace,global)),
-   rust('discoverScriptAgent',{agent:'builder',projectPath:project,sharedRoot:shared,workspaceRoot:workspace,globalRoot:global}));
+ compare('script symlink rejection',await node(()=>discoverScriptAgent('builder',project,workspace,global)),
+   rust('discoverScriptAgent',{agent:'builder',projectPath:project,workspaceRoot:workspace,globalRoot:global}));
  await rm(join(project,'agents','.shortcut','builder.agent.mjs'));
  await writeFile(join(project,'agents','.shortcut','builder.agent.mjs'),'export default async()=>{}\n');
  const findingsFile=join(root,'findings.json');
@@ -157,12 +157,12 @@ try {
   compare('blocker objective '+label,n,rust('blockerEffect',{action:'ensure',args}));
  }
  for(const args of [
-  ['--project-path',project,'--workspace-root',workspace,'--global-root',global,'--shared-root',shared,'--skills','onboard','--agents','builder'],
-  ['--project-path',project,'--workspace-root',workspace,'--global-root',global,'--shared-root',shared],
-  ['--project-path',project,'--workspace-root',workspace,'--global-root',global,'--shared-root',shared,'--role','nested-worker','--skills','missing'],
+  ['--project-path',project,'--workspace-root',workspace,'--global-root',global,'--skills','onboard','--agents','builder'],
+  ['--project-path',project,'--workspace-root',workspace,'--global-root',global],
+  ['--project-path',project,'--workspace-root',workspace,'--global-root',global,'--role','nested-worker','--skills','missing'],
   ['--project-path',project,'--workspace-root',join(root,'bad-workspace')],
-  ['--project-path',project,'--workspace-root',workspace,'--shared-root',join(root,'bad-shared')],
-  ['--project-path',project,'--workspace-root',workspace,'--global-root',global,'--shared-root',shared,'--agents','not-present'],
+  ['--project-path',project,'--workspace-root',workspace],
+  ['--project-path',project,'--workspace-root',workspace,'--global-root',global,'--agents','not-present'],
   ['--project-path',project,'--role','unknown'],
   ['--project-path',join(root,'missing')],
   [],

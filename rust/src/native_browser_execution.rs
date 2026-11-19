@@ -127,7 +127,7 @@ pub fn submit_claimed_chatgpt_worker(
     let fixture_root=config.pool_db.parent().and_then(Path::parent)
         .ok_or("Native WebHelm config missing isolated fixture root")?;
     let options=serde_json::json!({
-        "workspaceRoot":fixture_root,"sharedRoot":fixture_root,
+        "workspaceRoot":fixture_root,
         "globalRoot":fixture_root
     });
     let agents=store.load_agents()?.unwrap_or_default();

@@ -250,16 +250,12 @@ pub fn resolve_agent_contract_native(
         .pointer("/project/path")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let shared = context
-        .pointer("/project/sharedRoot")
-        .and_then(Value::as_str);
     let layers = crate::agent_content_resolver::agent_source_layers(project, &context["project"]);
     let builtin = package_root.join("skills/agents-relay/agents");
     let resolved = crate::agent_content_resolver::resolve_agent_markdown(
         name,
         &builtin.to_string_lossy(),
         project,
-        shared,
         Some(&layers),
     )?;
     let definition = resolved["content"].as_str().unwrap_or("");

@@ -1211,7 +1211,6 @@ fn native_cli_prompt_plan_and_task_context_reads_are_real_daemon_read_only(){
         let execute=||Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
             .args(args).env("HOME",&home).env("AGENTS_HOME",&globals)
             .env("AGENTS_RELAY_WORKSPACE_ROOT",&root)
-            .env_remove("AGENTS_RELAY_SHARED_ROOT")
             .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
             .output().unwrap();
         let mut output=execute();
@@ -1236,7 +1235,6 @@ fn native_cli_prompt_plan_and_task_context_reads_are_real_daemon_read_only(){
             .args(args).args(["--store-dir",&stores])
             .env("HOME",&home).env("AGENTS_HOME",&globals)
             .env("AGENTS_RELAY_WORKSPACE_ROOT",&root)
-            .env_remove("AGENTS_RELAY_SHARED_ROOT")
             .current_dir(source_root).output().unwrap()
     };
     let expected_task=run_original(&["prompt","--id","17","--task-id","2"]);
@@ -1342,14 +1340,12 @@ fn native_cli_prompt_plan_and_task_context_reads_are_real_daemon_read_only(){
             .args(&flags)
             .env("HOME",&home).env("AGENTS_HOME",&globals)
             .env("AGENTS_RELAY_WORKSPACE_ROOT",&root)
-            .env_remove("AGENTS_RELAY_SHARED_ROOT")
             .current_dir(source_root).output().unwrap();
         let native=Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
             .args([command,action,"--id","17","--port",&port])
             .args(&flags)
             .env("HOME",&home).env("AGENTS_HOME",&globals)
             .env("AGENTS_RELAY_WORKSPACE_ROOT",&root)
-            .env_remove("AGENTS_RELAY_SHARED_ROOT")
             .current_dir(source_root).output().unwrap();
         assert!(node.status.success(),"Original Node {command} {action}: {}",
             String::from_utf8_lossy(&node.stderr));

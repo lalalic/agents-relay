@@ -464,7 +464,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             return Ok(());
         }
         let script=discover_script_agent(field(task,"agentName"),
-            field(&original,"projectRoot"),None,
+            field(&original,"projectRoot"),
             self.config.workspace_root.to_str(),None)?
             .ok_or("Source Worker has no declared trusted Shortcut")?;
         if !Path::new(&script).is_file(){return Err("Script Agent module is absent".into());}
