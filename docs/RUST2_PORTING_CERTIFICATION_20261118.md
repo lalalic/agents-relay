@@ -727,3 +727,10 @@
 - **独立差分认证**：从当前 canonical 工作树直接对比 `src/events.ts` 与 `rust/src/events.rs`，未复用任何 Worker C 产物。50 个原创 Node/Rust 差分用例（`rust/tests/head_to_head_events_public.mjs`）：subjectToken 14 形状（空/空格/斜杠/点/unicode/200 长度）、subjectPrefix 13 形状、eventFor 9 fixtures（uuid/timestamp 归一化、failed/blocked→error 级别、默认 orchestrator 可见性、显式 null data/source 键语义——Rust op 修正为按"键存在"而非"非空对象"传递）、MemoryEventBus 7 场景（含失败 handler 的错误传播、退订、通配订阅）、NatsEventBus 构造器前缀校验 9 配置（无网络面）。
 - **回归**：lib 87/87、events_bus_runtime 662+200、native_events_bus_runtime 5/5 全绿。
 - NATS 线缆传输在 `head_to_head_events_bus_runtime.mjs` 范围内另有 862 用例；生产接线归属 `src/reconciler-runtime.ts` 行。
+
+## 2026-11-19 feedback.ts PROVENANCE QUARANTINE 解除
+
+- **独立差分认证**：未复用任何 Worker C 产物。77 个原创 Node/Rust 差分用例（`rust/tests/head_to_head_feedback_public.mjs`）：
+  - 52 纯函数用例覆盖全部 12 个公开导出：marker 的 JSON 序列化与 `>` 转义、parseFeedbackMarker 往返/错误 schema/版本/垃圾串、redactSensitiveText 的 Bearer/sk_/pk_/api-key/token/secret 形状、createFeedbackRecord 的完整校验面（文本边界、4 种图片类型、sizeBytes 安全整数/零/负/小数、reference ?#/凭据、11 附件上限、public 可见性 sanitize 栅栏、provenance product/submittedAt/contact/长度守卫、options id/receivedAt/sanitize）、workProvenance/fingerprint/renderFeedbackMarkdown。
+  - 25 真实文件系统用例：FileFeedbackStore submit 正常路径、文件名消毒、文本/媒体/大小/附件数限制、自定义 limits、IMAGE/PNG 大小写不敏感、provenance 失败传播、幂等键重放、storeRead 校验、readFeedbackAttachment 完整性/越界检查。
+- **回归**：lib 87/87、events 50 全绿。

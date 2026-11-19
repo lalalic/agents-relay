@@ -2,18 +2,18 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "c846739e5f60e6bc73cb3000cfab466855655462",
-    "rustTree": "0545de24cf57b2c92da6b513627ed75a48bdbfe3",
-    "sourceCount": 45,
+    "rustTree": "f2325b9cb5a97280c5d67e72d7099584c6434d87",
+    "sourceCount": 44,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 406,
-    "directNameMatches": 393,
+    "runtimeExportSymbols": 383,
+    "directNameMatches": 370,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 13,
-    "typeOrShapeReviewSymbols": 195,
+    "typeOrShapeReviewSymbols": 183,
     "filesWithUnmappedRuntime": 0,
     "filesWithoutDirectDiffImport": 17,
-    "filesWithoutOtherRustReferences": 11
+    "filesWithoutOtherRustReferences": 10
   },
   "pendingModules": [],
   "files": [
@@ -1042,234 +1042,6 @@
         },
         {
           "name": "makeExecutionDecisionAudit",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/feedback.ts",
-      "target": "rust/src/feedback.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 23,
-      "directNameMatches": 23,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "FeedbackSource",
-        "FeedbackActorClass",
-        "FeedbackVisibility",
-        "FeedbackTriageStatus",
-        "FeedbackProvenance",
-        "LegacyFeedbackAttachmentInput",
-        "LegacyFeedbackSubmission",
-        "LegacyFeedbackRecord",
-        "FeedbackAttachment",
-        "FeedbackDownstreamReference",
-        "FeedbackRecord",
-        "FileFeedbackStore.root"
-      ],
-      "directDiffImports": [
-        "rust/tests/head_to_head_worker_c.mjs",
-        "rust/tests/head_to_head_worker_c_feedback_store.mjs"
-      ],
-      "otherRustModuleReferences": [],
-      "exports": [
-        {
-          "name": "FEEDBACK_MARKER",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "FEEDBACK_SCHEMA",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "FEEDBACK_SCHEMA_VERSION",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "FEEDBACK_MAX_TEXT_LENGTH",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "FEEDBACK_MAX_ATTACHMENTS",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "FEEDBACK_MAX_ATTACHMENT_BYTES",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "FEEDBACK_IMAGE_TYPES",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "DEFAULT_FEEDBACK_LIMITS",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "FeedbackSource",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "FeedbackActorClass",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "FeedbackVisibility",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "FeedbackTriageStatus",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "FeedbackProvenance",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "FeedbackAttachmentInput",
-          "kind": "type",
-          "static": "name-match"
-        },
-        {
-          "name": "LegacyFeedbackAttachmentInput",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "LegacyFeedbackSubmission",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "LegacyFeedbackRecord",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "FeedbackAttachment",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "FeedbackDownstreamReference",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "FeedbackRecord",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "FeedbackLimits",
-          "kind": "type",
-          "static": "name-match"
-        },
-        {
-          "name": "FeedbackSubmission",
-          "kind": "type",
-          "static": "name-match"
-        },
-        {
-          "name": "FeedbackMaterialization",
-          "kind": "type",
-          "static": "name-match"
-        },
-        {
-          "name": "marker",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "renderFeedbackMarker",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "parseFeedbackMarker",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "FileFeedbackStore",
-          "kind": "class",
-          "static": "name-match"
-        },
-        {
-          "name": "root",
-          "kind": "class-property",
-          "parent": "FileFeedbackStore",
-          "static": "review"
-        },
-        {
-          "name": "constructor",
-          "kind": "class-constructor",
-          "parent": "FileFeedbackStore",
-          "static": "name-match"
-        },
-        {
-          "name": "submit",
-          "kind": "class-method",
-          "parent": "FileFeedbackStore",
-          "static": "name-match"
-        },
-        {
-          "name": "read",
-          "kind": "class-method",
-          "parent": "FileFeedbackStore",
-          "static": "name-match"
-        },
-        {
-          "name": "materializeFeedbackRecord",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "redactSensitiveText",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "createFeedbackRecord",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "feedbackWorkProvenance",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "feedbackFingerprint",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "renderFeedbackMarkdown",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "materializeFeedback",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "readFeedbackAttachment",
           "kind": "function",
           "static": "name-match"
         }

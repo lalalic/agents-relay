@@ -972,13 +972,12 @@
         "FeedbackRecord",
         "FileFeedbackStore.root"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
-        "仍有 12 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-19 PROVENANCE QUARANTINE cleared: independent verification from a fresh canonical session; no Worker C source or differential output reused. 77 original Node/Rust direct differential cases (rust/tests/head_to_head_feedback_public.mjs): 52 pure-helper cases over all 12 public exports (marker/parse/redact/createRecord/workProvenance/fingerprint/markdown) and 25 real-filesystem FileFeedbackStore cases (submit limits/sanitization/idempotency, read validation, attachment integrity/escape). Regressions: lib 87/87, events 50."
       ],
-      "legacyLedgerNote": "PROVENANCE QUARANTINE: prior Worker C used duplicate shared worktree; its source and differential output are not admissible PASS evidence. Pending independent canonical commit and direct Node/Rust/native verification from `hotfix/rust2-parallel-projection-canonical-20261117` and `/tmp/rust2-parallel-projection-canonical-20261117.handoff.md`. Existing Rust is retained for compatibility with later Wave2/3/4; not yet reverified."
+      "openGates": [],
+      "legacyLedgerNote": "PROVENANCE QUARANTINE: prior Worker C used duplicate shared worktree; its source and differential output are not admissible PASS evidence. Pending independent canonical commit and direct Node/Rust/native verification from `hotfix/rust2-parallel-projection-canonical-20261117` and `/tmp/rust2-parallel-projection-canonical-20261117.handoff.md`. Existing Rust is retained for compatibility with later Wave2/3/4; not yet reverified.",
+      "status": "PASS"
     },
     {
       "source": "src/force-restate-validation.ts",
