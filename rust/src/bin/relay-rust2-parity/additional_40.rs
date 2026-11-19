@@ -5,6 +5,22 @@ use std::path::Path;
 
 pub fn invoke(req:&Value)->Option<Result<String,String>>{
     match req["op"].as_str()?{
+        "certTroubleshooter"=>Some((||{
+            use agents_relay_rust2::troubleshooter as t;
+            let job=&req["job"];
+            let original=&req["original"];
+            let mut recovery=req["recovery"].clone();
+            let directory=Path::new(req["storeDir"].as_str().ok_or("storeDir missing")?);
+            let id=t::troubleshooter_task_id(directory,job,original)?;
+            let reopens=t::pending_troubleshooter_reopens(job);
+            let retries=t::pending_troubleshooter_retries(job);
+            let pending=t::pending_troubleshooter_tasks(
+                Path::new("workflow"),directory,job)?;
+            let exhausted=t::exhausted_troubleshooter_recoveries(job);
+            t::refresh_troubleshooter_input(job,original,&mut recovery);
+            Ok(json!({"id":id,"reopens":reopens,"retries":retries,
+                "pending":pending,"exhausted":exhausted,"recovery":recovery}).to_string())
+        })()),
         "certRelayStoreDiscovery"=>Some((||{
             use agents_relay_rust2::relay_store_discovery as d;
             let directory=Path::new(req["directory"].as_str().ok_or("directory missing")?);
