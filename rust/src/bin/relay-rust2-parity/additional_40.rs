@@ -25,6 +25,146 @@ pub fn invoke(req:&Value)->Option<Result<String,String>>{
             };
             Ok(result.to_string())
         })()),
+        "certTaskRecovery"=>Some((||{
+            use agents_relay_rust2::task_recovery as tr;
+            let action=req["action"].as_str().unwrap_or("");
+            let task_id=req["taskId"].as_str().unwrap_or("3");
+            let result=match action{
+                "request"=>{
+                    let mut result=tr::request_troubleshooter_escalation(Path::new("workflow"),
+                        &req["job"],task_id,&req["request"],req["now"].as_str())?;
+                    // Node public API returns the committed snapshot and
+                    // escalation receipt; its durable EventBus record is
+                    // published separately by the injected store port.
+                    if let Some(map)=result.as_object_mut(){map.remove("event");}
+                    result
+                },
+                "resume"=>tr::resume_troubleshooter(Path::new("workflow"),
+                    &req["job"],task_id,
+                    req["response"].as_str().unwrap_or(""),req["now"].as_str())?,
+                "hasPending"=>json!(tr::has_pending_troubleshooter_escalation(
+                    &req["job"],&req["original"])),
+                "receipt"=>tr::record_escalation_notification_delivery(
+                    &req["job"],task_id,req["escalationId"].as_str().unwrap_or(""),
+                    &req["receipt"] )?,
+                _=>return Err("Unknown Task recovery API".into()),
+            };
+            Ok(result.to_string())
+        })()),
+        "certBlockerPublic"=>Some((||{
+            use agents_relay_rust2::blockers as b;
+            let output=match req["action"].as_str().unwrap_or("") {
+                "register"=>{
+                    let result=b::register_blocker_dependency(Path::new("workflow"),
+                        &req["blocker"],&req["dependent"],
+                        req["taskId"].as_str().unwrap_or("2"),
+                        req["expectedAttempt"].as_i64(),
+                        req["resolutionMode"].as_str(),
+                        req["now"].as_str())?;
+                    json!({"blocker":result.blocker,"dependent":result.dependent,
+                        "relation":result.relation,"existing":result.existing})
+                },
+                "resolve"=>{
+                    let summary=b::resolve_blocker_dependencies(Path::new("workflow"),
+                        &req["blocker"],req["resolution"].as_str().unwrap_or("merge"),
+                        |_relation|Ok(req["dependent"].clone()),req["now"].as_str())?;
+                    let dependent=summary.updated_dependents.last().map(|(_,v)|v.clone())
+                        .unwrap_or_else(||req["dependent"].clone());
+                    json!({"blocker":summary.blocker,"dependent":dependent,
+                        "resumed":summary.resumed,"obsolete":summary.obsolete,
+                        "waiting":summary.waiting,"unblocked":summary.unblocked})
+                },
+                _=>return Err("Unknown blocker API".into()),
+            };
+            Ok(output.to_string())
+        })()),
+        "certExecutionRecovery"=>Some((||{
+            use std::{cell::RefCell,rc::Rc,future::{ready,Future},pin::pin,task::{Context,Poll,Waker}};
+            use agents_relay_rust2::execution_recovery as ex;
+            let records=Rc::new(RefCell::new(Vec::<Value>::new()));
+            let retrieved=req["latestJob"].clone();
+            let output=records.clone();
+            let mode=req["mode"].as_str().unwrap_or("expired");
+            let execute=|recorded:Rc<RefCell<Vec<Value>>>,job:Value,mode:&str|{
+                let reclaim=req["allowReclaim"].as_bool().unwrap_or(true);
+                let original=req["job"].clone();
+                let callbacks=move|task:Value,event:String,reason:String|{
+                    recorded.borrow_mut().push(json!({"id":task.get("id"),
+                        "executionId":task.get("executionId"),
+                        "event":event,"reason":reason}));
+                    ready(Ok::<(),String>(()))
+                };
+                if mode=="startup" {
+                    let f=ex::recover_startup_orphans(&original,
+                        req["owner"].as_str().unwrap_or("new-owner"),
+                        ||ready(Ok::<_,String>(job.clone())),
+                        move|_task|ready(Ok::<_,String>(reclaim)),callbacks);
+                    let mut f=pin!(f);let mut cx=Context::from_waker(Waker::noop());
+                    match f.as_mut().poll(&mut cx){Poll::Ready(v)=>v,
+                        Poll::Pending=>Err("Injected startup recovery suspended".into())}
+                }else{
+                    let f=ex::recover_expired_executions(&original,
+                        req["nowMs"].as_i64().unwrap_or(1795000000000),
+                        ||ready(Ok::<_,String>(job.clone())),
+                        move|_task|ready(Ok::<_,String>(reclaim)),callbacks);
+                    let mut f=pin!(f);let mut cx=Context::from_waker(Waker::noop());
+                    match f.as_mut().poll(&mut cx){Poll::Ready(v)=>v,
+                        Poll::Pending=>Err("Injected lease recovery suspended".into())}
+                }
+            };
+            execute(output,retrieved,mode)?;
+            Ok(json!({"recovered":records.borrow().clone()}).to_string())
+        })()),
+        "certManualPlan"=>Some((||{
+            use std::{cell::RefCell,rc::Rc,future::{ready,Future},pin::pin,task::{Context,Poll,Waker}};
+            use agents_relay_rust2::{manual_plan::execute_manual_plan,planner::create_plan_round};
+            let state=Rc::new(RefCell::new(req["job"].clone()));
+            let created=Rc::new(RefCell::new(Vec::<Value>::new()));
+            let loaded=state.clone();let committed=state.clone();
+            let launched=state.clone();let launch_records=created.clone();
+            let timeout=req["timeoutMs"].as_u64().unwrap_or(5000);
+            let future=execute_manual_plan(Path::new("workflow"),
+                req["jobId"].as_str().unwrap_or("17"),
+                req["guidance"].as_str(),timeout,
+                req["forceRestate"].as_bool().unwrap_or(false),
+                req["atomic"].as_bool().unwrap_or(true),
+                move||ready(Ok::<_,String>(loaded.borrow().clone())),
+                move|next:Value|{
+                    *committed.borrow_mut()=next.clone();
+                    ready(Ok::<_,String>(next))
+                },
+                |job,guidance,timeout|create_plan_round(Path::new("workflow"),
+                    job,guidance,true,Some(timeout),Some("2026-11-18T20:00:00.000Z")),
+                move|job,round|{
+                    launch_records.borrow_mut().push(round.clone());
+                    let mut current=job.clone();
+                    if req["failLaunch"]==true {
+                        return ready(Err("injected Planner transport failure".into()));
+                    }
+                    let plan_id=round["id"].clone();
+                    if let Some(plans)=current["plans"].as_array_mut(){
+                        if let Some(p)=plans.iter_mut().find(|p|p["id"]==plan_id){
+                            p["status"]=json!(req["terminalStatus"].as_str().unwrap_or("SUCCEEDED"));
+                            if req["terminalStatus"]=="FAILED"{
+                                p["error"]=json!("injected Planner failure");
+                            }
+                        }
+                    }
+                    *launched.borrow_mut()=current;
+                    ready(Ok(()))
+                });
+            let mut pinned=pin!(future);let mut cx=Context::from_waker(Waker::noop());
+            let result=match pinned.as_mut().poll(&mut cx){
+                Poll::Ready(value)=>value,
+                Poll::Pending=>return Err("Injected manual Planner cannot suspend".into()),
+            };
+            // Difference report transport shape keeps original Node errors.
+            let output=match result {
+                Ok((job,round))=>json!({"job":job,"round":round,"launched":created.borrow().len()}),
+                Err(error)=>return Err(error),
+            };
+            Ok(output.to_string())
+        })()),
         "certDaemonUtilities"=>Some((||{
             use agents_relay_rust2::relayd_utilities as d;
             let args=req["args"].as_array().into_iter().flatten()
@@ -103,56 +243,6 @@ pub fn invoke(req:&Value)->Option<Result<String,String>>{
                 _=>return Err("Unknown execution routing API".into()),
             };
             Ok(value.to_string())
-        })()),
-        "certManualPlan"=>Some((||{
-            use std::{cell::RefCell,rc::Rc,future::{ready,Future},pin::pin,task::{Context,Poll,Waker}};
-            use agents_relay_rust2::{manual_plan::execute_manual_plan,planner::create_plan_round};
-            let state=Rc::new(RefCell::new(req["job"].clone()));
-            let created=Rc::new(RefCell::new(Vec::<Value>::new()));
-            let loaded=state.clone();let committed=state.clone();
-            let launched=state.clone();let launch_records=created.clone();
-            let timeout=req["timeoutMs"].as_u64().unwrap_or(5000);
-            let future=execute_manual_plan(Path::new("workflow"),
-                req["jobId"].as_str().unwrap_or("17"),
-                req["guidance"].as_str(),timeout,
-                req["forceRestate"].as_bool().unwrap_or(false),
-                req["atomic"].as_bool().unwrap_or(true),
-                move||ready(Ok::<_,String>(loaded.borrow().clone())),
-                move|next:Value|{
-                    *committed.borrow_mut()=next.clone();
-                    ready(Ok::<_,String>(next))
-                },
-                |job,guidance,timeout|create_plan_round(Path::new("workflow"),
-                    job,guidance,true,Some(timeout),Some("2026-11-18T20:00:00.000Z")),
-                move|job,round|{
-                    launch_records.borrow_mut().push(round.clone());
-                    let mut current=job.clone();
-                    if req["failLaunch"]==true {
-                        return ready(Err("injected Planner transport failure".into()));
-                    }
-                    let plan_id=round["id"].clone();
-                    if let Some(plans)=current["plans"].as_array_mut(){
-                        if let Some(p)=plans.iter_mut().find(|p|p["id"]==plan_id){
-                            p["status"]=json!(req["terminalStatus"].as_str().unwrap_or("SUCCEEDED"));
-                            if req["terminalStatus"]=="FAILED"{
-                                p["error"]=json!("injected Planner failure");
-                            }
-                        }
-                    }
-                    *launched.borrow_mut()=current;
-                    ready(Ok(()))
-                });
-            let mut pinned=pin!(future);let mut cx=Context::from_waker(Waker::noop());
-            let result=match pinned.as_mut().poll(&mut cx){
-                Poll::Ready(value)=>value,
-                Poll::Pending=>return Err("Injected manual Planner cannot suspend".into()),
-            };
-            // Difference report transport shape keeps original Node errors.
-            let output=match result {
-                Ok((job,round))=>json!({"job":job,"round":round,"launched":created.borrow().len()}),
-                Err(error)=>return Err(error),
-            };
-            Ok(output.to_string())
         })()),
         "certWorkerRouterPublic"=>Some((||{
             use agents_relay_rust2::worker_routing as w;

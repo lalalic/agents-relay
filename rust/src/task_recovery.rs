@@ -80,12 +80,16 @@ pub fn request_troubleshooter_escalation(
     }
     let now=now.map(str::to_owned).unwrap_or_else(iso8601_now);
     if let Some(original)=original.as_ref() {
-        let proposal=json!({
+        let mut proposal=json!({
             "path":"escalation_gate","targetTaskId":text(original,"id"),
-            "recoveryExecutionId":recovery.get("executionId"),
             "rootCause":text(request,"context").trim(),
             "solution":text(request,"requiredAction").trim()
         });
+        // Node's optional `recoveryExecutionId: undefined` is absent from
+        // materialized Task resolution. Do not persist JSON null instead.
+        if let Some(id)=recovery.get("executionId").filter(|v|!v.is_null()){
+            proposal["recoveryExecutionId"]=id.clone();
+        }
         let mut selected=false;
         let decision=dispatch_task_resolution_sync(graph_directory,original,
             &proposal,&json!("troubleshooter"),|action|{
@@ -116,7 +120,7 @@ pub fn request_troubleshooter_escalation(
     let escalation_id=random_uuid();
     let channel=request.pointer("/notification/channel").and_then(Value::as_str)
         .unwrap_or("relay-event");
-    let escalation=json!({
+    let mut escalation=json!({
         "id":escalation_id,"originalTaskId":original.as_ref().and_then(|v|v.get("id")),
         "originalPlanId":original_plan.as_ref().and_then(|v|v.get("id")),
         "fingerprint":fp,"originalExecutionId":original.as_ref().and_then(|v|v.get("executionId")),
@@ -126,6 +130,13 @@ pub fn request_troubleshooter_escalation(
         "context":text(request,"context").trim(),"status":"pending","requestedAt":now,
         "notification":{"status":"pending","channel":channel,"requestedAt":now}
     });
+    // Match optional Node escalation fields, not explicitly-null fields.
+    if let Some(map)=escalation.as_object_mut(){
+        for key in ["originalTaskId","originalPlanId",
+            "originalExecutionId","recoveryExecutionId"]{
+            if map.get(key).is_some_and(Value::is_null){map.remove(key);}
+        }
+    }
     let event=event_for(&job_id,recovery_task_id,
         original.as_ref().and_then(|v|v.get("id")).and_then(Value::as_str),
         "escalation.requested","blocked",

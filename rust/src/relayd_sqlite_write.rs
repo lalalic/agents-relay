@@ -295,6 +295,19 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
             }).map_err(|e|format!("Cannot launch isolated Planner worker: {e}"))?;
         Ok(json!({"job":committed,"round":round}))
     }
+    fn task_update(&mut self,id:&str,task_id:&str,task:&Value,
+        expected_updated_at:&str)->Result<Value,String>{
+        let original=self.scoped(id)?.load_job(id)?
+            .ok_or_else(||format!("SQLite Job {id} not found"))?;
+        self.isolated_project(&original)?;
+        let scoped=self.scoped(id)?;
+        let updated=crate::task_update::apply_managed_task_update(
+            &self.config.graph_directory,&scoped,id,task_id,
+            task,expected_updated_at)?;
+        drop(scoped);
+        self.wake(id,"control.task.update")?;
+        Ok(updated)
+    }
     fn review_targeted(&mut self,id:&str,request:&Value)->Result<Value,String>{
         // Only the exact reviewer execution and immutable reviewed HEAD can
         // submit a correction. Atomic SQLite mutation allocates one numeric

@@ -13,6 +13,7 @@ use crate::{
         new_local_repository,integer_arg,
     },
     cli_revision::{revision_request,validate_revision_receipt},
+    cli_unblock::{job_unblock_request,task_unblock_request},
     cli_review::{review_job_request,review_job_response},
     cli_task_complete::task_complete_request,
     cli_workflow::workflow_cli_result,
@@ -261,9 +262,14 @@ pub fn run_job_command<P:CliRuntimePort>(
         return relay_job_state_command(args,id,"CANCELLED");
     }
     if action=="unblock"{
+        // CLI input preflight and real daemon Graph unblock use the same
+        // public Node-derived Rust unblock contract, never a loose status
+        // override. SQLite remains the only Task-state authority.
+        let proposed=job_unblock_request(args,&job,
+            crate::unblock::is_effectively_blocked)?;
         return control_response(port,args,&json!({
             "command":"job.unblock","jobId":id,
-            "reason":required(args,"--reason","job unblock")?
+            "reason":proposed.get("reason")
         }));
     }
     control_response(port,args,&job_update_request(args,&job,stdin)?)
@@ -422,9 +428,13 @@ pub fn run_task_command<P:CliRuntimePort>(
             "taskId":task_id,
             "recoveryTaskId":required(args,"--recovery-task-id","recover")?,
             "recoveryDiagnosis":recovery_diagnosis_from_args(args)?}),
-        "unblock"=>json!({"command":"task.unblock","jobId":id,
-            "taskId":task_id,"reason":arg(args,"--reason",""),
-            "response":arg(args,"--response","")}),
+        "unblock"=>{
+            let original=selected.ok_or("Unblock Task missing from Job")?;
+            let requested=task_unblock_request(args,original)?;
+            json!({"command":"task.unblock","jobId":id,
+                "taskId":task_id,"reason":requested.get("reason"),
+                "response":requested.get("response")})
+        },
         "escalate"=>json!({"command":"task.escalate","jobId":id,
             "taskId":task_id,
             "requiredAction":arg(args,"--required-action",""),

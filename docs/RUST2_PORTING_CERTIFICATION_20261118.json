@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 40,
-    "HOLD": 67
+    "PASS": 45,
+    "HOLD": 62
   },
   "records": [
     {
@@ -73,10 +73,13 @@
       "source": "src/blockers.ts",
       "target": "rust/src/blockers.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 2,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
+      "directDiffTests": [
+        "rust/tests/head_to_head_blockers_public.mjs",
+        "rust/tests/head_to_head_wave2_graph.mjs"
+      ],
       "otherRustModuleReferences": [
         "rust/src/blocker_recovery.rs",
         "rust/src/blocker_store_port.rs",
@@ -86,13 +89,15 @@
         "DependentStoreFactory",
         "BlockerDependentTarget"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "仍有 2 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "130 direct original Node/Rust registerBlockerDependency/resolveBlockerDependencies positive/invalid/obsolete/blocked/verified cases, plus randomized original Task/Blocker Graph decisions",
+        "Native SQLite cross-Job registration/reopen/idempotency, wrong attempt and partial-write retry gates all pass; real native daemon blocker control and store factory call canonical Rust reducer",
+        "Direct original Node/Rust tests: rust/tests/head_to_head_blockers_public.mjs, rust/tests/head_to_head_wave2_graph.mjs",
+        "Native Rust negative/runtime tests: rust/tests/native_cross_job_blocker_store.rs, rust/tests/native_all_api_sqlite_entrypoints.rs",
+        "Actual non-parity runtime callers: rust/src/relayd_control.rs, rust/src/blocker_store_port.rs"
       ],
-      "legacyLedgerNote": "Serial Phase1 native Rust port for authoritative Graph/SQLite and guarded Git side effects. UNCOMPILED/UNTESTED, finish production bindings in Phase2."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by direct Node/Rust behavioral comparisons, native tests and real runtime caller."
     },
     {
       "source": "src/browser-worker-pool.ts",
@@ -365,22 +370,27 @@
       "source": "src/cli-unblock.ts",
       "target": "rust/src/cli_unblock.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 2,
       "staticNameMismatch": 0,
       "directDiffTests": [
         "rust/tests/head_to_head_cli_unblock.mjs"
       ],
       "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity.rs"
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/cli.rs",
+        "rust/src/relayd_control.rs"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "直接 Task/Job Graph+SQLite 负面/重放测试已通过，但 run_task_unblock_command/run_job_unblock_command 目前仅由 parity harness 和测试调用，正式 CLI 生产调用链待闭合",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "11 direct original Node/Rust full Task and Job CLI unblock Graph/SQLite positive, no reason, rejected, multiple Task and authorized Troubleshooter response outcomes",
+        "Wired the dedicated Rust cli_unblock Task/Job input preflight into actual native cli.rs dispatch, with real daemon task.unblock and job.unblock SQLite/Graph ownership; native CLI tests and postcommit event denial tests pass",
+        "Direct original Node/Rust tests: rust/tests/head_to_head_cli_unblock.mjs",
+        "Native Rust negative/runtime tests: rust/tests/native_cli_unblock.rs, rust/tests/native_cli_binary.rs, rust/tests/native_all_api_sqlite_entrypoints.rs",
+        "Actual non-parity runtime callers: rust/src/cli.rs, rust/src/relayd_control.rs"
       ],
-      "legacyLedgerNote": "Phase1 serial native Rust draft; uncompiled, untested and not production-wired; parity pending."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by direct Node/Rust behavioral comparisons, native tests and real runtime caller."
     },
     {
       "source": "src/cli-worker-task.ts",
@@ -824,23 +834,28 @@
       "source": "src/execution-recovery.ts",
       "target": "rust/src/execution_recovery.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 2,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
+      "directDiffTests": [
+        "rust/tests/head_to_head_execution_recovery_public.mjs",
+        "rust/tests/head_to_head_reconciler_reconcile_public.mjs"
+      ],
       "otherRustModuleReferences": [
         "rust/src/reconciler.rs"
       ],
       "typeOrShapeReviews": [
         "ExecutionRecoveryPorts"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "170 direct original Node/Rust public recoverExpiredExecutions and recoverStartupOrphans generation, lease timeout, adapter and stale owner scenarios; original Node/Rust Reconciler applies recovery via authoritative entrypoint",
+        "Fixed native empty-string startup orphan executionId truthiness so no non-generation process can be reaped; native SQLite exact CAS/recovery/process-identity tests 1+6+2 pass, refusing unproven identities and duplicate effects",
+        "Direct original Node/Rust tests: rust/tests/head_to_head_execution_recovery_public.mjs, rust/tests/head_to_head_reconciler_reconcile_public.mjs",
+        "Native Rust negative/runtime tests: rust/tests/native_reconciler_recover_lost.rs, rust/tests/native_reconciler_reconcile_public.rs, rust/tests/native_process_identity.rs",
+        "Actual non-parity runtime callers: rust/src/reconciler.rs"
       ],
-      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by direct Node/Rust behavioral comparisons, native tests and real runtime caller."
     },
     {
       "source": "src/execution-routing.ts",
@@ -2399,10 +2414,13 @@
       "source": "src/task-recovery.ts",
       "target": "rust/src/task_recovery.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 4,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
+      "directDiffTests": [
+        "rust/tests/head_to_head_task_recovery_public.mjs",
+        "rust/tests/head_to_head_wave4_review_revision.mjs"
+      ],
       "otherRustModuleReferences": [
         "rust/src/cli_unblock.rs",
         "rust/src/relayd_control.rs"
@@ -2410,13 +2428,15 @@
       "typeOrShapeReviews": [
         "EscalationRequest"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "116 direct original Node/Rust requestTroubleshooterEscalation, resumeTroubleshooter, hasPendingTroubleshooterEscalation and recordEscalationNotificationDelivery positive/denied/duplicate/receipt-conflict scenarios",
+        "Corrected undefined optional UUID/execution fields to be absent in Rust escalation records, not JSON null; native SQLite exact generation, authorized human response and durable escalation notification outcomes pass",
+        "Direct original Node/Rust tests: rust/tests/head_to_head_task_recovery_public.mjs, rust/tests/head_to_head_wave4_review_revision.mjs",
+        "Native Rust negative/runtime tests: rust/tests/native_api_escalation.rs, rust/tests/native_cli_unblock.rs, rust/tests/native_wave4_review_escalation.rs",
+        "Actual non-parity runtime callers: rust/src/relayd_control.rs, rust/src/cli_unblock.rs"
       ],
-      "legacyLedgerNote": "Phase1 serial native Rust draft; uncompiled and untested, production API/binding and differential to close in Phase2."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by direct Node/Rust behavioral comparisons, native tests and real runtime caller."
     },
     {
       "source": "src/task-transitions.ts",
@@ -2469,21 +2489,28 @@
       "source": "src/task-update.ts",
       "target": "rust/src/task_update.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 2,
       "staticNameMismatch": 0,
       "directDiffTests": [
         "rust/tests/head_to_head_atomic_public_apis.mjs"
       ],
       "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity/sqlite_api.rs"
+        "rust/src/bin/relay-rust2-parity/sqlite_api.rs",
+        "rust/src/cli.rs",
+        "rust/src/relayd_control.rs",
+        "rust/src/relayd_sqlite_write.rs"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "Original Node/Rust applyManagedTaskUpdate identity, editable-fields, retry, graph state transition and read-only negative cases compare directly",
+        "Wired actual native daemon task.update to authoritative Rust SQLite Task-update handler with exact expectedUpdatedAt optimistic CAS; native tests prove post-commit wake, routing invalidation, stale/forged ID rejection and no mutation on denial",
+        "Direct original Node/Rust tests: rust/tests/head_to_head_atomic_public_apis.mjs",
+        "Native Rust negative/runtime tests: rust/tests/native_all_api_sqlite_entrypoints.rs, rust/tests/native_sqlite_write_host.rs",
+        "Actual non-parity runtime callers: rust/src/relayd_control.rs, rust/src/relayd_sqlite_write.rs, rust/src/cli.rs"
       ],
-      "legacyLedgerNote": "Phase1 serial Task mutable-field/identity guard draft; uncompiled, untested, and not production-wired."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by direct Node/Rust behavioral comparisons, native tests and real runtime caller."
     },
     {
       "source": "src/troubleshooter-fallback.ts",

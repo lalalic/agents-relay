@@ -59,6 +59,12 @@ pub trait WorkspaceControlBackend{
     fn manual_plan(&mut self,id:&str,guidance:Option<&str>,force:bool)
         ->Result<Value,String>;
     fn review_targeted(&mut self,id:&str,request:&Value)->Result<Value,String>;
+    /// Production Task edits must use canonical task-update SQLite/Graph
+    /// reducer and wake only after a committed optimistic-version receipt.
+    fn task_update(&mut self,_id:&str,_task_id:&str,_task:&Value,
+        _expected_updated_at:&str)->Result<Value,String>{
+        Err("Native managed Task update port is not connected".into())
+    }
     fn blocker_ensure(&mut self,request:&Value)->Result<Value,String>;
     fn blocker_resolve(&mut self,id:&str,mode:&str)->Result<Value,String>;
     fn local_head(&mut self,job:&Value)->Result<String,String>;
@@ -255,6 +261,17 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
                 backend.publish(&event_for_unblock(&job_id,&id,reason))?;
             }
             waking(backend,&job_id,"control.job.unblock",snapshot)
+        },
+        "task.update"=>{
+            let id=required(body,"taskId","task.update")?;
+            let expected=required(body,"expectedUpdatedAt","task.update")?;
+            let proposed=body.get("task").filter(|value|value.is_object())
+                .ok_or("task.update requires proposed Task object")?;
+            if proposed.get("id").and_then(Value::as_str)!=Some(id)
+                ||proposed.get("jobId").and_then(Value::as_str)!=Some(job_id.as_str()){
+                return Err("Task update identity mismatch".into());
+            }
+            backend.task_update(&job_id,id,proposed,expected)
         },
         "task.complete"=>{
             let task_id=field(body,"taskId");

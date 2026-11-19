@@ -75,7 +75,11 @@ where
         if stale.get("kind").and_then(Value::as_str) == Some("planner")
             || !matches!(state, "RUNNING" | "QUEUED")
             || matches!(adapter, "chatgpt" | "z")
-            || !stale.get("executionId").is_some_and(|v| !v.is_null())
+            // Node startup orphan filtering requires a TRUTHY execution ID,
+            // not merely a non-null JSON value. Empty-string generations are
+            // not real leases and cannot authorize OS process reclaim.
+            || !stale.get("executionId").and_then(Value::as_str)
+                .is_some_and(|id|!id.is_empty())
             || !owner_mismatch(stale, owner) {continue;}
         let Some(id) = task_id(stale) else {continue;};
         let fresh = load().await?;
@@ -87,6 +91,8 @@ where
         if !generation_equal(stale, task)
             || !matches!(state, "RUNNING" | "QUEUED")
             || matches!(adapter, "chatgpt" | "z")
+            || !task.get("executionId").and_then(Value::as_str)
+                .is_some_and(|id|!id.is_empty())
             || !owner_mismatch(task, owner) {continue;}
         if !reclaim(task.clone()).await? {continue;}
         recover(task.clone(), "execution.orphaned".into(), "startup_orphaned".into()).await?;

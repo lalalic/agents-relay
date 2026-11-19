@@ -2,7 +2,7 @@
 
 > 本表是逐文件的真实审计清单，不是所有模块均通过。**PASS** 需公开 API 原始 Node/Rust 直接差分、Rust 原生负面测试和实际生产调用绑定；只通过静态 API 名称匹配，不能晋级。**HOLD** 指存在尚未关闭的证据缺口，不等同于未实现。
 
-- 原始检查范围：107 个源模块。已认证 **40 PASS**，保留 **67 HOLD/PORTING**。
+- 原始检查范围：107 个源模块。已认证 **45 PASS**，保留 **62 HOLD/PORTING**。
 - 本轮仅跑 Rust 原生测试与必要的 Node/Rust 差分；未重跑独立 Node 全量测试。
 - 这份报告对应上次全量 Node/Rust 230/230 PASS 后的逐项认证。全量 230/230 不等于 107 个模块逐一通过。
 - `directDiffTests` 与 `otherRustModuleReferences` 基于静态文本检索；测试文件出现导入或 Rust 源文件出现引用，仅说明有线索，不表示覆盖了每个公开 API 或进入生产。
@@ -122,6 +122,26 @@
 - 64 directly compared original Node/Rust manual Plan admission, previous pending/leased Plan, terminal rejection, forceRestate, Plan launch success and failure scenarios; 19 finishPlanner Graph generation tests
 - Corrected native Plan leased-before-forceRestate validation order and missing Git headSha serialization; real isolated Planner Shortcut PID/Graph/SQLite plan apply, DAG generation, failed proposal, daemon job.plan, restart and process receipt tests pass
 
+### `src/execution-recovery.ts`
+- 170 direct original Node/Rust public recoverExpiredExecutions and recoverStartupOrphans generation, lease timeout, adapter and stale owner scenarios; original Node/Rust Reconciler applies recovery via authoritative entrypoint
+- Fixed native empty-string startup orphan executionId truthiness so no non-generation process can be reaped; native SQLite exact CAS/recovery/process-identity tests 1+6+2 pass, refusing unproven identities and duplicate effects
+
+### `src/blockers.ts`
+- 130 direct original Node/Rust registerBlockerDependency/resolveBlockerDependencies positive/invalid/obsolete/blocked/verified cases, plus randomized original Task/Blocker Graph decisions
+- Native SQLite cross-Job registration/reopen/idempotency, wrong attempt and partial-write retry gates all pass; real native daemon blocker control and store factory call canonical Rust reducer
+
+### `src/task-update.ts`
+- Original Node/Rust applyManagedTaskUpdate identity, editable-fields, retry, graph state transition and read-only negative cases compare directly
+- Wired actual native daemon task.update to authoritative Rust SQLite Task-update handler with exact expectedUpdatedAt optimistic CAS; native tests prove post-commit wake, routing invalidation, stale/forged ID rejection and no mutation on denial
+
+### `src/task-recovery.ts`
+- 116 direct original Node/Rust requestTroubleshooterEscalation, resumeTroubleshooter, hasPendingTroubleshooterEscalation and recordEscalationNotificationDelivery positive/denied/duplicate/receipt-conflict scenarios
+- Corrected undefined optional UUID/execution fields to be absent in Rust escalation records, not JSON null; native SQLite exact generation, authorized human response and durable escalation notification outcomes pass
+
+### `src/cli-unblock.ts`
+- 11 direct original Node/Rust full Task and Job CLI unblock Graph/SQLite positive, no reason, rejected, multiple Task and authorized Troubleshooter response outcomes
+- Wired the dedicated Rust cli_unblock Task/Job input preflight into actual native cli.rs dispatch, with real daemon task.unblock and job.unblock SQLite/Graph ownership; native CLI tests and postcommit event denial tests pass
+
 ## 已有局部验证、但不能升级的关键模块
 
 - **`src/cli-coordinator.ts`**：11 个真实 Git/SQLite Head-to-Head 场景及 4 个 Rust 原生测试已通过，但 run_coordinator_job_command 只发现 parity harness 引用，正式 CLI 生产分发尚未直接绑定本端口
@@ -143,7 +163,7 @@
 |---:|---|---|---:|---:|---:|---:|---|
 | 1 | `src/adapters.ts` | **HOLD** | 12 | 2 | 4 | 14 | 结构审核、模块特定场景／生产门禁 |
 | 2 | `src/blocker-recovery.ts` | **HOLD** | 1 | 0 | 0 | 1 | 直接差分、运行调用、结构审核、模块特定场景／生产门禁 |
-| 3 | `src/blockers.ts` | **HOLD** | 2 | 0 | 3 | 2 | 直接差分、结构审核、模块特定场景／生产门禁 |
+| 3 | `src/blockers.ts` | **PASS** | 2 | 0 | 3 | 2 | 直接差分、结构审核、模块特定场景／生产门禁 |
 | 4 | `src/browser-worker-pool.ts` | **PASS** | 15 | 1 | 3 | 3 | 直接差分、原生和生产调用证据已关闭 |
 | 5 | `src/browser-worker-routing.ts` | **HOLD** | 1 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 6 | `src/browser-worker-runtime.ts` | **HOLD** | 2 | 0 | 1 | 3 | 直接差分、结构审核、模块特定场景／生产门禁 |
@@ -156,7 +176,7 @@
 | 13 | `src/cli-prompt.ts` | **HOLD** | 5 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 14 | `src/cli-review.ts` | **PASS** | 3 | 1 | 1 | 0 | 模块特定场景／生产门禁 |
 | 15 | `src/cli-support.ts` | **HOLD** | 38 | 4 | 5 | 2 | 结构审核、模块特定场景／生产门禁 |
-| 16 | `src/cli-unblock.ts` | **HOLD** | 2 | 1 | 1 | 0 | 模块特定场景／生产门禁 |
+| 16 | `src/cli-unblock.ts` | **PASS** | 2 | 1 | 1 | 0 | 模块特定场景／生产门禁 |
 | 17 | `src/cli-worker-task.ts` | **PASS** | 3 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 18 | `src/cli.ts` | **HOLD** | 6 | 3 | 3 | 9 | 结构审核、模块特定场景／生产门禁 |
 | 19 | `src/continuation.ts` | **PASS** | 7 | 1 | 11 | 4 | 直接差分、原生和生产调用证据已关闭 |
@@ -172,7 +192,7 @@
 | 29 | `src/events.ts` | **HOLD** | 13 | 3 | 36 | 1 | 结构审核、模块特定场景／生产门禁 |
 | 30 | `src/execution-context.ts` | **HOLD** | 6 | 1 | 0 | 10 | 运行调用、结构审核、模块特定场景／生产门禁 |
 | 31 | `src/execution-process-tracker.ts` | **HOLD** | 2 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
-| 32 | `src/execution-recovery.ts` | **HOLD** | 2 | 0 | 1 | 1 | 直接差分、结构审核、模块特定场景／生产门禁 |
+| 32 | `src/execution-recovery.ts` | **PASS** | 2 | 0 | 1 | 1 | 直接差分、结构审核、模块特定场景／生产门禁 |
 | 33 | `src/execution-routing.ts` | **PASS** | 6 | 1 | 2 | 5 | 结构审核、模块特定场景／生产门禁 |
 | 34 | `src/feedback.ts` | **HOLD** | 23 | 2 | 0 | 12 | 运行调用、结构审核、模块特定场景／生产门禁 |
 | 35 | `src/force-restate-validation.ts` | **PASS** | 6 | 0 | 1 | 1 | 直接差分、结构审核、模块特定场景／生产门禁 |
@@ -231,9 +251,9 @@
 | 88 | `src/store.ts` | **HOLD** | 22 | 8 | 4 | 16 | 结构审核、模块特定场景／生产门禁 |
 | 89 | `src/task-actions.ts` | **HOLD** | 18 | 1 | 8 | 4 | 结构审核、模块特定场景／生产门禁 |
 | 90 | `src/task-inactivity-watchdog.ts` | **PASS** | 6 | 3 | 2 | 0 | 直接差分、原生和生产调用证据已关闭 |
-| 91 | `src/task-recovery.ts` | **HOLD** | 4 | 0 | 2 | 1 | 直接差分、结构审核、模块特定场景／生产门禁 |
+| 91 | `src/task-recovery.ts` | **PASS** | 4 | 0 | 2 | 1 | 直接差分、结构审核、模块特定场景／生产门禁 |
 | 92 | `src/task-transitions.ts` | **PASS** | 6 | 2 | 21 | 2 | 直接差分、原生和生产调用证据已关闭 |
-| 93 | `src/task-update.ts` | **HOLD** | 2 | 1 | 1 | 0 | 模块特定场景／生产门禁 |
+| 93 | `src/task-update.ts` | **PASS** | 2 | 1 | 1 | 0 | 模块特定场景／生产门禁 |
 | 94 | `src/troubleshooter-fallback.ts` | **HOLD** | 2 | 1 | 1 | 0 | 模块特定场景／生产门禁 |
 | 95 | `src/troubleshooter.ts` | **PASS** | 6 | 0 | 2 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 96 | `src/types.ts` | **HOLD** | 7 | 1 | 6 | 33 | 结构审核、模块特定场景／生产门禁 |

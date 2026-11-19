@@ -491,3 +491,49 @@ fn source_commit_required_model_task_rejects_false_completion_receipt(){
         "Unverified source completion cannot wake the Job as completed");
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn native_managed_task_update_is_live_sqlite_graph_control_with_exact_cas_and_postcommit_wake(){
+    let (root,config)=fixture();let project=root.join("project");
+    fs::create_dir_all(&project).unwrap();
+    git(&project,&["init","-q","-b","main"]);
+    let db=root.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&db,Some("17")).unwrap();
+    let original_stamp="2026-11-18T00:00:00.000Z";
+    let mut snapshot=job();snapshot["projectRoot"]=json!(project);
+    snapshot["repository"]=json!("project");
+    snapshot["state"]=json!("ACTIVE");
+    snapshot["tasks"]=json!([{"id":"2","jobId":"17","kind":"work",
+        "agentName":"implementation","title":"Edit safely","state":"DRAFT",
+        "priority":"P2","adapter":"script","attempt":0,"maxAttempts":2,
+        "dependencies":[],"input":"Original","routing":{"provider":"test"},
+        "workerSelection":{"adapter":"script","selectedAt":original_stamp},
+        "updatedAt":original_stamp,"createdAt":original_stamp}]);
+    store.save_job(&snapshot).unwrap();
+    let mut host=IsolatedSQLiteWriteHost::new(config);
+    let mut proposed=snapshot["tasks"][0].clone();
+    proposed["priority"]=json!("P1");
+    proposed["input"]=json!("Revised objective");
+    proposed["routing"]=json!({"provider":"verified-test"});
+    let request=json!({"command":"task.update","jobId":"17",
+        "repository":"project","taskId":"2",
+        "expectedUpdatedAt":original_stamp,"task":proposed});
+    let updated=workspace_control(&mut host,&request).unwrap();
+    assert_eq!(updated["tasks"][0]["input"],"Revised objective");
+    assert_eq!(updated["tasks"][0]["priority"],"P1");
+    assert!(updated["tasks"][0].get("workerSelection").is_none());
+    assert_eq!(updated["tasks"][0]["state"],"DRAFT");
+    assert_eq!(store.load_job("17").unwrap().unwrap(),updated);
+    let status=agents_relay_rust2::relayd::DaemonServices::status(&mut host);
+    assert_eq!(status["wakeCount"],1,"wake follows the authoritative committed change");
+    assert!(workspace_control(&mut host,&request).is_err(),
+        "An old updatedAt must reject another Task update");
+    assert_eq!(store.load_job("17").unwrap().unwrap(),updated);
+    assert_eq!(agents_relay_rust2::relayd::DaemonServices::status(&mut host)["wakeCount"],1,
+        "CAS failure must never signal a phantom Task change");
+    let mut prohibited=request.clone();
+    prohibited["task"]["id"]=json!("another-task");
+    assert!(workspace_control(&mut host,&prohibited).is_err());
+    assert_eq!(store.load_job("17").unwrap().unwrap(),updated);
+    fs::remove_dir_all(root).unwrap();
+}
