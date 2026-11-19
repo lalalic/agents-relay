@@ -265,7 +265,12 @@ fn native_write_daemon_reconciles_real_active_sqlite_job_but_never_fakes_worker_
     drop(daemon);
     let durable=SQLiteRelayStore::open_without_claim_reset(&path,Some("27"))
         .unwrap().load_job("27").unwrap().unwrap();
-    assert_eq!(durable["tasks"][0]["state"],"QUEUED", "Worker launch failure must preserve queued Task state, not claim execution");
+    assert_eq!(durable["tasks"][0]["state"],"FAILED",
+        "Canonical effect.launchTask.failed must settle the actual Task when the trusted Shortcut is absent");
+    assert_eq!(durable["tasks"][0]["error"],
+        "Source Worker has no declared trusted Shortcut");
+    assert!(durable["tasks"][0].get("executionId").is_none_or(Value::is_null),
+        "Rejected launch must not claim a nonexistent Worker execution");
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1056,6 +1061,72 @@ fn real_daemon_force_restate_creates_verified_work_and_survives_restart(){
     assert_eq!(after["plans"][0]["appliedExecutionId"],
         snapshot["plans"][0]["appliedExecutionId"]);
     assert_eq!(after["tasks"].as_array().unwrap().len(),2);
+    drop(restart);
+    fs::remove_dir_all(root).unwrap();
+}
+
+// Original workflow-effect-failures public reducer drives the *real* native
+// daemon when a Graph-selected Worker launch fails before a process is claimed.
+// This is disposable SQLite+Git; no provider, Node Relay or live data.
+#[test]
+fn native_daemon_failed_script_launch_is_durable_graph_failure_after_restart(){
+    let root=root();
+    let project=root.join("fixture");
+    fs::create_dir_all(&project).unwrap();
+    assert!(Command::new("git").args(["init","-q","-b","main"])
+        .current_dir(&project).status().unwrap().success());
+    let path=root.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&path,Some("17")).unwrap();
+    store.save_job(&json!({
+        "id":"17","repository":"fixture","projectRoot":project,
+        "title":"Failure effect E2E","state":"ACTIVE","prNumber":0,
+        "reviewEnabled":false,
+        "createdAt":"2026-11-18T00:00:00.000Z",
+        "updatedAt":"2026-11-18T00:00:00.000Z",
+        "tasks":[{
+            "id":"2","jobId":"17","kind":"work",
+            "agentName":"no-such-shortcut","adapter":"script",
+            "routing":{"decisionId":"decision-script-no-shortcut",
+                "provider":"fixture-script","model":"local-executable",
+                "profile":"local"},
+            "title":"Cannot start without a trusted Shortcut",
+            "state":"QUEUED","attempt":0,"maxAttempts":1,
+            "dependencies":[],"input":"must not execute",
+            "output":{"kind":"file","path":project.join("uncreated.json")},
+            "createdAt":"2026-11-18T00:00:00.000Z",
+            "updatedAt":"2026-11-18T00:00:00.000Z"
+        }],"plans":[]
+    })).unwrap();store.close().unwrap();
+    let port=socket_port();let daemon=start_mode(&root,port,"--isolated-write-store-dir");
+    let mut observed=Value::Null;
+    for _ in 0..90{
+        observed=body(&request(port,"GET","/api/job?id=17","").unwrap());
+        if observed["tasks"][0]["state"]=="FAILED"{break;}
+        thread::sleep(Duration::from_millis(60));
+    }
+    assert_eq!(observed["tasks"][0]["state"],"FAILED","{observed}");
+    assert_eq!(observed["tasks"][0]["error"],
+        "Source Worker has no declared trusted Shortcut");
+    assert!(observed["tasks"][0].get("executionId").is_none_or(Value::is_null));
+    assert!(!project.join("uncreated.json").exists(),
+        "A rejected launch cannot fabricate output or completion");
+    let original_error=observed["tasks"][0]["error"].clone();
+    let audit_path=root.join("decision-audit.jsonl");
+    let audit=fs::read_to_string(&audit_path).unwrap();
+    let rows=audit.lines().map(|line|serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(),1,"Only one postcommit launch-failure audit may be appended");
+    assert_eq!(rows[0]["decision_id"],"decision-script-no-shortcut");
+    assert_eq!(rows[0]["kind"],"launch_failure");
+    assert_eq!(rows[0]["evidence"]["task_id"],"2");
+    drop(daemon);
+    let restart=start_mode(&root,port,"--isolated-write-store-dir");
+    let persisted=body(&request(port,"GET","/api/job?id=17","").unwrap());
+    assert_eq!(persisted["tasks"][0]["state"],"FAILED");
+    assert_eq!(persisted["tasks"][0]["error"],original_error);
+    assert_eq!(fs::read_to_string(&audit_path).unwrap(),audit,
+        "Restart must not duplicate settled launch failure audit");
+    assert!(!project.join("uncreated.json").exists());
     drop(restart);
     fs::remove_dir_all(root).unwrap();
 }

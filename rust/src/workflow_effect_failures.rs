@@ -70,14 +70,22 @@ where
         if let Ok(updated) = transition_and_save(transitioned, name.into()).await {
             *task = updated;
         }
-        emit(event_for(&job_id, &task_id, parent_id.as_deref(),
+        let mut event=event_for(&job_id, &task_id, parent_id.as_deref(),
             "workflow.effect.failed", "failed",
             &format!("{} failed: {}", outcome.effect,
                 outcome.error.as_deref().unwrap_or("unknown error")),
             Some("orchestrator"),
             Some(json!({"effect": outcome.effect, "idempotencyKey": outcome.key, "workflowEvent": name})),
             Some(json!({"agent": "relay", "component": "agents-relay"})),
-        )).await?;
+        );
+        // Node eventFor receives Task.parentTaskId directly: a truly absent
+        // field serializes as absent, while an explicit null stays null.
+        // This distinction matters to event-source identity and parity.
+        if task.get("parentTaskId").is_none(){
+            event.as_object_mut().expect("event JSON object")
+                .remove("parent_task_id");
+        }
+        emit(event).await?;
     }
     Ok(())
 }

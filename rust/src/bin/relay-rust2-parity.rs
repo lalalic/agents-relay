@@ -52,6 +52,8 @@ mod dashboard_factory;
 mod worker_failure_parity;
 #[path = "relay-rust2-parity/additional_40.rs"]
 mod additional_40;
+#[path = "relay-rust2-parity/workflow_effect_failures_public.rs"]
+mod workflow_effect_failures_public;
 use serde_json::{json, Value};
 use std::io::{self, BufRead};
 
@@ -385,6 +387,7 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 }
 
 fn invoke(request: &Value) -> Result<String, String> {
+    if let Some(output)=workflow_effect_failures_public::invoke(request){return output;}
     if let Some(output)=worker_failure_parity::invoke(request)?{return Ok(output);}
     if let Some(output)=additional_40::invoke(request){return output;}
     if let Some(output)=dashboard_factory::invoke(request)?{return Ok(output);}

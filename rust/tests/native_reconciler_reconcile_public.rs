@@ -5,7 +5,7 @@ use agents_relay_rust2::{reconciler::Reconciler,
 use serde_json::{json,Value};
 use std::{path::{Path,PathBuf},time::{SystemTime,UNIX_EPOCH}};
 struct Host{store:SQLiteRelayStore,root:PathBuf,persisted:usize,launched:usize,
-    emitted:usize,inject_race:bool}
+    emitted:usize,inject_race:bool,forced_failure:Option<String>,events:Vec<Value>}
 impl ReconcileHost for Host{
  fn load(&mut self,id:&str)->Result<Value,String>{
      self.store.load_job(id)?.ok_or_else(||"Job missing".into())
@@ -27,6 +27,9 @@ impl ReconcileHost for Host{
      })
  }
  fn launch(&mut self,action:&Value)->Result<(),String>{
+     if let Some(error)=self.forced_failure.as_deref(){
+         return Err(error.into());
+     }
      if action["action"]!="effect.launchTask"{
          return Err("Unexpected external effect in recovery fixture".into());
      }
@@ -42,7 +45,8 @@ impl ReconcileHost for Host{
      })?;
      self.launched+=1;Ok(())
  }
- fn broadcast(&mut self,_event:&Value)->Result<(),String>{
+ fn broadcast(&mut self,event:&Value)->Result<(),String>{
+     self.events.push(event.clone());
      self.emitted+=1;Ok(())
  }
 }
@@ -57,7 +61,8 @@ fn fixture(state:&str,paused:bool)->(PathBuf,Host){
      "tasks":[],"plans":[],"reviewEnabled":false,
      "pause":if paused{json!({"reason":"operator"})}else{Value::Null},
      "headSha":"old-head"})).unwrap();
- (root.clone(),Host{store,root,persisted:0,launched:0,emitted:0,inject_race:false})
+ (root.clone(),Host{store,root,persisted:0,launched:0,emitted:0,
+     inject_race:false,forced_failure:None,events:Vec::new()})
 }
 fn rec(root:&Path)->Reconciler{
  Reconciler::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
@@ -97,7 +102,10 @@ fn expired_fixture()->(PathBuf,Host){
         let expired="2026-11-01T00:00:00.000Z";
         job["tasks"]=json!([{
             "id":"task-a","jobId":"1","kind":"work","agentName":"worker",
-            "adapter":"script","title":"Expired without a running process",
+            "adapter":"script",
+            "routing":{"decisionId":"decision-expired-1","provider":"fixture",
+                "model":"owned-script","profile":"isolated"},
+            "title":"Expired without a running process",
             "input":"never execute","state":"RUNNING",
             "createdAt":expired,"updatedAt":expired,
             "attempt":1,"maxAttempts":2,"dependencies":[],
@@ -116,9 +124,11 @@ fn expired_generation_recovered_through_graph_and_exact_sqlite_cas(){
     // The recovered Task is real and queued, but this legacy fixture has no
     // routing metadata or installed provider. Graph launch is now visible;
     // the production-equivalent claim must fail CLOSED, not fabricate a worker.
-    let error=reconciler.reconcile("1",None,&root,&json!({}),
-        &[],&[],None,&mut host).unwrap_err();
-    assert!(error.contains("requires routing metadata"),"{error}");
+    let result=reconciler.reconcile("1",None,&root,&json!({}),
+        &[],&[],None,&mut host).unwrap();
+    assert!(result["tasks"].as_array().unwrap().iter().any(|task|
+        task["state"]=="FAILED"&&task["error"].as_str()
+            .is_some_and(|error|error.contains("requires routing metadata"))));
     let persisted=host.load("1").unwrap();
     assert_eq!(persisted["tasks"][0]["state"],"FAILED");
     assert_eq!(persisted["tasks"][0]["failureReason"],"worker_outcome_unknown");
@@ -126,10 +136,20 @@ fn expired_generation_recovered_through_graph_and_exact_sqlite_cas(){
     assert!(persisted["tasks"].as_array().unwrap().iter().any(|task|
         task["agentName"]=="troubleshooter"
         &&task["parentTaskId"]=="task-a"
-        &&task["state"]=="QUEUED"
-        &&task["executionId"].is_null()));
+        &&task["state"]=="FAILED"
+        &&task["executionId"].is_null()
+        &&task["error"].as_str().is_some_and(|s|
+            s.contains("requires routing metadata"))));
     assert!(host.emitted>=2);
     assert_eq!(host.launched,0,"No Worker may start without a proven routing receipt");
+    let audit=std::fs::read_to_string(root.join("decision-audit.jsonl")).unwrap();
+    let rows=audit.lines().map(|line|
+        serde_json::from_str::<Value>(line).unwrap()).collect::<Vec<_>>();
+    assert_eq!(rows.len(),1,"Only verified lease recovery may append watchdog evidence");
+    assert_eq!(rows[0]["decision_id"],"decision-expired-1");
+    assert_eq!(rows[0]["kind"],"timeout");
+    assert_eq!(rows[0]["evidence"]["execution_id"],"execution-old");
+    assert_eq!(rows[0]["evidence"]["watchdog"],true);
     std::fs::remove_dir_all(root).unwrap();
 }
 #[test]
@@ -199,5 +219,70 @@ fn actual_git_head_change_refreshes_sqlite_without_reusing_cached_sha(){
     assert_eq!(host.load("1").unwrap()["headSha"],second);
     assert_eq!(host.persisted,2);
     assert_eq!(host.launched,0);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+
+// Failed external Graph effects must be observed and settled by the same
+// original Node workflow-effect-failures reducer; never silently return a
+// successful Worker receipt or mutate a different Job generation.
+#[test]
+fn canonical_launch_effect_failure_is_graph_sqlite_durable_with_exact_event(){
+    let (root,mut host)=fixture("ACTIVE",false);
+    host.forced_failure=Some("fixture worker runtime disconnected".into());
+    host.store.mutate_job("1",|mut job|{
+        job["tasks"]=json!([{
+            "id":"2","jobId":"1","kind":"work",
+            "agentName":"developer","adapter":"script",
+            "routing":{"decisionId":"decision-2","provider":"fixture",
+                "model":"isolated-runtime","profile":"test"},
+            "title":"Expected launch failure","state":"QUEUED",
+            "attempt":0,"maxAttempts":1,"dependencies":[],
+            "input":"isolated","output":{"kind":"file","path":root.join("out.json")},
+            "createdAt":"2026-11-18T00:00:00.000Z",
+            "updatedAt":"2026-11-18T00:00:00.000Z"
+        }]);Ok(job)
+    }).unwrap();
+    let mut reconciler=rec(&root);
+    let custom_audit=root.join("configured-route-audit.jsonl");
+    reconciler.options["decisionAuditPath"]=json!(custom_audit);
+    let outcome=reconciler.reconcile("1",None,&root,&json!({}),
+        &[],&[],None,&mut host).unwrap();
+    let stored=host.load("1").unwrap();
+    assert_eq!(outcome,stored);
+    assert_eq!(stored["tasks"][0]["state"],"FAILED");
+    assert_eq!(stored["tasks"][0]["error"],
+        "fixture worker runtime disconnected");
+    assert_eq!(host.launched,0,"A failed process launch cannot count as Worker");
+    let audit_path=root.join("configured-route-audit.jsonl");
+    let audit=std::fs::read_to_string(&audit_path).unwrap();
+    let rows=audit.lines().map(|line|
+        serde_json::from_str::<Value>(line).unwrap()).collect::<Vec<_>>();
+    assert_eq!(rows.len(),1,"Only committed Worker launch failure creates route audit");
+    assert_eq!(rows[0]["decision_id"],"decision-2");
+    assert_eq!(rows[0]["kind"],"launch_failure");
+    assert_eq!(rows[0]["evidence"]["phase"],"launch");
+    assert_eq!(rows[0]["evidence"]["task_id"],"2");
+    let events=host.events.iter().filter(|event|event["type"]=="workflow.effect.failed")
+        .collect::<Vec<_>>();
+    assert_eq!(events.len(),1,"Failure must be observable exactly once");
+    assert_eq!(events[0]["job_id"],"1");
+    assert_eq!(events[0]["task_id"],"2");
+    assert_eq!(events[0]["data"]["effect"],"effect.launchTask");
+    assert_eq!(events[0]["data"]["workflowEvent"],"effect.launchTask.failed");
+    assert_eq!(events[0]["status"],"failed");
+    let repeated=reconciler.reconcile("1",None,&root,&json!({}),
+        &[],&[],None,&mut host).unwrap();
+    assert_eq!(repeated["tasks"][0]["state"],"FAILED");
+    assert_eq!(host.events.iter().filter(|event|
+        event["type"]=="workflow.effect.failed"
+        &&event["task_id"]=="2").count(),1,
+        "Reconciliation may not duplicate the same Task's terminal launch error");
+    assert!(host.events.iter().filter(|event|
+        event["type"]=="workflow.effect.failed"
+        &&event["task_id"]!="2").count()<=1,
+        "A separate Troubleshooter's failure is a distinct Task generation");
+    assert_eq!(std::fs::read_to_string(&audit_path).unwrap(),audit,
+        "Repeated reconciliation may not re-audit a settled original Task");
     std::fs::remove_dir_all(root).unwrap();
 }

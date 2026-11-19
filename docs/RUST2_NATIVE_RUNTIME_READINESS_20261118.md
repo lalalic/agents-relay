@@ -24,6 +24,12 @@ The same Graph selects actions for the Rust Reconciler. A real integration test 
 
 ## 2026-11-19 追加证据（保持 NOT production-ready）
 
+- Route Outcome 已补齐 original Node/Rust 180 个 JSONL 直接差分与真实原生模型终态、启动失败、watchdog 过期的 post-Graph/SQLite 审计入口；真实 daemon 启动失败/重启无重复审计、自定义路径及嵌套凭据脱敏通过。Provider L4 仍独立于该单模块认证。
+
+
+- Rust Reconciler 已正式接通 `apply_job_effect_outcomes` 与 `apply_task_effect_outcomes`，确保 Graph 选中的 Worker launch 失败能被 SQLite 原子错误状态和 `workflow.effect.failed` 记录，而非静默丢失或重复执行。125 个原始 Node/Rust 差异场景 + 原生真实 daemon 拒绝启动/重启通过；整体生产切换仍需外部模型 L4。
+
+
 - Native isolated WebHelm Worker 已经接通真实 Rust managed_worker_input_resolved + layered Agent Markdown。97 个原始 Node/Rust Prompt 对照和真实 AF_UNIX/Graph SQLite E2E 证明 Agent/Task/Event 合同、执行身份和原始 Task 不在 transport prompt 直接复制。非隔离模型 provider 仍属于生产切换门禁。
 
 
@@ -33,7 +39,7 @@ The same Graph selects actions for the Rust Reconciler. A real integration test 
 - Force Restate 已通过 65 组 original Node/Rust facade 差分和实际 Rust `job.plan` → SQLite Graph → owned Script Planner → 有效 dependent browser Task 的 E2E，重启复核，没有跳过 Graph forward convergence。整体生产切换门禁不变。
 
 
-- 仅隔离 Rust 原生模型 Worker terminal 的 Route Outcome Audit 已接入真正的 post-commit SQLite Graph 路径（180 个原始 Node/Rust JSONL 对照、失败/重复回执拒绝和递归脱敏）；launch/watchdog caller 仍未认证，`route-outcome-recording.ts` 维持 PORTING。
+- 仅隔离 Rust 原生模型 Worker terminal 的 Route Outcome Audit 已接入真正的 post-commit SQLite Graph 路径（180 个原始 Node/Rust JSONL 对照、失败/重复回执拒绝和递归脱敏）；launch/watchdog caller 现已分别补入原生 Reconciler 并经 native 验证（见本轮认证）。
 
 
 - Relayd Main 现使用真实原生 CLI 程序调用的 `run_relayd_main` 统一成功/失败出口；48 个原始 Node/Rust 可执行入口差分及隔离 daemon 进程启动、重启通过；不代表整个 Relay daemon 认证。

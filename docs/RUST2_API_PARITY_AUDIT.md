@@ -14,24 +14,24 @@ A listed direct differential import only means a head-to-head test imports the c
 
 | Metric | Count |
 |---|---:|
-| sourceCount | 56 |
+| sourceCount | 54 |
 | pendingSourceModules | 0 |
 | pendingRuntimeExportSymbols | 0 |
-| runtimeExportSymbols | 451 |
-| directNameMatches | 438 |
+| runtimeExportSymbols | 444 |
+| directNameMatches | 431 |
 | unmappedRuntimeSymbols | 0 |
 | runtimeConstructorReviews | 13 |
-| typeOrShapeReviewSymbols | 213 |
+| typeOrShapeReviewSymbols | 212 |
 | filesWithUnmappedRuntime | 0 |
-| filesWithoutDirectDiffImport | 28 |
-| filesWithoutOtherRustReferences | 18 |
+| filesWithoutDirectDiffImport | 27 |
+| filesWithoutOtherRustReferences | 17 |
 
-Source tree: `c846739e5f60`; Rust source tree: `275d8cb0c47e`. Rust module rows in scope: 56. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `c846739e5f60`; Rust source tree: `ee381689a6be`. Rust module rows in scope: 54. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
 
-## Per-file candidate surface (all 56 PORTING files)
+## Per-file candidate surface (all 54 PORTING files)
 
 | Node source | Runtime exports | Named Rust candidates | Unmapped runtime names | Direct diff imports | Other Rust refs |
 |---|---:|---:|---:|---:|---:|
@@ -75,7 +75,6 @@ Source tree: `c846739e5f60`; Rust source tree: `275d8cb0c47e`. Rust module rows 
 | `src/relay-store.ts` | 46 | 45 | 0 | 9 | 26 |
 | `src/relayd-dashboard-actions.ts` | 1 | 1 | 0 | 1 | 1 |
 | `src/relayd.ts` | 1 | 1 | 0 | 0 | 5 |
-| `src/route-outcome-recording.ts` | 5 | 5 | 0 | 1 | 3 |
 | `src/router-evals.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/script-task-adapter.ts` | 3 | 3 | 0 | 0 | 1 |
 | `src/service-external-actions.ts` | 2 | 2 | 0 | 0 | 0 |
@@ -86,7 +85,6 @@ Source tree: `c846739e5f60`; Rust source tree: `275d8cb0c47e`. Rust module rows 
 | `src/troubleshooter-fallback.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/types.ts` | 7 | 7 | 0 | 1 | 6 |
 | `src/usage.ts` | 26 | 18 | 0 | 3 | 5 |
-| `src/workflow-effect-failures.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/workflow/durable-transition.ts` | 4 | 4 | 0 | 1 | 0 |
 | `src/workspace.ts` | 21 | 21 | 0 | 1 | 5 |
 | `src/z-adapter.ts` | 5 | 5 | 0 | 0 | 0 |

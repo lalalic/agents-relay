@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 51,
-    "HOLD": 56
+    "PASS": 53,
+    "HOLD": 54
   },
   "records": [
     {
@@ -2216,7 +2216,7 @@
       "source": "src/route-outcome-recording.ts",
       "target": "rust/src/route_outcome_recording.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 5,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -2224,6 +2224,7 @@
       ],
       "otherRustModuleReferences": [
         "rust/src/delivery_parity_harness.rs",
+        "rust/src/reconciler.rs",
         "rust/src/reconciler_runtime.rs",
         "rust/src/relayd_sqlite_write.rs"
       ],
@@ -2231,14 +2232,12 @@
         "DecisionAuditStore"
       ],
       "certificationEvidence": [
-        "Original Node/Rust 180 genuine append-only redacted DecisionAuditStore/JSONL outcomes, terminal, launch, watchdog, best-effort failure cases: rust/tests/head_to_head_wave4_delivery.mjs",
-        "Native internal verified model Worker terminal ingress now appends route outcome AFTER Graph/SQLite durable commit only, rejects stale/colliding event without extra audit; native_sqlite_write_host.rs and rust/src/relayd_sqlite_write.rs",
-        "Native JSONL audit append is best-effort, recursively redacts credentials and does not roll back already committed Task on write error: rust/src/route_outcome_recording.rs native_audit_effect_tests and jsonl_adapter_tests"
+        "All 5 original Node/Rust route-outcome recording exports, including classification, redacted JSONL append, terminal, launcher and watchdog outcomes; 180 direct genuine Node DecisionAuditStore vs Rust JSONL positive/negative/effect cases and unavailable audit transport: rust/tests/head_to_head_wave4_delivery.mjs",
+        "Verified correlated Worker terminal ingress records the route outcome only AFTER exact Graph/SQLite committed Task and never for forged/duplicate terminal events: rust/src/relayd_sqlite_write.rs, rust/tests/native_sqlite_write_host.rs",
+        "Real native Reconciler Graph Task lease expiry now records watchdog after exact SQLite CAS and refuses stale/mismatched process identity, and canonical Worker launch failure records launch after workflow.effect.failed is committed, deduplicates by Job/Task/transition. Native ReconcileHost tests prove exactly one audited outcome and no duplicate after retry, plus configured private audit output path: rust/src/reconciler.rs, rust/tests/native_reconciler_reconcile_public.rs",
+        "Real isolated daemon Script Worker missing trusted Shortcut gets FAILED, appends exactly one redacted launch failure audit to fixture-owned path, and persists both without duplicates over actual daemon restart: rust/tests/native_daemon_binary_readonly.rs. Original DecisionAuditStore transport interface audited as optional append-only JSONL side effect; external L4 providers are separately gated."
       ],
-      "openGates": [
-        "HOLD: original Node launch and watchdog route outcome effects still lack verified post-Graph/SQLite native production caller; actual Rust ingress currently wires terminal only",
-        "HOLD: live production DecisionAuditStore path configuration and reviewed provider/Watchdog L4 side effects remain unverified; isolated host uses fixture-owned decision-audit.jsonl"
-      ],
+      "openGates": [],
       "legacyLedgerNote": "Wave4 C: 180 randomized direct Node/Rust durable JSONL append/redaction, best-effort failure and multi-record cases; prior outcome classification. Full post-Graph/SQLite production audit caller sequencing remains unverified (head_to_head_wave4_delivery.mjs; native_wave4_delivery.rs)."
     },
     {
@@ -2790,18 +2789,22 @@
       "source": "src/workflow-effect-failures.ts",
       "target": "rust/src/workflow_effect_failures.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 2,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
-      "otherRustModuleReferences": [],
-      "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "directDiffTests": [
+        "rust/tests/head_to_head_workflow_effect_failures_public.mjs"
       ],
+      "otherRustModuleReferences": [
+        "rust/src/reconciler.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [
+        "Both original Node/Rust public Workflow Effect Failure APIs (applyJobEffectOutcomes, applyTaskEffectOutcomes): 125 original Node/Rust direct exact Graph transition/saves/event/error fixtures; corrected actual undefined vs null parentTaskId event field discrepancy: rust/tests/head_to_head_workflow_effect_failures_public.mjs",
+        "Production Rust Reconciler::reconcile now applies canonical WorkflowEffectOutcome failures after successful Graph/SQLite dispatch CAS, persists failed Task transition with exact generation guard and emits workflow.effect.failed after commit; Job effects share the same public reducer. Deduplicates exact Job/Task/transition effect identities to avoid repeated process launch and failure events: rust/src/reconciler.rs",
+        "Native ReconcileHost SQLite Graph first-pass and retry/duplicate event tests with new canonical failure handling: rust/tests/native_reconciler_reconcile_public.rs; real isolated Rust daemon with missing trusted Shortcut fails Task, persists failure reason, refuses output fabrication and preserves failure after SIGTERM/restart: rust/tests/native_daemon_binary_readonly.rs. External non-isolated models remain separate."
+      ],
+      "openGates": [],
       "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
     },
     {

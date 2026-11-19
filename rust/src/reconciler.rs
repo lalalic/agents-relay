@@ -9,6 +9,11 @@ use crate::{
     job_execution_slot::job_has_conflicting_execution,
     local_merge_lock::iso8601_now,
     execution_process_tracker::reclaim_stale_execution_process,
+    route_outcome_recording::{
+        record_launch_route_outcome_jsonl, record_watchdog_route_outcome_jsonl,
+    },
+    workflow_effect_failures::{apply_job_effect_outcomes,apply_task_effect_outcomes,
+        WorkflowEffectOutcome},
     planner::{create_plan_round,pending_plan},
     planner_recovery::create_failed_plan_recovery,
     reconciler_review::{
@@ -22,13 +27,15 @@ use crate::{
     review_revision_settlement::settle_review_revision_round,
     runtime_status::implementation_complete,
     task_actions::apply_task_retry_action,
-    task_transitions::{refresh_task_dependencies,try_transition_task_event},
+    task_transitions::{refresh_task_dependencies,try_transition_task_event,
+        transition_task_event,transition_job_event},
     troubleshooter::{
         exhausted_troubleshooter_recoveries,pending_troubleshooter_reopens,
         pending_troubleshooter_retries,pending_troubleshooter_tasks,
         refresh_troubleshooter_input,
     },
     workflow::{
+        contracts::workflow_effect_policy,
         job_reconcile_v2::decide_job_reconcile,
         planner_orchestration_v2::{
             decide_planner_orchestration,planner_orchestration_facts,
@@ -39,6 +46,7 @@ use crate::{
 use chrono::{DateTime,Utc};
 use serde_json::{json,Value};
 use std::{
+    cell::RefCell,rc::Rc,
     collections::{HashMap,HashSet},
     path::{Path,PathBuf},
 };
@@ -185,6 +193,15 @@ impl Reconciler{
             let message=task.get("error").and_then(Value::as_str)
                 .unwrap_or("Execution lease expired").to_owned();
             host.persist(job_id,&fresh,&candidate)?;
+            // Audit is an optional observation AFTER the exact SQLite CAS.
+            // Neither missing Decision ID nor audit I/O can reverse a real
+            // Graph lease recovery or falsify its durable result.
+            let audit_path=self.decision_audit_path();
+            record_watchdog_route_outcome_jsonl(&audit_path,&candidate["tasks"][index],
+                &json!({"executionId":generation,"failedExit":false,
+                    "rawError":"execution lease expired",
+                    "failureReason":"lease_expired","failureMessage":message,
+                    "exitCode":null}));
             if let Some(generation)=generation{
                 self.runtime.cancel_execution_generation(job_id,task_id,generation);
             }
@@ -205,7 +222,7 @@ impl Reconciler{
         let before=host.load(job_id)?;
         let outcome=self.reconcile_snapshot(&before,verified_head,
             project,roots,adapters,registered,usage)?;
-        let after=if outcome.changed{
+        let mut after=if outcome.changed{
             host.persist(job_id,&before,&outcome.job)?
         }else{before.clone()};
         // Never publish before a successful SQLite commit. A transport
@@ -224,8 +241,145 @@ impl Reconciler{
                     generation);
             }
         }
-        for action in &outcome.effects{host.launch(action)?;}
+        // The Node workflow-effects ledger coalesces duplicate effect
+        // requests selected in the same reconciliation pass. Rust's actual
+        // dispatch path may expose the same Graph effect more than once:
+        // deduplicate by immutable Job/Task/transition before even calling
+        // an owned external launcher, not after it has mutated SQLite.
+        let mut seen_effects=HashSet::new();
+        for action in &outcome.effects{
+            let key=json!([action.get("action"),action.get("jobId"),
+                action.get("taskId"),action.get("transitionKey")]).to_string();
+            if !seen_effects.insert(key){continue;}
+            let Err(error)=host.launch(action)else{continue;};
+            let launch_error=error.clone();
+            let effect=field(action,"action");
+            // Unknown non-Graph effects (e.g. planner.launch) fail closed.
+            // Only canonical Graph effect policy may classify a launch error.
+            if workflow_effect_policy(effect).is_none(){return Err(error);}
+            let key=action.get("idempotencyKey").and_then(Value::as_str)
+                .or_else(||action.get("transitionKey").and_then(Value::as_str))
+                .unwrap_or("");
+            let failure=WorkflowEffectOutcome{
+                effect:effect.into(),key:key.into(),status:"failed".into(),
+                error:Some(error)
+            };
+            let latest=host.load(job_id)?;
+            let task_id=field(action,"taskId");
+            if !task_id.is_empty(){
+                let original=tasks(&latest).iter()
+                    .find(|task|field(task,"id")==task_id)
+                    .ok_or("Effect failure Task missing from authoritative SQLite")?
+                    .clone();
+                let mut task=original.clone();
+                let graph=self.graph_directory.clone();
+                let job_id=job_id.to_string();
+                let shared=Rc::new(RefCell::new(&mut *host));
+                let save=Rc::clone(&shared);
+                let events=Rc::clone(&shared);
+                let failures=[failure];
+                let future=apply_task_effect_outcomes(
+                    &latest,&mut task,&failures,
+                    move |mut candidate,event|{
+                        let result=(||{
+                            transition_task_event(&graph,&mut candidate,&event,
+                                &json!({}),&iso8601_now())?;
+                            let mut svc=save.borrow_mut();
+                            let current=svc.load(&job_id)?;
+                            let idx=tasks(&current).iter().position(|task|
+                                field(task,"id")==field(&original,"id"))
+                                .ok_or("Effect failure Task no longer exists")?;
+                            if current["tasks"][idx]!=original{
+                                return Err("Effect failure generation changed before SQLite CAS".into());
+                            }
+                            let mut updated=current.clone();
+                            updated["tasks"][idx]=candidate.clone();
+                            svc.persist(&job_id,&current,&updated)?;
+                            Ok(candidate)
+                        })();
+                        std::future::ready(result)
+                    },
+                    move |event|{
+                        std::future::ready(events.borrow_mut().broadcast(&event))
+                    },
+                );
+                let mut future=std::pin::pin!(future);
+                let mut ctx=std::task::Context::from_waker(std::task::Waker::noop());
+                match std::future::Future::poll(future.as_mut(),&mut ctx){
+                    std::task::Poll::Ready(result)=>result?,
+                    std::task::Poll::Pending=>return Err(
+                        "Native Task effect failure recording unexpectedly suspended".into()),
+                }
+            }else{
+                let graph=self.graph_directory.clone();
+                let job_id=job_id.to_string();
+                let shared=Rc::new(RefCell::new(&mut *host));
+                let save=Rc::clone(&shared);
+                let events=Rc::clone(&shared);
+                let mut current=latest.clone();
+                let expected_latest=latest.clone();
+                let failures=[failure];
+                let future=apply_job_effect_outcomes(
+                    &mut current,&failures,
+                    move |mut candidate,event|{
+                        let result=(||{
+                            transition_job_event(&graph,&mut candidate,&event,
+                                &json!({}),&iso8601_now())?;
+                            let mut svc=save.borrow_mut();
+                            let fresh=svc.load(&job_id)?;
+                            if fresh!=expected_latest{
+                                return Err("Effect failure Job generation changed before SQLite CAS".into());
+                            }
+                            svc.persist(&job_id,&fresh,&candidate)?;
+                            Ok(candidate)
+                        })();
+                        std::future::ready(result)
+                    },
+                    move |event|{
+                        std::future::ready(events.borrow_mut().broadcast(&event))
+                    },
+                );
+                let mut future=std::pin::pin!(future);
+                let mut ctx=std::task::Context::from_waker(std::task::Waker::noop());
+                match std::future::Future::poll(future.as_mut(),&mut ctx){
+                    std::task::Poll::Ready(result)=>result?,
+                    std::task::Poll::Pending=>return Err(
+                        "Native Job effect failure recording unexpectedly suspended".into()),
+                }
+            }
+            after=host.load(job_id)?;
+            if effect=="effect.launchTask"&&!task_id.is_empty(){
+                let original=tasks(&latest).iter().find(|task|
+                    field(task,"id")==task_id);
+                let current=tasks(&after).iter().find(|task|
+                    field(task,"id")==task_id);
+                if let (Some(before),Some(task))=(original,current){
+                    if field(before,"state")!="FAILED"
+                        &&field(task,"state")=="FAILED"
+                        &&task.get("error").and_then(Value::as_str)
+                            ==Some(launch_error.as_str()){
+                        let audit_path=self.decision_audit_path();
+                        record_launch_route_outcome_jsonl(
+                            &audit_path,task,&launch_error,"launch",
+                            before.get("executionId").and_then(Value::as_str),false);
+                    }
+                }
+            }
+        }
         Ok(after)
+    }
+    /// Isolated hosts write beneath their own fixture store. A production
+    /// daemon may select an explicit audited location in immutable options.
+    fn decision_audit_path(&self)->PathBuf{
+        if let Some(path)=self.options.get("decisionAuditPath")
+            .and_then(Value::as_str).filter(|path|!path.is_empty()){
+            return PathBuf::from(path);
+        }
+        let root=if self.store_directory.file_name()
+            .is_some_and(|name|name=="stores"){
+            self.store_directory.parent().unwrap_or(&self.store_directory)
+        }else{&self.store_directory};
+        root.join("decision-audit.jsonl")
     }
     pub fn new(graph_directory:impl Into<PathBuf>,
         store_directory:impl Into<PathBuf>,profile_home:impl Into<PathBuf>,
