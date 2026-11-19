@@ -739,3 +739,9 @@
 
 - **差分认证**：18 个原创 Node/Rust 用例（`rust/tests/head_to_head_local_managed_store_public.mjs`）覆盖唯一公开导出 `openLocalManagedStore` 的完整行为：repository 形状（`..`/`.`/空格/斜杠/空串/unicode/120 长度等 9 种）、PR/jobId 形状（pr 0 带/不带 jobId、负数、小数）、统一 scope 解析（`relayUnifiedStorePath` 的 dirname 语义两侧一致），以及 noGitHub 模式下真实 SQLite authority 的可用性（createJobIfAbsent + saveTask + load 回读可见）。
 - 差分中对 rusqlite 与 node:sqlite 的 io 错误消息差异（路径后缀）做了归一化——这是传输层差异而非行为差异。
+
+## 2026-11-19 planner-child-recovery 认证 PASS
+
+- **差分认证**：11 个原创 Node/Rust 用例（`rust/tests/head_to_head_planner_child_recovery_public.mjs`），两侧都走**真实** materialize 路径（Rust `planner::materialize_planner_child` vs Node `materializePlannerChild`）并记录 store 回调序列：plan 驱动的缺失子任务恢复、已存在子任务跳过、非 SUCCEEDED/空 plan 忽略、带 resolution 的 spec、历史 planner Task 的 plan 合成（round/source/trigger/headSha/attempt 默认值）、已存在 plan 跳过但子任务仍恢复、组合恢复、无 plans 的 Job。
+- **真实差异修复**：Rust `materialize_planner_child` 缺少 Node 的 resolution-target 校验（`Planner resolution for <id> must target one unresolved durable Task`），已对齐 `rust/src/planner.rs`。
+- **回归**：lib 89/89、planner_input 100、planner_child、planner 公开 API 152、unblocks、activation 全绿。

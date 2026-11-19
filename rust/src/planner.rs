@@ -480,6 +480,25 @@ pub fn validate_planner_resolution_materialization(
 pub fn materialize_planner_child(
     directory:&Path,job:&Value,plan:&Value,spec:&Value,context:&Value,
 )->Result<Value,String>{
+    // Node materializePlannerChild: a spec.resolution must target one
+    // existing unresolved durable Task (planner.ts 'Planner resolution for
+    // <id> must target one unresolved durable Task').
+    if let Some(resolution)=spec.get("resolution").filter(|v|!v.is_null()){
+        let target=resolution.get("targetTaskId").and_then(Value::as_str)
+            .and_then(|id|job.get("tasks").and_then(Value::as_array)
+                .and_then(|tasks|tasks.iter()
+                    .find(|task|task.get("id").and_then(Value::as_str)==Some(id))));
+        let unresolved=target.is_some_and(|task|{
+            task.get("kind").and_then(Value::as_str)!=Some("planner")
+                &&!matches!(task.get("state").and_then(Value::as_str),
+                    Some("SUCCEEDED")|Some("CANCELLED"))
+        });
+        if !unresolved{
+            let spec_id=spec.get("id").and_then(Value::as_str).unwrap_or("");
+            return Err(format!(
+                "Planner resolution for {spec_id} must target one unresolved durable Task"));
+        }
+    }
     let mut fields=spec.clone();
     fields["jobId"]=job.get("id").cloned().unwrap_or(Value::Null);
     fields["kind"]=json!("work");
