@@ -22,6 +22,14 @@
 
 The same Graph selects actions for the Rust Reconciler. A real integration test identified a previously silent mismatch: the Task Lifecycle wrapper emits string action IDs, whereas older Reconciler code assumed every action was an `{id}` object. `Reconciler::graph_action` now supports both Graph decision forms; real native Script worker launch, multi-task DAG, and original Node/Rust Reconciler differential have passed after the fix. Other raw Graph consumers already receive structured actions; do not blanket-rewrite them.
 
+## 2026-11-19 追加证据（保持 NOT production-ready）
+- Local Registry 两个公开 API 已补 39 组原始 Node/Rust 差分（包括正在写入 WAL 的 Node Owner 和 Rust read-only inventory）、原生 Node SQLite 只读访问和按 Job ID 缓存复用；**但 owner 离线且 WAL/-shm 缺失的恢复路径与原生持久 Resolver 工厂接线仍未认证，保持 PORTING**。
+
+
+
+- Native CLI `job run` 已从原先仅 parity harness 的 Coordinator 绑定接到隔离 daemon `job.run` 原生 `relayd_control`，通过 11 个原始 Node/Rust Coordinator Graph/SQLite 差分、真实 CLI → HTTP → SQLite/Graph → restart 和错误工作区/重复启动测试。**Coordinator 的 `--foreground` 与完整生产 Worker 仍未绑定，`cli-coordinator.ts` 保持 PORTING**。
+- Native CLI `escalation` 已接通原生 owned process 与 canonical Escalation Graph；15 个原始 Node/Rust 外部效果差分和 13 个 CLI Graph 差分通过，实测 `resolved/needs_user/technical_failure` 退出码 0/0/2、无提供程序安全拒绝、私有 handoff 清理及 stderr secret 不泄露。单独认证 `cli-escalation.ts` 为 PASS；真实外部模型和线上人工交互尚未认证。
+
 ## Passing isolated regression evidence
 
 - Rust: `cargo test --all-targets -- --test-threads=1`, using only an isolated `AGENTS_RELAY_STORE_DIR` and absolute test-owned `AGENTS_RELAY_SCRIPT_NODE`, **PASS**.

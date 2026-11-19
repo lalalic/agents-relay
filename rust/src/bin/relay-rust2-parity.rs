@@ -391,6 +391,29 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=closure::invoke(request)?{return Ok(output);}
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "certLocalJobRegistry" => {
+            use agents_relay_rust2::local_job_registry::{
+                find_job_id_snapshot, create_job_id_registry_resolver,
+            };
+            let directory=std::path::Path::new(request["directory"].as_str()
+                .ok_or("directory required")?);
+            let id=request["jobId"].as_str().ok_or("jobId required")?;
+            let selected=find_job_id_snapshot(directory,id)?;
+            let selected_json=selected.as_ref().map(|snapshot|
+                json!({"job":snapshot.job,"path":snapshot.snapshot.path}));
+            let mut resolver=create_job_id_registry_resolver(directory,true);
+            let (resolved,first_ptr)=match resolver.resolve(id)?{
+                Some(first)=>(
+                    Some(json!({"job":first.job,"path":first.relay().path,
+                        "scope":first.relay().scope_job_id})),
+                    Some(first as *const _)),
+                None=>(None,None),
+            };
+            let next=resolver.resolve(id)?.map(|second|second as *const _);
+            Ok(json!({"selected":selected_json,"resolved":resolved,
+                "sameInstance":first_ptr==next,
+                "cacheCount":resolver.cached_count()}).to_string())
+        },
         "apiLocalBlockerPorts" => {
             use agents_relay_rust2::{
                 local_authority_store::LocalAuthorityDurableStore,

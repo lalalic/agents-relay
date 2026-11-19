@@ -481,7 +481,10 @@ pub fn run_cli<P:CliRuntimePort>(
             let response=port.control(flags,&request)?;
             Ok(review_job_response(&response))
         },
-        "review"|"artifact"|"prompt"|"context"|"blocker"|"escalation"=>
+        // Original Node escalation receives ALL flag arguments. It does not
+        // have an action subcommand and must not discard --intent.
+        "escalation"=>port.execute("escalation","",args),
+        "review"|"artifact"|"prompt"|"context"|"blocker"=>
             port.execute(command,args.first().map(String::as_str).unwrap_or(""),
                 &args[args.len().min(1)..]),
         "workflow"=>{

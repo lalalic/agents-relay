@@ -76,6 +76,12 @@ test('Node/Rust configured escalation executor, cleanup and negative contract',a
 });
 
 import {runEscalationCommand} from '../../dist/cli-escalation.js';
+const intentFile=join(temp,'intent-request.md');
+const blockedFile=join(temp,'blocked-request.md');
+const contextFile=join(temp,'context-request.md');
+writeFileSync(intentFile,' run original effect \n');
+writeFileSync(blockedFile,'blocked fixture\n');
+writeFileSync(contextFile,'fixture context\n');
 const cliFixtures=[
  {mode:'resolved',args:['--intent','run original effect','--blocked-on','blocked fixture']},
  {mode:'policy',args:['--intent','run original effect','--blocked-on','blocked fixture','--on-needs-user','notify carefully']},
@@ -85,6 +91,11 @@ const cliFixtures=[
  {mode:'resolved',args:['--intent','  ','--blocked-on','blocked fixture']},
  {mode:'resolved',args:['--intent','run original effect','--blocked-on','  ']},
  {mode:'resolved',args:['--intent','run original effect','--blocked-on','blocked fixture','--context','context']},
+ {mode:'resolved',args:['--intent-file',intentFile,'--blocked-on-file',blockedFile]},
+ {mode:'resolved',args:['--intent','run original effect','--intent-file',intentFile,'--blocked-on','blocked fixture']},
+ {mode:'resolved',args:['--intent-file',join(temp,'does-not-exist.md'),'--blocked-on','blocked fixture']},
+ {mode:'resolved',args:['--intent','run original effect','--blocked-on','blocked fixture','--context-file',contextFile]},
+ {mode:'resolved',args:['--intent','run original effect','--blocked-on','blocked fixture','--cwd',temp]},
 ];
 async function nodeCli(f){
  const saved=process.env.AGENTS_RELAY_ESCALATION_COMMAND;

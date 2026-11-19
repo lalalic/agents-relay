@@ -537,3 +537,58 @@ fn native_managed_task_update_is_live_sqlite_graph_control_with_exact_cas_and_po
     assert_eq!(store.load_job("17").unwrap().unwrap(),updated);
     fs::remove_dir_all(root).unwrap();
 }
+
+
+// Original Node src/cli-coordinator.ts: real native control ingress must
+// atomically bind Coordinator roots, accept a valid Graph transition and
+// reject stale or malformed retries without phantom wake notifications.
+#[test]
+fn native_coordinator_job_run_is_one_sqlite_graph_transition_with_retry_fences(){
+    let (root,config)=fixture();
+    let project=root.join("fixture");
+    fs::create_dir_all(&project).unwrap();
+    git(&project,&["init","-q","-b","main"]);
+    let store=SQLiteRelayStore::open(&root.join("relay.sqlite"),Some("17")).unwrap();
+    let mut snapshot=job();
+    snapshot["projectRoot"]=json!(project);
+    snapshot["tasks"]=json!([{
+        "id":"2","jobId":"17","kind":"work","title":"Coordinator",
+        "agentName":"coordinator","state":"DRAFT","attempt":0,"maxAttempts":3,
+        "dependencies":[],"agentGraph":"flowchart TD\nA[agent:developer]",
+        "createdAt":"2026-11-18T00:00:00.000Z",
+        "updatedAt":"2026-11-18T00:00:00.000Z"
+    }]);
+    store.save_job(&snapshot).unwrap();
+    let mut host=IsolatedSQLiteWriteHost::new(config);
+    let request=json!({"command":"job.run","jobId":"17","taskId":"2",
+        "workspaceRoot":root});
+    let receipt=workspace_control(&mut host,&request).unwrap();
+    assert_eq!(receipt["state"],"ACTIVE");
+    assert_eq!(receipt["graphRuntime"],"tasks");
+    assert_eq!(receipt["scheduled"],true);
+    let stored=store.load_job("17").unwrap().unwrap();
+    assert_eq!(stored["state"],"ACTIVE");
+    assert_eq!(stored["tasks"][0]["state"],"QUEUED");
+    assert_eq!(stored["graphStartContext"]["projectRoot"],json!(fs::canonicalize(&project).unwrap()));
+    assert_eq!(stored["graphStartContext"]["workspaceRoot"],json!(fs::canonicalize(&root).unwrap()));
+    assert_eq!(DaemonServices::status(&mut host)["wakeCount"],1);
+    assert!(workspace_control(&mut host,&json!({
+        "command":"job.run","jobId":"17","taskId":"wrong",
+        "workspaceRoot":root})).is_err());
+    assert!(workspace_control(&mut host,&json!({
+        "command":"job.run","jobId":"17","taskId":"2",
+        "workspaceRoot":root,"graphOverride":"graph TD\nBroken"})).is_err());
+    let other=root.join("other");
+    fs::create_dir_all(&other).unwrap();
+    let conflict=workspace_control(&mut host,&json!({
+        "command":"job.run","jobId":"17","taskId":"2",
+        "workspaceRoot":other})).unwrap_err();
+    assert!(conflict.contains("original binding"),"{conflict}");
+    assert_eq!(DaemonServices::status(&mut host)["wakeCount"],1);
+    assert_eq!(store.load_job("17").unwrap().unwrap(),stored);
+    // Retry with identical immutable binding is allowed and idempotent.
+    let retry=workspace_control(&mut host,&request).unwrap();
+    assert_eq!(retry["state"],"ACTIVE");
+    assert_eq!(store.load_job("17").unwrap().unwrap(),stored);
+    fs::remove_dir_all(root).unwrap();
+}

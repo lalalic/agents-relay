@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 45,
-    "HOLD": 62
+    "PASS": 46,
+    "HOLD": 61
   },
   "records": [
     {
@@ -224,13 +224,19 @@
         "rust/tests/head_to_head_coordinator_cli.mjs"
       ],
       "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity.rs"
+        "rust/src/bin/agents-relay-rust.rs",
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/relayd_control.rs"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
+      "certificationEvidence": [
+        "Original Node/Rust source public Coordinator immutable-binding/Graph/SQLite differential 11/11: rust/tests/head_to_head_coordinator_cli.mjs",
+        "Real native CLI job run -> HTTP daemon workspace_control job.run -> authoritative SQLite mutateJob with canonical Task queue and Job activation Graph: rust/src/bin/agents-relay-rust.rs, rust/src/relayd_control.rs",
+        "Native isolated real binary/restart, workspace-root conflict and duplicate/start negative tests: rust/tests/native_daemon_binary_readonly.rs, rust/tests/native_sqlite_write_host.rs"
+      ],
       "openGates": [
-        "11 个真实 Git/SQLite Head-to-Head 场景及 4 个 Rust 原生测试已通过，但 run_coordinator_job_command 只发现 parity harness 引用，正式 CLI 生产分发尚未直接绑定本端口",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+        "正式 CLI --foreground 仍被拒绝；Node 原版 runCoordinatorJobCommand 受控前台 Reconciler 等效执行、Ctrl+C/停止行为和端到端差分未通过，不可升级 PASS",
+        "需要完整 real Worker/provider 端到端验证；目前仅隔离 Script/native Graph 验证，仍非 productionReady"
       ],
       "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure."
     },
@@ -238,20 +244,24 @@
       "source": "src/cli-escalation.ts",
       "target": "rust/src/cli_escalation.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 4,
       "staticNameMismatch": 0,
       "directDiffTests": [
         "rust/tests/head_to_head_escalation_executor.mjs"
       ],
       "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity.rs"
+        "rust/src/bin/agents-relay-rust.rs",
+        "rust/src/bin/relay-rust2-parity.rs",
+        "rust/src/cli.rs"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "Original Node/Rust 15 configured external-executor outcomes (including invalid command, oversized stdout, nonzero exit, private handoff and no stderr leakage) and 13 exact canonical Graph/CLI cases: rust/tests/head_to_head_escalation_executor.mjs",
+        "Native installed CLI real operator-controlled owned child process, resolved/needs_user/technical_failure exit codes 0/0/2, no-provider refusal, isolated private handoff cleanup and stderr secret denial: rust/tests/native_cli_binary.rs",
+        "Production Rust cli.rs all-flags dispatch to native agents-relay-rust executable, cli_escalation::run_escalation_command -> workflow::escalation::run_escalation_graph -> run_configured_escalation owned subprocess; no Node/GitHub/Neo default fallback"
       ],
+      "openGates": [],
       "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure."
     },
     {
@@ -1235,15 +1245,21 @@
       "decision": "HOLD",
       "runtimeExports": 2,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
+      "directDiffTests": [
+        "rust/tests/head_to_head_local_job_registry_public.mjs"
+      ],
       "otherRustModuleReferences": [
         "rust/src/cli_support.rs"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
+      "certificationEvidence": [
+        "Original Node/Rust both public immutable ID snapshot and resolver/cached SQLite Job selection across 39 fixture IDs, 6 distinct states, original Node writable WAL owner held open: rust/tests/head_to_head_local_job_registry_public.mjs",
+        "Native test opens real Node-created unified SQLite read-only with no writable connection for discovery: rust/tests/native_cross_runtime_sqlite_readonly.rs",
+        "Native resolver API cache reuse with two independently scoped Job IDs already covered by rust/tests/native_port_api_facades.rs; find_job_id_snapshot called by production Rust cli_support.rs"
+      ],
       "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+        "HOLD: 未证明原始 Node WAL owner 已退出且 WAL/-shm 缺失/只读目录的跨运行时恢复一致性；当前探针仅覆盖 Node 已正常关闭并 checkpoint 的 SQLite 和存活的 writer",
+        "HOLD: createJobIdRegistryResolver 完整公开缓存工厂尚未作为持久的 native daemon/CLI runtime resolver 复用；当前唯一非测试调用仅 findJobIdSnapshot，不能按两个导出全覆盖晋级"
       ],
       "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
     },

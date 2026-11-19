@@ -2,7 +2,7 @@
 
 > 本表是逐文件的真实审计清单，不是所有模块均通过。**PASS** 需公开 API 原始 Node/Rust 直接差分、Rust 原生负面测试和实际生产调用绑定；只通过静态 API 名称匹配，不能晋级。**HOLD** 指存在尚未关闭的证据缺口，不等同于未实现。
 
-- 原始检查范围：107 个源模块。已认证 **45 PASS**，保留 **62 HOLD/PORTING**。
+- 原始检查范围：107 个源模块。已认证 **46 PASS**，保留 **61 HOLD/PORTING**。
 - 本轮仅跑 Rust 原生测试与必要的 Node/Rust 差分；未重跑独立 Node 全量测试。
 - 这份报告对应上次全量 Node/Rust 230/230 PASS 后的逐项认证。全量 230/230 不等于 107 个模块逐一通过。
 - `directDiffTests` 与 `otherRustModuleReferences` 基于静态文本检索；测试文件出现导入或 Rust 源文件出现引用，仅说明有线索，不表示覆盖了每个公开 API 或进入生产。
@@ -34,6 +34,11 @@
 ### `src/local-merge-projection.ts`
 - 原 Node/Rust 远端投影的 17 个直接差分场景通过：普通成功、无 origin、失败重试门禁、过期 lease、已完成、远端冲突及有效隔离 bare origin。
 - Rust 原生测试证明 SQLite Graph 幂等性、实际非强制推送、错误 SHA 和外部远端拒绝；正式 daemon 已接通 `effect.remoteDelivery`。真实生产远端与模型 L4 尚未验收。
+
+## 2026-11-19 原生 Escalation CLI 认证
+
+- **`src/cli-escalation.ts` — PASS**：15 个原始 Node/Rust 实际受控可执行程序差分、13 个 CLI + canonical Escalation Graph 差分，覆盖成功/需人工/失败、缺失配置、无效结果、超大 stdout、子进程 exit code 和不泄漏 stderr。
+- Rust 二进制生产入口 `agents-relay-rust escalation --intent ... --blocked-on ...` 现已直接绑定 `rust/src/cli_escalation.rs` → `workflow/escalation.rs` → 安全私有 handoff 的 owned process；修正 CLI 原有丢弃 `--intent` 的参数切片错误。原生 `native_cli_binary.rs` 确认 0/0/2 退出码、缺配置安全失败、临时数据清理和敏感文本不外泄。未执行实际外部模型或线上通知。
 
 ## 2026-11-18 认证批次（严格逐模块）
 
@@ -170,7 +175,7 @@
 | 7 | `src/chatgpt-platform-fallback.ts` | **HOLD** | 5 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 8 | `src/cli-artifact.ts` | **HOLD** | 2 | 4 | 1 | 0 | 模块特定场景／生产门禁 |
 | 9 | `src/cli-coordinator.ts` | **HOLD** | 1 | 1 | 1 | 0 | 模块特定场景／生产门禁 |
-| 10 | `src/cli-escalation.ts` | **HOLD** | 4 | 1 | 1 | 0 | 模块特定场景／生产门禁 |
+| 10 | `src/cli-escalation.ts` | **PASS** | 4 | 1 | 1 | 0 | 直接差分、Graph 原生及 CLI 生产调用证据已关闭 |
 | 11 | `src/cli-foreground.ts` | **HOLD** | 2 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 12 | `src/cli-job-create.ts` | **HOLD** | 1 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 13 | `src/cli-prompt.ts` | **HOLD** | 5 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
@@ -299,11 +304,11 @@
 8. **`src/cli-artifact.ts`** — 原记录：Wave4 B: original Node/Ajv schema-compile errors, CLI output/error priority, UTF16 Unicode/unknown-format tests plus Wave3 277 filesystem comparisons. Recursive $ref, full Ajv dialect/format and CLI edge parity remain unverified (head_to_head_wave4_artifact.mjs; head_to_head_wave3_artifact.mjs).
    - 差分参考：`rust/tests/head_to_head_batch6.mjs`, `rust/tests/head_to_head_cli_core.mjs`, `rust/tests/head_to_head_wave3_artifact.mjs`, `rust/tests/head_to_head_wave4_artifact.mjs`
 
-9. **`src/cli-coordinator.ts`** — 原记录：Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure.
-   - 差分参考：`rust/tests/head_to_head_coordinator_cli.mjs`
+9. **`src/cli-coordinator.ts` — HOLD** — 11 个 Node/Rust Coordinator 原始差分、原生 CLI→daemon Graph/SQLite、不可变路径绑定、错误/重复启动和实际进程重启均通过；`--foreground` 前台 Reconciler/中断仍未接线，不能认证 PASS。
+   - 差分：`rust/tests/head_to_head_coordinator_cli.mjs`；隔离原生：`native_daemon_binary_readonly.rs`、`native_sqlite_write_host.rs`
 
-10. **`src/cli-escalation.ts`** — 原记录：Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure.
-   - 差分参考：`rust/tests/head_to_head_escalation_executor.mjs`
+10. **`src/cli-escalation.ts` — PASS（2026-11-19）** — 原记录已由真实 CLI owned-process/Graph 执行替代。28 个 Node/Rust 差分场景和原生 CLI 成功、需人工、失败及不泄露敏感数据测试通过。
+   - 差分：`rust/tests/head_to_head_escalation_executor.mjs`；Rust 原生：`rust/tests/native_cli_binary.rs`；生产接线：`rust/src/bin/agents-relay-rust.rs` / `rust/src/cli.rs`
 
 11. **`src/cli-foreground.ts`** — 原记录：Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure.
    - 当前静态引用缺口：未发现其他 Rust 模块引用该模块
@@ -426,7 +431,7 @@
    - 差分参考：`rust/tests/head_to_head_wave4_delivery_git.mjs`
    - 类型/形状需复核：`LocalMergeReceipt`
 
-48. **`src/local-job-registry.ts`** — 原记录：Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure.
+48. **`src/local-job-registry.ts` — HOLD** — 39 组原始 Node/Rust 的两个公开接口差分、活跃 Node WAL Writer 与 Rust 只读访问、原生 SQLite 和缓存复用已测通。仍缺 WAL writer 离线且缺少 -shm/只读目录恢复门禁，以及长期生命周期的 native resolver 工厂生产绑定，不能认证 PASS。
 
 49. **`src/local-managed-store.ts`** — 原记录：Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure.
    - 类型/形状需复核：`LocalManagedStore`

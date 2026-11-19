@@ -839,3 +839,65 @@ fn request_to_json(port:u16,path:&str,payload:&Value)->Value{
     assert!(response.starts_with("HTTP/1.1 200"),"Native daemon rejected request: {response}");
     self::body(&response)
 }
+
+// Original Node src/cli-coordinator.ts: a real native CLI POST must reach
+// native daemon Graph/SQLite and preserve its immutable binding across restart.
+#[test]
+fn native_coordinator_cli_run_uses_real_daemon_and_survives_restart(){
+    let root=root();
+    let project=root.join("fixture");
+    fs::create_dir_all(&project).unwrap();
+    let initialized=Command::new("git").args(["init","-q","-b","main"])
+        .current_dir(&project).output().unwrap();
+    assert!(initialized.status.success());
+    let path=root.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&path,Some("17")).unwrap();
+    store.save_job(&json!({
+        "id":"17","repository":"fixture","projectRoot":project,"state":"DRAFT",
+        "title":"Native coordinator integration","prNumber":0,
+        "createdAt":"2026-11-18T00:00:00.000Z",
+        "updatedAt":"2026-11-18T00:00:00.000Z",
+        "tasks":[{
+            "id":"2","jobId":"17","kind":"work","title":"Coordinator",
+            "agentName":"coordinator","state":"DRAFT","attempt":0,"maxAttempts":1,
+            "dependencies":[],"agentGraph":"flowchart TD\nA[agent:developer]",
+            "updatedAt":"2026-11-18T00:00:00.000Z"
+        }],"plans":[]
+    })).unwrap();
+    store.close().unwrap();
+    let port=socket_port();
+    let daemon=start_mode(&root,port,"--isolated-write-store-dir");
+    let port_arg=port.to_string();
+    let workspace=root.to_string_lossy().to_string();
+    let opts=["job","run","--id","17","--task-id","2",
+        "--workspace-root",&workspace,"--port",&port_arg];
+    let result=native_cli_transient_retry(&opts);
+    assert!(result.status.success(),"{}",String::from_utf8_lossy(&result.stderr));
+    let receipt:Value=serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(receipt["scheduled"],true);
+    assert_eq!(receipt["graphRuntime"],"tasks");
+    let after=SQLiteRelayStore::open_without_claim_reset(&path,Some("17"))
+        .unwrap().load_job("17").unwrap().unwrap();
+    assert_eq!(after["graphStartContext"]["projectRoot"],
+        json!(fs::canonicalize(&project).unwrap()));
+    assert_eq!(after["graphStartContext"]["workspaceRoot"],
+        json!(fs::canonicalize(&root).unwrap()));
+    assert_ne!(after["state"],"DRAFT");
+    for rejected in [
+        vec!["job","run","--id","17","--task-id","absent","--port",&port_arg],
+        vec!["job","run","--id","17","--task-id","2",
+            "--shortcut-local","--port",&port_arg],
+        vec!["job","run","--id","17","--task-id","2",
+            "--foreground","--port",&port_arg],
+    ]{
+        let negative=native_cli_transient_retry(&rejected);
+        assert!(!negative.status.success(),"invalid Coordinator request accepted");
+    }
+    drop(daemon);
+    let restarted=start_mode(&root,port,"--isolated-write-store-dir");
+    let persisted=SQLiteRelayStore::open_without_claim_reset(&path,Some("17"))
+        .unwrap().load_job("17").unwrap().unwrap();
+    assert_eq!(persisted["graphStartContext"],after["graphStartContext"]);
+    drop(restarted);
+    fs::remove_dir_all(root).unwrap();
+}

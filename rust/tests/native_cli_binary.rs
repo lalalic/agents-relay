@@ -16,7 +16,7 @@ fn cli_help_version_and_unwired_actions_fail_closed(){
         .output().unwrap();
     assert!(!unavailable.status.success());
     assert!(String::from_utf8(unavailable.stderr).unwrap()
-        .contains("not yet bound to the daemon"));
+        .contains("job run requires --task-id"));
 }
 #[test]
 fn cli_uses_real_daemon_http_get_and_post_without_node(){
@@ -131,4 +131,70 @@ fn native_cli_review_and_revision_use_exact_daemon_control_requests(){
     assert_eq!(result["request"]["revisionTaskId"],"9");
     server.join().unwrap();
     std::fs::remove_file(temp).unwrap();
+}
+
+// Original Node src/cli-escalation.ts: installed native CLI must dispatch
+// canonical Graph to an operator-selected owned subprocess; no live provider.
+#[cfg(unix)]
+#[test]
+fn native_escalation_cli_uses_only_configured_executor_and_graph_exit_codes(){
+    use std::{fs,os::unix::fs::PermissionsExt,
+        path::Path,time::{SystemTime,UNIX_EPOCH}};
+    let root=std::env::temp_dir().join(format!("rust2-escalation-cli-{}-{}",
+        std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH)
+            .unwrap().as_nanos()));
+    fs::create_dir_all(&root).unwrap();
+    let script=root.join("provider.sh");
+    let log=root.join("handoff-path");
+    fs::write(&script,r#"#!/bin/sh
+printf '%s' "$4" > "$2"
+test "$3" = "--handoff-file" || exit 9
+test -r "$4" || exit 10
+grep -q '# Intent' "$4" || exit 11
+grep -q 'verify native escalation' "$4" || exit 12
+if [ "$1" = "resolved" ]; then
+    echo '{"status":"resolved","summary":"fixture complete"}'
+elif [ "$1" = "needs_user" ]; then
+    echo '{"status":"needs_user","summary":"requires user approval"}'
+elif [ "$1" = "secret" ]; then
+    echo 'SECRET-SHOULD-NOT-BE-PRINTED' >&2
+    exit 7
+else
+    echo 'not valid JSON'
+fi
+"#).unwrap();
+    fs::set_permissions(&script,fs::Permissions::from_mode(0o700)).unwrap();
+    let graph=Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    for (mode,state,exit) in [
+        ("resolved","resolved",0),("needs_user","needs_user",0),
+        ("invalid","technical_failure",2),("secret","technical_failure",2)
+    ]{
+        // Prefix args select the local fixture mode, then native code
+        // appends --handoff-file plus a newly created private path.
+        let selected=json!([script.to_string_lossy(),mode,log.to_string_lossy()]);
+        let result=Command::new(binary()).current_dir(graph)
+            .env("AGENTS_RELAY_ESCALATION_COMMAND",selected.to_string())
+            .args(["escalation","--intent","verify native escalation",
+                "--blocked-on","fixture unavailable"]).output().unwrap();
+        let out=String::from_utf8_lossy(&result.stdout);
+        let err=String::from_utf8_lossy(&result.stderr);
+        assert_eq!(result.status.code(),Some(exit),"{mode}: {err}");
+        let payload:Value=serde_json::from_str(&out).unwrap();
+        assert_eq!(payload["state"],state,"{mode}: {out}");
+        assert!(!out.contains("SECRET-SHOULD-NOT-BE-PRINTED"));
+        assert!(!err.contains("SECRET-SHOULD-NOT-BE-PRINTED"));
+        // Operator handoff path must be transient and deleted after exit.
+        if log.exists(){
+            let handoff=fs::read_to_string(&log).unwrap();
+            assert!(!Path::new(&handoff).exists(),"private handoff leaked");
+        }
+    }
+    let denied=Command::new(binary()).current_dir(graph)
+        .env_remove("AGENTS_RELAY_ESCALATION_COMMAND")
+        .args(["escalation","--intent","verify native escalation",
+            "--blocked-on","fixture unavailable"]).output().unwrap();
+    assert_eq!(denied.status.code(),Some(2));
+    assert_eq!(serde_json::from_slice::<Value>(&denied.stdout).unwrap()["state"],
+        "technical_failure");
+    fs::remove_dir_all(&root).unwrap();
 }

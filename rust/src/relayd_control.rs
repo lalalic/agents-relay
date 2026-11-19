@@ -3,6 +3,8 @@
 // SQLite Job bindings. The backend enforces atomic mutateJob/append operations
 // and wakes the SAME Pool. No client-side Dashboard source changes.
 use crate::{
+    agent_graph::parse_agent_graph,
+    cli_coordinator::bind_coordinator_start,
     blockers::register_blocker_dependency,
     cli_job_create::ensure_managed_github_job,
     interactive_request::{begin_interactive_review,abort_interactive_review,interactive_waiting_event},
@@ -15,7 +17,10 @@ use crate::{
     task_actions::{dispatch_task_action_snapshot,classify_failed_task_snapshot,supersede_cancelled_task_snapshot},
     task_comments::append_task_comment,
     task_recovery::{request_troubleshooter_escalation,resume_troubleshooter},
+    task_transitions::try_transition_task_event,
     unblock::{is_effectively_blocked,unblock_task_snapshot},
+    workflow::lifecycle::dispatch_job_lifecycle_sync,
+    workspace::{resolve_job_project_root,resolve_workspace_root},
 };
 use regex::Regex;
 use serde_json::{json,Value};
@@ -211,6 +216,49 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
     let job=backend.load_job(&job_id)?;
     let graph=backend.graph_directory().to_path_buf();
     match command{
+        "job.run"=>{
+            let task_id=required(body,"taskId","job run")?;
+            let root=task(&job,task_id)
+                .ok_or_else(||format!("Task {task_id} not found"))?;
+            let override_graph=body.get("graphOverride").and_then(Value::as_str)
+                .filter(|value|!value.is_empty());
+            if let Some(source)=override_graph{parse_agent_graph(source)?;}
+            let saved_graph=text(root,"agentGraph");
+            let source=saved_graph.or(override_graph)
+                .ok_or("job run requires a durable Agent Graph Task")?;
+            parse_agent_graph(source)?;
+            let workspace_root=resolve_workspace_root(
+                body.get("workspaceRoot").and_then(Value::as_str)
+                    .filter(|value|!value.is_empty()))?;
+            let project_root=resolve_job_project_root(&job)?;
+            let shared_root=body.get("sharedRoot").and_then(Value::as_str)
+                .filter(|value|!value.is_empty());
+            let global_root=body.get("globalRoot").and_then(Value::as_str)
+                .filter(|value|!value.is_empty());
+            let now=iso8601_now();
+            let stored=backend.mutate_job(&job_id,&|current|{
+                // Recompute with fresh SQLite state inside one transaction.
+                let updated=bind_coordinator_start(
+                    current,task_id,source,
+                    &project_root.to_string_lossy(),&workspace_root.to_string_lossy(),
+                    shared_root,global_root,true,false,
+                    |task|try_transition_task_event(
+                        &graph,task,"queue",
+                        &json!({"dependenciesSatisfied":true}),&now)
+                        .is_ok_and(|decision|
+                            decision["accepted"]==true&&decision["target"]=="QUEUED"),
+                    |job|dispatch_job_lifecycle_sync(
+                        &graph,job,"activate",&json!({}),&now)
+                        .is_ok_and(|decision|
+                            decision["accepted"]==true&&decision["target"]=="ACTIVE"),
+                )?;
+                *current=updated;
+                Ok(())
+            })?;
+            backend.wake(&job_id,"control.job.run")?;
+            Ok(json!({"jobId":job_id,"taskId":task_id,"scheduled":true,
+                "state":stored.get("state"),"graphRuntime":"tasks"}))
+        },
         "review.interactive.begin"|"review.interactive.abort"
             |"review.interactive.wait"|"review.interactive.fail"=>
                 control_review(backend,&job,body,command),
