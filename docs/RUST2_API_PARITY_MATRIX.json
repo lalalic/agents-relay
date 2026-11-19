@@ -2,7 +2,7 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "c846739e5f60e6bc73cb3000cfab466855655462",
-    "rustTree": "6e003f237d0de7d38e2fd929587e78fcf20359b0",
+    "rustTree": "541ee175db21a8fd314b06fb4c16608e8f51f2bc",
     "sourceCount": 49,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
@@ -12,8 +12,8 @@
     "runtimeConstructorReviews": 13,
     "typeOrShapeReviewSymbols": 199,
     "filesWithUnmappedRuntime": 0,
-    "filesWithoutDirectDiffImport": 18,
-    "filesWithoutOtherRustReferences": 12
+    "filesWithoutDirectDiffImport": 17,
+    "filesWithoutOtherRustReferences": 11
   },
   "pendingModules": [],
   "files": [
@@ -3179,8 +3179,12 @@
       "directNameMatches": 1,
       "unmappedRuntime": [],
       "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_single_job_task_control_public.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/single_job_task_control_public.rs"
+      ],
       "exports": [
         {
           "name": "createSingleJobTaskControl",

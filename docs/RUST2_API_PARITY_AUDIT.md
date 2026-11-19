@@ -23,10 +23,10 @@ A listed direct differential import only means a head-to-head test imports the c
 | runtimeConstructorReviews | 13 |
 | typeOrShapeReviewSymbols | 199 |
 | filesWithUnmappedRuntime | 0 |
-| filesWithoutDirectDiffImport | 18 |
-| filesWithoutOtherRustReferences | 12 |
+| filesWithoutDirectDiffImport | 17 |
+| filesWithoutOtherRustReferences | 11 |
 
-Source tree: `c846739e5f60`; Rust source tree: `6e003f237d0d`. Rust module rows in scope: 49. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `c846739e5f60`; Rust source tree: `541ee175db21`. Rust module rows in scope: 49. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
@@ -73,7 +73,7 @@ Source tree: `c846739e5f60`; Rust source tree: `6e003f237d0d`. Rust module rows 
 | `src/relayd.ts` | 1 | 1 | 0 | 0 | 5 |
 | `src/router-evals.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/service-external-actions.ts` | 2 | 2 | 0 | 0 | 0 |
-| `src/single-job-task-control.ts` | 1 | 1 | 0 | 0 | 0 |
+| `src/single-job-task-control.ts` | 1 | 1 | 0 | 1 | 1 |
 | `src/store-github.ts` | 21 | 21 | 0 | 1 | 6 |
 | `src/store.ts` | 22 | 22 | 0 | 8 | 4 |
 | `src/task-actions.ts` | 18 | 18 | 0 | 1 | 8 |

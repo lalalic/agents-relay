@@ -708,3 +708,10 @@
 - 修复 `rust/src/interactive_resume.rs` 的真实差异：Node `Math.max(3, task.maxAttempts)` 在 maxAttempts 缺失时产生 NaN 且键在 JSON 序列化下消失，Rust 原来钳到 3；现在缺失键保持缺失、显式 null 先按 0 钳到 3，与原 NaN 语义一致。
 - 同时验证：interactive.resume 边拒绝错误文本、attempt 重置、executionId/lease 清空、blockedBy/failureReason 移除、changes_requested 评论 author/trim/截断、updatedAt 刷新、可恢复列表推导。
 - 仍 HOLD 的缺口：Rust daemon 生产调用方（原 Node reconciler-runtime.ts / reconciler.ts 的 resume/recover 调用链）未接入，属 reconciler-runtime 集成批次。
+
+## 2026-11-19 Single-Job Task Control 包装层差分（仍 HOLD）
+
+- **`src/single-job-task-control.ts`**：31 组原始 Node/Rust 差分全部一致（`rust/tests/head_to_head_single_job_task_control_public.mjs`）。范围是本模块拥有的包装层契约：六个允许命令的 `String(body.command ?? '')` 强转语义（数字、null/undefined、数组、对象）、bound-Job 严格相等围栏、以及向真实 canonical control 的委托——两侧都走真实 `createWorkspaceControl`/`workspace_control`（Node 动态导入真模块；Rust 用带 fixture Job 的 backend 走真实 workflow 图）。
+- 修复 `rust/src/single_job_task_control.rs` 的真实准入门禁差异：原实现 `as_str()` 拒绝数组/对象 command 且错误类别不同；现按原始 `?? '' + String()` 语义精确复刻。
+- 包装层拒绝按错误文本精确对照；被接受的命令必须到达同一 canonical 结果类别（ok/error）。差分记录了 10 条 canonical 路径错误文本/校验顺序差异（taskId/必填字段校验次序与措辞），已按范围归属 relayd-control 批次，不阻塞本模块包装层契约。
+- 仍 HOLD 的缺口：Rust daemon 生产调用方（原 Node 单 Job relayd HTTP 适配器，需真实 Reconciler/store/bus 注入）未接入，属 relayd/reconciler-runtime 集成批次。

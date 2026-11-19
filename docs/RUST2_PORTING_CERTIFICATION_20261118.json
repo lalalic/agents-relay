@@ -2361,14 +2361,23 @@
       "decision": "HOLD",
       "runtimeExports": 1,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
-      "otherRustModuleReferences": [],
+      "directDiffTests": [
+        "rust/tests/head_to_head_single_job_task_control_public.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/relayd_control.rs (workspace_control canonical path driven by the differential)",
+        "rust/src/bin/relay-rust2-parity/single_job_task_control_public.rs (certSingleJobTaskControl differential op)",
+        "Original Node production caller: the single-Job relayd HTTP adapter (Rust daemon integration remains the gate)"
+      ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
+      "certificationEvidence": [
+        "2026-11-19 31 original Node/Rust differential cases PASS over the wrapper contract: the six allowed commands with JS String() coercion semantics (numbers, null/undefined, arrays, objects), the bound-Job strict-equality fence, and delegation into the REAL canonical workspace control on both sides (Node createWorkspaceControl dynamic imports; Rust workspace_control with a seeded fixture backend over the real workflow graphs)",
+        "Fixed a real admission divergence in rust/src/single_job_task_control.rs: the original String(body.command ?? '') coercion accepts e.g. array/object commands by their string form while as_str() rejected them with a different error class; the wrapper now reproduces the ?? '' + String() semantics exactly",
+        "Wrapper rejections compare exact error text; accepted commands must reach the same canonical outcome class (ok/error). 10 canonical-path error-text divergences were recorded and scoped to the relayd-control batch (taskId/required-field validation ordering and message wording), not this module"
+      ],
       "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+        "Rust daemon 生产调用方未接线：原 Node 由单 Job relayd HTTP 适配器构造（需真实 Reconciler/store/bus 注入），Rust relayd 端未接入，属 relayd/reconciler-runtime 集成批次",
+        "canonical relayd-control 差分中记录的 10 条错误文本/校验顺序差异需在 relayd-control 批次关闭（不阻塞本模块的包装层契约）"
       ],
       "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
     },
