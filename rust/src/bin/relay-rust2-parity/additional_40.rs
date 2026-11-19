@@ -5,6 +5,16 @@ use std::path::Path;
 
 pub fn invoke(req:&Value)->Option<Result<String,String>>{
     match req["op"].as_str()?{
+        "certUnblockFacts"=>Some((||{
+            use agents_relay_rust2::unblock as u;
+            let job=&req["job"];
+            let results=json!({
+                "blocked":u::is_effectively_blocked(&req["task"]),
+                "trigger":u::unconsumed_unblock_trigger(job),
+                "newPlan":u::unblock_needs_new_plan(job)
+            });
+            Ok(results.to_string())
+        })()),
         "certTroubleshooter"=>Some((||{
             use agents_relay_rust2::troubleshooter as t;
             let job=&req["job"];

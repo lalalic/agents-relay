@@ -2,15 +2,15 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "c846739e5f60e6bc73cb3000cfab466855655462",
-    "rustTree": "bf6c9c8218fff731d32aead1bf56d460fb1ac853",
-    "sourceCount": 76,
+    "rustTree": "448d416800366b15f59f266173816a7e09e0a60c",
+    "sourceCount": 75,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 517,
-    "directNameMatches": 504,
+    "runtimeExportSymbols": 513,
+    "directNameMatches": 500,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 13,
-    "typeOrShapeReviewSymbols": 232,
+    "typeOrShapeReviewSymbols": 231,
     "filesWithUnmappedRuntime": 0,
     "filesWithoutDirectDiffImport": 39,
     "filesWithoutOtherRustReferences": 23
@@ -5086,53 +5086,6 @@
         },
         {
           "name": "assertTaskTransition",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/unblock.ts",
-      "target": "rust/src/unblock.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 4,
-      "directNameMatches": 4,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "UnblockSource"
-      ],
-      "directDiffImports": [
-        "rust/tests/head_to_head_atomic_public_apis.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity/sqlite_api.rs",
-        "rust/src/blockers.rs",
-        "rust/src/cli_unblock.rs",
-        "rust/src/relayd_control.rs"
-      ],
-      "exports": [
-        {
-          "name": "UnblockSource",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "isEffectivelyBlocked",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "unconsumedUnblockTrigger",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "unblockNeedsNewPlan",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "unblockTask",
           "kind": "function",
           "static": "name-match"
         }

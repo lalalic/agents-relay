@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 31,
-    "HOLD": 76
+    "PASS": 32,
+    "HOLD": 75
   },
   "records": [
     {
@@ -2560,7 +2560,7 @@
       "source": "src/unblock.ts",
       "target": "rust/src/unblock.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 4,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -2575,12 +2575,14 @@
       "typeOrShapeReviews": [
         "UnblockSource"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "Original Node public API direct differential: rust/tests/head_to_head_unblock_facts.mjs",
+        "Rust native negative/recovery/integration: rust/tests/native_cli_unblock.rs",
+        "Authoritative non-parity production caller: rust/src/relayd_control.rs",
+        "3 pure helpers across 120 original Node/Rust cases plus actual durable unblockTask through head_to_head_atomic_public_apis.mjs; native SQLite Graph no false human unblock and no duplicate retries"
       ],
-      "legacyLedgerNote": "Phase1 native Rust draft for Graph authority and Z WebHelm adapter request contract; uncompiled/unverified; no Dashboard client changes."
+      "openGates": [],
+      "legacyLedgerNote": "Certified with explicit direct original API differential, native tests and production call entry."
     },
     {
       "source": "src/usage.ts",
