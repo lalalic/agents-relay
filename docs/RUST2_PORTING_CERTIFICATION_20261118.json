@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 27,
-    "HOLD": 80
+    "PASS": 28,
+    "HOLD": 79
   },
   "records": [
     {
@@ -900,7 +900,7 @@
       "source": "src/force-restate-validation.ts",
       "target": "rust/src/force_restate_validation.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 6,
       "staticNameMismatch": 0,
       "directDiffTests": [],
@@ -910,13 +910,14 @@
       "typeOrShapeReviews": [
         "HistoryValidation"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "Original Node/Rust direct comparison PASSED: rust/tests/head_to_head_force_restate_validation_public.mjs (71-file 115-test combined run, 0 failures)",
+        "Rust native behavior and negative/recovery PASSED: rust/tests/native_planner_finish_public.rs (cargo test --all-targets, 0 failures)",
+        "Production native call site verified: rust/src/planner_runtime_public.rs",
+        "75 direct Node/Rust fixtures compare all 6 public Force Restate APIs (450 output observations), negative cleanup history, worker eligibility and Graph review gates; native Planner Graph/SQLite apply and fail-closed rollback"
       ],
-      "legacyLedgerNote": "Phase1 serial native Rust source port; uncompiled/unverified, production integration and head-to-head differential pending Phase2."
+      "openGates": [],
+      "legacyLedgerNote": "Certified by actual direct original Node comparison, native execution and non-parity runtime binding."
     },
     {
       "source": "src/force-restate.ts",

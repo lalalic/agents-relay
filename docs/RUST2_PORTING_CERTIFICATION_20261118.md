@@ -2,7 +2,7 @@
 
 > 本表是逐文件的真实审计清单，不是所有模块均通过。**PASS** 需公开 API 原始 Node/Rust 直接差分、Rust 原生负面测试和实际生产调用绑定；只通过静态 API 名称匹配，不能晋级。**HOLD** 指存在尚未关闭的证据缺口，不等同于未实现。
 
-- 原始检查范围：107 个源模块。已认证 **27 PASS**，保留 **80 HOLD/PORTING**。
+- 原始检查范围：107 个源模块。已认证 **28 PASS**，保留 **79 HOLD/PORTING**。
 - 本轮仅跑 Rust 原生测试与必要的 Node/Rust 差分；未重跑独立 Node 全量测试。
 - 这份报告对应上次全量 Node/Rust 230/230 PASS 后的逐项认证。全量 230/230 不等于 107 个模块逐一通过。
 - `directDiffTests` 与 `otherRustModuleReferences` 基于静态文本检索；测试文件出现导入或 Rust 源文件出现引用，仅说明有线索，不表示覆盖了每个公开 API 或进入生产。
@@ -78,6 +78,14 @@
 | `src/dashboard-data.ts` | `head_to_head_worker_c.mjs` | `native_stage2_dashboard.rs` | `rust/src/dashboard_api.rs` |
 | `src/projection-outbox.ts` | `head_to_head_projection_outbox_strict.mjs` | `native_graph_outbox_batch.rs` | `rust/src/relay_store.rs` |
 
+## 2026-11-18 认证第四批（严格逐模块）
+
+本批只认证经过 Node 原始导出直接对照、Rust 原生负面/SQLite/Graph 测试和实际运行调用复核的模块。组合门禁是 71 个差分文件，115 PASS / 0 FAIL；Rust `cargo test --all-targets` PASS。未执行独立 Node 全量测试；真实多节点/模型 L4 未验收。
+
+| 源模块 | 直接 Node/Rust 差分 | Rust 原生验证 | 生产调用 |
+|---|---|---|---|
+| `src/force-restate-validation.ts` | `head_to_head_force_restate_validation_public.mjs` | `native_planner_finish_public.rs` | `rust/src/planner_runtime_public.rs` |
+
 ## 已有局部验证、但不能升级的关键模块
 
 - **`src/cli-coordinator.ts`**：11 个真实 Git/SQLite Head-to-Head 场景及 4 个 Rust 原生测试已通过，但 run_coordinator_job_command 只发现 parity harness 引用，正式 CLI 生产分发尚未直接绑定本端口
@@ -131,7 +139,7 @@
 | 32 | `src/execution-recovery.ts` | **HOLD** | 2 | 0 | 1 | 1 | 直接差分、结构审核、模块特定场景／生产门禁 |
 | 33 | `src/execution-routing.ts` | **HOLD** | 6 | 1 | 2 | 5 | 结构审核、模块特定场景／生产门禁 |
 | 34 | `src/feedback.ts` | **HOLD** | 23 | 2 | 0 | 12 | 运行调用、结构审核、模块特定场景／生产门禁 |
-| 35 | `src/force-restate-validation.ts` | **HOLD** | 6 | 0 | 1 | 1 | 直接差分、结构审核、模块特定场景／生产门禁 |
+| 35 | `src/force-restate-validation.ts` | **PASS** | 6 | 0 | 1 | 1 | 直接差分、结构审核、模块特定场景／生产门禁 |
 | 36 | `src/force-restate.ts` | **HOLD** | 1 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 37 | `src/github-auth.ts` | **HOLD** | 2 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 38 | `src/github-client.ts` | **HOLD** | 10 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |

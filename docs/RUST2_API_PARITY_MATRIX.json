@@ -3,16 +3,16 @@
   "summary": {
     "sourceTree": "c846739e5f60e6bc73cb3000cfab466855655462",
     "rustTree": "155c0256d0286ed9e895d2e332d0219d059bca64",
-    "sourceCount": 80,
+    "sourceCount": 79,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 536,
-    "directNameMatches": 523,
+    "runtimeExportSymbols": 530,
+    "directNameMatches": 517,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 13,
-    "typeOrShapeReviewSymbols": 233,
+    "typeOrShapeReviewSymbols": 232,
     "filesWithUnmappedRuntime": 0,
-    "filesWithoutDirectDiffImport": 43,
+    "filesWithoutDirectDiffImport": 42,
     "filesWithoutOtherRustReferences": 23
   },
   "pendingModules": [],
@@ -1916,58 +1916,6 @@
         },
         {
           "name": "readFeedbackAttachment",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/force-restate-validation.ts",
-      "target": "rust/src/force_restate_validation.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 6,
-      "directNameMatches": 6,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "HistoryValidation"
-      ],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [
-        "rust/src/planner_runtime_public.rs"
-      ],
-      "exports": [
-        {
-          "name": "forceRestateRunnable",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "forceRestateDependencyWaiting",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "forceRestateBlocked",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "forceRestateConverged",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "objectiveSatisfiedForReview",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "HistoryValidation",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "applyPlannerHistoryCleanup",
           "kind": "function",
           "static": "name-match"
         }
