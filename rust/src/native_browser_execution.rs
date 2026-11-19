@@ -6,6 +6,8 @@ use crate::{
     adapters::{ChatGptAdapter,WorkerExecution},
     browser_worker_pool::{BrowserPoolOptions,BrowserWorkerPoolManager},
     browser_worker_runtime::relay_workspace_name,
+    execution_context::resolve_execution_context,
+    managed_worker_input::managed_worker_input_resolved,
     relay_store::SQLiteRelayStore,
 };
 use serde_json::Value;
@@ -116,13 +118,31 @@ pub fn submit_claimed_chatgpt_worker(
         ||field(fresh,"state")!="QUEUED"{
         return Err("Native WebHelm launch was superseded by another Task generation".into());
     }
+    // The same contract-based managed input used by Node Workers must be
+    // resolved before the browser provider sees a prompt. The original Task
+    // remains immutable in SQLite; the assembled prompt is transport-only.
+    let project=current.get("projectRoot").and_then(Value::as_str)
+        .ok_or("Native Worker Job missing immutable projectRoot")?;
+    let fixture_root=config.pool_db.parent().and_then(Path::parent)
+        .ok_or("Native WebHelm config missing isolated fixture root")?;
+    let options=serde_json::json!({
+        "workspaceRoot":fixture_root,"sharedRoot":fixture_root,
+        "globalRoot":fixture_root
+    });
+    let context=resolve_execution_context(project,"worker",&options)?;
+    let package_root=Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent().ok_or("Rust package root missing")?;
+    let prompt=managed_worker_input_resolved(
+        &current,fresh,Some(&context),"production",package_root,None)?;
+    let mut submitted_task=fresh.clone();
+    submitted_task["input"]=serde_json::json!(prompt);
     let mut pool=BrowserWorkerPoolManager::open(BrowserPoolOptions{
         path:Some(config.pool_db.clone()),..Default::default()
     }).map_err(|e|e.to_string())?;
     let timeout=task.get("timeoutMs").and_then(Value::as_u64)
         .unwrap_or(900_000).clamp(500,86_400_000);
     let deadline=Instant::now()+Duration::from_millis(timeout);
-    let launched=ChatGptAdapter::default().launch(task,
+    let launched=ChatGptAdapter::default().launch(&submitted_task,
         &config.socket,&config.executable,&config.workspace,
         &mut pool,cancelled,|barrier|await_generation_barrier(
             db_path,job_id,task_id,execution_id,barrier,deadline,cancelled));

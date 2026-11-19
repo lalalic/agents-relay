@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 50,
-    "HOLD": 57
+    "PASS": 51,
+    "HOLD": 56
   },
   "records": [
     {
@@ -1350,19 +1350,23 @@
       "source": "src/managed-worker-input.ts",
       "target": "rust/src/managed_worker_input.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 1,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
+      "directDiffTests": [
+        "rust/tests/head_to_head_wave3_delivery.mjs"
+      ],
       "otherRustModuleReferences": [
-        "rust/src/delivery_parity_harness.rs"
+        "rust/src/delivery_parity_harness.rs",
+        "rust/src/native_browser_execution.rs"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "Original Node/Rust 97 real managedWorkerInput public cases incl positive Agent roles, production/evaluation, malformed/missing output, missing execution ID, invisible Agent and worker runtime mismatch: test/rust2-wave3-delivery-managed-resolver-differential.mjs through head_to_head_wave3_delivery.mjs",
+        "Native managed_worker_input.rs unit tests verify no provider input before immutable output/execution, context resolution and evaluation-safe suppression of event emission instructions.",
+        "Actual native isolated WebHelm Worker now calls managed_worker_input_resolved from immutable SQLite task and selected Agent Markdown instead of naked input. A real AF_UNIX fake-provider E2E validates Agent contract reference file, Event/Task contracts, job/task/generation IDs and no copied task text; accepted start/terminal Graph and SQLite/pool lifecycle: native_daemon_binary_readonly.rs. Non-isolated model provider cutover is separate."
       ],
+      "openGates": [],
       "legacyLedgerNote": "Wave3 C native layered Agent resolver and 75 original Node prompt comparisons pass; daemon execution-context entrypoint integration unverified (head_to_head_wave3_delivery.mjs)."
     },
     {

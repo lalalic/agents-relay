@@ -2,18 +2,18 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "c846739e5f60e6bc73cb3000cfab466855655462",
-    "rustTree": "6ffca21f8fc6c0ab4540790db4b51bcfd6ac494e",
-    "sourceCount": 57,
+    "rustTree": "275d8cb0c47e92b32ade99ebd515145bc8a3671f",
+    "sourceCount": 56,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 452,
-    "directNameMatches": 439,
+    "runtimeExportSymbols": 451,
+    "directNameMatches": 438,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 13,
     "typeOrShapeReviewSymbols": 213,
     "filesWithUnmappedRuntime": 0,
-    "filesWithoutDirectDiffImport": 29,
-    "filesWithoutOtherRustReferences": 19
+    "filesWithoutDirectDiffImport": 28,
+    "filesWithoutOtherRustReferences": 18
   },
   "pendingModules": [],
   "files": [
@@ -1305,7 +1305,9 @@
       "directDiffImports": [
         "rust/tests/head_to_head_agent_graph.mjs"
       ],
-      "otherRustModuleReferences": [],
+      "otherRustModuleReferences": [
+        "rust/src/native_browser_execution.rs"
+      ],
       "exports": [
         {
           "name": "ExecutionRole",
@@ -1997,26 +1999,6 @@
         },
         {
           "name": "openLocalManagedStore",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/managed-worker-input.ts",
-      "target": "rust/src/managed_worker_input.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 1,
-      "directNameMatches": 1,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [
-        "rust/src/delivery_parity_harness.rs"
-      ],
-      "exports": [
-        {
-          "name": "managedWorkerInput",
           "kind": "function",
           "static": "name-match"
         }

@@ -24,6 +24,9 @@ The same Graph selects actions for the Rust Reconciler. A real integration test 
 
 ## 2026-11-19 追加证据（保持 NOT production-ready）
 
+- Native isolated WebHelm Worker 已经接通真实 Rust managed_worker_input_resolved + layered Agent Markdown。97 个原始 Node/Rust Prompt 对照和真实 AF_UNIX/Graph SQLite E2E 证明 Agent/Task/Event 合同、执行身份和原始 Task 不在 transport prompt 直接复制。非隔离模型 provider 仍属于生产切换门禁。
+
+
 - Execution Process Tracker 的 monitor + stale-reclaim 已接入真实原生 Script Worker/SQLite 和 Reconciler 原生进程回收，180 个原始 Node/Rust 差异场景及 test-owned POSIX process/crash/restart 证据通过，空执行代误回收已修复。
 
 

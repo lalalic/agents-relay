@@ -678,7 +678,22 @@ fn isolated_native_daemon_submits_chatgpt_through_webhelm_and_waits_for_real_gra
                     assert_eq!(command["platform"],"chatgpt");
                     assert_eq!(command["action"],"new-thread");
                     assert_eq!(command["config"]["temporary"],false);
-                    assert!(command["config"]["message"].is_string());
+                    let prompt=command["config"]["message"].as_str().unwrap();
+                    assert!(prompt.contains("You are implementation with responsibility at "),
+                        "Selected Agent identity must be prompt-reference bound: {prompt}");
+                    let ref_path=prompt.split("You are implementation with responsibility at ")
+                        .nth(1).unwrap().split_whitespace().next().unwrap()
+                        .trim_end_matches('.');
+                    let agent_contract=fs::read_to_string(ref_path)
+                        .expect("Immutable managed Agent reference must be readable");
+                    assert!(agent_contract.contains("Implementation Agent"),
+                        "Selected Agent contract is not the real Markdown");
+                    assert!(prompt.contains("task-job-contract.md")
+                        &&prompt.contains("event-contract.md"),
+                        "Managed Worker must receive Task/Job and Event contracts");
+                    assert!(prompt.contains("Job: 83")&&prompt.contains("Task: 2"));
+                    assert!(!prompt.contains("Execute real task and send genuine events"),
+                        "Original Task text must be retrieved through authorized Relay CLI, not copied into transport prompt");
                     got_submission.store(true,Ordering::Release);
                     json!({"ok":true,"status":"submitted","verified_by":"test-fixture",
                         "temporary":false,"thread_id":"fixturethread4321",

@@ -2,7 +2,7 @@
 
 > 本表是逐文件的真实审计清单，不是所有模块均通过。**PASS** 需公开 API 原始 Node/Rust 直接差分、Rust 原生负面测试和实际生产调用绑定；只通过静态 API 名称匹配，不能晋级。**HOLD** 指存在尚未关闭的证据缺口，不等同于未实现。
 
-- 原始检查范围：107 个源模块。已认证 **50 PASS**，保留 **57 HOLD/PORTING**。
+- 原始检查范围：107 个源模块。已认证 **51 PASS**，保留 **56 HOLD/PORTING**。
 - 本轮仅跑 Rust 原生测试与必要的 Node/Rust 差分；未重跑独立 Node 全量测试。
 - 这份报告对应上次全量 Node/Rust 230/230 PASS 后的逐项认证。全量 230/230 不等于 107 个模块逐一通过。
 - `directDiffTests` 与 `otherRustModuleReferences` 基于静态文本检索；测试文件出现导入或 Rust 源文件出现引用，仅说明有线索，不表示覆盖了每个公开 API 或进入生产。
@@ -34,6 +34,10 @@
 ### `src/local-merge-projection.ts`
 - 原 Node/Rust 远端投影的 17 个直接差分场景通过：普通成功、无 origin、失败重试门禁、过期 lease、已完成、远端冲突及有效隔离 bare origin。
 - Rust 原生测试证明 SQLite Graph 幂等性、实际非强制推送、错误 SHA 和外部远端拒绝；正式 daemon 已接通 `effect.remoteDelivery`。真实生产远端与模型 L4 尚未验收。
+
+## 2026-11-19 Managed Worker Input 认证
+
+- **`src/managed-worker-input.ts` — PASS**：原始 Node/Rust Managed Worker prompt 差分从 75 增至 97（真实 Agent 内容、缺失 output/executionId、runtime mismatch、不可见 Agent、评价模式）。正式隔离 Rust WebHelm Worker 使用 managed_worker_input_resolved 生成引用固定 Agent Markdown、Task/Job/Event 合同的原生 Prompt，而不是把原始 Task 输入直接发送到 provider；真实 AF_UNIX test provider 验证合同、身份与 start/terminal Graph/SQLite/pool 生命周期。
 
 ## 2026-11-19 Execution Process Tracker 认证
 
@@ -234,7 +238,7 @@
 | 49 | `src/local-managed-store.ts` | **HOLD** | 1 | 0 | 0 | 1 | 直接差分、运行调用、结构审核、模块特定场景／生产门禁 |
 | 50 | `src/local-merge-delivery.ts` | **PASS** | 1 | 1 | 1 | 1 | 认证已完成 |
 | 51 | `src/local-merge-projection.ts` | **PASS** | 1 | 1 | 2 | 0 | 认证已完成
-| 52 | `src/managed-worker-input.ts` | **HOLD** | 1 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
+| 52 | `src/managed-worker-input.ts` | **PASS** | 1 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 53 | `src/manual-plan.ts` | **PASS** | 1 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 54 | `src/model-redecision.ts` | **HOLD** | 2 | 1 | 1 | 3 | 结构审核、模块特定场景／生产门禁 |
 | 55 | `src/model-routing.ts` | **PASS** | 4 | 1 | 4 | 3 | 结构审核、模块特定场景／生产门禁 |

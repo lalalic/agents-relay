@@ -47,6 +47,32 @@ try {
    const r=await capture(()=>rust({job,task,context,mode:'evaluation'}));
    assert.deepEqual(r,n,'random '+i);comparisons++;
  }
+ const negativeCases=[
+  ['no adapter',{adapter:'none'}],
+  ['no repository',{}, {repository:''}],
+  ['missing output',{output:null}],
+  ['missing execution ID',{executionId:null}],
+  ['empty execution ID',{executionId:''}],
+  ['missing selected Agent',{agentName:'does-not-exist'}],
+  ['wrong runtime',{workerRequirements:{runtime:'codex'}}],
+  ['empty worker Requirements',{workerRequirements:{capabilities:[]}}],
+  ['missing title',{title:null}],
+  ['missing task ID',{id:''}],
+  ['missing input',{input:''}],
+ ];
+ for(const [label,override,jobOverride] of negativeCases){
+   for(const mode of ['production','evaluation']){
+     const task={id:'51',jobId:'10',adapter:'chatgpt',agentName:'implementation',
+       executionId:'exec-fixture',title:'Offline test',input:'bounded request',
+       output:{kind:'file'},attempt:1,dependencies:[],...override};
+     const job={id:'10',repository:'fixtures',state:'ACTIVE',
+       tasks:[task],plans:[],...jobOverride};
+     const n=await capture(()=>managedWorkerInput(job,task,context,mode));
+     const r=await capture(()=>rust({job,task,context,mode}));
+     assert.deepEqual(r,n,'negative '+label+'/'+mode);
+     comparisons++;
+   }
+ }
  console.log('PASS Rust2 Wave3 runtime Agent resolver Node/Rust direct parity '+comparisons);
 }finally{
  if(old===undefined)delete process.env.AGENTS_RELAY_PROMPT_REFERENCE_DIR;
