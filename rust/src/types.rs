@@ -473,27 +473,50 @@ pub fn task_overall_timeout_ms(size:StorySize,reasoning:Option<&str>)->u64{
 pub fn chatgpt_start_ack_timeout_ms(overall_timeout_ms:u64)->u64{
     600_000.min(120_000.max(overall_timeout_ms/3))
 }
+fn js_truthy(value:&Value)->bool{
+    match value{
+        Value::Null=>false,
+        Value::Bool(v)=>*v,
+        Value::Number(n)=>n.as_f64().is_some_and(|n|n!=0.0),
+        Value::String(s)=>!s.is_empty(),
+        Value::Array(_)|Value::Object(_)=>true,
+    }
+}
 pub fn normalize_legacy_task_lifecycle(task:&mut Value){
-    let state=task.get("state").and_then(Value::as_str).unwrap_or("");
+    let state=task.get("state").and_then(Value::as_str).unwrap_or("").to_string();
     if state=="UNBLOCKED"{
         let agent=task.get("agentName").and_then(Value::as_str).unwrap_or("");
         task["state"]=json!(if agent=="troubleshooter"{"QUEUED"}else{"FAILED"});
         if task.get("failureReason").is_none_or(Value::is_null){
             task["failureReason"]=json!("legacy_unblocked_task_requires_recovery");
         }
-        let max=task.get("maxAttempts").and_then(Value::as_u64).unwrap_or(0);
-        let attempt=task.get("attempt").and_then(Value::as_u64).unwrap_or(0);
-        task["maxAttempts"]=json!(3u64.max(max).max(attempt.saturating_add(1)));
-        if task.get("unblock").is_some_and(|v|!v.is_null()){
+        // Node: Math.max(3, task.maxAttempts ?? 0, task.attempt + 1). A missing
+        // attempt poisons the maximum to NaN, which JSON serializes as null;
+        // a null attempt coerces to 0 before the +1.
+        let max=task.get("maxAttempts").and_then(Value::as_f64).unwrap_or(0.0);
+        task["maxAttempts"]=match task.get("attempt"){
+            None=>Value::Null,
+            Some(Value::Null)=>json!(3.0f64.max(max).max(1.0)),
+            Some(value)=>match value.as_f64(){
+                Some(attempt)=>json!(3.0f64.max(max).max(attempt+1.0)),
+                None=>json!(3.0f64.max(max).max(1.0)),
+            },
+        };
+        if task.get("unblock").is_some_and(js_truthy){
             task["unblock"]["event"]=json!("task.unblocked");
+        }else if let Some(object)=task.as_object_mut(){
+            // Node assigns undefined, which JSON serialization omits entirely.
+            object.remove("unblock");
         }
     }
-    if task.get("state").and_then(Value::as_str)==Some("DRAFT")
-        && task.get("attempt").and_then(Value::as_u64).unwrap_or(0)>0
-        && task.get("executionId").is_none_or(Value::is_null)
-        && task.get("unblock").is_none_or(Value::is_null)
-        && task.pointer("/interactiveInvocation/boundAt")
-            .is_some_and(|v|!v.is_null()){
+    let state=task.get("state").and_then(Value::as_str).unwrap_or("").to_string();
+    if state=="DRAFT"
+        && task.get("attempt").and_then(Value::as_f64)
+            .is_some_and(|attempt|attempt>0.0)
+        && task.get("executionId").map(|v|!js_truthy(v)).unwrap_or(true)
+        && task.get("unblock").map(|v|!js_truthy(v)).unwrap_or(true)
+        && task.get("interactiveInvocation").is_some_and(js_truthy)
+        && task.pointer("/interactiveInvocation/boundAt").is_some_and(js_truthy){
         let invocation=&task["interactiveInvocation"];
         let waiting=invocation.get("status").and_then(Value::as_str)==Some("awaiting_decision");
         let decided=invocation.get("decidedAt").and_then(Value::as_str)
@@ -504,7 +527,8 @@ pub fn normalize_legacy_task_lifecycle(task:&mut Value){
             task["state"]=json!("AWAITING_DECISION");
         }
     }
-    if task.get("state").and_then(Value::as_str)==Some("BLOCKED")
+    let state=task.get("state").and_then(Value::as_str).unwrap_or("").to_string();
+    if state=="BLOCKED"
         && task.get("kind").and_then(Value::as_str)!=Some("planner")
         && task.get("agentName").and_then(Value::as_str)!=Some("troubleshooter"){
         task["state"]=json!("FAILED");

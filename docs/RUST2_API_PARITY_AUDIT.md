@@ -26,7 +26,7 @@ A listed direct differential import only means a head-to-head test imports the c
 | filesWithoutDirectDiffImport | 21 |
 | filesWithoutOtherRustReferences | 14 |
 
-Source tree: `c846739e5f60`; Rust source tree: `72ea2e7c73a0`. Rust module rows in scope: 49. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `c846739e5f60`; Rust source tree: `e75385d47604`. Rust module rows in scope: 49. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
@@ -78,7 +78,7 @@ Source tree: `c846739e5f60`; Rust source tree: `72ea2e7c73a0`. Rust module rows 
 | `src/store.ts` | 22 | 22 | 0 | 8 | 4 |
 | `src/task-actions.ts` | 18 | 18 | 0 | 1 | 8 |
 | `src/troubleshooter-fallback.ts` | 2 | 2 | 0 | 1 | 1 |
-| `src/types.ts` | 7 | 7 | 0 | 1 | 6 |
+| `src/types.ts` | 7 | 7 | 0 | 2 | 9 |
 | `src/usage.ts` | 26 | 18 | 0 | 3 | 5 |
 | `src/workflow/durable-transition.ts` | 4 | 4 | 0 | 1 | 0 |
 | `src/workspace.ts` | 21 | 21 | 0 | 1 | 5 |

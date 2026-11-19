@@ -213,7 +213,7 @@ where
             "attempt":0,"maxAttempts":3,
             "leaseOwner":null,"leaseExpiresAt":null,"executionId":null,
             "threadId":null,"result":null,"error":null,
-            "timeoutMs":5_400_000,
+            "timeoutMs":crate::types::task_overall_timeout_ms(crate::types::StorySize::L,None),
             "createdAt":now,"updatedAt":now
         });
         let task=create_task_entity(graph_dir,&job,&input,false,&now)?;

@@ -2633,15 +2633,14 @@
       "runtimeExports": 7,
       "staticNameMismatch": 0,
       "directDiffTests": [
-        "rust/tests/head_to_head_legacy_migrations.mjs"
+        "rust/tests/head_to_head_types_public.mjs",
+        "rust/tests/head_to_head_coordinator_cli.mjs (Coordinator timeout after fix)"
       ],
       "otherRustModuleReferences": [
-        "rust/src/cli.rs",
-        "rust/src/cli_workflow.rs",
-        "rust/src/planner_launch_public.rs",
-        "rust/src/projection_outbox.rs",
-        "rust/src/reconciler.rs",
-        "rust/src/reconciler_review.rs"
+        "rust/src/store.rs, rust/src/relay_job_snapshot_reads.rs, rust/src/legacy_blocked_task_migration.rs (normalizeLegacyTaskLifecycle)",
+        "rust/src/reconciler.rs, rust/src/reconciler_review.rs, rust/src/cli.rs (storySizeTimeoutMs)",
+        "rust/src/cli_job_create.rs, rust/src/dag_task_runtime.rs (taskOverallTimeoutMs after the Coordinator timeout fix)",
+        "rust/src/workflow/dispatcher.rs (assert_v2_state_transition production path behind the types assert wrappers)"
       ],
       "typeOrShapeReviews": [
         "ChatGptTabClosePolicy",
@@ -2678,10 +2677,15 @@
         "JobPause",
         "ProjectionRecovery"
       ],
-      "certificationEvidence": [],
+      "certificationEvidence": [
+        "2026-11-19 1237 original Node/Rust runtime differential cases PASS: 105 timeout-helper cases (S/M/L plus invalid-size undefined semantics x 7 reasoning variants), 14 start-ack clamp cases, 56 normalizeLegacyTaskLifecycle fixtures, 88 job/task V2 assert pairs including unknown states with exact error text, and 4 pass-through states",
+        "normalize_legacy_task_lifecycle aligned to the original JS semantics: missing attempt -> Math.max NaN -> JSON null, null attempt -> +1 coercion, truthiness (not null-only) for executionId/unblock/interactiveInvocation/boundAt, falsy unblock -> key removed as JSON serialization omits undefined",
+        "Real Coordinator divergence fixed: rust cli_job_create.rs:216 and dag_task_runtime.rs:218 hardcoded timeoutMs 5,400,000 while original cli-job-create.ts:116 uses taskOverallTimeoutMs('L')=2,700,000; both now call task_overall_timeout_ms(StorySize::L, None) and head_to_head_coordinator_cli.mjs 11/11 passes",
+        "Regression: cargo test --lib 87/87; targeted native suites 4+19+4+2+2 with --test-threads=1 all green (one parallel-run scheduling flake was seen once and isolated/sequential reruns are stable)"
+      ],
       "openGates": [
-        "仍有 33 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+        "chatgpt_start_ack_timeout_ms 尚无 Rust 生产调用方：原 Node 唯一调用点是 reconciler.ts 的 ChatGPT start-ack 看门狗，Rust daemon 尚未移植该流程（属 reconciler/relayd 认证范围）",
+        "assertJobLifecycleTransition/assertTaskTransition 在两侧都只有公共 API 面、无直接调用方；语义由已认证 workflow v2 dispatcher 生产路径承担"
       ],
       "legacyLedgerNote": "Serial Phase1 native Rust wire contract and Worker Router first port; uncompiled and unverified, differential/binding Phase2."
     },

@@ -215,7 +215,7 @@ where Script:FnMut(&str,&Path,&Value)->Result<bool,String>{
                     "attempt":0,"maxAttempts":3,
                     "leaseOwner":null,"leaseExpiresAt":null,
                     "executionId":null,"threadId":null,"result":null,"error":null,
-                    "timeoutMs":5_400_000,"createdAt":now,"updatedAt":now
+                    "timeoutMs":crate::types::task_overall_timeout_ms(crate::types::StorySize::L,None),"createdAt":now,"updatedAt":now
                 });
                 if child(&current,&parent_id,node_id,&sha).is_some(){continue;}
                 let child=create_task_entity(graph_dir,&current,&fields,false,&now)?;

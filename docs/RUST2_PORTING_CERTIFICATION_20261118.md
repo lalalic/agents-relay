@@ -678,3 +678,11 @@
 - **`src/browser-worker-routing.ts`**：Rust `has_safe_alternative_worker` 重写为原始 Node 签名 `(task, adapters, agents, usage)`，候选复用已认证 `worker_routing::{worker_candidates, eligible_worker_candidates}`，`task.workerRequirements?.runtime===task.adapter` 的 `undefined===undefined` 语义保持一致。3192 组原始 Node/Rust 直接差分全部一致（19 种 Task 形态 × 6 组适配器 × 7 组注册 Agent × 4 组 usage × 5 种真实 pool 健康状态）：`rust/tests/head_to_head_browser_worker_routing_public.mjs`。Node 侧在隔离 `AGENTS_RELAY_STORE_DIR` 中驱动真实全局 pool 单例（`reportPreSubmissionOutage`/`reportHealthy`），Rust 侧使用同状态、固定时钟的真实隔离 `BrowserWorkerPoolManager`。
 - 原生 pool 绑定 4 项通过（`rust/tests/native_browser_worker_routing.rs`）：fresh pool 默认 HEALTHY、pre-submission outage 关闭准入、verified recovery 重新准入、快照失败 fail-closed，以及 capability 缺失/offline/同 adapter 候选的负例。
 - 仍 HOLD 的唯一缺口：daemon 生产调用绑定。原 Node 唯一调用链是 worker-failure-recovery→reconciler-runtime 的 `failLaunch`；Rust `worker_failure_orchestration` 已有 `has_safe_alternative` 端口 seam，但 daemon 端尚无 `WorkerFailurePorts` 实现（属 reconciler-runtime/relayd 的 WFR 集成范围）。本模块不因差分通过而晋级 PASS。
+
+## 2026-11-19 Types 运行时 API 差分与真实差异修复（仍 HOLD）
+
+- **`src/types.ts`**：1237 组原始 Node/Rust 运行时差分全部一致（`rust/tests/head_to_head_types_public.mjs`）：timeout 三个助手（含非法 size 的 undefined 语义与 reasoning 变体）、`normalizeLegacyTaskLifecycle` 56 组 fixture、job/task V2 断言 88 组状态对（含未知状态与逐字错误文本）、4 个透传状态。
+- 修复 Rust `normalize_legacy_task_lifecycle` 与原 JS 语义的差异：缺 attempt 时 `Math.max` 变 NaN → JSON null；null attempt 走 +1 强转；`executionId`/`unblock`/`interactiveInvocation`/`boundAt` 改为 JS 真值判断而非仅 null 判断；unblock 为 falsy 时键被移除（与 JSON 序列化忽略 undefined 一致）。
+- 修复真实 Coordinator 超时差异：Rust `cli_job_create.rs` 与 `dag_task_runtime.rs` 将 Coordinator `timeoutMs` 写死为 5,400,000，原 Node `cli-job-create.ts` 为 `taskOverallTimeoutMs('L')=2,700,000`；两处改为调用 `task_overall_timeout_ms(StorySize::L, None)`，`head_to_head_coordinator_cli.mjs` 11/11 通过，task_overall 助手由此接入生产路径。
+- 回归：`cargo test --lib` 87/87；目标原生套件 4+19+4+2+2（`--test-threads=1`）全绿。并行批跑曾出现一次调度波动失败，隔离与串行重跑均稳定，符合交接文档对 macOS 调度波动的既有记录。
+- 仍 HOLD 的缺口：`chatgpt_start_ack_timeout_ms` 在 Rust 无生产调用方（原 Node 唯一调用点是 reconciler.ts 的 ChatGPT start-ack 看门狗，Rust daemon 未移植）；assert 包装两侧均为纯 API 面，语义由已认证 workflow v2 dispatcher 承担。
