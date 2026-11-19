@@ -73,7 +73,21 @@ pub fn send_escalation_notification(
     if let Some(token)=&config.token {
         outgoing=outgoing.header("Authorization",&format!("Bearer {token}"));
     }
-    let mut response=outgoing.send_json(request).map_err(|error|error.to_string())?;
+    let mut response=match outgoing.send_json(request){
+        Ok(response)=>response,
+        Err(error)=>{
+            // ureq surfaces HTTP error statuses as transport errors; the
+            // canonical Node message for a non-2xx endpoint must still win.
+            let text=error.to_string();
+            if let Some(status)=text.split_whitespace().last()
+                .and_then(|value|value.parse::<u16>().ok()){
+                if (400..600).contains(&status){
+                    return Err(format!("Notification endpoint HTTP {status}"));
+                }
+            }
+            return Err(text);
+        }
+    };
     if !(200..300).contains(&response.status().as_u16()) {
         return Err(format!("Notification endpoint HTTP {}",response.status()));
     }

@@ -743,19 +743,27 @@
       "decision": "HOLD",
       "runtimeExports": 2,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
-      "otherRustModuleReferences": [],
+      "directDiffTests": [
+        "rust/tests/head_to_head_escalation_notifier_public.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/escalation_notifier_public.rs (certEscalationNotifier differential op)",
+        "Original Node production caller: src/reconciler.ts deliverPendingEscalations (Rust reconciler daemon integration remains the gate)"
+      ],
       "typeOrShapeReviews": [
         "EscalationNotification",
         "NotificationReceipt",
         "EscalationNotifier"
       ],
-      "certificationEvidence": [],
+      "certificationEvidence": [
+        "2026-11-19 56 original Node/Rust differential cases PASS: 11 environment-configuration shapes (HTTPS/loopback HTTP/credentials/fragment/garbage rejection, token presence), 40 durable delivery-ledger cases (10 Job fixtures x 4 notifier outcomes over a real Node store mutateJob fixture capturing pre/post images: pending/delivered-already/future-attempt/due-attempt/missing-channel-marked/fresh/non-troubleshooter/mixed) and 5 real loopback HTTP scenarios (verified receipt, delivered:false, HTTP 500, bad JSON body, redirect) through both stacks' real transports with a test-owned 127.0.0.1 server",
+        "Real divergence fixed in rust/src/escalation_notifier.rs: ureq surfaces non-2xx HTTP statuses as transport errors, so a 500 endpoint leaked 'http status: 500' instead of the canonical Node message; the status is now mapped back to 'Notification endpoint HTTP <status>' while genuine transport failures (timeout, redirect, connection reset) stay transport-specific on both stacks",
+        "Verified ledger semantics: pending counting for future nextAttemptAt, missing-channel lastError idempotence, attempts+1/backoff/nextAttemptAt mutation contents, delivered receipt fencing, idempotencyKey escalation/<id> request shape, atomic-mutation requirement error",
+        "Regression after the fix: lib 87/87, head_to_head fallback 4661, types 1237, browser-worker-routing 3192, worker-routing all green, native suites green"
+      ],
       "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
-        "仍有 3 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+        "Rust daemon 生产调用方未接线：原 Node reconciler.ts:71 每轮调用 deliverPendingEscalations，Rust reconciler/relayd 尚未接入（store 的原子 mutateJob 适配器 + NotificationMutation 提交也缺失），属 reconciler-runtime/relayd 集成批次",
+        "send_escalation_notification 仅经差分验证，生产环境配置（真实 HTTPS 端点与 token）未经外部调用（符合无生产 OAuth/外部调用约束）"
       ],
       "legacyLedgerNote": "Phase1 serial native Rust source port; uncompiled/unverified, production integration and head-to-head differential pending Phase2."
     },

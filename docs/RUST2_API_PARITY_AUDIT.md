@@ -23,10 +23,10 @@ A listed direct differential import only means a head-to-head test imports the c
 | runtimeConstructorReviews | 13 |
 | typeOrShapeReviewSymbols | 199 |
 | filesWithUnmappedRuntime | 0 |
-| filesWithoutDirectDiffImport | 20 |
-| filesWithoutOtherRustReferences | 14 |
+| filesWithoutDirectDiffImport | 19 |
+| filesWithoutOtherRustReferences | 13 |
 
-Source tree: `c846739e5f60`; Rust source tree: `39cdf23fa966`. Rust module rows in scope: 49. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `c846739e5f60`; Rust source tree: `18f40836f29c`. Rust module rows in scope: 49. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
@@ -50,7 +50,7 @@ Source tree: `c846739e5f60`; Rust source tree: `39cdf23fa966`. Rust module rows 
 | `src/dashboard-actions.ts` | 3 | 3 | 0 | 0 | 2 |
 | `src/dashboard.ts` | 1 | 1 | 0 | 0 | 3 |
 | `src/decision-audit.ts` | 13 | 13 | 0 | 1 | 1 |
-| `src/escalation-notifier.ts` | 2 | 2 | 0 | 0 | 0 |
+| `src/escalation-notifier.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/events.ts` | 13 | 13 | 0 | 3 | 38 |
 | `src/feedback.ts` | 23 | 23 | 0 | 2 | 0 |
 | `src/github-auth.ts` | 2 | 2 | 0 | 0 | 1 |

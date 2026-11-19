@@ -693,3 +693,11 @@
 - 修复已认证 `worker_routing.rs` 的两处真实分歧（回归证明）：`window_usage` 对显式 `weekly:null` 窗口返回合成对象而 Node 返回 undefined；`windows` 对 null/缺失窗口输出 JSON null 而非省略键。修复后 `head_to_head_worker_routing_public.mjs` 与 `head_to_head_browser_worker_routing_public.mjs`（3192 组）仍然全绿。
 - `persistChatGptPlatformFailure` 已由 `worker_failure_recovery.rs` 生产调用。
 - 仍 HOLD 的缺口：`codex_fallback_routing`/`codex_fallback_compatible`/`codex_no_start_fallback_route` 的 Rust daemon 生产调用方尚未接线（原 Node 调用链 worker-failure-recovery ports，属 reconciler-runtime/relayd WFR 集成）；`quarantine_unavailable_codex_fallback` 的真实 durable transition 绑定属 durable-transition 批次。
+
+## 2026-11-19 Escalation Notifier 差分与 ureq 状态消息修复（仍 HOLD）
+
+- **`src/escalation-notifier.ts`**：56 组原始 Node/Rust 差分全部一致（`rust/tests/head_to_head_escalation_notifier_public.mjs`）。覆盖：11 组环境配置形态（HTTPS/loopback HTTP/带凭据/带 fragment/非 URL 全部拒绝，token 存在性）；40 组持久投递账本用例（10 个 Job fixture × 4 种 notifier 结果，Node 侧用真实 `mutateJob` store fixture 捕获前后像：pending/已 delivered/未来 nextAttemptAt/到期重试/missing-channel 已标记与全新/非 troubleshooter/混合任务）；5 组真实 loopback HTTP 场景（验证回执、delivered:false、HTTP 500、坏 JSON、重定向），两侧都走各自真实 HTTP 栈，测试自有 127.0.0.1 服务器。
+- 修复 `rust/src/escalation_notifier.rs` 的真实差异：ureq 把非 2xx HTTP 状态作为传输错误抛出，500 端点会泄漏 `http status: 500` 而非 Node 的规范消息；现在状态被映射回 `Notification endpoint HTTP <status>`，真实传输失败（超时/重定向/连接重置）在两侧保持栈特定文本。
+- 差分同时验证了账本语义：未来 nextAttemptAt 的 pending 计数、missing-channel lastError 幂等、attempts+1/退避/nextAttemptAt 变更内容、delivered 回执围栏、`escalation/<id>` idempotencyKey 请求形状、原子变更强制错误。
+- 回归：lib 87/87；fallback 4661、types 1237、browser-worker-routing 3192、worker-routing 差分全绿；原生套件全绿。
+- 仍 HOLD 的缺口：Rust daemon 生产调用方（原 Node `reconciler.ts:71` 每轮调用 `deliverPendingEscalations`；Rust reconciler/relayd 需要接入 store 原子 mutateJob 适配器与 `NotificationMutation` 提交），属 reconciler-runtime/relayd 集成批次。生产 HTTPS 端点与 token 配置未做外部调用（符合约束）。

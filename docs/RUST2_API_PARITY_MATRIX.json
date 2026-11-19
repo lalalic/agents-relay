@@ -2,7 +2,7 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "c846739e5f60e6bc73cb3000cfab466855655462",
-    "rustTree": "39cdf23fa966ba482b25817b488b04360bed54c8",
+    "rustTree": "18f40836f29c603bbeb7d4936ab3bab97496b3b4",
     "sourceCount": 49,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
@@ -12,8 +12,8 @@
     "runtimeConstructorReviews": 13,
     "typeOrShapeReviewSymbols": 199,
     "filesWithUnmappedRuntime": 0,
-    "filesWithoutDirectDiffImport": 20,
-    "filesWithoutOtherRustReferences": 14
+    "filesWithoutDirectDiffImport": 19,
+    "filesWithoutOtherRustReferences": 13
   },
   "pendingModules": [],
   "files": [
@@ -1059,8 +1059,12 @@
         "NotificationReceipt",
         "EscalationNotifier"
       ],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_escalation_notifier_public.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/escalation_notifier_public.rs"
+      ],
       "exports": [
         {
           "name": "EscalationNotification",
