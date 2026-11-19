@@ -14,24 +14,24 @@ A listed direct differential import only means a head-to-head test imports the c
 
 | Metric | Count |
 |---|---:|
-| sourceCount | 61 |
+| sourceCount | 59 |
 | pendingSourceModules | 0 |
 | pendingRuntimeExportSymbols | 0 |
-| runtimeExportSymbols | 457 |
-| directNameMatches | 444 |
+| runtimeExportSymbols | 455 |
+| directNameMatches | 442 |
 | unmappedRuntimeSymbols | 0 |
 | runtimeConstructorReviews | 13 |
 | typeOrShapeReviewSymbols | 213 |
 | filesWithUnmappedRuntime | 0 |
-| filesWithoutDirectDiffImport | 33 |
-| filesWithoutOtherRustReferences | 23 |
+| filesWithoutDirectDiffImport | 31 |
+| filesWithoutOtherRustReferences | 21 |
 
-Source tree: `c846739e5f60`; Rust source tree: `c3bc91935207`. Rust module rows in scope: 61. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `c846739e5f60`; Rust source tree: `e07257c27204`. Rust module rows in scope: 59. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
 
-## Per-file candidate surface (all 61 PORTING files)
+## Per-file candidate surface (all 59 PORTING files)
 
 | Node source | Runtime exports | Named Rust candidates | Unmapped runtime names | Direct diff imports | Other Rust refs |
 |---|---:|---:|---:|---:|---:|
@@ -62,7 +62,6 @@ Source tree: `c846739e5f60`; Rust source tree: `c3bc91935207`. Rust module rows 
 | `src/github-client.ts` | 10 | 10 | 0 | 0 | 0 |
 | `src/interactive-invocation.ts` | 12 | 11 | 0 | 1 | 5 |
 | `src/interactive-resume.ts` | 2 | 2 | 0 | 0 | 0 |
-| `src/job-pause.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/job-worktree-cleanup.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/legacy-orchestrator-repair.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/local-job-registry.ts` | 2 | 2 | 0 | 1 | 2 |
@@ -78,9 +77,8 @@ Source tree: `c846739e5f60`; Rust source tree: `c3bc91935207`. Rust module rows 
 | `src/reconciler-runtime.ts` | 10 | 10 | 0 | 2 | 5 |
 | `src/relay-store.ts` | 46 | 45 | 0 | 9 | 26 |
 | `src/relayd-dashboard-actions.ts` | 1 | 1 | 0 | 1 | 1 |
-| `src/relayd-main.ts` | 0 | 0 | 0 | 0 | 0 |
 | `src/relayd.ts` | 1 | 1 | 0 | 0 | 5 |
-| `src/route-outcome-recording.ts` | 5 | 5 | 0 | 1 | 2 |
+| `src/route-outcome-recording.ts` | 5 | 5 | 0 | 1 | 3 |
 | `src/router-evals.ts` | 2 | 2 | 0 | 0 | 0 |
 | `src/script-task-adapter.ts` | 3 | 3 | 0 | 0 | 1 |
 | `src/service-external-actions.ts` | 2 | 2 | 0 | 0 | 0 |

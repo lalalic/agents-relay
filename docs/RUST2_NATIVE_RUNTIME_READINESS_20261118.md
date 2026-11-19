@@ -23,6 +23,15 @@
 The same Graph selects actions for the Rust Reconciler. A real integration test identified a previously silent mismatch: the Task Lifecycle wrapper emits string action IDs, whereas older Reconciler code assumed every action was an `{id}` object. `Reconciler::graph_action` now supports both Graph decision forms; real native Script worker launch, multi-task DAG, and original Node/Rust Reconciler differential have passed after the fix. Other raw Graph consumers already receive structured actions; do not blanket-rewrite them.
 
 ## 2026-11-19 追加证据（保持 NOT production-ready）
+
+- 仅隔离 Rust 原生模型 Worker terminal 的 Route Outcome Audit 已接入真正的 post-commit SQLite Graph 路径（180 个原始 Node/Rust JSONL 对照、失败/重复回执拒绝和递归脱敏）；launch/watchdog caller 仍未认证，`route-outcome-recording.ts` 维持 PORTING。
+
+
+- Relayd Main 现使用真实原生 CLI 程序调用的 `run_relayd_main` 统一成功/失败出口；48 个原始 Node/Rust 可执行入口差分及隔离 daemon 进程启动、重启通过；不代表整个 Relay daemon 认证。
+
+
+- Job Pause/Resume 现从真实 Rust CLI 接入 daemon SQLite/Graph（168 个原始 Node/Rust 差分，原生 CAS/重启/终态失败门禁）；只认证该模块的原生行为，不代表 Worker/provider 全链路切换。
+
 - Local Registry 两个公开 API 已补 39 组原始 Node/Rust 差分（包括正在写入 WAL 的 Node Owner 和 Rust read-only inventory）、原生 Node SQLite 只读访问和按 Job ID 缓存复用；**但 owner 离线且 WAL/-shm 缺失的恢复路径与原生持久 Resolver 工厂接线仍未认证，保持 PORTING**。
 
 

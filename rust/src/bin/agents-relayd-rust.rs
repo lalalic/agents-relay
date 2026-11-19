@@ -7,6 +7,7 @@ use agents_relay_rust2::{
     relayd_sqlite_observer::ReadOnlySQLiteHost,
     relayd_sqlite_write::IsolatedSQLiteWriteHost,
     reconciler::Reconciler,
+    relayd_main::run_relayd_main,
 };
 use serde_json::json;
 use std::{path::Path,sync::atomic::{AtomicBool,Ordering}};
@@ -22,11 +23,21 @@ fn main(){
         println!("agents-relayd-rust {} (isolated read-only preview)",env!("CARGO_PKG_VERSION"));
         return;
     }
-    let result=execute(&args);
-    if let Err(error)=result{
-        eprintln!("{error}");
-        std::process::exit(1);
-    }
+    // The original Node relayd-main entrypoint forwards the complete argv
+    // to one daemon owner and maps rejected startup to a nonzero exit.
+    // A synchronous native daemon is Ready on its one-shot Future; no
+    // second worker/executor or process is ever spawned here.
+    let run=run_relayd_main(args,|argv|async move{execute(&argv)});
+    let mut run=std::pin::pin!(run);
+    let exit=loop{
+        let mut ctx=std::task::Context::from_waker(std::task::Waker::noop());
+        match std::future::Future::poll(run.as_mut(),&mut ctx){
+            std::task::Poll::Ready(exit)=>break exit,
+            std::task::Poll::Pending=>std::thread::yield_now(),
+        }
+    };
+    if exit!=0{std::process::exit(exit);}
+
 }
 fn execute(args:&[String])->Result<(),String>{
     let arg=|name:&str|args.iter().position(|v|v==name)

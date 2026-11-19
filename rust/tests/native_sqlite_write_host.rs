@@ -394,6 +394,8 @@ fn correlated_model_worker_event_stream_is_graph_sqlite_durable_and_replay_fence
             "title":"Model Worker","state":"QUEUED","attempt":1,"maxAttempts":1,
             "leaseOwner":"isolated-native","leaseExpiresAt":"2099-01-01T00:00:00.000Z",
             "executionId":execution,"gitDeliveryRequired":false,"dependencies":[],
+            "routing":{"decisionId":"decision-17-worker","provider":"chatgpt",
+                "model":"account-defaults","profile":"default","reasoning":"medium"},
             "createdAt":"2026-11-18T00:00:00.000Z","updatedAt":"2026-11-18T00:00:00.000Z",
             "output":{"kind":"file","path":root.join("result.json")}}],
         "plans":[],"createdAt":"2026-11-18T00:00:00.000Z",
@@ -412,6 +414,8 @@ fn correlated_model_worker_event_stream_is_graph_sqlite_durable_and_replay_fence
         Some("orchestrator"),Some(json!({"ok":true})),Some(source.clone()));
     assert!(host.accept_model_worker_event("17","2",execution,&forged).is_err(),
         "Task cannot complete without a verified start/active generation");
+    let audit_path=root.join("decision-audit.jsonl");
+    assert!(!audit_path.exists(),"Denied terminal event must not append audit");
     assert_eq!(store.load_job("17").unwrap().unwrap()["tasks"][0]["state"],"QUEUED");
     let mut foreign=generated("task.started","started","wrong task");
     foreign["task_id"]=json!("3");
@@ -443,8 +447,18 @@ fn correlated_model_worker_event_stream_is_graph_sqlite_durable_and_replay_fence
     assert_eq!(complete_state["tasks"][0]["state"],"SUCCEEDED");
     assert!(complete_state["tasks"][0]["executionId"].is_null());
     assert_eq!(complete_state["tasks"][0]["result"]["summary"],"verified model result");
+    let audit=fs::read_to_string(&audit_path).unwrap();
+    let records=audit.lines().map(|line|serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(records.len(),1,"Only a committed terminal event creates an audit");
+    assert_eq!(records[0]["record_type"],"outcome");
+    assert_eq!(records[0]["decision_id"],"decision-17-worker");
+    assert_eq!(records[0]["kind"],"success");
+    assert_eq!(records[0]["evidence"]["execution_id"],execution);
     assert!(host.accept_model_worker_event("17","2",execution,&completed).is_err(),
         "Once terminal, stale model generation cannot finish twice");
+    assert_eq!(fs::read_to_string(&audit_path).unwrap(),audit,
+        "Failed duplicate execution must not append a second audit");
     let durable=store.load_job("17").unwrap().unwrap();
     assert_eq!(durable,complete_state);
     let journal:i64=store.db.query_row(
@@ -590,5 +604,63 @@ fn native_coordinator_job_run_is_one_sqlite_graph_transition_with_retry_fences()
     let retry=workspace_control(&mut host,&request).unwrap();
     assert_eq!(retry["state"],"ACTIVE");
     assert_eq!(store.load_job("17").unwrap().unwrap(),stored);
+    fs::remove_dir_all(root).unwrap();
+}
+
+// Node src/job-pause.ts: real daemon CLI ingress must commit the Graph pause
+// of all running tasks and live Plan execution in one SQLite CAS transaction.
+// A terminal Job fails closed and cannot wake/partially mutate the store.
+#[test]
+fn native_pause_resume_persists_graph_task_snapshots_and_rollback(){
+    let (root,config)=fixture();
+    let store=SQLiteRelayStore::open(&root.join("relay.sqlite"),Some("17")).unwrap();
+    let original=json!({
+        "id":"17","repository":"fixture","projectRoot":"/tmp/fixture",
+        "state":"ACTIVE","prNumber":0,"title":"pause/resume fixture",
+        "tasks":[
+            {"id":"2","jobId":"17","kind":"work","agentName":"developer",
+                "state":"RUNNING","attempt":2,"maxAttempts":2,
+                "executionId":"execution-a","leaseOwner":"runner",
+                "leaseExpiresAt":"2100-01-01T00:00:00.000Z"},
+            {"id":"3","jobId":"17","kind":"work","state":"SUCCEEDED",
+                "attempt":1,"maxAttempts":2},
+            {"id":"4","jobId":"17","kind":"planner","state":"RUNNING",
+                "executionId":"planner-task","leaseOwner":"planner"}],
+        "plans":[{"id":"5","jobId":"17","status":"PLANNING",
+            "executionId":"planning-execution","leaseOwner":"planner",
+            "leaseExpiresAt":"2100-01-01T00:00:00.000Z"}],
+        "updatedAt":"2026-11-18T00:00:00.000Z"
+    });
+    store.save_job(&original).unwrap();
+    let baseline=store.load_job("17").unwrap().unwrap();
+    let mut host=IsolatedSQLiteWriteHost::new(config);
+    let paused=workspace_control(&mut host,&json!({
+        "command":"job.pause","jobId":"17"})).unwrap();
+    assert_eq!(paused["state"],"ACTIVE");
+    assert_eq!(paused["tasks"][0]["state"],"QUEUED");
+    assert_eq!(paused["tasks"][0]["pausedExecution"]["id"],"execution-a");
+    assert_eq!(paused["tasks"][0]["pausedExecution"]["state"],"RUNNING");
+    assert_eq!(paused["tasks"][0]["leaseOwner"],Value::Null);
+    assert_eq!(paused["tasks"][1],baseline["tasks"][1]);
+    assert_eq!(paused["tasks"][2],baseline["tasks"][2],"planner Task is not paused");
+    assert_eq!(paused["plans"][0]["pausedExecutionId"],"planning-execution");
+    assert_eq!(paused["plans"][0]["leaseOwner"],Value::Null);
+    assert_eq!(store.load_job("17").unwrap().unwrap(),paused);
+    let resumed=workspace_control(&mut host,&json!({
+        "command":"job.resume","jobId":"17"})).unwrap();
+    assert!(resumed.get("pause").is_none());
+    assert!(resumed["tasks"][0].get("pausedExecution").is_none());
+    assert_eq!(resumed["tasks"][0]["maxAttempts"],3);
+    assert!(resumed["plans"][0].get("pausedExecutionId").is_none());
+    assert_eq!(store.load_job("17").unwrap().unwrap(),resumed);
+    assert_eq!(DaemonServices::status(&mut host)["wakeCount"],2);
+    let mut terminal=resumed.clone();
+    terminal["state"]=json!("COMPLETED");
+    store.save_job(&terminal).unwrap();
+    assert!(workspace_control(&mut host,&json!({
+        "command":"job.pause","jobId":"17"})).unwrap_err()
+            .contains("Cannot pause terminal Job"));
+    assert_eq!(store.load_job("17").unwrap().unwrap(),terminal);
+    assert_eq!(DaemonServices::status(&mut host)["wakeCount"],2);
     fs::remove_dir_all(root).unwrap();
 }

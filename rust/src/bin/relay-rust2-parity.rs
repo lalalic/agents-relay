@@ -391,6 +391,42 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=closure::invoke(request)?{return Ok(output);}
     let op = request["op"].as_str().ok_or("missing op")?;
     match op {
+        "certRelaydMain" => {
+            let argv=request["argv"].as_array().ok_or("argv array required")?
+                .iter().map(|v|v.as_str().ok_or("argv item must be string")
+                    .map(str::to_owned)).collect::<Result<Vec<_>,_>>()?;
+            let error=request["error"].as_str().map(str::to_owned);
+            let seen=std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+            let captured=std::sync::Arc::clone(&seen);
+            let fut=agents_relay_rust2::relayd_main::run_relayd_main(argv,move|args|{
+                *captured.lock().unwrap()=args;
+                async move{if let Some(err)=error{Err(err)}else{Ok(())}}
+            });
+            let mut fut=std::pin::pin!(fut);
+            let exit=loop{
+                let mut ctx=std::task::Context::from_waker(std::task::Waker::noop());
+                match std::future::Future::poll(fut.as_mut(),&mut ctx){
+                    std::task::Poll::Ready(exit)=>break exit,
+                    std::task::Poll::Pending=>std::thread::yield_now(),
+                }
+            };
+            Ok(json!({"exitCode":exit,"forwardedArgs":*seen.lock().unwrap()}).to_string())
+        },
+        "certJobPauseResume" => {
+            let graph=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent()
+                .ok_or("manifest parent missing")?.join("workflow");
+            let snapshot=&request["job"];
+            let outcome=match request["method"].as_str().unwrap_or("") {
+                "pause"=>agents_relay_rust2::job_pause::pause_job(snapshot,|task,event|{
+                    agents_relay_rust2::task_transitions::try_transition_task_event(
+                        &graph,task,event,&json!({}),"2026-11-19T00:00:00.000Z")
+                        .is_ok_and(|decision|decision["accepted"]==true)
+                }),
+                "resume"=>agents_relay_rust2::job_pause::resume_job(snapshot),
+                other=>Err(format!("unknown pause/resume action: {other}")),
+            }?;
+            Ok(outcome.to_string())
+        },
         "certLocalJobRegistry" => {
             use agents_relay_rust2::local_job_registry::{
                 find_job_id_snapshot, create_job_id_registry_resolver,

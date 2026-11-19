@@ -11,6 +11,7 @@ use crate::{
     agent_script_discovery::discover_script_agent,
     native_script_execution::run_claimed_script_task,
     native_worker_event_ingress::apply_verified_worker_event,
+    route_outcome_recording::record_terminal_route_outcome_jsonl,
     native_browser_execution::{IsolatedWebHelmConfig,submit_claimed_chatgpt_worker},
     native_script_planner::run_isolated_script_planner,
     manual_plan::prepare_manual_plan,
@@ -117,6 +118,19 @@ impl IsolatedSQLiteWriteHost {
         self.isolated_project(&job)?;
         let result=apply_verified_worker_event(&self.path(),&self.config.graph_directory,
             job_id,task_id,execution_id,event)?;
+        // This audit is strictly post-Graph/SQLite commit. A rejected or
+        // duplicate execution cannot append an outcome, and an audit I/O
+        // failure is observational (never rolls back durable Task state).
+        if matches!(field(event,"type"),"task.completed"|"task.failed"){
+            if let Some(task)=result["tasks"].as_array().into_iter().flatten()
+                .find(|task|field(task,"id")==task_id){
+                let audit_path=self.config.store_directory.parent()
+                    .ok_or("Native isolated store has no parent")?
+                    .join("decision-audit.jsonl");
+                record_terminal_route_outcome_jsonl(
+                    &audit_path,task,event,Some(execution_id));
+            }
+        }
         // Notifications and scheduling are post-commit effects. A submitted
         // browser receipt or a speculative provider callback must never
         // notify Dashboard that an uncommitted Task succeeded.

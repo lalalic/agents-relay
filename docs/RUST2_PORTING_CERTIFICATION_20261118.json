@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 46,
-    "HOLD": 61
+    "PASS": 48,
+    "HOLD": 59
   },
   "records": [
     {
@@ -1123,18 +1123,23 @@
       "source": "src/job-pause.ts",
       "target": "rust/src/job_pause.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 2,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
-      "otherRustModuleReferences": [],
-      "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "directDiffTests": [
+        "rust/tests/head_to_head_job_pause_public.mjs"
       ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/agents-relay-rust.rs",
+        "rust/src/relayd_control.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [
+        "Direct original Node/Rust pauseJob and resumeJob through task-lifecycle Graph on 168 randomized Job/Task/Plan fixtures, including terminal refusals, unknown states, pause/resume idempotency and timestamp-normalized exact outcomes (head_to_head_job_pause_public.mjs)",
+        "Native isolated SQLite Graph mutation, running-Task retry and Plan lease release, no-change for terminal/planner Task, terminal Job denial and no phantom wake: native_sqlite_write_host.rs",
+        "Native installed CLI job pause/resume -> HTTP /api/control -> relayd_control job.pause/job.resume -> authoritative mutate_job, daemon restart observes paused execution and resumed retries: native_daemon_binary_readonly.rs"
+      ],
+      "openGates": [],
       "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure."
     },
     {
@@ -1955,19 +1960,22 @@
       "source": "src/relayd-main.ts",
       "target": "rust/src/relayd_main.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 0,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
-      "otherRustModuleReferences": [],
-      "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "此模块没有可枚举 Runtime API：零静态未匹配名称不是守护进程启动和恢复等价证据，必须做真实进程启动/退出/重启门禁",
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "directDiffTests": [
+        "rust/tests/head_to_head_relayd_main_public.mjs"
       ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/agents-relayd-rust.rs"
+      ],
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [
+        "Original dist/relayd-main.js copied byte-for-byte with fake imported runDaemon contract spy, 48 original Node/Rust executable entrypoint success/failure/argv and stderr exit 0/1 direct comparisons: rust/tests/head_to_head_relayd_main_public.mjs",
+        "Native production binary agents-relayd-rust main now invokes relayd_main::run_relayd_main for real argv forwarding and startup error handling, no Node process or fallback: rust/src/bin/agents-relayd-rust.rs",
+        "Native actual daemon process startup, read-only SQLite observations, mutation refusal, SIGTERM and restart persistence: rust/tests/native_daemon_binary_readonly.rs; all live services and production DB untouched"
+      ],
+      "openGates": [],
       "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
     },
     {
@@ -2203,16 +2211,20 @@
       ],
       "otherRustModuleReferences": [
         "rust/src/delivery_parity_harness.rs",
-        "rust/src/reconciler_runtime.rs"
+        "rust/src/reconciler_runtime.rs",
+        "rust/src/relayd_sqlite_write.rs"
       ],
       "typeOrShapeReviews": [
         "DecisionAuditStore"
       ],
-      "certificationEvidence": [],
+      "certificationEvidence": [
+        "Original Node/Rust 180 genuine append-only redacted DecisionAuditStore/JSONL outcomes, terminal, launch, watchdog, best-effort failure cases: rust/tests/head_to_head_wave4_delivery.mjs",
+        "Native internal verified model Worker terminal ingress now appends route outcome AFTER Graph/SQLite durable commit only, rejects stale/colliding event without extra audit; native_sqlite_write_host.rs and rust/src/relayd_sqlite_write.rs",
+        "Native JSONL audit append is best-effort, recursively redacts credentials and does not roll back already committed Task on write error: rust/src/route_outcome_recording.rs native_audit_effect_tests and jsonl_adapter_tests"
+      ],
       "openGates": [
-        "JSONL、审计分类与追加失败的原生测试通过，但正式 Runtime 目前仅直接使用 classify_routing_failure，terminal/launch/watchdog 审计写入没有生产调用证据",
-        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+        "HOLD: original Node launch and watchdog route outcome effects still lack verified post-Graph/SQLite native production caller; actual Rust ingress currently wires terminal only",
+        "HOLD: live production DecisionAuditStore path configuration and reviewed provider/Watchdog L4 side effects remain unverified; isolated host uses fixture-owned decision-audit.jsonl"
       ],
       "legacyLedgerNote": "Wave4 C: 180 randomized direct Node/Rust durable JSONL append/redaction, best-effort failure and multi-record cases; prior outcome classification. Full post-Graph/SQLite production audit caller sequencing remains unverified (head_to_head_wave4_delivery.mjs; native_wave4_delivery.rs)."
     },

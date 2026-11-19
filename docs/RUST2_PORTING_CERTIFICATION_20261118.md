@@ -2,7 +2,7 @@
 
 > 本表是逐文件的真实审计清单，不是所有模块均通过。**PASS** 需公开 API 原始 Node/Rust 直接差分、Rust 原生负面测试和实际生产调用绑定；只通过静态 API 名称匹配，不能晋级。**HOLD** 指存在尚未关闭的证据缺口，不等同于未实现。
 
-- 原始检查范围：107 个源模块。已认证 **46 PASS**，保留 **61 HOLD/PORTING**。
+- 原始检查范围：107 个源模块。已认证 **48 PASS**，保留 **59 HOLD/PORTING**。
 - 本轮仅跑 Rust 原生测试与必要的 Node/Rust 差分；未重跑独立 Node 全量测试。
 - 这份报告对应上次全量 Node/Rust 230/230 PASS 后的逐项认证。全量 230/230 不等于 107 个模块逐一通过。
 - `directDiffTests` 与 `otherRustModuleReferences` 基于静态文本检索；测试文件出现导入或 Rust 源文件出现引用，仅说明有线索，不表示覆盖了每个公开 API 或进入生产。
@@ -34,6 +34,15 @@
 ### `src/local-merge-projection.ts`
 - 原 Node/Rust 远端投影的 17 个直接差分场景通过：普通成功、无 origin、失败重试门禁、过期 lease、已完成、远端冲突及有效隔离 bare origin。
 - Rust 原生测试证明 SQLite Graph 幂等性、实际非强制推送、错误 SHA 和外部远端拒绝；正式 daemon 已接通 `effect.remoteDelivery`。真实生产远端与模型 L4 尚未验收。
+
+## 2026-11-19 Relayd Main 入口认证
+
+- **`src/relayd-main.ts` — PASS**：原版 Node 编译入口（只替换注入的 `runDaemon` 依赖）对 Rust `run_relayd_main` 的 48 个 argv、成功、失败、退出码、stderr 对照通过。正式 Rust `agents-relayd-rust` 现使用这个入口，真实隔离 daemon HTTP/SQLite 启动、拒绝写入、SIGTERM/restart 测试通过。**仅入口模块认证**，完整生产 daemon/Worker 仍为 HOLD。
+
+## 2026-11-19 Job Pause/Resume 认证
+
+- **`src/job-pause.ts` — PASS**：原始 Node/Rust 168 组 Job/Task/Plan Graph 暂停与恢复差异场景通过，Rust SQLite CAS 确认运行中 Task 重新排队、执行 lease 与 Plan lease 清理、恢复重试额度、重复调用与终态拒绝。真实 CLI → daemon → SQLite 的暂停/重启/恢复 E2E 通过。
+- Rust 生产调用：`rust/src/bin/agents-relay-rust.rs` → `rust/src/relayd_control.rs` → `rust/src/job_pause.rs` + `task-transitions.rs`。保持线上 Node Relay 不变。
 
 ## 2026-11-19 原生 Escalation CLI 认证
 
@@ -208,7 +217,7 @@
 | 40 | `src/interactive-request.ts` | **PASS** | 5 | 1 | 2 | 0 | 模块特定场景／生产门禁 |
 | 41 | `src/interactive-resume.ts` | **HOLD** | 2 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 42 | `src/job-actions.ts` | **PASS** | 4 | 0 | 3 | 0 | 直接差分、模块特定场景／生产门禁 |
-| 43 | `src/job-pause.ts` | **HOLD** | 2 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
+| 43 | `src/job-pause.ts` | **PASS** | 2 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 44 | `src/job-worktree-cleanup.ts` | **HOLD** | 1 | 0 | 1 | 0 | 直接差分、模块特定场景／生产门禁 |
 | 45 | `src/legacy-orchestrator-repair.ts` | **HOLD** | 1 | 0 | 0 | 1 | 直接差分、运行调用、结构审核、模块特定场景／生产门禁 |
 | 46 | `src/local-authority-store.ts` | **PASS** | 33 | 4 | 5 | 1 | 直接差分、原生和生产调用证据已关闭 |
@@ -238,7 +247,7 @@
 | 70 | `src/relay-store.ts` | **HOLD** | 46 | 8 | 20 | 17 | 结构审核、模块特定场景／生产门禁 |
 | 71 | `src/relayd-control.ts` | **PASS** | 1 | 1 | 1 | 0 | 直接差分、原生和生产调用证据已关闭 |
 | 72 | `src/relayd-dashboard-actions.ts` | **HOLD** | 1 | 1 | 1 | 0 | 模块特定场景／生产门禁 |
-| 73 | `src/relayd-main.ts` | **HOLD** | 0 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
+| 73 | `src/relayd-main.ts` | **PASS** | 0 | 0 | 0 | 0 | 直接差分、运行调用、模块特定场景／生产门禁 |
 | 74 | `src/relayd-utilities.ts` | **PASS** | 10 | 1 | 2 | 2 | 结构审核、模块特定场景／生产门禁 |
 | 75 | `src/relayd.ts` | **HOLD** | 1 | 0 | 2 | 7 | 直接差分、结构审核、模块特定场景／生产门禁 |
 | 76 | `src/review-replan.ts` | **PASS** | 3 | 3 | 4 | 0 | 认证已完成 |

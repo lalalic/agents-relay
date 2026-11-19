@@ -8,6 +8,7 @@ use crate::{
     blockers::register_blocker_dependency,
     cli_job_create::ensure_managed_github_job,
     interactive_request::{begin_interactive_review,abort_interactive_review,interactive_waiting_event},
+    job_pause::{pause_job,resume_job},
     local_merge_lock::iso8601_now,
     git_delivery::verify_source_commit,
     events::event_for,
@@ -216,6 +217,25 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
     let job=backend.load_job(&job_id)?;
     let graph=backend.graph_directory().to_path_buf();
     match command{
+        "job.pause"|"job.resume"=>{
+            let pause=command=="job.pause";
+            let snapshot=backend.mutate_job(&job_id,&|current|{
+                let prior=current.clone();
+                let next=if pause{
+                    pause_job(current,|task,event|{
+                        try_transition_task_event(&graph,task,event,&json!({}),&iso8601_now())
+                            .is_ok_and(|decision|decision["accepted"]==true)
+                    })?
+                }else{
+                    resume_job(current)?
+                };
+                *current=next;
+                if *current==prior{return Ok(());}
+                Ok(())
+            })?;
+            backend.wake(&job_id,if pause{"control.job.pause"}else{"control.job.resume"})?;
+            Ok(snapshot)
+        },
         "job.run"=>{
             let task_id=required(body,"taskId","job run")?;
             let root=task(&job,task_id)

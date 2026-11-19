@@ -24,6 +24,14 @@ impl CliRuntimePort for DaemonClient {
                     .join("workflow");
                 run_escalation_command(args,&env,&graph)
             },
+            ("job",action @ ("pause"|"resume")) => {
+                let id=arg(args,"--id","");
+                if id.is_empty(){return Err("job requires --id".into());}
+                relay_control_command(args,&json!({
+                    "command":if action=="resume"{"job.resume"}else{"job.pause"},
+                    "jobId":id,
+                }))
+            },
             ("job","run") => {
                 // Original Node CLI Coordinator contract. The daemon owns
                 // the Graph decision and authoritative SQLite transaction.

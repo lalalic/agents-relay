@@ -135,9 +135,9 @@ fn native_daemon_refuses_missing_or_live_store_bindings(){
     assert!(String::from_utf8_lossy(&denied.stderr).contains("requires --isolated-store-dir"));
 }
 
-// A Darwin listener can momentarily return EAGAIN/os error 35 just after
-// restart. Retry only that transport error; all unexpected CLI failures and
-// persistent EAGAIN remain fatal to the exact native integration test.
+// Darwin can momentarily return EAGAIN or EPIPE during a listener restart.
+ // Retry only these transient transport failures; persistent errors fail the
+ // exact native integration test (no retry for daemon-side control rejection).
 fn native_cli_transient_retry(args:&[&str])->std::process::Output{
     let mut output=Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
         .args(args).output().unwrap();
@@ -145,7 +145,9 @@ fn native_cli_transient_retry(args:&[&str])->std::process::Output{
         if output.status.success(){break;}
         let stderr=String::from_utf8_lossy(&output.stderr);
         if !stderr.contains("Resource temporarily unavailable")
-            && !stderr.contains("os error 35"){
+            && !stderr.contains("os error 35")
+            && !stderr.contains("Broken pipe")
+            && !stderr.contains("os error 32"){
             break;
         }
         thread::sleep(Duration::from_millis(120));
@@ -899,5 +901,54 @@ fn native_coordinator_cli_run_uses_real_daemon_and_survives_restart(){
         .unwrap().load_job("17").unwrap().unwrap();
     assert_eq!(persisted["graphStartContext"],after["graphStartContext"]);
     drop(restarted);
+    fs::remove_dir_all(root).unwrap();
+}
+
+// Production ingress, not parity harness: installed native CLI pause/resume
+// -> localhost daemon -> Job Graph/SQLite -> process restart persistence.
+#[test]
+fn native_cli_pause_resume_round_trip_is_durable_after_daemon_restart(){
+    let root=root();
+    let path=root.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&path,Some("17")).unwrap();
+    store.save_job(&json!({
+        "id":"17","repository":"fixture","projectRoot":"/tmp/fixture",
+        "title":"Pause fixture","prNumber":0,"state":"ACTIVE",
+        "createdAt":"2026-11-18T00:00:00.000Z",
+        "updatedAt":"2026-11-18T00:00:00.000Z",
+        "tasks":[{"id":"2","jobId":"17","kind":"work","agentName":"developer",
+            "state":"RUNNING","attempt":1,"maxAttempts":1,
+            "executionId":"run-1","leaseOwner":"test",
+            "leaseExpiresAt":"2100-01-01T00:00:00.000Z"}],
+        "plans":[{"id":"3","status":"PLANNING","executionId":"plan-1"}]
+    })).unwrap();
+    store.close().unwrap();
+    let port=socket_port();
+    let port_arg=port.to_string();
+    let daemon=start_mode(&root,port,"--isolated-write-store-dir");
+    let paused=native_cli_transient_retry(&[
+        "job","pause","--id","17","--port",&port_arg]);
+    assert!(paused.status.success(),"{}",String::from_utf8_lossy(&paused.stderr));
+    let response:Value=serde_json::from_slice(&paused.stdout).unwrap();
+    assert_eq!(response["tasks"][0]["state"],"QUEUED");
+    assert_eq!(response["tasks"][0]["pausedExecution"]["id"],"run-1");
+    assert_eq!(response["plans"][0]["pausedExecutionId"],"plan-1");
+    drop(daemon);
+    let after_restart=start_mode(&root,port,"--isolated-write-store-dir");
+    let loaded=body(&request(port,"GET","/api/job?id=17","").unwrap());
+    assert_eq!(loaded["pause"],response["pause"]);
+    assert_eq!(loaded["tasks"][0]["pausedExecution"],
+        response["tasks"][0]["pausedExecution"]);
+    let resumed=native_cli_transient_retry(&[
+        "job","resume","--id","17","--port",&port_arg]);
+    assert!(resumed.status.success(),"{}",String::from_utf8_lossy(&resumed.stderr));
+    let resumed:Value=serde_json::from_slice(&resumed.stdout).unwrap();
+    assert!(resumed.get("pause").is_none());
+    assert_eq!(resumed["tasks"][0]["maxAttempts"],2);
+    assert!(resumed["tasks"][0].get("pausedExecution").is_none());
+    drop(after_restart);
+    let saved=SQLiteRelayStore::open_without_claim_reset(&path,Some("17"))
+        .unwrap().load_job("17").unwrap().unwrap();
+    assert_eq!(saved,resumed);
     fs::remove_dir_all(root).unwrap();
 }
