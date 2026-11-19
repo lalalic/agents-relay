@@ -378,3 +378,116 @@ fn isolated_daemon_refuses_pushing_to_an_external_git_origin(){
         .status.success()==false);
     fs::remove_dir_all(root).unwrap();fs::remove_dir_all(external).unwrap();
 }
+
+#[test]
+fn correlated_model_worker_event_stream_is_graph_sqlite_durable_and_replay_fenced(){
+    use agents_relay_rust2::{events::event_for,
+        execution_event_identity::execution_event_source};
+    let (root,config)=fixture();
+    let project=root.join("project");fs::create_dir_all(&project).unwrap();
+    git(&project,&["init","-q","-b","main"]);
+    let execution="11111111-2222-3333-4444-555555555555";
+    let job=json!({"id":"17","repository":"project","projectRoot":project,
+        "title":"Model Worker native event ingestion","state":"ACTIVE","prNumber":0,
+        "reviewEnabled":false,"priority":"P2","tasks":[{
+            "id":"2","jobId":"17","kind":"work","adapter":"chatgpt","agentName":"implementation",
+            "title":"Model Worker","state":"QUEUED","attempt":1,"maxAttempts":1,
+            "leaseOwner":"isolated-native","leaseExpiresAt":"2099-01-01T00:00:00.000Z",
+            "executionId":execution,"gitDeliveryRequired":false,"dependencies":[],
+            "createdAt":"2026-11-18T00:00:00.000Z","updatedAt":"2026-11-18T00:00:00.000Z",
+            "output":{"kind":"file","path":root.join("result.json")}}],
+        "plans":[],"createdAt":"2026-11-18T00:00:00.000Z",
+        "updatedAt":"2026-11-18T00:00:00.000Z"});
+    let path=root.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&path,Some("17")).unwrap();
+    store.save_job(&job).unwrap();
+    let mut host=IsolatedSQLiteWriteHost::new(config);
+    let source=json!({"id":execution_event_source("17","2",execution),
+        "agent":"implementation","component":"agents-relay"});
+    let generated=|kind,status,message:&str|{
+        event_for("17","2",None,kind,status,message,Some("orchestrator"),
+            Some(json!({"test":"isolated-model"})),Some(source.clone()))
+    };
+    let forged=event_for("17","2",None,"task.completed","completed","fake pre-start success",
+        Some("orchestrator"),Some(json!({"ok":true})),Some(source.clone()));
+    assert!(host.accept_model_worker_event("17","2",execution,&forged).is_err(),
+        "Task cannot complete without a verified start/active generation");
+    assert_eq!(store.load_job("17").unwrap().unwrap()["tasks"][0]["state"],"QUEUED");
+    let mut foreign=generated("task.started","started","wrong task");
+    foreign["task_id"]=json!("3");
+    assert!(host.accept_model_worker_event("17","2",execution,&foreign).is_err());
+    let mut forged_source=generated("task.started","started","forged source");
+    forged_source["source"]["id"]=json!("job/17/task/2/execution/fake");
+    assert!(host.accept_model_worker_event("17","2",execution,&forged_source).is_err());
+    let started=generated("task.started","started","model actually started");
+    let started_state=host.accept_model_worker_event("17","2",execution,&started).unwrap();
+    assert_eq!(started_state["tasks"][0]["state"],"RUNNING");
+    assert!(host.accept_model_worker_event("17","2",execution,&started).is_err(),
+        "Repeated start does not duplicate a durable Graph transition");
+    std::thread::sleep(std::time::Duration::from_millis(4));
+    let progress=generated("task.progress","running","genuine work progress");
+    let progress_state=host.accept_model_worker_event("17","2",execution,&progress).unwrap();
+    assert_eq!(progress_state["tasks"][0]["state"],"RUNNING");
+    assert!(progress_state["tasks"][0]["lastProgressEventAt"].is_string());
+    // Same durable event identity + modified payload must fail the SQLite
+    // collision fence, rolling back any speculative progress mutation.
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    let mut colliding=generated("task.progress","running","different progress content");
+    colliding["event_id"]=progress["event_id"].clone();
+    let collision=host.accept_model_worker_event("17","2",execution,&colliding).unwrap_err();
+    assert!(collision.contains("workflow event key collision"),"{collision}");
+    assert_eq!(store.load_job("17").unwrap().unwrap(),progress_state,
+        "Colliding progress event must not mutate the committed Task snapshot");
+    let completed=generated("task.completed","completed","verified model result");
+    let complete_state=host.accept_model_worker_event("17","2",execution,&completed).unwrap();
+    assert_eq!(complete_state["tasks"][0]["state"],"SUCCEEDED");
+    assert!(complete_state["tasks"][0]["executionId"].is_null());
+    assert_eq!(complete_state["tasks"][0]["result"]["summary"],"verified model result");
+    assert!(host.accept_model_worker_event("17","2",execution,&completed).is_err(),
+        "Once terminal, stale model generation cannot finish twice");
+    let durable=store.load_job("17").unwrap().unwrap();
+    assert_eq!(durable,complete_state);
+    let journal:i64=store.db.query_row(
+        "SELECT COUNT(*) FROM workflow_event_outbox WHERE event_key LIKE 'model-event/17/2/%'",
+        [],|row|row.get(0)).unwrap();
+    assert_eq!(journal,3,"one start, progress and finish event must commit atomically");
+    let status=agents_relay_rust2::relayd::DaemonServices::status(&mut host);
+    assert_eq!(status["wakeCount"],1,
+        "Only a durably committed terminal model event wakes the native scheduler");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn source_commit_required_model_task_rejects_false_completion_receipt(){
+    use agents_relay_rust2::{events::event_for,
+        execution_event_identity::execution_event_source};
+    let (root,config)=fixture();
+    let project=root.join("project");fs::create_dir_all(&project).unwrap();
+    git(&project,&["init","-q","-b","main"]);
+    let execution="11111111-2222-3333-4444-555555555555";
+    let path=root.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&path,Some("17")).unwrap();
+    let mut job=job();job["projectRoot"]=json!(project);
+    job["state"]=json!("ACTIVE");
+    job["tasks"]=json!([{"id":"2","jobId":"17","kind":"work","adapter":"codex",
+        "agentName":"implementation","state":"RUNNING","attempt":1,"maxAttempts":1,
+        "executionId":execution,"leaseOwner":"isolated-native",
+        "gitDeliveryRequired":true,"output":{"kind":"task_pr"},
+        "createdAt":"2026-11-18T00:00:00.000Z",
+        "updatedAt":"2026-11-18T00:00:00.000Z"}]);
+    store.save_job(&job).unwrap();
+    let mut host=IsolatedSQLiteWriteHost::new(config);
+    let event=event_for("17","2",None,"task.completed","completed","fake stdout success",
+        Some("orchestrator"),Some(json!({"ok":true})),
+        Some(json!({"id":execution_event_source("17","2",execution),
+            "agent":"implementation","component":"agents-relay"})));
+    assert!(host.accept_model_worker_event("17","2",execution,&event).is_err(),
+        "No verified Git source receipt means Task Graph must refuse success");
+    let after=store.load_job("17").unwrap().unwrap();
+    assert_eq!(after["tasks"][0]["state"],"RUNNING");
+    assert_eq!(after["tasks"][0]["gitDeliveryRequired"],true);
+    let status=agents_relay_rust2::relayd::DaemonServices::status(&mut host);
+    assert_eq!(status["wakeCount"],0,
+        "Unverified source completion cannot wake the Job as completed");
+    fs::remove_dir_all(root).unwrap();
+}

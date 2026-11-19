@@ -10,6 +10,7 @@ use crate::{
     local_merge_projection::reconcile_completed_local_delivery,
     agent_script_discovery::discover_script_agent,
     native_script_execution::run_claimed_script_task,
+    native_worker_event_ingress::apply_verified_worker_event,
     native_script_worker::configured_script_interpreter,
     reconciler::Reconciler,
     interactive_request::fail_interactive_review,
@@ -100,6 +101,26 @@ impl IsolatedSQLiteWriteHost {
             return Err("Isolated native daemon refuses delivery outside its own Git fixture".into());
         }
         Ok(())
+    }
+    /// Internal EventBus adapter port. Caller authentication remains the
+    /// responsibility of the future provider transport: source correlation
+    /// alone is NOT authentication. Never expose this as an open HTTP/CLI
+    /// command or treat a submission receipt as Worker completion.
+    pub fn accept_model_worker_event(&mut self,job_id:&str,task_id:&str,
+        execution_id:&str,event:&Value)->Result<Value,String>{
+        let job=self.scoped(job_id)?.load_job(job_id)?
+            .ok_or_else(||format!("SQLite Job {job_id} not found"))?;
+        self.isolated_project(&job)?;
+        let result=apply_verified_worker_event(&self.path(),&self.config.graph_directory,
+            job_id,task_id,execution_id,event)?;
+        // Notifications and scheduling are post-commit effects. A submitted
+        // browser receipt or a speculative provider callback must never
+        // notify Dashboard that an uncommitted Task succeeded.
+        self.emit(event.clone());
+        if matches!(field(event,"type"),"task.completed"|"task.failed"){
+            self.wake(job_id,"native-model-worker.terminal")?;
+        }
+        Ok(result)
     }
     pub fn reconcile_remote_delivery(&self,id:&str,expected_sha:&str)->Result<(),String>{
         let job=self.scoped(id)?.load_job(id)?
