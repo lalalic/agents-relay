@@ -2,15 +2,15 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "c846739e5f60e6bc73cb3000cfab466855655462",
-    "rustTree": "984883ed30a679155cf70a27a619d5f6b00e6d91",
-    "sourceCount": 46,
+    "rustTree": "0545de24cf57b2c92da6b513627ed75a48bdbfe3",
+    "sourceCount": 45,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 419,
-    "directNameMatches": 406,
+    "runtimeExportSymbols": 406,
+    "directNameMatches": 393,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 13,
-    "typeOrShapeReviewSymbols": 196,
+    "typeOrShapeReviewSymbols": 195,
     "filesWithUnmappedRuntime": 0,
     "filesWithoutDirectDiffImport": 17,
     "filesWithoutOtherRustReferences": 11
@@ -1042,143 +1042,6 @@
         },
         {
           "name": "makeExecutionDecisionAudit",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/events.ts",
-      "target": "rust/src/events.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 13,
-      "directNameMatches": 13,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "EventBus"
-      ],
-      "directDiffImports": [
-        "rust/tests/head_to_head_cli_support_publish_closure.mjs",
-        "rust/tests/head_to_head_service_event_bus_closure.mjs",
-        "rust/tests/head_to_head_worker_c.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/adapters.rs",
-        "rust/src/bin/relay-rust2-parity/closure.rs",
-        "rust/src/bin/relay-rust2-parity/pool_public.rs",
-        "rust/src/bin/relay-rust2-parity/runtime_base_public.rs",
-        "rust/src/chatgpt_platform_fallback.rs",
-        "rust/src/cli.rs",
-        "rust/src/cli_service_public.rs",
-        "rust/src/cli_support.rs",
-        "rust/src/cli_support_events.rs",
-        "rust/src/decision_audit.rs",
-        "rust/src/feedback.rs",
-        "rust/src/github_client.rs",
-        "rust/src/interactive_invocation.rs",
-        "rust/src/interactive_request.rs",
-        "rust/src/legacy_orchestrator_repair.rs",
-        "rust/src/local_merge_delivery.rs",
-        "rust/src/local_merge_projection.rs",
-        "rust/src/native_script_execution.rs",
-        "rust/src/native_script_planner.rs",
-        "rust/src/planner_launch_public.rs",
-        "rust/src/planner_runtime.rs",
-        "rust/src/planner_runtime_public.rs",
-        "rust/src/pool.rs",
-        "rust/src/pool_public_ports.rs",
-        "rust/src/projection_failure_recovery.rs",
-        "rust/src/reconciler.rs",
-        "rust/src/reconciler_review.rs",
-        "rust/src/reconciler_runtime.rs",
-        "rust/src/reconciler_runtime_base.rs",
-        "rust/src/relayd_control.rs",
-        "rust/src/route_outcome_recording.rs",
-        "rust/src/script_task_adapter.rs",
-        "rust/src/service_publication.rs",
-        "rust/src/task_recovery.rs",
-        "rust/src/troubleshooter_fallback.rs",
-        "rust/src/worker_failure_orchestration.rs",
-        "rust/src/worker_failure_recovery.rs",
-        "rust/src/workflow_effect_failures.rs"
-      ],
-      "exports": [
-        {
-          "name": "EventBus",
-          "kind": "interface",
-          "static": "review"
-        },
-        {
-          "name": "subjectToken",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "MemoryEventBus",
-          "kind": "class",
-          "static": "name-match"
-        },
-        {
-          "name": "publish",
-          "kind": "class-method",
-          "parent": "MemoryEventBus",
-          "static": "name-match"
-        },
-        {
-          "name": "subscribe",
-          "kind": "class-method",
-          "parent": "MemoryEventBus",
-          "static": "name-match"
-        },
-        {
-          "name": "subscribeAll",
-          "kind": "class-method",
-          "parent": "MemoryEventBus",
-          "static": "name-match"
-        },
-        {
-          "name": "NatsEventBus",
-          "kind": "class",
-          "static": "name-match"
-        },
-        {
-          "name": "constructor",
-          "kind": "class-constructor",
-          "parent": "NatsEventBus",
-          "static": "name-match"
-        },
-        {
-          "name": "ping",
-          "kind": "class-method",
-          "parent": "NatsEventBus",
-          "static": "name-match"
-        },
-        {
-          "name": "publish",
-          "kind": "class-method",
-          "parent": "NatsEventBus",
-          "static": "name-match"
-        },
-        {
-          "name": "subscribe",
-          "kind": "class-method",
-          "parent": "NatsEventBus",
-          "static": "name-match"
-        },
-        {
-          "name": "subscribeAll",
-          "kind": "class-method",
-          "parent": "NatsEventBus",
-          "static": "name-match"
-        },
-        {
-          "name": "close",
-          "kind": "class-method",
-          "parent": "NatsEventBus",
-          "static": "name-match"
-        },
-        {
-          "name": "eventFor",
           "kind": "function",
           "static": "name-match"
         }

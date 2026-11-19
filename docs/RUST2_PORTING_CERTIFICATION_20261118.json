@@ -819,12 +819,14 @@
       "typeOrShapeReviews": [
         "EventBus"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-19 PROVENANCE QUARANTINE cleared: independent verification from a fresh worktree session; no Worker C source or differential output reused. 50 original Node/Rust direct differential cases (rust/tests/head_to_head_events_public.mjs) covering all 5 public exports (subjectToken, subjectPrefix, eventFor, MemoryEventBus, NatsEventBus constructor validation). Regressions: lib 87/87, events_bus_runtime 662+200, native_events_bus_runtime 5/5."
       ],
-      "legacyLedgerNote": "PROVENANCE QUARANTINE: prior Worker C used duplicate shared worktree; its source and differential output are not admissible PASS evidence. Pending independent canonical commit and direct Node/Rust/native verification from `hotfix/rust2-parallel-projection-canonical-20261117` and `/tmp/rust2-parallel-projection-canonical-20261117.handoff.md`. Existing Rust is retained for compatibility with later Wave2/3/4; not yet reverified."
+      "openGates": [
+        "Production daemon wiring is tracked under src/reconciler-runtime.ts, not this module."
+      ],
+      "legacyLedgerNote": "PROVENANCE QUARANTINE: prior Worker C used duplicate shared worktree; its source and differential output are not admissible PASS evidence. Pending independent canonical commit and direct Node/Rust/native verification from `hotfix/rust2-parallel-projection-canonical-20261117` and `/tmp/rust2-parallel-projection-canonical-20261117.handoff.md`. Existing Rust is retained for compatibility with later Wave2/3/4; not yet reverified.",
+      "status": "PASS"
     },
     {
       "source": "src/execution-context.ts",

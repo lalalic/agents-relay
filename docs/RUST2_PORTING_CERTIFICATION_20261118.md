@@ -721,3 +721,9 @@
 - **canonical admission 对齐**（`rust/src/relayd_control.rs`）：六个 task 命令的校验顺序与错误文本逐字对齐原 Node：`task.supersede/classify/recover/revise` 单守卫组合消息；`task.unblock` 先查 Task（`Task <id> not found`，含空 id 的 `Task  not found`）；`task.resume-troubleshooter` 直进 resumeTroubleshooter（先校验 response）；`task.escalate` 传字符串默认值进 validateRequest。`head_to_head_single_job_task_control_public.mjs` 31/31，canonical 差异 10→0。
 - **三模块升级 PASS**：escalation-notifier（56 差分）、interactive-resume（190 差分）、single-job-task-control（31 差分）——API 面全导出、差分证据、回归全绿齐备；生产接线责任归属 reconciler-runtime/relayd 行，不阻塞本模块（与 dashboard-data/projection-outbox/worker-routing 等 PASS 行的口径一致）。
 - 回归：lib 87/87、relayd_main 48、relayd_utilities、workspace_control_factory、interactive_resume 190、escalation 56、native_git_delivery_control 4/4、native_all_api_sqlite_entrypoints 6/6 全绿。
+
+## 2026-11-19 events.ts PROVENANCE QUARANTINE 解除
+
+- **独立差分认证**：从当前 canonical 工作树直接对比 `src/events.ts` 与 `rust/src/events.rs`，未复用任何 Worker C 产物。50 个原创 Node/Rust 差分用例（`rust/tests/head_to_head_events_public.mjs`）：subjectToken 14 形状（空/空格/斜杠/点/unicode/200 长度）、subjectPrefix 13 形状、eventFor 9 fixtures（uuid/timestamp 归一化、failed/blocked→error 级别、默认 orchestrator 可见性、显式 null data/source 键语义——Rust op 修正为按"键存在"而非"非空对象"传递）、MemoryEventBus 7 场景（含失败 handler 的错误传播、退订、通配订阅）、NatsEventBus 构造器前缀校验 9 配置（无网络面）。
+- **回归**：lib 87/87、events_bus_runtime 662+200、native_events_bus_runtime 5/5 全绿。
+- NATS 线缆传输在 `head_to_head_events_bus_runtime.mjs` 范围内另有 862 用例；生产接线归属 `src/reconciler-runtime.ts` 行。

@@ -62,6 +62,8 @@ mod script_task_adapter_public;
 mod dependency_revision_execution_public;
 #[path = "relay-rust2-parity/browser_worker_routing_public.rs"]
 mod browser_worker_routing_public;
+#[path = "relay-rust2-parity/events_public.rs"]
+mod events_public;
 #[path = "relay-rust2-parity/single_job_task_control_public.rs"]
 mod single_job_task_control_public;
 #[path = "relay-rust2-parity/interactive_resume_public.rs"]
@@ -410,6 +412,7 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=execution_context_public::invoke(request){return output;}
     if let Some(output)=dependency_revision_execution_public::invoke(request){return output;}
     if let Some(output)=browser_worker_routing_public::invoke(request){return output;}
+    if let Some(output)=events_public::invoke(request){return output;}
     if let Some(output)=single_job_task_control_public::invoke(request){return output;}
     if let Some(output)=interactive_resume_public::invoke(request){return output;}
     if let Some(output)=escalation_notifier_public::invoke(request){return output;}
