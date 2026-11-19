@@ -258,6 +258,10 @@ pub trait DaemonServices:Send{
     fn github_usage(&mut self)->Result<Option<Value>,String>;
     fn status(&mut self)->Value;
     fn registered_agents(&mut self)->Result<Vec<Value>,String>;
+    /// Only an authoritative SQLite owner can preallocate numeric child IDs
+    /// and atomically schedule Graph-approved dependency revision Tasks.
+    /// Read-only and unbound hosts never fabricate new revisions.
+    fn prepare_dependency_revisions(&mut self,_id:&str)->Result<(),String>{Ok(())}
     /// Physical completion is an action selected by Job Lifecycle Graph, not
     /// a Task side effect or a CLI status override. Hosts without a verified
     /// merge/SQLite binding leave the Job ACTIVE and fail closed.
@@ -381,6 +385,10 @@ pub fn run_daemon<S:DaemonServices+'static>(
                     |id,capacity|{
                         let mut guard=services.lock()
                             .map_err(|_|"Daemon service lock poisoned")?;
+                        // Node reconcileDependencyRevisions is a Store transaction:
+                        // perform it on the live isolated SQLite authority,
+                        // never inside Reconciler's speculative Job snapshot.
+                        guard.prepare_dependency_revisions(id)?;
                         let snapshot=guard.load(id)?;
                         let project=resolve_job_project_root(&snapshot)?;
                         let usage=guard.account_usage().ok();

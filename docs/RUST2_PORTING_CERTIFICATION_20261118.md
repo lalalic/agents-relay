@@ -2,11 +2,16 @@
 
 > 本表是逐文件的真实审计清单，不是所有模块均通过。**PASS** 需公开 API 原始 Node/Rust 直接差分、Rust 原生负面测试和实际生产调用绑定；只通过静态 API 名称匹配，不能晋级。**HOLD** 指存在尚未关闭的证据缺口，不等同于未实现。
 
-- 原始检查范围：107 个源模块。已认证 **57 PASS**，保留 **50 HOLD/PORTING**。
+- 原始检查范围：107 个源模块。已认证 **58 PASS**，保留 **49 HOLD/PORTING**。
 - 本轮仅跑 Rust 原生测试与必要的 Node/Rust 差分；未重跑独立 Node 全量测试。
 - 这份报告对应上次全量 Node/Rust 230/230 PASS 后的逐项认证。全量 230/230 不等于 107 个模块逐一通过。
 - `directDiffTests` 与 `otherRustModuleReferences` 基于静态文本检索；测试文件出现导入或 Rust 源文件出现引用，仅说明有线索，不表示覆盖了每个公开 API 或进入生产。
 - `typeOrShapeReviews` 是待审计结构标记，不代表发现了实际类型错误。
+
+## 2026-11-19 Dependency Revision durable Graph/SQLite 认证
+
+- **`src/dependency-revision-execution.ts` — PASS**：540 组原始 Node/Rust 两个公开纯接口直接差分，覆盖 18 类上游证据、待执行/成功/失败、stale/revalidate/rerun、重复创建与禁入、全量 Task 元数据；遗漏字段 undefined/null 差异已修正。第三个公开 `reconcileDependencyRevisions` 通过真实 SQLite Store 事务和原生 daemon 路径验证：先 Graph preview，再全局数字 Task ID 分配，原子保存；旧 Reconciler 传空 ID 列表且吞掉失败的路径已移除。
+- 已验证真实独立 Git + SQLite + native daemon 创建新的 rerun 任务，经真实本地 JS Shortcut Worker/Graph 成功结束，并且 daemon/SQLite 重启后没有重复 Task；测试 `head_to_head_dependency_revision_execution_public.mjs`、`native_all_api_sqlite_entrypoints.rs`（6 项）、`native_daemon_binary_readonly.rs`（19 项）。这里不表示外部模型/生产 Cluster 切换完成。
 
 ## 2026-11-19 CLI Prompt / Planner 只读对照认证
 

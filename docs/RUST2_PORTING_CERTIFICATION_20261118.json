@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 57,
-    "HOLD": 50
+    "PASS": 58,
+    "HOLD": 49
   },
   "records": [
     {
@@ -699,19 +699,26 @@
       "source": "src/dependency-revision-execution.ts",
       "target": "rust/src/dependency_revision_execution.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 3,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
+      "directDiffTests": [
+        "rust/tests/head_to_head_dependency_revision_execution_public.mjs"
+      ],
       "otherRustModuleReferences": [
-        "rust/src/reconciler.rs"
+        "rust/src/relayd.rs",
+        "rust/src/relayd_sqlite_write.rs",
+        "rust/src/reconciler.rs",
+        "rust/tests/native_all_api_sqlite_entrypoints.rs"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "540 original compiled Node versus Rust direct pure public entrypoints across dependencyRevisionStillCurrent and reconcileDependencyRevisionFacts: changed/same upstream evidence, rerun/revalidate/order-only edges, revision duplication/selection, stale DRAFT/QUEUED, review/troubleshooter exclusions, missing/invalid dependencies, missing numeric ID refusal, full generated Task shape incl omitted optional fields. Original Node source directly imported in rust/tests/head_to_head_dependency_revision_execution_public.mjs; deterministic canonical Graph.",
+        "reconcileDependencyRevisions third public entrypoint bound to native isolated daemon SQLite authority: production Rust DaemonServices::prepare_dependency_revisions runs preview then global numeric ID allocator and atomically mutateJob before Reconciler graph dispatch; speculative old zero-ID allocator error is removed, not suppressed; no external workflow side effect. Native SQLite E2E tests allocate one numeric rerun child, preserve evidence vector and dependency edges, confirm no duplicate on second call and closed/reopened SQLite restart (rust/tests/native_all_api_sqlite_entrypoints.rs).",
+        "Real isolated rust daemon HTTP/Graph/Git/owned JS Shortcut E2E: 1 changed upstream SUCCEEDED generation -> exactly 1 new numbered downstream revision -> actual Worker SUCCEEDED with verified execution output -> process restart does not manufacture another child (rust/tests/native_daemon_binary_readonly.rs native_daemon_creates_numeric_semantic_revision_and_survives_restart). Fresh tasks cannot be invented by empty adapters or stale evidence.",
+        "19 native daemon E2E and 6 native canonical SQLite API tests passed in isolation. Production system still remains isolated-mode/non-provider-ready; live unapproved relay, Git pushes, external WebHelm Sessions were not touched."
       ],
+      "openGates": [],
       "legacyLedgerNote": "Phase1 serial native Rust source port; uncompiled/unverified, production integration and head-to-head differential pending Phase2."
     },
     {

@@ -24,6 +24,10 @@ The same Graph selects actions for the Rust Reconciler. A real integration test 
 
 ## 2026-11-19 追加证据（保持 NOT production-ready）
 
+- **DependencyRevision durable 调度**：新增 540 组原 Node/Rust 直接纯函数差分；修复 native Reconciler 用空 ID 数组忽略错误的任务丢失风险，改由独立 SQLite authority preview + 全局 Task ID + CAS 再进入 Graph。真正隔离 daemon 创建并执行重跑 Task，重启无重复；SQLite 6 项、daemon 19 项原生测试通过，未触及线上 Job 或外部模型。
+
+
+
 - **ScriptTaskAdapter 公开 API**：75 个原始 Node/native Rust 差异执行场景和类身份验证；真实本地 Script Worker `runCommand`、输出、PID、Graph/SQLite 终结与复制禁止通过。缺失 Agent Shortcut 的早期失败使用执行标识栅栏映射到 Graph `worker.delivery_failed`，不伪造开始事件；相关 5 个 Graph/SQLite E2E 与 18 个 daemon 测试通过。所有数据均为隔离 fixture，非线上自动切换授权。
 
 

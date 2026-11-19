@@ -392,6 +392,15 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
     fn reconcile_local_completion(&mut self,id:&str)->Result<bool,String>{
         self.reconcile_git_delivery(id)
     }
+    fn prepare_dependency_revisions(&mut self,id:&str)->Result<(),String>{
+        let source=self.scoped(id)?.load_job(id)?
+            .ok_or("Dependency Revision Job not found")?;
+        self.isolated_project(&source)?;
+        crate::dependency_revision_execution::reconcile_dependency_revisions(
+            &self.config.graph_directory,&self.config.store_directory,
+            &*self.scoped(id)?,id)?;
+        Ok(())
+    }
     fn registered_agents(&mut self)->Result<Vec<Value>,String>{
         self.reconcile_attempts+=1;
         let mut seen=HashSet::new();let mut agents=Vec::new();

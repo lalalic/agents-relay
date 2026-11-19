@@ -211,7 +211,7 @@ pub fn reconcile_dependency_revision_facts(
             format!("Original durable Task objective: {}",string(&original,"input")),
             format!("Original result: {}",original.get("result").unwrap_or(&Value::Null)),
         ].join("\n\n");
-        let fields=json!({
+        let mut fields=json!({
             "jobId":job.get("id"),"id":id,"title":title,
             "kind":"work","parentTaskId":original_id,"agentName":original.get("agentName"),
             "priority":original.get("priority").or_else(||job.get("priority")),
@@ -231,6 +231,15 @@ pub fn reconcile_dependency_revision_facts(
             "result":null,"error":null,"timeoutMs":original.get("timeoutMs"),
             "createdAt":now,"updatedAt":now,"continuation":null,"continuationDeliveredAt":null,
         });
+        // The original JS object spread omits `undefined` optional metadata.
+        // Null is a distinct durable field: a missing projectName/timeoutMs or
+        // workerRequirements must not be invented by serde_json::json!.
+        for optional in ["projectName","timeoutMs","workerRequirements"] {
+            if original.get(optional).is_none(){
+                fields.as_object_mut().expect("revision Task fields")
+                    .remove(optional);
+            }
+        }
         let child=create_task_entity(graph_directory,job,&fields,false,&now)?;
         job.get_mut("tasks").and_then(Value::as_array_mut)
             .ok_or("Job missing Tasks")?.push(child);
@@ -259,6 +268,10 @@ pub fn reconcile_dependency_revisions(
     let planned = reconcile_dependency_revision_facts(
         graph_directory, &mut preview, &preview_ids,
     )?;
+    // The daemon polls repeatedly. A no-op preview must never rewrite the
+    // SQLite Job, allocate sequence numbers or trigger a wake on every tick.
+    // Superseded pending revisions still require the atomic store mutation.
+    if planned.is_empty() && preview == snapshot {return Ok(Vec::new());}
     let repository = snapshot.get("repository").and_then(Value::as_str).unwrap_or("");
     let mut reserved = Vec::with_capacity(planned.len());
     let occupied = HashSet::new();

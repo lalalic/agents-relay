@@ -114,3 +114,75 @@ fn dependency_revisions_do_not_allocate_without_changed_upstream(){
     assert!(made.is_empty());
     assert_eq!(db.load_job("25").unwrap().unwrap(),fixture("25"));
 }
+
+/// Original Node reconcileDependencyRevisions always allocates a numeric Task
+/// ID *after* the pure Graph preview. Confirm real SQLite persistence and
+/// one-time idempotency across process recreation rather than a fixture-only
+/// reducer result or an ephemeral placeholder ID.
+#[test]
+fn semantic_upstream_revision_allocates_one_durable_numeric_child_once(){
+    let root=PathBuf::from(format!("/tmp/rust2-revision-positive-{}-{}",
+        std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH)
+            .unwrap().as_nanos()));
+    let stores=root.join("stores");std::fs::create_dir_all(&stores).unwrap();
+    let db_file=stores.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&db_file,Some("25")).unwrap();
+    let predecessor=json!({
+        "id":"1","jobId":"25","title":"Upstream Evidence", "kind":"work",
+        "state":"SUCCEEDED","agentName":"implementation","adapter":"script",
+        "priority":"P2","storySize":"S","attempt":1,"maxAttempts":3,
+        "capabilities":["script"],"workerRequirements":{"capabilities":["script"]},
+        "dependencies":[],"input":"Build original upstream result",
+        "result":{"summary":"Verified"},"output":{"kind":"task_pr"},
+        "createdAt":"2026-11-17T00:00:00.000Z","updatedAt":"2026-11-17T00:00:00.000Z"
+    });
+    let successor=json!({
+        "id":"2","jobId":"25","title":"Downstream Derived", "kind":"work",
+        "state":"SUCCEEDED","agentName":"implementation","adapter":"script",
+        "priority":"P2","storySize":"S","attempt":1,"maxAttempts":3,
+        "capabilities":["script"],"workerRequirements":{"capabilities":["script"]},
+        "dependencies":["1"],"dependencyValidity":{"1":"rerun"},
+        "input":"Reconcile semantic upstream evidence","result":{"summary":"Verified"},
+        "output":{"kind":"task_pr"},
+        "createdAt":"2026-11-17T00:00:01.000Z","updatedAt":"2026-11-17T00:00:01.000Z"
+    });
+    let revision=json!({
+        "id":"3","jobId":"25","title":"Upstream revision", "kind":"work",
+        "state":"SUCCEEDED","agentName":"implementation","adapter":"script",
+        "priority":"P2","storySize":"S","attempt":1,"maxAttempts":3,
+        "capabilities":["script"],"dependencies":["1"],"input":"Updated upstream evidence",
+        "result":{"summary":"New generation"},"output":{"kind":"task_pr"},
+        "revision":{"kind":"rerun","originalTaskId":"1","dependencyVector":{},"requestIds":["rq-1"]},
+        "createdAt":"2026-11-17T01:00:00.000Z","updatedAt":"2026-11-17T01:00:00.000Z"
+    });
+    let job=json!({"id":"25","repository":"fixture-repo","state":"ACTIVE",
+        "priority":"P2","reviewEnabled":false,"plans":[],
+        "createdAt":"2026-11-17T00:00:00.000Z","updatedAt":"2026-11-17T00:00:00.000Z",
+        "prNumber":0,"tasks":[predecessor,successor,revision]});
+    store.save_job(&job).unwrap();
+    let created=reconcile_dependency_revisions(&graph(),&stores,&store,"25")
+        .expect("one Graph-approved revision must atomically reserve a Task ID");
+    assert_eq!(created.len(),1,"{created:?}");
+    assert!(created[0].parse::<u64>().is_ok(),"Task IDs must be native numeric IDs");
+    let snapshot=store.load_job("25").unwrap().unwrap();
+    let descendants=snapshot["tasks"].as_array().unwrap().iter()
+        .filter(|t|t.pointer("/revision/originalTaskId")==Some(&json!("2")))
+        .collect::<Vec<_>>();
+    assert_eq!(descendants.len(),1,"Exactly one Graph-authorized descendant: {snapshot}");
+    let child=descendants[0];
+    assert_eq!(child["id"],created[0]);
+    assert_eq!(child["revision"]["kind"],"rerun");
+    assert_eq!(child["revision"]["dependencyVector"]["1"],"3:1");
+    assert_eq!(child["dependencies"],json!(["2","3"]));
+    assert_eq!(child["state"],"QUEUED");
+    assert_eq!(reconcile_dependency_revisions(&graph(),&stores,&store,"25")
+        .unwrap(),Vec::<String>::new(),"Graph must reject duplicate same-vector revision");
+    assert_eq!(store.load_job("25").unwrap().unwrap(),snapshot);
+    store.close().unwrap();
+    let reopened=SQLiteRelayStore::open_without_claim_reset(&db_file,Some("25")).unwrap();
+    assert_eq!(reconcile_dependency_revisions(&graph(),&stores,&reopened,"25")
+        .unwrap(),Vec::<String>::new(),"Restart must not reallocate same revision");
+    assert_eq!(reopened.load_job("25").unwrap().unwrap(),snapshot);
+    reopened.close().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}

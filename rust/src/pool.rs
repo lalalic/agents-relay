@@ -350,6 +350,10 @@ impl RepositoryWorkerPool{
                 let result=match reconcile(&id,allowance){
                     Ok(value)=>Some(value),
                     Err(error)=>{
+                        // Preserve reconciliation failures in the daemon log:
+                        // the pool intentionally keeps serving other Jobs,
+                        // but the originating Job must not fail silently.
+                        eprintln!("warning: Rust Relay Job {id} reconcile failed: {error}");
                         crate::observability::observability().record(&json!({
                             "stage":"reconcile","event":"reconcile.job_failed",
                             "level":"error","outcome":"failed",

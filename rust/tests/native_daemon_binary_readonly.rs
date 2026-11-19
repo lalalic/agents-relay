@@ -660,7 +660,11 @@ fn isolated_native_daemon_submits_chatgpt_through_webhelm_and_waits_for_real_gra
     let submitted=Arc::new(AtomicBool::new(false));
     let got_submission=Arc::clone(&submitted);
     let socket_worker=thread::spawn(move||{
-        let deadline=std::time::Instant::now()+Duration::from_secs(12);
+        // Isolated daemon startup may be delayed by macOS full-target Rust
+        // build contention. Keep the fake Unix service available through
+        // actual HTTP readiness and the Worker submission; do not allow a
+        // fixture timeout to masquerade as a failed production Worker.
+        let deadline=std::time::Instant::now()+Duration::from_secs(90);
         let mut ops=Vec::new();
         loop{
             if std::time::Instant::now()>deadline{break;}
@@ -749,10 +753,24 @@ fn isolated_native_daemon_submits_chatgpt_through_webhelm_and_waits_for_real_gra
         .stderr(std::process::Stdio::from(
             fs::File::create(root.join("native-daemon.log")).unwrap()))
         .spawn().unwrap();
-    let daemon=Guard(child);
+    let mut daemon=Guard(child);
+    let mut ready=false;
+    for _ in 0..300{
+        if request(port,"GET","/api/status","")
+            .is_ok_and(|reply|reply.starts_with("HTTP/1.1 200")){
+            ready=true;break;
+        }
+        if let Some(status)=daemon.0.try_wait().unwrap(){
+            panic!("Isolated WebHelm daemon exited before startup {status}: {}",
+                fs::read_to_string(root.join("native-daemon.log")).unwrap_or_default());
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert!(ready,"Native WebHelm daemon never became HTTP-ready: {}",
+        fs::read_to_string(root.join("native-daemon.log")).unwrap_or_default());
     let mut current=Value::Null;
     let mut seen=false;
-    for _ in 0..100{
+    for _ in 0..150{
         if let Ok(result)=request(port,"GET","/api/job?id=83",""){
             current=body(&result);
             if submitted.load(Ordering::Acquire)
@@ -760,7 +778,9 @@ fn isolated_native_daemon_submits_chatgpt_through_webhelm_and_waits_for_real_gra
         }
         thread::sleep(Duration::from_millis(40));
     }
-    assert!(seen,"Native daemon never submitted through its own isolated WebHelm port. Job={current}, Log={}",
+    let daemon_status=request(port,"GET","/api/status","")
+        .ok().and_then(|reply|std::panic::catch_unwind(||body(&reply)).ok());
+    assert!(seen,"Native daemon never submitted through its own isolated WebHelm port. Job={current}, Status={daemon_status:?}, Log={}",
         fs::read_to_string(root.join("native-daemon.log")).unwrap_or_default());
     assert_eq!(current["tasks"][0]["state"],"QUEUED",
         "WebHelm submitted receipt must not change the Task state");
@@ -1455,4 +1475,76 @@ fn native_task_events_cli_matches_original_node_real_event_history_and_rejects_s
     assert!(!missing.status.success());
     assert!(missing.stdout.is_empty());
     fs::remove_dir_all(root).unwrap();
+}
+
+/// Real native daemon owner must preallocate one Graph-approved semantic
+/// dependency revision in its isolated SQLite store BEFORE Reconciler claims
+/// the new Worker. A pure reconciliation with an empty reserved-ID vector
+/// previously swallowed the missing-ID error and lost the Task forever.
+#[test]
+fn native_daemon_creates_numeric_semantic_revision_and_survives_restart(){
+    let root=root();let project=root.join("project");
+    fs::create_dir_all(project.join("agents/.shortcut")).unwrap();
+    fs::write(project.join("agents/implementation.agent.md"),
+        "---\nname: implementation\ncapabilities: [script]\n---\n# Real revision Worker\n").unwrap();
+    fs::write(project.join("agents/.shortcut/implementation.agent.mjs"),
+        "export async function run({input}) { return {status:'COMPLETED',output:{evidence:input.executionId},artifacts:{}}; }\n").unwrap();
+    assert!(Command::new("git").arg("-C").arg(&project)
+        .args(["init","-q","-b","main"]).status().unwrap().success());
+    let store=SQLiteRelayStore::open(&root.join("relay.sqlite"),Some("93")).unwrap();
+    let task=|id:&str,title:&str,deps:Value,mode:Value,state:&str|json!({
+        "id":id,"jobId":"93","kind":"work","title":title,"state":state,
+        "agentName":"implementation","adapter":"script","priority":"P2",
+        "storySize":"S","attempt":1,"maxAttempts":2,
+        "capabilities":["script"],"dependencies":deps,
+        "dependencyValidity":mode,"input":format!("Build {title}"),
+        "result":{"summary":"Already verified"},
+        "output":{"kind":"file","path":root.join(format!("artifact-{id}.json"))},
+        "createdAt":"2026-11-17T00:00:00.000Z",
+        "updatedAt":"2026-11-17T00:00:00.000Z"
+    });
+    let up=task("1","Original upstream",json!([]),json!({}),"SUCCEEDED");
+    let down=task("2","Dependent original",json!(["1"]),json!({"1":"rerun"}),"SUCCEEDED");
+    let mut new=task("3","Revised upstream",json!(["1"]),json!({}),"SUCCEEDED");
+    new["revision"]=json!({"kind":"rerun","originalTaskId":"1",
+        "dependencyVector":{},"requestIds":["fixture-rq"]});
+    new["createdAt"]=json!("2026-11-17T01:00:00.000Z");
+    store.save_job(&json!({"id":"93","repository":"project","projectRoot":project,
+        "state":"ACTIVE","prNumber":0,"title":"Semantic dependency revision",
+        "priority":"P2","reviewEnabled":false,"plans":[],
+        "createdAt":"2026-11-17T00:00:00.000Z",
+        "updatedAt":"2026-11-17T00:00:00.000Z","tasks":[up,down,new]
+    })).unwrap();store.close().unwrap();
+    let port=socket_port();let daemon=start_mode(&root,port,"--isolated-write-store-dir");
+    let mut seen=Value::Null;
+    for _ in 0..100{
+        seen=body(&request(port,"GET","/api/job?id=93","").unwrap());
+        let latest=seen["tasks"].as_array().into_iter().flatten().filter(|task|
+            task.pointer("/revision/originalTaskId")==Some(&json!("2")))
+            .collect::<Vec<_>>();
+        if latest.len()==1&&latest[0]["state"]=="SUCCEEDED"{break;}
+        thread::sleep(Duration::from_millis(100));
+    }
+    let descendants=seen["tasks"].as_array().unwrap().iter().filter(|task|
+        task.pointer("/revision/originalTaskId")==Some(&json!("2")))
+        .collect::<Vec<_>>();
+    assert_eq!(descendants.len(),1,"Daemon must create only one semantic child: {seen}");
+    let child=descendants[0];
+    assert!(child["id"].as_str().unwrap_or("").parse::<u64>().is_ok(),"{child}");
+    assert_eq!(child["revision"]["kind"],"rerun");
+    assert_eq!(child["revision"]["dependencyVector"]["1"],"3:1");
+    assert_eq!(child["dependencies"],json!(["2","3"]));
+    assert_eq!(child["state"],"SUCCEEDED","Worker must be real owned Shortcut: {seen}");
+    assert_eq!(child["result"]["data"]["output"]["evidence"].as_str().is_some(),true);
+    let child_id=child["id"].clone();
+    drop(daemon);
+    let restarted=start_mode(&root,port,"--isolated-write-store-dir");
+    let restored=body(&request(port,"GET","/api/job?id=93","").unwrap());
+    let descendants=restored["tasks"].as_array().unwrap().iter().filter(|task|
+        task.pointer("/revision/originalTaskId")==Some(&json!("2")))
+        .collect::<Vec<_>>();
+    assert_eq!(descendants.len(),1,"Restart must not manufacture another child: {restored}");
+    assert_eq!(descendants[0]["id"],child_id);
+    assert_eq!(descendants[0]["state"],"SUCCEEDED");
+    drop(restarted);fs::remove_dir_all(root).unwrap();
 }

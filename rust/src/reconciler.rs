@@ -536,10 +536,10 @@ impl Reconciler{
             &self.graph_directory,&mut result.job,&now)?;
         let _=reconcile_review_revision_facts(
             &self.graph_directory,&mut result.job)?;
-        let mut reserved=Vec::new();
-        let _=crate::dependency_revision_execution::
-            reconcile_dependency_revision_facts(
-                &self.graph_directory,&mut result.job,&reserved)?;
+        // Dependency revision creation must use a SQLite-backed numeric ID
+        // allocator with a committed CAS. The daemon performs that mutation
+        // before constructing this speculative Graph snapshot; never swallow
+        // a missing-ID error or create a child with an ephemeral ID here.
         let updated=reconcile_dag_schedule(
             &self.graph_directory,&self.store_directory,&result.job,
             project,roots,|agent,project,roots|

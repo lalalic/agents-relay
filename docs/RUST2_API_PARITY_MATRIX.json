@@ -2,17 +2,17 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "c846739e5f60e6bc73cb3000cfab466855655462",
-    "rustTree": "23a6ad97874ad188b944da3918f045ee4eab2222",
-    "sourceCount": 50,
+    "rustTree": "17a95a7f6ff7b396c59315cbb1ad9e20cdbdb2db",
+    "sourceCount": 49,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 427,
-    "directNameMatches": 414,
+    "runtimeExportSymbols": 424,
+    "directNameMatches": 411,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 13,
     "typeOrShapeReviewSymbols": 199,
     "filesWithUnmappedRuntime": 0,
-    "filesWithoutDirectDiffImport": 24,
+    "filesWithoutDirectDiffImport": 23,
     "filesWithoutOtherRustReferences": 15
   },
   "pendingModules": [],
@@ -1033,36 +1033,6 @@
         },
         {
           "name": "makeExecutionDecisionAudit",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/dependency-revision-execution.ts",
-      "target": "rust/src/dependency_revision_execution.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 3,
-      "directNameMatches": 3,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [
-        "rust/src/reconciler.rs"
-      ],
-      "exports": [
-        {
-          "name": "dependencyRevisionStillCurrent",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "reconcileDependencyRevisionFacts",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "reconcileDependencyRevisions",
           "kind": "function",
           "static": "name-match"
         }
