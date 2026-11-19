@@ -686,3 +686,10 @@
 - 修复真实 Coordinator 超时差异：Rust `cli_job_create.rs` 与 `dag_task_runtime.rs` 将 Coordinator `timeoutMs` 写死为 5,400,000，原 Node `cli-job-create.ts` 为 `taskOverallTimeoutMs('L')=2,700,000`；两处改为调用 `task_overall_timeout_ms(StorySize::L, None)`，`head_to_head_coordinator_cli.mjs` 11/11 通过，task_overall 助手由此接入生产路径。
 - 回归：`cargo test --lib` 87/87；目标原生套件 4+19+4+2+2（`--test-threads=1`）全绿。并行批跑曾出现一次调度波动失败，隔离与串行重跑均稳定，符合交接文档对 macOS 调度波动的既有记录。
 - 仍 HOLD 的缺口：`chatgpt_start_ack_timeout_ms` 在 Rust 无生产调用方（原 Node 唯一调用点是 reconciler.ts 的 ChatGPT start-ack 看门狗，Rust daemon 未移植）；assert 包装两侧均为纯 API 面，语义由已认证 workflow v2 dispatcher 承担。
+
+## 2026-11-19 ChatGPT 平台回退差分与 worker_routing 真实分歧修复（仍 HOLD）
+
+- **`src/chatgpt-platform-fallback.ts`**：4661 组原始 Node/Rust 差分全部一致（`rust/tests/head_to_head_chatgpt_platform_fallback_public.mjs`）。`codex_fallback_routing` 重写为原始 Node 签名 `(task, adapters, registered, usage)`，复用已认证 Worker Router 候选链；`chatgptThreadDelivery`/`noStartFallback` 改为 JS 真值语义；`provider`/`model` 遵循原 `??` 空值语义；`excludedRoutes` 中缺失键按 JSON 序列化语义省略。`codexFallbackCompatible` 与 `codexNoStartFallbackRoute` 的差分在两侧都运行真实 engine-off `routeExecution`，并共享同一组 CODEX_HOME `config.toml` fixture（configured/provider-only/empty）。
+- 修复已认证 `worker_routing.rs` 的两处真实分歧（回归证明）：`window_usage` 对显式 `weekly:null` 窗口返回合成对象而 Node 返回 undefined；`windows` 对 null/缺失窗口输出 JSON null 而非省略键。修复后 `head_to_head_worker_routing_public.mjs` 与 `head_to_head_browser_worker_routing_public.mjs`（3192 组）仍然全绿。
+- `persistChatGptPlatformFailure` 已由 `worker_failure_recovery.rs` 生产调用。
+- 仍 HOLD 的缺口：`codex_fallback_routing`/`codex_fallback_compatible`/`codex_no_start_fallback_route` 的 Rust daemon 生产调用方尚未接线（原 Node 调用链 worker-failure-recovery ports，属 reconciler-runtime/relayd WFR 集成）；`quarantine_unavailable_codex_fallback` 的真实 durable transition 绑定属 durable-transition 批次。

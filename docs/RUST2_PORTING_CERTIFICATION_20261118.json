@@ -185,15 +185,23 @@
       "decision": "HOLD",
       "runtimeExports": 5,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
+      "directDiffTests": [
+        "rust/tests/head_to_head_chatgpt_platform_fallback_public.mjs"
+      ],
       "otherRustModuleReferences": [
-        "rust/src/worker_failure_recovery.rs"
+        "rust/src/worker_failure_recovery.rs (persistChatGptPlatformFailure production caller)",
+        "rust/src/bin/relay-rust2-parity/chatgpt_platform_fallback_public.rs (certChatgptPlatformFallback differential op)"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
+      "certificationEvidence": [
+        "2026-11-19 4661 original Node/Rust differential cases PASS: full codexFallbackRouting cartesian (13 task shapes x 3 adapter sets x 3 registered-agent sets x 3 usage snapshots x 8 routingExclusions shapes), 56 persistChatGptPlatformFailure fixtures (empty-string provider, nullish executionId, duplicate-exclusion negatives) and real routeExecution-based compatible/noStart cases over the same CODEX_HOME config.toml fixtures (configured, provider-only, empty) with the decision engine off on both sides",
+        "Interface aligned to the original Node signatures: codex_fallback_routing now takes (task, adapters, registered, usage) through the certified Worker Router candidates instead of pre-baked candidates; chatgptThreadDelivery/noStartFallback use JS truthiness; provider/model follow the original ?? nullish semantics; absent provider/model keys are omitted from excludedRoutes",
+        "Real divergences fixed in certified worker_routing.rs and regression-proven: window_usage returned a synthetic window object for an explicit null weekly/fiveHour window where Node returns undefined, and the windows object emitted JSON null instead of omitting null/absent windows; head_to_head_worker_routing_public.mjs and head_to_head_browser_worker_routing_public.mjs (3192 cases) remain green",
+        "persist_chatgpt_platform_failure is production-bound through worker_failure_recovery.rs apply_launch_failure_mutation"
+      ],
       "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+        "codex_fallback_routing/codex_fallback_compatible/codex_no_start_fallback_route 尚无 Rust daemon 生产调用方：原 Node 调用链 worker-failure-recovery 的 ports（has_codex_no_start_fallback）在 Rust 端仍只有 fixture 实现，绑定属 reconciler-runtime/relayd 的 WFR 集成",
+        "quarantine_unavailable_codex_fallback 的真实 durable transition 运行时绑定属 workflow/durable-transition 认证批次"
       ],
       "legacyLedgerNote": "Phase1 serial native Rust source port; uncompiled/unverified, production integration and head-to-head differential pending Phase2."
     },

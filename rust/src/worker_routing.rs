@@ -18,6 +18,8 @@ fn field<'a>(v:&'a Value,key:&str)->&'a str{
 fn as_number(v:Option<&Value>)->Option<f64> {v.and_then(Value::as_f64)}
 fn window_usage(window:Option<&Value>,now_ms:i64)->Option<Value>{
     let window=window?;
+    // Node: resourceWindow(null) returns undefined for an explicit null window.
+    if window.is_null(){return None;}
     let used=window.get("usedPercent").and_then(Value::as_f64).unwrap_or(0.0);
     let reset=window.get("resetsAt").filter(|v|!v.is_null());
     let reset_in=reset.and_then(Value::as_i64)
@@ -38,10 +40,15 @@ pub fn usage_for_provider(
         let weekly=usage.get("weekly");
         let used=five.and_then(|v|as_number(v.get("usedPercent"))).unwrap_or(0.0)
             .max(weekly.and_then(|v|as_number(v.get("usedPercent"))).unwrap_or(0.0));
-        let windows=json!({
-            "fiveHour":window_usage(five,now_ms),
-            "weekly":window_usage(weekly,now_ms)
-        });
+        // Node builds windows with resourceWindow(): a null/absent window is
+        // undefined, which JSON serialization omits entirely.
+        let mut windows=json!({});
+        if let Some(window)=window_usage(five,now_ms){
+            windows["fiveHour"]=window;
+        }
+        if let Some(window)=window_usage(weekly,now_ms){
+            windows["weekly"]=window;
+        }
         let reset=[five,weekly].into_iter().flatten()
             .filter_map(|window|{
                 let at=window.get("resetsAt").and_then(Value::as_i64)?;
