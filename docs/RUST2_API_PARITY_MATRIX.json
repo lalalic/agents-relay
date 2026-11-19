@@ -2,7 +2,7 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "c846739e5f60e6bc73cb3000cfab466855655462",
-    "rustTree": "17a95a7f6ff7b396c59315cbb1ad9e20cdbdb2db",
+    "rustTree": "72ea2e7c73a0a41e97fff945536f4501940d1287",
     "sourceCount": 49,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
@@ -12,8 +12,8 @@
     "runtimeConstructorReviews": 13,
     "typeOrShapeReviewSymbols": 199,
     "filesWithUnmappedRuntime": 0,
-    "filesWithoutDirectDiffImport": 23,
-    "filesWithoutOtherRustReferences": 15
+    "filesWithoutDirectDiffImport": 21,
+    "filesWithoutOtherRustReferences": 14
   },
   "pendingModules": [],
   "files": [
@@ -234,8 +234,12 @@
       "directNameMatches": 1,
       "unmappedRuntime": [],
       "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_browser_worker_routing_public.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/browser_worker_routing_public.rs"
+      ],
       "exports": [
         {
           "name": "hasSafeAlternativeWorker",
@@ -256,7 +260,9 @@
         "PoolSubmission",
         "PooledRun"
       ],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_browser_worker_routing_public.mjs"
+      ],
       "otherRustModuleReferences": [
         "rust/src/adapters.rs",
         "rust/src/native_browser_execution.rs"

@@ -60,6 +60,8 @@ mod reconciler_context_public;
 mod script_task_adapter_public;
 #[path = "relay-rust2-parity/dependency_revision_execution_public.rs"]
 mod dependency_revision_execution_public;
+#[path = "relay-rust2-parity/browser_worker_routing_public.rs"]
+mod browser_worker_routing_public;
 #[path = "relay-rust2-parity/execution_context_public.rs"]
 mod execution_context_public;
 use serde_json::{json, Value};
@@ -397,6 +399,7 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=execution_context_public::invoke(request){return output;}
     if let Some(output)=dependency_revision_execution_public::invoke(request){return output;}
+    if let Some(output)=browser_worker_routing_public::invoke(request){return output;}
     if let Some(output)=script_task_adapter_public::invoke(request){return output;}
     if let Some(output)=reconciler_context_public::invoke(request){return output;}
     if let Some(output)=workflow_effect_failures_public::invoke(request){return output;}

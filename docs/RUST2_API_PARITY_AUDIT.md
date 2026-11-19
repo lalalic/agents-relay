@@ -23,10 +23,10 @@ A listed direct differential import only means a head-to-head test imports the c
 | runtimeConstructorReviews | 13 |
 | typeOrShapeReviewSymbols | 199 |
 | filesWithUnmappedRuntime | 0 |
-| filesWithoutDirectDiffImport | 23 |
-| filesWithoutOtherRustReferences | 15 |
+| filesWithoutDirectDiffImport | 21 |
+| filesWithoutOtherRustReferences | 14 |
 
-Source tree: `c846739e5f60`; Rust source tree: `17a95a7f6ff7`. Rust module rows in scope: 49. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `c846739e5f60`; Rust source tree: `72ea2e7c73a0`. Rust module rows in scope: 49. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
@@ -37,8 +37,8 @@ Source tree: `c846739e5f60`; Rust source tree: `17a95a7f6ff7`. Rust module rows 
 |---|---:|---:|---:|---:|---:|
 | `src/adapters.ts` | 12 | 12 | 0 | 2 | 6 |
 | `src/blocker-recovery.ts` | 1 | 1 | 0 | 0 | 0 |
-| `src/browser-worker-routing.ts` | 1 | 1 | 0 | 0 | 0 |
-| `src/browser-worker-runtime.ts` | 2 | 2 | 0 | 0 | 2 |
+| `src/browser-worker-routing.ts` | 1 | 1 | 0 | 1 | 1 |
+| `src/browser-worker-runtime.ts` | 2 | 2 | 0 | 1 | 2 |
 | `src/chatgpt-platform-fallback.ts` | 5 | 5 | 0 | 0 | 1 |
 | `src/cli-artifact.ts` | 2 | 2 | 0 | 4 | 1 |
 | `src/cli-coordinator.ts` | 1 | 1 | 0 | 1 | 3 |

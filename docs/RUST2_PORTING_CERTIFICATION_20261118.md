@@ -672,3 +672,9 @@
 ## 认证下一步约束
 
 针对 HOLD 项逐个补齐与原 Node 可执行 API 直接对比、Rust 原生负面/恢复场景、权威 Graph/SQLite 和真实生产入口；证据完备后才在主 Ledger 将 `PORTING` 改为 `PASS`，随后重新生成 API matrix。禁止根据名称匹配率或某一条 Mock 断言自动升级。
+
+## 2026-11-19 Browser Worker Routing 准入差分对齐（仍 HOLD）
+
+- **`src/browser-worker-routing.ts`**：Rust `has_safe_alternative_worker` 重写为原始 Node 签名 `(task, adapters, agents, usage)`，候选复用已认证 `worker_routing::{worker_candidates, eligible_worker_candidates}`，`task.workerRequirements?.runtime===task.adapter` 的 `undefined===undefined` 语义保持一致。3192 组原始 Node/Rust 直接差分全部一致（19 种 Task 形态 × 6 组适配器 × 7 组注册 Agent × 4 组 usage × 5 种真实 pool 健康状态）：`rust/tests/head_to_head_browser_worker_routing_public.mjs`。Node 侧在隔离 `AGENTS_RELAY_STORE_DIR` 中驱动真实全局 pool 单例（`reportPreSubmissionOutage`/`reportHealthy`），Rust 侧使用同状态、固定时钟的真实隔离 `BrowserWorkerPoolManager`。
+- 原生 pool 绑定 4 项通过（`rust/tests/native_browser_worker_routing.rs`）：fresh pool 默认 HEALTHY、pre-submission outage 关闭准入、verified recovery 重新准入、快照失败 fail-closed，以及 capability 缺失/offline/同 adapter 候选的负例。
+- 仍 HOLD 的唯一缺口：daemon 生产调用绑定。原 Node 唯一调用链是 worker-failure-recovery→reconciler-runtime 的 `failLaunch`；Rust `worker_failure_orchestration` 已有 `has_safe_alternative` 端口 seam，但 daemon 端尚无 `WorkerFailurePorts` 实现（属 reconciler-runtime/relayd 的 WFR 集成范围）。本模块不因差分通过而晋级 PASS。

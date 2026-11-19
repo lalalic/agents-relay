@@ -135,14 +135,21 @@
       "decision": "HOLD",
       "runtimeExports": 1,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
-      "otherRustModuleReferences": [],
+      "directDiffTests": [
+        "rust/tests/head_to_head_browser_worker_routing_public.mjs",
+        "rust/tests/native_browser_worker_routing.rs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/browser_worker_routing_public.rs (certBrowserWorkerRouting differential op)"
+      ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
+      "certificationEvidence": [
+        "2026-11-19 has_safe_alternative_worker rewritten to the original Node signature (task, adapters, agents, usage) reusing certified worker_routing candidates; undefined===undefined workerRequirements.runtime===adapter semantics preserved",
+        "3192 original Node/Rust differential cases PASS (19 task shapes x 6 adapter sets x 7 registered-agent sets x 4 usage snapshots x 5 real pool health states); Node side drives the real global pool singleton in an isolated AGENTS_RELAY_STORE_DIR, Rust side an equally-stated isolated BrowserWorkerPoolManager with fixed clock",
+        "4 native pool-bound tests PASS (fresh HEALTHY default, pre-submission outage fail-closed, verified recovery re-admission, snapshot failure fail-closed, capability/offline/same-adapter negatives)"
+      ],
       "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+        "daemon 生产调用绑定未关闭：原 Node 唯一调用链 worker-failure-recovery→reconciler-runtime failLaunch，Rust worker_failure_orchestration 已有 has_safe_alternative 端口但尚无 daemon 端 Ports 实现（属 reconciler-runtime/relayd WFR 集成）"
       ],
       "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
     },
