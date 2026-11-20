@@ -648,7 +648,7 @@
       "source": "src/decision-audit.ts",
       "target": "rust/src/decision_audit.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 13,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -664,11 +664,11 @@
         "DecisionAuditStore",
         "RouterRouteResult"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 5 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-20: 140 original Node/Rust direct differential cases (rust/tests/head_to_head_decision_audit_public.mjs) over the public decision-audit surface with real JSONL files: routeReason redaction and 240 UTF-16 cap, routerReasonCode classification, RouterRouteResult projection, recentExecutionRouteResults join semantics (attempt keys, latest-wins, 0..10 clamp), bounded reverse scan with malformed/partial/CRLF lines and legacy full-join fallback, outcomeForDecision, taskAuditFacts, makeDecisionAudit and makeExecutionDecisionAudit builders. Five real divergences fixed: routeResult textField on profile/reasoning; read() all-or-nothing on malformed lines; undefined-key omission for task facts/correlation/timestamp/engine/fallback.reason/decision_evidence; prior_decision_id key order; trustDomains ?? [] and labels ?? {} worker defaults.",
+        "Regressions: lib 89/89; native model_redecision, wave4_delivery, dashboard_api, stage2_daemon_smoke, cli_service_public, stage2_dashboard all green; head-to-head wave4 delivery (125/42/180) and model-redecision differentials green; Node routing-audit.test.js 21/21."
       ],
+      "openGates": [],
       "legacyLedgerNote": "Serial Phase1 native SQLite Job creation and bounded/redacted JSONL routing audit port; uncompiled/untested, Stage2 bindings+differential pending."
     },
     {

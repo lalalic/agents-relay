@@ -788,3 +788,15 @@
   - `pullRequestState`/`headSha`：PR node 投影。
 - 两侧均无网络访问（fixture client）。
 - **回归**：lib 89/89、github_pr_archive 1156、github_runtime_usage 1793、no_github 900 + fail-closed 传输全绿。
+
+## 2026-11-20 decision-audit 认证 PASS
+
+- **差分认证**：140 个原创 Node/Rust 用例（`head_to_head_decision_audit_public.mjs`），覆盖公开面 + 真实 JSONL 文件：
+  - `routeReason`：Bearer/api-key/token/password/credential/authorization 脱敏、空白折叠、240 UTF-16 单元截断（含代理对）。
+  - `routerReasonCode`：12 种 kind × provider 摘要分类。
+  - `RouterRouteResult` 投影：路由字段缺失、空 profile/reasoning、非字符串 worker。
+  - `recentExecutionRouteResults`：decision/outcome 按 decision_id + 执行 attempt 键连接、最新时间戳（再文件序）胜出、limit 0..10 钳制、legacy 键、ghost 决策丢弃。
+  - 真实 JSONL store：append 脱敏、有界反向扫描（损坏行/半行/CRLF）、内嵌 route 快路径 + legacy 全量连接回退、上限 10。
+  - `outcomeForDecision`、`taskAuditFacts`、`makeDecisionAudit`（gate 理由顺序、excludedRoutes 匹配、policy 禁用门、键省略）与 `makeExecutionDecisionAudit`（worker/model 审计候选、stage 明细、worker 门）。
+- **修复 5 处真实差异**：routeResult 对 profile/reasoning 应用 Node textField 语义；read() 遇损坏行整体返回 []（Node all-or-nothing）；task facts/correlation 省略 undefined 的 Task ID（显式 null 保留）；两个审计构造器按 Node 键序输出 prior_decision_id，并在来源为 undefined 时省略 timestamp/engine/fallback.reason/decision_evidence；workerAuditCandidate 应用 trustDomains ?? [] 与 labels ?? {} 默认值。
+- **回归**：lib 89/89；native model_redecision、wave4_delivery、dashboard_api、stage2_daemon_smoke、cli_service_public、stage2_dashboard 全绿；head-to-head wave4 delivery（125/42/180）与 model-redecision 差分绿；Node routing-audit 21/21。

@@ -70,11 +70,18 @@ pub fn route_result(record:&Value,route:&Value)->Option<Value>{
     let failure=if matches!(kind,"success"|"cancelled"|"blocked"|"outcome_unknown"){
         Value::Null
     }else{json!(kind)};
+    // Node's RouterRouteResult passes profile/reasoning through textField():
+    // a non-blank string survives, anything else (empty, whitespace-only,
+    // null, objects, arrays) becomes null.
+    let text_field=|value:Option<&Value>|nonempty(value)
+        .map(|s|json!(s)).unwrap_or(Value::Null);
     Ok::<Value,()>(json!({
         "timestamp":record.get("timestamp"),"worker":route.get("worker"),
         "adapter":route.get("adapter"),"provider":route.get("provider"),
-        "model":route.get("model"),"profile":route.get("profile"),
-        "reasoning":route.get("reasoning"),"result":result,
+        "model":route.get("model"),
+        "profile":text_field(route.get("profile")),
+        "reasoning":text_field(route.get("reasoning")),
+        "result":result,
         "failure_kind":failure,"reason":router_reason_code(kind,field(record,"summary"))
     })).ok()
 }
@@ -153,8 +160,19 @@ impl JsonlDecisionAuditStore {
     }
     pub fn read(&self)->Vec<Value>{
         let Ok(raw)=fs::read_to_string(&self.path)else{return Vec::new();};
-        raw.lines().filter(|line|!line.is_empty())
-            .filter_map(|line|serde_json::from_str(line).ok()).collect()
+        // Node splits on /\r?\n/, filters empty strings and JSON.parses each
+        // line inside one try/catch: a single malformed line fails the whole
+        // read to []. Empty segments (blank lines) are skipped, CRLF lines
+        // parse because the \r is consumed by the split.
+        let mut records=Vec::new();
+        for line in raw.split("\r\n").flat_map(|chunk|chunk.split('\n')){
+            if line.is_empty(){continue;}
+            match serde_json::from_str(line){
+                Ok(value)=>records.push(value),
+                Err(_)=>return Vec::new(),
+            }
+        }
+        records
     }
     pub fn read_recent_routes(&self,limit:usize)->Vec<Value>{
         let cap=limit.min(10);
@@ -201,11 +219,37 @@ pub fn task_audit_facts(task:Option<&Value>)->Value{
     let input=field(task,"input");
     let input_class=input.encode_utf16().take(80).collect::<Vec<_>>();
     let bounded=String::from_utf16_lossy(&input_class);
-    json!({"job_id":task.get("jobId"),"task_id":task.get("id"),
-        "attempt":task.get("attempt"),"execution_id":task.get("executionId"),
-        "capabilities":task.get("capabilities"),"input_class":
-            Regex::new(r"\s+").expect("fixed whitespace")
-                .replace_all(&bounded," ").to_string()})
+    // Node copies task.jobId/id/attempt/executionId verbatim: JSON.stringify
+    // drops keys whose value is undefined, so absent IDs must stay absent
+    // while explicit nulls are kept.
+    let mut facts=serde_json::Map::new();
+    for (source,target) in [("jobId","job_id"),("id","task_id"),
+        ("attempt","attempt"),("executionId","execution_id")].into_iter(){
+        if let Some(value)=task.get(source){
+            facts.insert(target.into(),value.clone());
+        }
+    }
+    facts.insert("capabilities".into(),task.get("capabilities")
+        .cloned().unwrap_or_else(||json!([])));
+    facts.insert("input_class".into(),json!(
+        Regex::new(r"\s+").expect("fixed whitespace")
+            .replace_all(&bounded," ").to_string()));
+    Value::Object(facts)
+}
+/// correlation mirrors the JS object literal { job_id: task?.jobId, ... }:
+/// when task is null/undefined every field is undefined and JSON.stringify
+/// drops the whole set of keys ({}), while present-but-null fields stay.
+fn audit_correlation(task:Option<&Value>)->Value{
+    let mut map=serde_json::Map::new();
+    if let Some(task)=task{
+        for (source,target) in [("jobId","job_id"),("id","task_id"),
+            ("executionId","execution_id"),("attempt","attempt")]{
+            if let Some(value)=task.get(source){
+                map.insert(target.into(),value.clone());
+            }
+        }
+    }
+    Value::Object(map)
 }
 fn policy_audit(policy:&Value)->Value{
     json!({"path":policy.get("path"),"hash":policy.get("hash"),
@@ -267,38 +311,59 @@ pub fn make_decision_audit(
             "rejection_reasons":reasons})
     }).collect();
     let evidence=&routing["decisionEvidence"];
-    let mut value=json!({
-        "record_type":"decision",
-        "schema_version":DECISION_AUDIT_SCHEMA_VERSION,
-        "decision_id":decision_audit_id(),
-        "timestamp":routing.get("decidedAt"),
-        "correlation":{
-            "job_id":task.and_then(|t|t.get("jobId")),
-            "task_id":task.and_then(|t|t.get("id")),
-            "execution_id":task.and_then(|t|t.get("executionId")),
-            "attempt":task.and_then(|t|t.get("attempt"))
-        },
-        "task":task_audit_facts(task),
-        "worker":worker,"contract":contract,"policy":policy_audit(policy),
-        "candidates":candidates.iter().map(model_candidate).collect::<Vec<_>>(),
-        "gate_results":gates,
-        "eligible_candidates":eligible.iter().map(model_candidate).collect::<Vec<_>>(),
-        "selected":model_candidate(selected),
-        "engine":routing.get("decidedBy"),
-        "fallback":{"used":evidence.get("fallback")==Some(&Value::Bool(true)),
-            "reason":evidence.get("error")},
-        "decision_evidence":evidence
-    });
-    if let Some(previous)=prior_decision{value["prior_decision_id"]=json!(previous);}
-    if let Some(failure)=prior_failure{value["prior_failure"]=failure.clone();}
-    value
+    let mut map=serde_json::Map::new();
+    map.insert("record_type".into(),json!("decision"));
+    map.insert("schema_version".into(),json!(DECISION_AUDIT_SCHEMA_VERSION));
+    map.insert("decision_id".into(),json!(decision_audit_id()));
+    if let Some(previous)=prior_decision{
+        map.insert("prior_decision_id".into(),json!(previous));
+    }
+    if let Some(timestamp)=routing.get("decidedAt"){
+        map.insert("timestamp".into(),timestamp.clone());
+    }
+    map.insert("correlation".into(),audit_correlation(task));
+    map.insert("task".into(),task_audit_facts(task));
+    map.insert("worker".into(),worker.clone());
+    map.insert("contract".into(),contract.clone());
+    map.insert("policy".into(),policy_audit(policy));
+    map.insert("candidates".into(),json!(candidates.iter()
+        .map(model_candidate).collect::<Vec<_>>()));
+    map.insert("gate_results".into(),json!(gates));
+    map.insert("eligible_candidates".into(),json!(eligible.iter()
+        .map(model_candidate).collect::<Vec<_>>()));
+    map.insert("selected".into(),model_candidate(selected));
+    if let Some(engine)=routing.get("decidedBy"){
+        map.insert("engine".into(),engine.clone());
+    }
+    // fallback: { used, reason? } — reason only survives when
+    // decisionEvidence.error is defined (null stays null, undefined omits).
+    let mut fallback=serde_json::Map::new();
+    fallback.insert("used".into(),json!(
+        evidence.get("fallback")==Some(&Value::Bool(true))));
+    if let Some(reason)=evidence.get("error"){
+        fallback.insert("reason".into(),reason.clone());
+    }
+    map.insert("fallback".into(),Value::Object(fallback));
+    if evidence.is_object(){
+        map.insert("decision_evidence".into(),evidence.clone());
+    }
+    if let Some(failure)=prior_failure{
+        map.insert("prior_failure".into(),failure.clone());
+    }
+    Value::Object(map)
 }
 fn worker_audit_candidate(worker:&Value)->Value{
+    // Node applies ?? coalescing after the spread: trustDomains defaults to
+    // [] and labels to {} for both missing and null values.
+    let trust=worker.get("trustDomains").cloned()
+        .filter(|v|!v.is_null()).unwrap_or_else(||json!([]));
+    let labels=worker.get("labels").cloned()
+        .filter(|v|!v.is_null()).unwrap_or_else(||json!({}));
     json!({"id":worker.get("workerId"),"adapter":worker.get("adapter"),
         "runtime":worker.get("runtime"),"availability":worker.get("availability"),
         "capabilities":worker.get("capabilities"),
-        "trustDomains":worker.get("trustDomains"),"region":worker.get("region"),
-        "labels":worker.get("labels"),
+        "trustDomains":trust,"region":worker.get("region"),
+        "labels":labels,
         "resourceProvider":worker.get("resourceProvider"),
         "resourceHealthy":worker.get("resourceHealthy"),
         "resourceUsedPercent":worker.get("resourceUsedPercent"),
@@ -336,39 +401,49 @@ pub fn make_execution_decision_audit(
                 .and_then(Value::as_bool).unwrap_or(false)}
     })).collect::<Vec<_>>();
     let _=requirements;
-    json!({"record_type":"decision",
-        "schema_version":DECISION_AUDIT_SCHEMA_VERSION,
-        "decision_id":decision_audit_id(),
-        "timestamp":routing.get("decidedAt"),
-        "correlation":{
-            "job_id":task.and_then(|t|t.get("jobId")),
-            "task_id":task.and_then(|t|t.get("id")),
-            "execution_id":task.and_then(|t|t.get("executionId")),
-            "attempt":task.and_then(|t|t.get("attempt"))
-        },
-        "task":task_audit_facts(task),
-        "worker":worker_audit_candidate(&selected["worker"]),
-        "contract":contract,
-        "policy":policy_audit(policy),
-        "candidates":evaluations.iter()
-            .map(|e|execution_route_audit_candidate(&e["route"])).collect::<Vec<_>>(),
-        "gate_results":evaluations.iter().map(|e|json!({
-            "candidate_id":e.pointer("/route/id"),
-            "eligible":e.get("eligible"),
-            "rejection_reasons":e.get("rejectionReasons")
-        })).collect::<Vec<_>>(),
-        "eligible_candidates":eligible,
-        "selected":execution_route_audit_candidate(selected),
-        "engine":routing.get("decidedBy"),
-        "fallback":{"used":evidence.get("fallback")==Some(&Value::Bool(true)),
-            "reason":evidence.get("error")},
-        "decision_evidence":evidence,
-        "decision_input":{"type":"merged_choice_decision","stages":stage_details},
-        "worker_candidates":workers.iter().map(worker_audit_candidate)
-            .collect::<Vec<_>>(),
-        "worker_gate_results":worker_gates.iter().map(|entry|json!({
+    let mut map=serde_json::Map::new();
+    map.insert("record_type".into(),json!("decision"));
+    map.insert("schema_version".into(),json!(DECISION_AUDIT_SCHEMA_VERSION));
+    map.insert("decision_id".into(),json!(decision_audit_id()));
+    if let Some(timestamp)=routing.get("decidedAt"){
+        map.insert("timestamp".into(),timestamp.clone());
+    }
+    map.insert("correlation".into(),audit_correlation(task));
+    map.insert("task".into(),task_audit_facts(task));
+    map.insert("worker".into(),worker_audit_candidate(&selected["worker"]));
+    map.insert("contract".into(),contract.clone());
+    map.insert("policy".into(),policy_audit(policy));
+    map.insert("candidates".into(),json!(evaluations.iter()
+        .map(|e|execution_route_audit_candidate(&e["route"]))
+        .collect::<Vec<_>>()));
+    map.insert("gate_results".into(),json!(evaluations.iter().map(|e|json!({
+        "candidate_id":e.pointer("/route/id"),
+        "eligible":e.get("eligible"),
+        "rejection_reasons":e.get("rejectionReasons")
+    })).collect::<Vec<_>>()));
+    map.insert("eligible_candidates".into(),json!(eligible));
+    map.insert("selected".into(),execution_route_audit_candidate(selected));
+    if let Some(engine)=routing.get("decidedBy"){
+        map.insert("engine".into(),engine.clone());
+    }
+    let mut fallback=serde_json::Map::new();
+    fallback.insert("used".into(),json!(
+        evidence.get("fallback")==Some(&Value::Bool(true))));
+    if let Some(reason)=evidence.get("error"){
+        fallback.insert("reason".into(),reason.clone());
+    }
+    map.insert("fallback".into(),Value::Object(fallback));
+    if evidence.is_object(){
+        map.insert("decision_evidence".into(),evidence.clone());
+    }
+    map.insert("decision_input".into(),json!({
+        "type":"merged_choice_decision","stages":stage_details}));
+    map.insert("worker_candidates".into(),json!(workers.iter()
+        .map(worker_audit_candidate).collect::<Vec<_>>()));
+    map.insert("worker_gate_results".into(),json!(worker_gates.iter()
+        .map(|entry|json!({
             "worker_id":entry.get("workerId"),"eligible":entry.get("eligible"),
             "rejection_reasons":entry.get("rejectionReasons")
-        })).collect::<Vec<_>>()
-    })
+        })).collect::<Vec<_>>()));
+    Value::Object(map)
 }

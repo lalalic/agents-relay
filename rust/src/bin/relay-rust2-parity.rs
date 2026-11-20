@@ -90,6 +90,8 @@ mod escalation_notifier_public;
 mod chatgpt_platform_fallback_public;
 #[path = "relay-rust2-parity/types_public.rs"]
 mod types_public;
+#[path = "relay-rust2-parity/decision_audit_public.rs"]
+mod decision_audit_public;
 #[path = "relay-rust2-parity/execution_context_public.rs"]
 mod execution_context_public;
 use serde_json::{json, Value};
@@ -445,6 +447,7 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=script_task_adapter_public::invoke(request){return output;}
     if let Some(output)=reconciler_context_public::invoke(request){return output;}
     if let Some(output)=workflow_effect_failures_public::invoke(request){return output;}
+    if let Some(output)=decision_audit_public::invoke(request){return output;}
     if let Some(output)=worker_failure_parity::invoke(request)?{return Ok(output);}
     if let Some(output)=additional_40::invoke(request){return output;}
     if let Some(output)=dashboard_factory::invoke(request)?{return Ok(output);}
