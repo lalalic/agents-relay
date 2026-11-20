@@ -558,13 +558,12 @@
         "DAGChild",
         "DAGCheckpoint"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "仍有 2 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-19: 21 original Node/Rust direct differential cases (rust/tests/head_to_head_dag_task_runtime_public.mjs) over all 5 public exports with real Graph parsing and task entity factory on both stacks; fixed pause:false truthiness and capabilities array shape divergences. Regressions: lib 89/89, schema 258, agent_graph 1050+690, l3-unified-dag 17/17."
       ],
-      "legacyLedgerNote": "Phase1 serial native DAG Task projection and Troubleshooter recovery first port; uncompiled/unverified, production bindings Phase2."
+      "openGates": [],
+      "legacyLedgerNote": "Phase1 serial native DAG Task projection and Troubleshooter recovery first port; uncompiled/unverified, production bindings Phase2.",
+      "status": "PASS"
     },
     {
       "source": "src/dashboard-actions.ts",

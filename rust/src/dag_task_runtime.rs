@@ -207,7 +207,7 @@ where Script:FnMut(&str,&Path,&Value)->Result<bool,String>{
                         "graphHash":sha,"executor":if script{"script"}else{"model"}},
                     "title":agent,"kind":"work","agentName":agent,
                     "dependencies":deps,
-                    "capabilities":if script{vec!["script"]}else{vec!["model"]},
+                    "capabilities":if script{json!(["script"])}else{json!(["model"])},
                     "adapter":if script{"script"}else{"codex"},
                     "workerRequirements":if script{Value::Null}else{json!({"capabilities":["model"]})},
                     "input":input.to_string(),
@@ -231,8 +231,10 @@ where Script:FnMut(&str,&Path,&Value)->Result<bool,String>{
 /// Model Worker. No duplicate revision Task or parallel recovery chain.
 pub fn select_dag_review_executors(job:&Value)->Result<Value,String>{
     let mut current=job.clone();
+    // Node truthiness: only an actual `true` pauses; null/undefined/false
+    // do not.
     if field(&current,"state")!="ACTIVE"
-        ||current.get("pause").is_some_and(|v|!v.is_null()){
+        ||current.get("pause")==Some(&Value::Bool(true)){
         return Ok(current);
     }
     for task in current.get_mut("tasks").and_then(Value::as_array_mut)
@@ -245,7 +247,7 @@ pub fn select_dag_review_executors(job:&Value)->Result<Value,String>{
         let desired=if status=="changes_requested"{"codex"}else{"script"};
         if field(task,"adapter")==desired{continue;}
         task["adapter"]=json!(desired);
-        task["capabilities"]=json!(if desired=="codex"{"model"}else{"script"});
+        task["capabilities"]=json!(if desired=="codex"{["model"]}else{["script"]});
         if desired=="codex" {
             task["workerRequirements"]=json!({"capabilities":["model"]});
         }else if let Some(map)=task.as_object_mut(){map.remove("workerRequirements");}

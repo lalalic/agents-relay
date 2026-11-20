@@ -761,3 +761,12 @@
   - `combineOutcomeReviews` 优先级：BLOCKED > CHANGE_REQUIRED > PASS。
 - **既有证据**：wave4 500 randomized args/aggregate + native 注入 runner/exit-code 效果；9 个 evaluateOutcome 注入 runner 场景（子进程错误/非 JSON/verdict 校验）。
 - owned reviewer 子进程（codex exec）两侧均为注入，从不访问真实模型。
+
+## 2026-11-19 dag-task-runtime 认证 PASS
+
+- **差分认证**：21 个原创 Node/Rust 用例（`head_to_head_dag_task_runtime_public.mjs`）覆盖全部 5 个导出，两侧使用真实 Graph 解析器与 Task 实体工厂：
+  - 谓词：unifiedDAG/dagCoordinator 5 种形状。
+  - reconcileDAGTasks 10 场景：QUEUED 协调器启动、RUNNING 波次物化与依赖门控、SUCCEEDED 跳过、graph-hash 漂移拒绝、PAUSED 跳过、前驱结构化输出传播、缺失结构化结果报错、JSON 父输入展开（保留键剔除）、真实项目 agents 目录的 script 执行器解析。
+  - selectDAGReviewExecutors 6 场景：changes_requested 重路由 codex（reviewRevision 注入）、approved/空闲 script 保留、model 执行器跳过、PAUSED 跳过、已执行 Task 跳过。
+- **修复两个真实差异**：Rust 把 `pause:false` 当作暂停（Node 真值语义）；`capabilities` 写成字符串而非 Node 的数组形状（select 与子任务物化两处）。
+- **回归**：lib 89/89、unified_relay_schema 258、agent_graph 1050+690、l3-unified-dag 17/17 全绿。
