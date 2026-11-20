@@ -2,15 +2,15 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "45723f5e0c92937e3d3ff97a246f8cafdd526ebe",
-    "rustTree": "4a50327e53cc8e14e3cd3614bd1866e8aa1a95d9",
-    "sourceCount": 39,
+    "rustTree": "f3da076b5e39c97aeb0b27885d06cd830829fdf8",
+    "sourceCount": 38,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 369,
-    "directNameMatches": 356,
+    "runtimeExportSymbols": 351,
+    "directNameMatches": 338,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 13,
-    "typeOrShapeReviewSymbols": 175,
+    "typeOrShapeReviewSymbols": 171,
     "filesWithUnmappedRuntime": 0,
     "filesWithoutDirectDiffImport": 14,
     "filesWithoutOtherRustReferences": 8
@@ -2915,145 +2915,6 @@
         },
         {
           "name": "listManagedGitHubJobs",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/task-actions.ts",
-      "target": "rust/src/task_actions.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 18,
-      "directNameMatches": 18,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "TaskActionId",
-        "TaskActionRequest",
-        "TaskActionResult",
-        "TaskRetryPolicy"
-      ],
-      "directDiffImports": [
-        "rust/tests/head_to_head_atomic_public_apis.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity/sqlite_api.rs",
-        "rust/src/blockers.rs",
-        "rust/src/cli.rs",
-        "rust/src/interactive_request.rs",
-        "rust/src/reconciler.rs",
-        "rust/src/reconciler_runtime.rs",
-        "rust/src/relayd_control.rs",
-        "rust/src/task_update.rs"
-      ],
-      "exports": [
-        {
-          "name": "TASK_RETRY_ACTION",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "TASK_RECOVER_ACTION",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "TASK_UNBLOCK_RETRY_ACTION",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "TASK_CANCEL_ACTION",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "TASK_RELEASE_ACTION",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "TASK_HOLD_ACTION",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "TASK_QUEUE_ACTION",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "TaskActionId",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "TaskActionRequest",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "TaskActionResult",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "TaskRetryPolicy",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "classifyFailedTask",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "applyTaskUnblockRetrySnapshot",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "applyTaskRetryAction",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "applyTaskUnblockRetryAction",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "tryApplyTaskCancelAction",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "applyTaskCancelAction",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "applyTaskReleaseAction",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "applyTaskHoldAction",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "applyTaskQueueAction",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "supersedeCancelledTask",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "dispatchTaskAction",
           "kind": "function",
           "static": "name-match"
         }

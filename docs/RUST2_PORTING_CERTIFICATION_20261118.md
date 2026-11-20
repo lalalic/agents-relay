@@ -770,3 +770,11 @@
   - selectDAGReviewExecutors 6 场景：changes_requested 重路由 codex（reviewRevision 注入）、approved/空闲 script 保留、model 执行器跳过、PAUSED 跳过、已执行 Task 跳过。
 - **修复两个真实差异**：Rust 把 `pause:false` 当作暂停（Node 真值语义）；`capabilities` 写成字符串而非 Node 的数组形状（select 与子任务物化两处）。
 - **回归**：lib 89/89、unified_relay_schema 258、agent_graph 1050+690、l3-unified-dag 17/17 全绿。
+
+## 2026-11-19 task-actions 认证 PASS
+
+- **差分认证**：26 个原创 Node/Rust 用例（`head_to_head_task_actions_public.mjs`），基于真实 workflow Graph 定义覆盖全部导出：
+  - `applyTaskRetryAction`（可重启转换、extendBudget 算术、planner 只读、错误状态拒绝）、`applyTaskUnblockRetryAction`（BLOCKED 解锁+QUEUED/DRAFT 重置、attempt=0、Math.max(3,maxAttempts)、blockedBy 删除、RUNNING 拒绝）、`applyTaskCancelAction`（RUNNING 取消带原因、重复取消、planner、SUCCEEDED 拒绝）、`applyTaskReleaseAction`、`applyTaskHoldAction`（合法/非法状态）、`applyTaskQueueAction`（依赖满足/不满足/无依赖）。
+  - `dispatchTaskAction`：task.retry（routing/workerSelection 重置）、task.cancel、task.recover（真实 troubleshooter 恢复 Graph + resolution 物化）、缺失 recovery/task 报错、task.hold。
+- **修复两个真实差异**：Rust recovery 处理器监听的 action 名与 Graph 实际发出的 `resolution.activateRecovery` 不符（task.recover 全部被拒）；`extend_retry_budget` 以 f64 序列化整数预算（`6.0` vs Node 的 `6`）。
+- **回归**：lib 89/89、sjtc 31（0 差异）、interactive_resume 190、task_recovery、sqlite entrypoints 6/6 全绿。

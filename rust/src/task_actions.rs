@@ -61,7 +61,11 @@ pub fn apply_task_retry_action(
     if extend_budget {
         let attempt=task.get("attempt").and_then(Value::as_f64).unwrap_or(0.0);
         let budget=task.get("maxAttempts").and_then(Value::as_f64).unwrap_or(0.0);
-        task["maxAttempts"]=json!(extend_retry_budget(attempt,budget,3.0)?);
+        let extended=extend_retry_budget(attempt,budget,3.0)?;
+        // JS Number emits whole values without a decimal point.
+        task["maxAttempts"]=if extended.fract()==0.0{
+            json!(extended as i64)
+        }else{json!(extended)};
     }
     clear_execution(task);
     Ok(())
@@ -281,7 +285,7 @@ pub fn dispatch_task_action_snapshot(
             let decision=dispatch_task_resolution_sync(
                 directory,original,&proposal,&json!("troubleshooter"),
                 |selected|{
-                    if selected!="resolution.activateExactOriginalRetry" {
+                    if selected!="resolution.activateRecovery" {
                         return Err(format!("Unsupported recovery action {selected}"));
                     }
                     accepted_action=true;

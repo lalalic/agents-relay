@@ -2475,12 +2475,12 @@
         "TaskActionResult",
         "TaskRetryPolicy"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 4 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-19: 26 original Node/Rust direct differential cases (rust/tests/head_to_head_task_actions_public.mjs) over all exported snapshot appliers and dispatchTaskAction using the real workflow Graph; fixed the recovery action-name mismatch (Graph emits resolution.activateRecovery) and the f64 retry-budget wire shape. Regressions: lib 89/89 + recovery/control suites."
       ],
-      "legacyLedgerNote": "Phase1 serial Rust native Task Graph/SQLite snapshot draft; compile and head-to-head differential deferred to Phase2."
+      "openGates": [],
+      "legacyLedgerNote": "Phase1 serial Rust native Task Graph/SQLite snapshot draft; compile and head-to-head differential deferred to Phase2.",
+      "status": "PASS"
     },
     {
       "source": "src/task-inactivity-watchdog.ts",

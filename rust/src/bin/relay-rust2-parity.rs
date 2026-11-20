@@ -62,6 +62,8 @@ mod script_task_adapter_public;
 mod dependency_revision_execution_public;
 #[path = "relay-rust2-parity/browser_worker_routing_public.rs"]
 mod browser_worker_routing_public;
+#[path = "relay-rust2-parity/task_actions_public.rs"]
+mod task_actions_public;
 #[path = "relay-rust2-parity/dag_task_runtime_public.rs"]
 mod dag_task_runtime_public;
 #[path = "relay-rust2-parity/outcome_review_resolver_public.rs"]
@@ -424,6 +426,7 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=execution_context_public::invoke(request){return output;}
     if let Some(output)=dependency_revision_execution_public::invoke(request){return output;}
     if let Some(output)=browser_worker_routing_public::invoke(request){return output;}
+    if let Some(output)=task_actions_public::invoke(request){return output;}
     if let Some(output)=dag_task_runtime_public::invoke(request){return output;}
     if let Some(output)=outcome_review_resolver_public::invoke(request){return output;}
     if let Some(output)=model_redecision_public::invoke(request){return output;}
