@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 82,
-    "HOLD": 22,
+    "PASS": 83,
+    "HOLD": 21,
     "EXCLUDED": 3
   },
   "records": [
@@ -13,10 +13,12 @@
       "source": "src/adapters.ts",
       "target": "rust/src/adapters.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 12,
       "staticNameMismatch": 0,
       "directDiffTests": [
+        "rust/tests/head_to_head_adapters_public.mjs",
+        "rust/tests/head_to_head_codex_adapter_launch.mjs",
         "rust/tests/head_to_head_stage2_pool_adapters.mjs",
         "rust/tests/head_to_head_webhelm_preflight.mjs"
       ],
@@ -42,12 +44,12 @@
         "ChatGptAdapter.capabilities",
         "ChatGptAdapter.tabClosePolicy"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 14 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-20: Original Node/Rust 57 pure and 8 actual CodexAdapter.launch owned-fake-process public cases, 49 original Node owned WebHelm preflight probes, Stage2 adapter/pool tests; native ChatGPT AF_UNIX session/Graph barrier SQLite lease/quarantine 3/3, internal helper 6/6 and facade 12/12. Fixed native processExit.terminationReason to leader-exit. Actual native daemon WebHelm Graph/SQLite terminal tested separately. No real Codex/WebHelm/OAuth; cross-module lifecycle remains HOLD in relayd/reconciler-runtime/browser-worker-runtime."
       ],
-      "legacyLedgerNote": "Phase1 serial native Worker adapter/Repository Pool draft; not compiled/tested, Stage2 parity/wiring pending."
+      "openGates": [],
+      "legacyLedgerNote": "Phase1 serial native Worker adapter/Repository Pool draft; not compiled/tested, Stage2 parity/wiring pending.",
+      "status": "PASS"
     },
     {
       "source": "src/blocker-recovery.ts",

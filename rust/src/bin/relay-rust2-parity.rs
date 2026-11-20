@@ -84,6 +84,8 @@ mod events_public;
 mod single_job_task_control_public;
 #[path = "relay-rust2-parity/interactive_resume_public.rs"]
 mod interactive_resume_public;
+#[path = "relay-rust2-parity/adapters_public.rs"]
+mod adapters_public;
 #[path = "relay-rust2-parity/z_public.rs"]
 mod z_public;
 #[path = "relay-rust2-parity/escalation_notifier_public.rs"]
@@ -459,6 +461,7 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=events_public::invoke(request){return output;}
     if let Some(output)=single_job_task_control_public::invoke(request){return output;}
     if let Some(output)=interactive_resume_public::invoke(request){return output;}
+    if let Some(output)=adapters_public::invoke(request){return output;}
     if let Some(output)=z_public::invoke(request){return output;}
     if let Some(output)=escalation_notifier_public::invoke(request){return output;}
     if let Some(output)=chatgpt_platform_fallback_public::invoke(request){return output;}

@@ -226,7 +226,7 @@ pub(super) fn invoke(request:&Value)->Result<Option<String>,String>{
         // platform validation and daemon running truth are all observable.
         "webhelmReadyParity"=>{
             let mut calls=Vec::<String>::new();
-            let outcome=agents_relay_rust2::adapters::ensure_chat_gpt_webhelm_ready(|argv|{
+            let outcome=agents_relay_rust2::adapters::ensure_chatgpt_web_helm_ready(|argv|{
                 calls.push(argv.join(" "));
                 Ok(if argv.first()==Some(&"platform") {
                     request["profileOutput"].as_str().unwrap_or("")

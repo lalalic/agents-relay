@@ -55,19 +55,20 @@ impl From<StartAckTimeout> for LaunchFailure {
 /// Node ensureChatGptWebHelmReady uses two owned CLI observations, not a
 /// browser submission receipt or an implicit new WebHelm session. Injecting
 /// command execution permits identical offline error and ordering tests.
-pub fn ensure_chat_gpt_webhelm_ready<Run>(mut run:Run)->Result<(),String>
-where Run:FnMut(&[&str])->Result<String,String>{
-    fn workspace_json(output:&str)->Result<Value,String>{
-        for line in output.trim().lines().rev(){
-            if let Ok(value)=serde_json::from_str::<Value>(line){return Ok(value);}
-        }
-        Err("webhelm returned no JSON result".into())
+/// Last-JSON-line scan over CLI output; diagnostics may precede the result.
+pub fn parse_workspace_json(output:&str)->Result<Value,String>{
+    for line in output.trim().lines().rev(){
+        if let Ok(value)=serde_json::from_str::<Value>(line){return Ok(value);}
     }
-    let profile=workspace_json(&run(&["platform","profile","chatgpt"])?)?;
+    Err("webhelm returned no JSON result".into())
+}
+pub fn ensure_chatgpt_web_helm_ready<Run>(mut run:Run)->Result<(),String>
+where Run:FnMut(&[&str])->Result<String,String>{
+    let profile=parse_workspace_json(&run(&["platform","profile","chatgpt"])?)?;
     if profile["platform"]!="chatgpt"{
         return Err("Global WebHelm CLI cannot load the ChatGPT platform skill".into());
     }
-    let status=workspace_json(&run(&["status"])?)?;
+    let status=parse_workspace_json(&run(&["status"])?)?;
     if status.pointer("/daemon/running")!=Some(&Value::Bool(true)){
         return Err("Global WebHelm daemon is not running".into());
     }
@@ -77,6 +78,17 @@ pub trait WorkerAdapter {
     fn name(&self)->&'static str;
     fn id(&self)->&str;
     fn capabilities(&self)->&'static [&'static str];
+}
+/// Byte-capped output tail mirroring the original appendTail helper: keep
+/// the last `max_bytes` bytes and decode lossily (Node Buffer.toString
+/// replaces invalid lead bytes the same way from_utf8_lossy does).
+pub fn append_tail(current:&str,chunk:&str,max_bytes:usize)->String{
+    let mut combined=String::with_capacity(current.len()+chunk.len());
+    combined.push_str(current);
+    combined.push_str(chunk);
+    if combined.len()<=max_bytes{return combined;}
+    let bytes=combined.into_bytes();
+    String::from_utf8_lossy(&bytes[bytes.len()-max_bytes..]).into_owned()
 }
 pub fn build_codex_args(route:&Value,input:&str)->Vec<String>{
     let mut args=vec!["exec".into(),"--json".into()];
@@ -173,8 +185,10 @@ impl CodexAdapter{
             json!({"summary":
                 "Codex runtime exited after task execution; terminal task state is event-owned"}));
         result.thread_id=thread;
+        // Node's owned-process close handler records "leader-exit" for
+        // clean completion as it closes the exact disposable process group.
         result.process_exit=Some(json!({"exitCode":execution.code,
-            "signal":null,"stderr":stderr,"terminationReason":null}));
+            "signal":null,"stderr":stderr,"terminationReason":"leader-exit"}));
         Ok(result)
     }
 }
@@ -296,8 +310,11 @@ pub fn declared_prompt_references(prompt:&str)->Vec<Value>{
         let role=match_ref.get(1)?.as_str();
         let path=match_ref.get(2)?.as_str();
         let digest=match_ref.get(3).map(|m|m.as_str().into())
-            .or_else(||Path::new(path).file_stem().and_then(|s|s.to_str())
-                .map(str::to_owned))?;
+            .or_else(||Path::new(path).file_name().and_then(|s|s.to_str())
+                .map(|name|{
+                    // Node basename(path,'.md') strips only a '.md' suffix.
+                    name.strip_suffix(".md").unwrap_or(name).to_owned()
+                }))?;
         Regex::new(r"^[a-f0-9]{64}$").unwrap()
             .is_match(&digest).then(||json!({
                 "role":role,"path":path,"sha256":digest

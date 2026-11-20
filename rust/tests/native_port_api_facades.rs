@@ -106,17 +106,17 @@ fn script_adapter_preserves_worker_identity_and_rejects_unleased_tasks(){
 }
 #[test]
 fn webhelm_preflight_requires_both_profile_and_running_daemon(){
-    use agents_relay_rust2::adapters::ensure_chat_gpt_webhelm_ready;
+    use agents_relay_rust2::adapters::ensure_chatgpt_web_helm_ready;
     let mut commands=Vec::new();
-    ensure_chat_gpt_webhelm_ready(|argv|{
+    ensure_chatgpt_web_helm_ready(|argv|{
         commands.push(argv.join(" "));
         if argv.first()==Some(&"platform") {Ok("diagnostic\n{\"platform\":\"chatgpt\"}".into())}
         else {Ok("{\"daemon\":{\"running\":true}}".into())}
     }).unwrap();
     assert_eq!(commands,vec!["platform profile chatgpt","status"]);
-    let err=ensure_chat_gpt_webhelm_ready(|_|Ok("{\"platform\":\"z\"}".into())).unwrap_err();
+    let err=ensure_chatgpt_web_helm_ready(|_|Ok("{\"platform\":\"z\"}".into())).unwrap_err();
     assert_eq!(err,"Global WebHelm CLI cannot load the ChatGPT platform skill");
-    let err=ensure_chat_gpt_webhelm_ready(|argv|{
+    let err=ensure_chatgpt_web_helm_ready(|argv|{
         if argv.first()==Some(&"platform") {Ok("{\"platform\":\"chatgpt\"}".into())}
         else{Ok("{\"daemon\":{\"running\":false}}".into())}
     }).unwrap_err();

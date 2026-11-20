@@ -1,3 +1,10 @@
+## 2026-11-20 takeover from follow-up agent (newest update)
+
+- Previous follow-up committed 11455e6 (daemon WorkerFailurePorts/start-ack and three modules) and 004f509 (Z adapter/OAuth), leaving 209 PASS / 14 PORTING / 7 EXCLUDED. Its uncommitted adapters.ts work was preserved and completed here, with no new worktrees or Relay jobs.
+- Adapters: 57 direct Node/Rust public cases, 49 WebHelm owned-process preflight probes, 8 NEW original Node/Rust CodexAdapter.launch tests using only a fake owned executable, plus the existing 700+ Stage2 pool/adapter comparisons; native ChatGPT fake AF_UNIX pool/barrier tests (3), helper tests (6) and native facade tests (12). Fixed processExit terminationReason from null to leader-exit per original Node. No real Codex CLI or live ChatGPT invoked.
+- Ledger **210 PASS / 13 PORTING / 7 EXCLUDED** after the adapter tranche. The remaining active runtime/daemon/foreground/planner modules are still HOLD; no artificial PASS promotion. Another agent's concurrent Rust all-targets run recorded a daemon startup-port timeout once under contention; rerunning that single native coordinator daemon E2E in isolation passed. Run a new full all-target regression before claiming all tests green.
+- Earlier dated handoff sections below are history and carry superseded counts.
+
 # Rust2 handoff — CURRENT authoritative status (2026-11-20)
 
 **READ THIS FIRST:** Everything after the divider below is historical and its older PASS, PORTING, branch and merge remarks are superseded. The authoritative data is the current checklist and certification JSON.

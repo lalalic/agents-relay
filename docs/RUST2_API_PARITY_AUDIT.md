@@ -14,31 +14,28 @@ A listed direct differential import only means a head-to-head test imports the c
 
 | Metric | Count |
 |---|---:|
-| sourceCount | 19 |
+| sourceCount | 13 |
 | pendingSourceModules | 0 |
 | pendingRuntimeExportSymbols | 0 |
-| runtimeExportSymbols | 146 |
-| directNameMatches | 142 |
+| runtimeExportSymbols | 114 |
+| directNameMatches | 110 |
 | unmappedRuntimeSymbols | 0 |
 | runtimeConstructorReviews | 4 |
-| typeOrShapeReviewSymbols | 121 |
+| typeOrShapeReviewSymbols | 71 |
 | filesWithUnmappedRuntime | 0 |
-| filesWithoutDirectDiffImport | 4 |
-| filesWithoutOtherRustReferences | 1 |
+| filesWithoutDirectDiffImport | 2 |
+| filesWithoutOtherRustReferences | 0 |
 
-Source tree: `3eb0afe0968e`; Rust source tree: `f31dadfad80f`. Rust module rows in scope: 19. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `3eb0afe0968e`; Rust source tree: `8718baffad7f`. Rust module rows in scope: 13. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
 
-## Per-file candidate surface (all 19 PORTING files)
+## Per-file candidate surface (all 13 PORTING files)
 
 | Node source | Runtime exports | Named Rust candidates | Unmapped runtime names | Direct diff imports | Other Rust refs |
 |---|---:|---:|---:|---:|---:|
-| `src/adapters.ts` | 12 | 12 | 0 | 2 | 6 |
-| `src/browser-worker-routing.ts` | 1 | 1 | 0 | 1 | 1 |
 | `src/browser-worker-runtime.ts` | 2 | 2 | 0 | 1 | 2 |
-| `src/chatgpt-platform-fallback.ts` | 5 | 5 | 0 | 1 | 2 |
 | `src/cli-artifact.ts` | 2 | 2 | 0 | 4 | 1 |
 | `src/cli-coordinator.ts` | 1 | 1 | 0 | 1 | 3 |
 | `src/cli-foreground.ts` | 2 | 2 | 0 | 1 | 1 |
@@ -48,12 +45,9 @@ Source tree: `3eb0afe0968e`; Rust source tree: `f31dadfad80f`. Rust module rows 
 | `src/planner-runtime.ts` | 7 | 7 | 0 | 4 | 5 |
 | `src/planner.ts` | 22 | 20 | 0 | 3 | 13 |
 | `src/reconciler-runtime.ts` | 10 | 10 | 0 | 2 | 5 |
-| `src/relay-store.ts` | 46 | 45 | 0 | 14 | 28 |
+| `src/relay-store.ts` | 46 | 45 | 0 | 14 | 29 |
 | `src/relayd.ts` | 1 | 1 | 0 | 0 | 6 |
 | `src/troubleshooter-fallback.ts` | 2 | 2 | 0 | 1 | 1 |
-| `src/types.ts` | 7 | 7 | 0 | 2 | 9 |
-| `src/z-adapter.ts` | 5 | 5 | 0 | 0 | 0 |
-| `src/z-oauth.ts` | 2 | 2 | 0 | 0 | 1 |
 
 ## Priority review: unmapped exported runtime symbols
 
