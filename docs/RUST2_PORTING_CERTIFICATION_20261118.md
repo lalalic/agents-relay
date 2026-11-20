@@ -800,3 +800,15 @@
   - `outcomeForDecision`、`taskAuditFacts`、`makeDecisionAudit`（gate 理由顺序、excludedRoutes 匹配、policy 禁用门、键省略）与 `makeExecutionDecisionAudit`（worker/model 审计候选、stage 明细、worker 门）。
 - **修复 5 处真实差异**：routeResult 对 profile/reasoning 应用 Node textField 语义；read() 遇损坏行整体返回 []（Node all-or-nothing）；task facts/correlation 省略 undefined 的 Task ID（显式 null 保留）；两个审计构造器按 Node 键序输出 prior_decision_id，并在来源为 undefined 时省略 timestamp/engine/fallback.reason/decision_evidence；workerAuditCandidate 应用 trustDomains ?? [] 与 labels ?? {} 默认值。
 - **回归**：lib 89/89；native model_redecision、wave4_delivery、dashboard_api、stage2_daemon_smoke、cli_service_public、stage2_dashboard 全绿；head-to-head wave4 delivery（125/42/180）与 model-redecision 差分绿；Node routing-audit 21/21。
+
+## 2026-11-20 workspace 认证 PASS
+
+- **差分认证**：114 个原创 Node/Rust 用例（`head_to_head_workspace_local_public.mjs`），两侧各自真实一次性 Git 仓库：
+  - `githubRepositoryFromRemote` 13 种远端语法；`isProjectRunPath`/`taskUsesCanonicalProjectRun`（反斜杠、父链、环）。
+  - `managedJobWorktreePath`/`managedLocalJobWorktreePath` 身份校验（仓库语法、非安全整数 PR、unicode 与 100 字符 jobId + sha256 摘要）。
+  - `jobRequiresManagedWorktree`/`taskRequiresManagedWorktree` 形态；`resolveWorkspaceRoot`（存在/文件/缺失/相对/默认）。
+  - `validateProjectRoot`（规范根、子目录、linked worktree、非仓库、错误名称、相对路径）。
+  - `discoverWorkspaceRepositories` + `resolveWorkspaceRepositoryPath` + `resolveManagedProjectPath`（隐藏/node_modules 排除、身份冲突）。
+  - `ensureLocalJobSourceBranch`（创建、稳定复用、target 必须 main）；`prepareLocalJobExecutionWorktree`（6 种非法 sourceRef、无 localMerge 规范解析、创建+复用生命周期、canonical 检出拥有分支时复用且保留脏文件）；`assertCleanWorktreeAtHead`（干净/脏/过期）。
+- **既有覆盖**：managed PR worktree 10 场景、control factory 31 例、cleanup 142 例（job_worktree_cleanup.rs）。
+- **本批未发现真实差异**。回归：lib 89/89、Node job-worktree 12/12、四个差分全绿。

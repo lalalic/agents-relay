@@ -2957,11 +2957,14 @@
       "source": "src/workspace.ts",
       "target": "rust/src/workspace.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 21,
       "staticNameMismatch": 0,
       "directDiffTests": [
-        "rust/tests/head_to_head_managed_workspace.mjs"
+        "rust/tests/head_to_head_workspace_local_public.mjs",
+        "rust/tests/head_to_head_managed_workspace.mjs",
+        "rust/tests/head_to_head_workspace_control_factory.mjs",
+        "test/rust2-wave3-delivery-cleanup-differential.mjs"
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/closure.rs",
@@ -2974,11 +2977,11 @@
         "ManagedPullRequestHead",
         "ManagedWorktreeCleanupResult"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 3 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-20: 114 original Node/Rust local/identity differential cases (head_to_head_workspace_local_public.mjs) over real disposable Git repos: remote parsing, run-path predicates, worktree path identity validation, worktree requirement shapes, workspace root resolution, project root validation (nested/linked/non-repo), discovery + collision detection, local Job source branch, execution worktree lifecycle, reviewer cleanliness. Plus the pre-existing managed-worktree (10), control-factory (31) and cleanup (142) differentials. No real divergence found; production consumers relayd.rs/cli_job_create.rs/job_worktree_cleanup.rs stay on the certified functions.",
+        "Regressions: lib 89/89, Node job-worktree.test.js 12/12, all four workspace differentials green."
       ],
+      "openGates": [],
       "legacyLedgerNote": "Phase1 native CLI immutable Job bindings, HTTP control, Git workspace identity/worktree port; no compilation/tests; Stage2 head-to-head pending."
     },
     {
