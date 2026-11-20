@@ -2,12 +2,12 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "45723f5e0c92937e3d3ff97a246f8cafdd526ebe",
-    "rustTree": "f3da076b5e39c97aeb0b27885d06cd830829fdf8",
-    "sourceCount": 38,
+    "rustTree": "d0abf1bb8afedaf4c1fc6295e42de075e48c881d",
+    "sourceCount": 37,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 351,
-    "directNameMatches": 338,
+    "runtimeExportSymbols": 330,
+    "directNameMatches": 317,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 13,
     "typeOrShapeReviewSymbols": 171,
@@ -2526,153 +2526,6 @@
       ]
     },
     {
-      "source": "src/store-github.ts",
-      "target": "rust/src/store_github.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 21,
-      "directNameMatches": 21,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [
-        "rust/tests/head_to_head_projected_comments.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity/closure.rs",
-        "rust/src/bin/relay-rust2-parity.rs",
-        "rust/src/pool.rs",
-        "rust/src/projected_store.rs",
-        "rust/src/store.rs",
-        "rust/src/store_pull_request.rs"
-      ],
-      "exports": [
-        {
-          "name": "GitHubStore",
-          "kind": "class",
-          "static": "name-match"
-        },
-        {
-          "name": "constructor",
-          "kind": "class-constructor",
-          "parent": "GitHubStore",
-          "static": "name-match"
-        },
-        {
-          "name": "comments",
-          "kind": "class-method",
-          "parent": "GitHubStore",
-          "static": "name-match"
-        },
-        {
-          "name": "pullRequestState",
-          "kind": "class-method",
-          "parent": "GitHubStore",
-          "static": "name-match"
-        },
-        {
-          "name": "mergePullRequest",
-          "kind": "class-method",
-          "parent": "GitHubStore",
-          "static": "name-match"
-        },
-        {
-          "name": "closePullRequest",
-          "kind": "class-method",
-          "parent": "GitHubStore",
-          "static": "name-match"
-        },
-        {
-          "name": "updatePullRequestBody",
-          "kind": "class-method",
-          "parent": "GitHubStore",
-          "static": "name-match"
-        },
-        {
-          "name": "pullRequestHead",
-          "kind": "class-method",
-          "parent": "GitHubStore",
-          "static": "name-match"
-        },
-        {
-          "name": "headSha",
-          "kind": "class-method",
-          "parent": "GitHubStore",
-          "static": "name-match"
-        },
-        {
-          "name": "registerBlockerDependent",
-          "kind": "class-method",
-          "parent": "GitHubStore",
-          "static": "name-match"
-        },
-        {
-          "name": "resolveBlockerDependents",
-          "kind": "class-method",
-          "parent": "GitHubStore",
-          "static": "name-match"
-        },
-        {
-          "name": "load",
-          "kind": "class-method",
-          "parent": "GitHubStore",
-          "static": "name-match"
-        },
-        {
-          "name": "validateJobBinding",
-          "kind": "class-method",
-          "parent": "GitHubStore",
-          "static": "name-match"
-        },
-        {
-          "name": "listAgents",
-          "kind": "class-method",
-          "parent": "GitHubStore",
-          "static": "name-match"
-        },
-        {
-          "name": "appendTaskHistoryComment",
-          "kind": "class-method",
-          "parent": "GitHubStore",
-          "static": "name-match"
-        },
-        {
-          "name": "saveJob",
-          "kind": "class-method",
-          "parent": "GitHubStore",
-          "static": "name-match"
-        },
-        {
-          "name": "appendPlan",
-          "kind": "class-method",
-          "parent": "GitHubStore",
-          "static": "name-match"
-        },
-        {
-          "name": "savePlan",
-          "kind": "class-method",
-          "parent": "GitHubStore",
-          "static": "name-match"
-        },
-        {
-          "name": "appendTask",
-          "kind": "class-method",
-          "parent": "GitHubStore",
-          "static": "name-match"
-        },
-        {
-          "name": "saveTask",
-          "kind": "class-method",
-          "parent": "GitHubStore",
-          "static": "name-match"
-        },
-        {
-          "name": "saveAgent",
-          "kind": "class-method",
-          "parent": "GitHubStore",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
       "source": "src/store.ts",
       "target": "rust/src/store.rs",
       "ledgerStatus": "PORTING",
@@ -2704,8 +2557,7 @@
         "rust/tests/head_to_head_local_blocker_port.mjs",
         "rust/tests/head_to_head_reconciler_git_head.mjs",
         "rust/tests/head_to_head_resolve_pull_request.mjs",
-        "rust/tests/head_to_head_store_facade_closure.mjs",
-        "rust/tests/head_to_head_store_github_public.mjs"
+        "rust/tests/head_to_head_store_facade_closure.mjs"
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity.rs",

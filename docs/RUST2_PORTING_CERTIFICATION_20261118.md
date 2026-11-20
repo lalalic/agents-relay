@@ -778,3 +778,13 @@
   - `dispatchTaskAction`：task.retry（routing/workerSelection 重置）、task.cancel、task.recover（真实 troubleshooter 恢复 Graph + resolution 物化）、缺失 recovery/task 报错、task.hold。
 - **修复两个真实差异**：Rust recovery 处理器监听的 action 名与 Graph 实际发出的 `resolution.activateRecovery` 不符（task.recover 全部被拒）；`extend_retry_budget` 以 f64 序列化整数预算（`6.0` vs Node 的 `6`）。
 - **回归**：lib 89/89、sjtc 31（0 差异）、interactive_resume 190、task_recovery、sqlite entrypoints 6/6 全绿。
+
+## 2026-11-19 store-github 认证 PASS
+
+- **差分认证**：11 个原创 Node/Rust 用例（`head_to_head_store_github_public.mjs`），通过注入的 fixture GraphQL/REST client 驱动公开 `GitHubStore` 类：
+  - `load`：job marker 注释解析（有效、空 store、非信任作者被忽略、task+plan 注释聚合）。
+  - `saveJob`：canonical marker body 发布；`appendTask`。
+  - `listAgents`：信任作者过滤；`validateJobBinding`（匹配与不匹配）。
+  - `pullRequestState`/`headSha`：PR node 投影。
+- 两侧均无网络访问（fixture client）。
+- **回归**：lib 89/89、github_pr_archive 1156、github_runtime_usage 1793、no_github 900 + fail-closed 传输全绿。

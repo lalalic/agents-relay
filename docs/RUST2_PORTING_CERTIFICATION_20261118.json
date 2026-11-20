@@ -2395,11 +2395,12 @@
         "rust/src/store_pull_request.rs"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-19: 11 original Node/Rust direct differential cases (rust/tests/head_to_head_store_github_public.mjs) over the public GitHubStore with an injected fixture client: load (marker parsing, trusted filtering, task/plan aggregation), saveJob/appendTask posting, listAgents, validateJobBinding, PR state and head. Regressions: lib 89/89 + github suites (1156/1793/900)."
       ],
-      "legacyLedgerNote": "Serial Phase1 Rust GitHub marker Store and retryable SQLite projection transport; UNCOMPILED/UNTESTED; Graph/production API parity Phase2."
+      "openGates": [],
+      "legacyLedgerNote": "Serial Phase1 Rust GitHub marker Store and retryable SQLite projection transport; UNCOMPILED/UNTESTED; Graph/production API parity Phase2.",
+      "status": "PASS"
     },
     {
       "source": "src/store.ts",
