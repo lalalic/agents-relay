@@ -94,6 +94,10 @@ mod types_public;
 mod decision_audit_public;
 #[path = "relay-rust2-parity/workspace_local_public.rs"]
 mod workspace_local_public;
+#[path = "relay-rust2-parity/store_public.rs"]
+mod store_public;
+#[path = "relay-rust2-parity/usage_public.rs"]
+mod usage_public;
 #[path = "relay-rust2-parity/execution_context_public.rs"]
 mod execution_context_public;
 use serde_json::{json, Value};
@@ -451,6 +455,8 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=workflow_effect_failures_public::invoke(request){return output;}
     if let Some(output)=decision_audit_public::invoke(request){return output;}
     if let Some(output)=workspace_local_public::invoke(request)?{return Ok(output);}
+    if let Some(output)=store_public::invoke(request)?{return Ok(output);}
+    if let Some(output)=usage_public::invoke(request)?{return Ok(output);}
     if let Some(output)=worker_failure_parity::invoke(request)?{return Ok(output);}
     if let Some(output)=additional_40::invoke(request){return output;}
     if let Some(output)=dashboard_factory::invoke(request)?{return Ok(output);}

@@ -2406,17 +2406,13 @@
       "source": "src/store.ts",
       "target": "rust/src/store.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 22,
       "staticNameMismatch": 0,
       "directDiffTests": [
-        "rust/tests/head_to_head_cli_runtime_factory.mjs",
-        "rust/tests/head_to_head_cli_unblock.mjs",
-        "rust/tests/head_to_head_host_invocation_ports.mjs",
-        "rust/tests/head_to_head_local_blocker_port.mjs",
-        "rust/tests/head_to_head_reconciler_git_head.mjs",
-        "rust/tests/head_to_head_resolve_pull_request.mjs",
+        "rust/tests/head_to_head_store_public.mjs",
         "rust/tests/head_to_head_store_facade_closure.mjs",
+        "rust/tests/head_to_head_resolve_pull_request.mjs",
         "rust/tests/head_to_head_store_github_public.mjs"
       ],
       "otherRustModuleReferences": [
@@ -2443,11 +2439,12 @@
         "GitHubAppAuthOptions",
         "GitHubStore"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 16 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-20: 52 original Node/Rust differential cases (head_to_head_store_public.mjs) via the storePublicParity parity op: loadManagedGitHubPullRequestSnapshotGraphql parsing over raw GraphQL documents, dashboardManagedJobs ordering, listManagedGitHubJobs pagination over an offline fixture client and the full InMemoryStore mutation surface. Plus the pre-existing SQLite facade (12), PR resolve (23) and store-github (11) differentials.",
+        "Real divergences fixed this batch: (1) snapshot seed comments emitted null for missing nodeId/url where Node leaves undefined (JSON-omitted); (2) jobId-less tasks were adopted by every job instead of only the sole resolved job; (3) parity adapter double-wrapped its JSON value.",
+        "Regressions: lib 89/89, Node store/usage/routing/job-worktree suites, all 172 head-to-head differentials green."
       ],
+      "openGates": [],
       "legacyLedgerNote": "Phase1 serial native Store/SQLite authoritative facade over existing transaction/outbox primitives; UNCOMPILED UNTESTED, API parity Phase2."
     },
     {
@@ -2749,13 +2746,13 @@
       "source": "src/usage.ts",
       "target": "rust/src/usage.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 26,
       "staticNameMismatch": 0,
       "directDiffTests": [
-        "rust/tests/head_to_head_codex_api_usage.mjs",
-        "rust/tests/head_to_head_usage_readers_mitigation.mjs",
-        "rust/tests/head_to_head_usage_registry_closure.mjs"
+        "rust/tests/head_to_head_usage_public.mjs",
+        "rust/tests/head_to_head_usage_registry_closure.mjs",
+        "rust/tests/head_to_head_codex_api_usage.mjs"
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/closure.rs",
@@ -2784,11 +2781,12 @@
         "UsageRegistry.constructor",
         "UnavailableUsageReader.constructor"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 18 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-20: 60 original Node/Rust differential cases (head_to_head_usage_public.mjs) via the usagePublicParity parity op: CodexSessionUsageReader over real fixture files (both stacks scan the same directories), rateLimitsFromLine corpus, BrowserWorkspaceUsageReader through local probe executables, Z.ai/DeepSeek/OpenRouter 2xx payload decoding through injected fetch vs extracted Rust payload decoders, app-server response projection. Plus the pre-existing registry (170) and codex-api (11) differentials.",
+        "Real divergences fixed this batch: used_percent/percentage and window/epoch fields accepted numeric strings where Node finitePercent/positiveMinutes/epochSeconds require real numbers; string coercion remains only for DeepSeek total_balance (finiteNumber).",
+        "Regressions: lib 89/89, Node usage suite, all 172 head-to-head differentials green."
       ],
+      "openGates": [],
       "legacyLedgerNote": "Phase1 native owned GitHub CLI transport and provider usage/capacity readers port; UNCOMPILED UNTESTED, runtime API/parity closure Phase2."
     },
     {

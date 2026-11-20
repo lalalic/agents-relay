@@ -58,12 +58,24 @@ pub fn load_managed_github_pull_request_snapshot_graphql(
     let total=pr.pointer("/comments/totalCount")
         .and_then(Value::as_u64).unwrap_or(rows.len() as u64);
     let seed_comments=if total<=rows.len() as u64{
-        Value::Array(rows.iter().map(|row|json!({
-            "id":row.get("databaseId").and_then(Value::as_i64).unwrap_or(0),
-            "nodeId":row.get("id"),"url":row.get("url"),
-            "body":field(row,"body"),"updatedAt":field(row,"updatedAt"),
-            "authorLogin":row.pointer("/author/login")
-        })).collect())
+        // Node maps nodeId/url to undefined when not strings; JSON wire omits
+        // those keys instead of emitting nulls.
+        Value::Array(rows.iter().map(|row|{
+            let mut comment=json!({
+                "id":row.get("databaseId").and_then(Value::as_i64).unwrap_or(0),
+                "body":field(row,"body"),"updatedAt":field(row,"updatedAt"),
+                "authorLogin":row.pointer("/author/login"),
+            });
+            if let Some(object)=comment.as_object_mut(){
+                if let Some(id)=row.get("id").and_then(Value::as_str){
+                    object.insert("nodeId".into(),json!(id));
+                }
+                if let Some(url)=row.get("url").and_then(Value::as_str){
+                    object.insert("url".into(),json!(url));
+                }
+            }
+            comment
+        }).collect())
     }else{Value::Null};
     let trusted:Vec<&Value>=rows.iter().filter(|row|row.pointer("/author/login")
         .and_then(Value::as_str).is_some_and(|name|trusted_authors.contains(name)))
@@ -103,6 +115,8 @@ pub fn load_managed_github_pull_request_snapshot_graphql(
     let state=field(pr,"state").to_ascii_uppercase();
     let github_state=if pr.get("merged")==Some(&Value::Bool(true)){"MERGED"}
         else if state=="CLOSED"{"CLOSED"}else{"OPEN"};
+    // Node adopts jobId-less tasks only when exactly one job was resolved.
+    let sole_job=jobs.len()==1;
     let mut overviews=Vec::new();
     for mut job in jobs{
         let job_id=field(&job,"id").to_string();
@@ -111,7 +125,8 @@ pub fn load_managed_github_pull_request_snapshot_graphql(
         associated.sort_by_key(|p|p.get("round").and_then(Value::as_i64).unwrap_or(0));
         job["plans"]=json!(associated);
         job["tasks"]=json!(tasks.iter().filter(|task|
-            field(task,"jobId")==job_id||field(task,"jobId").is_empty())
+            field(task,"jobId")==job_id
+                ||(field(task,"jobId").is_empty()&&sole_job))
             .cloned().collect::<Vec<_>>());
         if field(&job,"description").is_empty()&&!field(pr,"body").is_empty(){
             job["description"]=pr["body"].clone();

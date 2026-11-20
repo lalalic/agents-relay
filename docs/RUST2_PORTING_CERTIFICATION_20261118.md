@@ -812,3 +812,18 @@
   - `ensureLocalJobSourceBranch`（创建、稳定复用、target 必须 main）；`prepareLocalJobExecutionWorktree`（6 种非法 sourceRef、无 localMerge 规范解析、创建+复用生命周期、canonical 检出拥有分支时复用且保留脏文件）；`assertCleanWorktreeAtHead`（干净/脏/过期）。
 - **既有覆盖**：managed PR worktree 10 场景、control factory 31 例、cleanup 142 例（job_worktree_cleanup.rs）。
 - **本批未发现真实差异**。回归：lib 89/89、Node job-worktree 12/12、四个差分全绿。
+
+## 2026-11-20 store / usage 认证 PASS
+
+- **store.ts**：52 个原创 Node/Rust 差分用例（`head_to_head_store_public.mjs`，新 parity op `storePublicParity`，适配器 `relay-rust2-parity/store_public.rs`）：
+  - `loadManagedGitHubPullRequestSnapshotGraphql` 解析（18）：可信作者过滤、body/评论 job 回退、plan/task URL 解析（url 缺省时 databaseId 锚点）、publication 标记（bot/可信作者）、MERGED/CLOSED 状态、评论截断 seed、sole-job 收养无 jobId 任务。
+  - `dashboardManagedJobs`（9）：COMPLETED/CANCELLED 历史 10 条上限、completedAt 字典序并列时 prNumber 降序、未完成优先。
+  - `listManagedGitHubJobs`（9）：open/recentMerged/recentClosed 三路去重、cursor 翻页、GraphQL 错误传播、字符串 PR 号强转。
+  - `InMemoryStore` 端到端（16）：构造器种子、load 归一化、mutateJob 补丁、appendPlan/appendTask 幂等与 `DurableDefinitionConflictError`、agents/comments/headSha。
+  - 修复真差异 3 处：seed comments 的 nodeId/url 非字符串时应省略键（Node undefined 语义）；无 jobId 任务仅当唯一 job 时收养；适配器 JSON 双重包装。
+- **usage.ts**：60 个原创 Node/Rust 差分用例（`head_to_head_usage_public.mjs`，新 parity op `usagePublicParity`，适配器 `relay-rust2-parity/usage_public.rs`）：
+  - `CodexSessionUsageReader` 真实 fixture 文件扫描（10）+ `rateLimitsFromLine` 语料（11）：新鲜/过期/缺窗口、跨文件最新胜出、archived_sessions、lookback 截断边界。
+  - `BrowserWorkspaceUsageReader` 本地探针可执行文件（14）：数值/布尔/字符串 available、staleness、垃圾行、退出码。
+  - Z.ai（8）/ DeepSeek（6）/ OpenRouter（6）2xx payload 解码（注入 fetch vs 抽出的 Rust payload 解码器）；app-server 响应投影（5）。
+  - 修复真差异 2 处：used_percent/percentage、window/epoch 字段仅接受数字（Node `finitePercent` 拒绝数字字符串；字符串强转仅保留给 DeepSeek `total_balance`）；deepseek/openrouter payload 解码函数抽出（HTTP 层不变）。
+- **回归**：lib 89/89、Node store/usage/routing/job-worktree 套件、172 个 head-to-head 差分全绿。

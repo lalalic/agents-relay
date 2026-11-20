@@ -47,14 +47,19 @@ fn finite(value:Option<&Value>)->Option<f64>{
         if s.trim().is_empty(){None}else{s.parse::<f64>().ok()}))
         .filter(|n|n.is_finite())
 }
+// Node finitePercent/positiveMinutes/epochSeconds only accept real numbers;
+// string coercion is reserved for finiteNumber (DeepSeek balances).
+fn numeric(value:Option<&Value>)->Option<f64>{
+    value?.as_f64().filter(|n|n.is_finite())
+}
 fn percent(value:Option<&Value>)->Option<f64>{
-    finite(value).filter(|p|*p>=0.0&&*p<=100.0)
+    numeric(value).filter(|p|*p>=0.0&&*p<=100.0)
 }
 fn minutes(value:Option<&Value>)->Option<f64>{
-    finite(value).filter(|n|*n>0.0)
+    numeric(value).filter(|n|*n>0.0)
 }
 fn epoch_seconds(value:Option<&Value>)->Option<f64>{
-    finite(value).filter(|n|*n>0.0)
+    numeric(value).filter(|n|*n>0.0)
 }
 pub fn parse_window(value:&Value)->Option<Value>{
     let used=percent(value.get("used_percent"))?;
@@ -272,53 +277,59 @@ pub fn deepseek_credit_reader(api_key:Option<&str>)->Value{
         return credit_unavailable("DEEPSEEK_API_KEY is not configured.");
     };
     match api_get("https://api.deepseek.com/user/balance",token){
-        Ok((status,payload)) if (200..300).contains(&status)=>{
-            let balances=payload.get("balance_infos").and_then(Value::as_array)
-                .into_iter().flatten().filter_map(|item|{
-                    let remaining=finite(item.get("total_balance"))?;
-                    Some(json!({
-                        "currency":item.get("currency").and_then(Value::as_str)
-                            .unwrap_or("credit"),
-                        "total":remaining,"used":null,"remaining":remaining
-                    }))
-                }).collect::<Vec<_>>();
-            let available=payload.get("is_available")==Some(&Value::Bool(true))
-                &&!balances.is_empty();
-            json!({"available":available,"generatedAt":iso8601_now(),
-                "balances":balances,
-                "reason":if balances.is_empty(){
-                    json!("DeepSeek returned no usable balance information.")
-                }else{Value::Null}})
-        },
+        Ok((status,payload)) if (200..300).contains(&status)=>
+            deepseek_credit_from_payload(&payload),
         Ok((status,_))=>credit_unavailable(
             &format!("DeepSeek balance request failed with HTTP {status}.")),
         Err(_)=>credit_unavailable("DeepSeek balance request could not be completed.")
     }
+}
+/// Payload-level decode of a 2xx DeepSeek balance document.
+pub fn deepseek_credit_from_payload(payload:&Value)->Value{
+    let balances=payload.get("balance_infos").and_then(Value::as_array)
+        .into_iter().flatten().filter_map(|item|{
+            let remaining=finite(item.get("total_balance"))?;
+            Some(json!({
+                "currency":item.get("currency").and_then(Value::as_str)
+                    .unwrap_or("credit"),
+                "total":remaining,"used":null,"remaining":remaining
+            }))
+        }).collect::<Vec<_>>();
+    let available=payload.get("is_available")==Some(&Value::Bool(true))
+        &&!balances.is_empty();
+    json!({"available":available,"generatedAt":iso8601_now(),
+        "balances":balances,
+        "reason":if balances.is_empty(){
+            json!("DeepSeek returned no usable balance information.")
+        }else{Value::Null}})
 }
 pub fn openrouter_credit_reader(api_key:Option<&str>)->Value{
     let Some(token)=api_key.filter(|s|!s.is_empty())else{
         return credit_unavailable("OPENROUTER_API_KEY is not configured.");
     };
     match api_get("https://openrouter.ai/api/v1/credits",token){
-        Ok((status,payload)) if (200..300).contains(&status)=>{
-            let total=finite(payload.pointer("/data/total_credits"));
-            let used=finite(payload.pointer("/data/total_usage"));
-            let remaining=total.zip(used).map(|(a,b)|a-b);
-            let balances=if total.is_some()||used.is_some(){
-                vec![json!({"currency":"USD","total":total,
-                    "used":used,"remaining":remaining})]
-            }else{Vec::new()};
-            json!({"available":!balances.is_empty(),
-                "generatedAt":iso8601_now(),
-                "balances":balances,
-                "reason":if balances.is_empty(){
-                    json!("OpenRouter returned no usable credit information.")
-                }else{Value::Null}})
-        },
+        Ok((status,payload)) if (200..300).contains(&status)=>
+            openrouter_credit_from_payload(&payload),
         Ok((status,_))=>credit_unavailable(
             &format!("OpenRouter credits request failed with HTTP {status}; this endpoint requires a management key.")),
         Err(_)=>credit_unavailable("OpenRouter credits request could not be completed.")
     }
+}
+/// Payload-level decode of a 2xx OpenRouter credits document.
+pub fn openrouter_credit_from_payload(payload:&Value)->Value{
+    let total=finite(payload.pointer("/data/total_credits"));
+    let used=finite(payload.pointer("/data/total_usage"));
+    let remaining=total.zip(used).map(|(a,b)|a-b);
+    let balances=if total.is_some()||used.is_some(){
+        vec![json!({"currency":"USD","total":total,
+            "used":used,"remaining":remaining})]
+    }else{Vec::new()};
+    json!({"available":!balances.is_empty(),
+        "generatedAt":iso8601_now(),
+        "balances":balances,
+        "reason":if balances.is_empty(){
+            json!("OpenRouter returned no usable credit information.")
+        }else{Value::Null}})
 }
 pub fn usage_registry(
     openai:&Value,zai:&Value,deepseek:Option<&Value>,

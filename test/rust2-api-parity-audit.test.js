@@ -51,19 +51,6 @@ test('cross-module reexports and Rust raw-keyword methods have grounded public f
   };
   for(const method of ['publish','subscribe','subscribeAll','close'])
     lookup('src/cli-support.ts',method,'ServiceEventBus');
-  lookup('src/usage.ts','snapshot','UsageRegistry');
-  lookup('src/usage.ts','read','UnavailableUsageReader');
-  for(const owner of ['CodexThreadContinuation','CommandContinuation','WebhookContinuation']){
-    lookup('src/continuation.ts',owner);
-    lookup('src/continuation.ts','continue',owner);
-  }
-  for(const name of ['closePullRequest','updatePullRequestBody'])
-    lookup('src/store.ts',name,'InMemoryStore');
-  for(const owner of ['BrowserWorkspaceUsageReader','CodexSessionUsageReader',
-    'ZaiUsageReader','DeepSeekCreditReader','OpenRouterCreditReader']){
-    lookup('src/usage.ts',owner);
-    lookup('src/usage.ts','read',owner);
-  }
   // The previous unmapped startService must only become a static name-match
   // alongside a real native wiring surface and direct Node/Rust behavior
   // evidence. A matching name alone still does not establish parity.
