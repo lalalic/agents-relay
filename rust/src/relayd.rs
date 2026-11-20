@@ -342,6 +342,32 @@ impl<S:DaemonServices> ReconcileHost for DaemonReconcileHost<'_,S>{
         self.0.load_execution_process(job_id,task_id,execution_id)
     }
 }
+/// One canonical daemon Reconciler pass. Both periodic Pool admission and
+/// explicit Dashboard reconcile converge here. A wake receipt alone is not a
+/// completed reconcile: graph-selected effects run after SQLite CAS.
+pub fn reconcile_one_daemon_job<S:DaemonServices>(
+    config:&DaemonConfig,services:&mut S,job_id:&str,capacity:usize,
+    make_reconciler:impl FnOnce(&Value)->Result<Reconciler,String>,
+)->Result<Value,String>{
+    services.prepare_dependency_revisions(job_id)?;
+    let snapshot=services.load(job_id)?;
+    let project=resolve_job_project_root(&snapshot)?;
+    let usage=services.account_usage().ok();
+    let registered=services.registered_agents()?;
+    let adapters=json!([
+        {"id":"codex","name":"codex","capabilities":["model","codex"]},
+        {"id":"chatgpt/browser-worker","name":"chatgpt","capabilities":["model","chatgpt","webhelm"]},
+        {"id":"z","name":"z","capabilities":["model","z"]}
+    ]);
+    let mut reconciler=make_reconciler(&snapshot)?;
+    reconciler.options["maxConcurrent"]=json!(capacity);
+    let roots=json!({"workspaceRoot":config.workspace_root});
+    let head=crate::reconciler_git_head::verified_local_head(
+        &snapshot,&project,true);
+    reconciler.reconcile(job_id,head.as_deref(),&project,&roots,
+        adapters.as_array().ok_or("Adapters invalid")?,&registered,
+        usage.as_ref(),&mut DaemonReconcileHost(services))
+}
 /// Runtime host explicit opt-in: one server, one Pool, SQLite inventory only.
 pub fn run_daemon<S:DaemonServices+'static>(
     config:DaemonConfig,services:S,
@@ -385,30 +411,10 @@ pub fn run_daemon<S:DaemonServices+'static>(
                     |id,capacity|{
                         let mut guard=services.lock()
                             .map_err(|_|"Daemon service lock poisoned")?;
-                        // Node reconcileDependencyRevisions is a Store transaction:
-                        // perform it on the live isolated SQLite authority,
-                        // never inside Reconciler's speculative Job snapshot.
-                        guard.prepare_dependency_revisions(id)?;
-                        let snapshot=guard.load(id)?;
-                        let project=resolve_job_project_root(&snapshot)?;
-                        let usage=guard.account_usage().ok();
-                        let registered=guard.registered_agents()?;
-                        let adapters=json!([
-                            {"id":"codex","name":"codex","capabilities":["model","codex"]},
-                            {"id":"chatgpt/browser-worker","name":"chatgpt","capabilities":["model","chatgpt","webhelm"]},
-                            {"id":"z","name":"z","capabilities":["model","z"]}
-                        ]);
-                        let mut reconciler=make_reconciler(&snapshot)?;
-                        reconciler.options["maxConcurrent"]=json!(capacity);
-                        let roots=json!({"workspaceRoot":config.workspace_root});
-                        let current_head=crate::reconciler_git_head::verified_local_head(
-                            &snapshot,&project,true);
-                        let updated=reconciler.reconcile(id,
-                            current_head.as_deref(),
-                            &project,&roots,adapters.as_array().ok_or("Adapters invalid")?,
-                            &registered,usage.as_ref(),
-                            &mut DaemonReconcileHost(&mut *guard))?;
-                        Ok(updated)
+                        reconcile_one_daemon_job(
+                            &config,&mut *guard,id,capacity,|snapshot|{
+                                make_reconciler(snapshot)
+                            })
                     })?;
                 // Only the canonical Job Lifecycle may authorize local Git
                 // merge or COMPLETE. Reconcile after Task results are durably

@@ -87,6 +87,18 @@ impl LocalJobRegistryResolver {
         }
         Ok(self.cached.get(&key))
     }
+    /// CLI storeFor creates one resolver and transfers the one scoped owner
+    /// into the caller. Do not leave an extra writable connection behind.
+    pub fn into_owned(mut self,job_id:&str)->Result<Option<ResolvedLocalJob>,String>{
+        // One inventory resolution is authoritative for this transfer. A
+        // second read could race with a replaced/migrated SQLite registry and
+        // extract a different cached owner than the Job we just selected.
+        let key=match self.resolve(job_id)?{
+            Some(entry)=>format!("{}#{job_id}",entry.relay().path.display()),
+            None=>return Ok(None),
+        };
+        Ok(self.cached.remove(&key))
+    }
     pub fn cached_count(&self)->usize{self.cached.len()}
 }
 pub fn create_job_id_registry_resolver(

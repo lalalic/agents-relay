@@ -246,6 +246,10 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
         self.scoped(id)?.save_job(job)?;Ok(job.clone())
     }
     fn create_job_if_absent(&mut self,job:&Value)->Result<Value,String>{
+        // Creation is the first point where an untrusted Control request can
+        // establish its source root. Refuse outside-fixture roots BEFORE
+        // opening or mutating SQLite, rather than relying on later actions.
+        self.isolated_project(job)?;
         let id=field(job,"id");
         self.scoped_create(id)?.create_job_if_absent(job)
     }
@@ -433,8 +437,26 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                 self.wake(id,"dashboard.job.cancel")?;
                 Ok(saved)
             }
-            // A full reconcile must execute daemon-owned Reconciler effects.
-            "reconcile"=>Err(denied("job_action.reconcile")),
+            "reconcile"=>{
+                // The same daemon Graph/SQLite Reconciler pass as periodic
+                // Pool admission. Never acknowledge only a wake-up.
+                let config=self.config.clone();
+                let owner=format!("isolated-rust-daemon-{}",std::process::id());
+                let runtime_config=config.clone();
+                crate::relayd::reconcile_one_daemon_job(
+                    &config,self,id,config.concurrency,move |_snapshot|{
+                        let config=&runtime_config;
+                        Ok(Reconciler::new(
+                            config.graph_directory.clone(),
+                            config.store_directory.clone(),
+                            config.profile_home.clone(),
+                            config.policy_path.clone(),
+                            config.router_rules_path.clone(),
+                            json!({"owner":owner,
+                                "maxConcurrent":config.concurrency,
+                                "leaseMs":config.lease_ms})))
+                    })
+            },
             _=>Err(format!("Unsupported Job action {action}")),
         }
     }

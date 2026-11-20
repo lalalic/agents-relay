@@ -100,6 +100,12 @@ mod store_public;
 mod usage_public;
 #[path = "relay-rust2-parity/batch_a_public.rs"]
 mod batch_a_public;
+#[path = "relay-rust2-parity/cli_job_create_public.rs"]
+mod cli_job_create_public;
+#[path = "relay-rust2-parity/service_flusher_public.rs"]
+mod service_flusher_public;
+#[path = "relay-rust2-parity/durable_transition_public.rs"]
+mod durable_transition_public;
 #[path = "relay-rust2-parity/execution_context_public.rs"]
 mod execution_context_public;
 use serde_json::{json, Value};
@@ -460,6 +466,9 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=store_public::invoke(request)?{return Ok(output);}
     if let Some(output)=usage_public::invoke(request)?{return Ok(output);}
     if let Some(output)=batch_a_public::invoke(request)?{return Ok(output);}
+    if let Some(output)=cli_job_create_public::invoke(request)?{return Ok(output);}
+    if let Some(output)=service_flusher_public::invoke(request)?{return Ok(output);}
+    if let Some(output)=durable_transition_public::invoke(request)?{return Ok(output);}
     if let Some(output)=worker_failure_parity::invoke(request)?{return Ok(output);}
     if let Some(output)=additional_40::invoke(request){return output;}
     if let Some(output)=dashboard_factory::invoke(request)?{return Ok(output);}
@@ -576,6 +585,16 @@ fn invoke(request: &Value) -> Result<String, String> {
                 other=>Err(format!("unknown pause/resume action: {other}")),
             }?;
             Ok(outcome.to_string())
+        },
+        "certLocalJobReadOnlySnapshot" => {
+            use agents_relay_rust2::local_job_registry::find_job_id_snapshot;
+            let directory=std::path::Path::new(request["directory"].as_str()
+                .ok_or("directory required")?);
+            let id=request["jobId"].as_str().ok_or("jobId required")?;
+            let selected=find_job_id_snapshot(directory,id)?;
+            Ok(json!(selected.map(|match_|json!({
+                "job":match_.job,"path":match_.snapshot.path
+            }))).to_string())
         },
         "certLocalJobRegistry" => {
             use agents_relay_rust2::local_job_registry::{

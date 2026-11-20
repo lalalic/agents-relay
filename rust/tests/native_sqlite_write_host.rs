@@ -664,3 +664,46 @@ fn native_pause_resume_persists_graph_task_snapshots_and_rollback(){
     assert_eq!(DaemonServices::status(&mut host)["wakeCount"],2);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn native_control_job_create_is_real_git_graph_sqlite_and_idempotent_after_restart(){
+    let (root,config)=fixture();
+    let project=root.join("fixture");fs::create_dir_all(&project).unwrap();
+    git(&project,&["init","-q","-b","main"]);
+    let opts=json!({"projectRoot":project,"title":"Native initial Job",
+        "objective":"Create through real daemon Control",
+        "idempotencyKey":"first-control","reviewEnabled":false,
+        "noGitHub":true});
+    let request=json!({"command":"job.create","repository":"fixture",
+        "initialPlan":false,"options":opts});
+    let mut host=IsolatedSQLiteWriteHost::new(config.clone());
+    let receipt=workspace_control(&mut host,&request).unwrap();
+    let id=receipt["job"].as_str().expect("allocated Job ID").to_owned();
+    assert!(id.parse::<u64>().is_ok());
+    assert_eq!(receipt["state"],"DRAFT");
+    let saved=host.load(&id).unwrap();
+    assert_eq!(saved["projectRoot"],json!(fs::canonicalize(&project).unwrap()));
+    assert_eq!(saved["title"],"Native initial Job");
+    assert!(saved["tasks"].as_array().is_some_and(Vec::is_empty));
+    drop(host);
+    let mut restarted=IsolatedSQLiteWriteHost::new(config.clone());
+    let repeated=workspace_control(&mut restarted,&request).unwrap();
+    assert_eq!(repeated["job"],id);
+    assert_eq!(restarted.load(&id).unwrap(),saved);
+    let mut bad=request.clone();
+    bad["options"]["title"]=json!("Changed definition");
+    assert!(workspace_control(&mut restarted,&bad).is_err());
+    assert_eq!(restarted.load(&id).unwrap(),saved);
+    let outside=std::env::temp_dir().join(format!("rust2-outside-{}",
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    fs::create_dir_all(&outside).unwrap();
+    git(&outside,&["init","-q","-b","main"]);
+    let mut unsafe_request=request.clone();
+    unsafe_request["options"]["projectRoot"]=json!(outside);
+    unsafe_request["options"]["idempotencyKey"]=json!("outside");
+    assert!(workspace_control(&mut restarted,&unsafe_request).is_err());
+    assert_eq!(restarted.load(&id).unwrap(),saved);
+    fs::remove_dir_all(outside).unwrap();
+    drop(restarted);
+    fs::remove_dir_all(root).unwrap();
+}

@@ -2,18 +2,18 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "45723f5e0c92937e3d3ff97a246f8cafdd526ebe",
-    "rustTree": "8f0b1665d37f787f9c94627dbd28b67e27b73744",
-    "sourceCount": 28,
+    "rustTree": "6e2cef28a0ab8a2f4d0852ecc739027ab8eb3539",
+    "sourceCount": 23,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 240,
-    "directNameMatches": 235,
+    "runtimeExportSymbols": 230,
+    "directNameMatches": 225,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 5,
-    "typeOrShapeReviewSymbols": 127,
+    "typeOrShapeReviewSymbols": 126,
     "filesWithUnmappedRuntime": 0,
-    "filesWithoutDirectDiffImport": 7,
-    "filesWithoutOtherRustReferences": 3
+    "filesWithoutDirectDiffImport": 6,
+    "filesWithoutOtherRustReferences": 2
   },
   "pendingModules": [],
   "files": [
@@ -399,26 +399,6 @@
         },
         {
           "name": "runForegroundCoordinator",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/cli-job-create.ts",
-      "target": "rust/src/cli_job_create.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 1,
-      "directNameMatches": 1,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [
-        "rust/src/relayd_control.rs"
-      ],
-      "exports": [
-        {
-          "name": "ensureManagedGitHubJob",
           "kind": "function",
           "static": "name-match"
         }
@@ -1089,34 +1069,6 @@
       ]
     },
     {
-      "source": "src/local-job-registry.ts",
-      "target": "rust/src/local_job_registry.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 2,
-      "directNameMatches": 2,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [
-        "rust/tests/head_to_head_local_job_registry_public.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity.rs",
-        "rust/src/cli_support.rs"
-      ],
-      "exports": [
-        {
-          "name": "findJobIdSnapshot",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "createJobIdRegistryResolver",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
       "source": "src/planner-runtime.ts",
       "target": "rust/src/planner_runtime.rs",
       "ledgerStatus": "PORTING",
@@ -1764,12 +1716,14 @@
       ],
       "directDiffImports": [
         "rust/tests/head_to_head_blocker_recovery_host.mjs",
+        "rust/tests/head_to_head_cli_job_create_sqlite.mjs",
         "rust/tests/head_to_head_cli_support_public_api.mjs",
         "rust/tests/head_to_head_cli_unblock.mjs",
         "rust/tests/head_to_head_coordinator_cli.mjs",
         "rust/tests/head_to_head_dashboard_task_commands_sqlite.mjs",
         "rust/tests/head_to_head_host_invocation_ports.mjs",
         "rust/tests/head_to_head_local_blocker_port.mjs",
+        "rust/tests/head_to_head_local_job_registry_offline.mjs",
         "rust/tests/head_to_head_local_job_registry_public.mjs",
         "rust/tests/head_to_head_local_managed_store_public.mjs",
         "rust/tests/head_to_head_planner_unblocks.mjs",
@@ -1778,6 +1732,7 @@
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/agents-relayd-rust.rs",
+        "rust/src/bin/relay-rust2-parity/cli_job_create_public.rs",
         "rust/src/bin/relay-rust2-parity/cli_service_public.rs",
         "rust/src/bin/relay-rust2-parity/closure.rs",
         "rust/src/bin/relay-rust2-parity/interactive_resume_public.rs",
@@ -2164,30 +2119,6 @@
       ]
     },
     {
-      "source": "src/relayd-dashboard-actions.ts",
-      "target": "rust/src/relayd_dashboard_actions.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 1,
-      "directNameMatches": 1,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [
-        "rust/tests/head_to_head_dashboard_factory.mjs",
-        "rust/tests/head_to_head_dashboard_task_commands_sqlite.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity/dashboard_factory.rs",
-        "rust/src/relayd_sqlite_write.rs"
-      ],
-      "exports": [
-        {
-          "name": "createDashboardActions",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
       "source": "src/relayd.ts",
       "target": "rust/src/relayd.rs",
       "ledgerStatus": "PORTING",
@@ -2250,33 +2181,6 @@
         },
         {
           "name": "runDaemon",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/service-external-actions.ts",
-      "target": "rust/src/service_external_actions.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 2,
-      "directNameMatches": 2,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [
-        "rust/tests/head_to_head_batch_a_public.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity/batch_a_public.rs"
-      ],
-      "exports": [
-        {
-          "name": "flushServiceExternalActions",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "startServiceExternalActionFlusher",
           "kind": "function",
           "static": "name-match"
         }
@@ -2715,51 +2619,6 @@
         {
           "name": "assertTaskTransition",
           "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/workflow/durable-transition.ts",
-      "target": "rust/src/workflow/durable_transition.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 4,
-      "directNameMatches": 4,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "DurableTaskTransitionResult"
-      ],
-      "directDiffImports": [
-        "rust/tests/head_to_head_wave3_graph.mjs"
-      ],
-      "otherRustModuleReferences": [],
-      "exports": [
-        {
-          "name": "DurableTaskTransitionResult",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "DurableTaskTransitionRuntime",
-          "kind": "class",
-          "static": "name-match"
-        },
-        {
-          "name": "constructor",
-          "kind": "class-constructor",
-          "parent": "DurableTaskTransitionRuntime",
-          "static": "name-match"
-        },
-        {
-          "name": "apply",
-          "kind": "class-method",
-          "parent": "DurableTaskTransitionRuntime",
-          "static": "name-match"
-        },
-        {
-          "name": "updateFact",
-          "kind": "class-method",
-          "parent": "DurableTaskTransitionRuntime",
           "static": "name-match"
         }
       ]

@@ -6,7 +6,7 @@ use crate::{
     local_authority_store::LocalAuthorityDurableStore,
     relay_store::SQLiteRelayStore,
     store::InMemoryStore,
-    local_job_registry::find_job_id_snapshot,
+    local_job_registry::{find_job_id_snapshot,create_job_id_registry_resolver},
     relay_job_snapshot_reads::normalize_relay_job,
 };
 use regex::Regex;
@@ -433,8 +433,13 @@ pub fn store_for(
         return Ok(CliStoreBinding{store:CliBoundStore::InMemory(store),
             job,local_file:None});
     }
-    let sqlite=SQLiteRelayStore::open(&selected.snapshot.path,Some(job_id))?;
-    let store=LocalAuthorityDurableStore::new(sqlite,true);
+    // Match Node storeFor: resolve through its immutable-ID registry factory
+    // and transfer the cached scoped connection to the CLI. A stale or
+    // ambiguous registry binding cannot be promoted to writable authority.
+    let resolved=create_job_id_registry_resolver(directory,true)
+        .into_owned(job_id)?.ok_or_else(||format!(
+            "Immutable local Job not found for repository: {job_id}"))?;
+    let store=resolved.store;
     let job=store.load(job_id)?;
     Ok(CliStoreBinding{store:CliBoundStore::Authoritative(store),
         job,local_file:None})

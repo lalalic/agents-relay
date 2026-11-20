@@ -14,24 +14,24 @@ A listed direct differential import only means a head-to-head test imports the c
 
 | Metric | Count |
 |---|---:|
-| sourceCount | 28 |
+| sourceCount | 23 |
 | pendingSourceModules | 0 |
 | pendingRuntimeExportSymbols | 0 |
-| runtimeExportSymbols | 240 |
-| directNameMatches | 235 |
+| runtimeExportSymbols | 230 |
+| directNameMatches | 225 |
 | unmappedRuntimeSymbols | 0 |
 | runtimeConstructorReviews | 5 |
-| typeOrShapeReviewSymbols | 127 |
+| typeOrShapeReviewSymbols | 126 |
 | filesWithUnmappedRuntime | 0 |
-| filesWithoutDirectDiffImport | 7 |
-| filesWithoutOtherRustReferences | 3 |
+| filesWithoutDirectDiffImport | 6 |
+| filesWithoutOtherRustReferences | 2 |
 
-Source tree: `45723f5e0c92`; Rust source tree: `8f0b1665d37f`. Rust module rows in scope: 28. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `45723f5e0c92`; Rust source tree: `6e2cef28a0ab`. Rust module rows in scope: 23. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
 
-## Per-file candidate surface (all 28 PORTING files)
+## Per-file candidate surface (all 23 PORTING files)
 
 | Node source | Runtime exports | Named Rust candidates | Unmapped runtime names | Direct diff imports | Other Rust refs |
 |---|---:|---:|---:|---:|---:|
@@ -42,25 +42,20 @@ Source tree: `45723f5e0c92`; Rust source tree: `8f0b1665d37f`. Rust module rows 
 | `src/cli-artifact.ts` | 2 | 2 | 0 | 4 | 1 |
 | `src/cli-coordinator.ts` | 1 | 1 | 0 | 1 | 3 |
 | `src/cli-foreground.ts` | 2 | 2 | 0 | 1 | 1 |
-| `src/cli-job-create.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/cli-support.ts` | 38 | 37 | 0 | 4 | 6 |
 | `src/cli.ts` | 6 | 6 | 0 | 4 | 4 |
 | `src/dashboard.ts` | 1 | 1 | 0 | 0 | 3 |
 | `src/github-auth.ts` | 2 | 2 | 0 | 0 | 1 |
 | `src/github-client.ts` | 10 | 10 | 0 | 0 | 0 |
 | `src/interactive-invocation.ts` | 12 | 11 | 0 | 1 | 5 |
-| `src/local-job-registry.ts` | 2 | 2 | 0 | 1 | 2 |
 | `src/planner-runtime.ts` | 7 | 7 | 0 | 4 | 5 |
 | `src/planner.ts` | 22 | 20 | 0 | 3 | 13 |
 | `src/projected-store.ts` | 34 | 34 | 0 | 2 | 1 |
 | `src/reconciler-runtime.ts` | 10 | 10 | 0 | 2 | 5 |
-| `src/relay-store.ts` | 46 | 45 | 0 | 12 | 27 |
-| `src/relayd-dashboard-actions.ts` | 1 | 1 | 0 | 2 | 2 |
+| `src/relay-store.ts` | 46 | 45 | 0 | 14 | 28 |
 | `src/relayd.ts` | 1 | 1 | 0 | 0 | 6 |
-| `src/service-external-actions.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/troubleshooter-fallback.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/types.ts` | 7 | 7 | 0 | 2 | 9 |
-| `src/workflow/durable-transition.ts` | 4 | 4 | 0 | 1 | 0 |
 | `src/z-adapter.ts` | 5 | 5 | 0 | 0 | 0 |
 | `src/z-oauth.ts` | 2 | 2 | 0 | 0 | 1 |
 

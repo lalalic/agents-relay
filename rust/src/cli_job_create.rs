@@ -55,9 +55,21 @@ fn require_coordinator(coordinator:&Value)->Result<(),String>{
     }
     Ok(())
 }
-fn placeholder(id:&str,options:&Value)->Value{
+fn external_pr_number(options:&Value)->Result<i64,String>{
+    let value=match options.get("prNumber"){
+        None|Some(Value::Null)=>return Ok(0),
+        Some(value)=>value,
+    };
+    // Original Node Number.isInteger, not a lossy serde as_i64 fallback.
+    let n=value.as_f64().ok_or("Invalid external PR binding number")?;
+    if !n.is_finite()||n<0.0||n.fract()!=0.0||n>=i64::MAX as f64{
+        return Err("Invalid external PR binding number".into());
+    }
+    Ok(n as i64)
+}
+fn placeholder(id:&str,options:&Value,number:i64)->Value{
     json!({
-        "number":options.get("prNumber").and_then(Value::as_i64).unwrap_or(0),
+        "number":number,
         "title":optional(options,"title").unwrap_or(id),
         "body":optional(options,"body")
             .or_else(||optional(options,"objective")).unwrap_or(""),
@@ -111,10 +123,10 @@ where
     }
     let occupied:HashSet<String>=known_jobs.iter().map(|job|field(job,"id").into()).collect();
     let id=requested.map(str::to_owned).map(Ok).unwrap_or_else(||
-        allocate_entity_id(store_dir,repository,"job",optional(options,"idempotencyKey"),&occupied))?;
-    let number=options.get("prNumber").and_then(Value::as_i64).unwrap_or(0);
-    if number<0{return Err("Invalid external PR binding number".into());}
-    let mut pr=placeholder(&id,options);
+        allocate_entity_id(store_dir,repository,"job",
+            options.get("idempotencyKey").and_then(Value::as_str),&occupied))?;
+    let number=external_pr_number(options)?;
+    let mut pr=placeholder(&id,options,number);
     let matching:Vec<&Value>=known_jobs.iter()
         .filter(|job|field(job,"id")==id).collect();
     if matching.len()>1{
@@ -163,7 +175,8 @@ where
         "objective":optional(options,"objective")
             .or_else(||optional(options,"body")),
         "projectRoot":path,
-        "description":optional(options,"body"),
+        "description":pr.get("body").and_then(Value::as_str)
+            .filter(|body|!body.is_empty()),
         "priority":optional(options,"priority").unwrap_or("P2"),
         "autoMerge":options.get("autoMerge").and_then(Value::as_bool).unwrap_or(true),
         "reviewEnabled":options.get("reviewEnabled").and_then(Value::as_bool).unwrap_or(true),
@@ -221,6 +234,13 @@ where
     }
     let persisted=if options.get("persist")==Some(&Value::Bool(false)){
         job
-    }else{persist(&job)?};
+    }else{
+        // Original LocalAuthorityDurableStore.load decorates the newly
+        // persisted snapshot with an empty plan array for the API response,
+        // while the raw SQLite Job snapshot omits the absent property.
+        let mut loaded=persist(&job)?;
+        if loaded.get("plans").is_none(){loaded["plans"]=json!([]);}
+        loaded
+    };
     Ok(json!({"job":persisted,"pr":pr}))
 }

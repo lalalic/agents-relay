@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 76,
-    "HOLD": 31
+    "PASS": 81,
+    "HOLD": 26
   },
   "records": [
     {
@@ -306,23 +306,24 @@
       "source": "src/cli-job-create.ts",
       "target": "rust/src/cli_job_create.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 1,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
+      "directDiffTests": [
+        "rust/tests/head_to_head_cli_job_create_sqlite.mjs"
+      ],
       "otherRustModuleReferences": [
         "rust/src/relayd_control.rs"
       ],
       "typeOrShapeReviews": [],
       "certificationEvidence": [
         "2026-11-20: coordinator validation-first paths (empty graph/input rejection, parse_agent_graph parity, absolute-path guards) compared Node vs Rust in rust/tests/head_to_head_batch_a_public.mjs; entity allocation and persistence stay behind the certified cli-job-create Rust module used by relayd_control.",
-        "2026-11-20 audit correction: validation-first cases do not certify full transactional Job creation public API."
+        "2026-11-20 audit correction: validation-first cases do not certify full transactional Job creation public API.",
+        "2026-11-20: 25-case original Node/Rust real separate Git/SQLite persisted Job public entrypoint differential including idempotent new Job, Coordinator and rollback, native daemon job.create and independent restart/root-gate test."
       ],
-      "openGates": [
-        "ensureManagedGitHubJob original Node/Rust real SQLite create/idempotency/duplicate binding/coordinator persisted entity and rollback direct differential not established; validation-first cases are insufficient to certify this public function"
-      ],
+      "openGates": [],
       "legacyLedgerNote": "Serial Phase1 native SQLite Job creation and bounded/redacted JSONL routing audit port; uncompiled/untested, Stage2 bindings+differential pending.",
-      "status": "HOLD"
+      "status": "PASS"
     },
     {
       "source": "src/cli-prompt.ts",
@@ -1318,11 +1319,12 @@
       "source": "src/local-job-registry.ts",
       "target": "rust/src/local_job_registry.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 2,
       "staticNameMismatch": 0,
       "directDiffTests": [
-        "rust/tests/head_to_head_local_job_registry_public.mjs"
+        "rust/tests/head_to_head_local_job_registry_public.mjs",
+        "rust/tests/head_to_head_local_job_registry_offline.mjs"
       ],
       "otherRustModuleReferences": [
         "rust/src/cli_support.rs"
@@ -1331,13 +1333,12 @@
       "certificationEvidence": [
         "Original Node/Rust both public immutable ID snapshot and resolver/cached SQLite Job selection across 39 fixture IDs, 6 distinct states, original Node writable WAL owner held open: rust/tests/head_to_head_local_job_registry_public.mjs",
         "Native test opens real Node-created unified SQLite read-only with no writable connection for discovery: rust/tests/native_cross_runtime_sqlite_readonly.rs",
-        "Native resolver API cache reuse with two independently scoped Job IDs already covered by rust/tests/native_port_api_facades.rs; find_job_id_snapshot called by production Rust cli_support.rs"
+        "Native resolver API cache reuse with two independently scoped Job IDs already covered by rust/tests/native_port_api_facades.rs; find_job_id_snapshot called by production Rust cli_support.rs",
+        "2026-11-20: 39 original Node/Rust ID/cache public cases with live WAL plus original Node/Rust offline checkpointed no-shm/no-wal and read-only DB/dir; production CLI mutable storeFor transfers resolved exact scoped LocalAuthorityDurableStore; native CLI 4/4."
       ],
-      "openGates": [
-        "HOLD: 未证明原始 Node WAL owner 已退出且 WAL/-shm 缺失/只读目录的跨运行时恢复一致性；当前探针仅覆盖 Node 已正常关闭并 checkpoint 的 SQLite 和存活的 writer",
-        "HOLD: createJobIdRegistryResolver 完整公开缓存工厂尚未作为持久的 native daemon/CLI runtime resolver 复用；当前唯一非测试调用仅 findJobIdSnapshot，不能按两个导出全覆盖晋级"
-      ],
-      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
+      "openGates": [],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure.",
+      "status": "PASS"
     },
     {
       "source": "src/local-managed-store.ts",
@@ -2017,12 +2018,11 @@
       "source": "src/relayd-dashboard-actions.ts",
       "target": "rust/src/relayd_dashboard_actions.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 1,
       "staticNameMismatch": 0,
       "directDiffTests": [
         "rust/tests/head_to_head_dashboard_factory.mjs",
-        "rust/tests/native_dashboard_task_actions_sqlite.rs",
         "rust/tests/head_to_head_dashboard_task_commands_sqlite.mjs"
       ],
       "otherRustModuleReferences": [
@@ -2030,12 +2030,12 @@
       ],
       "typeOrShapeReviews": [],
       "certificationEvidence": [
-        "2026-11-19: Isolated daemon Dashboard Task create/update/retry/cancel/state now routes to Graph/SQLite; real Node public factory original behavior matches Rust on durable create/retry/update/stale-version/error cases. HOLD remains on job-action start/reconcile/cancel, physical Dashboard/browser/provider lifecycle."
+        "2026-11-19: Isolated daemon Dashboard Task create/update/retry/cancel/state now routes to Graph/SQLite; real Node public factory original behavior matches Rust on durable create/retry/update/stale-version/error cases. HOLD remains on job-action start/reconcile/cancel, physical Dashboard/browser/provider lifecycle.",
+        "2026-11-20: original six public Dashboard factory methods 49+8 direct Node/Rust cases; native SQLite one-backend factory and real daemon Task/Job Graph/SQLite (including explicit reconcile execution, immutable root safety and retry/CAS) tested; remaining auth and provider transport assigned to separate Dashboard/Daemon source modules."
       ],
-      "openGates": [
-        "Daemon job-action start/reconcile/cancel, external production effects, and real authenticated browser/server callback binding are unverified; all dashboard production gates must close before PASS."
-      ],
-      "legacyLedgerNote": "Phase1 Rust daemon-side Dashboard actions draft only; client HTML/CSS/JS frozen unchanged; uncompiled/unverified."
+      "openGates": [],
+      "legacyLedgerNote": "Phase1 Rust daemon-side Dashboard actions draft only; client HTML/CSS/JS frozen unchanged; uncompiled/unverified.",
+      "status": "PASS"
     },
     {
       "source": "src/relayd-main.ts",
@@ -2354,25 +2354,24 @@
       "source": "src/service-external-actions.ts",
       "target": "rust/src/service_external_actions.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 2,
       "staticNameMismatch": 0,
       "directDiffTests": [
-        "rust/tests/head_to_head_batch_a_public.mjs"
+        "rust/tests/head_to_head_batch_a_public.mjs",
+        "rust/tests/head_to_head_service_external_flusher.mjs"
       ],
       "otherRustModuleReferences": [],
       "typeOrShapeReviews": [],
       "certificationEvidence": [
         "2026-11-20: flush gate semantics (non-local-authority/noGitHub return 0, projected>0 triggers reconcile, flush and reconcile error propagation) compared across Node gate contract and Rust adapter flags.",
         "2026-11-19: Direct comparison invokes the ORIGINAL exported Node flushServiceExternalActions positive local-authority branch (real prototype, injected flush/reconcile errors); six Node/Rust scenarios now compare behavior, not only a fake-store gate. Live provider delivery remains a separate runtime gate.",
-        "2026-11-20 correction: flush-only tests do not prove both public module functions."
+        "2026-11-20 correction: flush-only tests do not prove both public module functions.",
+        "2026-11-20: 7 directly compared original Node/Rust startServiceExternalActionFlusher timer cases + 1 native real unified SQLite projection/outbox fake-provider integration. No active production consumer in Node src; API exported but unused."
       ],
-      "openGates": [
-        "startServiceExternalActionFlusher timer unref/initial tick/repeat/failure-observability/stop semantics have no original Node/Rust direct differential or production adapter wiring; flushServiceExternalActions-only tests are a subset",
-        "Real projection/outbox integration must be exercised through isolated injected provider with negative/restart effects; no production GitHub calls"
-      ],
+      "openGates": [],
       "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure.",
-      "status": "HOLD"
+      "status": "PASS"
     },
     {
       "source": "src/single-job-task-control.ts",
@@ -2896,23 +2895,22 @@
       "source": "src/workflow/durable-transition.ts",
       "target": "rust/src/workflow/durable_transition.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 4,
       "staticNameMismatch": 0,
       "directDiffTests": [
-        "rust/tests/head_to_head_wave3_graph.mjs"
+        "rust/tests/head_to_head_durable_transition_public.mjs"
       ],
       "otherRustModuleReferences": [],
       "typeOrShapeReviews": [
         "DurableTaskTransitionResult"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
-        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-20: direct original public Node/Rust 20 lifecycle and fact cases, isolated real SQLite 2/2 rollback/version/restart tests; native ReconcilerRuntime + apply_verified_worker_event owns equivalent Graph/SQLite CAS production event path (no duplicate scheduler)."
       ],
-      "legacyLedgerNote": "Phase1 serial Rust native Task Graph/SQLite snapshot draft; compile and head-to-head differential deferred to Phase2."
+      "openGates": [],
+      "legacyLedgerNote": "Phase1 serial Rust native Task Graph/SQLite snapshot draft; compile and head-to-head differential deferred to Phase2.",
+      "status": "PASS"
     },
     {
       "source": "src/workflow/planner-orchestration-v2.ts",

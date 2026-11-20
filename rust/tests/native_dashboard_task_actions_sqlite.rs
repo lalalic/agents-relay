@@ -136,8 +136,9 @@ fn dashboard_task_update_uses_original_task_version_and_never_overwrites_stale_s
 #[test]
 fn dashboard_job_cancel_is_graph_sqlite_durable_and_invalid_actions_fail_closed(){
  let f=Fixture::new();let mut host=IsolatedSQLiteWriteHost::new(f.config.clone());
+ let reconciled=DaemonServices::job_action(&mut host,"15","reconcile").unwrap();
+ assert_eq!(reconciled,f.job(),"explicit reconcile must return committed SQLite snapshot");
  let before=f.job();
- assert!(DaemonServices::job_action(&mut host,"15","reconcile").is_err());
  assert!(DaemonServices::job_action(&mut host,"15","invalid").is_err());
  assert!(DaemonServices::job_action(&mut host,"missing","cancel").is_err());
  assert_eq!(f.job(),before);
@@ -170,4 +171,38 @@ fn dashboard_job_start_uses_canonical_activation_and_persists_restart(){
  drop(host);
  let mut restarted=IsolatedSQLiteWriteHost::new(f.config.clone());
  assert_eq!(DaemonServices::load(&mut restarted,"15").unwrap(),started);
+}
+
+#[test]
+fn dashboard_reconcile_executes_canonical_graph_with_real_git_head_and_durable_restart(){
+ let f=Fixture::new();
+ let project=f.root.join("mockrepo");
+ let commit=Command::new("git").args(["-C"]).arg(&project).args([
+  "-c","user.name=Rust Test","-c","user.email=rust-test@example.invalid",
+  "commit","--allow-empty","-m","head for reconciler"]).output().unwrap();
+ assert!(commit.status.success(),"{}",String::from_utf8_lossy(&commit.stderr));
+ let head=Command::new("git").arg("-C").arg(&project).args([
+  "rev-parse","HEAD"]).output().unwrap();
+ assert!(head.status.success());
+ let head=String::from_utf8_lossy(&head.stdout).trim().to_owned();
+ {
+  let store=SQLiteRelayStore::open_without_claim_reset(
+   &relay_unified_store_path(&f.config.store_directory),Some("15")).unwrap();
+  store.mutate_job("15",|mut job|{
+   job["state"]=json!("DRAFT");
+   job["tasks"]=json!([]);
+   job["headSha"]=json!("stale-cached-sha");
+   job["reviewEnabled"]=json!(false);
+   Ok(job)
+  }).unwrap();
+ }
+ let mut host=IsolatedSQLiteWriteHost::new(f.config.clone());
+ let first=DaemonServices::job_action(&mut host,"15","reconcile").unwrap();
+ assert_eq!(first["headSha"],head);
+ assert_eq!(first["state"],"DRAFT");
+ assert_eq!(first,f.job());
+ drop(host);
+ let mut restarted=IsolatedSQLiteWriteHost::new(f.config.clone());
+ let second=DaemonServices::job_action(&mut restarted,"15","reconcile").unwrap();
+ assert_eq!(second,first,"repeated Graph pass should preserve terminal facts");
 }
