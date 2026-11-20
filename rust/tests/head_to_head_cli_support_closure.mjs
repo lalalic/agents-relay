@@ -46,7 +46,6 @@ function add(method,args,options={}){
       integerArg:()=>integerArg(args,flag,fallback??0),
       newLocalRepository:()=>newLocalRepository(args),
       repository:()=>repository(args),
-      optionalLegacyPr:()=>optionalLegacyPr(args),
       eventBusResolutionMessage:()=>eventBusResolutionMessage(resolution),
     }[method];
     const value=fn();
@@ -59,7 +58,7 @@ function add(method,args,options={}){
   fixtures.push({request,expected:outcome});
 }
 add('defaults',[]);
-const flags=['--input','--repo','--mode','--pr','--priority','--story-size','--tag','--host','--port'];
+const flags=['--input','--repo','--mode','--priority','--story-size','--tag','--host','--port'];
 const values=['','P0','P1','P2','P3','p2','L','m','s','bad','🍀','../escape','owner/repo',
   'some-repo','2','3','-1','0','1.5',' 4 ','Infinity','0x10','--flag','0'];
 const unknownFlags=['--mode','--execution-mode','--schedule','--schedule-next-run',
@@ -73,7 +72,7 @@ for(let i=0;i<560;i++){
       [pick(flags),pick(values),pick(flags)];
   const method=pick(['arg','hasArg','priority','storySize','chatGptTabClosePolicy',
     'jobTagFromArgs','continuation','rejectRemovedJobOptions','rejectRemoteLifecycleOptions',
-    'integerArg','newLocalRepository','repository','optionalLegacyPr']);
+    'integerArg','newLocalRepository','repository']);
   const fallback=method==='integerArg'?pick([0,1,7,42]):pick(['','P2','P1','M','L','S','bad']);
   const env=pick([undefined,'','after-start','after-terminal','never','bad']);
   add(method,args,{flag:pick(flags),fallback,env});
@@ -97,6 +96,11 @@ for(const source of ['auto','explicit','local','unavailable','invalid']){
  for(const transport of ['nats','none']){
   add('eventBusResolutionMessage',[],{resolution:{source,transport,natsUrl:'nats://127.0.0.1'}});
  }
+}
+// Edge values accepted by JavaScript Number.isInteger even when they cannot
+// fit u64; they must not be truncated or rejected by the native CLI.
+for(const raw of ['1e25','1e100','9007199254740992','9007199254740991','1e308']){
+ add('integerArg',['--limit',raw],{flag:'--limit',fallback:7});
 }
 test('Node and Rust CLI support parsing, rejection and shape are directly equivalent',()=>{
  const input=fixtures.map(f=>JSON.stringify(f.request)).join('\n')+'\n';

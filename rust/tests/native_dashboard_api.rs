@@ -411,7 +411,18 @@ fn actual_pwa_http_transport_preserves_bytes_and_authenticates_webhooks() {
     let url = addr.to_string();
     let (status, body) = tcp(&url, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
     assert_eq!(status, 200);
-    assert_eq!(body, include_bytes!("../../dashboard/index.html"));
+    // Node's PWA server now renders immutable versioned asset URLs.
+    // Both native and Node must reuse the same single dashboard/ template.
+    assert_eq!(
+        body,
+        agents_relay_rust2::dashboard::static_response("GET", "/")
+            .unwrap().body,
+        "native HTTP must serve exactly the canonical versioned PWA response"
+    );
+    let html=String::from_utf8(body).unwrap();
+    for asset in ["dashboard.css","dashboard.js","vendor/markdown-it.min.js"]{
+        assert!(html.contains(&format!("/{asset}?v={}",agents_relay_rust2::dashboard::dashboard_version())));
+    }
     let (status, body) = tcp(
         &url,
         "GET /dashboard.js HTTP/1.1\r\nHost: localhost\r\n\r\n",

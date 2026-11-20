@@ -37,6 +37,26 @@ for(const row of rows){
    assert.match(wrapper,/dashboardClientJs = readFileSync/);
    assert(existsSync(resolve(root,'dashboard/index.html')));
    assert(existsSync(resolve(root,'dashboard/dashboard.js')));
+  } else if (new Set([
+    'src/github-auth.ts','src/github-client.ts','src/projected-store.ts',
+  ]).has(row.source)) {
+   // User-authorized compatibility exclusion, not a fake PASS. These
+   // imported historical shims still exist in Node but current CLI+daemon
+   // paths disable all remote GitHub effects. Recheck on every ledger run.
+   assert(currentSources.includes(row.source));
+   assert(existsSync(resolve(root,row.source)));
+   const noGithub=readFileSync(resolve(root,'src/no-github.ts'),'utf8');
+   const daemon=readFileSync(resolve(root,'src/relayd.ts'),'utf8');
+   const cli=readFileSync(resolve(root,'src/cli.ts'),'utf8');
+   const flusher=readFileSync(resolve(root,'src/service-external-actions.ts'),'utf8');
+   assert.match(noGithub,/function noGitHubMode[\s\S]*?return true;/);
+   assert.match(daemon,/const noGitHub = true;[\s\S]{0,150}const client = new DisabledGitHubClient\(\)/);
+   assert.match(cli,/rejectRemoteLifecycleOptions\(process\.argv\.slice\(2\)\)/);
+   assert.match(flusher,/if \(!\(store instanceof LocalAuthorityDurableStore\) \|\| store\.noGitHub\) return/);
+   assert(existsSync(resolve(root,'rust/tests/local_git_runtime_excludes_remote_github.mjs')),
+     'retired remote exclusion requires executable fail-closed original runtime tests');
+   assert(row.evidence.includes('local_git_runtime_excludes_remote_github.mjs'),
+     'retired compatibility EXCLUDED requires explicit module-specific runtime evidence');
   } else {
    assert(!currentSources.includes(row.source),`EXCLUDED file remains active in main: ${row.source}`);
    assert(!existsSync(resolve(root,row.source)),`EXCLUDED file still on disk: ${row.source}`);

@@ -106,6 +106,8 @@ mod cli_job_create_public;
 mod service_flusher_public;
 #[path = "relay-rust2-parity/durable_transition_public.rs"]
 mod durable_transition_public;
+#[path = "relay-rust2-parity/cli_support_more.rs"]
+mod cli_support_more;
 #[path = "relay-rust2-parity/execution_context_public.rs"]
 mod execution_context_public;
 use serde_json::{json, Value};
@@ -469,6 +471,7 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=cli_job_create_public::invoke(request)?{return Ok(output);}
     if let Some(output)=service_flusher_public::invoke(request)?{return Ok(output);}
     if let Some(output)=durable_transition_public::invoke(request)?{return Ok(output);}
+    if let Some(output)=cli_support_more::invoke(request)?{return Ok(output);}
     if let Some(output)=worker_failure_parity::invoke(request)?{return Ok(output);}
     if let Some(output)=additional_40::invoke(request){return output;}
     if let Some(output)=dashboard_factory::invoke(request)?{return Ok(output);}

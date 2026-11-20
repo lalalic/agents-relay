@@ -10,7 +10,7 @@ use crate::{
     cli_support::{
         relay_control_command,relay_control_job,relay_job_list,
         relay_job_state_command,relay_task_command,readonly_job_for,
-        new_local_repository,integer_arg,
+        new_local_repository,integer_arg,reject_remote_lifecycle_options,
     },
     cli_revision::{revision_request,validate_revision_receipt},
     cli_unblock::{job_unblock_request,task_unblock_request},
@@ -450,6 +450,9 @@ pub fn run_task_command<P:CliRuntimePort>(
 pub fn run_cli<P:CliRuntimePort>(
     port:&mut P,argv:&[String],stdin:Option<&str>,
 )->Result<Value,String>{
+    // Do not resurrect retired GitHub/PR compatibility through secondary
+    // command paths, including help: these flags are not part of native CLI.
+    reject_remote_lifecycle_options(argv)?;
     let Some(command)=argv.first().map(String::as_str)else{
         return Ok(json!(help_text(None,None)));
     };

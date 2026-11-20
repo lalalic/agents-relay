@@ -114,13 +114,21 @@ fn number_is_integer(n:f64)->bool{n.is_finite()&&n.fract()==0.0}
 fn number_is_safe_positive_integer(n:f64)->bool{
     number_is_integer(n)&&n>0.0&&n<=9_007_199_254_740_991.0
 }
-pub fn integer_arg(args:&[String],flag:&str,default:u64)->Result<u64,String>{
-    if !has_arg(args,flag){return Ok(default);}
+fn json_integer_js(number:f64)->Value{
+    // A JS Number can be an integer well beyond u64::MAX. Preserve the
+    // original accepted Number.isInteger semantics without truncating.
+    // For safely represented integers keep the canonical JSON integer form.
+    if number<=9_007_199_254_740_991.0{
+        json!(number as u64)
+    }else{json!(number)}
+}
+pub fn integer_arg(args:&[String],flag:&str,default:u64)->Result<Value,String>{
+    if !has_arg(args,flag){return Ok(json!(default));}
     let number=js_number(arg(args,flag,""));
-    if !number_is_integer(number)||number<0.0||number>u64::MAX as f64{
+    if !number_is_integer(number)||number<0.0{
         return Err(format!("{flag} must be a non-negative integer"));
     }
-    Ok(number as u64)
+    Ok(json_integer_js(number))
 }
 pub fn repository(args:&[String])->Result<&str,String>{
     let repo=arg(args,"--repo","");
@@ -135,13 +143,13 @@ pub fn new_local_repository(args:&[String])->Result<&str,String>{
     }
     Ok(repository)
 }
-pub fn pull_request(args:&[String])->Result<u64,String>{
+pub fn pull_request(args:&[String])->Result<Value,String>{
     let raw=arg(args,"--pr","");
     let pr=js_number(raw);
-    if !number_is_integer(pr)||pr<=0.0||pr>u64::MAX as f64{
+    if !number_is_integer(pr)||pr<=0.0{
         return Err("--pr is required for GitHub-backed operation".into());
     }
-    Ok(pr as u64)
+    Ok(json_integer_js(pr))
 }
 pub fn validate_read_only_job_binding(args:&[String])->Result<(),String>{
     for flag in [
