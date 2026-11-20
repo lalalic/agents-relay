@@ -374,3 +374,5 @@ pub mod reconciler_review_base;
 pub mod store_pull_request;
 
 pub mod blocker_store_port;
+// Top-level blocker recovery port: Node src/blocker-recovery.ts service layer.
+pub mod blocker_recovery;

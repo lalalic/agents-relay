@@ -2,18 +2,18 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "45723f5e0c92937e3d3ff97a246f8cafdd526ebe",
-    "rustTree": "5b74292a4c0bb3534bce256d5bab146797c00087",
-    "sourceCount": 33,
+    "rustTree": "8f0b1665d37f787f9c94627dbd28b67e27b73744",
+    "sourceCount": 28,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 248,
-    "directNameMatches": 243,
+    "runtimeExportSymbols": 240,
+    "directNameMatches": 235,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 5,
-    "typeOrShapeReviewSymbols": 129,
+    "typeOrShapeReviewSymbols": 127,
     "filesWithUnmappedRuntime": 0,
-    "filesWithoutDirectDiffImport": 14,
-    "filesWithoutOtherRustReferences": 8
+    "filesWithoutDirectDiffImport": 7,
+    "filesWithoutOtherRustReferences": 3
   },
   "pendingModules": [],
   "files": [
@@ -202,31 +202,6 @@
       ]
     },
     {
-      "source": "src/blocker-recovery.ts",
-      "target": "rust/src/blocker_recovery.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 1,
-      "directNameMatches": 1,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "BlockerRecoveryInput"
-      ],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
-      "exports": [
-        {
-          "name": "BlockerRecoveryInput",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "ensureBlockerRecovery",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
       "source": "src/browser-worker-routing.ts",
       "target": "rust/src/browser_worker_routing.rs",
       "ledgerStatus": "PORTING",
@@ -405,8 +380,12 @@
       "directNameMatches": 2,
       "unmappedRuntime": [],
       "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_batch_a_public.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/batch_a_public.rs"
+      ],
       "exports": [
         {
           "name": "ForegroundReporter",
@@ -787,37 +766,6 @@
       ]
     },
     {
-      "source": "src/dashboard-actions.ts",
-      "target": "rust/src/dashboard_actions.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 3,
-      "directNameMatches": 3,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [
-        "rust/src/relayd_dashboard_actions.rs",
-        "rust/src/relayd_sqlite_write.rs"
-      ],
-      "exports": [
-        {
-          "name": "dashboardTaskAction",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "dashboardJobSetState",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "dashboardTaskSetState",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
       "source": "src/dashboard.ts",
       "target": "rust/src/dashboard.rs",
       "ledgerStatus": "PORTING",
@@ -1135,51 +1083,6 @@
         },
         {
           "name": "shouldRecoverInteractiveDecision",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/job-worktree-cleanup.ts",
-      "target": "rust/src/job_worktree_cleanup.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 1,
-      "directNameMatches": 1,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [
-        "rust/src/delivery_parity_harness.rs"
-      ],
-      "exports": [
-        {
-          "name": "cleanupMergedJobWorktree",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/legacy-orchestrator-repair.ts",
-      "target": "rust/src/legacy_orchestrator_repair.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 1,
-      "directNameMatches": 1,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "LegacyOrchestratorRepairPorts"
-      ],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
-      "exports": [
-        {
-          "name": "LegacyOrchestratorRepairPorts",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "repairLegacyOrchestrators",
           "kind": "function",
           "static": "name-match"
         }
@@ -1860,9 +1763,11 @@
         "LocalRelayStoreSnapshot"
       ],
       "directDiffImports": [
+        "rust/tests/head_to_head_blocker_recovery_host.mjs",
         "rust/tests/head_to_head_cli_support_public_api.mjs",
         "rust/tests/head_to_head_cli_unblock.mjs",
         "rust/tests/head_to_head_coordinator_cli.mjs",
+        "rust/tests/head_to_head_dashboard_task_commands_sqlite.mjs",
         "rust/tests/head_to_head_host_invocation_ports.mjs",
         "rust/tests/head_to_head_local_blocker_port.mjs",
         "rust/tests/head_to_head_local_job_registry_public.mjs",
@@ -2267,10 +2172,12 @@
       "unmappedRuntime": [],
       "typeOrShapeReview": [],
       "directDiffImports": [
-        "rust/tests/head_to_head_dashboard_factory.mjs"
+        "rust/tests/head_to_head_dashboard_factory.mjs",
+        "rust/tests/head_to_head_dashboard_task_commands_sqlite.mjs"
       ],
       "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity/dashboard_factory.rs"
+        "rust/src/bin/relay-rust2-parity/dashboard_factory.rs",
+        "rust/src/relayd_sqlite_write.rs"
       ],
       "exports": [
         {
@@ -2299,6 +2206,7 @@
       "directDiffImports": [],
       "otherRustModuleReferences": [
         "rust/src/bin/agents-relayd-rust.rs",
+        "rust/src/bin/relay-rust2-parity/batch_a_public.rs",
         "rust/src/bin/relay-rust2-parity/cli_service_public.rs",
         "rust/src/cli_service_public.rs",
         "rust/src/relayd_sqlite_observer.rs",
@@ -2348,44 +2256,6 @@
       ]
     },
     {
-      "source": "src/router-evals.ts",
-      "target": "rust/src/router_evals.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 2,
-      "directNameMatches": 2,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
-      "exports": [
-        {
-          "name": "RouterEvalCase",
-          "kind": "type",
-          "static": "name-match"
-        },
-        {
-          "name": "RouterEvalResult",
-          "kind": "type",
-          "static": "name-match"
-        },
-        {
-          "name": "RouterEvalReport",
-          "kind": "type",
-          "static": "name-match"
-        },
-        {
-          "name": "ROUTER_EVAL_CASES",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "runRouterEvals",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
       "source": "src/service-external-actions.ts",
       "target": "rust/src/service_external_actions.rs",
       "ledgerStatus": "PORTING",
@@ -2393,8 +2263,12 @@
       "directNameMatches": 2,
       "unmappedRuntime": [],
       "typeOrShapeReview": [],
-      "directDiffImports": [],
-      "otherRustModuleReferences": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_batch_a_public.mjs"
+      ],
+      "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/batch_a_public.rs"
+      ],
       "exports": [
         {
           "name": "flushServiceExternalActions",

@@ -191,6 +191,58 @@ impl SQLiteRelayStore {
             .map_err(sql)?;
         result
     }
+    /// Commit a blocker Job and its dependent Task as one SQLite transaction.
+    /// Both snapshots are optimistic-version fenced; concurrent worker writes
+    /// or an idempotency-key collision abort *both* changes. This is callable
+    /// only from the scoped dependent-Job owner, never an unscoped provider.
+    pub fn commit_blocker_recovery_pair(
+        &self,dependent_before:&Value,dependent_after:&Value,
+        blocker_before:Option<&Value>,blocker_after:&Value,
+    )->Result<(),String>{
+        let dependent_id=field(dependent_before,"id");
+        let blocker_id=field(blocker_after,"id");
+        if dependent_id.is_empty() || blocker_id.is_empty() || dependent_id==blocker_id
+            ||self.scope_job_id.as_deref()!=Some(dependent_id)
+            ||dependent_after.get("id")!=dependent_before.get("id")
+            ||blocker_after.get("repository")==dependent_before.get("repository"){
+            return Err("Invalid cross-Job blocker recovery binding".into());
+        }
+        self.db.execute_batch("BEGIN IMMEDIATE").map_err(sql)?;
+        let result=(||->Result<(),String>{
+            let current_dependent=load_relay_job(&self.db,dependent_id)?
+                .ok_or("Dependent Job missing during blocker commit")?;
+            if &current_dependent!=dependent_before{
+                return Err("Concurrent dependent Job mutation; retry blocker recovery".into());
+            }
+            let current_blocker=load_relay_job(&self.db,blocker_id)?;
+            if current_blocker.as_ref()!=blocker_before{
+                return Err("Concurrent blocker Job mutation; retry blocker recovery".into());
+            }
+            // New blockers must use the same immutable local-repository root
+            // as all existing Jobs of their repository. Do not fork identity.
+            let mut statement=self.db.prepare(
+                "SELECT json FROM job_snapshot WHERE job_id<>? AND json_extract(json,'$.repository')=?"
+            ).map_err(sql)?;
+            let candidates=statement.query_map(params![blocker_id,field(blocker_after,"repository")],
+                |row|row.get::<_,String>(0)).map_err(sql)?
+                .collect::<Result<Vec<_>,_>>().map_err(sql)?;
+            drop(statement);
+            for raw in candidates{
+                let prior:Value=serde_json::from_str(&raw).map_err(sql)?;
+                if prior.get("projectRoot")!=blocker_after.get("projectRoot"){
+                    return Err("Blocker repository projectRoot conflicts with durable binding".into());
+                }
+            }
+            let stamp=iso8601_now();
+            ensure_unified_job_registry(&self.db,blocker_after,blocker_id)?;
+            write_snapshot(&self.db,Some(dependent_id),dependent_after,&stamp)?;
+            write_snapshot(&self.db,None,blocker_after,&stamp)?;
+            Ok(())
+        })();
+        self.db.execute_batch(if result.is_ok(){"COMMIT"}else{"ROLLBACK"})
+            .map_err(sql)?;
+        result
+    }
     fn workflow_operation<'a,F,R>(&'a self,work:F)->Result<R,String>
     where F:FnOnce(&mut SQLiteWorkflowOperations<'a,
         Box<dyn FnMut(&Value,&str)->Result<(),String>+'a>,

@@ -14,55 +14,50 @@ A listed direct differential import only means a head-to-head test imports the c
 
 | Metric | Count |
 |---|---:|
-| sourceCount | 33 |
+| sourceCount | 28 |
 | pendingSourceModules | 0 |
 | pendingRuntimeExportSymbols | 0 |
-| runtimeExportSymbols | 248 |
-| directNameMatches | 243 |
+| runtimeExportSymbols | 240 |
+| directNameMatches | 235 |
 | unmappedRuntimeSymbols | 0 |
 | runtimeConstructorReviews | 5 |
-| typeOrShapeReviewSymbols | 129 |
+| typeOrShapeReviewSymbols | 127 |
 | filesWithUnmappedRuntime | 0 |
-| filesWithoutDirectDiffImport | 14 |
-| filesWithoutOtherRustReferences | 8 |
+| filesWithoutDirectDiffImport | 7 |
+| filesWithoutOtherRustReferences | 3 |
 
-Source tree: `45723f5e0c92`; Rust source tree: `5b74292a4c0b`. Rust module rows in scope: 33. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `45723f5e0c92`; Rust source tree: `8f0b1665d37f`. Rust module rows in scope: 28. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
 
-## Per-file candidate surface (all 33 PORTING files)
+## Per-file candidate surface (all 28 PORTING files)
 
 | Node source | Runtime exports | Named Rust candidates | Unmapped runtime names | Direct diff imports | Other Rust refs |
 |---|---:|---:|---:|---:|---:|
 | `src/adapters.ts` | 12 | 12 | 0 | 2 | 6 |
-| `src/blocker-recovery.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/browser-worker-routing.ts` | 1 | 1 | 0 | 1 | 1 |
 | `src/browser-worker-runtime.ts` | 2 | 2 | 0 | 1 | 2 |
 | `src/chatgpt-platform-fallback.ts` | 5 | 5 | 0 | 1 | 2 |
 | `src/cli-artifact.ts` | 2 | 2 | 0 | 4 | 1 |
 | `src/cli-coordinator.ts` | 1 | 1 | 0 | 1 | 3 |
-| `src/cli-foreground.ts` | 2 | 2 | 0 | 0 | 0 |
+| `src/cli-foreground.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/cli-job-create.ts` | 1 | 1 | 0 | 0 | 1 |
 | `src/cli-support.ts` | 38 | 37 | 0 | 4 | 6 |
 | `src/cli.ts` | 6 | 6 | 0 | 4 | 4 |
-| `src/dashboard-actions.ts` | 3 | 3 | 0 | 0 | 2 |
 | `src/dashboard.ts` | 1 | 1 | 0 | 0 | 3 |
 | `src/github-auth.ts` | 2 | 2 | 0 | 0 | 1 |
 | `src/github-client.ts` | 10 | 10 | 0 | 0 | 0 |
 | `src/interactive-invocation.ts` | 12 | 11 | 0 | 1 | 5 |
-| `src/job-worktree-cleanup.ts` | 1 | 1 | 0 | 0 | 1 |
-| `src/legacy-orchestrator-repair.ts` | 1 | 1 | 0 | 0 | 0 |
 | `src/local-job-registry.ts` | 2 | 2 | 0 | 1 | 2 |
 | `src/planner-runtime.ts` | 7 | 7 | 0 | 4 | 5 |
 | `src/planner.ts` | 22 | 20 | 0 | 3 | 13 |
 | `src/projected-store.ts` | 34 | 34 | 0 | 2 | 1 |
 | `src/reconciler-runtime.ts` | 10 | 10 | 0 | 2 | 5 |
-| `src/relay-store.ts` | 46 | 45 | 0 | 10 | 27 |
-| `src/relayd-dashboard-actions.ts` | 1 | 1 | 0 | 1 | 1 |
-| `src/relayd.ts` | 1 | 1 | 0 | 0 | 5 |
-| `src/router-evals.ts` | 2 | 2 | 0 | 0 | 0 |
-| `src/service-external-actions.ts` | 2 | 2 | 0 | 0 | 0 |
+| `src/relay-store.ts` | 46 | 45 | 0 | 12 | 27 |
+| `src/relayd-dashboard-actions.ts` | 1 | 1 | 0 | 2 | 2 |
+| `src/relayd.ts` | 1 | 1 | 0 | 0 | 6 |
+| `src/service-external-actions.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/troubleshooter-fallback.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/types.ts` | 7 | 7 | 0 | 2 | 9 |
 | `src/workflow/durable-transition.ts` | 4 | 4 | 0 | 1 | 0 |

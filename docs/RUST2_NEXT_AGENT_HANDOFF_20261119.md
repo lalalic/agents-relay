@@ -92,3 +92,37 @@ User workflow: **hotfix / no Relay job** — execute directly, self-review, veri
 ## Handoff acceptance
 
 New agent should begin by running `git status --short --branch`, inspecting `git log -3 --oneline`, `node scripts/rust2-checklist-verify.mjs`, and verifying no other checkout currently edits this branch. It should end each tranche with an updated ledger, trustworthy exact test evidence, one local commit, and clean tree. Progress to 0 requires real certification and integration, not reclassification.
+
+
+## 2026-11-19 hotfix continuation: isolated native Blocker and Dashboard Task writes
+
+- Branch `rust2`, unchanged production authority; no Relay job, no Codex CLI, no deployment or GitHub side effects. Only one registered Git worktree (`~/Workspace/agents-relay`). Preserve all preexisting dirty work.
+- Blocker Recovery: `rust/src/relayd_sqlite_write.rs::blocker_ensure` now does real canonical Graph planning and binds `SQLiteRelayStore::commit_blocker_recovery_pair` (single `BEGIN IMMEDIATE`, per-Job exact CAS, both-direction durable registration, rollback). `rust/tests/native_blocker_recovery_host.rs`: 3 real isolated Git/SQLite tests; `rust/tests/head_to_head_blocker_recovery_host.mjs`: 2 direct ORIGINAL Node vs Rust isolated SQLite tests. Node does not persist dependent `blockedBy` on this fixture; native stores it atomically with the blocker inverse relation.
+- Dashboard Task API: `DaemonServices::task_command`, `task_action`, `task_set_state` route Task create/update/retry/cancel/forced-cancel through existing canonical Graph reducers and SQLite; check projectRoot against disposable Git fixture. Task-create has global numeric ID and idempotency receipt; Task-update has `updatedAt` optimistic CAS. `rust/tests/native_dashboard_task_actions_sqlite.rs`: 5 real isolated SQLite tests; `rust/tests/head_to_head_dashboard_task_commands_sqlite.mjs`: 2 original Node vs Rust SQLite differentials covering positive, idempotency, conflicts, stale version, self dependency. `job_action` remains denied, so entire Dashboard/relayd modules stay PORTING/HOLD.
+- Batch A original Node `flushServiceExternalActions` positive path now directly tested with `LocalAuthorityDurableStore` prototype (injected projection and reconciler ports) against Rust. `scripts/rust2-checklist-verify.mjs` now correctly resolves true public `pub use` Rust exports, validating target declarations. `native_coordinator_cli.rs` call signature fixed.
+- Required final verification after this patch: `npm run build`, `cargo build --manifest-path rust/Cargo.toml --bin relay-rust2-parity`, isolated `cargo test --all-targets`, direct Node/Rust suites listed above and `node scripts/rust2-checklist-verify.mjs`, `git diff --check`. At the time this handoff section was written, source checklist remains `201 PASS / 25 PORTING / 4 EXCLUDED` and original 107-module certification `79 PASS / 28 HOLD`; these remain true blockers, NOT completed `PORTING=0`.
+- Next priority: bind native daemon `job_action` (currently explicit deny), live Reconciler/CLI --foreground provider start/ack timeout paths, browser-worker reroute consumer, GitHub token provider, full dashboard/worker/browser external contract and negative/restart head-to-head. Never promote to PASS merely to reduce the count.
+
+
+## 2026-11-19 continuation: final regression and scoped Dashboard Job actions
+
+- Polled existing Neo shell job `02143c0f0927bc9f` before bootstrap, then ran `neo bootstrap`. The job terminated successfully (exit 0): Node build and Rust parity binary build, isolated Rust all-targets 116 target results / 524 passed / 0 failed, direct Node/Rust differential 7 passed / 0 failed, checklist and diff-check all passed. This run started **before** the scoped Job-action extension below and is not its full regression.
+- Native isolated daemon `job_action` now supports **start/cancel** via canonical Job Graph mutations, SQLite CAS/transaction and a post-commit wake; the `reconcile` route remains explicitly denied until the real daemon Reconciler and provider effects are bound. This is partial integration only: `src/relayd.ts` and `src/relayd-dashboard-actions.ts` remain PORTING.
+- `rust/tests/native_dashboard_task_actions_sqlite.rs` now has 7/7 focused tests including real isolated Git/SQLite Job cancel/start, rejection, restart, and durable state checks. Do not promote daemon or Dashboard module status without Node/Rust entrypoint differential and full Reconciler tests.
+- Completion still **201 PASS / 25 PORTING / 4 EXCLUDED**; no main merge, push, live changes, or Relay job. Preserve accumulated dirty work until separately reviewed and committed.
+
+
+## Certification correction: foreground must remain HOLD
+
+- Review found an unjustified PASS for `src/cli-foreground.ts`: only `foregroundEventLine` was compared, while `runForegroundCoordinator` (the important public runtime) lacked original Node/Rust loop, watcher, interrupt and cleanup verification. Its source ledger and 107-module certification were corrected to PORTING/HOLD, not counted as completed.
+- Revised tally after correction: **200 PASS / 26 PORTING / 4 EXCLUDED**, original 107 subset **78 PASS / 29 HOLD**. Static API matrix must be regenerated. This supersedes earlier 201/25 counters above.
+
+- Also corrected premature `src/cli-job-create.ts` PASS: only validation-first direct differential was available, not the full persisted public Job creation API. Revised count **199 PASS / 27 PORTING / 4 EXCLUDED** (original 107 subset **77 PASS / 30 HOLD**). Supersedes the previous interim counts.
+
+- Additional correction: `service-external-actions.ts` remains HOLD because only `flushServiceExternalActions` was directly compared; `startServiceExternalActionFlusher` tick, timer, stop and observability behaviors lack parity. Revised count **198 PASS / 28 PORTING / 4 EXCLUDED**, original subset **76 PASS / 31 HOLD**. Supersedes earlier interim counts.
+
+## Post-change full verification and corrected ledger
+
+- Neo shell regression job `1e6f5ba3d967c252` exited **0** after the Dashboard Job action change. With caller-owned temporary `AGENTS_RELAY_STORE_DIR` and Node Script interpreter: Rust all-targets **116 test-result groups, 526 passed, 0 failed**; direct original Node/Rust CLI/Dashboard suites **6 passed, 0 failed**. Includes native 7/7 Dashboard Task/Job SQLite tests. Node/Rust service differential and baseline suites were separately proven by prior `02143c0f0927bc9f` run (524 Rust cases + 7 direct Node/Rust tests, both green).
+- API parity audit `--write` and `--check --json`, checklist verify and `git diff --check` passed after certification corrections. The final authoritative source tally is **198 PASS / 28 PORTING / 4 EXCLUDED**; the original 107-module certification is **76 PASS / 31 HOLD**. Prior higher counts in this handoff are historical and superseded.
+- Preserve the HOLD gates for `cli-foreground`, `cli-job-create`, `service-external-actions`. They were initially promoted on subset tests only, then corrected after examining the full original public exports.

@@ -280,7 +280,7 @@ pub async fn ensure_blocker_recovery(
                         item.get("jobId")==request.get("dependentJobId")
                             &&item.get("taskId")==request.get("dependentTaskId"));
                 let result=register_blocker_dependency(directory,current,dependent,
-                    dependent_id,Some(blocked_attempt),
+                    dependent_id,Some(blocked_attempt as i64),
                     Some(field(&request,"resolutionMode")),Some(&now))?;
                 let mut next=result.blocker;
                 let mut candidate=result.dependent;

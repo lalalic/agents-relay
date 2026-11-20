@@ -3,7 +3,8 @@
 //! production; provider launch, external events and unported actions fail
 //! closed until their real adapters are installed. Never use live credentials.
 use crate::{
-    dashboard_actions::dashboard_job_set_state,
+    dashboard_actions::{dashboard_job_set_state,dashboard_task_action,dashboard_task_set_state},
+    relayd_dashboard_actions::workspace_task_create_snapshot,
     git_delivery::source_commit_sha,
     local_merge_delivery::{native_merge_effect,reconcile_local_git_completion},
     local_git_merge::{local_source_head,git as checked_local_git},
@@ -161,6 +162,17 @@ impl IsolatedSQLiteWriteHost {
                 })?;
                 Ok((saved,changed))
             })
+    }
+    fn apply_dashboard_task_action(&mut self,id:&str,task_id:&str,action:&str)
+        ->Result<Value,String>{
+        let current=self.scoped(id)?.load_job(id)?
+            .ok_or_else(||format!("SQLite Job {id} not found"))?;
+        self.isolated_project(&current)?;
+        let command=dashboard_task_action(&current,task_id,action)?;
+        let result=crate::task_actions::dispatch_task_action(
+            &self.config.graph_directory,&*self.scoped(id)?,&command)?;
+        self.wake(id,"dashboard.task.action")?;
+        Ok(result["job"].clone())
     }
     fn emit(&mut self,value:Value){
         let payload=value.to_string();
@@ -336,7 +348,54 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
         let graph=self.config.graph_directory.clone();
         self.scoped(id)?.submit_review_revision(&directory,&graph,id,&input)
     }
-    fn blocker_ensure(&mut self,_:&Value)->Result<Value,String>{Err(denied("blocker_ensure"))}
+    fn blocker_ensure(&mut self,request:&Value)->Result<Value,String>{
+        // This port accepts only caller-owned independent Git fixtures. The
+        // native Graph produces both snapshots, then a single SQLite CAS
+        // commits the blocker relation and dependent receipt atomically.
+        crate::blocker_recovery::validate_input(request)?;
+        let dependent_id=field(request,"dependentJobId");
+        let dependent=self.scoped(dependent_id)?.load_job(dependent_id)?
+            .ok_or("Dependent Job not found")?;
+        self.isolated_project(&dependent)?;
+        if field(&dependent,"repository")!=field(request,"dependentRepository"){
+            return Err("Blocker dependent repository identity mismatch".into());
+        }
+        // Validate the target repository's path before allocating any ID.
+        let target=json!({"repository":request.get("targetRepository"),
+            "projectRoot":request.get("targetProjectRoot")});
+        self.isolated_project(&target)?;
+        // Inventory discovery projects legacy fields; reload each candidate
+        // from its authoritative scoped SQLite snapshot for exact CAS.
+        let snapshots=crate::relay_store_discovery::discover_local_relay_store_snapshots(
+            &self.config.store_directory)?;
+        let mut known=Vec::new();
+        for snapshot in snapshots{
+            for summary in snapshot.jobs{
+                let id=field(&summary,"id");
+                let current=self.scoped(id)?.load_job(id)?
+                    .ok_or_else(||format!("Discovered blocker Job {id} disappeared"))?;
+                known.push(current);
+            }
+        }
+        let plan={
+            let future=crate::blocker_recovery::ensure_blocker_recovery(
+                &self.config.graph_directory,&self.config.store_directory,
+                request,&dependent,&known,request.get("now").and_then(Value::as_str));
+            let mut future=pin!(future);
+            let mut context=Context::from_waker(Waker::noop());
+            match future.as_mut().poll(&mut context){
+                Poll::Ready(result)=>result?,
+                Poll::Pending=>return Err("Native blocker recovery unexpectedly suspended".into()),
+            }
+        };
+        let blocker_id=field(&plan.blocker,"id").to_owned();
+        let prior=known.iter().find(|job|field(job,"id")==blocker_id);
+        self.scoped(dependent_id)?.commit_blocker_recovery_pair(
+            &dependent,&plan.dependent,prior,&plan.blocker)?;
+        self.wake(dependent_id,"blocker.recovery.registered")?;
+        self.wake(&blocker_id,"blocker.recovery.registered")?;
+        Ok(plan.receipt)
+    }
     fn blocker_resolve(&mut self,_:&str,_:&str)->Result<Value,String>{Err(denied("blocker_resolve"))}
     fn local_head(&mut self,job:&Value)->Result<String,String>{source_commit_sha(job)}
     fn fail_interactive(&mut self,id:&str,task:&str,execution:&str,reason:&str)
@@ -354,17 +413,107 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
     fn save_exact(&mut self,id:&str,prior:&Value,next:&Value)->Result<Value,String>{
         self.persist_exact(id,prior,next)
     }
-    fn job_action(&mut self,_:&str,_:&str)->Result<Value,String>{Err(denied("job_action"))}
-    fn task_command(&mut self,_:&Value)->Result<Value,String>{Err(denied("task_command"))}
-    fn task_action(&mut self,_:&str,_:&str,_:&str)->Result<Value,String>{Err(denied("task_action"))}
+    fn job_action(&mut self,id:&str,action:&str)->Result<Value,String>{
+        let current=self.scoped(id)?.load_job(id)?
+            .ok_or_else(||format!("SQLite Job {id} not found"))?;
+        self.isolated_project(&current)?;
+        match action {
+            "start"=>{
+                let next=crate::job_actions::apply_job_activate_action(
+                    &self.config.graph_directory,&current)?;
+                let saved=self.persist_exact(id,&current,&next)?;
+                self.wake(id,"dashboard.job.start")?;
+                Ok(saved)
+            }
+            "cancel"=>{
+                let graph=self.config.graph_directory.clone();
+                let saved=self.scoped(id)?.mutate_job(id,|fresh|{
+                    crate::job_actions::apply_job_cancel_action(&graph,&fresh,None)
+                })?;
+                self.wake(id,"dashboard.job.cancel")?;
+                Ok(saved)
+            }
+            // A full reconcile must execute daemon-owned Reconciler effects.
+            "reconcile"=>Err(denied("job_action.reconcile")),
+            _=>Err(format!("Unsupported Job action {action}")),
+        }
+    }
+    fn task_command(&mut self,body:&Value)->Result<Value,String>{
+        let id=field(body,"jobId");
+        let task_id=field(body,"taskId");
+        match field(body,"action"){
+            "retry"|"cancel"=>self.apply_dashboard_task_action(
+                id,task_id,field(body,"action")),
+            "update"=>{
+                let current=self.scoped(id)?.load_job(id)?
+                    .ok_or_else(||format!("SQLite Job {id} not found"))?;
+                self.isolated_project(&current)?;
+                let task=body.get("task").filter(|value|value.is_object())
+                    .ok_or("Dashboard Task update requires Task object")?;
+                let expected=field(body,"expectedUpdatedAt");
+                if task_id.is_empty()||expected.is_empty(){
+                    return Err("Dashboard Task update requires identity and version".into());
+                }
+                let updated=crate::task_update::apply_managed_task_update(
+                    &self.config.graph_directory,&*self.scoped(id)?,
+                    id,task_id,task,expected)?;
+                self.wake(id,"dashboard.task.update")?;
+                Ok(updated)
+            }
+            "create"=>{
+                let current=self.scoped(id)?.load_job(id)?
+                    .ok_or_else(||format!("SQLite Job {id} not found"))?;
+                self.isolated_project(&current)?;
+                let task=body.get("task").filter(|value|value.is_object())
+                    .ok_or("Dashboard Task create requires Task object")?;
+                // No caller-supplied Task ID, no worktree/provider side effects.
+                // Allocation is global and idempotent, while Job CAS enforces
+                // a single atomic Task append and optional Job activation.
+                let overviews=self.all()?.into_iter()
+                    .map(|job|json!({"job":job})).collect::<Vec<_>>();
+                let (candidate,task_id,existing)=workspace_task_create_snapshot(
+                    &self.config.graph_directory,&self.config.store_directory,
+                    &overviews,&current,task,
+                    body.get("idempotencyKey").and_then(Value::as_str))?;
+                let mut updated=if existing{current.clone()}else{
+                    self.persist_exact(id,&current,&candidate)?
+                };
+                if !existing{self.wake(id,"dashboard.task.create")?;}
+                updated["createdTaskId"]=json!(task_id);
+                Ok(updated)
+            }
+            _=>Err(denied("unsupported task command")),
+        }
+    }
+    fn task_action(&mut self,id:&str,task_id:&str,action:&str)
+        ->Result<Value,String>{
+        self.apply_dashboard_task_action(id,task_id,action)
+    }
     fn job_set_state(&mut self,id:&str,state:&str,_target:&Value)->Result<Value,String>{
         let original=WorkspaceControlBackend::load_job(self,id)?;
         let (next,remote)=dashboard_job_set_state(&self.config.graph_directory,&original,state)?;
         if remote{return Err(denied("remote job state effect"));}
         self.persist_exact(id,&original,&next)
     }
-    fn task_set_state(&mut self,_:&str,_:&str,_:&str,_:&Value)
-        ->Result<Value,String>{Err(denied("task_set_state"))}
+    fn task_set_state(&mut self,id:&str,task_id:&str,state:&str,target:&Value)
+        ->Result<Value,String>{
+        let current=self.scoped(id)?.load_job(id)?
+            .ok_or_else(||format!("SQLite Job {id} not found"))?;
+        self.isolated_project(&current)?;
+        if target.get("repository").and_then(Value::as_str)
+            .is_some_and(|repo|repo!=field(&current,"repository"))
+            ||target.get("prNumber").and_then(Value::as_i64)
+                .is_some_and(|pr|pr!=0&&current["prNumber"]!=json!(pr)){
+            return Err("Dashboard Task target does not match immutable Job binding".into());
+        }
+        let command=dashboard_task_set_state(&current,task_id,state)?;
+        if command.is_none(){return Ok(current);}
+        let result=crate::task_actions::dispatch_task_action(
+            &self.config.graph_directory,&*self.scoped(id)?,
+            &command.expect("validated Task cancellation"))?;
+        self.wake(id,"dashboard.task.setState")?;
+        Ok(result["job"].clone())
+    }
     fn event_history(&mut self,_:&str,_:Option<&str>,_:i64)->Result<Vec<Value>,String>{
         Err(denied("historical Event query"))
     }

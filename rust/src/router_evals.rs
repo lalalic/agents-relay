@@ -10,7 +10,9 @@ pub struct RouterEvalCase {
     pub story_size: String,
     pub task: String,
     pub chatgpt_available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub chatgpt_running: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub chatgpt_slots: Option<u32>,
     pub expected_worker: String,
 }
@@ -21,6 +23,7 @@ pub struct RouterEvalResult {
     pub selected_worker: String,
     pub selected_route: String,
     pub pass: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub probabilities: Option<serde_json::Value>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]

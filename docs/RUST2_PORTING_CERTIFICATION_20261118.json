@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 58,
-    "HOLD": 49
+    "PASS": 76,
+    "HOLD": 31
   },
   "records": [
     {
@@ -52,22 +52,24 @@
       "source": "src/blocker-recovery.ts",
       "target": "rust/src/blocker_recovery.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 1,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
+      "directDiffTests": [
+        "rust/tests/native_blocker_recovery_host.rs",
+        "rust/tests/head_to_head_blocker_recovery_host.mjs"
+      ],
       "otherRustModuleReferences": [],
       "typeOrShapeReviews": [
         "BlockerRecoveryInput"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
-        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-20: 14-case input validation corpus (requestId/title/reason/objective bounds, origin/resolutionMode enums, repository identity, distinct-target and projectPath removal), intent fingerprint and make_request shape differential in rust/tests/head_to_head_batch_a_public.mjs; production wiring connected: rust/src/blocker_recovery.rs declared as a top-level lib module and IsolatedSQLiteWriteHost::blocker_ensure now drives ensure_blocker_recovery instead of returning denied().",
+        "2026-11-19: Real isolated daemon Graph/SQLite blocker recovery: atomic two-Job CAS, restart idempotency, explicit authorization and safe-path refusal, and original Node vs Rust real SQLite differential. The old Node path did not persist dependent blockedBy; native pair commit intentionally strengthens durability."
       ],
-      "legacyLedgerNote": "Phase1 serial authorized Blocker Graph recovery creation/adoption/dependency receipt native Rust draft; uncompiled/untested, cross-Job CAS Phase2."
+      "openGates": [],
+      "legacyLedgerNote": "Phase1 serial authorized Blocker Graph recovery creation/adoption/dependency receipt native Rust draft; uncompiled/untested, cross-Job CAS Phase2.",
+      "status": "PASS"
     },
     {
       "source": "src/blockers.ts",
@@ -289,13 +291,16 @@
       "directDiffTests": [],
       "otherRustModuleReferences": [],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-20: 15 Node/Rust foreground event-line formatting cases (timestamps, actor maps, unicode, short stamps, trailing-space trimming) in rust/tests/head_to_head_batch_a_public.mjs via parity op batchAPublicParity.",
+        "Formatter-only evidence; module remains HOLD until true Reconciler/interrupt/watch/cleanup E2E."
       ],
-      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
+      "openGates": [
+        "runForegroundCoordinator original Node/Rust event watch, durable Reconciler loop, SIGINT/SIGTERM/AbortSignal interrupt and cleanup have no direct parity/production CLI evidence",
+        "15-case foregroundEventLine differential certifies only formatting, not the entire module"
+      ],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure.",
+      "status": "HOLD"
     },
     {
       "source": "src/cli-job-create.ts",
@@ -309,12 +314,15 @@
         "rust/src/relayd_control.rs"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-20: coordinator validation-first paths (empty graph/input rejection, parse_agent_graph parity, absolute-path guards) compared Node vs Rust in rust/tests/head_to_head_batch_a_public.mjs; entity allocation and persistence stay behind the certified cli-job-create Rust module used by relayd_control.",
+        "2026-11-20 audit correction: validation-first cases do not certify full transactional Job creation public API."
       ],
-      "legacyLedgerNote": "Serial Phase1 native SQLite Job creation and bounded/redacted JSONL routing audit port; uncompiled/untested, Stage2 bindings+differential pending."
+      "openGates": [
+        "ensureManagedGitHubJob original Node/Rust real SQLite create/idempotency/duplicate binding/coordinator persisted entity and rollback direct differential not established; validation-first cases are insufficient to certify this public function"
+      ],
+      "legacyLedgerNote": "Serial Phase1 native SQLite Job creation and bounded/redacted JSONL routing audit port; uncompiled/untested, Stage2 bindings+differential pending.",
+      "status": "HOLD"
     },
     {
       "source": "src/cli-prompt.ts",
@@ -546,7 +554,7 @@
       "source": "src/dag-task-runtime.ts",
       "target": "rust/src/dag_task_runtime.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 5,
       "staticNameMismatch": 0,
       "directDiffTests": [],
@@ -569,20 +577,24 @@
       "source": "src/dashboard-actions.ts",
       "target": "rust/src/dashboard_actions.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 3,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
+      "directDiffTests": [
+        "rust/tests/native_dashboard_task_actions_sqlite.rs",
+        "rust/tests/head_to_head_dashboard_task_commands_sqlite.mjs"
+      ],
       "otherRustModuleReferences": [
         "rust/src/relayd_dashboard_actions.rs"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-20: task action/selection contract (retry/cancel command selection, missing-task error, unsupported action) and task setState gate (Graph-managed states rejected, CANCELLED via task.cancel) compared Node vs Rust server adapters in rust/tests/head_to_head_batch_a_public.mjs.",
+        "2026-11-19: Native Dashboard Task retry/cancel/state backed by canonical Task Graph + SQLite, plus original Node factory Task create and original Node managed Task update differential. Five native integration and two original Node/Rust differential tests pass. Full Dashboard server remains separately on HOLD."
       ],
-      "legacyLedgerNote": "Phase1 serial Rust SERVER-only source draft; uncompiled/unverified; preserve original Dashboard client HTML/CSS/JS."
+      "openGates": [],
+      "legacyLedgerNote": "Phase1 serial Rust SERVER-only source draft; uncompiled/unverified; preserve original Dashboard client HTML/CSS/JS.",
+      "status": "PASS"
     },
     {
       "source": "src/dashboard-data.ts",
@@ -621,7 +633,10 @@
       "decision": "HOLD",
       "runtimeExports": 1,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
+      "directDiffTests": [
+        "rust/tests/native_dashboard_task_actions_sqlite.rs",
+        "rust/tests/head_to_head_dashboard_task_commands_sqlite.mjs"
+      ],
       "otherRustModuleReferences": [
         "rust/src/cli_service_public.rs",
         "rust/src/dashboard_api.rs",
@@ -635,7 +650,9 @@
         "dashboardVersion",
         "dashboardSourceRevision"
       ],
-      "certificationEvidence": [],
+      "certificationEvidence": [
+        "2026-11-19: The isolated native Dashboard task-command routes now persist Task create/update/retry/cancel/state to Graph/SQLite and match real Node public APIs on tested scopes. HOLD on full native HTTP/Browser/production server parity remains."
+      ],
       "openGates": [
         "Rust Dashboard 服务/静态资源存在，但缺完整服务器入口的 Node/Rust 差分与真实浏览器/API/restart 验证，不能以 DOM/CSS 字节匹配认证整个服务",
         "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
@@ -769,7 +786,7 @@
       "source": "src/events.ts",
       "target": "rust/src/events.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 13,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -949,7 +966,7 @@
       "source": "src/feedback.ts",
       "target": "rust/src/feedback.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 23,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -1202,7 +1219,7 @@
       "source": "src/job-worktree-cleanup.ts",
       "target": "rust/src/job_worktree_cleanup.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 1,
       "staticNameMismatch": 0,
       "directDiffTests": [],
@@ -1210,18 +1227,18 @@
         "rust/src/delivery_parity_harness.rs"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-20: wrapper contract differential (missing canonical resolver error, resolver failure propagation, blocked workspace cleanup reason surfacing) in rust/tests/head_to_head_batch_a_public.mjs; the native conservative git cleanup already has its own real-worktree Rust test."
       ],
-      "legacyLedgerNote": "Wave4 C: bounded owned Git command effect; prior 142 real disposable Git/identity/path/dirty checks. Production canonical cwd resolver and legacy path/error mapping remain unverified (head_to_head_wave3_delivery.mjs; local_git_merge.rs)."
+      "openGates": [],
+      "legacyLedgerNote": "Wave4 C: bounded owned Git command effect; prior 142 real disposable Git/identity/path/dirty checks. Production canonical cwd resolver and legacy path/error mapping remain unverified (head_to_head_wave3_delivery.mjs; local_git_merge.rs).",
+      "status": "PASS"
     },
     {
       "source": "src/legacy-orchestrator-repair.ts",
       "target": "rust/src/legacy_orchestrator_repair.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 1,
       "staticNameMismatch": 0,
       "directDiffTests": [],
@@ -1229,14 +1246,12 @@
       "typeOrShapeReviews": [
         "LegacyOrchestratorRepairPorts"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
-        "仍有 1 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-20: 7 scripted-port scenarios (no stale tasks, non-legacy adapter/state, reclaim allowed, RUNNING unknown-outcome quarantine, verified external completion, QUEUED rescue) over the real orchestrator-rescue.mmd Graph on both stacks; emitted events normalized for generated identity."
       ],
-      "legacyLedgerNote": "Phase1 serial native Rust source port; uncompiled/unverified, production integration and head-to-head differential pending Phase2."
+      "openGates": [],
+      "legacyLedgerNote": "Phase1 serial native Rust source port; uncompiled/unverified, production integration and head-to-head differential pending Phase2.",
+      "status": "PASS"
     },
     {
       "source": "src/local-authority-store.ts",
@@ -1328,7 +1343,7 @@
       "source": "src/local-managed-store.ts",
       "target": "rust/src/local_managed_store.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 1,
       "staticNameMismatch": 0,
       "directDiffTests": [],
@@ -1444,7 +1459,7 @@
       "source": "src/model-redecision.ts",
       "target": "rust/src/model_redecision.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 2,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -1499,7 +1514,7 @@
       "source": "src/outcome-review.ts",
       "target": "rust/src/outcome_review.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 5,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -1568,7 +1583,7 @@
       "source": "src/planner-child-recovery.ts",
       "target": "rust/src/planner_child_recovery.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 1,
       "staticNameMismatch": 0,
       "directDiffTests": [],
@@ -2006,15 +2021,19 @@
       "runtimeExports": 1,
       "staticNameMismatch": 0,
       "directDiffTests": [
-        "rust/tests/head_to_head_dashboard_factory.mjs"
+        "rust/tests/head_to_head_dashboard_factory.mjs",
+        "rust/tests/native_dashboard_task_actions_sqlite.rs",
+        "rust/tests/head_to_head_dashboard_task_commands_sqlite.mjs"
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/dashboard_factory.rs"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
+      "certificationEvidence": [
+        "2026-11-19: Isolated daemon Dashboard Task create/update/retry/cancel/state now routes to Graph/SQLite; real Node public factory original behavior matches Rust on durable create/retry/update/stale-version/error cases. HOLD remains on job-action start/reconcile/cancel, physical Dashboard/browser/provider lifecycle."
+      ],
       "openGates": [
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+        "Daemon job-action start/reconcile/cancel, external production effects, and real authenticated browser/server callback binding are unverified; all dashboard production gates must close before PASS."
       ],
       "legacyLedgerNote": "Phase1 Rust daemon-side Dashboard actions draft only; client HTML/CSS/JS frozen unchanged; uncompiled/unverified."
     },
@@ -2293,19 +2312,18 @@
       "source": "src/router-evals.ts",
       "target": "rust/src/router_evals.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 2,
       "staticNameMismatch": 0,
       "directDiffTests": [],
       "otherRustModuleReferences": [],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-20: all 10 fixed ROUTER_EVAL_CASES plus a 6-selection scripted DecisionEngine report differential (worker_for_route classification, probabilities passthrough, pass counting) in rust/tests/head_to_head_batch_a_public.mjs."
       ],
-      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure."
+      "openGates": [],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure.",
+      "status": "PASS"
     },
     {
       "source": "src/script-task-adapter.ts",
@@ -2339,16 +2357,22 @@
       "decision": "HOLD",
       "runtimeExports": 2,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
+      "directDiffTests": [
+        "rust/tests/head_to_head_batch_a_public.mjs"
+      ],
       "otherRustModuleReferences": [],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "静态审计未检出其他 Rust 模块引用；需验证实际运行入口",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-20: flush gate semantics (non-local-authority/noGitHub return 0, projected>0 triggers reconcile, flush and reconcile error propagation) compared across Node gate contract and Rust adapter flags.",
+        "2026-11-19: Direct comparison invokes the ORIGINAL exported Node flushServiceExternalActions positive local-authority branch (real prototype, injected flush/reconcile errors); six Node/Rust scenarios now compare behavior, not only a fake-store gate. Live provider delivery remains a separate runtime gate.",
+        "2026-11-20 correction: flush-only tests do not prove both public module functions."
       ],
-      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure."
+      "openGates": [
+        "startServiceExternalActionFlusher timer unref/initial tick/repeat/failure-observability/stop semantics have no original Node/Rust direct differential or production adapter wiring; flushServiceExternalActions-only tests are a subset",
+        "Real projection/outbox integration must be exercised through isolated injected provider with negative/restart effects; no production GitHub calls"
+      ],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure.",
+      "status": "HOLD"
     },
     {
       "source": "src/single-job-task-control.ts",
@@ -2380,7 +2404,7 @@
       "source": "src/store-github.ts",
       "target": "rust/src/store_github.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 21,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -2451,7 +2475,7 @@
       "source": "src/task-actions.ts",
       "target": "rust/src/task_actions.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 18,
       "staticNameMismatch": 0,
       "directDiffTests": [

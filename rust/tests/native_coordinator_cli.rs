@@ -40,7 +40,7 @@ impl Fixture {
  }
  fn run(&self,args:&[String])->Result<Option<Value>,String>{
   run_coordinator_job_command(graph(),args,"41",&self.store,&self.job(),
-   None,None,None,None,None)
+   None,None,None,None)
  }
 }
 impl Drop for Fixture{
@@ -98,7 +98,7 @@ fn terminal_foreground_uses_supplied_runner_without_rescheduling(){
  let mut args=fixture.args();args.push("--foreground".into());
  let output=run_coordinator_job_command(
   graph(),&args,"41",&fixture.store,&fixture.job(),
-  None,None,None,Some(&mut run),None).unwrap();
+  None,None,Some(&mut run),None).unwrap();
  assert_eq!(output,None);
  assert_eq!(called,1);
  assert_eq!(fixture.job()["state"],"COMPLETED");

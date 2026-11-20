@@ -56,6 +56,23 @@ for(const row of rows){
   // nominal PASS with omitted public functions/classes is not head-to-head.
   const nodeText=readFileSync(resolve(root,row.source),'utf8');
   const rustText=readFileSync(file,'utf8');
+  // Accept a public re-export only if the referenced module declares it.
+  // Both single-symbol and {grouped} Rust `pub use` syntax are supported.
+  const direct=[...rustText.matchAll(/\bpub\s+use\s+crate::(\w+)::(\w+)\s*;/g)]
+    .map(([,module,symbol])=>({module,symbol}));
+  const grouped=[...rustText.matchAll(/\bpub\s+use\s+crate::(\w+)::\{([^}]+)\}\s*;/g)]
+    .flatMap(([,module,names])=>names.split(',').map(n=>n.trim())
+      .filter(Boolean).map(symbol=>({module,symbol})));
+  const reexports=[...direct,...grouped];
+  const hasExport=name=>{
+    const declaration=new RegExp(`\\bpub\\s+(?:async\\s+)?(?:fn|struct|trait|type|const|static|enum)\\s+${name}\\b`);
+    if(declaration.test(rustText)) return true;
+    return reexports.some(({module,symbol})=>{
+      if(symbol!==name) return false;
+      const target=resolve(root,`rust/src/${module}.rs`);
+      return existsSync(target)&&declaration.test(readFileSync(target,'utf8'));
+    });
+  };
   const runtimeExport=/\bexport\s+(?:(?:declare|async)\s+)?(function|class|const|enum)\s+([A-Za-z_$][\w$]*)/g;
   for(const [,kind,symbol] of nodeText.matchAll(runtimeExport)){
     const snake=symbol.replace(/([a-z0-9])([A-Z])/g,'$1_$2').replace(/([A-Z])([A-Z][a-z])/g,'$1_$2').toLowerCase();
@@ -63,7 +80,7 @@ for(const row of rows){
     // capitalized words (GitHub -> github, ChatGPT -> chatgpt).
     const idiomatic=snake.replaceAll('git_hub','github').replaceAll('chat_gpt','chatgpt');
     const candidate=kind==='class'?[symbol]:kind==='const'?[snake,idiomatic,symbol]:[snake,idiomatic];
-    assert(candidate.some(name=>new RegExp(`\\bpub\\s+(?:async\\s+)?(?:fn|struct|const|static|enum)\\s+${name}\\b`).test(rustText)),
+    assert(candidate.some(hasExport),
       `PASS Rust source missing Node runtime export ${symbol}: ${row.target}`);
   }
  }
