@@ -4,6 +4,7 @@
 //! WebHelm transports and sender authentication are NOT bound here.
 use crate::{
     adapters::{ChatGptAdapter,WorkerExecution},
+    types::chatgpt_start_ack_timeout_ms,
     browser_worker_pool::{BrowserPoolOptions,BrowserWorkerPoolManager},
     browser_worker_runtime::relay_workspace_name,
     execution_context::resolve_execution_context,
@@ -157,11 +158,19 @@ pub fn submit_claimed_chatgpt_worker(
     }).map_err(|e|e.to_string())?;
     let timeout=task.get("timeoutMs").and_then(Value::as_u64)
         .unwrap_or(900_000).clamp(500,86_400_000);
+    // Node reconciler startAck: the worker-start barrier runs on the
+    // canonical start-ack timeout (min 120s / max 600s / overall/3), not
+    // the raw overall timeout; the terminal barrier keeps the full budget.
     let deadline=Instant::now()+Duration::from_millis(timeout);
     let launched=ChatGptAdapter::default().launch(&submitted_task,
         &config.socket,&config.executable,&config.workspace,
         &mut pool,cancelled,|barrier|await_generation_barrier(
-            db_path,job_id,task_id,execution_id,barrier,deadline,cancelled));
+            db_path,job_id,task_id,execution_id,barrier,
+            if barrier=="worker-start"{
+                Instant::now()+Duration::from_millis(
+                    chatgpt_start_ack_timeout_ms(timeout))
+            }else{deadline},
+            cancelled));
     pool.close().map_err(|e|e.to_string())?;
     launched
 }

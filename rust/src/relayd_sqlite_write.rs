@@ -13,6 +13,9 @@ use crate::{
     native_script_execution::run_claimed_script_task,
     native_worker_event_ingress::apply_verified_worker_event,
     route_outcome_recording::record_terminal_route_outcome_jsonl,
+    daemon_worker_failure::{
+        classify_native_launch_phase, DaemonFailureState, DaemonLiveWorkers,
+        DaemonWorkerFailurePorts},
     native_browser_execution::{IsolatedWebHelmConfig,submit_claimed_chatgpt_worker},
     native_script_planner::run_isolated_script_planner,
     manual_plan::prepare_manual_plan,
@@ -36,10 +39,17 @@ pub struct IsolatedSQLiteWriteHost {
     wake_count:u64,
     reconcile_attempts:u64,
     connections:RefCell<HashMap<String,SQLiteRelayStore>>,
+    // Node provenance: src/reconciler-runtime.ts failLaunch binding state.
+    // Shared with worker threads so launch failures reach the same
+    // Graph/SQLite path as Node, not a bare stderr print.
+    failure_state:std::sync::Arc<DaemonFailureState>,
+    live_workers:std::sync::Arc<std::sync::Mutex<DaemonLiveWorkers>>,
 }
 impl IsolatedSQLiteWriteHost {
     pub fn new(config:DaemonConfig)->Self{
-        Self{config,subscriptions:Vec::new(),wake_count:0,reconcile_attempts:0,connections:RefCell::new(HashMap::new())}
+        Self{config,subscriptions:Vec::new(),wake_count:0,reconcile_attempts:0,connections:RefCell::new(HashMap::new()),
+            failure_state:std::sync::Arc::new(DaemonFailureState::new()),
+            live_workers:std::sync::Arc::new(std::sync::Mutex::new(DaemonLiveWorkers::default()))}
     }
     fn path(&self)->PathBuf{relay_unified_store_path(&self.config.store_directory)}
     /// Isolated writes must be confined to the same disposable caller-owned
@@ -624,12 +634,53 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                 .find(|task|field(task,"id")==task_id).cloned()
                 .ok_or("ChatGPT Task vanished during lease claim")?;
             let db=self.path();let job_id=id.to_string();let task_id=task_id.to_string();
+            let execution_id=field(&task,"executionId").to_string();
+            let graph=self.config.graph_directory.clone();
+            let pool_path=Some(config.pool_db.clone());
+            let audit_path=self.config.store_directory.parent()
+                .map(|parent|parent.join("decision-audit.jsonl"));
+            let profile_home=Some(self.config.profile_home.clone());
+            let adapters=json!([
+                {"id":"codex","name":"codex","capabilities":["model","codex"]},
+                {"id":"chatgpt/browser-worker","name":"chatgpt","capabilities":["model","chatgpt","webhelm"]},
+                {"id":"z","name":"z","capabilities":["model","z"]}
+            ]).as_array().cloned().ok_or("Daemon adapter inventory invalid")?;
+            let failure_state=std::sync::Arc::clone(&self.failure_state);
+            let live_workers=std::sync::Arc::clone(&self.live_workers);
+            live_workers.lock().expect("daemon live workers lock poisoned")
+                .register(&task_id,&execution_id);
             std::thread::Builder::new().name(format!("rust-chatgpt-task-{task_id}"))
                 .spawn(move||{
                     let cancelled=std::sync::atomic::AtomicBool::new(false);
-                    if let Err(error)=submit_claimed_chatgpt_worker(
-                        &db,&job_id,&task,&config,&cancelled){
+                    let outcome=submit_claimed_chatgpt_worker(
+                        &db,&job_id,&task,&config,&cancelled);
+                    if let Err(error)=&outcome{
                         eprintln!("Native ChatGPT Worker {job_id}/{task_id}: {error}");
+                    }
+                    if let Ok(_execution)=&outcome{
+                        // Node markWorkerStarted: a successful isolated
+                        // submission proves the Worker generation started, so
+                        // any later failure is not a no-start fallback case.
+                        live_workers.lock().expect("daemon live workers lock poisoned")
+                            .mark_started(&task_id,&execution_id);
+                        return;
+                    }
+                    let error=outcome.expect_err("outcome is Err");
+                    // Node reconciler.ts failLaunch: a Worker launch failure
+                    // must reach handleWorkerLaunchFailure so the Graph alone
+                    // decides retry, quarantine or terminal; a stderr print
+                    // would strand the leased generation forever.
+                    let phase=classify_native_launch_phase(&error);
+                    let mut ports=DaemonWorkerFailurePorts::new(
+                        db.clone(),graph.clone(),Some(job_id.clone()),
+                        pool_path.clone(),audit_path.clone(),
+                        profile_home.clone(),adapters.clone(),
+                        std::sync::Arc::clone(&live_workers),
+                        std::sync::Arc::clone(&failure_state));
+                    if let Err(port_error)=crate::worker_failure_recovery::
+                        handle_worker_launch_failure(&mut ports,&job_id,&task_id,
+                            Some(&execution_id),&json!(error),phase){
+                        eprintln!("Native ChatGPT Worker failure transition {job_id}/{task_id} failed: {port_error}");
                     }
                 }).map_err(|e|format!("Cannot launch isolated WebHelm Worker executor: {e}"))?;
             return Ok(());
