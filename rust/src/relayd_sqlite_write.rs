@@ -44,12 +44,28 @@ pub struct IsolatedSQLiteWriteHost {
     // Graph/SQLite path as Node, not a bare stderr print.
     failure_state:std::sync::Arc<DaemonFailureState>,
     live_workers:std::sync::Arc<std::sync::Mutex<DaemonLiveWorkers>>,
+    // Only explicitly injected loopback fixture URLs are permitted by this
+    // isolated host; it NEVER reads a user's real notification endpoint.
+    escalation_notifier:Option<crate::escalation_notifier::EscalationNotifierConfig>,
 }
 impl IsolatedSQLiteWriteHost {
     pub fn new(config:DaemonConfig)->Self{
         Self{config,subscriptions:Vec::new(),wake_count:0,reconcile_attempts:0,connections:RefCell::new(HashMap::new()),
             failure_state:std::sync::Arc::new(DaemonFailureState::new()),
-            live_workers:std::sync::Arc::new(std::sync::Mutex::new(DaemonLiveWorkers::default()))}
+            live_workers:std::sync::Arc::new(std::sync::Mutex::new(DaemonLiveWorkers::default())),
+            escalation_notifier:None}
+    }
+    /// Explicit fixture transport only. No environment-derived or public
+    /// GitHub/HTTPS notification endpoint can run inside isolated mode.
+    pub fn set_test_loopback_escalation_notifier(
+        &mut self,config:crate::escalation_notifier::EscalationNotifierConfig,
+    )->Result<(),String>{
+        if config.url.scheme()!="http"
+            ||!matches!(config.url.host_str(),Some("localhost"|"127.0.0.1"|"::1")){
+            return Err("Isolated escalation notifier requires an explicit loopback fixture".into());
+        }
+        self.escalation_notifier=Some(config);
+        Ok(())
     }
     fn path(&self)->PathBuf{relay_unified_store_path(&self.config.store_directory)}
     /// Isolated writes must be confined to the same disposable caller-owned
@@ -419,6 +435,76 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
 }
 impl DaemonServices for IsolatedSQLiteWriteHost {
     fn control(&mut self,body:&Value)->Result<Value,String>{workspace_control(self,body)}
+    fn deliver_pending_escalations(&mut self,id:&str)->Result<(),String>{
+        // Node Reconciler calls this before normal Task reconciliation.
+        // Isolated tests have NO external notifier credentials: record a
+        // durable missing-channel observation, not an invented delivery.
+        let current=self.scoped(id)?.load_job(id)?
+            .ok_or("Escalation notification Job missing from SQLite")?;
+        self.isolated_project(&current)?;
+        let notify:Option<Box<dyn Fn(&Value)->Result<Value,String>>>=
+            self.escalation_notifier.as_ref().map(|config|{
+                let config=config.clone();
+                Box::new(move |request:&Value|{
+                    crate::escalation_notifier::send_escalation_notification(&config,request)
+                }) as Box<dyn Fn(&Value)->Result<Value,String>>
+            });
+        crate::escalation_notifier::deliver_pending_escalations(
+            &current,id,std::time::SystemTime::now(),notify,
+            |task_id,escalation_id,mutation|{
+                self.scoped(id)?.mutate_job(id,|mut job|{
+                    let mut candidate=job.get("tasks").and_then(Value::as_array)
+                        .into_iter().flatten().find(|task|field(task,"id")==task_id)
+                        .cloned().ok_or("Notification Task absent from SQLite")?;
+                    // A verified receipt must go through the canonical
+                    // conflict checker even if another worker already marked
+                    // it delivered: matching duplicates are idempotent and
+                    // contradictory receipts are rejected, never hidden.
+                    if let crate::escalation_notifier::NotificationMutation::Delivered{ref receipt}=mutation{
+                        return Ok(crate::task_recovery::record_escalation_notification_delivery(
+                            &job,task_id,escalation_id,receipt)?["job"].clone());
+                    }
+                    let escalation=&candidate["escalation"];
+                    if field(escalation,"id")!=escalation_id
+                        ||field(escalation,"status")!="pending"
+                        ||field(&escalation["notification"],"status")=="delivered"{
+                        // Failed/no-channel attempts cannot overwrite a
+                        // replacement or already delivered escalation.
+                        return Ok(job);
+                    }
+                    match mutation{
+                        crate::escalation_notifier::NotificationMutation::Delivered{..}=>{
+                            unreachable!("validated delivery handled above")
+                        },
+                        crate::escalation_notifier::NotificationMutation::MissingChannel=>{
+                            let notification=&mut candidate["escalation"]["notification"];
+                            if !notification.is_object(){*notification=json!({});}
+                            notification["status"]=json!("pending");
+                            notification["lastError"]=json!(
+                                "Notification delivery channel is not configured");
+                        },
+                        crate::escalation_notifier::NotificationMutation::Failed{
+                            ref message,attempts,ref last_attempt_at,ref next_attempt_at,
+                        }=>{
+                            let notification=&mut candidate["escalation"]["notification"];
+                            if !notification.is_object(){*notification=json!({});}
+                            notification["status"]=json!("pending");
+                            notification["attempts"]=json!(attempts);
+                            notification["lastError"]=json!(message);
+                            notification["lastAttemptAt"]=json!(last_attempt_at);
+                            notification["nextAttemptAt"]=json!(next_attempt_at);
+                        },
+                    }
+                    let entry=job.get_mut("tasks").and_then(Value::as_array_mut)
+                        .and_then(|tasks|tasks.iter_mut().find(|t|field(t,"id")==task_id))
+                        .ok_or("Notification Task disappeared before SQLite write")?;
+                    *entry=candidate;
+                    Ok(job)
+                })?;
+                Ok(())
+            },true)?;
+        Ok(())
+    }
     fn load(&mut self,id:&str)->Result<Value,String>{WorkspaceControlBackend::load_job(self,id)}
     fn load_execution_process(&mut self,id:&str,task:&str,execution:&str)
         ->Result<Option<Value>,String>{

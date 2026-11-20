@@ -1256,6 +1256,31 @@ fn invoke(request: &Value) -> Result<String, String> {
             )?
             .to_string(),
         ),
+        "escalateExhaustedTroubleshooters" => {
+            // Direct original public Node API differential using exactly the
+            // Rust Graph task-recovery reducer. The production daemon binds
+            // this same effect to SQLite CAS instead of this isolated cell.
+            use std::{cell::RefCell,rc::Rc};
+            let current=Rc::new(RefCell::new(request["job"].clone()));
+            let read=Rc::clone(&current);
+            let write=Rc::clone(&current);
+            let graph=std::path::Path::new(request["root"].as_str().ok_or(
+                "Graph root missing")?).join("workflow");
+            let job_id=request["job"]["id"].as_str().ok_or("Fixture Job ID missing")?;
+            let result=agents_relay_rust2::troubleshooter_fallback::escalate_exhausted_troubleshooters(
+                job_id,
+                move|_job_id|Ok(read.borrow().clone()),
+                move|_job_id,task_id,payload|{
+                    let source=write.borrow().clone();
+                    let updated=agents_relay_rust2::task_recovery::
+                        request_troubleshooter_escalation(
+                            &graph,&source,task_id,payload,None)?;
+                    *write.borrow_mut()=updated["job"].clone();
+                    Ok(updated["duplicate"]==true)
+                },
+            )?;
+            Ok(json!({"job":current.borrow().clone(),"escalated":result}).to_string())
+        },
         "fallbackFailedTroubleshooters" => {
             let mut job = request["job"].clone();
             let queued =

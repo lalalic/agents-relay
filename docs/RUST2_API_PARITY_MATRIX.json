@@ -2,12 +2,12 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "3eb0afe0968e045c3778f31cc3bc9f706318fd62",
-    "rustTree": "8718baffad7fee2a5eab95d3c4262cf17c9fb2e0",
-    "sourceCount": 13,
+    "rustTree": "6c0a8379cc2e383d4f7b036f5672a3466d785e99",
+    "sourceCount": 12,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 114,
-    "directNameMatches": 110,
+    "runtimeExportSymbols": 112,
+    "directNameMatches": 108,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 4,
     "typeOrShapeReviewSymbols": 71,
@@ -1357,33 +1357,6 @@
         },
         {
           "name": "runDaemon",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/troubleshooter-fallback.ts",
-      "target": "rust/src/troubleshooter_fallback.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 2,
-      "directNameMatches": 2,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [
-        "rust/tests/head_to_head_wave2_review_effects.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity.rs"
-      ],
-      "exports": [
-        {
-          "name": "fallbackFailedTroubleshooters",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "escalateExhaustedTroubleshooters",
           "kind": "function",
           "static": "name-match"
         }

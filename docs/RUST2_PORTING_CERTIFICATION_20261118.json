@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 83,
-    "HOLD": 21,
+    "PASS": 84,
+    "HOLD": 20,
     "EXCLUDED": 3
   },
   "records": [
@@ -2644,21 +2644,25 @@
       "source": "src/troubleshooter-fallback.ts",
       "target": "rust/src/troubleshooter_fallback.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 2,
       "staticNameMismatch": 0,
       "directDiffTests": [
-        "rust/tests/head_to_head_wave2_review_effects.mjs"
+        "rust/tests/head_to_head_wave2_review_effects.mjs",
+        "rust/tests/head_to_head_troubleshooter_escalate_public.mjs",
+        "rust/tests/head_to_head_task_recovery_public.mjs",
+        "rust/tests/head_to_head_escalation_notifier_public.mjs"
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity.rs"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-20: Both public functions compared against original Node with 6 fallback and 12 complete escalation control + mutated Job cases; task-recovery original Node/Rust 116, notifier 56. Native isolated Git/SQLite Reconciler queues one bounded fallback before human gate, suppresses false independent recovery.exhausted for human-escalated Task, commits task.escalate through Graph/CAS, restart and concurrent daemon requests idempotent. Local fake HTTP valid receipt marks delivered, invalid receipt records pending/backoff, no channel pending/error. Nontransactional legacy saveTask excluded as retired compatibility. Full production notification config belongs to relayd HOLD."
       ],
-      "legacyLedgerNote": "Wave4 B: canonical Graph-authorized SQLite atomic escalation state plus outbox intent, native idempotency and rollback 3/3; prior fallback native cases. Actual downstream human delivery and all legacy saveTask/concurrent request effects remain unverified (native_wave4_review_escalation.rs)."
+      "openGates": [],
+      "legacyLedgerNote": "Wave4 B: canonical Graph-authorized SQLite atomic escalation state plus outbox intent, native idempotency and rollback 3/3; prior fallback native cases. Actual downstream human delivery and all legacy saveTask/concurrent request effects remain unverified (native_wave4_review_escalation.rs).",
+      "status": "PASS"
     },
     {
       "source": "src/troubleshooter.ts",

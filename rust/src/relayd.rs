@@ -250,6 +250,13 @@ pub trait DaemonServices:Send{
     fn event_history(&mut self,id:&str,task_id:Option<&str>,limit:i64)
         ->Result<Vec<Value>,String>;
     fn publish_event(&mut self,event:&Value)->Result<(),String>;
+    fn deliver_pending_escalations(&mut self,id:&str)->Result<(),String>{
+        let snapshot=self.load(id)?;
+        if crate::escalation_notifier::candidate_notifications(&snapshot).is_empty(){
+            return Ok(());
+        }
+        Err("Daemon escalation notification Store is not bound".into())
+    }
     // SSE frames are observations from the authoritative live Event Bus.
     fn subscribe_events(&mut self)->Receiver<String>;
     fn router_test(&mut self,id:&str,task_id:&str)->Result<Value,String>;
@@ -337,6 +344,19 @@ impl<S:DaemonServices> ReconcileHost for DaemonReconcileHost<'_,S>{
     }
     fn launch(&mut self,action:&Value)->Result<(),String>{self.0.effect(action)}
     fn broadcast(&mut self,event:&Value)->Result<(),String>{self.0.publish_event(event)}
+    fn deliver_pending_escalations(&mut self,job_id:&str)->Result<(),String>{
+        self.0.deliver_pending_escalations(job_id)
+    }
+    fn request_troubleshooter_escalation(
+        &mut self,job_id:&str,recovery_id:&str,request:&Value
+    )->Result<Value,String>{
+        self.0.control(&json!({
+            "command":"task.escalate","jobId":job_id,"taskId":recovery_id,
+            "requiredAction":request.get("requiredAction"),
+            "resolutionCondition":request.get("resolutionCondition"),
+            "context":request.get("context"),
+        }))
+    }
     fn load_execution_process(&mut self,job_id:&str,task_id:&str,
         execution_id:&str)->Result<Option<Value>,String>{
         self.0.load_execution_process(job_id,task_id,execution_id)

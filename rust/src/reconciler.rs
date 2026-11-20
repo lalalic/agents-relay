@@ -34,6 +34,9 @@ use crate::{
         pending_troubleshooter_retries,pending_troubleshooter_tasks,
         refresh_troubleshooter_input,
     },
+    troubleshooter_fallback::{
+        fallback_failed_troubleshooters,exhausted_troubleshooter_escalations,
+    },
     workflow::{
         contracts::workflow_effect_policy,
         job_reconcile_v2::decide_job_reconcile,
@@ -218,6 +221,11 @@ impl Reconciler{
         project:&Path,roots:&Value,adapters:&[Value],registered:&[Value],
         usage:Option<&Value>,host:&mut P,
     )->Result<Value,String>{
+        // Match Node reconcile() ordering: replay pending human escalation
+        // notices through the durable retry ledger before selecting any new
+        // Task/Planner effects. Failed or missing channels cannot masquerade
+        // as delivered human approval.
+        host.deliver_pending_escalations(job_id)?;
         self.recover_expired_generations(job_id,host)?;
         let before=host.load(job_id)?;
         let outcome=self.reconcile_snapshot(&before,verified_head,
@@ -229,6 +237,32 @@ impl Reconciler{
         // failure does not roll back the transaction, but remains visible to
         // the caller so the durable outbox can retry the observation.
         for event in &outcome.events{host.broadcast(event)?;}
+        // Original Node Reconciler escalates only AFTER a bounded alternate
+        // model fallback has been applied. The Graph/SQLite host must own the
+        // actual human gate; no effect is claimed from a candidate list.
+        // Recheck exact durable state after each request because an external
+        // provider or concurrent Reconciler can change that Task generation.
+        let escalation_candidates=exhausted_troubleshooter_escalations(&after);
+        for candidate in escalation_candidates{
+            let id=field(&candidate,"taskId").to_string();
+            if id.is_empty(){return Err("Troubleshooter escalation Task ID missing".into());}
+            let latest=host.load(job_id)?;
+            if !exhausted_troubleshooter_escalations(&latest).iter()
+                .any(|entry|field(entry,"taskId")==id){continue;}
+            host.request_troubleshooter_escalation(job_id,&id,&candidate)?;
+            let committed=host.load(job_id)?;
+            let recovery=tasks(&committed).iter().find(|task|field(task,"id")==id)
+                .ok_or("Escalated Troubleshooter Task missing after SQLite commit")?;
+            if recovery.get("escalation").is_none_or(Value::is_null)
+                ||field(recovery,"state")!="BLOCKED"{
+                return Err(format!(
+                    "Escalation for Troubleshooter {id} was not durably committed"));
+            }
+            host.broadcast(&event_for(job_id,&id,None,"task.blocked",
+                "blocked",&format!("Fallback exhausted: human action required for {id}"),
+                Some("orchestrator"),None,None))?;
+            after=committed;
+        }
         // Lost/blocked generations are cancelled using exact execution IDs,
         // never process-name matching or a global kill operation.
         for generation in &outcome.cancel_generations{
@@ -453,10 +487,34 @@ impl Reconciler{
                     "attempt":task.get("attempt"),"maxAttempts":task.get("maxAttempts")})));
             result.job["tasks"][index]=task;
         }
+        // Node Reconciler invokes fallbackFailedTroubleshooters AFTER normal
+        // Troubleshooter retry admission and BEFORE human escalation. A
+        // failed provider/runtime may get one Graph-authorized config-default
+        // attempt, then this exact candidate is no longer escalation-eligible.
+        // All changes are still speculative until Reconciler's SQLite CAS.
+        let fallback_queued=fallback_failed_troubleshooters(
+            &self.graph_directory,&mut result.job)?;
+        for id in fallback_queued{
+            let task=tasks(&result.job).iter().find(|task|field(task,"id")==id)
+                .ok_or("Fallback queued Task missing from candidate")?;
+            result.events.push(self.event(&result.job,task,
+                "troubleshooter.retry_queued","queued",
+                &format!("Alternate model fallback scheduled for {id}"),
+                json!({})));
+        }
+        // Node runs human escalation before the generic "recovery exhausted"
+        // bookkeeping. When a human gate will be created, the recovery
+        // becomes BLOCKED and is no longer a FAILED recovery to record.
+        // Do not publish a false independent terminal failure first.
+        let pending_human=exhausted_troubleshooter_escalations(&result.job)
+            .into_iter().filter_map(|entry|entry.get("taskId")
+                .and_then(Value::as_str).map(str::to_string))
+            .collect::<HashSet<_>>();
         let exhausted=exhausted_troubleshooter_recoveries(&result.job);
         for entry in exhausted{
             let original=field(&entry["original"],"id");
             let recovery=field(&entry["recovery"],"id");
+            if pending_human.contains(recovery){continue;}
             let reason=field(&entry,"reason");
             let record=json!({"taskId":original,
                 "recoveryTaskId":recovery,"reason":reason,"at":iso8601_now()});
