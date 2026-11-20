@@ -1,3 +1,48 @@
+# Rust2 handoff — CURRENT authoritative status (2026-11-20)
+
+**READ THIS FIRST:** Everything after the divider below is historical and its older PASS, PORTING, branch and merge remarks are superseded. The authoritative data is the current checklist and certification JSON.
+
+## Pickup and exact state
+
+- Checkout: /Users/chengli/Workspace/agents-relay. Active branch: rust2; latest completed implementation commit 153375e. Following the user-requested merge, local main should fast-forward to the *handoff commit* as well. Check both branch pointers. No push, deployment, live daemon restart or production Rust cutover is authorized.
+- **NOT COMPLETE**: current 230-source migration ledger: **204 PASS, 19 PORTING, 7 EXCLUDED, 0 PENDING**. Separate original 107-file certifier: **82 PASS, 22 HOLD, 3 EXCLUDED**. No 0-PORTING claim.
+- Latest full isolated regression: Neo job e6a6f6cf50b3f484 exited 0; npm build and prior Rust parity binaries built; **118 Rust target results, 532 tests passed, 0 failed**; selected direct original Node/Rust CLI, Dashboard and local-Git suites **143 passed, 0 failed**; checklist verification and diff check passed. Standalone full Node tests were not run. All tests used disposable local Git / SQLite fixtures and isolated AGENTS_RELAY_STORE_DIR, no real providers.
+- Original main Dashboard PWA changes merged into rust2 at 99a3ce4 (main before merge b2481f9). Both Node and Rust serve *one* frontend directory dashboard/ with matching versioned asset URLs. Two stale Rust raw-template assertions were corrected in native_dashboard_api.rs and native_stage2_daemon_smoke.rs; focused and full tests passed.
+- User explicitly instructed **skip all retired compatibility**. Original Node daemon hardcodes noGitHub=true and DisabledGitHubClient. Public CLI and Rust CLI reject --pr / --github-* / remote PR switches, including help; do not port these. Three in-source historical shims github-auth.ts, github-client.ts, projected-store.ts are **EXCLUDED**, not PASS, guarded by source invariants and original runtime test rust/tests/local_git_runtime_excludes_remote_github.mjs (2 passing). SQLite, canonical Graph, local Git, event bus, active adapters are still fully in-scope.
+- Static API audit was regenerated/verified in this handoff after stale hash detection. It checks names only, not behavior. The old git stash named rust2-wip-cli-support-before-main-20261120 holds a safety copy already reapplied and committed: do not blindly apply it. The disposable untracked relay.sqlite* triplet was preserved under .git/rust2-quarantine/20261120-handoff/ (not committed); do not confuse it with the production SQLite store.
+
+## Exactly 19 outstanding PORTING modules
+
+1. src/adapters.ts — real native adapter execution, ack/terminal/cancel, production provider/Graph binding.
+2. src/browser-worker-routing.ts — 3,192 Node/Rust candidates pass; bind pool-health reroute in actual WorkerFailurePorts daemon.
+3. src/browser-worker-runtime.ts — complete WebHelm lease, probe, monitor, cancel, recovery, session quarantine and reconnect parity.
+4. src/chatgpt-platform-fallback.ts — 4,661 Node/Rust cases pass; bind no-start fallback and quarantine to daemon and SQLite.
+5. src/cli-artifact.ts — complete Ajv schema/reference/format and CLI negative Unicode/error parity.
+6. src/cli-coordinator.ts — native job.run Graph/SQLite works; foreground/interrupt/provider lifecycle parity pending.
+7. src/cli-foreground.ts — formatting tested only; full watch/poll/reconcile/SIGINT/SIGTERM/AbortSignal/cleanup unverified.
+8. src/cli.ts — finish public CLI routing, error/exit behavior, active foreground and real daemon binding.
+9. src/dashboard.ts — PWA and basic HTTP pass; remaining SSE/auth/versioned transport/error/lifecycle integration.
+10. src/interactive-invocation.ts — real daemon host callback, Graph/SQLite acceptance, stale/dedupe/restart/resume.
+11. src/planner-runtime.ts — native Planner runtime/children, Graph/outbox/restart orchestration.
+12. src/planner.ts — complete native Planner effect protocols with owned script/provider-fake E2E.
+13. src/reconciler-runtime.ts — production event ingress, worker start-ack, failure/terminal/cancel and restart.
+14. src/relay-store.ts — complete active public SQLite durable-store facade, concurrency/rollback/outbox parity.
+15. src/relayd.ts — end-to-end native daemon orchestration of all active modules, not just smoke tests.
+16. src/troubleshooter-fallback.ts — original fallback state and human escalation delivery, concurrent/retry/rollback.
+17. src/types.ts — 1,237 Node/Rust runtime cases pass; bind chatGptStartAckTimeoutMs in daemon for ChatGPT and Z.
+18. src/z-adapter.ts — native Z credential/WebHelm transport/start-ack/cancel/quarantine E2E.
+19. src/z-oauth.ts — production HTTPS/TLS/identity integration and safe failure handling; local fake HTTP flow passes.
+
+## Concrete next-agent workflow
+
+- Run neo bootstrap once, then AGENTS.md/DESIGN-PRINCIPLES.md. Inspect git status, git log, git branch -vv and git worktree list; develop on rust2, not on main. User will assign a replacement agent. Never use Codex CLI, Relay Jobs, live services or production SQLite during isolated certification.
+- Prioritize the real daemon path: rust/src/relayd.rs, reconciler_runtime.rs, native_browser_execution.rs, worker_failure_orchestration.rs and WorkerFailurePorts. Native WebHelm submission and Graph terminal barrier exist, but Node start-ack policy is not yet fully production-bound. Task state must never be inferred from browser submission. Cover launch failure, duplicate/stale generation, timeouts, cancel, quarantine, restart and post-commit event/SQLite receipts.
+- For each source, compare original Node public APIs with native Rust against identical independent fixtures; prove production native CLI/daemon bindings, Graph/SQLite side effects, negative + duplicate + restart. Only then change PORTING to PASS; do not reclassify missing live behavior as compatible or excluded.
+- Repro checks: npm run build; node scripts/rust2-checklist-verify.mjs; node scripts/rust2-api-parity-audit.mjs --write; node scripts/rust2-api-parity-audit.mjs --check --json; with isolated AGENTS_RELAY_STORE_DIR and AGENTS_RELAY_SCRIPT_NODE set, cargo test --manifest-path rust/Cargo.toml --all-targets -- --test-threads=1; selected original Node/Rust H2H tests; git diff --check. Commit each verified tranche.
+- User's acceptance remains **PORTING=0 AND real tests pass**, not just a count adjustment. Do not push/deploy without explicit authorization.
+
+---
+
 # Rust2 transfer to next agent — 2026-11-19
 
 ## Verified starting state

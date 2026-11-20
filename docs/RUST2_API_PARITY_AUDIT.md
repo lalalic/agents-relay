@@ -26,7 +26,7 @@ A listed direct differential import only means a head-to-head test imports the c
 | filesWithoutDirectDiffImport | 4 |
 | filesWithoutOtherRustReferences | 1 |
 
-Source tree: `3eb0afe0968e`; Rust source tree: `fdc62262dcb7`. Rust module rows in scope: 19. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `3eb0afe0968e`; Rust source tree: `f31dadfad80f`. Rust module rows in scope: 19. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
