@@ -1490,31 +1490,89 @@ test('Jobs display one lifecycle without an execution-mode badge and refresh aut
  assert.match(dashboardHtml,/void refreshJobSnapshot\(payload\.statePatch\.jobId\)/);
 });
 
-test('CLI foreground reconciler forwards configured shared root to Shortcut Worker context',async()=>{
+test('CLI runtime binds workspace and global roots without resurrecting removed sharedRoot',async()=>{
  const {runtime}=await import('../dist/cli.js');
- const reconciler=runtime(new InMemoryStore({id:'test',title:'test',repository:'test',state:'DRAFT',tasks:[]}),['--no-github','--workspace-root','/tmp','--global-root','/tmp/global-agents'],undefined,undefined,true);
- try{assert.equal(reconciler.options.executionContextRoots.workspaceRoot,'/tmp');assert.equal(reconciler.options.executionContextRoots.globalRoot,'/tmp/global-agents');}
+ const reconciler=runtime(new InMemoryStore({id:'test',title:'test',repository:'test',state:'DRAFT',tasks:[]}),['--no-github','--workspace-root','/tmp','--shared-root','/tmp/obsolete-shared-root','--global-root','/tmp/global-agents'],undefined,undefined,true);
+ try{
+  assert.equal(reconciler.options.executionContextRoots.workspaceRoot,'/tmp');
+  assert.equal(reconciler.options.executionContextRoots.globalRoot,'/tmp/global-agents');
+  assert.equal(Object.hasOwn(reconciler.options.executionContextRoots,'sharedRoot'),false);
+ }
  finally{await reconciler.close();}
 });
 
-test('Job and Task dialogs prioritize durable content and append-only comments', () => {
+test('Job and Task dialogs read durable intent and review feedback, not status and diagnostic JSON', () => {
   const source = dashboardHtml;
-  const start = source.indexOf('function detailContentText(');
+  const start = source.indexOf('// Content-only dialogs:');
   const end = source.indexOf("document.querySelector('#job-content-open').addEventListener", start);
-  assert.ok(start >= 0 && end > start, 'content-first detail dialog implementation exists');
-  const details = source.slice(start, end);
-  assert.match(details, /\['Objective',job\.objective\|\|job\.title/);
-  assert.match(details, /\['Content',job\.description/);
-  assert.match(details, /\['Input',job\.continuation\?\.input/);
-  assert.match(details, /\['Objective',task\.title/);
-  assert.match(details, /\['Input',task\.input/);
-  assert.match(details, /task\.comments\|\|\[\]/);
-  assert.match(details, /job\.tasks\|\|\[\]\)\.flatMap/);
-  assert.match(details, /comments\.slice\(\)\.sort/);
-  assert.match(details, /detailCommentsSection\(comments\)/);
-  assert.match(details, /element\('details','dialog-metadata'\)/);
-  assert.match(details, /dialog\.showModal\(\)/);
-  assert.doesNotMatch(details, /innerHTML\s*=/, 'user-supplied comments use text nodes');
-  assert.ok(source.indexOf('body.append(detailCommentsSection(comments))', start) < source.indexOf("element('details','dialog-metadata')", start), 'comments appear before diagnostics');
-  for (const selector of ['.details-dialog-body', '.dialog-content-text', '.dialog-comment-list']) assert.ok(source.includes(selector), 'dialog styles include '+selector);
+  assert.ok(start >= 0 && end > start);
+  const reader = source.slice(start, end);
+  assert.match(reader, /job\.objective\|\|job\.description\|\|job\.title/);
+  assert.match(reader, /taskReaderObjective\(task,envelope\)/);
+  assert.match(reader, /job\.continuation\?\.input/);
+  assert.match(reader, /task\.input/);
+  assert.match(reader, /uniqueInputs\(candidates,objective\)/);
+  assert.match(reader, /reviewRevisionRequests/);
+  assert.match(reader, /non_blocking_observations/);
+  assert.match(reader, /review\.feedback/);
+  assert.match(reader, /kind==='Task'\?'Task objective':'Objective'/);
+  assert.match(reader, /Review comments/);
+  assert.doesNotMatch(reader, /dialog-metadata|Execution & diagnostics|badge.*state|\['Content',job\.description/);
+  assert.match(reader, /window\.markdownit/);
+  assert.match(source, /<script>\n.*markdown-it/);
+  assert.match(reader, /html:false/);
+  assert.match(reader, /next\.rel='noopener noreferrer'/);
+  assert.doesNotMatch(reader, /innerHTML|document\.write/);
+});
+
+
+test('Task reader extracts human-readable Script DAG inputs without exposing JSON as its objective', () => {
+  const source=readFileSync(new URL('../dashboard/dashboard.js',import.meta.url),'utf8');
+  const start=source.indexOf('function taskReaderEnvelope(task)');
+  const end=source.indexOf('function openTaskDetails(task)',start);
+  const {taskReaderEnvelope,taskReaderObjective,taskReaderInputs}=runInNewContext(source.slice(start,end)+
+    '\n({taskReaderEnvelope,taskReaderObjective,taskReaderInputs})',
+    {detailText:value=>typeof value==='string'?value.trim():''});
+  const task={id:'2000',title:'vlog-visioner',input:JSON.stringify({
+    taskInput:'Process this project.\n\n- Canonical media: 6 files',
+    agent:'vlog-visioner',nodeId:'visioner',predecessorOutputs:{director:{result:'internal'}},
+    outputPath:'/tmp/2000.json',instruction:'Analyze the authorized media',
+  })};
+  const envelope=taskReaderEnvelope(task);
+  assert.equal(taskReaderObjective(task,envelope),'vlog-visioner');
+  assert.deepEqual([...taskReaderInputs(task,envelope)].map(x=>[x.source,x.content]),[
+    ['Task request','Process this project.\n\n- Canonical media: 6 files'],
+    ['Execution instructions','Analyze the authorized media'],
+  ]);
+  assert.equal(taskReaderObjective({...task,objective:'**Inspect** all media'}),'**Inspect** all media');
+  assert.equal(taskReaderObjective({...task,input:JSON.stringify({...JSON.parse(task.input),taskObjective:'Create a shot inventory'})}),
+    'Create a shot inventory');
+  assert.equal(taskReaderObjective({id:'1999',title:'Coordinator',input:'Process this selected run.\n\n- Source A'}),
+    'Process this selected run.');
+  assert.equal(taskReaderObjective({id:'2',title:'Editor',input:'{not valid JSON'}),'{not valid JSON');
+  const fallback=taskReaderInputs({id:'7',title:'Worker',input:JSON.stringify({unrecognized:1})});
+  assert.match(fallback[0].content,/```json\n/);
+});
+
+test('content reader removes objective duplicates and preserves independent inputs and review findings', () => {
+  const source = readFileSync(new URL('../dashboard/dashboard.js', import.meta.url), 'utf8');
+  const start = source.indexOf('function detailText(value)');
+  const end = source.indexOf('function readerInputSection(item)', start);
+  assert.ok(start >= 0 && end > start);
+  const { uniqueInputs, readerReviewComments } = runInNewContext(source.slice(start,end) + '\n({uniqueInputs,readerReviewComments})');
+  const objective='Mission statement.\n\nUnique long paragraph that must not repeat inside an input block.';
+  const inputs=uniqueInputs([
+    {source:'Coordinator',content:'Distinct instructions.\n\nUnique long paragraph that must not repeat inside an input block.'},
+    {source:'duplicate',content:'Distinct instructions.'},
+    {source:'Second input',content:'More requirements.'},
+    {source:'objective duplicate',content:objective},
+  ],objective);
+  assert.deepEqual([...inputs].map(item => item.content), ['Distinct instructions.','More requirements.']);
+  const job={tasks:[{id:'42',comments:[
+    {kind:'resolution.changed',author:'relay',text:'system state transition',createdAt:'2026-01-01'},
+    {kind:'review.feedback',author:'Reviewer',text:'Fix the headline',createdAt:'2026-01-03'}
+  ]}],reviewRevisionRequests:[{originalTaskId:'42',createdAt:'2026-01-02',findings:[{summary:'Check sources',evidence:'Reference is missing'}]}]};
+  const comments=readerReviewComments(job);
+  assert.deepEqual([...comments].map(comment=>comment.text),['Fix the headline','Check sources\n\nReference is missing']);
+  assert.deepEqual([...readerReviewComments(job,{...job.tasks[0],id:'other'})].map(c=>c.text),['Fix the headline']);
 });

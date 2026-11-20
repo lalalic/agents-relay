@@ -85,7 +85,7 @@
     .badge.DRAFT { background:#eef2ff; color:#3f51b5; }
     .badge.shortcut-mode { background:var(--accent2); color:var(--accent); border:1px solid var(--accent); }
     .badge.MERGE_PENDING { background:#ffe3a3; color:#7a4a00; }
-    .details-dialog { width:min(860px,calc(100vw - 1.5rem)); max-height:min(90vh,960px); max-height:min(90dvh,960px); padding:0; overflow:hidden; border:1px solid var(--border); border-radius:.85rem; background:var(--surface); color:var(--text); box-shadow:0 24px 65px #0004; }
+    .details-dialog { width:min(1140px,calc(100vw - 1.2rem)); max-width:none; max-height:95vh; max-height:95dvh; padding:0; overflow:hidden; border:1px solid var(--border); border-radius:.85rem; background:var(--surface); color:var(--text); box-shadow:0 24px 65px #0004; }
     .details-dialog[open] { display:flex; flex-direction:column; }
     .details-dialog::backdrop { background:#17202b99; }
     .details-dialog-head { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex:none; padding:1rem 1.25rem; border-bottom:1px solid var(--border); background:var(--surface); }
@@ -236,7 +236,7 @@
       #usage-view .usage-provider > .detail-value { font-size:1.2rem; font-weight:800; }
       #usage-view .usage-details { padding-top:.35rem; }
       #usage-view .usage-details-body { font-size:.68rem; }
-      .details-dialog-head { padding:.75rem .85rem; } .details-dialog-body { padding:.8rem .85rem 1rem; }
+      .details-dialog { width:calc(100vw - .55rem); max-height:97dvh; border-radius:.45rem; } .details-dialog-head { padding:.75rem .85rem; } .details-dialog-body { padding:.8rem .85rem 1rem; }
     .job-summary,.detail-groups { grid-template-columns:1fr; }
       .panel-head { padding:.55rem .6rem; }
       .panel-body { padding:.6rem; }
@@ -244,3 +244,27 @@
     }
     @media (prefers-reduced-motion:reduce) { .skeleton { animation:none; } .usage-fill { transition:none; } }
   .router-rules-workspace{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start;min-width:0}.router-rules-pane{min-width:0;max-width:100%;overflow:hidden}.rules-editor .rules-textarea{min-height:420px}.audit-log{display:flex;flex-direction:column;gap:8px;max-height:500px;overflow:auto;min-width:0}.audit-entry{border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--surface)}.audit-entry-head{display:flex;justify-content:space-between;gap:8px;align-items:center}.audit-entry pre{white-space:pre-wrap;word-break:break-word;margin:8px 0 0;font-size:11px}.router-test-panel{margin-top:16px;border-top:1px solid var(--border);padding-top:12px}.router-test-results{margin-top:8px;display:flex;flex-direction:column;gap:6px;max-height:480px;overflow:auto;min-width:0}.router-test-results pre{white-space:pre;overflow:auto;max-width:100%;font-size:11px;line-height:1.45;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px}.router-test-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)}@media(max-width:900px){.router-rules-workspace{grid-template-columns:1fr}.router-rules-pane{max-height:none}.router-test-results{max-height:420px}}@media(max-width:650px){#rules-view .panel-head .subtle{display:none}#rules-view .panel-body{max-height:none;overflow:visible;padding:.6rem}#rules-view .router-rules-workspace{gap:.9rem}#rules-view .rules-help{font-size:.74rem;line-height:1.4}#rules-view .rules-textarea{min-height:52vh;padding:.65rem;font-size:12px}#rules-view .rules-footer{align-items:stretch}#rules-view .rules-footer>.subtle{width:100%}#rules-view .rules-footer>div{width:100%;display:grid;grid-template-columns:1fr 1fr;gap:.5rem}#rules-view .rules-save{min-height:44px;width:100%;padding:.55rem .7rem}#rules-view .router-rules-pane>.panel-head{padding:.55rem 0}#rules-view .audit-log{max-height:none}#rules-view .audit-entry-head{align-items:flex-start}#rules-view .audit-entry-head .subtle{display:block;flex:0 0 auto}#rules-view .router-test-panel{min-width:0;max-width:100%;overflow:hidden}#rules-view .router-test-results{max-height:none;width:100%;max-width:100%;overflow-x:hidden}#rules-view .router-test-results>*{min-width:0;max-width:100%}#rules-view .router-test-results pre{width:100%;box-sizing:border-box;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;font-size:11px;padding:.65rem}#rules-view .router-test-row{grid-template-columns:1fr}}
+
+/* Readable content-first Job / Task details (Markdown, not runtime diagnostics). */
+.dialog-content-body { padding:1rem 1.2rem; }
+.dialog-input-source { margin:0 0 .55rem; color:var(--muted); font-size:.74rem; font-weight:600; }
+.dialog-markdown { min-width:0; overflow-wrap:anywhere; line-height:1.65; font-size:.92rem; }
+.dialog-markdown > :first-child { margin-top:0; }
+.dialog-markdown > :last-child { margin-bottom:0; }
+.dialog-markdown h1,.dialog-markdown h2,.dialog-markdown h3,.dialog-markdown h4 { margin:1em 0 .4em; color:var(--text); font-weight:750; line-height:1.35; text-transform:none; letter-spacing:normal; }
+.dialog-markdown h1 { font-size:1.3rem; }
+.dialog-markdown h2 { font-size:1.15rem; }
+.dialog-markdown h3 { font-size:1.02rem; }
+.dialog-markdown h4 { font-size:.95rem; }
+.dialog-markdown p { margin:.45rem 0 .8rem; }
+.dialog-markdown ul,.dialog-markdown ol { padding-left:1.5rem; margin:.45rem 0 .8rem; }
+.dialog-markdown li { margin:.18rem 0; }
+.dialog-markdown li > p { margin:.2rem 0; }
+.dialog-markdown a { color:var(--accent); text-decoration:underline; text-underline-offset:.12em; }
+.dialog-markdown code { font:.85em/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; background:var(--surface); border:1px solid var(--border); border-radius:.25rem; padding:.05em .25em; }
+.dialog-markdown pre { margin:.55rem 0 1rem; overflow:auto; max-width:100%; background:var(--surface); border:1px solid var(--border); border-radius:.45rem; padding:.7rem .9rem; white-space:pre; tab-size:2; }
+.dialog-markdown pre code { padding:0; border:0; background:none; font-size:.82rem; }
+.dialog-markdown blockquote { margin:.6rem 0; border-left:3px solid var(--accent); padding:.25rem .8rem; color:var(--muted); }
+.dialog-markdown table { display:block; max-width:100%; overflow-x:auto; border-collapse:collapse; margin:.6rem 0; }
+.dialog-markdown th,.dialog-markdown td { padding:.4rem .65rem; border:1px solid var(--border); text-align:left; }
+.dialog-markdown hr { border:0; border-top:1px solid var(--border); margin:1rem 0; }

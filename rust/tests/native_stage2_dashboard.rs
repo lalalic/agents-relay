@@ -83,7 +83,10 @@ fn server_uses_exact_original_pwa_assets_with_no_second_frontend() {
     let response=static_response("GET","/").unwrap();
     assert_eq!(response.status,200);
     assert_eq!(response.content_type,"text/html; charset=utf-8");
-    assert_eq!(response.body,include_bytes!("../../dashboard/index.html"));
+    let html=String::from_utf8(response.body).unwrap();
+    for asset in ["dashboard.css","dashboard.js","vendor/markdown-it.min.js"]{
+        assert!(html.contains(&format!("/{asset}?v={}",dashboard_version())));
+    }
     assert!(static_response("POST","/").is_none());
     assert!(static_response("GET","/../../secret").is_none());
     assert!(static_response("GET","/dashboard.js").is_some());

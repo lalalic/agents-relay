@@ -1,7 +1,8 @@
 // Only public, non-sensitive, version-independent app-shell assets are cached.
 // Never intercept /api/*, /events, /dashboard-config.js or navigations.
-const CACHE = 'agents-relay-pwa-shell-v1';
-const ASSETS = ['/dashboard.css', '/dashboard.js', '/pwa.js', '/manifest.webmanifest',
+const CACHE = 'agents-relay-pwa-shell-v3';
+// JavaScript and CSS are release-specific and must not be cached by a Service Worker.
+const ASSETS = ['/pwa.js', '/manifest.webmanifest',
   '/icons/icon-180.png', '/icons/icon-192.png', '/icons/icon-512.png'];
 const ALLOWED = new Set(ASSETS);
 self.addEventListener('install', event => {

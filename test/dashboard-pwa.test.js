@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { Script } from 'node:vm';
-import { dashboardJelFunction } from '../dist/dashboard-html.js';
+import { dashboardJelFunction, dashboardVersion } from '../dist/dashboard-html.js';
 import { jobJelDiagram } from '../dist/dashboard-jel.js';
 import { InMemoryStore } from '../dist/store.js';
 
@@ -23,6 +23,7 @@ test('PWA frontend assets load independently and real-time API remains uncached'
 
   for (const [path, name, type] of [
     ['/dashboard.js', 'dashboard.js', 'text/javascript'],
+    ['/vendor/markdown-it.min.js', 'vendor/markdown-it.min.js', 'text/javascript'],
     ['/dashboard.css', 'dashboard.css', 'text/css'],
     ['/pwa.js', 'pwa.js', 'text/javascript'],
     ['/service-worker.js', 'service-worker.js', 'text/javascript'],
@@ -43,7 +44,15 @@ test('PWA frontend assets load independently and real-time API remains uncached'
   const html = await htmlRes.text();
   assert.match(html, /<link rel="manifest" href="\/manifest.webmanifest">/);
   assert.match(html, /<script src="\/dashboard-config.js" defer><\/script>/);
-  assert.match(html, /<script src="\/dashboard.js" defer><\/script>/);
+  for (const asset of ['/dashboard.css', '/dashboard.js', '/vendor/markdown-it.min.js']) {
+    assert.ok(html.includes(`${asset}?v=${dashboardVersion}`), `${asset} is release-scoped`);
+    const raw = await fetch(base + asset);
+    const versioned = await fetch(base + `${asset}?v=${dashboardVersion}`);
+    assert.equal(versioned.status, 200, asset);
+    assert.equal(raw.headers.get('content-type'), versioned.headers.get('content-type'), asset);
+    assert.deepEqual(Buffer.from(await raw.arrayBuffer()), Buffer.from(await versioned.arrayBuffer()), asset);
+  }
+  assert.match(html, /<script src="\/dashboard.js\?v=[^"]+" defer><\/script>/);
   assert.match(html, /<script src="\/pwa.js" defer><\/script>/);
   assert.doesNotMatch(html, /<script>\s*'use strict';/);
   const cfg = await fetch(base + '/dashboard-config.js');
@@ -65,6 +74,8 @@ test('PWA frontend assets load independently and real-time API remains uncached'
 test('PWA service worker excludes durable job data and SSE from caching', () => {
   const sw = asset('service-worker.js').toString();
   assert.match(sw, /new Set\(ASSETS\)/);
+  assert.doesNotMatch(sw, /'\/dashboard\.js'|'\/dashboard\.css'|'\/vendor\/markdown-it\.min\.js'/);
+  assert.match(sw, /agents-relay-pwa-shell-v3/);
   assert.match(sw, /ALLOWED\.has\(url\.pathname\)/);
   assert.doesNotMatch(sw, /['"]\/api\//);
   assert.doesNotMatch(sw, /['"]\/events['"]/);
@@ -84,6 +95,10 @@ test('PWA asset routes reject non-GET methods and traversal', async () => {
   const base = 'http://127.0.0.1:' + address.port;
   for (const [path, init] of [
     ['/dashboard.js', {method:'POST'}],
+    ['/dashboard.js?v=old', {}],
+    ['/dashboard.css?v=old', {}],
+    ['/dashboard.js?v=' + dashboardVersion + '&v=old', {}],
+    ['/dashboard.js?v=' + dashboardVersion + '&unused=yes', {}],
     ['/icons/unknown.png', {}],
     ['/dashboard/private-key', {}],
   ]) {

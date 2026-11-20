@@ -98,19 +98,36 @@ document.querySelector('.version').textContent='v'+window.__RELAY_DASHBOARD_CONF
     )
 }
 /// Exact public path allowlist. No HTTP-supplied path is used in filesystem I/O.
+/// Canonical shared PWA assets. The original Node server uses immutable
+/// versioned paths to survive a CDN cache that can ignore no-cache headers.
+/// Keep the native server's HTML/asset allowlist identical: no arbitrary query
+/// strings or filesystem paths, and never cache the runtime config.
 pub fn static_response(method: &str, target: &str) -> Option<DashboardResponse> {
     if method != "GET" {
         return None;
     }
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    if !query.is_empty() {
+        let mut pairs = url::form_urlencoded::parse(query.as_bytes());
+        if !pairs.next().is_some_and(|(key, value)| key == "v" && value == dashboard_version())
+            || pairs.next().is_some()
+        {
+            return None;
+        }
+    }
     let fixed = |mime, cache, bytes: &'static [u8]| {
         DashboardResponse::new(200, mime, cache, bytes.to_vec())
     };
-    match target {
-        "/" => Some(fixed(
-            "text/html; charset=utf-8",
-            "no-store",
-            include_bytes!("../../dashboard/index.html"),
-        )),
+    match path {
+        "/" if target == "/" => {
+            let version=dashboard_version();
+            let html=include_str!("../../dashboard/index.html")
+                .replace(r#"href="/dashboard.css""#, &format!(r#"href="/dashboard.css?v={version}""#))
+                .replace(r#"src="/vendor/markdown-it.min.js""#, &format!(r#"src="/vendor/markdown-it.min.js?v={version}""#))
+                .replace(r#"src="/dashboard.js""#, &format!(r#"src="/dashboard.js?v={version}""#));
+            Some(DashboardResponse::new(200,"text/html; charset=utf-8","no-store",
+                html.into_bytes()))
+        },
         "/dashboard-config.js" => Some(DashboardResponse::new(
             200,
             "text/javascript; charset=utf-8",
@@ -121,6 +138,11 @@ pub fn static_response(method: &str, target: &str) -> Option<DashboardResponse> 
             "text/javascript; charset=utf-8",
             "no-cache",
             include_bytes!("../../dashboard/dashboard.js"),
+        )),
+        "/vendor/markdown-it.min.js" => Some(fixed(
+            "text/javascript; charset=utf-8",
+            "no-cache",
+            include_bytes!("../../dashboard/vendor/markdown-it.min.js"),
         )),
         "/dashboard.css" => Some(fixed(
             "text/css; charset=utf-8",

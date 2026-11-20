@@ -81,12 +81,6 @@ fn response_body(bytes: &[u8]) -> &[u8] {
 fn pwa_static_assets_have_exact_shared_bytes_and_no_stale_runtime_state() {
     for (path, body, mime, cache) in [
         (
-            "/",
-            &include_bytes!("../../dashboard/index.html")[..],
-            "text/html",
-            "no-store",
-        ),
-        (
             "/dashboard.js",
             &include_bytes!("../../dashboard/dashboard.js")[..],
             "text/javascript",
@@ -96,6 +90,12 @@ fn pwa_static_assets_have_exact_shared_bytes_and_no_stale_runtime_state() {
             "/dashboard.css",
             &include_bytes!("../../dashboard/dashboard.css")[..],
             "text/css",
+            "no-cache",
+        ),
+        (
+            "/vendor/markdown-it.min.js",
+            &include_bytes!("../../dashboard/vendor/markdown-it.min.js")[..],
+            "text/javascript",
             "no-cache",
         ),
         (
@@ -142,6 +142,23 @@ fn pwa_static_assets_have_exact_shared_bytes_and_no_stale_runtime_state() {
         assert_eq!(result.cache_control, cache, "{path}");
         assert!(static_response("POST", path).is_none());
     }
+    let page=String::from_utf8(static_response("GET","/").unwrap().body).unwrap();
+    assert_eq!(page.replace(&format!("?v={}",dashboard_version()),""),
+        include_str!("../../dashboard/index.html"),
+        "native versioned HTML must be the same Node-owned template");
+    for asset in ["/dashboard.css","/dashboard.js","/vendor/markdown-it.min.js"]{
+        let url=format!("{asset}?v={}",dashboard_version());
+        assert!(page.contains(&url),"{asset} requires immutable versioned URL");
+        assert_eq!(static_response("GET",&url),static_response("GET",asset));
+        for bad in [
+            format!("{asset}?v=old"),
+            format!("{asset}?v={}&v=old",dashboard_version()),
+            format!("{asset}?v={}&extra=1",dashboard_version()),
+        ]{
+            assert!(static_response("GET",&bad).is_none(),
+                "non-versioned or ambiguous asset query must be rejected: {bad}");
+        }
+    }
     assert!(static_response("GET", "/dashboard/../../secrets").is_none());
     assert!(static_response("GET", "/api/job?id=1").is_none());
     assert!(static_response("GET", "/events").is_none());
@@ -159,7 +176,7 @@ fn rust_http_serves_pwa_delegates_api_and_streams_sse_events() {
     assert!(page.starts_with(b"HTTP/1.1 200 OK\r\n"));
     assert_eq!(
         response_body(&page),
-        include_bytes!("../../dashboard/index.html")
+        static_response("GET","/").unwrap().body.as_slice()
     );
     let js = request(
         &addr,
