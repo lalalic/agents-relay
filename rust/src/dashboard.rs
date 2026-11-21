@@ -138,9 +138,9 @@ pub fn static_response(method: &str, target: &str) -> Option<DashboardResponse> 
         "/" if target == "/" => {
             let version=dashboard_version();
             let html=include_str!("../../dashboard/index.html")
-                .replace(r#"href="/dashboard.css""#, &format!(r#"href="/dashboard.css?v={version}""#))
-                .replace(r#"src="/vendor/markdown-it.min.js""#, &format!(r#"src="/vendor/markdown-it.min.js?v={version}""#))
-                .replace(r#"src="/dashboard.js""#, &format!(r#"src="/dashboard.js?v={version}""#));
+                .replace(r#"href="./dashboard.css""#, &format!(r#"href="./dashboard.css?v={version}""#))
+                .replace(r#"src="./vendor/markdown-it.min.js""#, &format!(r#"src="./vendor/markdown-it.min.js?v={version}""#))
+                .replace(r#"src="./dashboard.js""#, &format!(r#"src="./dashboard.js?v={version}""#));
             Some(DashboardResponse::new(200,"text/html; charset=utf-8","no-store",
                 html.into_bytes()))
         },

@@ -33,7 +33,7 @@ test('dashboard inline JavaScript parses before publication', () => {
 
 test('dashboard polls the live package version and reloads only when it changes', () => {
   assert.match(dashboardHtml, /const DASHBOARD_VERSION=/);
-  assert.match(dashboardHtml, /loadJSON\('\/api\/version'\)/);
+  assert.match(dashboardHtml, /loadJSON\(RELAY_PREFIX\+'\/api\/version'\)/);
   assert.match(dashboardHtml, /live\?\.version&&live\.version!==DASHBOARD_VERSION\)location\.reload\(\)/);
   assert.match(dashboardHtml, /setInterval\(\(\)=>void refreshVersion\(\),30000\)/);
 });
@@ -161,7 +161,7 @@ test('dashboard exposes a top-level Graphs browser backed by the workflow graph 
   assert.match(dashboardHtml, /id="graphs-tab"[\s\S]*>Workflow<\/button>/);
   assert.doesNotMatch(dashboardHtml, /id="shortcuts-tab"/);
   assert.match(dashboardHtml, /id="graphs-view"/);
-  assert.match(dashboardHtml, /loadJSON\('\/api\/graphs'\)/);
+  assert.match(dashboardHtml, /loadJSON\(RELAY_PREFIX\+'\/api\/graphs'\)/);
   assert.match(dashboardHtml, /function renderSelectedGraph\(\)/);
   assert.match(dashboardHtml, /window\.mermaid\.render/);
   assert.match(dashboardHtml, /new DOMParser\(\)\.parseFromString\(markup\.replace\(/);
@@ -244,7 +244,7 @@ test('dashboard exposes the operations-console structure safely', () => {
 
 
 test('SSE still updates Jobs without a separate connection status component', () => {
-  assert.match(dashboardHtml, /const stream=new EventSource\('\/events'\)/);
+  assert.match(dashboardHtml, /const stream=new EventSource\(RELAY_PREFIX\+'\/events'\)/);
   assert.match(dashboardHtml, /stream\.addEventListener\('relay'/);
   assert.doesNotMatch(dashboardHtml, /stream\.onopen=|stream\.onerror=|id="connection"/);
   assert.doesNotMatch(dashboardHtml, /addEvent\(\{type:'connection'/);
@@ -255,7 +255,7 @@ test('jobs panel supports manual fresh refresh and latest-first ordering', () =>
   assert.match(dashboardHtml, /id="selected-job-refresh"/);
   assert.match(dashboardHtml, /selectedJobRefresh\.addEventListener\('click'/);
   assert.match(dashboardHtml, /new URLSearchParams\(\{id:job\.id,repo:job\.repository,pr:String\(job\.prNumber\)\}\)/);
-  assert.match(dashboardHtml, /loadJSON\('\/api\/job\?'\+params\.toString\(\)\)/);
+  assert.match(dashboardHtml, /loadJSON\(RELAY_PREFIX\+'\/api\/job\?'\+params\.toString\(\)\)/);
   assert.match(dashboardHtml, /jobsRefresh\.addEventListener\('click',\(\)=>void refresh\(true\)\)/);
   assert.match(dashboardHtml, /\/api\/jobs'\+\(params\?'\?'\+params:''\)/);
   assert.doesNotMatch(dashboardHtml, /function isTerminalJob\(job\)/);
@@ -285,7 +285,7 @@ test('dashboard labels relay and worker lifecycle phases distinctly', () => {
 });
 
 test('events replay canonical history when job or task selection changes', () => {
-  assert.match(dashboardHtml, /loadJSON\('\/api\/events\?'/);
+  assert.match(dashboardHtml, /loadJSON\(RELAY_PREFIX\+'\/api\/events\?'/);
   assert.match(dashboardHtml, /async function loadEventHistory\(\)/);
   assert.match(dashboardHtml, /void loadEventHistory\(\)/);
   assert.match(dashboardHtml, /displayedEventIds\.has\(event\.event_id\)/);
@@ -924,7 +924,7 @@ test('dashboard webhook accepts only self-contained facts and does not refresh G
 test('dashboard warns when GitHub API is rate limited', () => {
   assert.match(dashboardHtml, /id="rate-limit-warning"/);
   assert.match(dashboardHtml, /GitHub API rate limit reached\. Showing cached job data\./);
-  assert.match(dashboardHtml, /loadJSON\('\/api\/status'\)/);
+  assert.match(dashboardHtml, /loadJSON\(RELAY_PREFIX\+'\/api\/status'\)/);
   assert.match(dashboardHtml, /function renderRateLimitStatus\(status\)/);
 });
 
@@ -954,7 +954,7 @@ test('dashboard exposes one free-text Execution Router rules editor', () => {
   assert.match(dashboardHtml, /id="rules-tab"[^>]*>Router Rules</);
   assert.match(dashboardHtml, /id="rules-text"[^>]*class="rules-textarea"/);
   assert.match(dashboardHtml, /Execution Router rules with an explicit <code>\[choices\]<\/code> section/);
-  assert.match(dashboardHtml, /fetch\('\/api\/execution-router-rules'/);
+  assert.match(dashboardHtml, /dashboardWrite\(RELAY_PREFIX\+'\/api\/execution-router-rules'/);
   assert.match(dashboardHtml, /method:'PUT'/);
   assert.match(dashboardHtml, /New routing decisions will load these rules/);
   assert.doesNotMatch(dashboardHtml, /worker-rules-tab|model-router-rules|worker-router-rules/);
@@ -1057,8 +1057,8 @@ test('Router Rules tab exposes current router test and latest audit log', () => 
   assert.match(dashboardHtml, /id="audit-log"/);
   assert.match(dashboardHtml, /Rules Editor/);
   assert.match(dashboardHtml, /Audit Log/);
-  assert.match(dashboardHtml, /fetch\('\/api\/router-test'/);
-  assert.match(dashboardHtml, /loadJSON\('\/api\/decision-audit'/);
+  assert.match(dashboardHtml, /dashboardWrite\(RELAY_PREFIX\+'\/api\/router-test'/);
+  assert.match(dashboardHtml, /loadJSON\(RELAY_PREFIX\+'\/api\/decision-audit'/);
   assert.match(dashboardHtml, /laya_input/);
   assert.match(dashboardHtml, /hard_gates/);
   assert.match(dashboardHtml, /effective_choices/);
@@ -1343,7 +1343,7 @@ test('Jobs search keeps only the newest response across filters and Refresh', as
   const pending = [];
   const state = {
     jobsRefresh:{disabled:false,textContent:'Refresh'}, jobsFeedback:{textContent:''}, jobs:[], jobRepositories:[],
-    selectedJob:null,selectedTaskId:null,searchQuery:' initial ',selectedStatus:'ACTIVE',selectedRepo:'owner/one', URLSearchParams,
+    selectedJob:null,selectedTaskId:null,RELAY_PREFIX:'',searchQuery:' initial ',selectedStatus:'ACTIVE',selectedRepo:'owner/one', URLSearchParams,
     location:{hash:''}, jobList:{replaceChildren(){}},
     loadJSON(url){return new Promise((resolve,reject)=>pending.push({url,resolve,reject}));},
     dedupeJobs(value){return value;},drawRuntimeSummary(){},compareJobs(){return 0;},
