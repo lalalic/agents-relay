@@ -192,3 +192,10 @@ Statuses below mean **complete gate** status; a green subtest does not turn its 
 - **D-MVP-3 still NOT PASS:** Job 682's re-scheduled A/B/C incorrectly ran old source-root Shortcut versions despite a repaired source Job worktree. New source-owned Shortcut fixture preflight performed actual public trend search, 8 observed reference URLs, A/B/C verifiable file outputs and verified SHA-256 over **file bytes**, no publication authorization. Full Project Runner review + terminal is still pending.
 - **Mobile 4 checks BLOCKED** by physical iPhone 17 `unavailable`; no simulator or synthetic UI observation.
 - Evidence: `mvp/runs/20261121T1943Z-rust2/summary.md`, selected test logs, CLI readbacks, Script A/B/C preflight.
+
+### MVP update — Neo Mobile deferred (2026-11-21)
+
+- User explicitly deferred physical Neo Mobile verification. Exclude Mobile from the current Rust2 CLI/DAG completion gate; do not count unrun iPhone checks as PASS or as an implementation FAIL. Resume the iPhoneHelm checklist only when explicitly requested.
+- CLI Job 685: Calculator Builder 2101 and independent QA 2105 SUCCEEDED; Reviewer 2107 RUNNING at last readback, so **not COMPLETED** despite independent WebHelm artifact QA 14/14. Artifact logs preserved in `mvp/runs/20261121T1943Z-rust2/`.
+- CLI Job 686: Script-free Model A/B/C 2102/2103/2104 SUCCEEDED; Final Reviewer 2106 returned `changes_required` for missing authorized research brief and missing declared Coordinator output. Plan `plan-1` is PLANNING, owned by foreground Coordinator CLI. **Not COMPLETED**; do not forge inputs, review, or missing file.
+- Found repeated daemon Planner-launch races with a valid foreground CLI generation. Rust now skips duplicate launch effects when another owner holds a durable unexpired Plan lease; no Plan status is edited. Targeted regression **26/26 PASS**: native Codex Planner 3, Script Planner 5, SQLite 18. Source fix remains inactive in the running daemon until an orderly restart after current owned Codex processes settle.

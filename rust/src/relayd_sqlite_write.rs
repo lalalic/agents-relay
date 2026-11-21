@@ -675,6 +675,16 @@ impl IsolatedSQLiteWriteHost {
             // committed; never start a duplicate execution.
             return Ok(());
         }
+        // A foreground Coordinator or another authorized Planner may have
+        // already claimed this exact generation after the Graph committed the
+        // launch effect. Its durable, unexpired SQLite lease wins regardless
+        // of process owner. Never race it with a second native model process.
+        if !field(plan,"executionId").is_empty()
+            &&plan.get("leaseExpiresAt").and_then(serde_json::Value::as_str)
+                .and_then(|value|chrono::DateTime::parse_from_rfc3339(value).ok())
+                .is_some_and(|until|until>chrono::Utc::now()){
+            return Ok(());
+        }
         let declared=project.join("agents/.shortcut/planner.agent.mjs");
         // Absence may select the authorized Model provider; an existing but
         // broken/escaping Script contract must fail closed, not fall back.

@@ -1,0 +1,1 @@
+Independent WebHelm Chrome QA ran on genuine Calculator Job 685 generated nested Run artifact. Functional DOM+keyboard 10/10; Chrome CDP Emulation 320/375/430/1280 viewport 4/4. Both logs contain real UI event/dimensions; this verifies artifact, not a Job terminal.
