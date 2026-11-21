@@ -576,3 +576,56 @@ fn installed_native_daemon_receives_nats_push_as_authoritative_graph_worker_even
     drop(restarted);
     fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn installed_native_daemon_dashboard_sse_emits_node_frames_only_after_commit(){
+    let home=root();job(&home,"DRAFT",false);
+    let port=port();
+    let running=daemon(&home,port);
+    let mut live=TcpStream::connect(("127.0.0.1",port)).unwrap();
+    live.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    live.write_all(b"GET /events HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+    let mut got=String::new();
+    let mut buf=[0u8;4096];
+    let deadline=Instant::now()+Duration::from_secs(7);
+    while !got.contains(": connected\n\n"){
+        let n=live.read(&mut buf).unwrap();assert!(n>0);
+        got.push_str(&String::from_utf8_lossy(&buf[..n]));
+        assert!(Instant::now()<deadline,"native SSE startup did not open a live stream");
+    }
+    assert!(got.starts_with("HTTP/1.1 200"),"{got}");
+    assert!(got.contains("Content-Type: text/event-stream"),"{got}");
+    assert!(!got.contains("\"state\":\"ACTIVE\""),
+        "SSE must never send an activated Job before the Graph/SQLite commit");
+    let mut control=TcpStream::connect(("127.0.0.1",port)).unwrap();
+    control.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    control.write_all(
+        b"POST /api/job-action?id=17&action=start HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    ).unwrap();
+    let mut result=String::new();
+    control.read_to_string(&mut result).unwrap();
+    assert!(result.starts_with("HTTP/1.1 200"),"{result}");
+    let committed:serde_json::Value=serde_json::from_str(
+        result.split_once("\r\n\r\n").unwrap().1).unwrap();
+    assert_eq!(committed["state"],"ACTIVE");
+    let deadline=Instant::now()+Duration::from_secs(7);
+    while !got.contains("event: relay\ndata: ")
+        || !got.contains("\"type\":\"relay.wake\"")
+        || !got.contains("\"job\":") || !got.contains("\"state\":\"ACTIVE\""){
+        let n=live.read(&mut buf).unwrap();
+        assert!(n>0,"native SSE connection dropped before forwarding committed Job");
+        got.push_str(&String::from_utf8_lossy(&buf[..n]));
+        assert!(Instant::now()<deadline,"daemon sent no Node-compatible SSE after SQLite commit: {got}");
+    }
+    let saved=SQLiteRelayStore::open_without_claim_reset(
+        &home.join("relay.sqlite"),Some("17")).unwrap().load_job("17").unwrap().unwrap();
+    assert_eq!(saved["state"],"ACTIVE");
+    let payload=got.split("data: ").find(|part|part.starts_with("{\"job\":"))
+        .expect("Node EventSource onmessage requires a data-only Job frame");
+    let job_json:serde_json::Value=serde_json::from_str(
+        payload.split_once("\n\n").unwrap().0).unwrap();
+    assert_eq!(job_json["job"]["id"],"17");
+    assert_eq!(job_json["job"]["state"],"ACTIVE");
+    drop(live);drop(running);
+    fs::remove_dir_all(home).unwrap();
+}

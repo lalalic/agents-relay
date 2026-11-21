@@ -87,6 +87,9 @@ pub struct IsolatedSQLiteWriteHost {
     model_nats_url:Option<String>,
     model_nats_last_retry:Option<std::time::Instant>,
     model_nats_pending:HashMap<String,Vec<Value>>,
+    // Observational SSE de-duplication: an unchanged Graph/SQLite snapshot
+    // must not trigger an extra render on every daemon wake.
+    last_sse_snapshot:HashMap<String,String>,
 }
 impl IsolatedSQLiteWriteHost {
     pub fn new(config:DaemonConfig)->Self{
@@ -97,7 +100,8 @@ impl IsolatedSQLiteWriteHost {
             model_event_ingress_enabled:false,model_event_cursor:HashMap::new(),
             model_nats_subscription:None,model_nats_receiver:None,
             model_nats_sender:None,model_nats_url:None,
-            model_nats_last_retry:None,model_nats_pending:HashMap::new()}
+            model_nats_last_retry:None,model_nats_pending:HashMap::new(),
+            last_sse_snapshot:HashMap::new()}
     }
     /// Bind the REAL Events Bus read-only HTTP history API only when the
     /// caller explicitly supplies a loopback endpoint. This isolated daemon
@@ -350,17 +354,21 @@ impl IsolatedSQLiteWriteHost {
             stores.get_mut(id).expect("cached scoped DB")))
     }
     fn all(&self)->Result<Vec<Value>,String>{inventory_from_local(&self.config,false)}
-    fn persist_exact(&self,id:&str,prior:&Value,next:&Value)->Result<Value,String>{
+    fn persist_exact(&mut self,id:&str,prior:&Value,next:&Value)->Result<Value,String>{
         if field(prior,"id")!=id||field(next,"id")!=id{
             return Err("Cross-Job SQLite CAS forbidden".into());
         }
         let expected=prior.clone();let candidate=next.clone();
-        self.scoped(id)?.mutate_job(id,|current|{
+        let committed=self.scoped(id)?.mutate_job(id,|current|{
             if current!=expected{
                 return Err("Concurrent Job mutation; recompute from SQLite snapshot".into());
             }
             Ok(candidate)
-        })
+        })?;
+        // Node subscribeLocalCommits publishes ONLY committed snapshots;
+        // the UI must never see speculative Reconciler or Worker states.
+        self.emit_job_snapshot(&committed);
+        Ok(committed)
     }
     fn isolated_origin(&self,project:&Path)->Result<(),String>{
         let names=checked_local_git(project,&["remote"])?;
@@ -415,6 +423,7 @@ impl IsolatedSQLiteWriteHost {
         // browser receipt or a speculative provider callback must never
         // notify Dashboard that an uncommitted Task succeeded.
         self.emit(event.clone());
+        self.emit_job_snapshot(&result);
         if matches!(field(event,"type"),"task.completed"|"task.failed"){
             self.wake(job_id,"native-model-worker.terminal")?;
         }
@@ -453,9 +462,25 @@ impl IsolatedSQLiteWriteHost {
         self.wake(id,"dashboard.task.action")?;
         Ok(result["job"].clone())
     }
-    fn emit(&mut self,value:Value){
-        let payload=value.to_string();
-        self.subscriptions.retain(|sender|sender.send(payload.clone()).is_ok());
+    fn emit_sse(&mut self,frame:String){
+        self.subscriptions.retain(|sender|sender.send(frame.clone()).is_ok());
+    }
+    fn emit(&mut self,event:Value){
+        // Original Node Dashboard bus.subscribe wraps each event in a
+        // named SSE "relay" frame. A bare JSON string in the socket is
+        // ignored by EventSource and cannot update live Dashboard bubbles.
+        let payload=json!({"event":event});
+        self.emit_sse(format!("event: relay\ndata: {payload}\n\n"));
+    }
+    fn emit_job_snapshot(&mut self,job:&Value){
+        let id=field(job,"id");
+        if id.is_empty(){return;}
+        let payload=json!({"job":job}).to_string();
+        if self.last_sse_snapshot.get(id).is_some_and(|prior|prior==&payload){
+            return;
+        }
+        self.last_sse_snapshot.insert(id.to_owned(),payload.clone());
+        self.emit_sse(format!("data: {payload}\n\n"));
     }
     /// Current Job Graph invokes this effect; the shared local Git module
     /// owns immutable source/target ref checks and completion guard. Each
@@ -569,7 +594,9 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
     }
     fn save_job(&mut self,job:&Value)->Result<Value,String>{
         let id=field(job,"id");
-        self.scoped(id)?.save_job(job)?;Ok(job.clone())
+        self.scoped(id)?.save_job(job)?;
+        self.emit_job_snapshot(job);
+        Ok(job.clone())
     }
     fn create_job_if_absent(&mut self,job:&Value)->Result<Value,String>{
         // Creation is the first point where an untrusted Control request can
@@ -577,24 +604,32 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
         // opening or mutating SQLite, rather than relying on later actions.
         self.isolated_project(job)?;
         let id=field(job,"id");
-        self.scoped_create(id)?.create_job_if_absent(job)
+        let saved=self.scoped_create(id)?.create_job_if_absent(job)?;
+        self.emit_job_snapshot(&saved);
+        Ok(saved)
     }
     fn mutate_job(&mut self,id:&str,reduce:&dyn Fn(&mut Value)->Result<(),String>)
         ->Result<Value,String>{
-        self.scoped(id)?.mutate_job(id,|mut job|{reduce(&mut job)?;Ok(job)})
+        let saved=self.scoped(id)?.mutate_job(id,|mut job|{
+            reduce(&mut job)?;Ok(job)
+        })?;
+        self.emit_job_snapshot(&saved);
+        Ok(saved)
     }
     fn append_task(&mut self,id:&str,task:&Value)->Result<Value,String>{
         if field(task,"jobId")!=id||field(task,"id").is_empty(){
             return Err("Task create requires immutable Job/Task identity".into());
         }
-        self.scoped(id)?.mutate_job(id,|mut job|{
+        let saved=self.scoped(id)?.mutate_job(id,|mut job|{
             let list=job.get_mut("tasks").and_then(Value::as_array_mut)
                 .ok_or("Job Task list unavailable")?;
             if list.iter().any(|row|field(row,"id")==field(task,"id")){
                 return Err("Task ID already allocated".into());
             }
             list.push(task.clone());Ok(job)
-        })
+        })?;
+        self.emit_job_snapshot(&saved);
+        Ok(saved)
     }
     fn save_agent(&mut self,id:&str,agent:&Value)->Result<(),String>{
         self.scoped(id)?.upsert_agent(agent)
@@ -605,6 +640,11 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
     fn wake(&mut self,id:&str,reason:&str)->Result<(),String>{
         self.wake_count+=1;
         self.emit(json!({"type":"relay.wake","jobId":id,"reason":reason}));
+        // Snapshot readback is observational. A wake that has not yet
+        // committed cannot invent a fresh Job/Task state.
+        if let Ok(Some(job))=self.scoped(id).and_then(|db|db.load_job(id)){
+            self.emit_job_snapshot(&job);
+        }
         Ok(())
     }
     fn refresh_inventory(&mut self)->Result<(),String>{

@@ -1045,3 +1045,34 @@ fn nats_disconnection_recovers_same_execution_and_never_duplicates_durable_compl
     drop(store);drop(host);
     assert_eq!(final_job,fixture.job(),"post-disconnect Job must remain immutable");
 }
+
+#[test]
+fn node_dashboard_sse_envelopes_only_contain_graph_sqlite_committed_snapshots(){
+    use std::sync::mpsc::TryRecvError;
+    let fixture=Fixture::new();
+    let mut host=IsolatedSQLiteWriteHost::new(fixture.config.clone());
+    let observer=DaemonServices::subscribe_events(&mut host);
+    assert!(matches!(observer.try_recv(),Err(TryRecvError::Empty)));
+    let initial=fixture.job();
+    assert!(DaemonServices::task_action(&mut host,"15","missing","retry").is_err());
+    assert_eq!(fixture.job(),initial);
+    assert!(matches!(observer.try_recv(),Err(TryRecvError::Empty)),
+        "Graph denied Task must never send fabricated SSE progress");
+    let saved=DaemonServices::task_action(&mut host,"15","7","retry").unwrap();
+    assert_eq!(saved["tasks"][0]["state"],"QUEUED");
+    assert_eq!(saved,fixture.job());
+    let relay=observer.try_recv().expect("canonical wake should be an SSE relay frame");
+    assert!(relay.starts_with("event: relay\ndata: "),"{relay}");
+    assert!(relay.ends_with("\n\n"));
+    let wake:Value=serde_json::from_str(
+        relay.strip_prefix("event: relay\ndata: ").unwrap().trim()).unwrap();
+    assert_eq!(wake["event"]["type"],"relay.wake");
+    assert_eq!(wake["event"]["jobId"],"15");
+    let snapshot=observer.try_recv().expect("committed Task snapshot must reach EventSource");
+    assert!(snapshot.starts_with("data: "),"{snapshot}");
+    let decoded:Value=serde_json::from_str(
+        snapshot.strip_prefix("data: ").unwrap().trim()).unwrap();
+    assert_eq!(decoded["job"],saved);
+    assert!(matches!(observer.try_recv(),Err(TryRecvError::Empty)),
+        "one changed SQLite revision must not cause duplicate SSE snapshots");
+}
