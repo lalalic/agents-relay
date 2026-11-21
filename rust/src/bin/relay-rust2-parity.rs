@@ -4023,6 +4023,27 @@ fn invoke(request: &Value) -> Result<String, String> {
         "dashboardStyles" => {
             Ok(json!(agents_relay_rust2::dashboard_style::dashboard_styles).to_string())
         }
+        "dashboardMobile" => {
+            use agents_relay_rust2::dashboard_mobile::*;
+            let kind=request["method"].as_str().unwrap_or("");
+            let result=match kind{
+                "validMobileIdentity"=>json!(valid_mobile_identity(
+                    &request["id"],&request["repository"])),
+                "projectMobileJob"=>project_mobile_job(&request["row"])
+                    .unwrap_or(Value::Null),
+                "projectMobileJobs"=>project_mobile_jobs(
+                    &request["rows"],
+                    request.get("offset").and_then(Value::as_f64).unwrap_or(f64::NAN),
+                    request.get("limit").and_then(Value::as_f64).unwrap_or(f64::NAN),
+                )?,
+                "projectMobileTasks"=>project_mobile_tasks(
+                    &request["row"],&request["id"],&request["repository"],
+                )?,
+                "projectMobileActivity"=>project_mobile_activity(&request["rows"]),
+                _=>return Err(format!("Unknown dashboard mobile method: {kind}")),
+            };
+            Ok(result.to_string())
+        }
         "observeProcess" => Ok(agents_relay_rust2::process_identity::observe_process(
             request["pid"].as_i64().unwrap_or(0),
         )

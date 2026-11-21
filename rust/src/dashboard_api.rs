@@ -4,6 +4,10 @@
 // All lifecycle writes must be performed by the injected Graph/SQLite services.
 use crate::{
     dashboard::{DashboardBackend, DashboardRequest, DashboardResponse},
+    dashboard_mobile::{
+        project_mobile_jobs,project_mobile_tasks,project_mobile_activity,
+        valid_mobile_identity,
+    },
     dashboard_data::{
         dashboard_workflow_graphs, effective_github_usage, list_dashboard_job_inventory,
         search_dashboard_jobs,
@@ -225,6 +229,95 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
         }
         text_response(202, "Accepted")
     }
+    fn mobile(&self,services:&mut S,req:&DashboardRequest<'_>,parsed:&Url)
+        ->DashboardResponse{
+        let path=parsed.path();
+        let id=query(parsed,"id").unwrap_or_default();
+        let repo=query(parsed,"repo").unwrap_or_default();
+        let identity=valid_mobile_identity(&json!(id),&json!(repo));
+        let valid_get=allowed_method(req,"GET")&&identity;
+        let result=(||->Result<Value,String>{
+            match path{
+                "/api/mobile/jobs" if allowed_method(req,"GET")=>{
+                    let js_num=|name:&str,default:&str|{
+                        let value=query(parsed,name).unwrap_or_else(||default.into());
+                        let raw=value.trim();
+                        if raw.is_empty(){return 0.0;}
+                        if let Some(n)=raw.strip_prefix("0x").or_else(||raw.strip_prefix("0X")){
+                            return u64::from_str_radix(n,16).map(|v|v as f64).unwrap_or(f64::NAN);
+                        }
+                        if let Some(n)=raw.strip_prefix("0b").or_else(||raw.strip_prefix("0B")){
+                            return u64::from_str_radix(n,2).map(|v|v as f64).unwrap_or(f64::NAN);
+                        }
+                        if let Some(n)=raw.strip_prefix("0o").or_else(||raw.strip_prefix("0O")){
+                            return u64::from_str_radix(n,8).map(|v|v as f64).unwrap_or(f64::NAN);
+                        }
+                        raw.parse::<f64>().unwrap_or(f64::NAN)
+                    };
+                    let offset=js_num("offset","0");
+                    let limit=js_num("limit","20");
+                    let jobs=self.discovered(services,false)?;
+                    project_mobile_jobs(&json!(jobs),offset,limit)
+                },
+                "/api/mobile/job-tasks" if valid_get=>{
+                    let job=services.exact_job(&id,Some(&repo),None)?
+                        .ok_or("Job unavailable")?;
+                    project_mobile_tasks(&job,&json!(id),&json!(repo))
+                },
+                "/api/mobile/job-activity" if valid_get=>{
+                    // EventBus history is keyed only by Job ID; a scoped
+                    // request is NOT authorization if another repository has
+                    // the same ID. Verify unique owner BEFORE reading events.
+                    let rows=services.discovered_jobs(true)?;
+                    if rows.iter().filter(|job|field(job,"id")==id).count()!=1{
+                        return Err("Ambiguous Job ID".into());
+                    }
+                    let job=services.exact_job(&id,Some(&repo),None)?
+                        .ok_or("Job unavailable")?;
+                    if field(&job,"id")!=id||field(&job,"repository")!=repo{
+                        return Err("Job identity mismatch".into());
+                    }
+                    let history=services.events(&id,None,100)?;
+                    Ok(json!({"jobId":id,"repository":repo,
+                        "events":project_mobile_activity(&json!(history))}))
+                },
+                "/api/mobile/job-cancel" if allowed_method(req,"POST")=>{
+                    if req.body.len()>8192{return Err("Cancel request too large".into())}
+                    let input:Value=serde_json::from_slice(req.body)
+                        .map_err(|e|format!("Invalid JSON: {e}"))?;
+                    let bound_id=field(&input,"id");
+                    let bound_repo=field(&input,"repository");
+                    if !valid_mobile_identity(&input["id"],&input["repository"]){
+                        return Err("Invalid Job identity".into());
+                    }
+                    // The underlying Graph cancel control accepts ID only.
+                    // Do NOT mutate if ID belongs to more than one repository.
+                    let rows=services.discovered_jobs(true)?;
+                    let owned=rows.iter().filter(|job|field(job,"id")==bound_id)
+                        .collect::<Vec<_>>();
+                    if owned.len()!=1||field(owned[0],"repository")!=bound_repo
+                        ||!matches!(field(owned[0],"state"),"DRAFT"|"ACTIVE"){
+                        return Err("Job not cancellable without a unique Job ID".into());
+                    }
+                    services.job_action(bound_id,"cancel")?;
+                    let after=services.exact_job(bound_id,Some(bound_repo),None)?
+                        .ok_or("CANCELLED readback not confirmed")?;
+                    if field(&after,"id")!=bound_id||field(&after,"repository")!=bound_repo
+                        ||field(&after,"state")!="CANCELLED"{
+                        return Err("CANCELLED readback not confirmed".into());
+                    }
+                    Ok(json!({"id":bound_id,"repository":bound_repo,"status":"cancelled"}))
+                },
+                _=>Err("__MOBILE_NOT_FOUND__".into()),
+            }
+        })();
+        match result{
+            Ok(value)=>json_response(200,&value),
+            Err(error) if error=="__MOBILE_NOT_FOUND__"=>
+                text_response(404,"Mobile API unavailable"),
+            Err(error)=>json_response(409,&json!({"error":error})),
+        }
+    }
     fn route(&self, services: &mut S, req: &DashboardRequest<'_>) -> DashboardResponse {
         let address = format!("http://127.0.0.1{}", req.target);
         let parsed = match Url::parse(&address) {
@@ -232,6 +325,9 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
             Err(_) => return text_response(400, "Invalid URL"),
         };
         let path = parsed.path();
+        if path.starts_with("/api/mobile/"){
+            return self.mobile(services,req,&parsed);
+        }
         if path == "/webhooks/github" && allowed_method(req, "POST") {
             return self.webhook(services, req);
         }

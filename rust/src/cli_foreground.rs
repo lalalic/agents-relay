@@ -105,11 +105,11 @@ where
 {
     let mut reporter=ForegroundReporter::default();
     let mut paused_reported=false;
-    report(format!("Coordinator job {job_id}, task {task_id}: foreground execution (Ctrl+C stops local execution; durable Job stays recoverable)"));
+    report(format!("Coordinator job {job_id}, task {task_id}: foreground daemon attachment (Ctrl+C detaches CLI; daemon-owned Workers continue and Job remains durable)"));
     loop{
         let signal=interrupted.load(Ordering::SeqCst);
         if signal!=0{
-            report(format!("Leaving foreground for Job {job_id}; in-flight local workers are interrupted and Relay recovers their durable Tasks."));
+            report(format!("Leaving foreground for Job {job_id}; daemon-owned Workers continue and the durable Job remains active unless independently completed or cancelled."));
             return Ok(ForegroundAttachResult{
                 job:load()?,interrupted_signal:Some(signal),
             });

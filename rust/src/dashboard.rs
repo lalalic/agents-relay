@@ -200,6 +200,7 @@ pub fn static_response(method: &str, target: &str) -> Option<DashboardResponse> 
 pub fn is_backend_route(method: &str, target: &str) -> bool {
     let path = target.split('?').next().unwrap_or("");
     (path == "/webhooks/github" && method == "POST")
+        || path.starts_with("/api/mobile/")
         || matches!(
             path,
             "/api/graph-symbol"

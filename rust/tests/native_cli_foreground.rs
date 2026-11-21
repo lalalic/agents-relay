@@ -137,7 +137,7 @@ fn attachment_interrupt_never_claims_job_completed_or_cancels_durable_work(){
     assert_eq!(completed.interrupted_signal,Some(libc::SIGINT));
     assert_eq!(completed.job,original);
     assert!(messages.iter().any(|message|message.contains("PAUSED")));
-    assert!(messages.iter().any(|message|message.contains("durable Job stays recoverable")));
+    assert!(messages.iter().any(|message|message.contains("daemon-owned Workers continue")));
     assert!(messages.iter().any(|message|message.contains("Leaving foreground")));
     assert!(!messages.iter().any(|message|message=="Job 17: COMPLETED"));
 }
@@ -153,7 +153,7 @@ fn installed_native_cli_attaches_to_terminal_real_daemon_without_restarting_job(
     assert!(output.status.success(),"{}",
         String::from_utf8_lossy(&output.stderr));
     let stdout=String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("Coordinator job 17, task 2: foreground execution"),"{stdout}");
+    assert!(stdout.contains("Coordinator job 17, task 2: foreground daemon attachment"),"{stdout}");
     assert!(stdout.contains("Job 17: COMPLETED"),"{stdout}");
     assert!(stdout.contains("\"state\": \"COMPLETED\""),"{stdout}");
     let after=SQLiteRelayStore::open_without_claim_reset(
@@ -212,4 +212,109 @@ fn installed_native_cli_signals_detach_paused_job_keep_graph_sqlite_across_resta
     drop(restarted);
     fs::remove_dir_all(home).unwrap();
     }
+}
+
+#[test]
+fn native_cli_foreground_runs_real_script_worker_to_verified_graph_sqlite_completion(){
+    let home=root();
+    let project=home.join("fixture");
+    fs::create_dir_all(project.join("agents/.shortcut")).unwrap();
+    fs::write(project.join("agents/fixture.agent.md"),
+        "---\nname: fixture\ncapabilities: [script]\n---\n# Native foreground Script Worker\n").unwrap();
+    fs::write(project.join("agents/.shortcut/fixture.agent.mjs"),
+        "export async function run({input}) { return {status:'COMPLETED',output:{foreground:true,execution:input.executionId},artifacts:{}} }\n").unwrap();
+    assert!(Command::new("git").args(["init","-q","-b","main"])
+        .current_dir(&project).status().unwrap().success());
+    let output=home.join("real-worker-output.json");
+    let db=SQLiteRelayStore::open(&home.join("relay.sqlite"),Some("17")).unwrap();
+    db.save_job(&json!({
+        "id":"17","repository":"fixture","projectRoot":project,
+        "title":"Foreground real Script Worker","state":"DRAFT","prNumber":0,
+        "objective":"Complete verified Script via native Coordinator",
+        "reviewEnabled":false,"autoMerge":true,"priority":"P2",
+        "createdAt":"2026-11-18T00:00:00.000Z",
+        "updatedAt":"2026-11-18T00:00:00.000Z",
+        "plans":[{"id":"plan-1","round":1,"status":"SUCCEEDED",
+            "objectiveStatus":"satisfied","assessment":"Fixture scope approved"}],
+        "tasks":[{
+            "id":"2","jobId":"17","kind":"work","adapter":"script",
+            "agentName":"fixture","title":"Real Script Worker","state":"DRAFT",
+            "agentGraph":"flowchart TD\nA[agent:fixture]",
+            "attempt":0,"maxAttempts":1,"priority":"P2",
+            "dependencies":[],"input":"{}",
+            "output":{"kind":"file","path":output},
+            "createdAt":"2026-11-18T00:00:00.000Z",
+            "updatedAt":"2026-11-18T00:00:00.000Z"
+        }]
+    })).unwrap();
+    db.close().unwrap();
+    let port=port();
+    let service=daemon(&home,port);
+    let stdout=home.join("actual-foreground-out.log");
+    let stderr=home.join("actual-foreground-err.log");
+    let process=Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
+        .args(["job","run","--id","17","--task-id","2","--foreground",
+            "--workspace-root",home.to_str().unwrap(),"--port",&port.to_string()])
+        .stdout(Stdio::from(fs::File::create(&stdout).unwrap()))
+        .stderr(Stdio::from(fs::File::create(&stderr).unwrap()))
+        .spawn().unwrap();
+    let mut process=Guard(process);
+    let start=Instant::now();
+    let completed=loop{
+        if let Some(status)=process.0.try_wait().unwrap(){break status;}
+        assert!(start.elapsed()<Duration::from_secs(25),
+            "real Script coordinator did not complete: stdout={}, stderr={}, daemon={}",
+            fs::read_to_string(&stdout).unwrap_or_default(),
+            fs::read_to_string(&stderr).unwrap_or_default(),
+            fs::read_to_string(home.join("daemon.log")).unwrap_or_default());
+        thread::sleep(Duration::from_millis(60));
+    };
+    assert!(completed.success(),
+        "native CLI foreground exit {completed}: stdout={}, stderr={}, daemon={}",
+        fs::read_to_string(&stdout).unwrap_or_default(),
+        fs::read_to_string(&stderr).unwrap_or_default(),
+        fs::read_to_string(home.join("daemon.log")).unwrap_or_default());
+    let progress=fs::read_to_string(&stdout).unwrap();
+    assert!(progress.contains("Coordinator job 17, task 2: foreground daemon attachment"));
+    assert!(progress.contains("Job 17: COMPLETED"),"{progress}");
+    let saved=SQLiteRelayStore::open_without_claim_reset(
+        &home.join("relay.sqlite"),Some("17")).unwrap();
+    let after=saved.load_job("17").unwrap().unwrap();
+    assert_eq!(after["state"],"COMPLETED");
+    assert_eq!(after["tasks"][0]["state"],"SUCCEEDED");
+    assert_eq!(after["tasks"][0]["attempt"],0,
+        "Graph Coordinator root is an aggregation, not a fake Worker launch");
+    let children=after["tasks"].as_array().unwrap().iter().filter(|row|
+        row.pointer("/dagNode/parentTaskId").and_then(serde_json::Value::as_str)==Some("2"))
+        .collect::<Vec<_>>();
+    assert_eq!(children.len(),1,"one declared DAG agent gets one Task generation");
+    let child=children[0];
+    assert_eq!(child["state"],"SUCCEEDED");
+    assert_eq!(child["attempt"],1);
+    assert!(child["executionId"].is_null());
+    assert_eq!(child["result"]["data"]["output"]["foreground"],true);
+    // A Coordinator is an aggregate DAG root. The verified child carries
+    // the Script result in canonical SQLite; the root's output-file field
+    // does not automatically propagate to its child.
+    assert!(!output.exists(),
+        "Coordinator root must not fabricate a Worker artifact");
+    let child_id=child["id"].as_str().unwrap();
+    let rows:i64=saved.db.query_row(
+        "SELECT COUNT(*) FROM workflow_event_outbox WHERE event_key LIKE ?",
+        [format!("script-event/17/{child_id}/%")],|row|row.get(0)).unwrap();
+    assert_eq!(rows,2,"real DAG child start and completion are durable events");
+    drop(saved);drop(service);
+    let reboot=daemon(&home,port);
+    thread::sleep(Duration::from_millis(200));
+    let check=SQLiteRelayStore::open_without_claim_reset(
+        &home.join("relay.sqlite"),Some("17")).unwrap();
+    let restarted=check.load_job("17").unwrap().unwrap();
+    assert_eq!(restarted["state"],"COMPLETED");
+    assert_eq!(restarted["tasks"][0]["attempt"],0);
+    assert_eq!(restarted["tasks"][1]["attempt"],1,
+        "restarted daemon cannot relaunch the already completed Script");
+    assert_eq!(restarted["tasks"][1]["executionHistory"],
+        after["tasks"][1]["executionHistory"]);
+    drop(check);drop(reboot);
+    fs::remove_dir_all(home).unwrap();
 }

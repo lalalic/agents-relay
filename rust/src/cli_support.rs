@@ -261,28 +261,45 @@ fn http(args:&[String],path:&str,method:&str,params:&[(&str,String)],
     body:Option<&Value>,description:&str)->Result<Value,String>{
     let url=url_for(args,path,params)?;
     let (host,port)=endpoint(args)?;
-    // A non-2xx HTTP response is a daemon control rejection, not a transport
-    // outage. Keep the original response body for Node-compatible diagnostics.
-    let client=ureq::Agent::config_builder().http_status_as_error(false)
-        .build().new_agent();
-    let response=if method=="POST"{
-        let request=client.post(url.as_str());
-        if let Some(body)=body{request.send_json(body)}
-        else{request.send_empty()}
-    }else{client.get(url.as_str()).call()};
-    let mut response=response.map_err(|e|format!(
-        "Agents Relay service unavailable at {host}:{port}: {e}"))?;
-    if !(200..300).contains(&response.status().as_u16()){
-        let status=response.status().as_u16();
-        let text=response.body_mut().read_to_string()
-            .unwrap_or_else(|_|format!("HTTP {status}"));
-        return Err(format!("Agents Relay {description} failed: {}",if text.is_empty(){
-            format!("HTTP {status}")
-        }else{text}));
+    let once=||{
+        // A non-2xx HTTP response is a daemon control rejection, not an
+        // observed Graph success. Keep its body for CLI diagnostics.
+        let client=ureq::Agent::config_builder().http_status_as_error(false)
+            .build().new_agent();
+        let response=if method=="POST"{
+            let request=client.post(url.as_str());
+            if let Some(body)=body{request.send_json(body)}
+            else{request.send_empty()}
+        }else{client.get(url.as_str()).call()};
+        let mut response=response.map_err(|e|format!(
+            "Agents Relay service unavailable at {host}:{port}: {e}"))?;
+        if !(200..300).contains(&response.status().as_u16()){
+            let status=response.status().as_u16();
+            let text=response.body_mut().read_to_string()
+                .unwrap_or_else(|_|format!("HTTP {status}"));
+            return Err(format!("Agents Relay {description} failed: {}",if text.is_empty(){
+                format!("HTTP {status}")
+            }else{text}));
+        }
+        response.body_mut().read_json::<Value>()
+            .map_err(|e|e.to_string())
+    };
+    // Darwin can transiently report EAGAIN/Resource temporarily
+    // unavailable from local HTTP reads during a concurrent Reconciler
+    // startup. Retry only safe read-only GETs, never state-changing POSTs.
+    // Actual 4xx/409 Graph rejections still return their original error.
+    for attempt in 0..3{
+        let result=once();
+        let retry=method=="GET"&&attempt<2&&result.as_ref().err()
+            .is_some_and(|error|error.contains("Resource temporarily unavailable")
+                ||error.contains("operation would block")
+                ||error.contains("WouldBlock"));
+        if !retry{return result;}
+        std::thread::sleep(std::time::Duration::from_millis(15*(attempt+1)));
     }
-    response.body_mut().read_json::<Value>()
-        .map_err(|e|e.to_string())
+    unreachable!("bounded GET retry always returns")
 }
+
 fn job_params(args:&[String],id:&str)->Result<Vec<(&'static str,String)>,String>{
     let mut params=vec![("id",id.into())];
     let repo=arg(args,"--repo","");

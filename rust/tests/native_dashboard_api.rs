@@ -26,6 +26,7 @@ struct FixtureServices {
     calls: Arc<Mutex<Vec<Value>>>,
     fail_refresh: Arc<AtomicBool>,
     fail_webhook: Arc<AtomicBool>,
+    duplicate_mobile_id: Arc<AtomicBool>,
 }
 impl FixtureServices {
     fn log(&self, method: &str, value: Value) -> Value {
@@ -58,7 +59,13 @@ impl DashboardApiServices for FixtureServices {
         if force && self.fail_refresh.load(Ordering::Acquire) {
             return Err("authoritative sqlite unavailable".into());
         }
-        Ok(jobs())
+        let mut result=jobs();
+        if self.duplicate_mobile_id.load(Ordering::Acquire){
+            let mut other=result[0].clone();
+            other["repository"]=json!("other/repo");
+            result.push(other);
+        }
+        Ok(result)
     }
     fn exact_job(
         &mut self,
@@ -346,6 +353,81 @@ fn dashboard_commands_validate_before_invoking_sqlite_graph_actions() {
         .iter()
         .any(|item| item["method"] == "task_state"));
 }
+
+#[test]
+fn mobile_http_redacts_jobs_and_scopes_task_activity_and_cancel(){
+    let (backend,calls,_,_)=fixture();
+    let listing=call(&backend,"GET","/api/mobile/jobs?offset=0&limit=1",None);
+    assert_eq!(listing.status,200);
+    assert_eq!(listing.cache_control,"no-store");
+    let response=data(listing);
+    assert_eq!(response["total"],3);
+    assert_eq!(response["jobs"][0]["id"],"101");
+    assert_eq!(response["jobs"][0]["repository"],"toy/repo");
+    assert!(response["hasMore"].as_bool().unwrap());
+    assert_eq!(response["nextOffset"],1);
+    for bad in ["-1","1.5","21","nan","Infinity"]{
+        let path=if bad=="21"{
+            format!("/api/mobile/jobs?offset=0&limit={bad}")
+        }else{format!("/api/mobile/jobs?offset={bad}&limit=20")};
+        let response=call(&backend,"GET",&path,None);
+        assert_eq!(response.status,409,"wrong paging {bad}");
+        assert_eq!(data(response)["error"],"Invalid paging");
+    }
+    assert_eq!(call(&backend,"GET",
+        "/api/mobile/job-tasks?id=101&repo=../wrong",None).status,404);
+    assert_eq!(call(&backend,"GET",
+        "/api/mobile/job-tasks?id=101&repo=other/repo",None).status,409);
+    let tasks=data(call(&backend,"GET",
+        "/api/mobile/job-tasks?id=101&repo=toy%2Frepo",None));
+    assert_eq!(tasks["jobId"],"101");
+    assert_eq!(tasks["repository"],"toy/repo");
+    assert_eq!(tasks["tasks"],json!([]));
+    let activity=data(call(&backend,"GET",
+        "/api/mobile/job-activity?id=101&repo=toy%2Frepo",None));
+    assert_eq!(activity["events"],json!([]));
+    let before=calls.lock().unwrap().iter().filter(|row|
+        row["method"]=="job_action").count();
+    assert_eq!(call(&backend,"POST","/api/mobile/job-cancel",
+        Some(json!({"id":"101","repository":"other/repo"}))).status,409);
+    assert_eq!(calls.lock().unwrap().iter().filter(|row|
+        row["method"]=="job_action").count(),before,
+        "wrong owner must never call cancellation");
+    let unverified=call(&backend,"POST","/api/mobile/job-cancel",
+        Some(json!({"id":"101","repository":"toy/repo"})));
+    assert_eq!(unverified.status,409,
+        "HTTP success receipt is not proof of CANCELLED Graph/SQLite commit");
+    assert_eq!(data(unverified)["error"],"CANCELLED readback not confirmed");
+    assert_eq!(calls.lock().unwrap().iter().filter(|row|
+        row["method"]=="job_action").count(),before+1);
+    assert_eq!(call(&backend,"GET","/api/mobile/unknown",None).status,404);
+}
+#[test]
+fn mobile_http_cross_repo_collision_fails_closed_before_event_history_or_mutation(){
+    let service=FixtureServices{
+        duplicate_mobile_id:Arc::new(AtomicBool::new(true)),
+        ..FixtureServices::default()
+    };
+    let calls=service.calls.clone();
+    let options=DashboardApiOptions{
+        graph_directory:PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
+        router_rules_path:std::env::temp_dir().join(format!(
+            "rust2-mobile-collision-{}",std::process::id())),
+        webhook_secret:None,webhook_repositories:HashSet::new(),
+        webhook_job_id:None,webhook_pr_number:None,
+    };
+    let backend=NativeDashboardApi::new(options,service);
+    let response=call(&backend,"GET",
+        "/api/mobile/job-activity?id=101&repo=toy%2Frepo",None);
+    assert_eq!(response.status,409);
+    assert_eq!(data(response)["error"],"Ambiguous Job ID");
+    assert_eq!(call(&backend,"POST","/api/mobile/job-cancel",
+        Some(json!({"id":"101","repository":"toy/repo"}))).status,409);
+    let log=calls.lock().unwrap();
+    assert!(!log.iter().any(|row|matches!(row["method"].as_str(),
+        Some("events"|"job_action"))),
+        "ambiguous ID cannot access another repository's events or cancellation");
+}
 fn hmac_sha256(secret: &str, body: &[u8]) -> String {
     let mut key = [0u8; 64];
     let secret = secret.as_bytes();
@@ -409,6 +491,18 @@ fn actual_pwa_http_transport_preserves_bytes_and_authenticates_webhooks() {
         thread::spawn(move || serve_dashboard(listener, cloned, stop).unwrap())
     };
     let url = addr.to_string();
+    // Real native HTTP/TCP transport, not just a direct DashboardApi call.
+    // Mobile pagination and scoped identity must stay redacted end to end.
+    let (mobile_status,mobile_body)=tcp(&url,
+        "GET /api/mobile/jobs?offset=0&limit=20 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    assert_eq!(mobile_status,200);
+    let mobile:Value=serde_json::from_slice(&mobile_body).unwrap();
+    assert_eq!(mobile["total"],3);
+    assert_eq!(mobile["jobs"][0]["id"],"101");
+    assert!(!mobile.to_string().contains("objective"));
+    let (denied,_) = tcp(&url,
+        "GET /api/mobile/job-tasks?id=101&repo=other%2Frepo HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    assert_eq!(denied,409);
     let (status, body) = tcp(&url, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
     assert_eq!(status, 200);
     // Node's PWA server now renders immutable versioned asset URLs.

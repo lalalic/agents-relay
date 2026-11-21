@@ -103,6 +103,7 @@ pub mod workflow {
     pub mod mermaid;
 }
 pub mod cli_artifact;
+pub mod dashboard_mobile;
 pub mod dashboard_jel;
 pub mod dashboard_style;
 pub mod dashboard_workflow_inspection;
