@@ -23,9 +23,9 @@ export const dashboardIndexHtml = readFileSync(new URL('../dashboard/index.html'
  * override no-cache for up to four hours; a release-specific URL must never
  * reuse an older JavaScript or CSS response while /api/version is current. */
 export const dashboardPageHtml = dashboardIndexHtml
-  .replace('href="/dashboard.css"', `href="/dashboard.css?v=${encodeURIComponent(dashboardVersion)}"`)
-  .replace('src="/vendor/markdown-it.min.js"', `src="/vendor/markdown-it.min.js?v=${encodeURIComponent(dashboardVersion)}"`)
-  .replace('src="/dashboard.js"', `src="/dashboard.js?v=${encodeURIComponent(dashboardVersion)}"`);
+  .replace('href="./dashboard.css"', `href="./dashboard.css?v=${encodeURIComponent(dashboardVersion)}"`)
+  .replace('src="./vendor/markdown-it.min.js"', `src="./vendor/markdown-it.min.js?v=${encodeURIComponent(dashboardVersion)}"`)
+  .replace('src="./dashboard.js"', `src="./dashboard.js?v=${encodeURIComponent(dashboardVersion)}"`);
 
 export const dashboardClientJs = readFileSync(new URL('../dashboard/dashboard.js', import.meta.url), 'utf8');
 export const dashboardMarkdownJs = readFileSync(new URL('../dashboard/vendor/markdown-it.min.js', import.meta.url), 'utf8');
@@ -45,7 +45,7 @@ export function dashboardConfigScript(): string {
 /** Compatibility projection for existing test/consumer imports. Actual HTTP delivery uses static assets. */
 export const dashboardHtml = dashboardIndexHtml
   .replace('<span class="version"></span>', '<span class="version">v' + dashboardVersion + '</span>')
-  .replace('<link rel="stylesheet" href="/dashboard.css">', dashboardStyles)
-  .replace('<script src="/dashboard-config.js" defer></script>', () => '<script>' + dashboardConfigScript() + '</script>')
-  .replace('<script src="/vendor/markdown-it.min.js" defer></script>', () => '<script>\n' + dashboardMarkdownJs + '</script>')
-  .replace('<script src="/dashboard.js" defer></script>', () => '<script>\n' + dashboardClientJs + '</script>');
+  .replace('<link rel="stylesheet" href="./dashboard.css">', dashboardStyles)
+  .replace('<script src="./dashboard-config.js" defer></script>', () => '<script>' + dashboardConfigScript() + '</script>')
+  .replace('<script src="./vendor/markdown-it.min.js" defer></script>', () => '<script>\n' + dashboardMarkdownJs + '</script>')
+  .replace('<script src="./dashboard.js" defer></script>', () => '<script>\n' + dashboardClientJs + '</script>');

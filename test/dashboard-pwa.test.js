@@ -42,18 +42,18 @@ test('PWA frontend assets load independently and real-time API remains uncached'
   assert.equal(htmlRes.status, 200);
   assert.equal(htmlRes.headers.get('cache-control'), 'no-store');
   const html = await htmlRes.text();
-  assert.match(html, /<link rel="manifest" href="\/manifest.webmanifest">/);
-  assert.match(html, /<script src="\/dashboard-config.js" defer><\/script>/);
+  assert.match(html, /<link rel="manifest" href="\.\/manifest.webmanifest">/);
+  assert.match(html, /<script src="\.\/dashboard-config.js" defer><\/script>/);
   for (const asset of ['/dashboard.css', '/dashboard.js', '/vendor/markdown-it.min.js']) {
-    assert.ok(html.includes(`${asset}?v=${dashboardVersion}`), `${asset} is release-scoped`);
+    assert.ok(html.includes(`./${asset.slice(1)}?v=${dashboardVersion}`), `${asset} is release-scoped`);
     const raw = await fetch(base + asset);
     const versioned = await fetch(base + `${asset}?v=${dashboardVersion}`);
     assert.equal(versioned.status, 200, asset);
     assert.equal(raw.headers.get('content-type'), versioned.headers.get('content-type'), asset);
     assert.deepEqual(Buffer.from(await raw.arrayBuffer()), Buffer.from(await versioned.arrayBuffer()), asset);
   }
-  assert.match(html, /<script src="\/dashboard.js\?v=[^"]+" defer><\/script>/);
-  assert.match(html, /<script src="\/pwa.js" defer><\/script>/);
+  assert.match(html, /<script src="\.\/dashboard.js\?v=[^"]+" defer><\/script>/);
+  assert.match(html, /<script src="\.\/pwa.js" defer><\/script>/);
   assert.doesNotMatch(html, /<script>\s*'use strict';/);
   const cfg = await fetch(base + '/dashboard-config.js');
   assert.equal(cfg.headers.get('cache-control'), 'no-store');
@@ -62,7 +62,7 @@ test('PWA frontend assets load independently and real-time API remains uncached'
   assert.match(script, /buildJelDiagram:function jobJelDiagram\(/);
   const manifest = JSON.parse(asset('manifest.webmanifest'));
   assert.equal(manifest.display, 'standalone');
-  assert.equal(manifest.start_url, '/');
+  assert.equal(manifest.start_url, './');
 
   const jobs = await fetch(base + '/api/jobs');
   assert.equal(jobs.headers.get('cache-control'), 'no-store');
@@ -75,7 +75,7 @@ test('PWA service worker excludes durable job data and SSE from caching', () => 
   const sw = asset('service-worker.js').toString();
   assert.match(sw, /new Set\(ASSETS\)/);
   assert.doesNotMatch(sw, /'\/dashboard\.js'|'\/dashboard\.css'|'\/vendor\/markdown-it\.min\.js'/);
-  assert.match(sw, /agents-relay-pwa-shell-v3/);
+  assert.match(sw, /agents-relay-pwa-shell-v4/);
   assert.match(sw, /ALLOWED\.has\(url\.pathname\)/);
   assert.doesNotMatch(sw, /['"]\/api\//);
   assert.doesNotMatch(sw, /['"]\/events['"]/);
@@ -84,7 +84,7 @@ test('PWA service worker excludes durable job data and SSE from caching', () => 
     'shared frontend JEL JS must be regenerated if its TypeScript source changes');
   const client = asset('dashboard.js').toString();
   assert.doesNotThrow(() => new Script(client));
-  assert.match(client, /new EventSource\('\/events'\)/);
+  assert.match(client, /new EventSource\(RELAY_PREFIX\+'\/events'\)/);
 });
 
 test('PWA asset routes reject non-GET methods and traversal', async () => {

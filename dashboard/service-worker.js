@@ -1,9 +1,9 @@
 // Only public, non-sensitive, version-independent app-shell assets are cached.
 // Never intercept /api/*, /events, /dashboard-config.js or navigations.
-const CACHE = 'agents-relay-pwa-shell-v3';
+const CACHE = 'agents-relay-pwa-shell-v4-' + new URL(self.registration.scope).pathname.replace(/\W/g, '-');
 // JavaScript and CSS are release-specific and must not be cached by a Service Worker.
-const ASSETS = ['/pwa.js', '/manifest.webmanifest',
-  '/icons/icon-180.png', '/icons/icon-192.png', '/icons/icon-512.png'];
+const ASSETS = ['pwa.js', 'manifest.webmanifest',
+  'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'].map(path => new URL(path, self.registration.scope).pathname);
 const ALLOWED = new Set(ASSETS);
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
