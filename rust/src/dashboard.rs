@@ -103,10 +103,25 @@ document.querySelector('.version').textContent='v'+window.__RELAY_DASHBOARD_CONF
 /// Keep the native server's HTML/asset allowlist identical: no arbitrary query
 /// strings or filesystem paths, and never cache the runtime config.
 pub fn static_response(method: &str, target: &str) -> Option<DashboardResponse> {
+    // Original Node server checks req.url === '/api/version' without a
+    // method guard. Preserve that exact route before the GET-only PWA
+    // allowlist; do not accept query variants or silently map POST to 404.
+    if target=="/api/version"{
+        return Some(DashboardResponse::new(
+            200,"application/json","no-store",
+            serde_json::json!({"version":dashboard_version()})
+                .to_string().into_bytes()));
+    }
     if method != "GET" {
         return None;
     }
-    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    // The original Node static asset lookup uses new URL(req.url, base).
+    // WHATWG URL normalizes /foo/../../assets and encoded dot segments
+    // before applying the *fixed* allowlist; naive string splitting
+    // incorrectly returned 404 for those accepted canonical paths.
+    let normalized=url::Url::parse(&format!("http://127.0.0.1{target}")).ok()?;
+    let path=normalized.path();
+    let query=normalized.query().unwrap_or("");
     if !query.is_empty() {
         let mut pairs = url::form_urlencoded::parse(query.as_bytes());
         if !pairs.next().is_some_and(|(key, value)| key == "v" && value == dashboard_version())
@@ -128,7 +143,7 @@ pub fn static_response(method: &str, target: &str) -> Option<DashboardResponse> 
             Some(DashboardResponse::new(200,"text/html; charset=utf-8","no-store",
                 html.into_bytes()))
         },
-        "/dashboard-config.js" => Some(DashboardResponse::new(
+        "/dashboard-config.js" if target=="/dashboard-config.js" => Some(DashboardResponse::new(
             200,
             "text/javascript; charset=utf-8",
             "no-store",
@@ -178,14 +193,6 @@ pub fn static_response(method: &str, target: &str) -> Option<DashboardResponse> 
             "image/png",
             "no-cache",
             include_bytes!("../../dashboard/icons/icon-512.png"),
-        )),
-        "/api/version" => Some(DashboardResponse::new(
-            200,
-            "application/json",
-            "no-store",
-            serde_json::json!({"version": dashboard_version()})
-                .to_string()
-                .into_bytes(),
         )),
         _ => None,
     }

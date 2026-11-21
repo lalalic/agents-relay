@@ -2,7 +2,7 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "3eb0afe0968e045c3778f31cc3bc9f706318fd62",
-    "rustTree": "95be0d6a9378a45c056291969e7252064c89ffba",
+    "rustTree": "4426d2f68909c5148bd3356b13636c89d135dc37",
     "sourceCount": 10,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
@@ -12,7 +12,7 @@
     "runtimeConstructorReviews": 3,
     "typeOrShapeReviewSymbols": 57,
     "filesWithUnmappedRuntime": 0,
-    "filesWithoutDirectDiffImport": 2,
+    "filesWithoutDirectDiffImport": 1,
     "filesWithoutOtherRustReferences": 0
   },
   "pendingModules": [],
@@ -284,8 +284,11 @@
         "dashboardVersion",
         "dashboardSourceRevision"
       ],
-      "directDiffImports": [],
+      "directDiffImports": [
+        "rust/tests/head_to_head_dashboard_static_http.mjs"
+      ],
       "otherRustModuleReferences": [
+        "rust/src/bin/relay-rust2-parity/closure.rs",
         "rust/src/cli_service_public.rs",
         "rust/src/dashboard_api.rs",
         "rust/src/relayd.rs"

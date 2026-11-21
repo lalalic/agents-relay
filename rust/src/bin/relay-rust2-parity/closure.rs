@@ -38,6 +38,30 @@ pub(super) fn invoke(request:&Value)->Result<Option<String>,String>{
                 Err(error)=>json!({"ok":false,"error":error})
             }}).to_string())
         }
+        // Dashboard static HTTP routes compared directly against a real
+        // original Node serveDashboard loopback server, no provider or data.
+        "dashboardStaticPublic"=>{
+            use sha2::{Digest,Sha256};
+            let out=request["requests"].as_array().ok_or("requests required")?
+                .iter().map(|query|{
+                    let method=query["method"].as_str().unwrap_or("GET");
+                    let target=query["target"].as_str().unwrap_or("/");
+                    let response=agents_relay_rust2::dashboard::static_response(
+                        method,target);
+                    match response{
+                        Some(response)=>json!({
+                            "status":response.status,
+                            "contentType":response.content_type,
+                            "cacheControl":response.cache_control,
+                            "digest":format!("{:x}",Sha256::digest(&response.body)),
+                        }),
+                        None=>json!({"status":404,
+                            "contentType":null,"cacheControl":null,
+                            "digest":null}),
+                    }
+                }).collect::<Vec<_>>();
+            Ok(json!(out).to_string())
+        }
         // Direct original Node SQLiteRelayStore registry semantics,
         // including null (never observed) vs [] (observed empty), and atomic
         // replacement. Test-only isolated in-memory SQLite.

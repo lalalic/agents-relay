@@ -23,10 +23,10 @@ A listed direct differential import only means a head-to-head test imports the c
 | runtimeConstructorReviews | 3 |
 | typeOrShapeReviewSymbols | 57 |
 | filesWithUnmappedRuntime | 0 |
-| filesWithoutDirectDiffImport | 2 |
+| filesWithoutDirectDiffImport | 1 |
 | filesWithoutOtherRustReferences | 0 |
 
-Source tree: `3eb0afe0968e`; Rust source tree: `95be0d6a9378`. Rust module rows in scope: 10. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `3eb0afe0968e`; Rust source tree: `4426d2f68909`. Rust module rows in scope: 10. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
@@ -40,7 +40,7 @@ Source tree: `3eb0afe0968e`; Rust source tree: `95be0d6a9378`. Rust module rows 
 | `src/cli-coordinator.ts` | 1 | 1 | 0 | 1 | 3 |
 | `src/cli-foreground.ts` | 2 | 2 | 0 | 1 | 1 |
 | `src/cli.ts` | 6 | 6 | 0 | 4 | 5 |
-| `src/dashboard.ts` | 1 | 1 | 0 | 0 | 3 |
+| `src/dashboard.ts` | 1 | 1 | 0 | 1 | 4 |
 | `src/planner.ts` | 22 | 20 | 0 | 3 | 13 |
 | `src/reconciler-runtime.ts` | 10 | 10 | 0 | 2 | 5 |
 | `src/relay-store.ts` | 46 | 45 | 0 | 15 | 29 |

@@ -641,7 +641,8 @@
       "staticNameMismatch": 0,
       "directDiffTests": [
         "rust/tests/native_dashboard_task_actions_sqlite.rs",
-        "rust/tests/head_to_head_dashboard_task_commands_sqlite.mjs"
+        "rust/tests/head_to_head_dashboard_task_commands_sqlite.mjs",
+        "rust/tests/head_to_head_dashboard_static_http.mjs"
       ],
       "otherRustModuleReferences": [
         "rust/src/cli_service_public.rs",
@@ -657,13 +658,12 @@
         "dashboardSourceRevision"
       ],
       "certificationEvidence": [
-        "2026-11-19: The isolated native Dashboard task-command routes now persist Task create/update/retry/cancel/state to Graph/SQLite and match real Node public APIs on tested scopes. HOLD on full native HTTP/Browser/production server parity remains."
+        "2026-11-19: The isolated native Dashboard task-command routes now persist Task create/update/retry/cancel/state to Graph/SQLite and match real Node public APIs on tested scopes. HOLD on full native HTTP/Browser/production server parity remains.",
+        "2026-11-20: 55 original Node serveDashboard real loopback HTTP responses match Rust static_response SHA256 body, status/content-type/cache-control incl PWA, versioned assets, method mismatch and WHATWG URL normalization. Still HOLD pending live daemon authenticated API/SSE backend, transport/restart, error route parity."
       ],
       "openGates": [
-        "Rust Dashboard 服务/静态资源存在，但缺完整服务器入口的 Node/Rust 差分与真实浏览器/API/restart 验证，不能以 DOM/CSS 字节匹配认证整个服务",
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "仍有 6 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+        "Authenticated production Dashboard backend and SSE full HTTP API/error/restart parity not verified; 55 static PWA Node/Rust HTTP responses alone insufficient for PASS",
+        "No verified production daemon Dashboard cutover"
       ],
       "legacyLedgerNote": "PWA-preserving native Dashboard API integration: rust/src/dashboard.rs remains the shared PWA/SSE HTTP transport, rust/src/dashboard_api.rs provides injected Graph/SQLite API route mapping, webhook signature/durable-ack dedup and error paths. Native integration: rust/tests/native_dashboard_api.rs (3/3), native_dashboard_pwa.rs (4/4); Node dashboard 117/117; dashboard JEL/style/data differential 3/3. Production service callback binding, physical browser install, and full endpoint parity remain unverified; do NOT claim production-ready."
     },

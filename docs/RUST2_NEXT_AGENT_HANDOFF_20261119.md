@@ -1,3 +1,9 @@
+## 2026-11-20 final scope freeze: 213 PASS / 10 PORTING / 7 EXCLUDED
+
+- Latest Dashboard static HTTP parity fixes: new rust/tests/head_to_head_dashboard_static_http.mjs verifies 55/55 real original Node HTTP responses against Rust compiled static PWA response status, headers and body SHA256. Fixed exact /dashboard-config.js, method-insensitive exact /api/version, and WHATWG URL path normalization. This does not certify full Dashboard backend or production SSE.
+- STOP expanding parity matrices without a concrete production blocker. Focus only on remaining runtime-critical provider/daemon/foreground, authenticated EventBus/Host delivery, real WebHelm and HTTP/SSE integration. Ten modules remain PORTING; all other counts unchanged. Do not claim live Node-to-Rust cutover, remote push or full all-target verification for this change.
+- Repository /Users/chengli/Workspace/agents-relay, branch rust2; prior commits e1bd6ca interactive Host, 3a8107f Host receipt, 05ecc59 Store fixes, c87f80b Planner. This tranche uses isolated fixture HTTP, no external provider.
+
 ## 2026-11-20 newest: Interactive Host one-shot approval certified, 213 / 10 / 7
 
 - Existing rust2 checkout. src/interactive-invocation.ts certified PASS. The native HostInteractiveInvocationCoordinator.bind_with_waiter provides a one-shot accepted-decision receiver equivalent to Node bind(...).decision Promise, with original 60-second deadline from bind and exact generation cleanup. An older timed-out receiver cannot evict a rebound waiter; close/timeout never fabricate approval. Accepted record includes immutable Job/Task/Execution/Invocation/Revision, decision, feedback/comments and original event, delivered ONLY AFTER Graph-authorized HostInvocationPorts SQLite fingerprint/receipt commit. ReconcilerRuntimeBase exposes bind_interactive_invocation_with_waiter after durable Task generation binding.
