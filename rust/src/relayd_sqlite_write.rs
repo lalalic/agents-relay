@@ -71,13 +71,34 @@ pub struct IsolatedSQLiteWriteHost {
     // Only explicitly injected loopback fixture URLs are permitted by this
     // isolated host; it NEVER reads a user's real notification endpoint.
     escalation_notifier:Option<crate::escalation_notifier::EscalationNotifierConfig>,
+    // Explicit read-only Events Bus history provider. Isolated daemons
+    // never open the operator's configured bus without opt-in.
+    event_history_api:Option<url::Url>,
 }
 impl IsolatedSQLiteWriteHost {
     pub fn new(config:DaemonConfig)->Self{
         Self{config,subscriptions:Vec::new(),wake_count:0,reconcile_attempts:0,connections:RefCell::new(HashMap::new()),
             failure_state:std::sync::Arc::new(DaemonFailureState::new()),
             live_workers:std::sync::Arc::new(std::sync::Mutex::new(DaemonLiveWorkers::default())),
-            escalation_notifier:None}
+            escalation_notifier:None,event_history_api:None}
+    }
+    /// Bind the REAL Events Bus read-only HTTP history API only when the
+    /// caller explicitly supplies a loopback endpoint. This isolated daemon
+    /// never discovers/touches the user's live Events Bus configuration.
+    /// Ingress is still Graph/SQLite-authorized separately, never derived
+    /// from a historical event observation.
+    pub fn set_loopback_event_history_api(&mut self,raw:&str)->Result<(),String>{
+        let parsed=url::Url::parse(raw).map_err(|e|format!("Invalid Events Bus history API: {e}"))?;
+        if parsed.scheme()!="http"
+            ||!matches!(parsed.host_str(),Some("127.0.0.1"|"localhost"|"::1"))
+            ||parsed.port().is_none()
+            ||parsed.path()!="/"
+            ||parsed.query().is_some()||parsed.fragment().is_some()
+            ||!parsed.username().is_empty()||parsed.password().is_some(){
+            return Err("Native isolated Events Bus history must be an explicit loopback HTTP root URL with port".into());
+        }
+        self.event_history_api=Some(parsed);
+        Ok(())
     }
     /// Explicit fixture transport only. No environment-derived or public
     /// GitHub/HTTPS notification endpoint can run inside isolated mode.
@@ -710,17 +731,35 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         self.wake(id,"dashboard.task.setState")?;
         Ok(result["job"].clone())
     }
-    fn event_history(&mut self,id:&str,_task:Option<&str>,_limit:i64)
+    fn event_history(&mut self,id:&str,task:Option<&str>,limit:i64)
         ->Result<Vec<Value>,String>{
-        // Node's dashboard-data.eventHistory catches an unavailable external
-        // EventsBus history provider and returns []. The deliberately
-        // isolated native write daemon has no authenticated EventsBus
-        // history connector: return empty rather than inventing events or
-        // rejecting an otherwise valid foreground CLI attachment. Native
-        // Task history still belongs to an installed EventBus provider.
-        self.scoped(id)?.load_job(id)?
+        // The scoped durable Job must be known before any external query.
+        // A supplied Task is also checked against this exact Job.
+        let job=self.scoped(id)?.load_job(id)?
             .ok_or_else(||format!("SQLite Job {id} not found"))?;
-        Ok(Vec::new())
+        if task.is_some_and(|task_id|!job["tasks"].as_array().into_iter().flatten()
+            .any(|row|field(row,"id")==task_id)){
+            return Err("Events Bus history requested an unrelated Task".into());
+        }
+        let Some(api)=self.event_history_api.as_ref() else{
+            // No installed Events Bus history port. Node dashboard-data
+            // catches unavailable history and returns [], not fake events.
+            return Ok(Vec::new());
+        };
+        // Reuse the production Node-compatible /events reader, including
+        // cursor ordering, exact Job/Task checks and bounded response rows.
+        // Missing/unavailable external history is *observational only* and
+        // never affects Graph/SQLite Task progress or CLI reconciliation.
+        let env=json!({
+            "EVENTS_BUS_API_URL":api.as_str(),
+            "EVENTS_BUS_CONFIG":self.config.store_directory.join(
+                ".eventsbus-history-no-global-config.json").to_string_lossy(),
+        });
+        let fetched=crate::events_bus_runtime::events_bus_history_page(
+            id,task,&json!(limit.max(1)),&json!({"timeoutMs":1200}),&env);
+        Ok(fetched.ok()
+            .and_then(|page|page["events"].as_array().cloned())
+            .unwrap_or_default())
     }
     fn publish_event(&mut self,event:&Value)->Result<(),String>{
         WorkspaceControlBackend::publish(self,event)

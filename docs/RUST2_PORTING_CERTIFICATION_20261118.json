@@ -652,7 +652,9 @@
       "directDiffTests": [
         "rust/tests/native_dashboard_task_actions_sqlite.rs",
         "rust/tests/head_to_head_dashboard_task_commands_sqlite.mjs",
-        "rust/tests/head_to_head_dashboard_static_http.mjs"
+        "rust/tests/head_to_head_dashboard_static_http.mjs",
+        "rust/tests/native_cli_foreground.rs",
+        "rust/tests/head_to_head_events_bus_runtime.mjs"
       ],
       "otherRustModuleReferences": [
         "rust/src/cli_service_public.rs",
@@ -670,7 +672,8 @@
       "certificationEvidence": [
         "2026-11-19: The isolated native Dashboard task-command routes now persist Task create/update/retry/cancel/state to Graph/SQLite and match real Node public APIs on tested scopes. HOLD on full native HTTP/Browser/production server parity remains.",
         "2026-11-20: 55 original Node serveDashboard real loopback HTTP responses match Rust static_response SHA256 body, status/content-type/cache-control incl PWA, versioned assets, method mismatch and WHATWG URL normalization. Still HOLD pending live daemon authenticated API/SSE backend, transport/restart, error route parity.",
-        "2026-11-20 concurrent Node mobile REST addition ported in dashboard_mobile.rs and native dashboard_api.rs/dashboard.rs: exact DTO, scoped identity, non-ambiguous event/cancel, 8KiB body, durable CANCELLED readback. Node/Rust direct 613, Node HTTP 6, native API/loopback TCP 5, Rust projection 2 all pass. Full production SSE/HTTP auth gate still HOLD under dashboard.ts."
+        "2026-11-20 concurrent Node mobile REST addition ported in dashboard_mobile.rs and native dashboard_api.rs/dashboard.rs: exact DTO, scoped identity, non-ambiguous event/cancel, 8KiB body, durable CANCELLED readback. Node/Rust direct 613, Node HTTP 6, native API/loopback TCP 5, Rust projection 2 all pass. Full production SSE/HTTP auth gate still HOLD under dashboard.ts.",
+        "2026-11-20: Explicit caller-owned localhost Events Bus history installed in native isolated daemon (--event-history-api); live original HTTP /events backed by EventsBus API parser, immutable Job/Task scope and real TCP /api/events route; remote history cannot commit Graph/SQLite states. Native 18 Dashboard SQLite and 6 CLI tests (including actual daemon/two-server loopback E2E and actual completed Script DAG) pass. Original Node/Rust 662 API/config and 200 real localhost history/paging/negative fixtures pass. Production authenticated EventBus subscribe, worker ingress, SSE and external model lifecycle still HOLD."
       ],
       "openGates": [
         "Authenticated production Dashboard backend and SSE full HTTP API/error/restart parity not verified; 55 static PWA Node/Rust HTTP responses alone insufficient for PASS",
@@ -2119,7 +2122,11 @@
       "decision": "HOLD",
       "runtimeExports": 1,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
+      "directDiffTests": [
+        "rust/tests/native_dashboard_task_actions_sqlite.rs",
+        "rust/tests/native_cli_foreground.rs",
+        "rust/tests/head_to_head_events_bus_runtime.mjs"
+      ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/cli_service_public.rs",
         "rust/src/cli_service_public.rs"
@@ -2136,7 +2143,8 @@
       "certificationEvidence": [
         "2026-11-20 real worker start fix, still HOLD: WebHelm HTTP submission cannot mark daemon workerStarted; exact execution-correlated task.started must commit canonical Graph/SQLite first, and terminal clears exact execution. ChatGptAdapter never policy now requires worker-start barrier and quarantines uncertain session; canonical worker_start_timeout classified as start-ack. Tests: 5 native fake Unix WebHelm socket/pool, 2 native daemon WorkerFailure E2E, 1 native daemon WebHelm Graph terminal HTTP test, 1+1 native barrier/live Worker unit. All targeted isolated tests pass, production authenticated EventBus/provider still unbound.",
         "2026-11-20: isolated actual native daemon + installed CLI job run --foreground runs real trusted Script DAG child to Graph/SQLite SUCCEEDED and Job COMPLETED, durable event outbox, exactly one attempt, replay-free daemon restart and correct CLI exit. GET-only EAGAIN retry, no control POST replay. Production authenticated Model Worker/EventBus/HTTP cutover NOT evidenced; remains HOLD.",
-        "2026-11-20: native after-terminal checks canonical start-ack before terminal barrier; 6/6 disposable real Unix WebHelm session/pool, 2/2 generation SQLite start/fast success/timeout and 1/1 isolated actual daemon HTTP/Graph/SQLite terminal pass. Unstarted generation quarantines; FAILED/CANCELLED cannot spoof start-ack. Authenticated external provider still HOLD. First all-target test run not green (2 unrelated native_api_escalation subprocess SIGTERM exits under Mac load)."
+        "2026-11-20: native after-terminal checks canonical start-ack before terminal barrier; 6/6 disposable real Unix WebHelm session/pool, 2/2 generation SQLite start/fast success/timeout and 1/1 isolated actual daemon HTTP/Graph/SQLite terminal pass. Unstarted generation quarantines; FAILED/CANCELLED cannot spoof start-ack. Authenticated external provider still HOLD. First all-target test run not green (2 unrelated native_api_escalation subprocess SIGTERM exits under Mac load).",
+        "2026-11-20: Explicit caller-owned localhost Events Bus history installed in native isolated daemon (--event-history-api); live original HTTP /events backed by EventsBus API parser, immutable Job/Task scope and real TCP /api/events route; remote history cannot commit Graph/SQLite states. Native 18 Dashboard SQLite and 6 CLI tests (including actual daemon/two-server loopback E2E and actual completed Script DAG) pass. Original Node/Rust 662 API/config and 200 real localhost history/paging/negative fixtures pass. Production authenticated EventBus subscribe, worker ingress, SSE and external model lifecycle still HOLD."
       ],
       "openGates": [
         "公开 daemon 运行入口没有直接差分测试，必须验证 CLI、SQLite/NATS、Dashboard、重启及 Graph 生产调用一致",

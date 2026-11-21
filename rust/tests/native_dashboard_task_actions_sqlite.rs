@@ -686,3 +686,85 @@ fn native_daemon_reconciler_retries_pending_planner_cross_job_unblock_after_late
  assert_eq!(replay["plans"].as_array().unwrap().len(),1);
  assert_eq!(replay,f.job());
 }
+
+#[test]
+fn installed_events_bus_history_reads_actual_loopback_http_and_never_mutates_sqlite(){
+    use std::{io::{Read,Write},net::TcpListener,thread};
+    let fixture=Fixture::new();
+    let mut host=IsolatedSQLiteWriteHost::new(fixture.config.clone());
+    // The isolated daemon must NEVER open the global/user EventBus runtime
+    // without the caller explicitly binding a loopback source.
+    assert!(DaemonServices::event_history(&mut host,"15",Some("7"),8)
+        .unwrap().is_empty());
+    for invalid in ["http://example.com:4223/","https://127.0.0.1:4223/",
+        "http://127.0.0.1:4223/private","http://127.0.0.1:4223/?token=secret"]{
+        assert!(host.set_loopback_event_history_api(invalid).is_err(),"{invalid}");
+    }
+    let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+    let api=format!("http://127.0.0.1:{}/",listener.local_addr().unwrap().port());
+    host.set_loopback_event_history_api(&api).unwrap();
+    let server=thread::spawn(move ||{
+        let (mut stream,_)=listener.accept().unwrap();
+        stream.set_read_timeout(Some(std::time::Duration::from_secs(2))).unwrap();
+        let mut request=String::new();
+        let mut buf=[0u8;1024];
+        while !request.contains("\r\n\r\n"){
+            let n=stream.read(&mut buf).unwrap();
+            assert!(n>0,"EventsBus API client closed before HTTP request");
+            request.push_str(&String::from_utf8_lossy(&buf[..n]));
+            assert!(request.len()<4096);
+        }
+        assert!(request.starts_with("GET /events?"),"{request}");
+        assert!(request.contains("job=15"),"{request}");
+        assert!(request.contains("task=7"),"{request}");
+        assert!(request.contains("order=desc"),"{request}");
+        let body=json!({"job_id":"15","order":"desc",
+            "events":[{
+                "cursor":54,"event":{
+                    "event_id":"worker_event_0001","job_id":"15",
+                    "task_id":"7","type":"task.progress",
+                    "message":"Provider reported real progress"}}],
+            "next_cursor":54}).to_string();
+        write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),body).unwrap();
+    });
+    let prior=fixture.job();
+    let events=DaemonServices::event_history(&mut host,"15",Some("7"),8).unwrap();
+    server.join().unwrap();
+    assert_eq!(events.len(),1);
+    assert_eq!(events[0]["event_id"],"worker_event_0001");
+    assert_eq!(events[0]["type"],"task.progress");
+    assert_eq!(fixture.job(),prior,
+        "historical events can never mutate Graph/SQLite Task state");
+    assert!(DaemonServices::event_history(&mut host,"15",Some("unrelated"),8)
+        .is_err(),"other Tasks cannot be used to query external history");
+    assert!(DaemonServices::event_history(&mut host,"other",None,8).is_err(),
+        "unknown Jobs cannot trigger external history reads");
+}
+
+#[test]
+fn invalid_events_bus_history_falls_back_to_empty_not_fabricated_progress(){
+    use std::{io::{Read,Write},net::TcpListener,thread};
+    let fixture=Fixture::new();
+    let mut host=IsolatedSQLiteWriteHost::new(fixture.config.clone());
+    let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+    host.set_loopback_event_history_api(&format!(
+        "http://127.0.0.1:{}/",listener.local_addr().unwrap().port())).unwrap();
+    let server=thread::spawn(move ||{
+        let (mut stream,_)=listener.accept().unwrap();
+        let mut request=[0u8;2048];let _=stream.read(&mut request).unwrap();
+        // The Events Bus service must never forge this Job identity.
+        let body=json!({"job_id":"different-job","order":"desc",
+            "events":[{"cursor":1,"event":{"event_id":"false",
+                "job_id":"different-job","task_id":"7","type":"task.completed"}}],
+            "next_cursor":1}).to_string();
+        write!(stream,"HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),body).unwrap();
+    });
+    let before=fixture.job();
+    let history=DaemonServices::event_history(&mut host,"15",None,20).unwrap();
+    server.join().unwrap();
+    assert!(history.is_empty(),
+        "wrong-Job EventsBus response is not authoritative Worker evidence");
+    assert_eq!(fixture.job(),before);
+}

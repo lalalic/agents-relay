@@ -16,7 +16,7 @@ extern "C" fn stop_signal(_:libc::c_int){STOP.store(true,Ordering::Release);}
 fn main(){
     let args=std::env::args().skip(1).collect::<Vec<_>>();
     if args.iter().any(|arg|matches!(arg.as_str(),"--help"|"-h")){
-        println!("agents-relayd-rust (isolated preview)\n  --isolated-store-dir /absolute/path/to/stores (read-only)\n  --isolated-write-store-dir /absolute/path/to/stores (SQLite/Graph isolated mutations)\n  --port N\n  --interval MS\nNo production Workers or live state. No Node fallback.");
+        println!("agents-relayd-rust (isolated preview)\n  --isolated-store-dir /absolute/path/to/stores (read-only)\n  --isolated-write-store-dir /absolute/path/to/stores (SQLite/Graph isolated mutations)\n  --event-history-api http://127.0.0.1:PORT/ (explicit read-only loopback Events Bus history, write mode only)\n  --port N\n  --interval MS\nNo production Workers or live state. No Node fallback.");
         return;
     }
     if args.first().is_some_and(|a|a=="--version"){
@@ -46,7 +46,14 @@ fn execute(args:&[String])->Result<(),String>{
     if writable&&!arg("--isolated-store-dir").is_empty(){
         return Err("Select exactly one isolated daemon store mode".into());
     }
+    if args.iter().any(|value|value=="--event-history-api")
+        &&arg("--event-history-api").is_empty(){
+        return Err("--event-history-api requires an explicit loopback HTTP URL".into());
+    }
     let store=if writable{arg("--isolated-write-store-dir")}else{arg("--isolated-store-dir")};
+    if !writable&&!arg("--event-history-api").is_empty(){
+        return Err("Read-only daemon does not permit external event history provider bindings".into());
+    }
     if store.is_empty()||!Path::new(store).is_absolute()||!Path::new(store).is_dir(){
         return Err("Native daemon requires --isolated-store-dir pointing to an existing absolute caller-owned directory".into());
     }
@@ -98,7 +105,12 @@ fn execute(args:&[String])->Result<(),String>{
         // that directly edits Task status. Worker effects remain explicitly
         // unbound until a lifecycle-owned process/provider adapter is proven.
         let runtime=config.clone();
-        run_daemon(config.clone(),IsolatedSQLiteWriteHost::new(config),&STOP,move |_|{
+        let mut host=IsolatedSQLiteWriteHost::new(config.clone());
+        let history=arg("--event-history-api");
+        if !history.is_empty(){
+            host.set_loopback_event_history_api(history)?;
+        }
+        run_daemon(config.clone(),host,&STOP,move |_|{
             Ok(Reconciler::new(
                 runtime.graph_directory.clone(),runtime.store_directory.clone(),
                 runtime.profile_home.clone(),runtime.policy_path.clone(),

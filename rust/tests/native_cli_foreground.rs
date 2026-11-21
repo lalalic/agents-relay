@@ -45,10 +45,17 @@ impl Drop for Guard{
     }
 }
 fn daemon(root:&Path,port:u16)->Guard{
-    let child=Command::new(env!("CARGO_BIN_EXE_agents-relayd-rust"))
-        .args(["--isolated-write-store-dir",
+    daemon_with_history(root,port,None)
+}
+fn daemon_with_history(root:&Path,port:u16,history:Option<&str>)->Guard{
+    let mut command=Command::new(env!("CARGO_BIN_EXE_agents-relayd-rust"));
+    command.args(["--isolated-write-store-dir",
             root.join("stores").to_str().unwrap(),"--port",&port.to_string(),
-            "--interval","100"])
+            "--interval","100"]);
+    if let Some(history)=history{
+        command.args(["--event-history-api",history]);
+    }
+    let child=command
         .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
         .stdout(Stdio::null())
         .stderr(Stdio::from(fs::File::create(root.join("daemon.log")).unwrap()))
@@ -316,5 +323,61 @@ fn native_cli_foreground_runs_real_script_worker_to_verified_graph_sqlite_comple
     assert_eq!(restarted["tasks"][1]["executionHistory"],
         after["tasks"][1]["executionHistory"]);
     drop(check);drop(reboot);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn installed_native_daemon_reads_explicit_events_bus_http_history_without_graph_mutation(){
+    use std::io::{Read as _,Write as _};
+    let home=root();job(&home,"COMPLETED",false);
+    let before=SQLiteRelayStore::open_without_claim_reset(
+        &home.join("relay.sqlite"),Some("17")).unwrap()
+        .load_job("17").unwrap().unwrap();
+    let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+    let event_port=listener.local_addr().unwrap().port();
+    let mock=thread::spawn(move ||{
+        let (mut stream,_)=listener.accept().unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let mut request=String::new();
+        let mut buffer=[0u8;1024];
+        while !request.contains("\r\n\r\n"){
+            let size=stream.read(&mut buffer).unwrap();
+            assert!(size>0);
+            request.push_str(&String::from_utf8_lossy(&buffer[..size]));
+            assert!(request.len()<4000);
+        }
+        assert!(request.starts_with("GET /events?"),"{request}");
+        assert!(request.contains("job=17"),"{request}");
+        assert!(request.contains("task=2"),"{request}");
+        let payload=json!({"job_id":"17","order":"desc",
+            "events":[{"cursor":5,"event":{"event_id":"persisted_event_0005",
+                "job_id":"17","task_id":"2","type":"task.progress",
+                "message":"Real external read-only Events Bus"}}],
+            "next_cursor":5}).to_string();
+        write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            payload.len(),payload).unwrap();
+    });
+    let daemon_port=port();
+    let service=daemon_with_history(&home,daemon_port,
+        Some(&format!("http://127.0.0.1:{event_port}/")));
+    let mut socket=TcpStream::connect(("127.0.0.1",daemon_port)).unwrap();
+    socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    socket.write_all(
+        b"GET /api/events?job=17&task=2&limit=5 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    ).unwrap();
+    let mut raw=Vec::new();socket.read_to_end(&mut raw).unwrap();
+    mock.join().unwrap();
+    let text=String::from_utf8(raw).unwrap();
+    assert!(text.starts_with("HTTP/1.1 200"),"{text}");
+    let body=text.split_once("\r\n\r\n").unwrap().1;
+    let events:serde_json::Value=serde_json::from_str(body).unwrap();
+    assert_eq!(events.as_array().unwrap().len(),1);
+    assert_eq!(events[0]["event_id"],"persisted_event_0005");
+    assert_eq!(events[0]["message"],"Real external read-only Events Bus");
+    let after=SQLiteRelayStore::open_without_claim_reset(
+        &home.join("relay.sqlite"),Some("17")).unwrap()
+        .load_job("17").unwrap().unwrap();
+    assert_eq!(before,after,"external events history cannot mutate Job status");
+    drop(service);
     fs::remove_dir_all(home).unwrap();
 }
