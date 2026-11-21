@@ -40,7 +40,7 @@ B is the completed **Node-vs-Rust shadow cutover parity check**, not an all-fiel
 
 **Gate B result: PASS for read-only cutover parity**, based on completed 2026-11-21 shadow evidence. Remaining exhaustive API/UX cases are explicitly still required under B-Dashboard/F and final G; no inference that the real Worker path works.
 
-## Gate B-Dashboard — actual Dashboard read-only verification (**must PASS before Gate C**)
+## Gate B-Dashboard — actual Dashboard read-only verification (**independent of Gate D**)
 
 This is a **separate user-visible gate**, beyond Gate B's SQLite/HTTP shadow comparison. The read-only shadow was exercised historically with Node as owner; a production Rust Dashboard browser check has also been performed. Those are distinct evidence sets and neither silently upgrades the full historical gate to PASS.
 
@@ -51,7 +51,9 @@ This is a **separate user-visible gate**, beyond Gate B's SQLite/HTTP shadow com
 - [ ] BD5. Verify 401/403, invalid Job ID, cross-repository identity, missing Review and large-response framing cases; no private data leaks or truncated responses. Capture browser network evidence and HTTP status codes, not screenshots alone.
 - [ ] BD6. Repeat after shadow restart; verify no lingering process/port/worker/broker sessions. Attach one independent Dashboard read-only PASS/FAIL report before permitting Gate C.
 
-## Gate C — real WebHelm + Model + Events Bus in isolated writable Rust (**currently blocked**)
+## Gate C — real WebHelm Browser Worker + Events Bus (**DEFERRED by user; resume after D**)
+
+**Priority decision (2026-11-21):** This gate is deliberately DEFERRED, not a prerequisite to executing D. Do not repair WebHelm Thread ID/New Thread actions or retry uncertain browser submissions during D. It remains required for later WebHelm-specific acceptance, but must not block native Coordinator, Script Worker, Git/Review and non-browser Model Worker tests. DEFERRED does not mean PASS.
 
 - [ ] C1. Prepare unique disposable Git/SQLite, Job ID absent from live, test-only WebHelm Rust2Canary workspace/session, separate port, verified broker namespace and authorized event ingestion.
 - [ ] C2. Run python3 rust/tests/real_webhelm_canary_e2e.py --execute in explicit opt-in mode. Capture actual browser Thread URL/ID, output, graph/outbox evidence and exit. Never turn a failed provider attempt into a fake success.
@@ -61,7 +63,9 @@ This is a **separate user-visible gate**, beyond Gate B's SQLite/HTTP shadow com
 - [ ] C6. Exercise actual Z.ai provider as well **if production routing supports Z.ai**; verify provider-specific durable Thread identity and exact terminal. If native adapter not available, mark BLOCKED and record gap.
 - [ ] C7. Close only owned WebHelm session/pool slot, terminate test-owned Rust daemon, prove original live Node Job/SQLite untouched.
 
-## Gate D — native end-to-end Job lifecycle in isolated store
+## Gate D — native Job lifecycle (**NOW PRIORITY 1, no WebHelm Browser Worker**)
+
+**D order:** First prove a real native Script-only A→B→C Job terminal through Coordinator, canonical Graph, independent QA/Review and local Git. Next test retry/cancel/restart and the non-browser Model adapter. Browser Thread ID and WebHelm-session QA are reserved for Gate C. A Script-only PASS is a subgate, not proof of D4 Model completion or the entire Gate D. The existing Calculator Job 681 is diagnostic evidence, not an invitation to resubmit uncertain browser tasks.
 
 For every case save real CLI/API input, Graph transition sequence, authoritative Job/Task/Review state, Script/Model execution evidence, and final readback.
 
@@ -74,7 +78,7 @@ For every case save real CLI/API input, Graph transition sequence, authoritative
 - [ ] D7. Test failure → bounded retry → success; exhausted failure; cancel running Script/Model Task; correct leases/session cleanup, no false success.
 - [ ] D8. Local Git is source of truth for Final Review/merge; Job completes without GitHub. Optional origin push only **after** verified completion; remote failures never reopen the Job.
 
-## Gate D-ProjectRunner — real Project Runner calculator Job (**must PASS after D, before E**)
+## Gate D-ProjectRunner — real Project Runner calculator Job (**after native D core, before E**)
 
 Use the **existing calculator acceptance project** at `/Users/chengli/Workspace/html-calculator-rust-relay` and its source-of-truth `job-objective.md` / `AGENTS.md`. The current repository already contains a calculator produced by an earlier Rust Worker run; its `qa/verification.md` records `jobId=91`, Model Task `101` and Script QA Task `102` as successful **but the Job remained ACTIVE pending Final Review**. This is prior partial evidence, **not** a Project Runner PASS.
 
@@ -109,7 +113,7 @@ Use the **existing calculator acceptance project** at `/Users/chengli/Workspace/
 
 ## Gate G — production readiness, controlled live cutover, rollback (**partially live, not certified**)
 
-**Current exception / status:** The user explicitly authorized early production cutover on 2026-11-21. Native Rust is now live as the sole PM2 relayd owner (port 8787). This **does not** satisfy G1-G8: full authenticated external Model/EventBus execution, Project Runner terminal state, live rollback, and three-node acceptance still need verification. Before any further rollout, Gates A, B, B-Dashboard, C, D, D-ProjectRunner, E and F must be independently evidenced; do not use early cutover as proof of their completion.
+**Current exception / status:** The user authorized early production cutover on 2026-11-21 and subsequently deferred WebHelm Browser Worker Gate C until after D. Native Rust is now live as the sole PM2 relayd owner (port 8787). This **does not** satisfy G1-G8: full authenticated external Model/EventBus execution, Project Runner terminal state, live rollback, and three-node acceptance still need verification. Prioritize D / D-ProjectRunner now; Gate C WebHelm is deferred, not waived. Before final production certification, every outstanding Gate (including C, B-Dashboard, E and F) still requires independent evidence. Early cutover does not prove completion.
 
 - [ ] G1. Implement/review safe production single-owner writable Rust startup, credentials, launchd service path, broker durability/security and health/productionReady reporting; no repurposed isolated-canary flags.
 - [ ] G2. Prove a consistent SQLite/WAL/outbox/lease backup can be restored on a disposable host; document exact safe rollback and Node/Rust ownership fencing.
@@ -129,8 +133,8 @@ Statuses below mean **complete gate** status; a green subtest does not turn its 
 | A — cutover baseline / critical regression | **PASS** (scoped) | Build, API mapping, 101/101 lib, 23/23 native daemon, 16/16 SQLite writer, 5/5 migration, focused parity. All-targets, Node full, L1/L2/L3 **remain mandatory under D/E**; not represented as passed. |
 | B — historical read-only shadow parity | **PASS** (scoped) | 469 Job identities/count, 60/60 Node/Rust sampled fields + later 40/40, large responses, 405 shadow POST guard, clean removal. **No claim of full-record parity**; Dashboard UX/SSE/mobile remain in B-Dashboard/F. |
 | B-Dashboard — browser read-only | **PARTIAL** | Real Chrome/WebHelm shadow Dashboard and mobile viewport displayed; live Rust Jobs API and authenticated WebHelm public `/dashboard/` displayed Jobs. Public anonymous route still returns **401**, `/dashboard/api/jobs` **404** (actual route `/relay/api/jobs`); complete read-only review, SSE, scoped 401/403 and post-restart matrix **not signed off**. |
-| C — real browser Model + Events Bus | **BLOCKED** | Real isolated ChatGPT WebHelm canary reached Send, but durable Thread ID and authentic `task.started/task.completed` were not verified. Post-Send uncertainty must remain quarantined; no fabricated success. |
-| D — full native Job lifecycle | **PARTIAL** | Live native CLI, Graph/SQLite control, Job creation/cancellation, Scheduler admission and coordinator activation exercised. **Model Worker codex route unsupported** and no real terminal chain/Final Review. |
+| C — WebHelm Browser Worker + Events Bus | **DEFERRED (after D)** | Real isolated ChatGPT WebHelm canary reached Send, but durable Thread ID and authentic `task.started/task.completed` were not verified. Post-Send uncertainty must remain quarantined; no fabricated success. |
+| D — native Job lifecycle (priority 1) | **PARTIAL / IN_PROGRESS** | Live native CLI, Graph/SQLite control, Job creation/cancellation, Scheduler admission and coordinator activation exercised. **Model Worker codex route unsupported** and no real terminal chain/Final Review. |
 | D-ProjectRunner — Calculator | **BLOCKED** | Genuine `neo project run` from clean `ae2f833` clone `/Users/chengli/Workspace/neo/calculator-rust2-e2e-20261121`. Failed draft **Job 680 / Task 2068 CANCELLED** by native Graph. Current **Job 681 ACTIVE**, Coordinator **2069 RUNNING**, Builder **2070 FAILED** (unsupported `codex`), Troubleshooter **2071 QUEUED**. No new calculator artifact, independent browser QA, Final Review or Job COMPLETED. |
 | E — durability/restart/security | **PARTIAL** | Rust live owner-lock/restart, restored WAL backup, post-Send quarantine, pre-Send lease release, and one-time migration regression tested. Full real broker replay, concurrent three-node fencing, malicious event and live rollback cases unverified. |
 | F — real iPhone / three nodes | **NOT_RUN** | No certified real-device Review/Cancel + Neo Master/home98/Worknode route/reconnect acceptance for final live Rust build. Never substitute simulator. |
@@ -142,7 +146,7 @@ Statuses below mean **complete gate** status; a green subtest does not turn its 
 - Native daemon 23/23: `/tmp/rust2-daemon-parity-recheck.log`; Rust lib 101/101: `/tmp/rust2-post-migration-lib-tests.log`; SQLite writer 16/16: `/tmp/rust2-post-migration-regression.log` (this older combined run also contains **two earlier daemon failures**, subsequently fixed and retested 23/23); migration 5/5: `/tmp/rust2-once-migration-regression-final.log`.
 - Native PM2 service: `agents-relay/daemon`, binary `rust/target/debug/agents-relayd-rust`, port `8787`; backup and prior PM2 definitions in `~/.agents-relay/backups/rust2-exclusive-20261121-*/`. Preserve these for rollback.
 - Last authoritative Calculator snapshot: `681 ACTIVE`; `2069 RUNNING`, `2070 FAILED`, `2071 QUEUED`. These are **not** evidence of a completed Job or that the entire Scheduler/Model path works.
-- **Next hard blocker:** implement and verify the real Rust model adapter selected by Project Runner (currently `codex`) or a correctly authorized equivalent through the real Model service, with durable EventBus terminal provenance, and finish the original Calculator E2E. Do not manually advance failed Tasks or duplicate an uncertain browser Send.
+- **Current D priority:** Script Worker real execution, A→B→C dependencies, local Git/review, and terminal Job, without WebHelm Browser Worker. Job 681 still demonstrates an unsupported codex adapter; verify a correct non-browser Model path separately. No manual Task advancement or duplicate uncertain browser submission.
 - **Full acceptance: 2/9 gates PASS** for their stated scoped criteria (A and B); **7 gates not yet PASS**. The exhaustive suites deferred from A/B remain blocking requirements under D/E/F/G. An intention to finish today is not acceptance evidence.
 
 **Definition of DONE:** all **nine** gates (A, B, B-Dashboard, C, D, D-ProjectRunner, E, F and G) PASS at a reviewed and identified build SHA; real external provider + correlated terminal; a **new calculator Project Runner Job independently reviewed and COMPLETED**; real iPhone UI; exclusive production ownership; proven rollback; original Node state preserved. Only then reconsider upgrading src/reconciler-runtime.ts and src/relayd.ts from PORTING to PASS and declare PORTING=0.
