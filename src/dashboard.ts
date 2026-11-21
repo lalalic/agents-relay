@@ -1,4 +1,5 @@
 import { inspectWorkflowSymbol } from './dashboard-workflow-inspection.js';
+import { handleMobileDashboardRequest } from './dashboard-mobile.js';
 import { createServer, Server } from 'node:http';
 import { subscribeLocalCommits } from './local-commit-events.js';
 import { handleTroubleshooterQa } from './troubleshooter-qa-api.js';
@@ -32,16 +33,10 @@ const dashboardStaticAssets: Readonly<Record<string, [string, string]>> = {
 const SSE_HEARTBEAT_MS = 15000;
 type DashboardTarget = { repository?: string; prNumber?: number };
 type DashboardActions = { control?: (body: Record<string, unknown>) => Promise<unknown>; start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState, target?: DashboardTarget) => Promise<Job>; taskCreate?: (jobId: string, task: Task, idempotencyKey?: string) => Promise<Job>; taskUpdate?: (jobId: string, taskId: string, task: Task, expectedUpdatedAt: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState, target?: DashboardTarget) => Promise<Job> };
-
-function isTaskId(candidate: string): boolean {
-  return candidate.length > 0;
-}
-
-
+const isTaskId = (candidate: string): boolean => candidate.length > 0;
 
 export { dashboardHtml, dashboardVersion, dashboardSourceRevision } from './dashboard-html.js';
 import { dashboardPageHtml, dashboardConfigScript, dashboardVersion } from './dashboard-html.js';
-
 export function serveDashboard(
   store: DurableStore,
   port = 8787,
@@ -225,6 +220,11 @@ export function serveDashboard(
       }
       return;
     }
+    if (await handleMobileDashboardRequest(req, res, {
+      jobs: discoveredJobs,
+      scoped: async (id, repo) => JSON.parse((await snapshot(id, true, { repository: repo })).json),
+      activity: id => eventHistory(id, null, 100), cancel: resolvedActions?.cancel,
+    })) return;
     if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/jobs') {
       try {
         await subscribeDiscovered();
