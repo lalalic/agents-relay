@@ -1,0 +1,134 @@
+[
+  {
+    "id": "683",
+    "repository": "calculator-happy-rust2-mvp-20261121",
+    "state": "COMPLETED",
+    "review": "approved",
+    "localMerge": "succeeded",
+    "tasks": [
+      {
+        "id": "2079",
+        "agent": null,
+        "state": "SUCCEEDED",
+        "attempt": 0
+      },
+      {
+        "id": "2080",
+        "agent": "calculator-builder",
+        "state": "SUCCEEDED",
+        "attempt": 3
+      },
+      {
+        "id": "2084",
+        "agent": "troubleshooter",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      },
+      {
+        "id": "2087",
+        "agent": "calculator-qa",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      },
+      {
+        "id": "2090",
+        "agent": "job-acceptance-reviewer",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      }
+    ]
+  },
+  {
+    "id": "685",
+    "repository": "calculator-happy-rust2-mvp2-20261121",
+    "state": "COMPLETED",
+    "review": "approved",
+    "localMerge": "succeeded",
+    "tasks": [
+      {
+        "id": "2099",
+        "agent": null,
+        "state": "SUCCEEDED",
+        "attempt": 0
+      },
+      {
+        "id": "2101",
+        "agent": "calculator-builder",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      },
+      {
+        "id": "2105",
+        "agent": "calculator-qa",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      },
+      {
+        "id": "2107",
+        "agent": "job-acceptance-reviewer",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      }
+    ]
+  },
+  {
+    "id": "690",
+    "repository": "rust2-shortcut-d-e2e-mvp3-20261121",
+    "state": "COMPLETED",
+    "review": "approved",
+    "localMerge": null,
+    "tasks": [
+      {
+        "id": "2126",
+        "agent": null,
+        "state": "SUCCEEDED",
+        "attempt": 0
+      },
+      {
+        "id": "2127",
+        "agent": "stage-a",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      },
+      {
+        "id": "2128",
+        "agent": "stage-b",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      },
+      {
+        "id": "2129",
+        "agent": "stage-c",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      },
+      {
+        "id": "2130",
+        "agent": "job-acceptance-reviewer",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      }
+    ]
+  },
+  {
+    "id": "691",
+    "repository": "rust2-model-d-e2e-mvp5-20261121",
+    "state": "ACTIVE",
+    "review": null,
+    "localMerge": null,
+    "tasks": [
+      {
+        "id": "2131",
+        "agent": null,
+        "state": "RUNNING",
+        "attempt": 0
+      },
+      {
+        "id": "2132",
+        "agent": "model-a",
+        "state": "QUEUED",
+        "attempt": 1
+      }
+    ]
+  }
+]

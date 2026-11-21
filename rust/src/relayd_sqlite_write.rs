@@ -57,6 +57,43 @@ fn update_live_worker_from_committed_event(
     }
 }
 
+/// Outbox may carry either a locally produced Script event or a verified,
+/// already-committed Model/Events Bus ingress receipt. Both must be tied to
+/// the precise leased execution and immutable event_id before publication.
+/// Replaying via NATS retains the original event_id for consumer de-duplication.
+fn verified_worker_outbox_event(key:&str,kind:&str,event:&Value)->bool{
+    let job=field(event,"job_id");
+    let task=field(event,"task_id");
+    let event_type=field(event,"type");
+    let event_id=field(event,"event_id");
+    if event.get("version")!=Some(&json!(1))||job.is_empty()
+        ||task.is_empty()||event_id.is_empty()||kind!=event_type{
+        return false;
+    }
+    let (prefix,allowed)=if matches!(event_type,"task.started"|"task.completed"|"task.failed"){
+        (format!("script-event/{job}/{task}/"),true)
+    }else{(String::new(),false)};
+    if allowed{
+        if let Some(execution)=key.strip_prefix(&prefix)
+            .and_then(|rest|rest.strip_suffix(&format!("/{event_type}"))){
+            return !execution.is_empty()
+                &&event.pointer("/source/id").and_then(Value::as_str)
+                    ==Some(crate::execution_event_identity::execution_event_source(
+                        job,task,execution).as_str());
+        }
+    }
+    if !matches!(event_type,"task.started"|"task.progress"|"task.completed"|"task.failed"){
+        return false;
+    }
+    let prefix=format!("model-event/{job}/{task}/");
+    let Some(rest)=key.strip_prefix(&prefix)else{return false;};
+    let Some(execution)=rest.strip_suffix(&format!("/{event_id}"))else{return false;};
+    !execution.is_empty()
+        &&event.pointer("/source/id").and_then(Value::as_str)
+            ==Some(crate::execution_event_identity::execution_event_source(
+                job,task,execution).as_str())
+}
+
 pub struct IsolatedSQLiteWriteHost {
     config:DaemonConfig,
     // Explicitly selected production-owned canonical store. Isolated callers
@@ -325,6 +362,15 @@ impl IsolatedSQLiteWriteHost {
                 ==Some(crate::execution_event_identity::execution_event_source(
                     id,task_id,&execution).as_str());
         if !trusted{return Ok(false);}
+        // At-least-once NATS delivery can include an additional start event
+        // with a different event_id for the SAME leased generation. Once the
+        // Graph has committed RUNNING, start is permanently stale for that
+        // execution. Do not requeue this invalid duplicate indefinitely and
+        // strand the later genuine task.completed behind it. Out-of-order
+        // terminal events on QUEUED generations still retain their retry.
+        if kind=="task.started"&&field(task,"state")=="RUNNING"{
+            return Ok(false);
+        }
         let event_id=field(event,"event_id");
         let key=format!("model-event/{id}/{task_id}/{execution}/{event_id}");
         // New SQLite scopes create their outbox at the first genuine CAS.
@@ -611,6 +657,24 @@ impl IsolatedSQLiteWriteHost {
             .ok_or_else(||format!("SQLite Job {id} not found"))?;
         if field(&job,"state")!="ACTIVE"{return Ok(false);}
         let project=self.isolated_project(&job)?;
+        // Materialize the Project Runner's declared Coordinator receipt only
+        // from committed Graph/SQLite SUCCEEDED child Tasks. This projection
+        // never advances Job/Task/Review state or overwrites run files.
+        let output_root=if self.live_store{
+            project.clone()
+        }else{
+            std::fs::canonicalize(self.config.store_directory.parent()
+                .ok_or("Isolated Coordinator output root missing")?)
+                .map_err(|e|e.to_string())?
+        };
+        if let Err(error)=crate::dag_coordinator_receipt::materialize_committed_dag_receipts(
+            &job,&project,&output_root){
+            // A pre-existing malformed/relative Coordinator output is NOT
+            // permission to write it. Also not permission to stop the entire
+            // workspace's independent Job reconciliation: the Reviewer will
+            // still detect its missing artifact; no Task state is inferred.
+            eprintln!("warning: Coordinator receipt Job {id} not materialized: {error}");
+        }
         let ref_name=job.pointer("/localMerge/sourceRef")
             .and_then(Value::as_str).filter(|s|!s.is_empty());
         let head=ref_name.map(|ref_name|local_source_head(&project,ref_name))
@@ -1342,22 +1406,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         for (key,kind,raw) in rows{
             let event:Value=serde_json::from_str(&raw)
                 .map_err(|e|format!("Durable Worker event JSON invalid: {e}"))?;
-            let event_job=field(&event,"job_id");
-            let event_task=field(&event,"task_id");
-            let event_kind=field(&event,"type");
-            let event_id=field(&event,"event_id");
-            let generation=event.pointer("/source/id").and_then(Value::as_str)
-                .unwrap_or("");
-            let expected_prefix=format!("script-event/{event_job}/{event_task}/");
-            let valid_generation=key.strip_prefix(&expected_prefix)
-                .and_then(|suffix|suffix.strip_suffix(&format!("/{event_kind}")))
-                .filter(|execution|!execution.is_empty())
-                .is_some_and(|execution|generation==
-                    crate::execution_event_identity::execution_event_source(
-                        event_job,event_task,execution));
-            if event["version"]!=1||event_kind!=kind
-                ||event_id.is_empty()||!valid_generation
-                ||!matches!(event_kind,"task.started"|"task.completed"|"task.failed"){
+            if !verified_worker_outbox_event(&key,&kind,&event){
                 return Err(format!(
                     "Refusing invalid/out-of-scope durable Worker event {key}"));
             }
@@ -1681,6 +1730,39 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                 }
             }).map_err(|e|format!("Cannot launch owned Script Worker executor: {e}"))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod verified_worker_outbox_tests {
+    use super::*;
+    #[test]
+    fn model_and_script_outbox_are_correlated_and_bounded() {
+        let job="689";let task="2124";let lease="fca5e941-6e62-4067-bc18-932294cc4217";
+        let id="2adb3c03-237d-4f45-8050-24ca7f5434bc";
+        let source=crate::execution_event_identity::execution_event_source(job,task,lease);
+        let event=json!({"version":1,"job_id":job,"task_id":task,
+            "type":"task.started","event_id":id,"source":{"id":source}});
+        assert!(verified_worker_outbox_event(&format!("model-event/{job}/{task}/{lease}/{id}"),
+            "task.started",&event));
+        assert!(verified_worker_outbox_event(&format!("script-event/{job}/{task}/{lease}/task.started"),
+            "task.started",&event));
+        let mut progress=event.clone();progress["type"]=json!("task.progress");
+        assert!(verified_worker_outbox_event(&format!("model-event/{job}/{task}/{lease}/{id}"),
+            "task.progress",&progress));
+        assert!(!verified_worker_outbox_event(&format!("script-event/{job}/{task}/{lease}/task.progress"),
+            "task.progress",&progress));
+        assert!(!verified_worker_outbox_event(&format!("model-event/{job}/{task}/{lease}/wrong"),
+            "task.started",&event));
+        assert!(!verified_worker_outbox_event(&format!("model-event/{job}/{task}/wrong/{id}"),
+            "task.started",&event));
+        assert!(!verified_worker_outbox_event(&format!("model-event/{job}/wrong/{lease}/{id}"),
+            "task.started",&event));
+        let mut fake=event.clone();fake["source"]["id"]=json!("job/other/task/other/execution/wrong");
+        assert!(!verified_worker_outbox_event(&format!("model-event/{job}/{task}/{lease}/{id}"),
+            "task.started",&fake));
+        assert!(!verified_worker_outbox_event(&format!("model-event/{job}/{task}/{lease}/{id}"),
+            "task.failed",&event));
     }
 }
 

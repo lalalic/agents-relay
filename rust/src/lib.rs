@@ -250,6 +250,7 @@ pub mod events; // Direct Node src/events.ts memory and NATS event transports.
 pub mod feedback;
 // Wave 2 worker C: isolated file-to-file ports, merged by sole integration owner.
 pub mod dag_result_contract;
+pub mod dag_coordinator_receipt;
 pub mod delivery_parity_harness;
 pub mod host_invocation_store;
 pub mod local_git_merge;
