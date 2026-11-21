@@ -434,7 +434,7 @@ Actions:
 
 Required: --project-path PATH.
 Common: --role orchestrator|planner|reviewer|worker|nested-worker, --skills a,b, --agents a,b.
-Root overrides: --workspace-root PATH (or AGENTS_RELAY_WORKSPACE_ROOT), --global-root PATH. Named Agents resolve through workspace and project layers.
+Root overrides: --workspace-root PATH (or AGENTS_RELAY_WORKSPACE_ROOT), --global-root PATH. Agent names resolve through the workspace and project layers.
 
 Example:
   npx agents-relay context resolve --project-path ~/Workspace/agents-relay --role orchestrator"##########,

@@ -312,6 +312,11 @@ fn job_params(args:&[String],id:&str)->Result<Vec<(&'static str,String)>,String>
 pub fn relay_service_status(args:&[String])->Result<Value,String>{
     http(args,"/api/status","GET",&[],None,"status request")
 }
+/// Original cli.ts "status" reads the Dashboard runtime summary, not
+/// the daemon's lower-level /api/status health diagnostic endpoint.
+pub fn relay_cli_runtime_summary(args:&[String])->Result<Value,String>{
+    http(args,"/api/runtime-summary","GET",&[],None,"status request")
+}
 pub fn relay_control_job(args:&[String],id:&str)->Result<Value,String>{
     http(args,"/api/job","GET",&job_params(args,id)?,None,"job request")
 }

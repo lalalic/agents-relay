@@ -49,6 +49,22 @@ pub fn worker_task_from_args(
     graph_directory:&Path,job:&Value,args:&[String],now:&str,
     store_directory:&Path,stdin:Option<&str>,
 )->Result<Value,String> {
+    task_from_args_inner(graph_directory,job,args,now,store_directory,stdin,true)
+}
+/// For the managed daemon front door, the authoritative SQLite transaction
+/// allocates the global Task ID AFTER Graph validation. Do not allocate a
+/// competing local ID or write a second unowned .agents-relay store.
+pub fn managed_worker_task_from_args(
+    graph_directory:&Path,job:&Value,args:&[String],now:&str,
+    stdin:Option<&str>,
+)->Result<Value,String> {
+    task_from_args_inner(graph_directory,job,args,now,
+        Path::new(".agents-relay"),stdin,false)
+}
+fn task_from_args_inner(
+    graph_directory:&Path,job:&Value,args:&[String],now:&str,
+    store_directory:&Path,stdin:Option<&str>,allocate_id:bool,
+)->Result<Value,String> {
     let model=arg(args,"--model","");
     let adapter_value=arg(args,"--adapter","");
     let adapter=if adapter_value.is_empty(){"codex"}else{adapter_value};
@@ -120,10 +136,14 @@ pub fn worker_task_from_args(
     }
     let repo=job.get("repository").and_then(Value::as_str)
         .ok_or("Task ID allocation requires a repository context")?;
-    let directory=if let Some(location)=nonempty(arg(args,"--store-dir","")){
-        Path::new(location)
-    }else{store_directory};
-    let id=allocate_entity_id(directory,repo,"task",None,&HashSet::new())?;
+    let id=if allocate_id{
+        let directory=if let Some(location)=nonempty(arg(args,"--store-dir","")){
+            Path::new(location)
+        }else{store_directory};
+        allocate_entity_id(directory,repo,"task",None,&HashSet::new())?
+    }else{
+        String::new()
+    };
     let output=if output_kind=="file"{
         json!({"kind":"file","path":output_path})
     }else{json!({"kind":"task_pr"})};

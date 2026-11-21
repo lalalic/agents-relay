@@ -2,10 +2,13 @@
 //! the CLI only parses arguments and invokes the same control/HTTP routes as
 //! Node. Unwired host actions explicitly fail rather than launching Node.
 use agents_relay_rust2::{
-    cli::{run_cli,CliRuntimePort},
+    cli::{run_cli,CliRuntimePort,agent_control_request},
     cli_artifact::{validate_artifact,result_json},
     cli_core_support::{arg,has_arg,text_option},
     cli_coordinator::validate_coordinator_args,
+    cli_context::run_context_command,
+    cli_blocker::run_blocker_command,
+    cli_workflow_action::workflow_operation,
     cli_foreground::attach_foreground_daemon,
     cli_escalation::run_escalation_command,
     cli_prompt::{run_prompt_command,run_plan_context_command,
@@ -15,7 +18,7 @@ use agents_relay_rust2::{
     execution_context::resolve_execution_context,
     managed_worker_input::managed_worker_input_resolved,
     planner_adapters::build_planner_execution_prompt,
-    cli_support::{relay_control_command,relay_control_job,relay_service_status,
+    cli_support::{relay_control_command,relay_control_job,relay_cli_runtime_summary,
         relay_job_events},
 };
 use serde_json::{json,Value};
@@ -65,6 +68,9 @@ struct DaemonClient;
 impl CliRuntimePort for DaemonClient {
     fn execute(&mut self,group:&str,action:&str,args:&[String])->Result<Value,String>{
         match (group,action){
+            ("agent-register"|"agent-discover","")=>{
+                relay_control_command(args,&agent_control_request(group,args)?)
+            },
             ("artifact","validate") => {
                 // The installed native CLI must use the same read-only
                 // validator as the original Node artifact command and the
@@ -75,7 +81,17 @@ impl CliRuntimePort for DaemonClient {
                 validate_artifact(artifact,schema).map(|result|result_json(&result))
             },
             ("artifact",_)=>Err("artifact supports only validate".into()),
-            ("status","") => relay_service_status(args),
+            ("context","resolve")=>run_context_command("resolve",args),
+            ("context",_)=>Err("context supports only resolve".into()),
+            ("blocker",action)=>run_blocker_command(action,args,None),
+            ("workflow","action")=>{
+                // The original runWorkflowAction maps one supported Graph
+                // task action and delegates the EXACT Task's CLI command;
+                // never synthesize a state update or retry an HTTP POST.
+                let operation=workflow_operation(args)?;
+                agents_relay_rust2::cli::run_task_command(self,&operation,args,None)
+            },
+            ("status","") => relay_cli_runtime_summary(args),
             ("prompt","")=>{
                 let package_root=Path::new(env!("CARGO_MANIFEST_DIR"))
                     .parent().ok_or("Rust repo root missing")?;

@@ -19,7 +19,7 @@ use crate::{
     cli_workflow::workflow_cli_result,
     cli_worker_task::{
         recovery_diagnosis_from_args,dependency_validity_from_args,
-        worker_task_from_args,
+        worker_task_from_args,managed_worker_task_from_args,
     },
     events::random_uuid,
     local_merge_lock::iso8601_now,
@@ -155,7 +155,6 @@ pub fn job_create_request(args:&[String],stdin:Option<&str>)
             .map_err(|e|format!("Invalid Job tag: {e}"))?)
     }else{None};
     let mut options=json!({
-        "id":arg(args,"--id",""),"idempotencyKey":arg(args,"--idempotency-key",""),
         "title":arg(args,"--title",""),"objective":objective,
         "projectRoot":project,"priority":priority,"tag":tag,
         "reviewEnabled":!has_arg(args,"--no-review"),
@@ -165,6 +164,35 @@ pub fn job_create_request(args:&[String],stdin:Option<&str>)
         "implementationThreadId":arg(args,"--implementation-thread-id",""),
         "coordinator":coordinator
     });
+    // Node JSON.stringify omits undefined option values; an empty
+    // idempotencyKey or ID is NOT an explicit value. Sending "" changes
+    // semantics: canonical SQLite allocator correctly rejects that key.
+    for (flag,key) in [
+        ("--id","id"),
+        ("--idempotency-key","idempotencyKey"),
+        ("--title","title"),
+        ("--reviewer-thread-id","reviewerThreadId"),
+        ("--creator-thread-id","creatorThreadId"),
+        ("--implementation-thread-id","implementationThreadId"),
+    ]{
+        let supplied=arg(args,flag,"");
+        if !supplied.is_empty(){
+            options[key]=json!(supplied);
+        }else if let Some(object)=options.as_object_mut(){
+            object.remove(key);
+        }
+    }
+    // Node emits no optional property for undefined objective, tag or
+    // coordinator. An explicit null can be a rejected binding rather than
+    // an absent field.
+    if objective.trim().is_empty(){
+        options.as_object_mut().expect("JSON object").remove("objective");
+    }
+    for field in ["tag","coordinator"]{
+        if options[field].is_null(){
+            options.as_object_mut().expect("JSON object").remove(field);
+        }
+    }
     if !source.is_empty(){
         options["localMergeSource"]=json!(source);
         options["localMergeTarget"]=json!(target);
@@ -396,12 +424,14 @@ pub fn run_task_command<P:CliRuntimePort>(
         return serde_json::from_str(&rendered).map_err(|error|error.to_string());
     }
     if action=="create"{
-        let options=json!({"idempotencyKey":arg(args,"--idempotency-key","")});
-        let task=worker_task_from_args(Path::new("workflows"),
-            &job,args,&iso8601_now(),Path::new(".agents-relay"),stdin)?;
-        let result=port.task_command(args,&json!({"jobId":id,
-            "action":"create","task":task,
-            "idempotencyKey":options["idempotencyKey"]}))?;
+        let task=managed_worker_task_from_args(Path::new("workflow"),
+            &job,args,&iso8601_now(),stdin)?;
+        let mut request=json!({"jobId":id,"action":"create","task":task});
+        let key=arg(args,"--idempotency-key","");
+        // An omitted Task retry key is absent on the Node CLI wire, not
+        // the explicit invalid empty string rejected by the ID allocator.
+        if !key.is_empty(){request["idempotencyKey"]=json!(key);}
+        let result=port.task_command(args,&request)?;
         return Ok(result);
     }
     if action=="update"{
@@ -446,6 +476,83 @@ pub fn run_task_command<P:CliRuntimePort>(
         _=>return port.execute("task",action,args)
     };
     control_response(port,args,&request)
+}
+/// Native equivalent of the original src/cli.ts agent-register and
+/// agent-discover admission. Construct the Job-scoped request only; the
+/// daemon's existing Graph/SQLite workspace control remains authoritative.
+pub fn agent_control_request(action:&str,args:&[String])->Result<Value,String>{
+    let id=arg(args,"--id","");
+    if id.is_empty(){
+        return Err(format!("{action} requires --repo and --id"));
+    }
+    let csv=|flag:&str,delimiter:char|->Vec<String>{
+        arg(args,flag,"").split(delimiter).filter(|v|!v.is_empty())
+            .map(str::to_string).collect()
+    };
+    match action{
+        "agent-discover"=>{
+            let runtime=arg(args,"--runtime","");
+            let trust=arg(args,"--trust-domain","");
+            let kind=arg(args,"--task-kind","");
+            let mut required=json!({
+                "capabilities":csv("--capabilities",','),
+                "availability":csv("--availability",','),
+                "explore":has_arg(args,"--explore"),
+            });
+            for (name,value) in [("runtime",runtime),("trustDomain",trust),("taskKind",kind)]{
+                if !value.is_empty(){required[name]=json!(value);}
+            }
+            Ok(json!({"command":"agent.discover","jobId":id,
+                "requirements":required}))
+        },
+        "agent-register"=>{
+            let name=arg(args,"--name","");
+            let responsibility=arg(args,"--responsibility","");
+            let role=arg(args,"--role","");
+            let endpoint=arg(args,"--endpoint","");
+            if name.is_empty()||responsibility.is_empty()||role.is_empty()
+                ||endpoint.is_empty(){
+                return Err("--name, --responsibility, --role, and --endpoint are required".into());
+            }
+            let agent_id=arg(args,"--agent-id","");
+            let agent_id=if agent_id.is_empty(){random_uuid()}else{agent_id.into()};
+            let now=iso8601_now();
+            let mut labels=json!({});
+            for label in csv("--labels",','){
+                let mut split=label.split('=');
+                if let (Some(key),Some(value))=(split.next(),split.next()){
+                    if !key.is_empty()&&!value.is_empty(){labels[key]=json!(value);}
+                }
+            }
+            let adapter=arg(args,"--adapter","shell");
+            let runtime=arg(args,"--runtime",adapter);
+            let mut run=json!({"adapter":runtime});
+            for key in ["--provider","--model"]{
+                let value=arg(args,key,"");
+                if !value.is_empty(){
+                    run[key.trim_start_matches("--")]=json!(value);
+                }
+            }
+            let registration=json!({
+                "id":agent_id,"name":name,"responsibility":responsibility,"role":role,
+                "capabilities":csv("--capabilities",','),
+                "boundaries":csv("--boundaries",'|'),
+                "endpoint":{"kind":arg(args,"--endpoint-kind","adapter"),"target":endpoint},
+                "runtime":run,
+                "availability":arg(args,"--availability","available"),
+                "routing":{"labels":labels,
+                    "trustDomains":csv("--trust-domains",','),
+                    "regions":csv("--regions",',')},
+                "evidence":{"evaluations":[],"outcomes":{
+                    "succeeded":0,"failed":0,"timedOut":0},
+                    "lastObservedAt":Value::Null},
+                "registeredAt":now,"updatedAt":now
+            });
+            Ok(json!({"command":"agent.register","jobId":id,
+                "agent":registration}))
+        },
+        _=>Err(format!("Unsupported agent command {action}")),
+    }
 }
 pub fn run_cli<P:CliRuntimePort>(
     port:&mut P,argv:&[String],stdin:Option<&str>,
