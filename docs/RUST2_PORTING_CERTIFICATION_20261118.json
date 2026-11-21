@@ -174,7 +174,9 @@
         "PoolSubmission",
         "PooledRun"
       ],
-      "certificationEvidence": [],
+      "certificationEvidence": [
+        "2026-11-20 real worker start fix, still HOLD: WebHelm HTTP submission cannot mark daemon workerStarted; exact execution-correlated task.started must commit canonical Graph/SQLite first, and terminal clears exact execution. ChatGptAdapter never policy now requires worker-start barrier and quarantines uncertain session; canonical worker_start_timeout classified as start-ack. Tests: 5 native fake Unix WebHelm socket/pool, 2 native daemon WorkerFailure E2E, 1 native daemon WebHelm Graph terminal HTTP test, 1+1 native barrier/live Worker unit. All targeted isolated tests pass, production authenticated EventBus/provider still unbound."
+      ],
       "openGates": [
         "缺独立原 Node/Rust 动态/失联 WebHelm 会话租约验证；不能把 Pool mock 看作实际 Provider 生命周期",
         "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
@@ -1867,7 +1869,8 @@
       ],
       "certificationEvidence": [
         "2026-11-20 still HOLD: verified 72 direct Node/Rust public host contract fixtures, 10 original Node/Rust real SQLite HostInvocationPorts cases, 17 original Node/Rust ReconcilerRuntimeBase scenarios. Rust ReconcilerRuntimeBase now requires an explicitly bound HostInvocation SQLite port instead of Graph-only false acceptance. Real four native SQLite/EventBus tests approve/change requested, forged source rejection, one accepted event, Graph-approved Task resume, and duplicate/restarted replay. RuntimeBaseStore default fail-closed; missing live provider binding and 60s waiter/continuation still open.",
-        "2026-11-20: Node-style Host waiter is completed and tested in separately certified interactive-invocation.ts; production authenticated EventBus and model Worker continuation still HOLD under Reconciler Runtime."
+        "2026-11-20: Node-style Host waiter is completed and tested in separately certified interactive-invocation.ts; production authenticated EventBus and model Worker continuation still HOLD under Reconciler Runtime.",
+        "2026-11-20 real worker start fix, still HOLD: WebHelm HTTP submission cannot mark daemon workerStarted; exact execution-correlated task.started must commit canonical Graph/SQLite first, and terminal clears exact execution. ChatGptAdapter never policy now requires worker-start barrier and quarantines uncertain session; canonical worker_start_timeout classified as start-ack. Tests: 5 native fake Unix WebHelm socket/pool, 2 native daemon WorkerFailure E2E, 1 native daemon WebHelm Graph terminal HTTP test, 1+1 native barrier/live Worker unit. All targeted isolated tests pass, production authenticated EventBus/provider still unbound."
       ],
       "openGates": [
         "Connect Reconciler Runtime to production authenticated EventBus Host/model ingress and real worker continuation callbacks",
@@ -2124,7 +2127,9 @@
         "shouldCoalescePullRequestRefresh",
         "configureExecutionRouterRulesPath"
       ],
-      "certificationEvidence": [],
+      "certificationEvidence": [
+        "2026-11-20 real worker start fix, still HOLD: WebHelm HTTP submission cannot mark daemon workerStarted; exact execution-correlated task.started must commit canonical Graph/SQLite first, and terminal clears exact execution. ChatGptAdapter never policy now requires worker-start barrier and quarantines uncertain session; canonical worker_start_timeout classified as start-ack. Tests: 5 native fake Unix WebHelm socket/pool, 2 native daemon WorkerFailure E2E, 1 native daemon WebHelm Graph terminal HTTP test, 1+1 native barrier/live Worker unit. All targeted isolated tests pass, production authenticated EventBus/provider still unbound."
+      ],
       "openGates": [
         "公开 daemon 运行入口没有直接差分测试，必须验证 CLI、SQLite/NATS、Dashboard、重启及 Graph 生产调用一致",
         "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",

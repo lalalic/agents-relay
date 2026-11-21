@@ -33,6 +33,30 @@ use std::{cell::{Ref,RefCell,RefMut},collections::{HashMap,HashSet},future::{rea
 fn field<'a>(v:&'a Value,key:&str)->&'a str{v.get(key).and_then(Value::as_str).unwrap_or("")}
 fn denied(name:&str)->String{format!("Rust isolated-write daemon {name} not bound; refusing unsafe side effect")}
 
+/// A WebHelm "submitted" HTTP receipt is NOT a worker start acknowledgement.
+/// Only the canonical Graph+SQLite result of an execution-correlated
+/// task.started may flip the volatile Worker live observation. Terminal
+/// cleanup is likewise fenced to the execution history that actually closed.
+fn update_live_worker_from_committed_event(
+    live:&mut DaemonLiveWorkers,committed:&Value,
+    task_id:&str,execution_id:&str,event_type:&str,
+){
+    let task=committed.get("tasks").and_then(Value::as_array)
+        .into_iter().flatten().find(|task|field(task,"id")==task_id);
+    let Some(task)=task else{return;};
+    if event_type=="task.started"
+        &&field(task,"state")=="RUNNING"
+        &&field(task,"executionId")==execution_id{
+        live.mark_started(task_id,execution_id);
+    }else if matches!(event_type,"task.completed"|"task.failed")
+        &&matches!(field(task,"state"),"SUCCEEDED"|"FAILED"|"CANCELLED")
+        &&task.get("executionHistory").and_then(Value::as_array)
+            .into_iter().flatten().any(|generation|field(generation,"id")==execution_id)
+        &&live.get(task_id).is_some_and(|state|state.execution_id==execution_id){
+        live.remove(task_id);
+    }
+}
+
 pub struct IsolatedSQLiteWriteHost {
     config:DaemonConfig,
     subscriptions:Vec<Sender<String>>,
@@ -145,6 +169,13 @@ impl IsolatedSQLiteWriteHost {
         self.isolated_project(&job)?;
         let result=apply_verified_worker_event(&self.path(),&self.config.graph_directory,
             job_id,task_id,execution_id,event)?;
+        // Node ReconcilerRuntime.markWorkerStarted executes only AFTER the
+        // authoritative Graph/SQLite task.started receipt. The browser
+        // delivery receipt itself is never evidence of Worker execution.
+        update_live_worker_from_committed_event(
+            &mut *self.live_workers.lock()
+                .map_err(|_|"Daemon live worker lock poisoned")?,
+            &result,task_id,execution_id,field(event,"type"));
         // This audit is strictly post-Graph/SQLite commit. A rejected or
         // duplicate execution cannot append an outcome, and an audit I/O
         // failure is observational (never rolls back durable Task state).
@@ -817,12 +848,11 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                     if let Err(error)=&outcome{
                         eprintln!("Native ChatGPT Worker {job_id}/{task_id}: {error}");
                     }
-                    if let Ok(_execution)=&outcome{
-                        // Node markWorkerStarted: a successful isolated
-                        // submission proves the Worker generation started, so
-                        // any later failure is not a no-start fallback case.
-                        live_workers.lock().expect("daemon live workers lock poisoned")
-                            .mark_started(&task_id,&execution_id);
+                    if outcome.is_ok(){
+                        // A successful WebHelm HTTP submission alone does
+                        // NOT prove task.started. The accepted EventBus
+                        // ingress above owns mark_started after durable
+                        // Graph/SQLite confirmation of this exact generation.
                         return;
                     }
                     let error=outcome.expect_err("outcome is Err");
@@ -895,5 +925,44 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                 }
             }).map_err(|e|format!("Cannot launch owned Script Worker executor: {e}"))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod committed_worker_observation_tests{
+    use super::*;
+    #[test]
+    fn submission_does_not_start_a_worker_but_exact_graph_event_does(){
+        let mut live=DaemonLiveWorkers::default();
+        live.register("2","exec-new");
+        let queued=json!({"tasks":[{"id":"2","state":"QUEUED",
+            "executionId":"exec-new","leaseOwner":"isolated"}]});
+        update_live_worker_from_committed_event(
+            &mut live,&queued,"2","exec-new","task.process.launched");
+        assert!(!live.get("2").unwrap().worker_started,
+            "WebHelm submitted is not the worker task.started event");
+        update_live_worker_from_committed_event(
+            &mut live,&queued,"2","exec-new","task.started");
+        assert!(!live.get("2").unwrap().worker_started,
+            "a Graph-denied/stale task.started cannot mark a worker started");
+        let running=json!({"tasks":[{"id":"2","state":"RUNNING",
+            "executionId":"exec-new","leaseOwner":"isolated"}]});
+        update_live_worker_from_committed_event(
+            &mut live,&running,"2","exec-old","task.started");
+        assert!(!live.get("2").unwrap().worker_started,
+            "wrong execution source cannot mark a worker started");
+        update_live_worker_from_committed_event(
+            &mut live,&running,"2","exec-new","task.started");
+        assert!(live.get("2").unwrap().worker_started,
+            "only exact current Graph/SQLite RUNNING generation starts");
+        let terminal=json!({"tasks":[{"id":"2","state":"SUCCEEDED",
+            "executionId":null,"executionHistory":[{"id":"exec-new"}]}]});
+        update_live_worker_from_committed_event(
+            &mut live,&terminal,"2","exec-old","task.completed");
+        assert!(live.get("2").is_some(),"stale terminal cannot clear live Worker");
+        update_live_worker_from_committed_event(
+            &mut live,&terminal,"2","exec-new","task.completed");
+        assert!(live.get("2").is_none(),
+            "committed terminal clears only its matching volatile live Worker");
     }
 }

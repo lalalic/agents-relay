@@ -74,6 +74,10 @@ fn await_generation_barrier(
             return Err("Native WebHelm Worker was cancelled".into());
         }
         if Instant::now()>deadline{
+            if barrier=="worker-start"{
+                return Err(format!(
+                    "Task {task_id} worker_start_timeout: no worker task.started start-ack"));
+            }
             return Err(format!("Native WebHelm {barrier} Graph event barrier expired"));
         }
         let store=SQLiteRelayStore::open_without_claim_reset(db_path,Some(job_id))?;
@@ -173,4 +177,25 @@ pub fn submit_claimed_chatgpt_worker(
             cancelled));
     pool.close().map_err(|e|e.to_string())?;
     launched
+}
+
+#[cfg(test)]
+mod start_ack_barrier_tests{
+    use super::*;
+    #[test]
+    fn missing_start_ack_has_specific_canonical_timeout_phase(){
+        let cancelled=AtomicBool::new(false);
+        let expired=Instant::now()-Duration::from_millis(2);
+        let start=await_generation_barrier(
+            Path::new("/dev/null"),"job-7","task-9","exec-2",
+            "worker-start",expired,&cancelled).unwrap_err();
+        assert!(start.contains("worker_start_timeout"),"{start}");
+        assert_eq!(crate::daemon_worker_failure::classify_native_launch_phase(&start),
+            "start-ack");
+        let terminal=await_generation_barrier(
+            Path::new("/dev/null"),"job-7","task-9","exec-2",
+            "terminal",expired,&cancelled).unwrap_err();
+        assert!(terminal.contains("terminal Graph event barrier expired"),"{terminal}");
+        assert!(!terminal.contains("worker_start_timeout"));
+    }
 }

@@ -463,7 +463,7 @@ impl ChatGptAdapter{
             }
         }
         let barrier_result=match policy.as_str(){
-            "after-start"=>await_barrier("worker-start"),
+            "after-start"|"never"=>await_barrier("worker-start"),
             "after-terminal"=>await_barrier("terminal"),
             _=>Ok(()),
         };

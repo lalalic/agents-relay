@@ -42,7 +42,21 @@ fn server(socket:&Path,receipt:Value,release:bool)->thread::JoinHandle<Vec<Strin
             };
             stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
             let mut reader=BufReader::new(&stream);
-            let mut line=String::new();reader.read_line(&mut line).unwrap();
+            let mut line=String::new();
+            let read_deadline=Instant::now()+Duration::from_secs(3);
+            loop{
+                match reader.read_line(&mut line){
+                    Ok(size) if size>0=>break,
+                    Err(error) if error.kind()==std::io::ErrorKind::WouldBlock
+                        ||error.kind()==std::io::ErrorKind::TimedOut=>{
+                        assert!(Instant::now()<read_deadline,
+                            "disposable WebHelm IPC read deadline expired: {error}");
+                        thread::sleep(Duration::from_millis(5));
+                    },
+                    Ok(_)=>panic!("test-owned WebHelm received empty request"),
+                    Err(error)=>panic!("test-owned WebHelm read failed: {error}"),
+                }
+            }
             drop(reader);
             let command:Value=serde_json::from_str(&line).unwrap();
             let op=command["op"].as_str().unwrap().to_owned();
@@ -72,13 +86,14 @@ fn server(socket:&Path,receipt:Value,release:bool)->thread::JoinHandle<Vec<Strin
         seen
     })
 }
-fn run_case(temporary:bool,barrier_ok:bool)->(Result<agents_relay_rust2::adapters::WorkerExecution,String>,i64,i64,Vec<String>){
+fn run_case_with_policy(temporary:bool,barrier_ok:bool,policy:&str)
+    ->(Result<agents_relay_rust2::adapters::WorkerExecution,String>,i64,i64,i64,Vec<String>){
     let (root,cli,socket)=fixture();
     let receipt=json!({"status":"submitted","verified_by":"fixture",
         "thread_id":"fixturethread12345",
         "thread_url":"https://chatgpt.com/c/fixturethread12345",
         "temporary":temporary});
-    let expect_release=!temporary&&barrier_ok;
+    let expect_release=!temporary&&barrier_ok&&policy!="never";
     let hosted=server(&socket,receipt,expect_release);
     let mut pool=BrowserWorkerPoolManager::open(BrowserPoolOptions{
         path:Some(root.join("pool.sqlite")),capacity:1,queue_wait_ms:1500,
@@ -87,17 +102,42 @@ fn run_case(temporary:bool,barrier_ok:bool)->(Result<agents_relay_rust2::adapter
     let task=json!({"id":"2","jobId":"17","executionId":"fixture-uuid-00000001",
         "adapter":"chatgpt","input":"[Relay agent: worker; adapter: chatgpt]\nDo actual work",
         "routing":{"adapter":"chatgpt","projectId":"isolated-test"},
-        "chatgptTabClosePolicy":"after-terminal","timeoutMs":6000});
+        "chatgptTabClosePolicy":policy,"timeoutMs":6000});
     let adapter=ChatGptAdapter::default();
     let response=adapter.launch(&task,&socket,&cli,"Relay",&mut pool,
         &AtomicBool::new(false),|barrier|{
-            assert_eq!(barrier,"terminal","Browser submission is NOT Worker start proof");
+            assert_eq!(barrier,if policy=="never"{"worker-start"}else{"terminal"},
+                "a submitted receipt cannot substitute an authoritative barrier");
             if barrier_ok{Ok(())}else{Err("No verified terminal event".into())}
         });
     let snapshot=pool.snapshot("chatgpt").unwrap();
     let operations=hosted.join().unwrap();
     fs::remove_dir_all(root).unwrap();
-    (response,snapshot.idle,snapshot.quarantined,operations)
+    (response,snapshot.idle,snapshot.leased,snapshot.quarantined,operations)
+}
+fn run_case(temporary:bool,barrier_ok:bool)
+    ->(Result<agents_relay_rust2::adapters::WorkerExecution,String>,i64,i64,Vec<String>){
+    let (outcome,idle,_leased,quarantined,ops)=
+        run_case_with_policy(temporary,barrier_ok,"after-terminal");
+    (outcome,idle,quarantined,ops)
+}
+#[test]
+fn verified_submission_with_never_close_still_requires_real_start_ack(){
+    let (result,idle,leased,quarantined,operations)=
+        run_case_with_policy(false,true,"never");
+    assert!(result.is_ok(),"verified worker start should allow never-close");
+    assert_eq!((idle,leased,quarantined),(0,1,0),
+        "never-close only retains a live leased Session after actual Task start");
+    assert_eq!(operations,vec!["workspace-create","start","platform-run"]);
+}
+#[test]
+fn never_close_without_authoritative_start_ack_quarantines_webhelm_lease(){
+    let (result,idle,leased,quarantined,operations)=
+        run_case_with_policy(false,false,"never");
+    assert!(result.unwrap_err().contains("No verified terminal event"));
+    assert_eq!((idle,leased,quarantined),(0,0,1),
+        "no-start timeout must quarantine uncertain browser Session");
+    assert_eq!(operations,vec!["workspace-create","start","platform-run"]);
 }
 #[test]
 fn valid_browser_submission_releases_only_after_verified_terminal_barrier(){
@@ -121,7 +161,9 @@ fn temporary_or_unverified_browser_thread_quarantines_uncertain_pool_lease(){
 #[test]
 fn missing_authoritative_terminal_event_quarantines_submitted_session(){
     let (response,idle,quarantined,ops)=run_case(false,false);
-    assert!(response.unwrap_err().contains("No verified terminal event"));
+    let error=response.unwrap_err();
+    assert!(error.contains("No verified terminal event"),
+        "expected Graph terminal barrier rejection, got: {error}");
     assert_eq!(idle,0);assert_eq!(quarantined,1);
     assert_eq!(ops,vec!["workspace-create","start","platform-run"]);
 }
