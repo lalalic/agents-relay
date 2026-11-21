@@ -107,6 +107,36 @@ impl CliRuntimePort for DaemonClient {
                         context,package_root,None,adapter,None))?;
                 Ok(Value::String(rendered))
             },
+            ("plan","apply")=>{
+                let id=arg(args,"--id","");
+                let plan_id=arg(args,"--plan-id","");
+                let execution_id=arg(args,"--execution-id","");
+                let file=arg(args,"--file","");
+                if id.is_empty()||plan_id.is_empty()
+                    ||execution_id.is_empty()||file.is_empty(){
+                    return Err("plan apply requires --id --plan-id --execution-id --file".into());
+                }
+                let bytes=if file=="-"{
+                    use std::io::Read;
+                    let mut input=Vec::new();
+                    std::io::stdin().take(1024*1024+1)
+                        .read_to_end(&mut input).map_err(|e|e.to_string())?;
+                    input
+                }else{
+                    std::fs::read(file).map_err(|e|e.to_string())?
+                };
+                if bytes.len()>1024*1024{
+                    return Err("Planner proposal exceeds 1 MiB".into());
+                }
+                let proposal:Value=serde_json::from_slice(&bytes)
+                    .map_err(|e|format!("Invalid Planner proposal JSON: {e}"))?;
+                if !proposal.is_object(){
+                    return Err("Planner proposal must be a JSON object".into());
+                }
+                relay_control_command(args,&json!({"command":"plan.apply",
+                    "jobId":id,"planId":plan_id,
+                    "executionId":execution_id,"proposal":proposal}))
+            },
             ("plan","context")=>{
                 let binding=arg(args,"--id","");
                 if binding.is_empty(){return Err("plan context requires --id".into());}

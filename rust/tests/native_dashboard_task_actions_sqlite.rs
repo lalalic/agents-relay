@@ -1076,3 +1076,66 @@ fn node_dashboard_sse_envelopes_only_contain_graph_sqlite_committed_snapshots(){
     assert!(matches!(observer.try_recv(),Err(TryRecvError::Empty)),
         "one changed SQLite revision must not cause duplicate SSE snapshots");
 }
+
+#[test]
+fn isolated_daemon_plan_apply_uses_exact_generation_and_durable_graph_sqlite(){
+    let f=Fixture::new();
+    let store=SQLiteRelayStore::open_without_claim_reset(
+        &relay_unified_store_path(&f.config.store_directory),Some("15")).unwrap();
+    store.mutate_job("15",|mut job|{
+        job["tasks"][0]["state"]=json!("SUCCEEDED");
+        job["autoMerge"]=json!(false);
+        job["reviewEnabled"]=json!(false);
+        job["plans"]=json!([{
+            "id":"plan-1","jobId":"15","status":"PLANNING",
+            "round":1,"source":"model-planner",
+            "executionId":"isolated-plan-generation-1",
+            "leaseOwner":"isolated-plan-owner",
+            "leaseExpiresAt":"2027-11-20T00:00:00Z",
+            "attempt":1,"maxAttempts":3,"manualPlanning":true,
+            "createdAt":"2026-11-19T00:00:00.000Z",
+            "updatedAt":"2026-11-19T00:00:00.000Z",
+            "trigger":{"source":"manual"},"forceRestate":false,
+            "generatedTaskIds":[]
+        }]);
+        Ok(job)
+    }).unwrap();drop(store);
+    let candidate=json!({"objective_status":"satisfied",
+        "assessment":"Task verified by original Graph",
+        "next_tasks":[],"unblocks":[]});
+    let mut host=IsolatedSQLiteWriteHost::new(f.config.clone());
+    let original=f.job();
+    let command=|generation:&str,candidate:&Value|json!({
+        "command":"plan.apply","jobId":"15","planId":"plan-1",
+        "executionId":generation,"proposal":candidate
+    });
+    assert!(DaemonServices::control(&mut host,
+        &command("foreign-generation",&candidate)).is_err());
+    assert_eq!(f.job(),original,"forged Plan generation cannot mutate Job");
+    let invalid=json!({"objective_status":"satisfied",
+        "assessment":"Malformed child cannot enter Task Graph",
+        "next_tasks":[{"id":"bad-child","title":"Unbound Worker"}],
+        "unblocks":[]});
+    assert!(DaemonServices::control(&mut host,
+        &command("isolated-plan-generation-1",&invalid)).is_err());
+    assert_eq!(f.job(),original,"invalid candidate cannot mutate Job");
+    let accepted=DaemonServices::control(&mut host,
+        &command("isolated-plan-generation-1",&candidate)).unwrap();
+    assert_eq!(accepted["status"],"SUCCEEDED");
+    assert_eq!(accepted["appliedExecutionId"],"isolated-plan-generation-1");
+    let saved=f.job();
+    assert_eq!(saved["plans"][0],accepted);
+    assert_eq!(saved["tasks"][0]["state"],"SUCCEEDED");
+    let store=SQLiteRelayStore::open_without_claim_reset(
+        &relay_unified_store_path(&f.config.store_directory),Some("15")).unwrap();
+    let outbox:i64=store.db.query_row(
+        "SELECT COUNT(*) FROM workflow_event_outbox WHERE event_key LIKE 'isolated-planner/15/planner.completed/%'",
+        [],|row|row.get(0)).unwrap();
+    assert_eq!(outbox,1);
+    drop(store);drop(host);
+    let mut restarted=IsolatedSQLiteWriteHost::new(f.config.clone());
+    let replay=DaemonServices::control(&mut restarted,
+        &command("isolated-plan-generation-1",&candidate)).unwrap();
+    assert_eq!(replay,accepted,"same Plan generation replay idempotent");
+    assert_eq!(f.job(),saved,"Plan completed persisted after restart");
+}

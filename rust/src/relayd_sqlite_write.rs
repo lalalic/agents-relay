@@ -774,7 +774,31 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
     }
 }
 impl DaemonServices for IsolatedSQLiteWriteHost {
-    fn control(&mut self,body:&Value)->Result<Value,String>{workspace_control(self,body)}
+    fn control(&mut self,body:&Value)->Result<Value,String>{
+        if field(body,"command")=="plan.apply"{
+            let job_id=field(body,"jobId");
+            let plan_id=field(body,"planId");
+            let execution_id=field(body,"executionId");
+            let proposal=body.get("proposal").filter(|value|value.is_object())
+                .ok_or("Planner apply requires validated JSON proposal")?;
+            if job_id.is_empty()||plan_id.is_empty()||execution_id.is_empty(){
+                return Err("Planner apply requires immutable Job/Plan/execution identity".into());
+            }
+            let current=self.scoped(job_id)?.load_job(job_id)?
+                .ok_or("Planner apply Job not found")?;
+            self.isolated_project(&current)?;
+            let committed=crate::native_script_planner::apply_isolated_planner_proposal(
+                &self.path(),&self.config.store_directory,
+                &self.config.graph_directory,job_id,plan_id,execution_id,proposal)?;
+            let persisted={self.scoped(job_id)?.load_job(job_id)?};
+            if let Some(job)=persisted{
+                self.emit_job_snapshot(&job);
+            }
+            self.wake(job_id,"native-plan.apply")?;
+            return Ok(committed);
+        }
+        workspace_control(self,body)
+    }
     fn deliver_pending_escalations(&mut self,id:&str)->Result<(),String>{
         // Node Reconciler calls this before normal Task reconciliation.
         // Isolated tests have NO external notifier credentials: record a

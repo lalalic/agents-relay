@@ -708,3 +708,77 @@ fn installed_daemon_sse_watches_external_graph_sqlite_worker_commits(){
     drop(restarted);
     fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn installed_native_cli_plan_apply_uses_only_authoritative_daemon_graph_sqlite(){
+    let home=root();job(&home,"ACTIVE",false);
+    let db=home.join("relay.sqlite");
+    let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap();
+    store.mutate_job("17",|mut job|{
+        job["tasks"][0]["state"]=json!("SUCCEEDED");
+        job["plans"]=json!([{
+            "id":"plan-1","jobId":"17","status":"PLANNING",
+            "round":1,"source":"model-planner",
+            "executionId":"owned-cli-plan-generation-1",
+            "leaseOwner":"isolated-owned-plan",
+            "leaseExpiresAt":"2027-11-20T00:00:00Z",
+            "attempt":1,"maxAttempts":3,"manualPlanning":true,
+            "createdAt":"2026-11-18T00:00:00.000Z",
+            "updatedAt":"2026-11-18T00:00:00.000Z",
+            "trigger":{"source":"manual"},"forceRestate":false,
+            "generatedTaskIds":[]
+        }]);
+        Ok(job)
+    }).unwrap();drop(store);
+    let proposal=home.join("proposal.json");
+    fs::write(&proposal,json!({
+        "objective_status":"satisfied",
+        "assessment":"Original Graph and SQLite evidence verified",
+        "next_tasks":[],"unblocks":[]
+    }).to_string()).unwrap();
+    let before=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap()
+        .load_job("17").unwrap().unwrap();
+    let port=port();let server=daemon(&home,port);
+    let invoke=|generation:&str|{
+        Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
+            .args(["plan","apply","--id","17","--plan-id","plan-1",
+                "--execution-id",generation,
+                "--file",proposal.to_str().unwrap(),"--port",&port.to_string()])
+            .output().unwrap()
+    };
+    let rejected=invoke("foreign-execution");
+    assert!(!rejected.status.success(),
+        "unowned generation cannot apply a proposed Plan");
+    let unchanged=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap()
+        .load_job("17").unwrap().unwrap();
+    assert_eq!(unchanged["plans"],before["plans"],
+        "forged generation cannot commit planner state");
+    let accepted=invoke("owned-cli-plan-generation-1");
+    assert!(accepted.status.success(),"{}",
+        String::from_utf8_lossy(&accepted.stderr));
+    let plan:serde_json::Value=serde_json::from_slice(&accepted.stdout).unwrap();
+    assert_eq!(plan["status"],"SUCCEEDED","{plan}");
+    assert_eq!(plan["appliedExecutionId"],"owned-cli-plan-generation-1");
+    let fresh=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap();
+    let committed=fresh.load_job("17").unwrap().unwrap();
+    assert_eq!(committed["plans"][0],plan);
+    let outbox:i64=fresh.db.query_row(
+        "SELECT COUNT(*) FROM workflow_event_outbox WHERE event_key LIKE 'isolated-planner/17/planner.completed/%'",
+        [],|r|r.get(0)).unwrap();
+    assert_eq!(outbox,1,"Plan application must produce exactly one durable event");
+    drop(fresh);
+    let replay=invoke("owned-cli-plan-generation-1");
+    assert!(replay.status.success(),"{}",
+        String::from_utf8_lossy(&replay.stderr));
+    let final_snapshot=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap()
+        .load_job("17").unwrap().unwrap();
+    assert_eq!(final_snapshot["plans"],committed["plans"],
+        "repeating exact plan cannot mutate committed revision");
+    drop(server);
+    let restarted=daemon(&home,port);
+    let persisted=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap()
+        .load_job("17").unwrap().unwrap();
+    assert_eq!(persisted["plans"],committed["plans"]);
+    drop(restarted);
+    fs::remove_dir_all(home).unwrap();
+}

@@ -229,6 +229,49 @@ impl PlannerLaunchPorts for PlannerPorts {
         eprintln!("Isolated Planner {job_id}/{plan_id}: {error}");
     }
 }
+/// Apply an explicitly supplied Planner proposal through exactly the SAME
+/// canonical PlannerFinishPorts/Graph/SQLite path used by an isolated Script
+/// Planner, but without spawning a model, Script or second daemon. The caller
+/// must independently prove that the Job's project root is in its isolated
+/// workspace before invoking this effect. This is not a public event writer.
+pub fn apply_isolated_planner_proposal(
+    db:&Path,store_directory:&Path,graph:&Path,
+    job_id:&str,plan_id:&str,execution_id:&str,proposal:&Value,
+)->Result<Value,String>{
+    if job_id.is_empty()||plan_id.is_empty()||execution_id.is_empty(){
+        return Err("Planner apply requires exact Job/Plan/execution identities".into());
+    }
+    let current=store(db,job_id)?.load_job(job_id)?
+        .ok_or("Planner apply Job missing from SQLite")?;
+    let plan=current.get("plans").and_then(Value::as_array)
+        .into_iter().flatten().find(|plan|field(plan,"id")==plan_id)
+        .ok_or("Planner apply Plan not registered")?;
+    if field(plan,"status")!="PLANNING"
+        &&!(field(plan,"status")=="SUCCEEDED"
+            &&field(plan,"appliedExecutionId")==execution_id){
+        return Err("Planner apply is not an active generation or exact replay".into());
+    }
+    if field(plan,"status")=="PLANNING"
+        &&(field(plan,"executionId")!=execution_id
+            ||field(plan,"leaseOwner").is_empty()){
+        return Err("Planner apply requires exact currently leased generation".into());
+    }
+    let mut ports=PlannerPorts{
+        db:db.to_path_buf(),store_directory:store_directory.to_path_buf(),
+        graph:graph.to_path_buf(),
+        // No worker launch can occur on this CLI application path.
+        script:PathBuf::new(),interpreter:PathBuf::new(),
+        owner:"isolated-cli-plan-apply".into(),timeout_ms:0,
+        live:Some(execution_id.to_string()),
+    };
+    let root=store_directory.parent()
+        .ok_or("Planner apply isolated store has no parent")?;
+    let mut reconciler=crate::reconciler::Reconciler::new(
+        graph,store_directory,root,root,root,
+        json!({"owner":"isolated-cli-plan-apply"}));
+    reconciler.apply_planner_tree(
+        &mut ports,job_id,plan_id,execution_id,proposal)
+}
 /// Execute the already-created Plan through canonical PlannerLaunchPorts,
 /// including exact Job execution slot, lease and finishPlanner validations.
 pub fn run_isolated_script_planner(
