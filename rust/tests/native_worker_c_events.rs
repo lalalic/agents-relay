@@ -160,6 +160,8 @@ fn nats_subscribe_all_rejects_subject_body_job_and_type_mismatch() {
 
 #[test]
 fn nats_refuses_unverified_auth_tls_or_malformed_info() {
+    // Keep the Node-compatible public constructor. Any userinfo is rejected
+    // before socket connect; credentials can never be silently ignored.
     let protected = NatsEventBus::new(
         Some("nats://username:password@127.0.0.1:1/"), None).unwrap();
     assert!(protected.ping().unwrap_err().contains("plaintext credentials"));

@@ -16,7 +16,7 @@ extern "C" fn stop_signal(_:libc::c_int){STOP.store(true,Ordering::Release);}
 fn main(){
     let args=std::env::args().skip(1).collect::<Vec<_>>();
     if args.iter().any(|arg|matches!(arg.as_str(),"--help"|"-h")){
-        println!("agents-relayd-rust (isolated preview)\n  --isolated-store-dir /absolute/path/to/stores (read-only)\n  --isolated-write-store-dir /absolute/path/to/stores (SQLite/Graph isolated mutations)\n  --event-history-api http://127.0.0.1:PORT/ (explicit read-only loopback Events Bus history, write mode only)\n  --trust-isolated-model-events (opt-in caller-owned loopback events as Graph-verified Worker ingress)\n  --isolated-nats-url nats://127.0.0.1:PORT/ (optional caller-owned isolated NATS subscriber, requires trust flag)\n  --port N\n  --interval MS\nNo production Workers or live state. No Node fallback.");
+        println!("agents-relayd-rust (isolated preview)\n  --isolated-store-dir /absolute/path/to/stores (read-only)\n  --isolated-write-store-dir /absolute/path/to/stores (SQLite/Graph isolated mutations)\n  --event-history-api http://127.0.0.1:PORT/ (explicit read-only loopback Events Bus history, write mode only)\n  --trust-isolated-model-events (opt-in caller-owned loopback events as Graph-verified Worker ingress)\n  --isolated-nats-url nats://127.0.0.1:PORT/ (optional caller-owned isolated NATS subscriber, requires trust flag)\n  --isolated-nats-token-file /absolute/path/to/store/token (0600 isolated loopback authentication only)\n  --port N\n  --interval MS\nNo production Workers or live state. No Node fallback.");
         return;
     }
     if args.first().is_some_and(|a|a=="--version"){
@@ -56,6 +56,11 @@ fn execute(args:&[String])->Result<(),String>{
     }
     if !writable&&!arg("--isolated-nats-url").is_empty(){
         return Err("Read-only daemon does not permit isolated NATS source".into());
+    }
+    if args.iter().any(|flag|flag=="--isolated-nats-token-file") &&
+       (arg("--isolated-nats-token-file").is_empty()
+        || arg("--isolated-nats-url").is_empty() || !writable) {
+        return Err("Isolated NATS token file requires writable mode and explicit NATS URL".into());
     }
     if !arg("--isolated-nats-url").is_empty()
         &&!args.iter().any(|arg|arg=="--trust-isolated-model-events"){
@@ -119,7 +124,36 @@ fn execute(args:&[String])->Result<(),String>{
         }
         let nats=arg("--isolated-nats-url");
         if !nats.is_empty(){
-            host.set_loopback_model_nats(nats)?;
+            let token_file=arg("--isolated-nats-token-file");
+            let token=if token_file.is_empty(){None}else{
+                let provided=Path::new(token_file);
+                if !provided.is_absolute(){
+                    return Err("Isolated NATS token file requires an absolute path".into());
+                }
+                let metadata=std::fs::symlink_metadata(provided)
+                    .map_err(|_|"Cannot read isolated NATS token file metadata")?;
+                if !metadata.is_file() || metadata.file_type().is_symlink() {
+                    return Err("Isolated NATS token file must be a regular non-symlink file".into());
+                }
+                #[cfg(unix)] {
+                    use std::os::unix::fs::PermissionsExt;
+                    if metadata.permissions().mode() & 0o077 != 0 {
+                        return Err("Isolated NATS token file must have mode 0600 or stricter".into());
+                    }
+                }
+                let path=std::fs::canonicalize(provided)
+                    .map_err(|_|"Cannot resolve isolated NATS token file")?;
+                if !path.starts_with(&canonical){
+                    return Err("Isolated NATS token file must be inside its caller-owned store".into());
+                }
+                if metadata.len()==0 || metadata.len()>4096 {
+                    return Err("Isolated NATS token file length must be 1..4096 bytes".into());
+                }
+                let secret=std::fs::read_to_string(provided)
+                    .map_err(|_|"Cannot read isolated NATS token file")?;
+                Some(secret)
+            };
+            host.set_loopback_model_nats_with_token(nats,token.as_deref())?;
         }
         if args.iter().any(|arg|arg=="--trust-isolated-model-events"){
             host.enable_isolated_model_event_ingress()?;

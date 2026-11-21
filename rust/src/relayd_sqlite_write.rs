@@ -85,6 +85,8 @@ pub struct IsolatedSQLiteWriteHost {
     model_nats_receiver:Option<Receiver<Value>>,
     model_nats_sender:Option<mpsc::SyncSender<Value>>,
     model_nats_url:Option<String>,
+    model_nats_token:Option<String>,
+    model_nats_wake:std::sync::Arc<std::sync::atomic::AtomicBool>,
     model_nats_last_retry:Option<std::time::Instant>,
     model_nats_pending:HashMap<String,Vec<Value>>,
     // Observational SSE de-duplication: an unchanged Graph/SQLite snapshot
@@ -100,6 +102,8 @@ impl IsolatedSQLiteWriteHost {
             model_event_ingress_enabled:false,model_event_cursor:HashMap::new(),
             model_nats_subscription:None,model_nats_receiver:None,
             model_nats_sender:None,model_nats_url:None,
+            model_nats_token:None,
+            model_nats_wake:std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             model_nats_last_retry:None,model_nats_pending:HashMap::new(),
             last_sse_snapshot:HashMap::new()}
     }
@@ -126,6 +130,13 @@ impl IsolatedSQLiteWriteHost {
     /// decoded NATS frame as a Graph/SQLite transition. NATS callback only
     /// enqueues immutable JSON; exact leased execution is checked later.
     pub fn set_loopback_model_nats(&mut self,raw:&str)->Result<(),String>{
+        self.set_loopback_model_nats_with_token(raw,None)
+    }
+    /// An explicitly provided token is only for test-owned loopback NATS.
+    /// The native daemon must never automatically read operator credentials.
+    pub fn set_loopback_model_nats_with_token(
+        &mut self,raw:&str,token:Option<&str>,
+    )->Result<(),String>{
         let parsed=url::Url::parse(raw)
             .map_err(|error|format!("Invalid isolated NATS model URL: {error}"))?;
         if parsed.scheme()!="nats"
@@ -135,19 +146,24 @@ impl IsolatedSQLiteWriteHost {
             ||!parsed.username().is_empty()||parsed.password().is_some(){
             return Err("Isolated model NATS requires explicit nats://127.0.0.1:PORT/ without credentials".into());
         }
-        let bus=crate::events::NatsEventBus::new(Some(raw),None)?;
+        let bus=crate::events::NatsEventBus::with_loopback_token(
+            Some(raw),None,token)?;
         // The NATS reader must not allocate unbounded memory when a
         // Graph/SQLite writer is blocked; JetStream/HTTP history remains
         // responsible for replay if the fixed-capacity intake is full.
         let (sender,receiver)=mpsc::sync_channel(1024);
         let callback_sender=sender.clone();
+        let wake=std::sync::Arc::clone(&self.model_nats_wake);
         let subscription=bus.subscribe_all(std::sync::Arc::new(move |event|{
-            callback_sender.try_send(event.clone()).map_err(|e|e.to_string())
+            callback_sender.try_send(event.clone()).map_err(|e|e.to_string())?;
+            wake.store(true,std::sync::atomic::Ordering::Release);
+            Ok(())
         }))?;
         self.model_nats_subscription=Some(subscription);
         self.model_nats_receiver=Some(receiver);
         self.model_nats_sender=Some(sender);
         self.model_nats_url=Some(raw.into());
+        self.model_nats_token=token.map(str::to_owned);
         self.model_nats_last_retry=None;
         Ok(())
     }
@@ -164,9 +180,13 @@ impl IsolatedSQLiteWriteHost {
         self.model_nats_last_retry=Some(std::time::Instant::now());
         let sender=self.model_nats_sender.as_ref()
             .ok_or("NATS subscription is missing its intake sender")?.clone();
-        let bus=crate::events::NatsEventBus::new(Some(url),None)?;
+        let wake=std::sync::Arc::clone(&self.model_nats_wake);
+        let bus=crate::events::NatsEventBus::with_loopback_token(
+            Some(url),None,self.model_nats_token.as_deref())?;
         let next=bus.subscribe_all(std::sync::Arc::new(move|event|{
-            sender.try_send(event.clone()).map_err(|error|error.to_string())
+            sender.try_send(event.clone()).map_err(|error|error.to_string())?;
+            wake.store(true,std::sync::atomic::Ordering::Release);
+            Ok(())
         }))?;
         // Replace only after successful SUB write. Keep the same receiver
         // and all already-buffered events even if broker reconnects.
@@ -1062,6 +1082,22 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
     }
     fn poll_model_events(&mut self,id:&str)->Result<usize,String>{
         self.poll_isolated_model_worker_events(id)
+    }
+    fn has_pending_model_events(&mut self)->bool{
+        // NATS disconnect does not create a new MSG callback. Check the
+        // subscription's actual reader liveness on the watchdog sleep path,
+        // not just on the next 5-minute Job polling round. The existing
+        // per-host 1-second throttle prevents a broker outage reconnect spin.
+        // This is only transport maintenance; Graph/SQLite effects still
+        // require a verified event in the single daemon reconciliation loop.
+        if self.model_nats_url.is_some()
+            && self.model_nats_subscription.as_ref().is_some_and(
+                |subscription|!subscription.is_alive()){
+            if let Err(error)=self.reconnect_isolated_model_nats_if_needed(){
+                eprintln!("warning: Isolated model NATS reconnect: {error}");
+            }
+        }
+        self.model_nats_wake.swap(false,std::sync::atomic::Ordering::AcqRel)
     }
     fn prepare_dependency_revisions(&mut self,id:&str)->Result<(),String>{
         let source=self.scoped(id)?.load_job(id)?

@@ -149,6 +149,9 @@ impl MemoryEventBus {
 pub struct NatsEventBus {
     url: String,
     prefix: String,
+    // Explicit opt-in for a caller-owned broker; never log the credential.
+    // Plain TCP token authentication is permitted only by a loopback host.
+    token: Option<String>,
     connection: Mutex<Option<TcpStream>>,
 }
 pub struct NatsSubscription {
@@ -185,11 +188,47 @@ impl Drop for NatsSubscription {
 }
 impl NatsEventBus {
     pub fn new(url: Option<&str>, prefix: Option<&str>) -> Result<Self, String> {
+        // Preserve Node's public constructor: URL validation occurs when
+        // connecting, but prefix validation is immediate. The private
+        // authenticated constructor below has stronger up-front checks.
         let prefix = prefix.unwrap_or(DEFAULT_NATS_SUBJECT_PREFIX);
         subject_prefix(prefix)?;
         Ok(Self {
             url: url.unwrap_or(DEFAULT_NATS_URL).into(),
             prefix: prefix.into(),
+            token: None,
+            connection: Mutex::new(None),
+        })
+    }
+    /// Token authentication requires explicit local transport. Never send
+    /// a plaintext bearer token to an external NATS endpoint or URL userinfo.
+    /// TLS / NKey / JWT production authentication remains a separate port.
+    pub fn with_loopback_token(
+        url: Option<&str>, prefix: Option<&str>, token: Option<&str>,
+    ) -> Result<Self, String> {
+        let Some(secret) = token else { return Self::new(url,prefix); };
+        if url.is_none() {
+            return Err("NATS token requires an explicitly selected loopback endpoint".into());
+        }
+        let prefix = prefix.unwrap_or(DEFAULT_NATS_SUBJECT_PREFIX);
+        subject_prefix(prefix)?;
+        let url = url.unwrap_or(DEFAULT_NATS_URL);
+        let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
+        if !parsed.username().is_empty() || parsed.password().is_some() {
+            return Err("NATS credentials must not appear in URL".into());
+        }
+        if parsed.scheme() != "nats" ||
+            !matches!(parsed.host_str(), Some("127.0.0.1"|"localhost"|"::1")) {
+            return Err("Plaintext NATS token requires an explicit loopback endpoint".into());
+        }
+        if secret.is_empty() || secret.len() > 4096 ||
+            !secret.bytes().all(|c| (0x21..=0x7e).contains(&c)) {
+            return Err("NATS token has invalid length or characters".into());
+        }
+        Ok(Self {
+            url: url.into(),
+            prefix: prefix.into(),
+            token: Some(secret.to_owned()),
             connection: Mutex::new(None),
         })
     }
@@ -243,16 +282,34 @@ impl NatsEventBus {
                     if !capabilities.is_object() {
                         return Err("NATS INFO handshake must be an object".into());
                     }
-                    if capabilities["auth_required"] == true {
-                        return Err("NATS broker requires authentication not provided by native transport".into());
-                    }
                     if capabilities["tls_required"] == true {
                         return Err("NATS broker requires TLS not provided by native transport".into());
                     }
-                    let mut output = stream.try_clone().map_err(|e| e.to_string())?;
-                    output
-                        .write_all(b"CONNECT {\"verbose\":false,\"pedantic\":false}\r\n")
+                    if capabilities["auth_required"] == true && self.token.is_none() {
+                        return Err("NATS broker requires authentication not provided by native transport".into());
+                    }
+                    if self.token.is_some() && capabilities["auth_required"] != true {
+                        return Err("Refusing to send a NATS token to a broker without required authentication".into());
+                    }
+                    let mut connect = json!({"verbose":false,"pedantic":false});
+                    if let Some(token) = &self.token { connect["auth_token"] = json!(token); }
+                    stream.write_all(format!("CONNECT {}\r\n",connect).as_bytes())
                         .map_err(|e| e.to_string())?;
+                    if self.token.is_some() {
+                        // A TCP write or SUB is not an authentication receipt:
+                        // the broker must acknowledge a fresh PING first.
+                        stream.write_all(b"PING\r\n").map_err(|e| e.to_string())?;
+                        let mut reply = Vec::new();
+                        for _ in 0..8192 {
+                            let mut byte = [0u8; 1];
+                            stream.read_exact(&mut byte).map_err(|_|"NATS authentication handshake failed")?;
+                            reply.push(byte[0]);
+                            if reply.ends_with(b"\r\n") { break; }
+                        }
+                        if reply != b"PONG\r\n" {
+                            return Err("NATS broker did not acknowledge authenticated connection".into());
+                        }
+                    }
                     return Ok(stream);
                 }
                 Err(e) => last_error = Some(e.to_string()),

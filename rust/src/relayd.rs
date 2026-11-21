@@ -254,6 +254,9 @@ pub trait DaemonServices:Send{
     /// Model Workers independently from Pool admission: a Worker already
     /// running cannot be "runnable" merely to get its terminal event.
     fn poll_model_events(&mut self,_id:&str)->Result<usize,String>{Ok(0)}
+    /// An observed broker callback requests one early Graph/SQLite scan.
+    /// The callback never applies Worker events or mutates the Job directly.
+    fn has_pending_model_events(&mut self)->bool{false}
     fn deliver_pending_escalations(&mut self,id:&str)->Result<(),String>{
         let snapshot=self.load(id)?;
         if crate::escalation_notifier::candidate_notifications(&snapshot).is_empty(){
@@ -511,6 +514,14 @@ pub fn run_daemon<S:DaemonServices+'static>(
             let interval=Duration::from_millis(config.interval_ms.max(100));
             let until=Instant::now()+interval;
             while !stop.load(Ordering::Acquire)&&Instant::now()<until{
+                if services.lock()
+                    .map_err(|_|"Daemon service lock poisoned")?
+                    .has_pending_model_events(){
+                    // NATS already queued immutable rows. Re-run the same
+                    // lifecycle owner now instead of waiting up to 5 minutes.
+                    // No side effect is trusted until exact SQLite CAS.
+                    break;
+                }
                 std::thread::sleep(Duration::from_millis(100));
             }
         }

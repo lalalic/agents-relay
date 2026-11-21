@@ -19,6 +19,17 @@ impl Drop for OwnedBroker {
     }
 }
 
+const FIXTURE_TOKEN: &str = "rust2-isolated-auth-test-token-20261121";
+
+fn launch_broker_with_token(port: u16) -> OwnedBroker {
+    let child = Command::new("nats-server")
+        .args(["-a", "127.0.0.1", "-p", &port.to_string(),
+            "-auth", FIXTURE_TOKEN])
+        .stdout(Stdio::null()).stderr(Stdio::null())
+        .spawn().expect("launch test-owned authenticated nats-server");
+    OwnedBroker(child)
+}
+
 fn launch_broker(port: u16) -> OwnedBroker {
     let child = Command::new("nats-server")
         .args(["-a", "127.0.0.1", "-p", &port.to_string()])
@@ -107,6 +118,14 @@ fn real_nats_broker_restart_recovers_on_next_operation_without_replaying_pub() {
 
 #[test]
 fn real_nats_through_installed_daemon_commits_only_subject_verified_graph_events() {
+    real_nats_graph_sqlite_case(false);
+}
+#[test]
+fn authenticated_nats_through_installed_daemon_commits_only_subject_verified_graph_events() {
+    real_nats_graph_sqlite_case(true);
+}
+
+fn real_nats_graph_sqlite_case(authenticated: bool) {
     use agents_relay_rust2::{
         events::{event_for, NatsEventBus},
         execution_event_identity::execution_event_source,
@@ -157,9 +176,11 @@ fn real_nats_through_installed_daemon_commits_only_subject_verified_graph_events
         TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
     };
     let nats_port=free_port();
-    let _broker=launch_broker(nats_port);
+    let mut broker=Some(if authenticated { launch_broker_with_token(nats_port) }
+        else { launch_broker(nats_port) });
     let nats=format!("nats://127.0.0.1:{nats_port}/");
-    let publisher=NatsEventBus::new(Some(&nats),None).unwrap();
+    let publisher=NatsEventBus::with_loopback_token(
+        Some(&nats),None,authenticated.then_some(FIXTURE_TOKEN)).unwrap();
     let start=Instant::now();
     while publisher.ping().is_err(){
         assert!(start.elapsed()<Duration::from_secs(5),"real local NATS startup");
@@ -173,10 +194,26 @@ fn real_nats_through_installed_daemon_commits_only_subject_verified_graph_events
         }
     }
     let port=free_port();
-    let daemon=Command::new(env!("CARGO_BIN_EXE_agents-relayd-rust"))
-        .args(["--isolated-write-store-dir",directory.join("stores").to_str().unwrap(),
-            "--port",&port.to_string(),"--interval","100",
-            "--isolated-nats-url",&nats,"--trust-isolated-model-events"])
+    let token_file=directory.join("stores").join("nats.token");
+    if authenticated {
+        fs::write(&token_file,FIXTURE_TOKEN).unwrap();
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&token_file,fs::Permissions::from_mode(0o600)).unwrap();
+        }
+    }
+    let mut native=Command::new(env!("CARGO_BIN_EXE_agents-relayd-rust"));
+    // The authenticated branch uses a 5-minute watchdog interval. Only a
+    // real NATS callback wake can deliver start/terminal within the fixture
+    // deadline; a fast timer cannot mask missing push notification.
+    let interval=if authenticated{"300000"}else{"100"};
+    native.args(["--isolated-write-store-dir",directory.join("stores").to_str().unwrap(),
+            "--port",&port.to_string(),"--interval",interval,
+            "--isolated-nats-url",&nats,"--trust-isolated-model-events"]);
+    if authenticated {
+        native.args(["--isolated-nats-token-file",token_file.to_str().unwrap()]);
+    }
+    let daemon=native
         .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
         .stdout(Stdio::null())
         .stderr(Stdio::from(fs::File::create(directory.join("daemon.log")).unwrap()))
@@ -212,7 +249,15 @@ fn real_nats_through_installed_daemon_commits_only_subject_verified_graph_events
     let mut info=String::new();
     BufReader::new(raw.try_clone().unwrap()).read_line(&mut info).unwrap();
     assert!(info.starts_with("INFO "));
-    raw.write_all(b"CONNECT {\"verbose\":false}\r\n").unwrap();
+    if authenticated {
+        raw.write_all(format!("CONNECT {}\r\nPING\r\n",
+            json!({"verbose":false,"auth_token":FIXTURE_TOKEN})).as_bytes()).unwrap();
+        let mut pong=String::new();
+        BufReader::new(raw.try_clone().unwrap()).read_line(&mut pong).unwrap();
+        assert_eq!(pong,"PONG\r\n","fake publisher must authenticate with test-owned NATS");
+    }else{
+        raw.write_all(b"CONNECT {\"verbose\":false}\r\n").unwrap();
+    }
     let forged_body=forged.to_string();
     write!(raw,"PUB relay.events.job.99.task.started {}\r\n{forged_body}\r\n",
         forged_body.len()).unwrap();
@@ -240,6 +285,25 @@ fn real_nats_through_installed_daemon_commits_only_subject_verified_graph_events
             "real NATS Worker start not committed to SQLite: {current}");
         thread::sleep(Duration::from_millis(30));
     }
+    if authenticated {
+        // Restart the ACTUAL authenticated broker after a committed start.
+        // The model event reader must detect EOF and re-authenticate
+        // independently of a 300000ms watchdog tick. The same execution
+        // continues; no second start or fabricated terminal is allowed.
+        drop(broker.take());
+        thread::sleep(Duration::from_millis(250));
+        broker=Some(launch_broker_with_token(nats_port));
+        let restarted=Instant::now();
+        loop {
+            if publisher.ping().is_ok(){break;}
+            assert!(restarted.elapsed()<Duration::from_secs(6),
+                "authenticated NATS publisher could not reconnect");
+            thread::sleep(Duration::from_millis(50));
+        }
+        // Subscription discovery is asynchronous. Give the host's bounded
+        // reconnect cycle one full interval before publishing the terminal.
+        thread::sleep(Duration::from_millis(1450));
+    }
     publisher.publish(&terminal).unwrap();
     let deadline=Instant::now()+Duration::from_secs(12);
     loop {
@@ -260,4 +324,86 @@ fn real_nats_through_installed_daemon_commits_only_subject_verified_graph_events
     }
     publisher.close().unwrap();
     drop(daemon);
+    drop(broker);
+}
+
+#[test]
+fn authenticated_broker_rejects_wrong_token_and_unbound_urls_without_leaking_secret() {
+    if Command::new("nats-server").arg("-v").output().is_err() {
+        eprintln!("SKIP: optional nats-server executable not installed");
+        return;
+    }
+    let port=TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let _broker=launch_broker_with_token(port);
+    let url=format!("nats://127.0.0.1:{port}/");
+    let trusted=NatsEventBus::with_loopback_token(
+        Some(&url),None,Some(FIXTURE_TOKEN)).unwrap();
+    let start=Instant::now();
+    while trusted.ping().is_err(){
+        assert!(start.elapsed()<Duration::from_secs(5),"authenticated broker startup");
+        thread::sleep(Duration::from_millis(30));
+    }
+    let missing=NatsEventBus::new(Some(&url),None).unwrap();
+    let no_auth=missing.ping().unwrap_err();
+    assert!(no_auth.contains("requires authentication"));
+    let wrong=NatsEventBus::with_loopback_token(
+        Some(&url),None,Some("bad-test-token")).unwrap();
+    let denied=wrong.ping().unwrap_err();
+    assert!(!denied.contains("bad-test-token"));
+    assert!(!denied.contains(FIXTURE_TOKEN));
+    assert!(NatsEventBus::with_loopback_token(
+        None,None,Some(FIXTURE_TOKEN)).is_err());
+    for input in ["nats://test.example:4222/","nats://user:pass@127.0.0.1:4222/"]{
+        assert!(NatsEventBus::with_loopback_token(
+            Some(input),None,Some(FIXTURE_TOKEN)).is_err());
+    }
+    for secret in ["","bad\nsecret","bad secret"] {
+        assert!(NatsEventBus::with_loopback_token(
+            Some(&url),None,Some(secret)).is_err());
+    }
+    trusted.close().unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn isolated_daemon_rejects_insecure_nats_token_files_before_opening_broker() {
+    use std::{fs, os::unix::fs::{symlink,PermissionsExt}, time::{SystemTime,UNIX_EPOCH}};
+    let fixture=std::env::temp_dir().join(format!("rust2-nats-token-fence-{}-{}",
+        std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH)
+            .unwrap().as_nanos()));
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup{
+        fn drop(&mut self){let _=std::fs::remove_dir_all(&self.0);}
+    }
+    let _cleanup=Cleanup(fixture.clone());
+    let store=fixture.join("stores");
+    fs::create_dir_all(&store).unwrap();
+    let secret_path=store.join("token");
+    fs::write(&secret_path,FIXTURE_TOKEN).unwrap();
+    fs::set_permissions(&secret_path,fs::Permissions::from_mode(0o600)).unwrap();
+    let outside=fixture.join("outside-token");
+    fs::write(&outside,FIXTURE_TOKEN).unwrap();
+    fs::set_permissions(&outside,fs::Permissions::from_mode(0o600)).unwrap();
+    let linked=store.join("symlink-token");
+    symlink(&secret_path,&linked).unwrap();
+    let invoke=|token_path:&std::path::Path, expected:&str|{
+        let output=Command::new(env!("CARGO_BIN_EXE_agents-relayd-rust"))
+            .args(["--isolated-write-store-dir",store.to_str().unwrap(),
+                "--isolated-nats-url","nats://127.0.0.1:65511/",
+                "--trust-isolated-model-events","--isolated-nats-token-file",
+                token_path.to_str().unwrap()])
+            .current_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
+            .output().unwrap();
+        assert!(!output.status.success(),"invalid token file must not launch daemon");
+        let error=String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains(expected),"{error}");
+        assert!(!error.contains(FIXTURE_TOKEN),"token must not be leaked to stderr");
+    };
+    invoke(&outside,"inside its caller-owned store");
+    invoke(&linked,"non-symlink");
+    fs::set_permissions(&secret_path,fs::Permissions::from_mode(0o644)).unwrap();
+    invoke(&secret_path,"0600");
+    fs::set_permissions(&secret_path,fs::Permissions::from_mode(0o600)).unwrap();
+    fs::write(&secret_path,format!("{FIXTURE_TOKEN}\n")).unwrap();
+    invoke(&secret_path,"invalid length or characters");
 }

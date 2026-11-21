@@ -698,8 +698,14 @@ fn installed_daemon_sse_watches_external_graph_sqlite_worker_commits(){
         .collect::<Vec<_>>();
     assert!(frames.iter().any(|frame|frame["job"]["tasks"][0]["state"]=="SUCCEEDED"),
         "EventSource must receive a real committed Task status snapshot");
-    assert!(frames.iter().all(|frame|frame.get("event").is_none()),
-        "separate process commit observation must not fabricate relay event payloads");
+    // A legitimate daemon-owned relay.wake may race with the external
+    // SQLite observer. The observer may emit committed Job snapshots only:
+    // it must never invent a second Worker lifecycle event on behalf of the
+    // external process that already committed the source event to SQLite.
+    assert!(frames.iter().filter_map(|frame|frame.get("event")).all(|event|
+        !matches!(event["type"].as_str(),
+            Some("task.started"|"task.progress"|"task.completed"|"task.failed"))),
+        "external SQLite observation must not fabricate Worker lifecycle events");
     let before=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap()
         .load_job("17").unwrap().unwrap();
     assert_eq!(before["tasks"][0]["state"],"SUCCEEDED");
