@@ -41,6 +41,41 @@ fn isolated_path(name:&str,root:&Path)->Result<PathBuf,String>{
     Ok(canonical)
 }
 impl IsolatedWebHelmConfig {
+    /// Explicit external WebHelm binding only for a disposable canary Job
+    /// store. Merely detecting a running provider never opts in to launch.
+    pub fn from_explicit_canary(
+        store_directory:&Path,socket_raw:&str,executable_raw:&str,
+        workspace_raw:&str,
+    )->Result<Self,String>{
+        if !workspace_raw.starts_with("Rust2Canary")
+            ||workspace_raw.len()>60{
+            return Err("Live WebHelm canary must use a distinct Rust2Canary workspace".into());
+        }
+        let workspace=relay_workspace_name(Some(workspace_raw))?;
+        let absolute=|path:&str,label:&str|->Result<PathBuf,String>{
+            let source=Path::new(path);
+            if !source.is_absolute(){return Err(format!("{label} must be an absolute path"));}
+            fs::canonicalize(source).map_err(|_|format!("{label} is not accessible"))
+        };
+        let socket=absolute(socket_raw,"Canary WebHelm socket")?;
+        let executable=absolute(executable_raw,"Canary WebHelm executable")?;
+        if !socket.metadata().is_ok_and(|m|
+            std::os::unix::fs::FileTypeExt::is_socket(&m.file_type())){
+            return Err("Canary WebHelm socket is not a Unix socket".into());
+        }
+        if !executable.is_file(){
+            return Err("Canary WebHelm executable is not a regular file".into());
+        }
+        #[cfg(unix)]{
+            use std::os::unix::fs::PermissionsExt;
+            if executable.metadata().map_err(|e|e.to_string())?
+                .permissions().mode()&0o111==0{
+                return Err("Canary WebHelm executable is not executable".into());
+            }
+        }
+        Ok(Self{socket,executable,workspace,
+            pool_db:store_directory.join("browser-worker-pool.sqlite")})
+    }
     pub fn from_test_store(store_directory:&Path)->Result<Self,String>{
         let root=store_directory.parent().ok_or("Isolated store has no parent")?;
         let socket=isolated_path("AGENTS_RELAY_WEBHELM_SOCKET",root)?;

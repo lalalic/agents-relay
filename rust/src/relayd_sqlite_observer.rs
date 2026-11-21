@@ -8,14 +8,21 @@ use std::sync::mpsc::{self,Receiver};
 
 pub struct ReadOnlySQLiteHost {
     config:DaemonConfig,
+    shadow_live:bool,
 }
 impl ReadOnlySQLiteHost {
-    pub fn new(config:DaemonConfig)->Self {Self{config}}
+    pub fn new(config:DaemonConfig)->Self {Self{config,shadow_live:false}}
+    /// Explicit production-store shadow: never owns a Worker/Graph mutation,
+    /// even if the underlying SQLite happens to be the active Node store.
+    pub fn new_live_shadow(config:DaemonConfig)->Self {
+        Self{config,shadow_live:true}
+    }
     fn rejected(operation:&str)->Result<Value,String>{
         Err(format!("Rust Relay {operation} denied: isolated read-only host has no mutation or Worker execution binding"))
     }
 }
 impl DaemonServices for ReadOnlySQLiteHost {
+    fn is_read_only_shadow(&self)->bool{self.shadow_live}
     fn control(&mut self,_body:&Value)->Result<Value,String>{Self::rejected("control")}
     fn load(&mut self,id:&str)->Result<Value,String>{
         exact_job(&inventory_from_local(&self.config,false)?,id,None,None)?
@@ -52,12 +59,14 @@ impl DaemonServices for ReadOnlySQLiteHost {
     fn status(&mut self)->Value{
         match inventory_from_local(&self.config,false){
             Ok(jobs)=>json!({
-                "runtime":"native-rust","mode":"read-only",
+                "runtime":"native-rust",
+                "mode":if self.shadow_live{"shadow-live-read-only"}else{"read-only"},
                 "productionReady":false,"jobCount":jobs.len(),
                 "reason":"No Worker effect, Graph mutation or event transport bound",
             }),
             Err(error)=>json!({
-                "runtime":"native-rust","mode":"read-only",
+                "runtime":"native-rust",
+                "mode":if self.shadow_live{"shadow-live-read-only"}else{"read-only"},
                 "productionReady":false,"error":error,
             }),
         }

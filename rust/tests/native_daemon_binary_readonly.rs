@@ -641,6 +641,13 @@ fn native_daemon_merges_verified_source_branch_and_persists_job_terminal_state()
 
 #[test]
 fn isolated_native_daemon_submits_chatgpt_through_webhelm_and_waits_for_real_graph_terminal(){
+    webhelm_submission_e2e(false);
+}
+#[test]
+fn explicit_canary_webhelm_submission_still_needs_real_graph_terminal(){
+    webhelm_submission_e2e(true);
+}
+fn webhelm_submission_e2e(canary:bool){
     use agents_relay_rust2::{
         native_worker_event_ingress::apply_verified_worker_event,
         execution_event_identity::execution_event_source,
@@ -692,7 +699,7 @@ fn isolated_native_daemon_submits_chatgpt_through_webhelm_and_waits_for_real_gra
             ops.push(op.clone());
             let response=match op.as_str(){
                 "workspace-create"=>json!({"ok":true}),
-                "start"=>json!({"ok":true,"workspace":"Relay",
+                "start"=>json!({"ok":true,"workspace":command["workspace"],
                     "workspace_supported":true,"session_id":"fixture-session-23"}),
                 "platform-run"=>{
                     assert_eq!(command["platform"],"chatgpt");
@@ -751,13 +758,25 @@ fn isolated_native_daemon_submits_chatgpt_through_webhelm_and_waits_for_real_gra
             "updatedAt":"2026-11-18T00:00:00.000Z"}],"plans":[]})).unwrap();
     store.close().unwrap();
     let port=socket_port();
-    let child=Command::new(binary())
-        .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
+    let mut program=Command::new(binary());
+    program.current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
         .args(["--isolated-write-store-dir",root.join("stores").to_str().unwrap(),
-            "--port",&port.to_string(),"--interval","100"])
-        .env("AGENTS_RELAY_WEBHELM_SOCKET",&socket)
-        .env("AGENTS_RELAY_WEBHELM_EXECUTABLE",&cli)
-        .env("AGENTS_RELAY_WEBHELM_WORKSPACE","Relay")
+            "--port",&port.to_string(),"--interval","100"]);
+    if canary{
+        // Test only: exact explicit real-provider canary argv with a fake
+        // Unix socket. Production credentials and existing browser tabs
+        // are never used in this deterministic process acceptance.
+        program.args(["--event-history-api","http://127.0.0.1:65531/",
+            "--trust-isolated-model-events",
+            "--canary-webhelm-socket",socket.to_str().unwrap(),
+            "--canary-webhelm-executable",cli.to_str().unwrap(),
+            "--canary-webhelm-workspace","Rust2CanaryFixture"]);
+    }else{
+        program.env("AGENTS_RELAY_WEBHELM_SOCKET",&socket)
+            .env("AGENTS_RELAY_WEBHELM_EXECUTABLE",&cli)
+            .env("AGENTS_RELAY_WEBHELM_WORKSPACE","Relay");
+    }
+    let child=program
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::from(
             fs::File::create(root.join("native-daemon.log")).unwrap()))
@@ -1554,4 +1573,156 @@ fn native_daemon_creates_numeric_semantic_revision_and_survives_restart(){
     assert_eq!(descendants[0]["id"],child_id);
     assert_eq!(descendants[0]["state"],"SUCCEEDED");
     drop(restarted);fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn live_shadow_requires_exact_selected_store_and_does_not_change_graph_sqlite() {
+    use agents_relay_rust2::relay_store_discovery::relay_unified_store_path;
+    use std::os::unix::fs::symlink;
+    let home=root();
+    struct Cleanup(PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self){let _=fs::remove_dir_all(&self.0);}
+    }
+    let _cleanup=Cleanup(home.clone());
+    let fixture_store=home.join("stores");
+    let database=relay_unified_store_path(&fixture_store);
+    let store=SQLiteRelayStore::open(&database,Some("17")).unwrap();
+    store.save_job(&json!({
+        "id":"17","repository":"shadow-fixture","projectRoot":home.join("project"),
+        "prNumber":0,"title":"Canonical Node state via read-only Rust shadow",
+        "state":"ACTIVE","tasks":[{"id":"2","jobId":"17","kind":"work",
+            "state":"RUNNING","adapter":"chatgpt","agentName":"worker",
+            "executionId":"shadow-immutable","leaseOwner":"node-live-authority"}],
+        "plans":[]
+    })).unwrap();
+    store.close().unwrap();
+    let output=Command::new(binary()).env("AGENTS_RELAY_STORE_DIR",&fixture_store)
+        .args(["--shadow-live-store-dir",home.to_str().unwrap(),
+            "--port",&socket_port().to_string()])
+        .output().unwrap();
+    assert!(!output.status.success(),"shadow must not inspect a different store");
+    assert!(String::from_utf8_lossy(&output.stderr).contains(
+        "must exactly match the configured production Relay store"));
+    for flags in [
+        vec!["--shadow-live-store-dir",fixture_store.to_str().unwrap(),
+            "--trust-isolated-model-events"],
+        vec!["--shadow-live-store-dir",fixture_store.to_str().unwrap(),
+            "--isolated-write-store-dir",fixture_store.to_str().unwrap()],
+        vec!["--shadow-live-store-dir",fixture_store.to_str().unwrap(),
+            "--isolated-nats-url","nats://127.0.0.1:4222/"],
+    ]{
+        let output=Command::new(binary())
+            .env("AGENTS_RELAY_STORE_DIR",&fixture_store).args(&flags)
+            .output().unwrap();
+        assert!(!output.status.success(),
+            "read-only shadow must reject all writable/EventBus flags");
+    }
+    // Unified SQLite is one level ABOVE the stores directory. Keep a
+    // separate parent to exercise a symlinked database without touching
+    // the genuine fixture's canonical relay.sqlite.
+    let link_dir=home.join("linked-fixture").join("stores");
+    fs::create_dir_all(&link_dir).unwrap();
+    let bad_db=relay_unified_store_path(&link_dir);
+    symlink(&database,&bad_db).unwrap();
+    let rejected=Command::new(binary()).env("AGENTS_RELAY_STORE_DIR",&link_dir)
+        .args(["--shadow-live-store-dir",link_dir.to_str().unwrap()])
+        .output().unwrap();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("non-symlink"),
+        "shadow symlink guard: {}",String::from_utf8_lossy(&rejected.stderr));
+
+    let port=socket_port();
+    let daemon=Command::new(binary())
+        .env("AGENTS_RELAY_STORE_DIR",&fixture_store)
+        .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
+        .args(["--shadow-live-store-dir",fixture_store.to_str().unwrap(),
+            "--port",&port.to_string(),"--interval","100"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::from(
+            fs::File::create(home.join("shadow.log")).unwrap()))
+        .spawn().unwrap();
+    let mut daemon=Guard(daemon);
+    let until=std::time::Instant::now()+Duration::from_secs(20);
+    let status=loop{
+        if let Ok(response)=request(port,"GET","/api/status",""){
+            if response.starts_with("HTTP/1.1 200"){break response;}
+        }
+        assert!(daemon.0.try_wait().unwrap().is_none(),
+            "shadow daemon refused the configured fixture store");
+        assert!(std::time::Instant::now()<until,"shadow daemon did not become ready");
+        thread::sleep(Duration::from_millis(30));
+    };
+    let state=body(&status);
+    assert_eq!(state["runtime"],"native-rust");
+    assert_eq!(state["mode"],"shadow-live-read-only");
+    assert_eq!(state["productionReady"],false);
+    assert_eq!(state["jobCount"],1);
+
+    let snapshot=request(port,"GET","/api/job?id=17","").unwrap();
+    let view=body(&snapshot);
+    assert_eq!(view["id"],"17");
+    assert_eq!(view["tasks"][0]["executionId"],"shadow-immutable");
+    let inventory=request(port,"GET","/api/jobs?inventory=1","").unwrap();
+    assert!(inventory.contains("Canonical Node state via read-only Rust shadow"));
+    // A real HTTP control POST is rejected; it must never claim/reconcile
+    // an active Node-owned execution or mutate SQLite through the shadow.
+    let rejected=request(port,"POST","/api/control",
+        r#"{"action":"job.cancel","id":"17"}"#).unwrap();
+    assert!(!rejected.starts_with("HTTP/1.1 200"),"{rejected}");
+    let current=SQLiteRelayStore::open_without_claim_reset(
+        &database,Some("17")).unwrap();
+    let job=current.load_job("17").unwrap().unwrap();
+    assert_eq!(job["state"],"ACTIVE");
+    assert_eq!(job["tasks"][0]["state"],"RUNNING");
+    assert_eq!(job["tasks"][0]["executionId"],"shadow-immutable");
+    drop(current);
+    drop(daemon);
+}
+
+#[test]
+fn real_webhelm_canary_requires_explicit_trust_and_distinct_workspace() {
+    use std::os::unix::{net::UnixListener,fs::PermissionsExt};
+    // Darwin AF_UNIX sun_path is short; avoid the long $TMPDIR prefix.
+    let home=PathBuf::from("/tmp").join(format!("r2canary-{}",
+        std::process::id()));
+    fs::create_dir_all(home.join("stores")).unwrap();
+    struct Cleanup(PathBuf);
+    impl Drop for Cleanup {fn drop(&mut self){let _=fs::remove_dir_all(&self.0);}}
+    let _cleanup=Cleanup(home.clone());
+    let socket=home.join("provider.sock");
+    let _listener=UnixListener::bind(&socket).unwrap();
+    let cli=home.join("provider-cli");
+    fs::write(&cli,b"#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&cli,fs::Permissions::from_mode(0o700)).unwrap();
+    let base=vec![
+        "--isolated-write-store-dir".to_string(),
+        home.join("stores").to_string_lossy().to_string(),
+        "--canary-webhelm-socket".to_string(),
+        socket.to_string_lossy().to_string(),
+        "--canary-webhelm-executable".to_string(),
+        cli.to_string_lossy().to_string(),
+        "--canary-webhelm-workspace".to_string(),
+        "Rust2CanaryTest".to_string(),
+    ];
+    let denied=Command::new(binary()).args(&base).output().unwrap();
+    assert!(!denied.status.success());
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("trusted Events Bus"));
+    let mut wrong_workspace=base.clone();
+    *wrong_workspace.last_mut().unwrap()="Relay".to_string();
+    wrong_workspace.extend(["--event-history-api".into(),
+        "http://127.0.0.1:65531/".into(),
+        "--trust-isolated-model-events".into()]);
+    let denied=Command::new(binary()).args(&wrong_workspace).output().unwrap();
+    assert!(!denied.status.success());
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("distinct Rust2Canary"));
+    let mut missing=base;
+    missing.retain(|value|value!="--canary-webhelm-executable"
+        &&value!=cli.to_string_lossy().as_ref());
+    missing.extend(["--event-history-api".into(),
+        "http://127.0.0.1:65531/".into(),
+        "--trust-isolated-model-events".into()]);
+    let denied=Command::new(binary()).args(&missing).output().unwrap();
+    assert!(!denied.status.success());
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("all three explicit"));
 }

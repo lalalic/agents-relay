@@ -231,6 +231,10 @@ pub fn remote_delivery_candidates(config:&DaemonConfig)
 /// DaemonServices are supplied by the executable host. No production ports
 /// are initialized, and NO daemon is started, merely by importing this file.
 pub trait DaemonServices:Send{
+    /// A live-store shadow must not run Pool scheduling, Graph reconcile,
+    /// remote delivery or SSE emit loops. It only serves on-demand SQLite
+    /// read-only HTTP observations; it never owns the production lease.
+    fn is_read_only_shadow(&self)->bool{false}
     fn control(&mut self,body:&Value)->Result<Value,String>;
     fn load(&mut self,id:&str)->Result<Value,String>;
     fn load_execution_process(&mut self,_job_id:&str,_task_id:&str,
@@ -413,6 +417,7 @@ pub fn run_daemon<S:DaemonServices+'static>(
         webhook_secret:None,webhook_repositories:HashSet::new(),
         webhook_job_id:None,webhook_pr_number:None,
     };
+    let read_only_shadow=services.is_read_only_shadow();
     let services=Arc::new(Mutex::new(services));
     let dashboard=Arc::new(NativeDashboardApi::new(opts,DaemonDashboardBackend{
         config:config.clone(),services:Arc::clone(&services),
@@ -431,6 +436,13 @@ pub fn run_daemon<S:DaemonServices+'static>(
             .map_err(|e|format!("Dashboard server: {e}")));
         let mut first=true;
         while !stop.load(Ordering::Acquire){
+            if read_only_shadow{
+                // No background Job scan or model/provider activity in the
+                // live store. Dashboard reads use the original strictly
+                // read-only connection on demand, with no stale cached Job.
+                std::thread::sleep(Duration::from_millis(100));
+                continue;
+            }
             let result=(||->Result<(),String>{
                 let inventory=inventory_from_local(&config,true)?;
                 // The live Model event subscription is a daemon-level

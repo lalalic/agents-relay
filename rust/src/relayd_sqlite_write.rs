@@ -78,6 +78,7 @@ pub struct IsolatedSQLiteWriteHost {
     // read-only UI history. Cursor is only a cache; durable SQLite event
     // keys fence replay on process recreation.
     model_event_ingress_enabled:bool,
+    model_webhelm_canary:Option<IsolatedWebHelmConfig>,
     model_event_cursor:HashMap<String,i64>,
     // NATS callback thread delivers only immutable JSON into a bounded
     // in-process queue. Graph/SQLite is always mutated on daemon thread.
@@ -99,7 +100,8 @@ impl IsolatedSQLiteWriteHost {
             failure_state:std::sync::Arc::new(DaemonFailureState::new()),
             live_workers:std::sync::Arc::new(std::sync::Mutex::new(DaemonLiveWorkers::default())),
             escalation_notifier:None,event_history_api:None,
-            model_event_ingress_enabled:false,model_event_cursor:HashMap::new(),
+            model_event_ingress_enabled:false,model_webhelm_canary:None,
+            model_event_cursor:HashMap::new(),
             model_nats_subscription:None,model_nats_receiver:None,
             model_nats_sender:None,model_nats_url:None,
             model_nats_token:None,
@@ -203,6 +205,18 @@ impl IsolatedSQLiteWriteHost {
             return Err("Isolated escalation notifier requires an explicit loopback fixture".into());
         }
         self.escalation_notifier=Some(config);
+        Ok(())
+    }
+    /// An actual external ChatGPT/WebHelm provider is permitted only on
+    /// explicit canary config, with the isolated SQLite/Graph owner unchanged.
+    /// Submission metadata alone never certifies a Task started/terminal.
+    pub fn set_model_webhelm_canary(
+        &mut self,config:IsolatedWebHelmConfig,
+    )->Result<(),String>{
+        if !self.model_event_ingress_enabled{
+            return Err("Canary Worker requires an explicitly trusted Events Bus ingress".into());
+        }
+        self.model_webhelm_canary=Some(config);
         Ok(())
     }
     /// Explicit opt-in, isolated loopback HTTP history and/or local NATS
@@ -1160,7 +1174,10 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         }
         let _project_root=self.isolated_project(&original)?;
         if adapter=="chatgpt"{
-            let config=IsolatedWebHelmConfig::from_test_store(&self.config.store_directory)?;
+            let config=match &self.model_webhelm_canary{
+                Some(canary)=>canary.clone(),
+                None=>IsolatedWebHelmConfig::from_test_store(&self.config.store_directory)?,
+            };
             if task.get("routing").is_none_or(Value::is_null){
                 return Err("Native ChatGPT Worker requires verified routing metadata".into());
             }

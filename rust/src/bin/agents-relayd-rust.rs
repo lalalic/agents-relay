@@ -8,6 +8,7 @@ use agents_relay_rust2::{
     relayd_sqlite_write::IsolatedSQLiteWriteHost,
     reconciler::Reconciler,
     relayd_main::run_relayd_main,
+    native_browser_execution::IsolatedWebHelmConfig,
 };
 use serde_json::json;
 use std::{path::Path,sync::atomic::{AtomicBool,Ordering}};
@@ -16,7 +17,7 @@ extern "C" fn stop_signal(_:libc::c_int){STOP.store(true,Ordering::Release);}
 fn main(){
     let args=std::env::args().skip(1).collect::<Vec<_>>();
     if args.iter().any(|arg|matches!(arg.as_str(),"--help"|"-h")){
-        println!("agents-relayd-rust (isolated preview)\n  --isolated-store-dir /absolute/path/to/stores (read-only)\n  --isolated-write-store-dir /absolute/path/to/stores (SQLite/Graph isolated mutations)\n  --event-history-api http://127.0.0.1:PORT/ (explicit read-only loopback Events Bus history, write mode only)\n  --trust-isolated-model-events (opt-in caller-owned loopback events as Graph-verified Worker ingress)\n  --isolated-nats-url nats://127.0.0.1:PORT/ (optional caller-owned isolated NATS subscriber, requires trust flag)\n  --isolated-nats-token-file /absolute/path/to/store/token (0600 isolated loopback authentication only)\n  --port N\n  --interval MS\nNo production Workers or live state. No Node fallback.");
+        println!("agents-relayd-rust (isolated preview)\n  --isolated-store-dir /absolute/path/to/stores (read-only)\n  --shadow-live-store-dir /absolute/path/to/live/stores (strictly read-only, explicit opt-in)\n  --isolated-write-store-dir /absolute/path/to/stores (SQLite/Graph isolated mutations)\n  --event-history-api http://127.0.0.1:PORT/ (explicit read-only loopback Events Bus history, write mode only)\n  --trust-isolated-model-events (opt-in caller-owned loopback events as Graph-verified Worker ingress)\n  --isolated-nats-url nats://127.0.0.1:PORT/ (optional caller-owned isolated NATS subscriber, requires trust flag)\n  --isolated-nats-token-file /absolute/path/to/store/token (0600 isolated loopback authentication only)\n  --canary-webhelm-socket /absolute/path/to/real-webhelm.sock (explicit real provider, disposable Job store only)\n  --canary-webhelm-executable /absolute/path/to/webhelm\n  --canary-webhelm-workspace Rust2CanaryID\n  --port N\n  --interval MS\nNo production Workers or live state. No Node fallback.");
         return;
     }
     if args.first().is_some_and(|a|a=="--version"){
@@ -43,14 +44,43 @@ fn execute(args:&[String])->Result<(),String>{
     let arg=|name:&str|args.iter().position(|v|v==name)
         .and_then(|i|args.get(i+1)).map(String::as_str).unwrap_or("");
     let writable=!arg("--isolated-write-store-dir").is_empty();
-    if writable&&!arg("--isolated-store-dir").is_empty(){
-        return Err("Select exactly one isolated daemon store mode".into());
+    let shadow_live=args.iter().any(|flag|flag=="--shadow-live-store-dir");
+    let canary= args.iter().any(|flag|matches!(flag.as_str(),
+        "--canary-webhelm-socket"|"--canary-webhelm-executable"
+        |"--canary-webhelm-workspace"));
+    if canary&&(!writable
+        ||arg("--canary-webhelm-socket").is_empty()
+        ||arg("--canary-webhelm-executable").is_empty()
+        ||arg("--canary-webhelm-workspace").is_empty()
+        ||!args.iter().any(|flag|flag=="--trust-isolated-model-events")
+        ||(arg("--isolated-nats-url").is_empty()
+           &&arg("--event-history-api").is_empty())){
+        return Err("Real WebHelm canary requires isolated write store, all three explicit provider fields, and trusted Events Bus".into());
+    }
+    let store_mode_count=(writable as u8)
+        +(!arg("--isolated-store-dir").is_empty() as u8)
+        +(shadow_live as u8);
+    if store_mode_count==0 {
+        return Err("Native daemon requires --isolated-store-dir, --isolated-write-store-dir or --shadow-live-store-dir pointing to an existing absolute directory".into());
+    }
+    if store_mode_count!=1 {
+        return Err("Select exactly one native daemon store mode".into());
+    }
+    if shadow_live&&(arg("--shadow-live-store-dir").is_empty()
+        || args.iter().any(|flag|matches!(flag.as_str(),
+            "--trust-isolated-model-events"|"--isolated-nats-token-file"
+            |"--isolated-nats-url"|"--event-history-api"
+            |"--canary-webhelm-socket"|"--canary-webhelm-executable"
+            |"--canary-webhelm-workspace"))){
+        return Err("Production shadow is read-only and cannot attach EventBus or Worker inputs".into());
     }
     if args.iter().any(|value|value=="--event-history-api")
         &&arg("--event-history-api").is_empty(){
         return Err("--event-history-api requires an explicit loopback HTTP URL".into());
     }
-    let store=if writable{arg("--isolated-write-store-dir")}else{arg("--isolated-store-dir")};
+    let store=if shadow_live{arg("--shadow-live-store-dir")}
+        else if writable{arg("--isolated-write-store-dir")}
+        else{arg("--isolated-store-dir")};
     if !writable&&!arg("--event-history-api").is_empty(){
         return Err("Read-only daemon does not permit external event history provider bindings".into());
     }
@@ -67,13 +97,29 @@ fn execute(args:&[String])->Result<(),String>{
         return Err("Isolated model NATS requires --trust-isolated-model-events".into());
     }
     if store.is_empty()||!Path::new(store).is_absolute()||!Path::new(store).is_dir(){
-        return Err("Native daemon requires --isolated-store-dir pointing to an existing absolute caller-owned directory".into());
+        return Err("Native daemon requires --isolated-store-dir, --isolated-write-store-dir or --shadow-live-store-dir pointing to an existing absolute directory".into());
     }
     // A transient staging directory is not allowed to resolve to the user's
     // live relay.sqlite even if a symlink or renamed path was provided.
     let canonical=std::fs::canonicalize(store).map_err(|e|e.to_string())?;
     let live=agents_relay_rust2::relay_store::relay_store_directory();
-    if std::fs::canonicalize(&live).ok().as_deref()==Some(canonical.as_path()){
+    let live_canonical=std::fs::canonicalize(&live).ok();
+    if shadow_live {
+        if live_canonical.as_deref()!=Some(canonical.as_path()){
+            return Err("Shadow live store must exactly match the configured production Relay store".into());
+        }
+        let database=agents_relay_rust2::relay_store_discovery::relay_unified_store_path(&canonical);
+        let metadata=std::fs::symlink_metadata(&database)
+            .map_err(|_|"Shadow live store requires an existing unified SQLite database")?;
+        if !metadata.is_file()||metadata.file_type().is_symlink(){
+            return Err("Shadow live store requires a regular non-symlink SQLite database".into());
+        }
+        // No CREATE/PRAGMA journal_mode/scheduler lease reset. The only
+        // permitted SQLite connection here must be opened read-only.
+        rusqlite::Connection::open_with_flags(
+            &database,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e|format!("Cannot open production shadow SQLite read-only: {e}"))?;
+    }else if live_canonical.as_deref()==Some(canonical.as_path()){
         return Err("Refusing to run the native preview on the live Relay store".into());
     }
     let database=agents_relay_rust2::relay_store_discovery::relay_unified_store_path(&canonical);
@@ -111,7 +157,9 @@ fn execute(args:&[String])->Result<(),String>{
         libc::signal(libc::SIGTERM,stop_signal as *const () as libc::sighandler_t);
         libc::signal(libc::SIGINT,stop_signal as *const () as libc::sighandler_t);
     }
-    eprintln!("Native Relay isolated {} observer on 127.0.0.1:{}",if writable{"write"}else{"read-only"},config.port);
+    eprintln!("Native Relay {} observer on 127.0.0.1:{}",
+        if shadow_live{"production shadow read-only"}
+        else if writable{"isolated write"}else{"isolated read-only"},config.port);
     if writable{
         // This is the original production Reconciler Graph, not a fake timer
         // that directly edits Task status. Worker effects remain explicitly
@@ -158,6 +206,13 @@ fn execute(args:&[String])->Result<(),String>{
         if args.iter().any(|arg|arg=="--trust-isolated-model-events"){
             host.enable_isolated_model_event_ingress()?;
         }
+        if canary{
+            let config=IsolatedWebHelmConfig::from_explicit_canary(
+                &canonical,arg("--canary-webhelm-socket"),
+                arg("--canary-webhelm-executable"),
+                arg("--canary-webhelm-workspace"))?;
+            host.set_model_webhelm_canary(config)?;
+        }
         run_daemon(config.clone(),host,&STOP,move |_|{
             Ok(Reconciler::new(
                 runtime.graph_directory.clone(),runtime.store_directory.clone(),
@@ -169,8 +224,11 @@ fn execute(args:&[String])->Result<(),String>{
             ))
         })
     }else{
-        run_daemon(config.clone(),ReadOnlySQLiteHost::new(config),&STOP,|_|{
-            Err("Isolated native read-only daemon: production Job reconciliation disabled".into())
+        let host=if shadow_live{
+            ReadOnlySQLiteHost::new_live_shadow(config.clone())
+        }else{ReadOnlySQLiteHost::new(config.clone())};
+        run_daemon(config,host,&STOP,|_|{
+            Err("Native read-only daemon: production Job reconciliation disabled".into())
         })
     }
 }
