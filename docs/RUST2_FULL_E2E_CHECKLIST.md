@@ -32,6 +32,17 @@
 - [ ] B4. Prove all attempted shadow mutations fail closed; unchanged live SQLite, outbox, leases and worker count before/after.
 - [ ] B5. Stop/restart only owned shadow; no broker subscription, Worker invocation, side effects, lingering port or Node ownership change.
 
+## Gate B-Dashboard — actual Dashboard read-only verification (**must PASS before Gate C**)
+
+This is a **separate user-visible gate**, beyond Gate B's SQLite/HTTP shadow comparison. Perform it using a real browser against Rust's read-only shadow while Node remains the sole live owner. Never enable writes or attach Model/Events Bus to the shadow.
+
+- [ ] BD1. Open the actual Rust2 Dashboard on an isolated port in a real desktop browser and mobile-sized browser viewport (at least 375 px), including the intended authenticated same-origin/proxy URL. Confirm assets, navigation, relative URLs and authentication behavior; save screenshots.
+- [ ] BD2. Compare visible Jobs, scoped repository identity, pagination, Task details, activity timeline, JEL/Graph and available Review previews to the live Node Dashboard and canonical SQLite. Verify a large Job, running/failed/terminal Jobs and empty/no-review cases without exposing unrelated projects.
+- [ ] BD3. Verify HTTP GET/read-only API parity plus SSE/live-refresh behavior: stream remains connected, changes are observed only when committed by the **Node owner**, and no synthetic worker/terminal events are produced.
+- [ ] BD4. Prove all write controls are unavailable or rejected (create, cancel, retry, approve/reject review, edits); exercise denied HTTP mutations and show before/after live Job/Task/lease/outbox state is unchanged by Rust shadow.
+- [ ] BD5. Verify 401/403, invalid Job ID, cross-repository identity, missing Review and large-response framing cases; no private data leaks or truncated responses. Capture browser network evidence and HTTP status codes, not screenshots alone.
+- [ ] BD6. Repeat after shadow restart; verify no lingering process/port/worker/broker sessions. Attach one independent Dashboard read-only PASS/FAIL report before permitting Gate C.
+
 ## Gate C — real WebHelm + Model + Events Bus in isolated writable Rust (**currently blocked**)
 
 - [ ] C1. Prepare unique disposable Git/SQLite, Job ID absent from live, test-only WebHelm Rust2Canary workspace/session, separate port, verified broker namespace and authorized event ingestion.
@@ -55,6 +66,19 @@ For every case save real CLI/API input, Graph transition sequence, authoritative
 - [ ] D7. Test failure → bounded retry → success; exhausted failure; cancel running Script/Model Task; correct leases/session cleanup, no false success.
 - [ ] D8. Local Git is source of truth for Final Review/merge; Job completes without GitHub. Optional origin push only **after** verified completion; remote failures never reopen the Job.
 
+## Gate D-ProjectRunner — real Project Runner calculator Job (**must PASS after D, before E**)
+
+Use the **existing calculator acceptance project** at `/Users/chengli/Workspace/html-calculator-rust-relay` and its source-of-truth `job-objective.md` / `AGENTS.md`. The current repository already contains a calculator produced by an earlier Rust Worker run; its `qa/verification.md` records `jobId=91`, Model Task `101` and Script QA Task `102` as successful **but the Job remained ACTIVE pending Final Review**. This is prior partial evidence, **not** a Project Runner PASS.
+
+- [ ] DPR1. Create a **new disposable local Git clone/worktree** from the project's clean **seed commit `ae2f833`** (which has no `index.html`), with an independent Rust2 Job store, unique Job ID and dedicated worker namespace. Do not overwrite the existing calculator implementation or claim previous Job `91`.
+- [ ] DPR2. Invoke the **actual installed Project Runner entry point** to create/start a real Rust-owned Relay Job whose `projectRoot` is that seed clone and whose objective is the calculator project's `job-objective.md`. Record the exact entry point/CLI command, resulting Job ID, Coordinator/Planner/Worker Task IDs and original Git HEAD. Do not manually seed fabricated success rows or bypass the Project Runner using ad hoc direct Worker calls.
+- [ ] DPR3. Verify the Project Runner drives the canonical workflow: create → Coordinator/Planner → review/approved Plan → implementation Worker → independent QA/Final Reviewer → terminal Job; no TypeScript Scheduler or duplicate ownership.
+- [ ] DPR4. Require the assigned Worker to **generate `index.html` during this new Job** (not pre-existing): one offline, dependency-free, accessible responsive calculator with decimal handling, keyboard/pointer, error reset, focus and no tracking. Capture file diff, Worker provenance and immutable resulting Git commit.
+- [ ] DPR5. Run actual browser QA on desktop and 320/375/430 px viewports: `0.1 + 0.2 = 0.3`, `9 ÷ 3 = 3`, `8 × 7 = 56`, division by zero error/reset, `123 → 12` Backspace, clear, `7+2 Enter → 9`, Escape, negative/chained arithmetic, accessible labels and no horizontal overflow. Record screenshots, interactions and exact pass/fail.
+- [ ] DPR6. Independent Final Reviewer verifies code, true Git HEAD, actual browser evidence and objective. If review requests changes, require a **real revision Job/Task and re-review**, not a manual approval or an artificially completed Task.
+- [ ] DPR7. Read back **Job COMPLETED** (not merely Worker/QA Tasks SUCCEEDED), every Task's terminal state, correlated Events Bus source, Graph/SQLite generation/lease/outbox, Job duration and a clean local Git history. The previous `jobId=91` ACTIVE result must never count as this gate's completion.
+- [ ] DPR8. Stop only test-owned runner/worker/browser processes, validate isolated SQLite and Git artifacts persist as evidence, and confirm the original calculator repository, production Node Relay and unrelated Jobs were untouched. Failure to reach independently reviewed **Job** terminal is **BLOCKED/FAIL**, not PASS.
+
 ## Gate E — transport, restart, ownership and adversarial safety
 
 - [ ] E1. Persist unique correlated started/progress/completed/failed and outbox receipts; reject duplicate, out-of-order and forged model-worker events.
@@ -77,7 +101,7 @@ For every case save real CLI/API input, Graph transition sequence, authoritative
 
 ## Gate G — production readiness, controlled live cutover, rollback (**currently blocked**)
 
-**G1 is a prerequisite.** Native agents-relayd-rust currently exposes isolated preview modes only; none of the preceding test modes authorizes production use. Gates A–F must be PASS before proceeding.
+**G1 is a prerequisite.** Native agents-relayd-rust currently exposes isolated preview modes only; none of the preceding test modes authorizes production use. Gates A, B, B-Dashboard, C, D, D-ProjectRunner, E and F must all be PASS before proceeding.
 
 - [ ] G1. Implement/review safe production single-owner writable Rust startup, credentials, launchd service path, broker durability/security and health/productionReady reporting; no repurposed isolated-canary flags.
 - [ ] G2. Prove a consistent SQLite/WAL/outbox/lease backup can be restored on a disposable host; document exact safe rollback and Node/Rust ownership fencing.
@@ -94,10 +118,12 @@ For every case save real CLI/API input, Graph transition sequence, authoritative
 | --- | --- | --- | --- |
 | A — baseline/regression | NOT_RUN | | |
 | B — read-only shadow | NOT_RUN (previous partial sample exists) | | |
+| B-Dashboard — actual read-only browser verification | NOT_RUN; **required before C** | | |
 | C — actual browser provider/Events Bus | **BLOCKED**: durable Thread ID | | |
 | D — full native Job lifecycle | NOT_RUN | | |
+| D-ProjectRunner — calculator Job + independent Final Review | NOT_RUN; **required after D** | | |
 | E — durability/negative tests | NOT_RUN | | |
 | F — real iPhone/three nodes | NOT_RUN | | |
 | G — production cutover/rollback | **BLOCKED**: native production startup | | |
 
-**Definition of DONE:** every A–G gate PASS at a reviewed and identified build SHA; real external provider + correlated terminal; real iPhone UI; exclusive production ownership; proven rollback; original Node state preserved. Only then reconsider upgrading src/reconciler-runtime.ts and src/relayd.ts from PORTING to PASS and declare PORTING=0.
+**Definition of DONE:** all **nine** gates (A, B, B-Dashboard, C, D, D-ProjectRunner, E, F and G) PASS at a reviewed and identified build SHA; real external provider + correlated terminal; a **new calculator Project Runner Job independently reviewed and COMPLETED**; real iPhone UI; exclusive production ownership; proven rollback; original Node state preserved. Only then reconsider upgrading src/reconciler-runtime.ts and src/relayd.ts from PORTING to PASS and declare PORTING=0.
