@@ -16,7 +16,7 @@ extern "C" fn stop_signal(_:libc::c_int){STOP.store(true,Ordering::Release);}
 fn main(){
     let args=std::env::args().skip(1).collect::<Vec<_>>();
     if args.iter().any(|arg|matches!(arg.as_str(),"--help"|"-h")){
-        println!("agents-relayd-rust (isolated preview)\n  --isolated-store-dir /absolute/path/to/stores (read-only)\n  --isolated-write-store-dir /absolute/path/to/stores (SQLite/Graph isolated mutations)\n  --event-history-api http://127.0.0.1:PORT/ (explicit read-only loopback Events Bus history, write mode only)\n  --port N\n  --interval MS\nNo production Workers or live state. No Node fallback.");
+        println!("agents-relayd-rust (isolated preview)\n  --isolated-store-dir /absolute/path/to/stores (read-only)\n  --isolated-write-store-dir /absolute/path/to/stores (SQLite/Graph isolated mutations)\n  --event-history-api http://127.0.0.1:PORT/ (explicit read-only loopback Events Bus history, write mode only)\n  --trust-isolated-model-events (opt-in caller-owned loopback events as Graph-verified Worker ingress)\n  --port N\n  --interval MS\nNo production Workers or live state. No Node fallback.");
         return;
     }
     if args.first().is_some_and(|a|a=="--version"){
@@ -109,6 +109,9 @@ fn execute(args:&[String])->Result<(),String>{
         let history=arg("--event-history-api");
         if !history.is_empty(){
             host.set_loopback_event_history_api(history)?;
+        }
+        if args.iter().any(|arg|arg=="--trust-isolated-model-events"){
+            host.enable_isolated_model_event_ingress()?;
         }
         run_daemon(config.clone(),host,&STOP,move |_|{
             Ok(Reconciler::new(

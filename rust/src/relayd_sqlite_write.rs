@@ -74,13 +74,19 @@ pub struct IsolatedSQLiteWriteHost {
     // Explicit read-only Events Bus history provider. Isolated daemons
     // never open the operator's configured bus without opt-in.
     event_history_api:Option<url::Url>,
+    // Explicit caller-owned event stream trust boundary, independent of
+    // read-only UI history. Cursor is only a cache; durable SQLite event
+    // keys fence replay on process recreation.
+    model_event_ingress_enabled:bool,
+    model_event_cursor:HashMap<String,i64>,
 }
 impl IsolatedSQLiteWriteHost {
     pub fn new(config:DaemonConfig)->Self{
         Self{config,subscriptions:Vec::new(),wake_count:0,reconcile_attempts:0,connections:RefCell::new(HashMap::new()),
             failure_state:std::sync::Arc::new(DaemonFailureState::new()),
             live_workers:std::sync::Arc::new(std::sync::Mutex::new(DaemonLiveWorkers::default())),
-            escalation_notifier:None,event_history_api:None}
+            escalation_notifier:None,event_history_api:None,
+            model_event_ingress_enabled:false,model_event_cursor:HashMap::new()}
     }
     /// Bind the REAL Events Bus read-only HTTP history API only when the
     /// caller explicitly supplies a loopback endpoint. This isolated daemon
@@ -111,6 +117,99 @@ impl IsolatedSQLiteWriteHost {
         }
         self.escalation_notifier=Some(config);
         Ok(())
+    }
+    /// Isolated explicit opt-in: treat only a caller-owned loopback Events
+    /// Bus history source as a model worker event transport. This is NOT
+    /// enabled by the ordinary Dashboard read-only history switch. No
+    /// unauthenticated public HTTP writer exists.
+    pub fn enable_isolated_model_event_ingress(&mut self)->Result<(),String>{
+        if self.event_history_api.is_none(){
+            return Err("Trusted local model EventBus ingress requires an explicit loopback history endpoint".into());
+        }
+        self.model_event_ingress_enabled=true;
+        Ok(())
+    }
+    pub fn poll_isolated_model_worker_events(&mut self,id:&str)->Result<usize,String>{
+        if !self.model_event_ingress_enabled{return Ok(0);}
+        let job=self.scoped(id)?.load_job(id)?
+            .ok_or("Model EventBus ingress Job is absent")?;
+        self.isolated_project(&job)?;
+        let has_model_lease=job["tasks"].as_array().into_iter().flatten().any(|task|
+            matches!(field(task,"adapter"),"chatgpt"|"z"|"codex")
+            && !field(task,"executionId").is_empty()
+            && !field(task,"leaseOwner").is_empty()
+            && matches!(field(task,"state"),"QUEUED"|"RUNNING"));
+        if !has_model_lease{return Ok(0);}
+        let api=self.event_history_api.as_ref()
+            .ok_or("No explicit model EventBus history source")?.clone();
+        let env=json!({
+            "EVENTS_BUS_API_URL":api.as_str(),
+            "EVENTS_BUS_CONFIG":self.config.store_directory.join(
+                ".eventsbus-model-ingress-no-global-config.json").to_string_lossy(),
+        });
+        let mut after=*self.model_event_cursor.get(id).unwrap_or(&0);
+        let mut applied=0;
+        for _page in 0..4{
+            let page=crate::events_bus_runtime::events_bus_history_page(
+                id,None,&json!(60),&json!({
+                    "order":"asc","after":after,"timeoutMs":1200,
+                }),&env)?;
+            let rows=page["rows"].as_array()
+                .ok_or("Model EventBus history response has no rows")?;
+            if rows.is_empty(){break;}
+            for row in rows{
+                let cursor=row["cursor"].as_i64()
+                    .ok_or("Model EventBus history cursor invalid")?;
+                let event=&row["event"];
+                let typ=field(event,"type");
+                let task_id=field(event,"task_id");
+                // The remote history is an observation, never a Task
+                // authority. Restrict to the original four model lifecycle
+                // events with canonical issued execution identity.
+                if matches!(typ,"task.started"|"task.progress"|"task.completed"|"task.failed"){
+                    let current=self.scoped(id)?.load_job(id)?
+                        .ok_or("Model EventBus Job disappeared")?;
+                    if let Some(task)=current["tasks"].as_array().into_iter().flatten()
+                        .find(|task|field(task,"id")==task_id){
+                        let execution=field(task,"executionId").to_string();
+                        let trusted=matches!(field(task,"adapter"),"chatgpt"|"z"|"codex")
+                            &&!execution.is_empty()
+                            &&!field(task,"leaseOwner").is_empty()
+                            &&event.pointer("/source/id").and_then(Value::as_str)
+                                ==Some(crate::execution_event_identity::execution_event_source(
+                                    id,task_id,&execution).as_str());
+                        if trusted{
+                            let event_id=field(event,"event_id");
+                            let key=format!("model-event/{id}/{task_id}/{execution}/{event_id}");
+                            // A brand-new SQLite scope has no workflow
+                            // outbox yet. Canonical commit creates it on the
+                            // first accepted event; absence is not an error.
+                            let existing=self.scoped(id)?;
+                            let table_exists:i64=existing.db.query_row(
+                                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='workflow_event_outbox'",
+                                [],|row|row.get(0)).map_err(|e|e.to_string())?;
+                            let already:i64=if table_exists==0{0}else{
+                                existing.db.query_row(
+                                    "SELECT COUNT(*) FROM workflow_event_outbox WHERE event_key=?",
+                                    [&key],|row|row.get(0)).map_err(|e|e.to_string())?
+                            };
+                            drop(existing);
+                            if already==0{
+                                self.accept_model_worker_event(id,task_id,&execution,event)?;
+                                applied+=1;
+                            }
+                        }
+                    }
+                }
+                // Invalid/foreign event sources do not block later events.
+                // Failure to Graph-commit a correctly bound event returns
+                // before cursor advance so the original event is retried.
+                after=cursor;
+                self.model_event_cursor.insert(id.into(),after);
+            }
+            if rows.len()<60{break;}
+        }
+        Ok(applied)
     }
     fn path(&self)->PathBuf{relay_unified_store_path(&self.config.store_directory)}
     /// Isolated writes must be confined to the same disposable caller-owned
@@ -784,6 +883,9 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
     }
     fn reconcile_local_completion(&mut self,id:&str)->Result<bool,String>{
         self.reconcile_git_delivery(id)
+    }
+    fn poll_model_events(&mut self,id:&str)->Result<usize,String>{
+        self.poll_isolated_model_worker_events(id)
     }
     fn prepare_dependency_revisions(&mut self,id:&str)->Result<(),String>{
         let source=self.scoped(id)?.load_job(id)?

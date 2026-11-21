@@ -768,3 +768,86 @@ fn invalid_events_bus_history_falls_back_to_empty_not_fabricated_progress(){
         "wrong-Job EventsBus response is not authoritative Worker evidence");
     assert_eq!(fixture.job(),before);
 }
+
+#[test]
+fn trusted_loopback_model_events_commit_graph_sqlite_and_reject_forged_start(){
+    use agents_relay_rust2::{
+        events::event_for,execution_event_identity::execution_event_source,
+    };
+    use std::{io::{Read,Write},net::TcpListener,thread};
+    let fixture=Fixture::new();
+    let execution="isolate_model_exec_0001";
+    let store=SQLiteRelayStore::open_without_claim_reset(
+        &relay_unified_store_path(&fixture.config.store_directory),Some("15")).unwrap();
+    store.mutate_job("15",|mut job|{
+        job["tasks"][0]["adapter"]=json!("chatgpt");
+        job["tasks"][0]["state"]=json!("QUEUED");
+        job["tasks"][0]["attempt"]=json!(1);
+        job["tasks"][0]["executionId"]=json!(execution);
+        job["tasks"][0]["leaseOwner"]=json!("isolated-worker-owner");
+        job["tasks"][0]["leaseExpiresAt"]=json!("2026-11-21T23:59:59.000Z");
+        job["tasks"][0]["error"]=Value::Null;
+        Ok(job)
+    }).unwrap();
+    drop(store);
+    let source=json!({"id":execution_event_source("15","7",execution),
+        "agent":"fixture","component":"agents-relay"});
+    let forged=json!({"id":"job/15/task/7/execution/forged",
+        "agent":"attacker","component":"agents-relay"});
+    let events=vec![
+        event_for("15","7",None,"task.started","started",
+            "FORGED start",None,None,Some(forged)),
+        event_for("15","7",None,"task.started","started",
+            "Real leased Worker start",None,None,Some(source.clone())),
+        event_for("15","7",None,"task.completed","completed",
+            "Real leased Worker terminal",None,Some(json!({"output":"verified"})),
+            Some(source)),
+    ];
+    let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+    let api=format!("http://127.0.0.1:{}/",listener.local_addr().unwrap().port());
+    let server=thread::spawn(move ||{
+        let (mut stream,_)=listener.accept().unwrap();
+        stream.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
+        let mut request=String::new();let mut buf=[0u8;1024];
+        while !request.contains("\r\n\r\n"){
+            let n=stream.read(&mut buf).unwrap();assert!(n>0);
+            request.push_str(&String::from_utf8_lossy(&buf[..n]));
+        }
+        assert!(request.starts_with("GET /events?"),"{request}");
+        assert!(request.contains("order=asc"),"{request}");
+        assert!(request.contains("after=0"),"{request}");
+        let payload=json!({"job_id":"15","order":"asc",
+            "events":events.into_iter().enumerate().map(|(i,event)|
+                json!({"cursor":i+1,"event":event})).collect::<Vec<_>>(),
+            "next_cursor":3}).to_string();
+        write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            payload.len(),payload).unwrap();
+    });
+    let mut host=IsolatedSQLiteWriteHost::new(fixture.config.clone());
+    assert!(host.enable_isolated_model_event_ingress().is_err());
+    host.set_loopback_event_history_api(&api).unwrap();
+    // Reading external history without trusted model-ingress opt-in
+    // cannot advance even an already-leased Task.
+    assert_eq!(host.poll_isolated_model_worker_events("15").unwrap(),0);
+    assert_eq!(fixture.job()["tasks"][0]["state"],"QUEUED");
+    host.enable_isolated_model_event_ingress().unwrap();
+    assert_eq!(host.poll_isolated_model_worker_events("15").unwrap(),2);
+    server.join().unwrap();
+    let committed=fixture.job();
+    assert_eq!(committed["tasks"][0]["state"],"SUCCEEDED");
+    assert_eq!(committed["tasks"][0]["attempt"],1);
+    assert!(committed["tasks"][0]["executionId"].is_null());
+    let path=relay_unified_store_path(&fixture.config.store_directory);
+    let sqlite=SQLiteRelayStore::open_without_claim_reset(&path,Some("15")).unwrap();
+    let rows:i64=sqlite.db.query_row(
+        "SELECT COUNT(*) FROM workflow_event_outbox WHERE event_key LIKE 'model-event/15/7/%'",
+        [],|row|row.get(0)).unwrap();
+    assert_eq!(rows,2,"only two real Graph-authorized model events are persisted");
+    drop(sqlite);drop(host);
+    let mut restarted=IsolatedSQLiteWriteHost::new(fixture.config.clone());
+    restarted.set_loopback_event_history_api(&api).unwrap();
+    restarted.enable_isolated_model_event_ingress().unwrap();
+    assert_eq!(restarted.poll_isolated_model_worker_events("15").unwrap(),0,
+        "no active execution after terminal: daemon restart cannot replay old events");
+    assert_eq!(fixture.job(),committed);
+}

@@ -48,6 +48,9 @@ fn daemon(root:&Path,port:u16)->Guard{
     daemon_with_history(root,port,None)
 }
 fn daemon_with_history(root:&Path,port:u16,history:Option<&str>)->Guard{
+    daemon_with_model_ingress(root,port,history,false)
+}
+fn daemon_with_model_ingress(root:&Path,port:u16,history:Option<&str>,trust:bool)->Guard{
     let mut command=Command::new(env!("CARGO_BIN_EXE_agents-relayd-rust"));
     command.args(["--isolated-write-store-dir",
             root.join("stores").to_str().unwrap(),"--port",&port.to_string(),
@@ -55,6 +58,7 @@ fn daemon_with_history(root:&Path,port:u16,history:Option<&str>)->Guard{
     if let Some(history)=history{
         command.args(["--event-history-api",history]);
     }
+    if trust{command.arg("--trust-isolated-model-events");}
     let child=command
         .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
         .stdout(Stdio::null())
@@ -379,5 +383,95 @@ fn installed_native_daemon_reads_explicit_events_bus_http_history_without_graph_
         .load_job("17").unwrap().unwrap();
     assert_eq!(before,after,"external events history cannot mutate Job status");
     drop(service);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn native_daemon_opt_in_model_event_ingress_commits_verified_worker_terminal(){
+    use agents_relay_rust2::{
+        events::event_for,execution_event_identity::execution_event_source,
+        relay_store_discovery::relay_unified_store_path,
+    };
+    let home=root();
+    job(&home,"ACTIVE",false);
+    let execution="native_ingress_verified_001";
+    let db=relay_unified_store_path(&home.join("stores"));
+    let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap();
+    store.mutate_job("17",|mut job|{
+        let task=&mut job["tasks"][0];
+        task["adapter"]=json!("chatgpt");
+        task["agentName"]=json!("implementation");
+        task["agentGraph"]=serde_json::Value::Null;
+        task["attempt"]=json!(1);
+        task["executionId"]=json!(execution);
+        task["leaseOwner"]=json!("isolated-model-provider");
+        task["leaseExpiresAt"]=json!("2027-11-21T23:59:59.000Z");
+        job["autoMerge"]=json!(false);
+        Ok(job)
+    }).unwrap();
+    drop(store);
+    let expected_source=json!({
+        "id":execution_event_source("17","2",execution),
+        "agent":"fixture","component":"agents-relay",
+    });
+    let events=vec![
+        event_for("17","2",None,"task.started","started",
+            "Observed exactly issued worker start",None,None,
+            Some(expected_source.clone())),
+        event_for("17","2",None,"task.completed","completed",
+            "Observed exactly issued worker completion",None,None,
+            Some(expected_source)),
+    ];
+    let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+    let bus_port=listener.local_addr().unwrap().port();
+    let bus=thread::spawn(move||{
+        let (mut stream,_)=listener.accept().unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let mut raw=String::new();let mut buf=[0u8;1024];
+        while !raw.contains("\r\n\r\n"){
+            let n=stream.read(&mut buf).unwrap();assert!(n>0);
+            raw.push_str(&String::from_utf8_lossy(&buf[..n]));
+        }
+        assert!(raw.starts_with("GET /events?"),"{raw}");
+        assert!(raw.contains("job=17")&&raw.contains("order=asc"),"{raw}");
+        let payload=json!({
+            "job_id":"17","order":"asc","events":events.into_iter()
+                .enumerate().map(|(i,event)|
+                    json!({"cursor":i+1,"event":event})).collect::<Vec<_>>(),
+            "next_cursor":2,
+        }).to_string();
+        write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            payload.len(),payload).unwrap();
+    });
+    let port=port();
+    let running=daemon_with_model_ingress(&home,port,
+        Some(&format!("http://127.0.0.1:{bus_port}/")),true);
+    let began=Instant::now();
+    let saved=loop{
+        let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap();
+        let snapshot=store.load_job("17").unwrap().unwrap();
+        if snapshot["tasks"][0]["state"]=="SUCCEEDED"{break snapshot;}
+        assert!(began.elapsed()<Duration::from_secs(20),
+            "native daemon never committed model Events Bus terminal: {snapshot}; daemon={}",
+            fs::read_to_string(home.join("daemon.log")).unwrap_or_default());
+        thread::sleep(Duration::from_millis(100));
+    };
+    bus.join().unwrap();
+    assert!(saved["tasks"][0]["executionId"].is_null());
+    let outbox=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap();
+    let count:i64=outbox.db.query_row(
+        "SELECT COUNT(*) FROM workflow_event_outbox WHERE event_key LIKE 'model-event/17/2/%'",
+        [],|row|row.get(0)).unwrap();
+    assert_eq!(count,2,"only verified start and terminal can persist");
+    drop(outbox);drop(running);
+    let restarted=daemon(&home,port);
+    thread::sleep(Duration::from_millis(220));
+    let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap();
+    let after=store.load_job("17").unwrap().unwrap();
+    assert_eq!(after["tasks"][0]["state"],"SUCCEEDED");
+    assert_eq!(after["tasks"][0]["attempt"],1);
+    assert_eq!(after["tasks"][0]["executionHistory"],
+        saved["tasks"][0]["executionHistory"]);
+    drop(store);drop(restarted);
     fs::remove_dir_all(home).unwrap();
 }

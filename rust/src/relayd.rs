@@ -250,6 +250,10 @@ pub trait DaemonServices:Send{
     fn event_history(&mut self,id:&str,task_id:Option<&str>,limit:i64)
         ->Result<Vec<Value>,String>;
     fn publish_event(&mut self,event:&Value)->Result<(),String>;
+    /// Observation/effect adapter, not a workflow scheduler. Poll leased
+    /// Model Workers independently from Pool admission: a Worker already
+    /// running cannot be "runnable" merely to get its terminal event.
+    fn poll_model_events(&mut self,_id:&str)->Result<usize,String>{Ok(0)}
     fn deliver_pending_escalations(&mut self,id:&str)->Result<(),String>{
         let snapshot=self.load(id)?;
         if crate::escalation_notifier::candidate_notifications(&snapshot).is_empty(){
@@ -420,6 +424,20 @@ pub fn run_daemon<S:DaemonServices+'static>(
         while !stop.load(Ordering::Acquire){
             let result=(||->Result<(),String>{
                 let inventory=inventory_from_local(&config,true)?;
+                // The live Model event subscription is a daemon-level
+                // observation. A leased QUEUED/RUNNING Task is intentionally
+                // not in the Pool's runnable admission set, but still needs
+                // task.started/progress/terminal ingestion. Never let an
+                // unavailable EventBus block unrelated Script workers.
+                for job in inventory.iter().filter(|job|field(job,"state")=="ACTIVE"){
+                    let id=field(job,"id");
+                    let receipt=services.lock()
+                        .map_err(|_|"Daemon service lock poisoned")?
+                        .poll_model_events(id);
+                    if let Err(error)=receipt{
+                        eprintln!("warning: Model EventBus observation for Job {id}: {error}");
+                    }
+                }
                 let overview=inventory.iter().map(|job|json!({"job":job}))
                     .collect::<Vec<_>>();
                 pool.reconcile_discovered(&overview,
