@@ -34,6 +34,37 @@ impl RuntimeBaseStore for SqliteHost {
     fn emit(&self,event:&Value)->Result<(),String>{
         self.events.lock().unwrap().push(event.clone());Ok(())
     }
+    fn apply_host_invocation_event(
+        &self,graph:&Path,event:&Value,
+        coordinator:&mut agents_relay_rust2::interactive_invocation::
+            HostInteractiveInvocationCoordinator,
+    )->Result<agents_relay_rust2::reconciler_runtime::RuntimeEffect,String>{
+        use agents_relay_rust2::{
+            interactive_invocation_ports::host_invocation_ports,
+            interactive_resume::recover_interactive_decisions,
+            reconciler_runtime::RuntimeEffect,
+        };
+        let mut store=self.store();
+        let mut accepted_events=Vec::new();
+        let mut ports=host_invocation_ports(&mut store);
+        let outcome=coordinator.apply_event(&mut ports,graph,event,
+            |_,_|Ok(()),
+            |accepted|{accepted_events.push(accepted.clone());Ok(())})?;
+        drop(ports);
+        for accepted in accepted_events{self.emit(&accepted)?;}
+        let job_id=event["job_id"].as_str().unwrap_or("");
+        let resumed=outcome["resumeWorker"]==true
+            &&outcome["decision"].is_object()
+            &&recover_interactive_decisions(graph,&store,job_id)?;
+        let latest=store.load_job(job_id)?.ok_or("Host Job disappeared")?;
+        let status=outcome["outcome"].as_str().unwrap_or("ignored");
+        let reason=format!("task.interactive_decision.{status}");
+        if status=="ignored"{
+            return Ok(RuntimeEffect::ignored(&latest,reason));
+        }
+        Ok(RuntimeEffect::recognized(&latest,reason,
+            resumed||status=="accepted"))
+    }
 }
 fn fixture()->(PathBuf,Arc<SqliteHost>,Value){
     let suffix=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
@@ -110,4 +141,97 @@ fn interactive_binding_atomic_and_bus_unsubscribe_scoped_to_one_job(){
     assert_eq!(host.wakes.load(Ordering::SeqCst),1);
     runtime.close().unwrap();drop(runtime);drop(host);
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn interactive_host_decision_through_runtime_bus_is_durable_and_untrusted_replay_cannot_approve(){
+ use agents_relay_rust2::interactive_invocation::host_interactive_decision_event;
+ let (directory,host,_initial)=fixture();
+ host.store().mutate_job("41",|mut job|{
+  let task=&mut job["tasks"][0];
+  task["state"]=json!("AWAITING_DECISION");
+  task["interactiveInvocation"]=json!({
+   "invocationId":"execution-1","revision":"execution-1",
+   "executionId":"execution-1","status":"awaiting_decision",
+   "boundAt":"2026-11-17T12:00:00.000Z"
+  });
+  Ok(job)
+ }).unwrap();
+ let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+ let runtime=ReconcilerRuntimeBase::new(graph,"relay",15000,
+  Arc::clone(&host) as Arc<dyn RuntimeBaseStore>);
+ let valid=host_interactive_decision_event(
+  &json!({"jobId":"41","taskId":"1","executionId":"execution-1"}),
+  &json!({"eventId":"decision-valid-1","decision":"approved",
+   "feedback":"Verified by fixture owner","comments":[]}),
+  "2026-11-17T13:00:00.000Z").unwrap();
+ let mut forged=valid.clone();
+ forged["source"]["id"]=json!("job/41/task/1/execution/forged");
+ runtime.handle_event(forged).unwrap();
+ assert_eq!(host.load_job("41").unwrap()["tasks"][0]["interactiveInvocation"]["status"],
+  "awaiting_decision","forged host source must never persist an approval");
+ runtime.handle_event(valid.clone()).unwrap();
+ assert_eq!(host.events.lock().unwrap().iter().filter(|event|
+  event["type"]=="task.interactive_decision.accepted").count(),1,
+  "exactly one accepted-event emission must follow SQLite commit");
+ let accepted=host.load_job("41").unwrap();
+ assert_eq!(accepted["tasks"][0]["interactiveInvocation"]["status"],"approved",
+  "actual Host decision must commit in SQLite before the runtime emits accepted");
+ assert!(matches!(accepted["tasks"][0]["state"].as_str(),Some("QUEUED"|"DRAFT")),
+  "Graph authorized host decision must actually resume Task: {accepted}");
+ let before=accepted.clone();
+ runtime.handle_event(valid.clone()).unwrap();
+ assert_eq!(host.load_job("41").unwrap(),before,
+  "duplicate event after durable approval cannot run a second transition");
+ runtime.close().unwrap();drop(runtime);
+ // A daemon can exit between decision persistence and a caller's retry.
+ // A new runtime must not replay accepted events or change the Task again.
+ let reopened=ReconcilerRuntimeBase::new(
+  Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
+  "new-daemon-owner",15000,Arc::clone(&host) as Arc<dyn RuntimeBaseStore>);
+ reopened.handle_event(valid).unwrap();
+ assert_eq!(host.load_job("41").unwrap(),before,
+  "an accepted decision must remain idempotent after daemon recreation");
+ assert_eq!(host.events.lock().unwrap().iter().filter(|event|
+  event["type"]=="task.interactive_decision.accepted").count(),1,
+  "restarted daemon cannot republish an accepted decision");
+ reopened.close().unwrap();drop(reopened);drop(host);
+ std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn interactive_changes_requested_is_graph_resumed_with_feedback_and_replay_fence(){
+ use agents_relay_rust2::interactive_invocation::host_interactive_decision_event;
+ let (directory,host,_initial)=fixture();
+ host.store().mutate_job("41",|mut job|{
+  let task=&mut job["tasks"][0];
+  task["state"]=json!("AWAITING_DECISION");
+  task["interactiveInvocation"]=json!({
+   "invocationId":"execution-1","revision":"execution-1",
+   "executionId":"execution-1","status":"awaiting_decision",
+   "boundAt":"2026-11-17T12:00:00.000Z"
+  });
+  Ok(job)
+ }).unwrap();
+ let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+ let runtime=ReconcilerRuntimeBase::new(graph,"relay",15000,
+  Arc::clone(&host) as Arc<dyn RuntimeBaseStore>);
+ let event=host_interactive_decision_event(
+  &json!({"jobId":"41","taskId":"1","executionId":"execution-1"}),
+  &json!({"eventId":"decision-changes-1","decision":"changes_requested",
+   "feedback":"Fix missing integration evidence","comments":[{"text":"Need E2E proof"}]}),
+  "2026-11-17T13:00:00.000Z").unwrap();
+ runtime.handle_event(event.clone()).unwrap();
+ let committed=host.load_job("41").unwrap();
+ assert_eq!(committed["tasks"][0]["interactiveInvocation"]["status"],"changes_requested");
+ assert_eq!(committed["tasks"][0]["state"],"QUEUED");
+ assert!(committed.to_string().contains("Fix missing integration evidence"),
+  "requested changes must be recorded durably on Job/Task");
+ let before=committed.clone();
+ runtime.handle_event(event).unwrap();
+ assert_eq!(host.load_job("41").unwrap(),before);
+ assert_eq!(host.events.lock().unwrap().iter().filter(|e|
+  e["type"]=="task.interactive_decision.accepted").count(),1);
+ runtime.close().unwrap();drop(runtime);drop(host);
+ std::fs::remove_dir_all(directory).unwrap();
 }

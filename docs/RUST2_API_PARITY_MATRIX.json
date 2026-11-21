@@ -2,7 +2,7 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "3eb0afe0968e045c3778f31cc3bc9f706318fd62",
-    "rustTree": "24d3e0d7d4c345f4997f3a2cf44da542f7b68c33",
+    "rustTree": "815a468ffa9bf33c3f87c2911522be6cfa246905",
     "sourceCount": 11,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
@@ -350,7 +350,8 @@
         "WorkerInteractiveContinuation"
       ],
       "directDiffImports": [
-        "rust/tests/head_to_head_host_invocation_ports.mjs"
+        "rust/tests/head_to_head_host_invocation_ports.mjs",
+        "rust/tests/head_to_head_interactive_invocation_public.mjs"
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/closure.rs",

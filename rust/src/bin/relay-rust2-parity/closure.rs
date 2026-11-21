@@ -6,6 +6,38 @@ use serde_json::{json,Value};
 pub(super) fn invoke(request:&Value)->Result<Option<String>,String>{
     let op=request["op"].as_str().unwrap_or("");
     let result:Result<String,String>=match op{
+        // Public Host interactive decision event/normalization/fingerprint,
+        // Graph recovery and bind candidate. Completely fixture-only.
+        "interactiveInvocationContract"=>{
+            use agents_relay_rust2::interactive_invocation as i;
+            let graph=std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../workflow");
+            let result:Result<Value,String>=match request["method"]
+                .as_str().unwrap_or(""){
+                "hostEvent"=>i::host_interactive_decision_event(
+                    &request["context"],&request["feedback"],
+                    request["now"].as_str().unwrap_or("2026-11-20T00:00:00.000Z")),
+                "normalize"=>Ok(json!(i::normalize_interactive_decision(
+                    &request["event"]))),
+                "fingerprint"=>Ok(json!(i::interactive_decision_fingerprint(
+                    &request["delivery"]))),
+                "eligible"=>Ok(json!(i::event_only_review_eligible(
+                    &request["delivery"]))),
+                "recover"=>i::should_recover_interactive_decision(
+                    &graph,request["status"].as_str().unwrap_or(""))
+                    .map(|value|json!(value)),
+                "bind"=>i::bind_interactive_invocation_snapshot(
+                    &request["job"],
+                    request["taskId"].as_str().unwrap_or(""),
+                    request["executionId"].as_str().unwrap_or(""),
+                    request["now"].as_str().unwrap_or("2026-11-20T00:00:00.000Z")),
+                _=>Err("Unknown Host Interactive contract method".into())
+            };
+            Ok(json!({"outcome":match result{
+                Ok(value)=>json!({"ok":true,"value":value}),
+                Err(error)=>json!({"ok":false,"error":error})
+            }}).to_string())
+        }
         // Direct original Node SQLiteRelayStore registry semantics,
         // including null (never observed) vs [] (observed empty), and atomic
         // replacement. Test-only isolated in-memory SQLite.

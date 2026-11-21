@@ -3,7 +3,9 @@
 // Store/worker effects are owned by the host, not a parallel Job scheduler.
 use crate::{
     events::{MemoryEventBus,NatsEventBus,Wake},
-    interactive_invocation::bind_interactive_invocation_snapshot,
+    interactive_invocation::{
+        bind_interactive_invocation_snapshot,HostInteractiveInvocationCoordinator,
+    },
     reconcile_coordinator::ReconcileCoordinator,
     reconciler_runtime::{ReconcilerRuntime,RuntimeEffect},
 };
@@ -18,6 +20,16 @@ pub trait RuntimeBaseStore:Send+Sync+'static{
     /// The same Reconciler instance owns DAG scheduling and Graph effects.
     fn reconcile(&self,job_id:&str)->Result<Value,String>;
     fn emit(&self,_event:&Value)->Result<(),String>{Ok(())}
+    /// Interactive human decisions are never an ordinary task lifecycle
+    /// mutation. They require the authoritative HostInvocation SQLite
+    /// identity/receipt ledger and Graph-controlled resume after commit.
+    /// An unbound runtime refuses the input rather than reporting accepted.
+    fn apply_host_invocation_event(
+        &self,_graph:&std::path::Path,_event:&Value,
+        _coordinator:&mut HostInteractiveInvocationCoordinator,
+    )->Result<RuntimeEffect,String>{
+        Err("Native Reconciler interactive HostInvocation SQLite port is not bound".into())
+    }
     fn report_transport_failure(&self,_message:&str){}
 }
 pub trait RuntimeBaseEventBus{
@@ -49,6 +61,14 @@ fn apply_durable_event(
     }
     if kind=="github.webhook"{
         return Ok(RuntimeEffect::recognized(&Value::Null,"github.audit_only",false));
+    }
+    if kind=="task.interactive_decision"{
+        // Node delegates to hostInvocations.applyEvent, NOT a speculative
+        // Graph-only ReconcilerRuntime.apply_event. Its actual SQLite receipt
+        // must commit before any accepted event or task unblocking.
+        let mut current=runtime.lock().map_err(|error|error.to_string())?;
+        return host.apply_host_invocation_event(directory,event,
+            &mut current.host_invocations);
     }
     if !matches!(kind,"task.started"|"task.progress"|
         "task.completed"|"task.failed"|"task.blocked"|
