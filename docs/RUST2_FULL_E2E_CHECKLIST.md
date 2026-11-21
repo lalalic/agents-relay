@@ -51,6 +51,14 @@ This is a **separate user-visible gate**, beyond Gate B's SQLite/HTTP shadow com
 - [ ] BD5. Verify 401/403, invalid Job ID, cross-repository identity, missing Review and large-response framing cases; no private data leaks or truncated responses. Capture browser network evidence and HTTP status codes, not screenshots alone.
 - [ ] BD6. Repeat after shadow restart; verify no lingering process/port/worker/broker sessions. Attach one independent Dashboard read-only PASS/FAIL report before permitting Gate C.
 
+### BD — Neo Mobile Tasks / Activities actual endpoint comparison, 2026-11-21
+
+- **Endpoint routing PASS**: Neo Mobile Swift uses authenticated \`/relay/api/mobile/jobs\`, \`/relay/api/mobile/job-tasks?id=...&repo=...\`, and \`/relay/api/mobile/job-activity?id=...&repo=...\`. Rust implements these exact routes; the HTTP and UI are distinct gates.
+- **Historical EventBus read PASS**: Rust \`/api/mobile/job-activity\` returned **HTTP 200 and 23 allowed Events for Job 679**, **11 for Job 627**, **32 for Job 629**. Job/repository scope matched. Raw \`/api/events\` history is nonempty for these Node-era Jobs.
+- **New Rust Job event publication FAIL (pre-fix)**: Rust Job **681** has real SQLite/Graph state, but its Mobile Activity returned **HTTP 200 with \`events:[]\`**; independent EventBus history likewise had **0 events**. This is not a global mobile parser or Dashboard route failure. Rust \`WorkspaceControlBackend::publish\` emitted only in-process SSE, not NATS. Do not fabricate historical Worker execution events.
+- **Rust-only correction under verification**: bind a real NATS publisher to the configured loopback transport and forward only **post-Graph-CAS versioned lifecycle events**, keeping ephemeral \`relay.wake\` out of the EventBus. Isolated real NATS test \`live_committed_graph_event_reaches_actual_nats_activity_transport\` **PASS**. Live Mobile readback still pending.
+- Keep BD2/BD3 and the independent mobile-device display gate open until a **new Rust-created Job** has real correlated \`job.*\` and \`task.*\` Events that Neo Mobile renders. No Neo Mobile or stable Node code changes are needed for this producer defect.
+
 ## Gate C — real WebHelm Browser Worker + Events Bus (**DEFERRED by user; resume after D**)
 
 **Priority decision (2026-11-21):** This gate is deliberately DEFERRED, not a prerequisite to executing D. Do not repair WebHelm Thread ID/New Thread actions or retry uncertain browser submissions during D. It remains required for later WebHelm-specific acceptance, but must not block native Coordinator, Script Worker, Git/Review and non-browser Model Worker tests. DEFERRED does not mean PASS.
@@ -77,6 +85,8 @@ For every case save real CLI/API input, Graph transition sequence, authoritative
 - [ ] D6. Review modes: no review; all approvals; request changes with revision shortcut; request changes without shortcut. Confirm re-review, Final Review and proper child lineage.
 - [ ] D7. Test failure → bounded retry → success; exhausted failure; cancel running Script/Model Task; correct leases/session cleanup, no false success.
 - [ ] D8. Local Git is source of truth for Final Review/merge; Job completes without GitHub. Optional origin push only **after** verified completion; remote failures never reopen the Job.
+
+**Non-WebHelm D subtests (verified):** native Script process execution **4/4 PASS**; native daemon dependency-ordered A→B Script chain **1/1 PASS**; planned Script Job terminal state **1/1 PASS**; immutable local Git merged terminal **1/1 PASS**. Evidence: \`/tmp/rust2-D-script-worker.log\`, \`/tmp/rust2-D-dependency-e2e.log\`, \`/tmp/rust2-D-terminal-e2e.log\`, \`/tmp/rust2-D-git-merge-e2e.log\`. Full three-worker A→B→C and real Project Runner Calculator remain pending; these subsets do **not** authorize a D PASS.
 
 ## Gate D-ProjectRunner — real Project Runner calculator Job (**after native D core, before E**)
 

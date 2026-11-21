@@ -707,3 +707,65 @@ fn native_control_job_create_is_real_git_graph_sqlite_and_idempotent_after_resta
     drop(restarted);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn live_committed_graph_event_reaches_actual_nats_activity_transport() {
+    use agents_relay_rust2::events::{event_for,NatsEventBus};
+    use std::{net::TcpListener,process::{Command,Stdio},sync::{Arc,mpsc},
+        thread,time::{Duration,Instant}};
+    if Command::new("nats-server").arg("-v").output().is_err(){
+        eprintln!("SKIP: optional nats-server binary unavailable");return;
+    }
+    let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+    let port=listener.local_addr().unwrap().port();
+    drop(listener);
+    let mut child=Command::new("nats-server").args(["-a","127.0.0.1",
+        "-p",&port.to_string()])
+        .stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
+    let result=(||{
+        let url=format!("nats://127.0.0.1:{port}/");
+        let consumer=NatsEventBus::new(Some(&url),None).unwrap();
+        let start=Instant::now();
+        while consumer.ping().is_err(){
+            assert!(start.elapsed()<Duration::from_secs(5));
+            thread::sleep(Duration::from_millis(30));
+        }
+        let (sender,receiver)=mpsc::channel();
+        let subscription=consumer.subscribe("17",Arc::new(move|event|{
+            sender.send(event.clone()).map_err(|error|error.to_string())
+        })).unwrap();
+        thread::sleep(Duration::from_millis(70));
+        let (root,config)=fixture();
+        fs::create_dir_all(&config.workspace_root).unwrap();
+        let db=root.join("relay.sqlite");
+        let store=SQLiteRelayStore::open(&db,Some("17")).unwrap();
+        store.save_job(&job()).unwrap();store.close().unwrap();
+        let mut live=IsolatedSQLiteWriteHost::new_live(config);
+        live.set_loopback_model_nats(&url).unwrap();
+        let prior=live.load("17").unwrap();
+        let mut next=prior.clone();
+        next["state"]=json!("ACTIVE");
+        let committed=live.save_exact("17",&prior,&next).unwrap();
+        assert_eq!(committed["state"],"ACTIVE");
+        // This event describes only the committed Graph Job transition;
+        // never report a worker as started/completed without its own receipt.
+        let event=event_for("17","",None,"job.started",
+            "info","Persisted Job state became ACTIVE",Some("orchestrator"),
+            None,None);
+        live.publish_event(&event).unwrap();
+        let received=receiver.recv_timeout(Duration::from_secs(3))
+            .expect("persisted lifecycle event never reached real NATS");
+        assert_eq!(received["event_id"],event["event_id"]);
+        assert_eq!(received["job_id"],"17");
+        assert_eq!(received["type"],"job.started");
+        // Ephemeral Dashboard wake is not a real persisted lifecycle event
+        // and must never pollute Mobile Activities.
+        live.publish_event(&json!({"type":"relay.wake","job_id":"17"})).unwrap();
+        assert!(receiver.recv_timeout(Duration::from_millis(250)).is_err());
+        subscription.unsubscribe();
+        drop(live);drop(consumer);
+        fs::remove_dir_all(root).unwrap();
+    })();
+    let _=child.kill();let _=child.wait();
+    result
+}

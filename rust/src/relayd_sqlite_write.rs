@@ -87,6 +87,9 @@ pub struct IsolatedSQLiteWriteHost {
     // NATS callback thread delivers only immutable JSON into a bounded
     // in-process queue. Graph/SQLite is always mutated on daemon thread.
     model_nats_subscription:Option<crate::events::NatsSubscription>,
+    // Graph-created lifecycle events MUST reach the same Events Bus that the
+    // Dashboard reads; subscribing for Model completions alone is not enough.
+    model_nats_publisher:Option<crate::events::NatsEventBus>,
     model_nats_receiver:Option<Receiver<Value>>,
     model_nats_sender:Option<mpsc::SyncSender<Value>>,
     model_nats_url:Option<String>,
@@ -106,7 +109,8 @@ impl IsolatedSQLiteWriteHost {
             escalation_notifier:None,event_history_api:None,
             model_event_ingress_enabled:false,model_webhelm_canary:None,
             model_event_cursor:HashMap::new(),
-            model_nats_subscription:None,model_nats_receiver:None,
+            model_nats_subscription:None,model_nats_publisher:None,
+            model_nats_receiver:None,
             model_nats_sender:None,model_nats_url:None,
             model_nats_token:None,
             model_nats_wake:std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -174,6 +178,7 @@ impl IsolatedSQLiteWriteHost {
             Ok(())
         }))?;
         self.model_nats_subscription=Some(subscription);
+        self.model_nats_publisher=Some(bus);
         self.model_nats_receiver=Some(receiver);
         self.model_nats_sender=Some(sender);
         self.model_nats_url=Some(raw.into());
@@ -760,9 +765,33 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
         Ok(())
     }
     fn publish(&mut self,event:&Value)->Result<(),String>{
-        // SSE is ephemeral observability. A delivery receipt is not a durable
-        // execution fact and never advances Task state.
-        self.emit(event.clone());Ok(())
+        // Reconciler broadcasts only AFTER its canonical SQLite CAS. The
+        // original Node daemon publishes the same eventFor envelope to NATS
+        // in addition to the in-process SSE. A Rust host that only sends SSE
+        // leaves new Jobs invisible to /api/mobile/job-activity even while
+        // historical Node events are visible.
+        //
+        // Do not forward an untrusted webhook/wake shape as an execution
+        // event. The broker's own NATS subject is validated by publish().
+        // A successful PUB followed by PONG proves broker acceptance but
+        // cannot create or alter Task state; that belongs to SQLite/Graph.
+        if self.live_store
+            &&event["version"]==1
+            &&event.get("event_id").and_then(Value::as_str)
+                .is_some_and(|value|!value.is_empty())
+            &&event.get("timestamp").and_then(Value::as_str)
+                .is_some_and(|value|!value.is_empty())
+            &&matches!(field(event,"type").split('.').next(),
+                Some("job"|"task"|"review"|"planner")){
+            let publisher=self.model_nats_publisher.as_ref()
+                .ok_or("Live Graph lifecycle Events Bus publisher is not bound")?;
+            publisher.publish(event)?;
+            publisher.ping().map_err(|error|format!(
+                "Live Graph event publication broker acknowledgement unavailable: {error}"))?;
+        }
+        // Keep Dashboard SSE as a distinct observational channel.
+        self.emit(event.clone());
+        Ok(())
     }
     fn manual_plan(&mut self,id:&str,guidance:Option<&str>,force:bool)
         ->Result<Value,String>{
