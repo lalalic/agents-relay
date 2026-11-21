@@ -148,6 +148,14 @@ pub struct NatsSubscription {
     worker: Option<std::thread::JoinHandle<()>>,
 }
 impl NatsSubscription {
+    /// A TCP subscription is not necessarily alive merely because its owner
+    /// still holds the handle. The reader exits on EOF / network errors;
+    /// daemon callers must reconnect and re-subscribe instead of silently
+    /// keeping a dead subscription forever.
+    pub fn is_alive(&self) -> bool {
+        self.active.load(Ordering::Acquire)
+            && self.worker.as_ref().is_some_and(|worker| !worker.is_finished())
+    }
     pub fn unsubscribe(mut self) {
         self.active.store(false, Ordering::SeqCst);
         if let Ok(mut stream) = self.socket.lock() {

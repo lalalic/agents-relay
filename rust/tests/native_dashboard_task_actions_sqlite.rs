@@ -946,3 +946,102 @@ fn opt_in_loopback_nats_push_commits_only_graph_authorized_model_worker_events()
     assert_eq!(restarted.poll_isolated_model_worker_events("15").unwrap(),0);
     assert_eq!(saved,f.job());
 }
+
+#[test]
+fn nats_disconnection_recovers_same_execution_and_never_duplicates_durable_completion(){
+    use agents_relay_rust2::{
+        events::event_for,execution_event_identity::execution_event_source,
+    };
+    use std::{io::{BufRead,BufReader,Write},net::TcpListener,
+        sync::{Arc,atomic::{AtomicBool,Ordering}},thread,time::{Duration,Instant}};
+    let fixture=Fixture::new();
+    let generation="nats-reconnect-generation-001";
+    let store=SQLiteRelayStore::open_without_claim_reset(
+        &relay_unified_store_path(&fixture.config.store_directory),Some("15")).unwrap();
+    store.mutate_job("15",|mut job|{
+        let task=&mut job["tasks"][0];
+        task["adapter"]=json!("chatgpt");
+        task["state"]=json!("QUEUED");
+        task["attempt"]=json!(1);
+        task["executionId"]=json!(generation);
+        task["leaseOwner"]=json!("isolated-reconnect-owner");
+        task["leaseExpiresAt"]=json!("2027-11-21T23:59:59.000Z");
+        Ok(job)
+    }).unwrap();
+    drop(store);
+    let source=json!({"id":execution_event_source("15","7",generation),
+        "agent":"fixture","component":"agents-relay"});
+    let started=event_for("15","7",None,"task.started","started",
+        "initial NATS subscription",None,None,Some(source.clone()));
+    let completed=event_for("15","7",None,"task.completed","completed",
+        "recovered NATS subscription",None,None,Some(source));
+    let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+    let nats_url=format!("nats://127.0.0.1:{}/",listener.local_addr().unwrap().port());
+    let allow_disconnect=Arc::new(AtomicBool::new(false));
+    let gate=Arc::clone(&allow_disconnect);
+    let server=thread::spawn(move||{
+        for round in 0..2{
+            let (mut socket,_)=listener.accept().unwrap();
+            socket.set_read_timeout(Some(Duration::from_secs(6))).unwrap();
+            socket.write_all(b"INFO {}\r\n").unwrap();
+            let mut reader=BufReader::new(socket.try_clone().unwrap());
+            let mut subscribed=false;
+            for _ in 0..8{
+                let mut line=String::new();
+                assert!(reader.read_line(&mut line).unwrap()>0);
+                if line.starts_with("SUB "){
+                    assert!(line.contains("relay.events.job.> 1"),"{line}");
+                    subscribed=true;break;
+                }
+            }
+            assert!(subscribed,"native EventBus failed to re-SUB after disconnect");
+            let events=if round==0{vec![&started]}else{vec![&started,&completed]};
+            for event in events{
+                let topic=format!("relay.events.job.15.{}",event["type"].as_str().unwrap());
+                let json=event.to_string();
+                write!(socket,"MSG {topic} 1 {}\r\n{json}\r\n",json.len()).unwrap();
+            }
+            socket.flush().unwrap();
+            if round==0{
+                let deadline=Instant::now()+Duration::from_secs(7);
+                while !gate.load(Ordering::Acquire){
+                    assert!(Instant::now()<deadline,"initial event never reached SQLite");
+                    thread::sleep(Duration::from_millis(10));
+                }
+                // Both socket clones must close; reader detects EOF.
+                drop(reader);
+            }else{
+                thread::sleep(Duration::from_millis(180));
+            }
+        }
+    });
+    let mut host=IsolatedSQLiteWriteHost::new(fixture.config.clone());
+    host.set_loopback_model_nats(&nats_url).unwrap();
+    host.enable_isolated_model_event_ingress().unwrap();
+    let deadline=Instant::now()+Duration::from_secs(12);
+    let mut applied=0;
+    loop{
+        applied+=host.poll_isolated_model_worker_events("15").unwrap();
+        let current=fixture.job();
+        if current["tasks"][0]["state"]=="RUNNING"{
+            allow_disconnect.store(true,Ordering::Release);
+        }
+        if current["tasks"][0]["state"]=="SUCCEEDED"{break;}
+        assert!(Instant::now()<deadline,
+            "Native NATS never reconnected to deliver leased Worker terminal: {current}");
+        thread::sleep(Duration::from_millis(25));
+    }
+    server.join().unwrap();
+    let final_job=fixture.job();
+    assert_eq!(applied,2,"resubmitted duplicate started event must be idempotent");
+    assert_eq!(final_job["tasks"][0]["state"],"SUCCEEDED");
+    assert_eq!(final_job["tasks"][0]["attempt"],1);
+    let store=SQLiteRelayStore::open_without_claim_reset(
+        &relay_unified_store_path(&fixture.config.store_directory),Some("15")).unwrap();
+    let accepted:i64=store.db.query_row(
+        "SELECT COUNT(*) FROM workflow_event_outbox WHERE event_key LIKE 'model-event/15/7/%'",
+        [],|row|row.get(0)).unwrap();
+    assert_eq!(accepted,2,"disconnect/reconnect never duplicates durable receipts");
+    drop(store);drop(host);
+    assert_eq!(final_job,fixture.job(),"post-disconnect Job must remain immutable");
+}

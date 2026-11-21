@@ -83,6 +83,9 @@ pub struct IsolatedSQLiteWriteHost {
     // in-process queue. Graph/SQLite is always mutated on daemon thread.
     model_nats_subscription:Option<crate::events::NatsSubscription>,
     model_nats_receiver:Option<Receiver<Value>>,
+    model_nats_sender:Option<mpsc::SyncSender<Value>>,
+    model_nats_url:Option<String>,
+    model_nats_last_retry:Option<std::time::Instant>,
     model_nats_pending:HashMap<String,Vec<Value>>,
 }
 impl IsolatedSQLiteWriteHost {
@@ -93,7 +96,8 @@ impl IsolatedSQLiteWriteHost {
             escalation_notifier:None,event_history_api:None,
             model_event_ingress_enabled:false,model_event_cursor:HashMap::new(),
             model_nats_subscription:None,model_nats_receiver:None,
-            model_nats_pending:HashMap::new()}
+            model_nats_sender:None,model_nats_url:None,
+            model_nats_last_retry:None,model_nats_pending:HashMap::new()}
     }
     /// Bind the REAL Events Bus read-only HTTP history API only when the
     /// caller explicitly supplies a loopback endpoint. This isolated daemon
@@ -128,12 +132,41 @@ impl IsolatedSQLiteWriteHost {
             return Err("Isolated model NATS requires explicit nats://127.0.0.1:PORT/ without credentials".into());
         }
         let bus=crate::events::NatsEventBus::new(Some(raw),None)?;
-        let (sender,receiver)=mpsc::channel();
+        // The NATS reader must not allocate unbounded memory when a
+        // Graph/SQLite writer is blocked; JetStream/HTTP history remains
+        // responsible for replay if the fixed-capacity intake is full.
+        let (sender,receiver)=mpsc::sync_channel(1024);
+        let callback_sender=sender.clone();
         let subscription=bus.subscribe_all(std::sync::Arc::new(move |event|{
-            sender.send(event.clone()).map_err(|e|e.to_string())
+            callback_sender.try_send(event.clone()).map_err(|e|e.to_string())
         }))?;
         self.model_nats_subscription=Some(subscription);
         self.model_nats_receiver=Some(receiver);
+        self.model_nats_sender=Some(sender);
+        self.model_nats_url=Some(raw.into());
+        self.model_nats_last_retry=None;
+        Ok(())
+    }
+    fn reconnect_isolated_model_nats_if_needed(&mut self)->Result<(),String>{
+        let Some(url)=self.model_nats_url.as_ref() else{return Ok(());};
+        if self.model_nats_subscription.as_ref().is_some_and(
+            crate::events::NatsSubscription::is_alive){return Ok(());}
+        // One daemon scan may visit hundreds of Jobs. Throttle reconnection
+        // per host, not per Job, and never spin on a disconnected broker.
+        if self.model_nats_last_retry.is_some_and(|at|
+            at.elapsed()<std::time::Duration::from_secs(1)){
+            return Ok(());
+        }
+        self.model_nats_last_retry=Some(std::time::Instant::now());
+        let sender=self.model_nats_sender.as_ref()
+            .ok_or("NATS subscription is missing its intake sender")?.clone();
+        let bus=crate::events::NatsEventBus::new(Some(url),None)?;
+        let next=bus.subscribe_all(std::sync::Arc::new(move|event|{
+            sender.try_send(event.clone()).map_err(|error|error.to_string())
+        }))?;
+        // Replace only after successful SUB write. Keep the same receiver
+        // and all already-buffered events even if broker reconnects.
+        self.model_nats_subscription=Some(next);
         Ok(())
     }
     /// Explicit fixture transport only. No environment-derived or public
@@ -196,6 +229,11 @@ impl IsolatedSQLiteWriteHost {
     }
     pub fn poll_isolated_model_worker_events(&mut self,id:&str)->Result<usize,String>{
         if !self.model_event_ingress_enabled{return Ok(0);}
+        // Recover a dead NATS subscription independently of Pool admission.
+        // HTTP history, if configured, remains a separate durable fallback.
+        if let Err(error)=self.reconnect_isolated_model_nats_if_needed(){
+            eprintln!("warning: Isolated model NATS resubscribe: {error}");
+        }
         // Drain a bounded number of NATS callback rows before inspecting
         // this Job. Multi-Job events are cached for their OWN daemon turn,
         // never applied with the wrong Job-scoped SQLite connection.
