@@ -2,7 +2,7 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "3eb0afe0968e045c3778f31cc3bc9f706318fd62",
-    "rustTree": "c93e1cd747678962af09ef79aa945f283c4398b0",
+    "rustTree": "24d3e0d7d4c345f4997f3a2cf44da542f7b68c33",
     "sourceCount": 11,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
@@ -829,6 +829,7 @@
         "rust/tests/head_to_head_local_managed_store_public.mjs",
         "rust/tests/head_to_head_planner_unblocks.mjs",
         "rust/tests/head_to_head_projected_comments.mjs",
+        "rust/tests/head_to_head_relay_store_agent_registry.mjs",
         "rust/tests/head_to_head_store_facade_closure.mjs"
       ],
       "otherRustModuleReferences": [

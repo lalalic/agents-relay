@@ -1949,7 +1949,9 @@
         "rust/tests/head_to_head_local_blocker_port.mjs",
         "rust/tests/head_to_head_planner_unblocks.mjs",
         "rust/tests/head_to_head_projected_comments.mjs",
-        "rust/tests/head_to_head_store_facade_closure.mjs"
+        "rust/tests/head_to_head_store_facade_closure.mjs",
+        "rust/tests/head_to_head_relay_store_agent_registry.mjs",
+        "rust/tests/native_relay_store_agent_registry.rs"
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/cli_service_public.rs",
@@ -1992,10 +1994,12 @@
         "discoverLocalRelayStoreSnapshots",
         "LocalRelayStoreSnapshot"
       ],
-      "certificationEvidence": [],
+      "certificationEvidence": [
+        "2026-11-20: Remains HOLD. Native Rust fixed observed-empty Agent registry (saveAgents zero-row), duplicate Agent ID atomic batch rollback (plain INSERT; no UPSERT), incomplete PR Head as null. New 11 original Node/Rust SQLite scenarios, 89 direct operations across scoped/legacy; two native real disk/restart tests cover empty registry, duplicate rollback, event receipt dedupe, UNKNOWN/stale PR facts and incomplete HEAD. Existing facade 24 scenarios/528 public operations and native write-host 16/16 pass. Other outbox/callback/whole constructor semantics and source shape reviews remain open."
+      ],
       "openGates": [
-        "仍有 17 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+        "Projection/outbox, workflow callback and complete 46-export SQLiteRelayStore facade negative/restart parity not yet certified",
+        "Verify remaining 17 type/shape/constructor reexport bindings and production daemon Store lifecycle before PASS"
       ],
       "legacyLedgerNote": "Phase1 serial native Store/SQLite authoritative facade over existing transaction/outbox primitives; UNCOMPILED UNTESTED, API parity Phase2."
     },

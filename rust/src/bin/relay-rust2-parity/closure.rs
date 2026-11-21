@@ -6,6 +6,43 @@ use serde_json::{json,Value};
 pub(super) fn invoke(request:&Value)->Result<Option<String>,String>{
     let op=request["op"].as_str().unwrap_or("");
     let result:Result<String,String>=match op{
+        // Direct original Node SQLiteRelayStore registry semantics,
+        // including null (never observed) vs [] (observed empty), and atomic
+        // replacement. Test-only isolated in-memory SQLite.
+        "relayStoreAgentRegistryParity"=>{
+            use agents_relay_rust2::relay_store::SQLiteRelayStore;
+            let scope=request["scope"].as_str();
+            let db=SQLiteRelayStore::open(std::path::Path::new(":memory:"),scope)?;
+            if let Some(seed)=request.get("seedJob").filter(|value|value.is_object()){
+                db.save_job(seed)?;
+            }
+            let mut output=Vec::new();
+            for action in request["actions"].as_array().ok_or("actions required")?{
+                let result:Result<Value,String>=match action["method"]
+                    .as_str().unwrap_or(""){
+                    "load"=>db.load_agents().map(|items|json!(items)),
+                    "save"=>{
+                        let agents=action["agents"].as_array().ok_or("agents array required")?;
+                        db.save_agents(agents).map(|_|Value::Null)
+                    },
+                    "upsert"=>db.upsert_agent(&action["agent"])
+                        .map(|_|Value::Null),
+                    "markEvent"=>db.mark_event_processed(
+                        action["eventId"].as_str().ok_or("eventId missing")?,
+                        action["stream"].as_str(),action["sequence"].as_i64())
+                        .map(|b|json!(b)),
+                    "loadFacts"=>db.load_pull_request_facts().map(|row|json!(row)),
+                    "saveFacts"=>db.save_pull_request_facts(&action["facts"])
+                        .map(|_|Value::Null),
+                    _=>Err("Unknown direct SQLite Store operation".into()),
+                };
+                output.push(match result{
+                    Ok(value)=>json!({"ok":true,"value":value}),
+                    Err(error)=>json!({"ok":false,"error":error})
+                });
+            }
+            Ok(json!(output).to_string())
+        }
         // Public PlannerRuntime cross-Job unblock acknowledgments. Every
         // registration is injected, and SQLite mutateJob owns acknowledgment.
         "plannerUnblocksParity"=>{

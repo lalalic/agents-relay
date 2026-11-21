@@ -408,6 +408,27 @@ impl SQLiteRelayStore {
         raws.into_iter().map(|raw|serde_json::from_str(&raw).map_err(sql))
             .collect::<Result<Vec<_>,_>>().map(Some)
     }
+    /// A zero-row Agent registry is still a confirmed observation.
+    /// Node saveAgents([]) writes agent_registry_observed_at even after
+    /// deleting the last row. Without this flag, empty and never-fetched
+    /// registries are conflated and Planner may mis-detect provider health.
+    fn mark_agent_registry_observed_in_transaction(&self,now:&str)
+        ->Result<(),String>{
+        if let Some(scope)=self.scope_job_id.as_deref(){
+            self.db.execute(
+                "INSERT INTO relay_meta(scope_job_id,key,value)
+                 VALUES(?,'agent_registry_observed_at',?)
+                 ON CONFLICT(scope_job_id,key) DO UPDATE SET value=excluded.value",
+                params![scope,now]).map_err(sql)?;
+        }else{
+            self.db.execute(
+                "INSERT INTO relay_meta(key,value)
+                 VALUES('agent_registry_observed_at',?)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                params![now]).map_err(sql)?;
+        }
+        Ok(())
+    }
     fn upsert_agent_in_transaction(&self,agent:&Value,now:&str)
         ->Result<(),String>{
         let id=field(agent,"id");
@@ -453,7 +474,25 @@ impl SQLiteRelayStore {
                 self.db.execute("DELETE FROM agent_snapshot",[]).map_err(sql)?;
             }
             let now=iso8601_now();
-            for agent in agents{self.upsert_agent_in_transaction(agent,&now)?;}
+            // Node saveAgents uses a plain INSERT for each replacement row,
+            // NOT upsertAgent. Duplicate IDs in a *single* registry snapshot
+            // must abort the entire transaction, preserving old observations.
+            for agent in agents{
+                if let Some(scope)=self.scope_job_id.as_deref(){
+                    self.db.execute(
+                        "INSERT INTO agent_snapshot(
+                         scope_job_id,agent_id,json,updated_at) VALUES(?,?,?,?)",
+                        params![scope,field(agent,"id"),agent.to_string(),now])
+                        .map_err(sql)?;
+                }else{
+                    self.db.execute(
+                        "INSERT INTO agent_snapshot(agent_id,json,updated_at)
+                         VALUES(?,?,?)",
+                        params![field(agent,"id"),agent.to_string(),now])
+                        .map_err(sql)?;
+                }
+            }
+            self.mark_agent_registry_observed_in_transaction(&now)?;
             Ok(())
         })();
         self.db.execute_batch(if result.is_ok(){"COMMIT"}else{"ROLLBACK"})
@@ -577,10 +616,19 @@ impl SQLiteRelayStore {
         };
         let mut stmt=self.db.prepare(query_sql).map_err(sql)?;
         let row=|row:&rusqlite::Row<'_>|{
+            // Node only exposes a confirmed HEAD if BOTH ref and SHA
+            // are truthy. Empty or partial rows mean absence of evidence,
+            // never a synthetic object containing null fields.
+            let reference=row.get::<_,Option<String>>(1)?;
+            let sha=row.get::<_,Option<String>>(2)?;
+            let head=match (reference.as_deref(),sha.as_deref()){
+                (Some(reference),Some(sha)) if !reference.is_empty()&&!sha.is_empty()
+                    =>json!({"ref":reference,"sha":sha}),
+                _=>Value::Null,
+            };
             Ok(json!({
                 "state":row.get::<_,String>(0)?,
-                "head":{"ref":row.get::<_,Option<String>>(1)?,
-                    "sha":row.get::<_,Option<String>>(2)?},
+                "head":head,
                 "observedAt":row.get::<_,String>(3)?
             }))
         };
