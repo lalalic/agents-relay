@@ -4,6 +4,8 @@
 use agents_relay_rust2::{
     cli::{run_cli,CliRuntimePort,agent_control_request},
     cli_artifact::{validate_artifact,result_json},
+    cli_review::run_review_command,
+    outcome_review::run_outcome_review,
     cli_core_support::{arg,has_arg,text_option},
     cli_coordinator::validate_coordinator_args,
     cli_context::run_context_command,
@@ -19,7 +21,7 @@ use agents_relay_rust2::{
     managed_worker_input::managed_worker_input_resolved,
     planner_adapters::build_planner_execution_prompt,
     cli_support::{relay_control_command,relay_control_job,relay_cli_runtime_summary,
-        relay_job_events},
+        priority as cli_priority,relay_job_events},
 };
 use serde_json::{json,Value};
 use std::{
@@ -68,6 +70,70 @@ struct DaemonClient;
 impl CliRuntimePort for DaemonClient {
     fn execute(&mut self,group:&str,action:&str,args:&[String])->Result<Value,String>{
         match (group,action){
+            ("init","")=>{
+                if !arg(args,"--file","").is_empty(){
+                    return Err("Legacy --file Job initialization is not supported; use the canonical local SQLite daemon".into());
+                }
+                let repo=arg(args,"--repo","");
+                if repo.is_empty() || repo=="." || repo==".."
+                    || !repo.bytes().all(|c|c.is_ascii_alphanumeric()
+                        || matches!(c,b'_'|b'.'|b'-')){
+                    return Err("--repo must be a local Git root basename, not a path or remote owner/repo".into());
+                }
+                let project=arg(args,"--project-root","");
+                let project=if project.is_empty(){
+                    std::env::current_dir().map_err(|e|e.to_string())?
+                }else{std::path::PathBuf::from(project)};
+                let mut options=json!({
+                    "title":arg(args,"--title","Agents Relay job"),
+                    "projectRoot":project,
+                    "priority":cli_priority(args,"P2")?,
+                    "reviewEnabled":!args.iter().any(|a|a=="--no-review"),
+                    "continuation":Value::Null,
+                });
+                let continue_kind=arg(args,"--continue-kind","");
+                let continue_target=arg(args,"--continue-target","");
+                if !continue_kind.is_empty()&&!continue_target.is_empty(){
+                    let mut continuation=json!({"kind":continue_kind,
+                        "target":continue_target});
+                    let value=arg(args,"--continue-input","");
+                    if !value.is_empty(){continuation["input"]=json!(value);}
+                    options["continuation"]=continuation;
+                }
+                for (flag,key) in [("--id","id"),("--objective","objective")]{
+                    let value=arg(args,flag,"");
+                    if !value.is_empty(){options[key]=json!(value);}
+                }
+                relay_control_command(args,&json!({"command":"job.create",
+                    "repository":repo,"options":options}))
+            },
+            ("reconcile","")=>{
+                if !arg(args,"--file","").is_empty(){
+                    return Err("Legacy --file reconcile is unavailable in native managed Relay".into());
+                }
+                let id=arg(args,"--id","");
+                if id.is_empty(){return Err("reconcile requires --repo and --id".into());}
+                relay_control_command(args,&json!({"command":"job.reconcile","jobId":id}))
+            },
+            ("review","job"|"run"|"interactive")=>{
+                run_review_command(action,args,
+                    |path|{
+                        // Explicit interactive review.preview request only.
+                        // Private 0600 JSON file is constructed by the
+                        // original verified review CLI helper.
+                        let output=std::process::Command::new("neo")
+                            .args(["mcp","call","review.preview","--args-file"])
+                            .arg(path).output().map_err(|e|e.to_string())?;
+                        if !output.status.success(){
+                            return Err(format!("Neo review.preview failed: {}",
+                                String::from_utf8_lossy(&output.stderr)));
+                        }
+                        String::from_utf8(output.stdout).map_err(|e|e.to_string())
+                    },
+                    |flags,body|relay_control_command(flags,body),
+                    |_flags|Err("Native review run requires an explicitly configured reviewer runner".into()),
+                )
+            },
             ("agent-register"|"agent-discover","")=>{
                 relay_control_command(args,&agent_control_request(group,args)?)
             },
@@ -282,6 +348,31 @@ fn main(){
             std::process::exit(1);
         }
         return;
+    }
+    if arguments.get(0).is_some_and(|arg|arg=="review")
+        && arguments.get(1).is_some_and(|arg|arg=="run"){
+        // Node runOutcomeReview publishes its verdict and has distinct
+        // completed/changes-needed/blocked POSIX exit statuses. Preserve
+        // that contract instead of serializing a generic {"ok":true}
+        // around the already-published review output. This owned runner
+        // executes ONLY on an explicitly requested review run, never while
+        // starting a daemon or processing a Worker receipt.
+        let flags=&arguments[2..];
+        let cwd=match std::env::current_dir(){
+            Ok(value)=>value,
+            Err(error)=>{eprintln!("{error}");std::process::exit(1);}
+        };
+        let workspace=arg(flags,"--workspace-root","");
+        let workspace=if workspace.is_empty(){cwd.clone()}
+            else{std::path::PathBuf::from(workspace)};
+        let relay_root=std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent().unwrap_or(&cwd);
+        let model=std::env::var("AGENTS_RELAY_REVIEW_MODEL_BIN")
+            .unwrap_or_else(|_|"codex".into());
+        match run_outcome_review(flags,&cwd,&workspace,relay_root,&model){
+            Ok(exit)=>std::process::exit(exit),
+            Err(error)=>{eprintln!("{error}");std::process::exit(1);}
+        }
     }
     if arguments.first().is_some_and(|arg|arg=="--version"){
         println!("agents-relay-rust {} (native preview)",env!("CARGO_PKG_VERSION"));

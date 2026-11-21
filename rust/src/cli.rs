@@ -1,3 +1,4 @@
+// Node provenance: src/cli.ts public runtime factories and native CLI route dispatch.
 pub use crate::cli_runtime_public::{runtime,RuntimePaths,RuntimeReconciler};
 pub use crate::cli_service_public::{create_service,start_service,Service};
 // Head-to-head Phase1 port: src/cli.ts

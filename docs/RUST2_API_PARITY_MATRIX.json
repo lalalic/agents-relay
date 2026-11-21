@@ -2,135 +2,21 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "22fa4e5259049ed6c31acef6d0a967a5a4700c3d",
-    "rustTree": "00a559d6ef67699722282a1f8e928ad0921a7c01",
-    "sourceCount": 3,
+    "rustTree": "faed3eb4acdce204351a438626a9ee425d05dbfc",
+    "sourceCount": 2,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 17,
-    "directNameMatches": 17,
+    "runtimeExportSymbols": 11,
+    "directNameMatches": 11,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 0,
-    "typeOrShapeReviewSymbols": 20,
+    "typeOrShapeReviewSymbols": 11,
     "filesWithUnmappedRuntime": 0,
     "filesWithoutDirectDiffImport": 1,
     "filesWithoutOtherRustReferences": 0
   },
   "pendingModules": [],
   "files": [
-    {
-      "source": "src/cli.ts",
-      "target": "rust/src/cli.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 6,
-      "directNameMatches": 6,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "dashboardJobSetState",
-        "dashboardTaskAction",
-        "dashboardTaskSetState",
-        "helpText",
-        "runtimeReviewer",
-        "SERVICE_DEFAULTS",
-        "eventBus",
-        "chatGptTabClosePolicy",
-        "ensureManagedGitHubJob"
-      ],
-      "directDiffImports": [
-        "rust/tests/head_to_head_cli_prompt_eval_public.mjs",
-        "rust/tests/head_to_head_cli_runtime_factory.mjs",
-        "rust/tests/head_to_head_cli_runtime_public.mjs",
-        "rust/tests/head_to_head_cli_service_public.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/agents-relay-rust.rs",
-        "rust/src/bin/relay-rust2-parity/cli_runtime_public.rs",
-        "rust/src/bin/relay-rust2-parity/cli_service_public.rs",
-        "rust/src/bin/relay-rust2-parity/cli_support_more.rs",
-        "rust/src/bin/relay-rust2-parity/closure.rs"
-      ],
-      "exports": [
-        {
-          "name": "dashboardJobSetState",
-          "kind": "reexport",
-          "static": "review"
-        },
-        {
-          "name": "dashboardTaskAction",
-          "kind": "reexport",
-          "static": "review"
-        },
-        {
-          "name": "dashboardTaskSetState",
-          "kind": "reexport",
-          "static": "review"
-        },
-        {
-          "name": "helpText",
-          "kind": "reexport",
-          "static": "review"
-        },
-        {
-          "name": "runtimeReviewer",
-          "kind": "reexport",
-          "static": "review"
-        },
-        {
-          "name": "SERVICE_DEFAULTS",
-          "kind": "reexport",
-          "static": "review"
-        },
-        {
-          "name": "eventBus",
-          "kind": "reexport",
-          "static": "review"
-        },
-        {
-          "name": "chatGptTabClosePolicy",
-          "kind": "reexport",
-          "static": "review"
-        },
-        {
-          "name": "ensureManagedGitHubJob",
-          "kind": "reexport",
-          "static": "review"
-        },
-        {
-          "name": "runtimePlanner",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "runtime",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "dashboardJobAction",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "Service",
-          "kind": "interface",
-          "static": "name-match"
-        },
-        {
-          "name": "createService",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "startService",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "isEntrypoint",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
     {
       "source": "src/reconciler-runtime.ts",
       "target": "rust/src/reconciler_runtime.rs",
