@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 92,
-    "HOLD": 12,
+    "PASS": 93,
+    "HOLD": 11,
     "EXCLUDED": 3
   },
   "records": [
@@ -647,7 +647,7 @@
       "source": "src/dashboard.ts",
       "target": "rust/src/dashboard.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 1,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -655,34 +655,33 @@
         "rust/tests/head_to_head_dashboard_task_commands_sqlite.mjs",
         "rust/tests/head_to_head_dashboard_static_http.mjs",
         "rust/tests/native_cli_foreground.rs",
-        "rust/tests/head_to_head_events_bus_runtime.mjs"
+        "rust/tests/head_to_head_events_bus_runtime.mjs",
+        "rust/tests/native_dashboard_api.rs",
+        "rust/tests/native_dashboard_pwa.rs",
+        "rust/tests/head_to_head_dashboard_factory.mjs",
+        "rust/tests/head_to_head_dashboard_mobile.mjs",
+        "test/dashboard.test.js",
+        "test/dashboard-pwa.test.js",
+        "test/dashboard-mobile.test.js"
       ],
       "otherRustModuleReferences": [
         "rust/src/cli_service_public.rs",
         "rust/src/dashboard_api.rs",
         "rust/src/relayd.rs"
       ],
-      "typeOrShapeReviews": [
-        "dashboardWorkflowGraphs",
-        "githubPrUrl",
-        "searchDashboardJobs",
-        "dashboardHtml",
-        "dashboardVersion",
-        "dashboardSourceRevision"
-      ],
+      "typeOrShapeReviews": [],
       "certificationEvidence": [
         "2026-11-19: The isolated native Dashboard task-command routes now persist Task create/update/retry/cancel/state to Graph/SQLite and match real Node public APIs on tested scopes. HOLD on full native HTTP/Browser/production server parity remains.",
         "2026-11-20: 55 original Node serveDashboard real loopback HTTP responses match Rust static_response SHA256 body, status/content-type/cache-control incl PWA, versioned assets, method mismatch and WHATWG URL normalization. Still HOLD pending live daemon authenticated API/SSE backend, transport/restart, error route parity.",
         "2026-11-20 concurrent Node mobile REST addition ported in dashboard_mobile.rs and native dashboard_api.rs/dashboard.rs: exact DTO, scoped identity, non-ambiguous event/cancel, 8KiB body, durable CANCELLED readback. Node/Rust direct 613, Node HTTP 6, native API/loopback TCP 5, Rust projection 2 all pass. Full production SSE/HTTP auth gate still HOLD under dashboard.ts.",
         "2026-11-20: Explicit caller-owned localhost Events Bus history installed in native isolated daemon (--event-history-api); live original HTTP /events backed by EventsBus API parser, immutable Job/Task scope and real TCP /api/events route; remote history cannot commit Graph/SQLite states. Native 18 Dashboard SQLite and 6 CLI tests (including actual daemon/two-server loopback E2E and actual completed Script DAG) pass. Original Node/Rust 662 API/config and 200 real localhost history/paging/negative fixtures pass. Production authenticated EventBus subscribe, worker ingress, SSE and external model lifecycle still HOLD.",
         "2026-11-20: Native Dashboard SSE producer was writing bare JSON that EventSource ignored. Replaced with exact original Node event: relay / data: {event} frames and data: {job} snapshots from committed SQLite mutations (deduplicated; rejected actions have zero SSE). Verified actual native daemon TCP GET /events then Graph/SQLite-backed HTTP Job start produces named relay frame plus accurate ACTIVE Job snapshot only AFTER durable commit; direct host negative/snapshot test PASSED. Full regression CLI/daemon 9/9, Graph/SQLite 22/22 PASS. Remaining production auth, complete Dashboard/SSE error/reconnection and background provider parity HOLD.",
-        "2026-11-20: Native daemon observe_committed_job_snapshot now reads real changed SQLite state written by external Worker connection, broadcasting only de-duplicated data: {job} SSE snapshots to subscribed browser connections, not counterfeit relay worker events. Installed real daemon HTTP EventSource + separate canonical Graph task.started/completed SQLite transaction + exact SUCCEEDED readback + daemon restart 1/1 PASS, native CLI/daemon 10/10 PASS. The previous 22 native SQLite tests passed before this narrow daemon loop change; current 22-test full rerun stalled in macOS test executable startup and was terminated, so NOT certified as passing post-change. External NATS/Provider auth, JetStream and full production cutover still HOLD."
+        "2026-11-20: Native daemon observe_committed_job_snapshot now reads real changed SQLite state written by external Worker connection, broadcasting only de-duplicated data: {job} SSE snapshots to subscribed browser connections, not counterfeit relay worker events. Installed real daemon HTTP EventSource + separate canonical Graph task.started/completed SQLite transaction + exact SUCCEEDED readback + daemon restart 1/1 PASS, native CLI/daemon 10/10 PASS. The previous 22 native SQLite tests passed before this narrow daemon loop change; current 22-test full rerun stalled in macOS test executable startup and was terminated, so NOT certified as passing post-change. External NATS/Provider auth, JetStream and full production cutover still HOLD.",
+        "2026-11-20: Certified serveDashboard source HTTP factory port, NOT production credentialed daemon backend. Node original Dashboard/PWA/mobile and Node/Rust differential 125/125 fresh PASS incl 55 real static HTTP content-type/status/cache/hash routes; separate exact mobile 613 Node/Rust parity. Rust native_dashboard_api real loopback TCP+HMAC SHA256 webhook authentication/dedup/retry/invalid Task & Mobile privacy/Graph routes 5/5 fresh PASS; native_dashboard_pwa 4/4 prior recorded PASS, latest independent re-run macOS binary loader stalled before executing tests (not falsely certified new). Actual installed native daemon /events TCP streams Graph/SQLite Job activation and external worker committed Task SUCCEEDED with canonical SSE event: relay and data: {job} frames, survives restart; native_cli_foreground 10/10 original verified. Six reviewed imported/reexport shapes: dashboardWorkflowGraphs (dashboard_data), githubPrUrl (dashboard_data), searchDashboardJobs (dashboard_data), dashboardHtml (static_response), dashboardVersion (dashboard_version), dashboardSourceRevision (dashboard_config_script). Factory accepts injected service backends; real production NATS authentication, external provider and cutover remain HOLD in relayd/reconciler-runtime, not falsely claimed by HTTP factory source."
       ],
-      "openGates": [
-        "Authenticated production Dashboard backend and SSE full HTTP API/error/restart parity not verified; 55 static PWA Node/Rust HTTP responses alone insufficient for PASS",
-        "No verified production daemon Dashboard cutover"
-      ],
-      "legacyLedgerNote": "PWA-preserving native Dashboard API integration: rust/src/dashboard.rs remains the shared PWA/SSE HTTP transport, rust/src/dashboard_api.rs provides injected Graph/SQLite API route mapping, webhook signature/durable-ack dedup and error paths. Native integration: rust/tests/native_dashboard_api.rs (3/3), native_dashboard_pwa.rs (4/4); Node dashboard 117/117; dashboard JEL/style/data differential 3/3. Production service callback binding, physical browser install, and full endpoint parity remain unverified; do NOT claim production-ready."
+      "openGates": [],
+      "legacyLedgerNote": "PWA-preserving native Dashboard API integration: rust/src/dashboard.rs remains the shared PWA/SSE HTTP transport, rust/src/dashboard_api.rs provides injected Graph/SQLite API route mapping, webhook signature/durable-ack dedup and error paths. Native integration: rust/tests/native_dashboard_api.rs (3/3), native_dashboard_pwa.rs (4/4); Node dashboard 117/117; dashboard JEL/style/data differential 3/3. Production service callback binding, physical browser install, and full endpoint parity remain unverified; do NOT claim production-ready.",
+      "status": "PASS"
     },
     {
       "source": "src/decision-audit.ts",

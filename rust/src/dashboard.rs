@@ -1,3 +1,4 @@
+// Node provenance: src/dashboard.ts. Native serveDashboard HTTP/PWA/SSE transport.
 //! Native Dashboard transport adapter. Shared PWA assets are compiled as Rust resources.
 //! Job/Task persistence and Event Bus authority stay with the runtime-supplied backend.
 

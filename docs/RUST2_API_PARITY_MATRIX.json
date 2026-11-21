@@ -2,15 +2,15 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "22fa4e5259049ed6c31acef6d0a967a5a4700c3d",
-    "rustTree": "96350880480319c46cc2f9cd5e33770c43a5bedb",
-    "sourceCount": 4,
+    "rustTree": "00a559d6ef67699722282a1f8e928ad0921a7c01",
+    "sourceCount": 3,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 18,
-    "directNameMatches": 18,
+    "runtimeExportSymbols": 17,
+    "directNameMatches": 17,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 0,
-    "typeOrShapeReviewSymbols": 26,
+    "typeOrShapeReviewSymbols": 20,
     "filesWithUnmappedRuntime": 0,
     "filesWithoutDirectDiffImport": 1,
     "filesWithoutOtherRustReferences": 0
@@ -126,68 +126,6 @@
         },
         {
           "name": "isEntrypoint",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/dashboard.ts",
-      "target": "rust/src/dashboard.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 1,
-      "directNameMatches": 1,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "dashboardWorkflowGraphs",
-        "githubPrUrl",
-        "searchDashboardJobs",
-        "dashboardHtml",
-        "dashboardVersion",
-        "dashboardSourceRevision"
-      ],
-      "directDiffImports": [
-        "rust/tests/head_to_head_dashboard_static_http.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity/closure.rs",
-        "rust/src/cli_service_public.rs",
-        "rust/src/dashboard_api.rs",
-        "rust/src/relayd.rs"
-      ],
-      "exports": [
-        {
-          "name": "dashboardWorkflowGraphs",
-          "kind": "reexport",
-          "static": "review"
-        },
-        {
-          "name": "githubPrUrl",
-          "kind": "reexport",
-          "static": "review"
-        },
-        {
-          "name": "searchDashboardJobs",
-          "kind": "reexport",
-          "static": "review"
-        },
-        {
-          "name": "dashboardHtml",
-          "kind": "reexport",
-          "static": "review"
-        },
-        {
-          "name": "dashboardVersion",
-          "kind": "reexport",
-          "static": "review"
-        },
-        {
-          "name": "dashboardSourceRevision",
-          "kind": "reexport",
-          "static": "review"
-        },
-        {
-          "name": "serveDashboard",
           "kind": "function",
           "static": "name-match"
         }

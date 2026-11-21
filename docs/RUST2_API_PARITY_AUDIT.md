@@ -14,29 +14,28 @@ A listed direct differential import only means a head-to-head test imports the c
 
 | Metric | Count |
 |---|---:|
-| sourceCount | 4 |
+| sourceCount | 3 |
 | pendingSourceModules | 0 |
 | pendingRuntimeExportSymbols | 0 |
-| runtimeExportSymbols | 18 |
-| directNameMatches | 18 |
+| runtimeExportSymbols | 17 |
+| directNameMatches | 17 |
 | unmappedRuntimeSymbols | 0 |
 | runtimeConstructorReviews | 0 |
-| typeOrShapeReviewSymbols | 26 |
+| typeOrShapeReviewSymbols | 20 |
 | filesWithUnmappedRuntime | 0 |
 | filesWithoutDirectDiffImport | 1 |
 | filesWithoutOtherRustReferences | 0 |
 
-Source tree: `22fa4e525904`; Rust source tree: `963508804803`. Rust module rows in scope: 4. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
+Source tree: `22fa4e525904`; Rust source tree: `00a559d6ef67`. Rust module rows in scope: 3. Full symbol details: [RUST2_API_PARITY_MATRIX.json](RUST2_API_PARITY_MATRIX.json).
 
 ## Pending source modules (not included in PORTING name-match counts)
 
 
-## Per-file candidate surface (all 4 PORTING files)
+## Per-file candidate surface (all 3 PORTING files)
 
 | Node source | Runtime exports | Named Rust candidates | Unmapped runtime names | Direct diff imports | Other Rust refs |
 |---|---:|---:|---:|---:|---:|
 | `src/cli.ts` | 6 | 6 | 0 | 4 | 5 |
-| `src/dashboard.ts` | 1 | 1 | 0 | 1 | 4 |
 | `src/reconciler-runtime.ts` | 10 | 10 | 0 | 2 | 5 |
 | `src/relayd.ts` | 1 | 1 | 0 | 0 | 6 |
 
