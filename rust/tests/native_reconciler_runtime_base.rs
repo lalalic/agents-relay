@@ -385,3 +385,36 @@ fn host_waiter_delivers_changes_requested_comments_after_durable_retry(){
  runtime.close().unwrap();drop(runtime);drop(host);
  std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn broker_subject_job_cannot_retarget_wake_into_different_graph_sqlite_job(){
+    use agents_relay_rust2::{
+        events::Wake,
+        reconciler_runtime_base::RuntimeBaseEventBus,
+    };
+    struct ForgedSubject;
+    impl RuntimeBaseEventBus for ForgedSubject {
+        fn subscribe_job(&self, _job_id:&str, wake:Wake)
+            ->Result<Box<dyn FnOnce()+Send>,String>{
+            // The NATS broker delivered a message on subject job.41 but the
+            // JSON payload claims to be a different Job with valid-looking
+            // ID. This must never route to the claimed Job's SQLite scope.
+            let mismatch=json!({"job_id":"untrusted-other-job",
+                "type":"job.wake","event_id":"forged-target-1"});
+            assert!(wake(&mismatch).unwrap_err().contains("subject/body Job mismatch"));
+            Ok(Box::new(||{}))
+        }
+    }
+    let (directory,host,baseline)=fixture();
+    let runtime=ReconcilerRuntimeBase::new(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
+        "real-reconciler-subject-owner",15000,
+        Arc::clone(&host) as Arc<dyn RuntimeBaseStore>);
+    let unsubscribe=runtime.watch(Some(&ForgedSubject),"41");
+    runtime.idle();
+    assert_eq!(host.wakes.load(Ordering::SeqCst),0);
+    assert_eq!(host.load_job("41").unwrap(),baseline);
+    unsubscribe();
+    runtime.close().unwrap();drop(runtime);drop(host);
+    std::fs::remove_dir_all(directory).unwrap();
+}

@@ -56,7 +56,28 @@ try:
  current=next(t for t in job_after['tasks'] if t['id']==str(task_id))
  print('TASK_AFTER_GRAPH_ACTION',current['state'])
  assert current['state']=='CANCELLED'
- print('CLI_AGENT_AND_WORKFLOW_REAL_E2E_PASS')
+ # "init" is an alias for the same authoritative Job Graph create. It
+ # deliberately does NOT resurrect legacy --file or a second local store.
+ initialized=cli(['init','--repo','fixture','--project-root',str(project),
+   '--title','Fixture init Job','--objective','Isolated review admission'])
+ second=initialized.get('id') or initialized.get('job')
+ assert second and second!=id
+ initialized_job=cli(['job','show','--repo','fixture','--id',second])
+ assert initialized_job['reviewEnabled'] is True
+ cli(['init','--repo','fixture','--file',str(project/'old-legacy.json')],ok=False)
+ reconciled=cli(['reconcile','--repo','fixture','--id',second])
+ assert reconciled['id']==second, 'Reconcile must return the bound SQLite Job'
+ cli(['reconcile','--repo','fixture'],ok=False)
+ requested=cli(['review','job','--repo','fixture','--id',second])
+ assert requested['status']=='requested' and requested['jobId']==second
+ again=cli(['job','show','--repo','fixture','--id',second])
+ assert again['id']==second and again['state']=='DRAFT'
+ unowned=cli(['review','interactive','fail','--id',second,'--task-id','missing',
+   '--execution-id','foreign','--reason','unowned'])
+ assert unowned['requeued'] is False, 'foreign reviewer cannot requeue a Task'
+ after=cli(['job','show','--repo','fixture','--id',second])
+ assert after['plans']==again['plans'] and after['tasks']==again['tasks']
+ print('CLI_AGENT_WORKFLOW_INIT_REVIEW_REAL_E2E_PASS')
 finally:
  p.terminate()
  try:p.wait(timeout=4)

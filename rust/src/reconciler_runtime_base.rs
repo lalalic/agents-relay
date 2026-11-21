@@ -171,8 +171,20 @@ impl ReconcilerRuntimeBase {
         ->Box<dyn FnOnce()+Send>{
         let Some(bus)=bus else{return Box::new(||{});};
         let coordinator=self.coordinator.clone();
+        let subscribed_job=job_id.to_owned();
         let subscription=bus.subscribe_job(job_id,Arc::new(move |event|{
-            let signal=json!({"jobId":event.get("job_id"),
+            // A broker subscription filter alone is not authentication.
+            // If a payload is placed on Job A's NATS subject with a
+            // purported Job B identity, never dispatch into Job B's
+            // Graph/SQLite store. Reject before enqueue, rather than
+            // letting the ReconcileCoordinator route the forged jobId.
+            if event.get("job_id").and_then(Value::as_str)
+                !=Some(subscribed_job.as_str()){
+                return Err(format!(
+                    "Reconciler EventBus subject/body Job mismatch: subscribed {subscribed_job}"
+                ));
+            }
+            let signal=json!({"jobId":subscribed_job,
                 "reason":format!("event.{}",event.get("type")
                     .and_then(Value::as_str).unwrap_or("undefined")),"event":event});
             drop(coordinator.accept_observed(signal));

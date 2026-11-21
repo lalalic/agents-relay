@@ -59,6 +59,15 @@ pub fn subject_prefix(value: &str) -> Result<&str, String> {
         Err(format!("Unsafe event subject prefix: {value}"))
     }
 }
+// NATS protocol subject levels must be nonempty plain tokens. In particular,
+// never put an untrusted event type with a newline into a raw PUB frame.
+fn event_kind_subject(value: &str) -> Result<&str, String> {
+    if !value.is_empty() && value.split('.').all(|part| subject_token(part).is_ok()) {
+        Ok(value)
+    } else {
+        Err("Unsafe event type for NATS subject".into())
+    }
+}
 // Node eventFor has nine positional arguments.
 // Preserve all Node eventFor arguments including optional data and source.
 #[allow(clippy::too_many_arguments)]
@@ -189,19 +198,57 @@ impl NatsEventBus {
         if url.scheme() != "nats" {
             return Err(format!("unsupported NATS URL scheme: {}", url.scheme()));
         }
+        // The native TCP transport has no TLS/SASL/NKey authenticator.
+        // Never silently ignore credentials embedded in the server URL.
+        if !url.username().is_empty() || url.password().is_some() {
+            return Err("Authenticated NATS transport is not bound; refusing plaintext credentials".into());
+        }
         let host = url.host_str().ok_or("NATS host is missing")?;
         let port = url.port().unwrap_or(4222);
         let addresses = (host, port).to_socket_addrs().map_err(|e| e.to_string())?;
         let mut last_error = None;
         for address in addresses {
             match TcpStream::connect_timeout(&address, Duration::from_secs(1)) {
-                Ok(stream) => {
+                Ok(mut stream) => {
                     stream
                         .set_read_timeout(Some(Duration::from_secs(1)))
                         .map_err(|e| e.to_string())?;
                     stream
                         .set_write_timeout(Some(Duration::from_secs(1)))
                         .map_err(|e| e.to_string())?;
+                    // A TCP connect is not a verified NATS session. Read
+                    // the broker INFO before emitting CONNECT/SUB/PUB. A
+                    // broker demanding authentication or TLS must fail closed
+                    // until the production transport has those capabilities.
+                    let mut info_line = Vec::new();
+                    // Read exactly one bounded INFO line. BufReader may read
+                    // ahead and discard the next NATS frame when dropped.
+                    // An untrusted broker also must not force unbounded
+                    // allocation by withholding CRLF.
+                    for _ in 0..8192 {
+                        let mut byte = [0u8; 1];
+                        stream.read_exact(&mut byte).map_err(|e| e.to_string())?;
+                        info_line.push(byte[0]);
+                        if info_line.ends_with(b"\r\n") { break; }
+                    }
+                    if !info_line.ends_with(b"\r\n") {
+                        return Err("NATS INFO handshake exceeds 8192 bytes".into());
+                    }
+                    let line = std::str::from_utf8(&info_line)
+                        .map_err(|_|"NATS INFO handshake is not UTF-8")?;
+                    let info = line.trim_end().strip_prefix("INFO ")
+                        .ok_or("NATS server did not present INFO handshake")?;
+                    let capabilities: Value = serde_json::from_str(info)
+                        .map_err(|_|"NATS INFO handshake is not valid JSON")?;
+                    if !capabilities.is_object() {
+                        return Err("NATS INFO handshake must be an object".into());
+                    }
+                    if capabilities["auth_required"] == true {
+                        return Err("NATS broker requires authentication not provided by native transport".into());
+                    }
+                    if capabilities["tls_required"] == true {
+                        return Err("NATS broker requires TLS not provided by native transport".into());
+                    }
                     let mut output = stream.try_clone().map_err(|e| e.to_string())?;
                     output
                         .write_all(b"CONNECT {\"verbose\":false,\"pedantic\":false}\r\n")
@@ -221,7 +268,15 @@ impl NatsEventBus {
         if client.is_none() {
             *client = Some(self.connect()?);
         }
-        f(client.as_mut().expect("connected"))
+        let result = f(client.as_mut().expect("connected"));
+        // NATS reconnections belong to the next independent operation.
+        // A failed PUB is delivery-uncertain and MUST NOT be replayed here.
+        // Dropping the broken TCP connection permits later operations to
+        // reconnect without treating a transport failure as an event ack.
+        if result.is_err() {
+            *client = None;
+        }
+        result
     }
     pub fn ping(&self) -> Result<(), String> {
         self.with_client(|stream| {
@@ -242,7 +297,7 @@ impl NatsEventBus {
     }
     pub fn publish(&self, event: &Value) -> Result<(), String> {
         let job = subject_token(event["job_id"].as_str().unwrap_or("undefined"))?;
-        let kind = event["type"].as_str().unwrap_or("undefined");
+        let kind = event_kind_subject(event["type"].as_str().unwrap_or("undefined"))?;
         let subject = format!("{}.{}.{}", self.prefix, job, kind);
         let json = crate::observability::json_wire(event);
         self.with_client(|stream| {
@@ -263,6 +318,7 @@ impl NatsEventBus {
         let active = Arc::new(AtomicBool::new(true));
         let active2 = Arc::clone(&active);
         let socket2 = Arc::clone(&socket);
+        let subject_root = format!("{}.", self.prefix);
         let worker = std::thread::spawn(move || {
             let mut reader = BufReader::new(&mut stream);
             while active2.load(Ordering::SeqCst) {
@@ -289,8 +345,8 @@ impl NatsEventBus {
                 if !header.starts_with("MSG ") {
                     continue;
                 }
-                let Some(len) = header
-                    .split_whitespace()
+                let words = header.split_whitespace().collect::<Vec<_>>();
+                let Some(len) = words
                     .last()
                     .and_then(|n| n.parse::<usize>().ok())
                 else {
@@ -304,6 +360,21 @@ impl NatsEventBus {
                     break;
                 }
                 if let Ok(event) = serde_json::from_slice::<Value>(&buf[..len]) {
+                    // Verify the *wire subject* before passing the payload to
+                    // a Job-scoped Graph/SQLite consumer. Broker subject ACLs
+                    // are meaningless if job_id can retarget a decoded body.
+                    let identity = words.get(1)
+                        .and_then(|topic| topic.strip_prefix(&subject_root))
+                        .and_then(|suffix| suffix.split_once('.'));
+                    let correlated = matches!(words.len(), 4 | 5)
+                        && words.get(2) == Some(&"1")
+                        && identity.is_some_and(|(job, kind)| {
+                            subject_token(job).is_ok()
+                                && event_kind_subject(kind).is_ok()
+                                && event["job_id"].as_str() == Some(job)
+                                && event["type"].as_str() == Some(kind)
+                        });
+                    if !correlated { continue; }
                     if let Err(error) = wake(&event) {
                         eprintln!("warning: event handler failed for {subject}: {error}");
                     }
