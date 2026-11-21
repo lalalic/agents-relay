@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 91,
-    "HOLD": 13,
+    "PASS": 92,
+    "HOLD": 12,
     "EXCLUDED": 3
   },
   "records": [
@@ -1955,7 +1955,7 @@
       "source": "src/relay-store.ts",
       "target": "rust/src/relay_store.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 46,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -1968,7 +1968,11 @@
         "rust/tests/head_to_head_projected_comments.mjs",
         "rust/tests/head_to_head_store_facade_closure.mjs",
         "rust/tests/head_to_head_relay_store_agent_registry.mjs",
-        "rust/tests/native_relay_store_agent_registry.rs"
+        "rust/tests/native_relay_store_agent_registry.rs",
+        "rust/tests/head_to_head_relay_store_atomic_public.mjs",
+        "rust/tests/head_to_head_projection_outbox_strict.mjs",
+        "rust/tests/head_to_head_graph_outbox.mjs",
+        "test/relay-store.test.js"
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/cli_service_public.rs",
@@ -1992,33 +1996,14 @@
         "rust/src/task_update.rs",
         "rust/src/unblock.rs"
       ],
-      "typeOrShapeReviews": [
-        "mergeInboundJobSnapshot",
-        "ProjectionConflictDiagnostic",
-        "ProjectionConflictRecord",
-        "ProjectionConflictResolution",
-        "ProjectionConflictResolutionRequest",
-        "ProjectionOperation",
-        "ProjectionOutboxItem",
-        "ProjectionRequest",
-        "ProjectionStatus",
-        "PullRequestFacts",
-        "RelayStore",
-        "SQLiteRelayStore.constructor",
-        "relayStoreDirectory",
-        "relayUnifiedStorePath",
-        "resolveUnifiedJobScope",
-        "discoverLocalRelayStoreSnapshots",
-        "LocalRelayStoreSnapshot"
-      ],
+      "typeOrShapeReviews": [],
       "certificationEvidence": [
-        "2026-11-20: Remains HOLD. Native Rust fixed observed-empty Agent registry (saveAgents zero-row), duplicate Agent ID atomic batch rollback (plain INSERT; no UPSERT), incomplete PR Head as null. New 11 original Node/Rust SQLite scenarios, 89 direct operations across scoped/legacy; two native real disk/restart tests cover empty registry, duplicate rollback, event receipt dedupe, UNKNOWN/stale PR facts and incomplete HEAD. Existing facade 24 scenarios/528 public operations and native write-host 16/16 pass. Other outbox/callback/whole constructor semantics and source shape reviews remain open."
+        "2026-11-20: Remains HOLD. Native Rust fixed observed-empty Agent registry (saveAgents zero-row), duplicate Agent ID atomic batch rollback (plain INSERT; no UPSERT), incomplete PR Head as null. New 11 original Node/Rust SQLite scenarios, 89 direct operations across scoped/legacy; two native real disk/restart tests cover empty registry, duplicate rollback, event receipt dedupe, UNKNOWN/stale PR facts and incomplete HEAD. Existing facade 24 scenarios/528 public operations and native write-host 16/16 pass. Other outbox/callback/whole constructor semantics and source shape reviews remain open.",
+        "2026-11-20: Certified all 46/46 Node SQLiteRelayStore runtime exports mapped to explicit Rust class wrapper, plus reexport paths/discovery. New original Node vs Rust class-wide atomic public Store comparison 4/4 scenarios, 64/64 methods PASS against independent real SQLite, explicitly testing scoped/unscoped Job/Agent atomic projection and rollback, external action once, workflow event callback mutation with outbox event count and repeated event id. Existing Node Store 36/36 PASS; native on-disk registry/PR-state restart 2/2 PASS; original facades 24x528 calls, registry 11x89 calls, strict projection/outbox 5x39 ops and 550 randomized durable Workflow Outbox publication/consumer histories PASS. Mapped reviewed 17 public type/shape/constructor boundaries: mergeInboundJobSnapshot -> relay_job_merge::merge_inbound_job_snapshot; projection conflicts/record/status/action item -> projection_outbox::{row_to_projection,row_to_conflict} with typed SQL constraints; PullRequestFacts -> SQLite PR facts and native parser; RelayStore and SQLiteRelayStore constructor -> typed SQLiteRelayStore::open/create/close; relayStoreDirectory/unified path/scope/discover snapshots and LocalRelayStoreSnapshot -> local_job_path and relay_store_discovery. Production daemon/provider authentication/external projections remain HOLD under relayd/reconciler-runtime, not falsely claimed for this Store module."
       ],
-      "openGates": [
-        "Projection/outbox, workflow callback and complete 46-export SQLiteRelayStore facade negative/restart parity not yet certified",
-        "Verify remaining 17 type/shape/constructor reexport bindings and production daemon Store lifecycle before PASS"
-      ],
-      "legacyLedgerNote": "Phase1 serial native Store/SQLite authoritative facade over existing transaction/outbox primitives; UNCOMPILED UNTESTED, API parity Phase2."
+      "openGates": [],
+      "legacyLedgerNote": "Phase1 serial native Store/SQLite authoritative facade over existing transaction/outbox primitives; UNCOMPILED UNTESTED, API parity Phase2.",
+      "status": "PASS"
     },
     {
       "source": "src/relayd-control.ts",
