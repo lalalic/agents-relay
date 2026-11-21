@@ -59,8 +59,12 @@ fn update_live_worker_from_committed_event(
 
 pub struct IsolatedSQLiteWriteHost {
     config:DaemonConfig,
+    // Explicitly selected production-owned canonical store. Isolated callers
+    // still reject any project outside their disposable Git fixture.
+    live_store:bool,
     subscriptions:Vec<Sender<String>>,
     wake_count:u64,
+    wake_pending:bool,
     reconcile_attempts:u64,
     connections:RefCell<HashMap<String,SQLiteRelayStore>>,
     // Node provenance: src/reconciler-runtime.ts failLaunch binding state.
@@ -96,7 +100,7 @@ pub struct IsolatedSQLiteWriteHost {
 }
 impl IsolatedSQLiteWriteHost {
     pub fn new(config:DaemonConfig)->Self{
-        Self{config,subscriptions:Vec::new(),wake_count:0,reconcile_attempts:0,connections:RefCell::new(HashMap::new()),
+        Self{config,live_store:false,subscriptions:Vec::new(),wake_count:0,wake_pending:false,reconcile_attempts:0,connections:RefCell::new(HashMap::new()),
             failure_state:std::sync::Arc::new(DaemonFailureState::new()),
             live_workers:std::sync::Arc::new(std::sync::Mutex::new(DaemonLiveWorkers::default())),
             escalation_notifier:None,event_history_api:None,
@@ -108,6 +112,14 @@ impl IsolatedSQLiteWriteHost {
             model_nats_wake:std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             model_nats_last_retry:None,model_nats_pending:HashMap::new(),
             last_sse_snapshot:HashMap::new()}
+    }
+    /// Construct a Graph/SQLite writer for the canonical store only after
+    /// the executable has obtained exclusive ownership, checked the exact
+    /// store binding and successfully acquired its production lock.
+    pub fn new_live(config:DaemonConfig)->Self{
+        let mut host=Self::new(config);
+        host.live_store=true;
+        host
     }
     /// Bind the REAL Events Bus read-only HTTP history API only when the
     /// caller explicitly supplies a loopback endpoint. This isolated daemon
@@ -215,6 +227,21 @@ impl IsolatedSQLiteWriteHost {
     )->Result<(),String>{
         if !self.model_event_ingress_enabled{
             return Err("Canary Worker requires an explicitly trusted Events Bus ingress".into());
+        }
+        self.model_webhelm_canary=Some(config);
+        Ok(())
+    }
+    /// A live browser adapter uses the same Graph/SQLite receipt fence as
+    /// disposable canaries. Its Session, WebHelm profile and durable Pool
+    /// remain separate from the authoritative Task terminal event.
+    pub fn set_model_webhelm_live(
+        &mut self,config:IsolatedWebHelmConfig,
+    )->Result<(),String>{
+        if !self.live_store{
+            return Err("Live WebHelm provider is unavailable in isolated mode".into());
+        }
+        if !self.model_event_ingress_enabled{
+            return Err("Live WebHelm Worker requires explicit Events Bus ingress".into());
         }
         self.model_webhelm_canary=Some(config);
         Ok(())
@@ -358,13 +385,22 @@ impl IsolatedSQLiteWriteHost {
     fn isolated_project(&self,job:&Value)->Result<PathBuf,String>{
         let root=std::fs::canonicalize(field(job,"projectRoot"))
             .map_err(|e|format!("Invalid isolated Job projectRoot: {e}"))?;
-        let base=std::fs::canonicalize(
-            self.config.store_directory.parent().ok_or("Isolated store has no parent")?)
-            .map_err(|e|e.to_string())?;
+        let base=if self.live_store {
+            std::fs::canonicalize(&self.config.workspace_root)
+                .map_err(|e|format!("Live Workspace Root inaccessible: {e}"))?
+        } else {
+            std::fs::canonicalize(self.config.store_directory.parent()
+                .ok_or("Isolated store has no parent")?)
+                .map_err(|e|e.to_string())?
+        };
         if root==base || !root.starts_with(&base)
             || root.file_name().and_then(|v|v.to_str())!=Some(field(job,"repository"))
-            ||!root.join(".git").is_dir(){
-            return Err("Isolated Rust daemon refuses Job project outside its own independent Git fixture".into());
+            ||!root.join(".git").exists(){
+            return Err(if self.live_store {
+                "Live Rust daemon refuses Job outside its canonical local Git workspace"
+            }else{
+                "Isolated Rust daemon refuses Job project outside its own independent Git fixture"
+            }.into());
         }
         Ok(root)
     }
@@ -619,8 +655,42 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
     fn store_directory(&self)->&Path{&self.config.store_directory}
     fn repositories(&self)->Vec<String>{self.config.repositories.clone()}
     fn repository_path(&self,repository:&str)->Option<String>{
-        self.all().ok()?.into_iter().find(|j|field(j,"repository")==repository)
-            .and_then(|j|j.get("projectRoot").and_then(Value::as_str).map(str::to_owned))
+        if let Some(root)=self.all().ok()?.into_iter()
+            .find(|j|field(j,"repository")==repository)
+            .and_then(|j|j.get("projectRoot").and_then(Value::as_str).map(str::to_owned)){
+            return Some(root);
+        }
+        // Node's startup discovery recursively walks independently nested
+        // local Git roots beneath Workspace (for example neo/project).
+        // Use the ported canonical discovery function so Project Runner Jobs
+        // under nested roots have the same immutable repository identity,
+        // collision refusal and symlink boundary as Node.
+        if !self.live_store || repository.is_empty()
+            || repository=="." || repository==".." {
+            return None;
+        }
+        let base=std::fs::canonicalize(&self.config.workspace_root).ok()?;
+        // Search all valid workspace Git roots, but apply collision fencing
+        // to THIS repository identity only. An unrelated Xcode SourcePackages
+        // duplicate must not prevent a legitimate new Project Runner Job.
+        let mut match_root:Option<PathBuf>=None;
+        for found in crate::workspace::discover_git_repositories(&base){
+            if found.file_name().and_then(|v|v.to_str())!=Some(repository){
+                continue;
+            }
+            let candidate=std::fs::canonicalize(found).ok()?;
+            if candidate==base || !candidate.starts_with(&base)
+                ||candidate.file_name().and_then(|v|v.to_str())!=Some(repository)
+                ||!candidate.join(".git").exists(){
+                return None;
+            }
+            if let Some(prior)=&match_root{
+                if prior!=&candidate{return None;}
+            }else{
+                match_root=Some(candidate);
+            }
+        }
+        match_root.map(|root|root.to_string_lossy().to_string())
     }
     fn known_jobs(&mut self)->Result<Vec<Value>,String>{self.all()}
     fn load_job(&mut self,id:&str)->Result<Value,String>{
@@ -673,6 +743,10 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
     }
     fn wake(&mut self,id:&str,reason:&str)->Result<(),String>{
         self.wake_count+=1;
+        // Node pool.reconcileLocalJob schedules canonical work immediately.
+        // Preserve this local wake until the single daemon Reconciler consumes
+        // it; emitting SSE alone cannot wake the five-minute scan.
+        self.wake_pending=true;
         self.emit(json!({"type":"relay.wake","jobId":id,"reason":reason}));
         // Snapshot readback is observational. A wake that has not yet
         // committed cannot invent a fresh Job/Task state.
@@ -809,6 +883,13 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
 }
 impl DaemonServices for IsolatedSQLiteWriteHost {
     fn control(&mut self,body:&Value)->Result<Value,String>{
+        if field(body,"command")=="job.reconcile"{
+            let id=field(body,"jobId");
+            if id.is_empty(){return Err("job.reconcile requires immutable Job ID".into());}
+            // Stable Node's control.job.reconcile awaits the actual Pool
+            // pass. Do not acknowledge only a Dashboard wake receipt.
+            return self.job_action(id,"reconcile");
+        }
         if field(body,"command")=="plan.apply"{
             let job_id=field(body,"jobId");
             let plan_id=field(body,"planId");
@@ -830,6 +911,19 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             }
             self.wake(job_id,"native-plan.apply")?;
             return Ok(committed);
+        }
+        if field(body,"command")=="job.create"{
+            // Stable Node src/relayd-control.ts injects daemon noGitHub
+            // into the trusted factory options, independently of whether
+            // the HTTP/CLI caller supplied a flag. The native service has
+            // no GitHub transport; recording false here breaks the immutable
+            // Coordinator start binding at the subsequent job run.
+            let mut normalized=body.clone();
+            if !normalized.get("options").is_some_and(Value::is_object){
+                normalized["options"]=json!({});
+            }
+            normalized["options"]["noGitHub"]=json!(true);
+            return workspace_control(self,&normalized);
         }
         workspace_control(self,body)
     }
@@ -914,7 +1008,10 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
     fn job_action(&mut self,id:&str,action:&str)->Result<Value,String>{
         let current=self.scoped(id)?.load_job(id)?
             .ok_or_else(||format!("SQLite Job {id} not found"))?;
-        self.isolated_project(&current)?;
+        // Production writes must stay in their canonical local Git tree.
+        // Isolated fixtures may have historical DRAFT Jobs with nonexistent
+        // paths; Node's reconcile on these is a harmless no-op/wake.
+        if self.live_store{self.isolated_project(&current)?;}
         match action {
             "start"=>{
                 let next=crate::job_actions::apply_job_activate_action(
@@ -932,8 +1029,14 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                 Ok(saved)
             }
             "reconcile"=>{
-                // The same daemon Graph/SQLite Reconciler pass as periodic
-                // Pool admission. Never acknowledge only a wake-up.
+                // Node Pool only admits ACTIVE Jobs. For DRAFT/terminal Jobs,
+                // accept the wake but do not invoke a Model/Planner effect or
+                // require a Git project that has not yet been activated.
+                if field(&current,"state")!="ACTIVE"{
+                    self.wake(id,"dashboard.job.reconcile")?;
+                    return Ok(current);
+                }
+                // The same Graph/SQLite Reconciler as periodic Pool admission.
                 let config=self.config.clone();
                 let owner=format!("isolated-rust-daemon-{}",std::process::id());
                 let runtime_config=config.clone();
@@ -1007,9 +1110,20 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
     }
     fn job_set_state(&mut self,id:&str,state:&str,_target:&Value)->Result<Value,String>{
         let original=WorkspaceControlBackend::load_job(self,id)?;
-        let (next,remote)=dashboard_job_set_state(&self.config.graph_directory,&original,state)?;
-        if remote{return Err(denied("remote job state effect"));}
-        self.persist_exact(id,&original,&next)
+        self.isolated_project(&original)?;
+        let (next,close_optional_pr)=dashboard_job_set_state(
+            &self.config.graph_directory,&original,state)?;
+        // Stable Node dashboardJobSetState first commits the canonical
+        // Graph cancellation and only *optionally* closes a remote PR.
+        // Rust's noGitHub daemon has no remote transport: a missing source
+        // ref must not prevent the local CANCELLED transition.
+        if close_optional_pr&&!self.config.no_github{
+            return Err(denied("remote job state effect"));
+        }
+        if next==original{return Ok(original);}
+        let committed=self.persist_exact(id,&original,&next)?;
+        if state=="CANCELLED"{self.wake(id,"dashboard.job.cancel")?;}
+        Ok(committed)
     }
     fn task_set_state(&mut self,id:&str,task_id:&str,state:&str,target:&Value)
         ->Result<Value,String>{
@@ -1082,12 +1196,13 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
     fn account_usage(&mut self)->Result<Value,String>{Err(denied("provider account usage"))}
     fn github_usage(&mut self)->Result<Option<Value>,String>{Ok(None)}
     fn status(&mut self)->Value{
+        let mode=if self.live_store {"live-write"}else{"isolated-write"};
         match self.all(){
-            Ok(jobs)=>json!({"runtime":"native-rust","mode":"isolated-write",
+            Ok(jobs)=>json!({"runtime":"native-rust","mode":mode,
                 "productionReady":false,"jobCount":jobs.len(),"wakeCount":self.wake_count,
                 "reconcileAttempts":self.reconcile_attempts,
-                "reason":"Script and test-only ChatGPT WebHelm submission bound; authenticated external EventBus and production providers not bound"}),
-            Err(error)=>json!({"runtime":"native-rust","mode":"isolated-write",
+                "reason":"Canonical Rust service ownership active; full external Model/EventBus E2E not yet certified"}),
+            Err(error)=>json!({"runtime":"native-rust","mode":mode,
                 "productionReady":false,"error":error}),
         }
     }
@@ -1111,7 +1226,10 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                 eprintln!("warning: Isolated model NATS reconnect: {error}");
             }
         }
-        self.model_nats_wake.swap(false,std::sync::atomic::Ordering::AcqRel)
+        let native_wake=std::mem::take(&mut self.wake_pending);
+        let provider_wake=self.model_nats_wake.swap(
+            false,std::sync::atomic::Ordering::AcqRel);
+        native_wake||provider_wake
     }
     fn prepare_dependency_revisions(&mut self,id:&str)->Result<(),String>{
         let source=self.scoped(id)?.load_job(id)?
@@ -1250,9 +1368,13 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             self.config.workspace_root.to_str(),None)?
             .ok_or("Source Worker has no declared trusted Shortcut")?;
         if !Path::new(&script).is_file(){return Err("Script Agent module is absent".into());}
-        let isolated_parent=std::fs::canonicalize(
-            self.config.store_directory.parent().ok_or("Isolated store parent missing")?)
-            .map_err(|e|e.to_string())?;
+        let isolated_parent=if self.live_store {
+            self.isolated_project(&original)?
+        }else{
+            std::fs::canonicalize(self.config.store_directory.parent()
+                .ok_or("Isolated store parent missing")?)
+                .map_err(|e|e.to_string())?
+        };
         let output=task.pointer("/output/path").and_then(Value::as_str)
             .ok_or("Native Script Worker requires a declared file output")?;
         let output_parent=Path::new(output).parent()

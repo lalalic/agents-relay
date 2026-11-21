@@ -140,7 +140,7 @@ fn native_daemon_refuses_missing_or_live_store_bindings(){
     let denied=Command::new(binary()).current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
         .arg("--port").arg("0").output().unwrap();
     assert!(!denied.status.success());
-    assert!(String::from_utf8_lossy(&denied.stderr).contains("requires --isolated-store-dir"));
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("requires --live-store-dir"));
 }
 
 // Darwin can momentarily return EAGAIN or EPIPE during a listener restart.
@@ -1734,4 +1734,66 @@ fn real_webhelm_canary_requires_explicit_trust_and_distinct_workspace() {
     let denied=Command::new(binary()).args(&missing).output().unwrap();
     assert!(!denied.status.success());
     assert!(String::from_utf8_lossy(&denied.stderr).contains("all three explicit"));
+}
+
+#[test]
+fn canonical_live_rust_owner_locks_sqlite_and_restarts_without_node() {
+    let root=root();
+    let db=root.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&db,Some("931")).unwrap();
+    store.save_job(&json!({"id":"931","repository":"test","projectRoot":"/tmp/test",
+        "title":"Rust live production mode locked fixture","state":"COMPLETED","prNumber":0,
+        "createdAt":"2026-11-21T12:00:00Z","updatedAt":"2026-11-21T12:00:00Z",
+        "tasks":[],"plans":[]})).unwrap();
+    store.close().unwrap();
+    let port=socket_port();
+    let launch=||{
+        Command::new(binary())
+            .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
+            .env("AGENTS_RELAY_STORE_DIR",root.join("stores"))
+            .args(["--live-store-dir",root.join("stores").to_str().unwrap(),
+                "--workspace-root",root.to_str().unwrap(),
+                "--port",&port.to_string(),"--interval","300000"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped()).spawn().unwrap()
+    };
+    for run in 0..2{
+        let mut owner=Guard(launch());
+        let mut seen=false;
+        for _ in 0..160{
+            if let Ok(result)=request(port,"GET","/api/status",""){
+                if result.starts_with("HTTP/1.1 200"){
+                    let data=body(&result);
+                    assert_eq!(data["runtime"],"native-rust");
+                    assert_eq!(data["mode"],"live-write");
+                    assert_eq!(data["jobCount"],1);
+                    assert_eq!(data["productionReady"],false,
+                        "real Model+Events Bus E2E is not yet certified");
+                    seen=true;break;
+                }
+            }
+            if let Some(status)=owner.0.try_wait().unwrap(){
+                panic!("native live owner exited before serving: {status}");
+            }
+            thread::sleep(Duration::from_millis(60));
+        }
+        assert!(seen,"live native owner did not serve actual SQLite");
+        let result=Command::new(binary())
+            .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
+            .env("AGENTS_RELAY_STORE_DIR",root.join("stores"))
+            .args(["--live-store-dir",root.join("stores").to_str().unwrap(),
+                "--workspace-root",root.to_str().unwrap(),
+                "--port",&socket_port().to_string()])
+            .output().unwrap();
+        assert!(!result.status.success(),"duplicate live owner must fail");
+        assert!(String::from_utf8_lossy(&result.stderr)
+            .contains("already owns the production Relay store"));
+        drop(owner);
+        if run==0{thread::sleep(Duration::from_millis(250));}
+    }
+    let conn=rusqlite::Connection::open(&db).unwrap();
+    assert_eq!(conn.query_row("SELECT COUNT(*) FROM job_snapshot",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+    assert_eq!(conn.query_row("PRAGMA quick_check",[],|r|r.get::<_,String>(0)).unwrap(),"ok");
+    drop(conn);
+    let _=fs::remove_dir_all(root);
 }

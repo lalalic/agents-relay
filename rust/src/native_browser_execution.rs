@@ -76,6 +76,42 @@ impl IsolatedWebHelmConfig {
         Ok(Self{socket,executable,workspace,
             pool_db:store_directory.join("browser-worker-pool.sqlite")})
     }
+    /// Explicit authenticated local WebHelm transport for the sole native
+    /// production owner. Never silently choose a browser profile or Session.
+    /// The caller must also attach a verified Events Bus ingress before
+    /// launching a Model Worker; browser delivery alone cannot finish Tasks.
+    pub fn from_explicit_live(
+        store_directory:&Path,socket_raw:&str,executable_raw:&str,
+        workspace_raw:&str,
+    )->Result<Self,String>{
+        let workspace=relay_workspace_name(Some(workspace_raw))?;
+        if workspace_raw.trim().is_empty(){
+            return Err("Live WebHelm requires an explicit safe workspace".into());
+        }
+        let validate=|raw:&str,label:&str|->Result<PathBuf,String>{
+            let path=Path::new(raw);
+            if !path.is_absolute(){return Err(format!("{label} must be absolute"));}
+            fs::canonicalize(path).map_err(|_|format!("{label} unavailable"))
+        };
+        let socket=validate(socket_raw,"Live WebHelm socket")?;
+        let executable=validate(executable_raw,"Live WebHelm executable")?;
+        if !socket.metadata().is_ok_and(|metadata|
+            std::os::unix::fs::FileTypeExt::is_socket(&metadata.file_type())){
+            return Err("Live WebHelm socket must be a Unix socket".into());
+        }
+        if !executable.is_file(){
+            return Err("Live WebHelm executable must be a regular file".into());
+        }
+        #[cfg(unix)]{
+            use std::os::unix::fs::PermissionsExt;
+            if executable.metadata().map_err(|e|e.to_string())?
+                .permissions().mode()&0o111==0{
+                return Err("Live WebHelm executable must be executable".into());
+            }
+        }
+        Ok(Self{socket,executable,workspace,
+            pool_db:store_directory.join("browser-worker-pool.sqlite")})
+    }
     pub fn from_test_store(store_directory:&Path)->Result<Self,String>{
         let root=store_directory.parent().ok_or("Isolated store has no parent")?;
         let socket=isolated_path("AGENTS_RELAY_WEBHELM_SOCKET",root)?;
