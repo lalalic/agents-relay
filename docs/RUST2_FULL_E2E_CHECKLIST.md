@@ -4,13 +4,13 @@
 
 **Canonical requirements:** [AGENTS.md](../AGENTS.md), [DESIGN-PRINCIPLES.md](../DESIGN-PRINCIPLES.md), [Rust2 handoff](RUST2_NEXT_AGENT_HANDOFF_20261119.md), [migration ledger](RUST2_HEAD_TO_HEAD_CHECKLIST.md), [browser pool](BROWSER_WORKER_POOL.md).
 
-**Current baseline (2026-11-21):** 222 PASS / 2 PORTING / 0 PENDING / 7 EXCLUDED. Remaining modules: src/reconciler-runtime.ts and src/relayd.ts. Prior real ChatGPT WebHelm canary **failed** to return a durable thread ID; real Worker start/terminal was not verified. The existing Rust daemon announces an **isolated preview only** and does not support production Workers/live state. Therefore a production cutover is **blocked** independently of passing isolated tests.
+**Verified status (2026-11-21, live main):** migration ledger **222 PASS / 2 PORTING / 0 PENDING / 7 EXCLUDED** (src/reconciler-runtime.ts, src/relayd.ts). Native Rust has replaced Node relayd under PM2 on port 8787, with 471 durable SQLite Jobs and a healthy exclusive owner; **productionReady=false** because real Model Worker terminal provenance, full Project Runner, rollback and multi-node gates remain unverified. Live cutover is an accomplished substep **not a Gate G PASS**. The real WebHelm ChatGPT canary previously failed to verify a durable Thread ID after Send; do not retry uncertain submission. See dated execution status below.
 
 ## Rules and evidence
 
-- Use one pinned Git SHA, isolated per-run SQLite and temporary canonical Git project roots until the explicitly authorized live cutover. **Node stays sole production owner** throughout all preview/canary gates.
+- Use one pinned Git SHA, isolated per-run SQLite and temporary canonical Git project roots until the explicitly authorized live cutover. **Node was sole production owner for the historical shadow/canary runs; Rust is now sole live owner**. Subsequent isolation runs must not make Node a competing owner.
 - For each box record PASS / FAIL / BLOCKED / NOT_RUN, date, commit SHA, exact command + exit, event/job/task/execution IDs, before/after Graph/SQLite facts, logs, and UI evidence in a redacted test-owned run directory (for example /tmp/rust2-e2e-RUN_ID/). A mock, delivery receipt, HTTP 200, spinner or manually inserted event **cannot** prove real Task completion.
-- Do not modify production Relay SQLite, the three pre-existing untracked root relay.sqlite* files, live Node configuration, another WebHelm Session, or another node's services during isolation. Stop only test-owned daemons, browser Sessions and processes.
+- Do not modify production Relay SQLite except via the authorized, single live Rust Graph service; preserve the three pre-existing untracked root relay.sqlite* files, all unrelated WebHelm sessions, and other nodes' services during isolation. Stop only test-owned daemons, browser Sessions and processes.
 - Immediate NO-GO on dual production writers, duplicate browser sends, missing correlated terminal, forged cross-repo state, lease corruption, lost Events Bus delivery or unverifiable rollback.
 - Require independent review of Graph-owned policy vs effects. SQLite is authoritative for lifecycle, not GitHub, EventBus messages or browser output.
 
@@ -34,7 +34,7 @@
 
 ## Gate B-Dashboard — actual Dashboard read-only verification (**must PASS before Gate C**)
 
-This is a **separate user-visible gate**, beyond Gate B's SQLite/HTTP shadow comparison. Perform it using a real browser against Rust's read-only shadow while Node remains the sole live owner. Never enable writes or attach Model/Events Bus to the shadow.
+This is a **separate user-visible gate**, beyond Gate B's SQLite/HTTP shadow comparison. The read-only shadow was exercised historically with Node as owner; a production Rust Dashboard browser check has also been performed. Those are distinct evidence sets and neither silently upgrades the full historical gate to PASS.
 
 - [ ] BD1. Open the actual Rust2 Dashboard on an isolated port in a real desktop browser and mobile-sized browser viewport (at least 375 px), including the intended authenticated same-origin/proxy URL. Confirm assets, navigation, relative URLs and authentication behavior; save screenshots.
 - [ ] BD2. Compare visible Jobs, scoped repository identity, pagination, Task details, activity timeline, JEL/Graph and available Review previews to the live Node Dashboard and canonical SQLite. Verify a large Job, running/failed/terminal Jobs and empty/no-review cases without exposing unrelated projects.
@@ -99,9 +99,9 @@ Use the **existing calculator acceptance project** at `/Users/chengli/Workspace/
 - [ ] F6. Run isolated real Worker registration, routing, start/terminal, node heartbeat and reconnection checks on Neo Master → home98 → Worknode, one node at a time.
 - [ ] F7. Disconnect a test secondary node mid-Task; verify safe lease fencing/recovery and no duplicate browser submission, then reconnect and clean up.
 
-## Gate G — production readiness, controlled live cutover, rollback (**currently blocked**)
+## Gate G — production readiness, controlled live cutover, rollback (**partially live, not certified**)
 
-**G1 is a prerequisite.** Native agents-relayd-rust currently exposes isolated preview modes only; none of the preceding test modes authorizes production use. Gates A, B, B-Dashboard, C, D, D-ProjectRunner, E and F must all be PASS before proceeding.
+**Current exception / status:** The user explicitly authorized early production cutover on 2026-11-21. Native Rust is now live as the sole PM2 relayd owner (port 8787). This **does not** satisfy G1-G8: full authenticated external Model/EventBus execution, Project Runner terminal state, live rollback, and three-node acceptance still need verification. Before any further rollout, Gates A, B, B-Dashboard, C, D, D-ProjectRunner, E and F must be independently evidenced; do not use early cutover as proof of their completion.
 
 - [ ] G1. Implement/review safe production single-owner writable Rust startup, credentials, launchd service path, broker durability/security and health/productionReady reporting; no repurposed isolated-canary flags.
 - [ ] G2. Prove a consistent SQLite/WAL/outbox/lease backup can be restored on a disposable host; document exact safe rollback and Node/Rust ownership fencing.
@@ -112,18 +112,29 @@ Use the **existing calculator acceptance project** at `/Users/chengli/Workspace/
 - [ ] G7. Exercise rollback first on test/staging and verify Node resumes as unique owner with correct durable facts, active work and endpoints; only attempt production rollback when authorized/necessary.
 - [ ] G8. After live Neo Master acceptance, upgrade home98 and Worknode **one at a time**, checking smoke, model/Script Tasks, broker and rollback. Remove Node implementation only after sustained verified operation.
 
-## Gate sign-off
+## Gate sign-off — recorded 2026-11-21 (source SHA `23a36de`)
 
-| Gate | Current status | Evidence/run ID | Reviewer |
-| --- | --- | --- | --- |
-| A — baseline/regression | NOT_RUN | | |
-| B — read-only shadow | NOT_RUN (previous partial sample exists) | | |
-| B-Dashboard — actual read-only browser verification | NOT_RUN; **required before C** | | |
-| C — actual browser provider/Events Bus | **BLOCKED**: durable Thread ID | | |
-| D — full native Job lifecycle | NOT_RUN | | |
-| D-ProjectRunner — calculator Job + independent Final Review | NOT_RUN; **required after D** | | |
-| E — durability/negative tests | NOT_RUN | | |
-| F — real iPhone/three nodes | NOT_RUN | | |
-| G — production cutover/rollback | **BLOCKED**: native production startup | | |
+Statuses below mean **complete gate** status; a green subtest does not turn its entire gate green. Evidence files are from the actual Neo Master session; verify their availability before relying on them in future runs.
+
+| Gate | Current status | Verified subset / remaining gap |
+| --- | --- | --- |
+| A — baseline/regression | **PARTIAL** | Rust lib **101/101**, native daemon **23/23** after fix, SQLite writer **16/16**, one-time migration **5/5**. Static ledger **222 PASS / 2 PORTING**. Full `cargo test --all-targets`, Node full, L1/L2/L3 and fresh-build final-SHA suite **not certified**. |
+| B — read-only shadow | **PARTIAL** | Historical production comparison: **60/60 sampled Job fields** (plus later 40/40 sample), isolation and write-denial tests. All 469 historical full snapshots / every endpoint / current SHA not exhaustively certified. Shadow now stopped per user request. |
+| B-Dashboard — browser read-only | **PARTIAL** | Real Chrome/WebHelm shadow Dashboard and mobile viewport displayed; live Rust Jobs API and authenticated WebHelm public `/dashboard/` displayed Jobs. Public anonymous route still returns **401**, `/dashboard/api/jobs` **404** (actual route `/relay/api/jobs`); complete read-only review, SSE, scoped 401/403 and post-restart matrix **not signed off**. |
+| C — real browser Model + Events Bus | **BLOCKED** | Real isolated ChatGPT WebHelm canary reached Send, but durable Thread ID and authentic `task.started/task.completed` were not verified. Post-Send uncertainty must remain quarantined; no fabricated success. |
+| D — full native Job lifecycle | **PARTIAL** | Live native CLI, Graph/SQLite control, Job creation/cancellation, Scheduler admission and coordinator activation exercised. **Model Worker codex route unsupported** and no real terminal chain/Final Review. |
+| D-ProjectRunner — Calculator | **BLOCKED** | Genuine `neo project run` from clean `ae2f833` clone `/Users/chengli/Workspace/neo/calculator-rust2-e2e-20261121`. Failed draft **Job 680 / Task 2068 CANCELLED** by native Graph. Current **Job 681 ACTIVE**, Coordinator **2069 RUNNING**, Builder **2070 FAILED** (unsupported `codex`), Troubleshooter **2071 QUEUED**. No new calculator artifact, independent browser QA, Final Review or Job COMPLETED. |
+| E — durability/restart/security | **PARTIAL** | Rust live owner-lock/restart, restored WAL backup, post-Send quarantine, pre-Send lease release, and one-time migration regression tested. Full real broker replay, concurrent three-node fencing, malicious event and live rollback cases unverified. |
+| F — real iPhone / three nodes | **NOT_RUN** | No certified real-device Review/Cancel + Neo Master/home98/Worknode route/reconnect acceptance for final live Rust build. Never substitute simulator. |
+| G — production cutover/rollback | **PARTIAL / BLOCKED** | **Rust is sole live PM2 relayd** on `8787`; Node stopped. Native status: `runtime=native-rust`, `mode=live-write`, `productionReady=false`, **471 Jobs**, SQLite `PRAGMA quick_check=ok`. Tested backup integrity/restore and single-owner restart; no verified complete production Job, rollback E2E or secondary-node upgrade. |
+
+### Session evidence and no-go summary
+
+- E2E source reference: local `main` commit `23a36de`; migration optimization commit `e125b52`. Following modifications must update this SHA and rerun affected evidence.
+- Native daemon 23/23: `/tmp/rust2-daemon-parity-recheck.log`; Rust lib 101/101: `/tmp/rust2-post-migration-lib-tests.log`; SQLite writer 16/16: `/tmp/rust2-post-migration-regression.log` (this older combined run also contains **two earlier daemon failures**, subsequently fixed and retested 23/23); migration 5/5: `/tmp/rust2-once-migration-regression-final.log`.
+- Native PM2 service: `agents-relay/daemon`, binary `rust/target/debug/agents-relayd-rust`, port `8787`; backup and prior PM2 definitions in `~/.agents-relay/backups/rust2-exclusive-20261121-*/`. Preserve these for rollback.
+- Last authoritative Calculator snapshot: `681 ACTIVE`; `2069 RUNNING`, `2070 FAILED`, `2071 QUEUED`. These are **not** evidence of a completed Job or that the entire Scheduler/Model path works.
+- **Next hard blocker:** implement and verify the real Rust model adapter selected by Project Runner (currently `codex`) or a correctly authorized equivalent through the real Model service, with durable EventBus terminal provenance, and finish the original Calculator E2E. Do not manually advance failed Tasks or duplicate an uncertain browser Send.
+- **Full acceptance: 0/9 gates PASS** as of this record. An intention to finish today is not an acceptance result; promote gates only after their actual evidence is obtained.
 
 **Definition of DONE:** all **nine** gates (A, B, B-Dashboard, C, D, D-ProjectRunner, E, F and G) PASS at a reviewed and identified build SHA; real external provider + correlated terminal; a **new calculator Project Runner Job independently reviewed and COMPLETED**; real iPhone UI; exclusive production ownership; proven rollback; original Node state preserved. Only then reconsider upgrading src/reconciler-runtime.ts and src/relayd.ts from PORTING to PASS and declare PORTING=0.
