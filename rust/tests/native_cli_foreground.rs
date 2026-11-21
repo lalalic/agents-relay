@@ -169,6 +169,57 @@ fn permanent_foreground_reconcile_failure_remains_an_error(){
     assert!(failure.contains("Graph denied"));
 }
 #[test]
+fn broken_pipe_read_event_and_reconcile_recover_without_fabricating_terminal(){
+    use std::cell::Cell;
+    let interrupted=AtomicI32::new(0);
+    let reads=Cell::new(0usize);
+    let event_calls=Cell::new(0usize);
+    let reconciliation_calls=Cell::new(0usize);
+    let successful=Cell::new(0usize);
+    let mut messages=Vec::<String>::new();
+    let result=attach_foreground_daemon(
+        "17","2",
+        ||{
+            reads.set(reads.get()+1);
+            if reads.get()==1{return Err("io: Broken pipe (os error 32)".into());}
+            Ok(json!({"id":"17","state":if successful.get()>=2{"COMPLETED"}else{"ACTIVE"},
+                "tasks":[{"id":"2","state":"RUNNING","agentName":"fixture"}]}))
+        },
+        ||{
+            reconciliation_calls.set(reconciliation_calls.get()+1);
+            if reconciliation_calls.get()==1{
+                return Err("Agents Relay service unavailable: Broken pipe (os error 32)".into());
+            }
+            successful.set(successful.get()+1);
+            Ok(())
+        },
+        ||{
+            event_calls.set(event_calls.get()+1);
+            if event_calls.get()==1{return Err("io: Broken pipe (os error 32)".into());}
+            Ok(vec![json!({"job_id":"17","task_id":"2","event_id":"real-id",
+                "type":"task.started","message":"Started","timestamp":"2026-11-21T00:00:00Z"})])
+        },
+        |message|messages.push(message),Duration::from_millis(0),&interrupted).unwrap();
+    assert_eq!(result.job["state"],"COMPLETED");
+    assert_eq!(successful.get(),2,"only successful daemon reconciles advance test source state");
+    assert!(reads.get()>=5);
+    assert!(event_calls.get()>=3);
+    assert_eq!(reconciliation_calls.get(),3);
+    assert!(messages.iter().any(|line|line.contains("read temporarily unavailable")));
+    assert!(messages.iter().any(|line|line.contains("reconcile busy")));
+    assert_eq!(messages.iter().filter(|line|line.contains("task.started")).count(),1);
+    assert!(messages.iter().any(|line|line=="Job 17: COMPLETED"));
+}
+#[test]
+fn non_transient_foreground_event_error_still_fails_closed(){
+    let interrupted=AtomicI32::new(0);
+    let error=attach_foreground_daemon(
+        "17","2",||Ok(json!({"id":"17","state":"ACTIVE","tasks":[]})),
+        ||Ok(()),||Err("Event history unauthorized (HTTP 403)".into()),
+        |_|{},Duration::from_millis(0),&interrupted).unwrap_err();
+    assert!(error.contains("HTTP 403"));
+}
+#[test]
 fn attachment_interrupt_never_claims_job_completed_or_cancels_durable_work(){
     let interrupted=AtomicI32::new(0);
     let mut messages=Vec::<String>::new();

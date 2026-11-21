@@ -100,7 +100,12 @@ pub fn control(args: &[String], payload: &Value) -> Result<Value, String> {
         let transient=replay_safe && attempt<2 && once.as_ref().err()
             .is_some_and(|error|error.contains("Resource temporarily unavailable")
                 ||error.contains("operation would block")
-                ||error.contains("WouldBlock"));
+                ||error.contains("WouldBlock")
+                ||error.contains("Broken pipe")
+                ||error.contains("Connection reset by peer")
+                ||error.contains("connection reset")
+                ||error.contains("unexpected EOF")
+                ||error.contains("UnexpectedEof"));
         if !transient{return once;}
         std::thread::sleep(std::time::Duration::from_millis(25*(attempt+1)));
     }

@@ -82,6 +82,17 @@ where
 }
 
 
+fn transient_daemon_transport(error:&str)->bool{
+    error.contains("Resource temporarily unavailable")
+        ||error.contains("operation would block")
+        ||error.contains("WouldBlock")
+        ||error.contains("Broken pipe")
+        ||error.contains("Connection reset by peer")
+        ||error.contains("connection reset")
+        ||error.contains("unexpected EOF")
+        ||error.contains("UnexpectedEof")
+}
+
 // In production the ordinary daemon owns all Task/Graph/SQLite mutations.
 // This is strictly a foreground CLI attachment: it invokes the SAME daemon
 // reconciler route and reads durable events, never starts a parallel Worker.
@@ -106,6 +117,7 @@ where
     let mut reporter=ForegroundReporter::default();
     let mut paused_reported=false;
     let mut transient_reconcile_failures=0u8;
+    let mut transient_read_failures=0u8;
     report(format!("Coordinator job {job_id}, task {task_id}: foreground daemon attachment (Ctrl+C detaches CLI; daemon-owned Workers continue and Job remains durable)"));
     loop{
         let signal=interrupted.load(Ordering::SeqCst);
@@ -115,12 +127,35 @@ where
                 job:load()?,interrupted_signal:Some(signal),
             });
         }
-        let job=load()?;
+        let job=match load(){
+            Ok(job)=>job,
+            Err(error) if transient_read_failures<10 && transient_daemon_transport(&error)=>{
+                transient_read_failures+=1;
+                if transient_read_failures==1{
+                    report(format!("Job {job_id}: daemon read temporarily unavailable; preserving CLI attachment"));
+                }
+                std::thread::sleep(poll.min(Duration::from_millis(200)));
+                continue;
+            }
+            Err(error)=>return Err(error),
+        };
         reporter.refresh_names(&job);
-        // Polling the authoritative daemon event history is the CLI
-        // replacement for Node's local Reconciler/EventBus subscription.
-        // Duplicate and foreign-Job event IDs are suppressed across polls.
-        for event in events()?{
+        // A failed idempotent HTTP GET is never an invented Task/Job
+        // transition. Keep the last displayed progress and try again.
+        let rows=match events(){
+            Ok(rows)=>rows,
+            Err(error) if transient_read_failures<10 && transient_daemon_transport(&error)=>{
+                transient_read_failures+=1;
+                if transient_read_failures==1{
+                    report(format!("Job {job_id}: event history read temporarily unavailable; preserving CLI attachment"));
+                }
+                std::thread::sleep(poll.min(Duration::from_millis(200)));
+                continue;
+            }
+            Err(error)=>return Err(error),
+        };
+        transient_read_failures=0;
+        for event in rows {
             if let Some(line)=reporter.on_event(job_id,&event){report(line);}
         }
         let state=job.get("state").and_then(Value::as_str).unwrap_or("");
@@ -144,9 +179,7 @@ where
         match reconcile(){
             Ok(())=>transient_reconcile_failures=0,
             Err(error) if transient_reconcile_failures<10 &&
-                (error.contains("Resource temporarily unavailable")
-                    ||error.contains("operation would block")
-                    ||error.contains("WouldBlock"))=>{
+                transient_daemon_transport(&error)=>{
                 transient_reconcile_failures+=1;
                 if transient_reconcile_failures==1{
                     report(format!("Job {job_id}: daemon reconcile busy; preserving CLI attachment and retrying"));
@@ -154,7 +187,16 @@ where
             }
             Err(error)=>return Err(error),
         }
-        let updated=load()?;
+        let updated=match load(){
+            Ok(updated)=>updated,
+            Err(error) if transient_read_failures<10 && transient_daemon_transport(&error)=>{
+                transient_read_failures+=1;
+                std::thread::sleep(poll.min(Duration::from_millis(200)));
+                continue;
+            }
+            Err(error)=>return Err(error),
+        };
+        transient_read_failures=0;
         let state=updated.get("state").and_then(Value::as_str).unwrap_or("");
         if matches!(state,"COMPLETED"|"CANCELLED"){continue;}
         // Do not sleep uninterruptibly. A SIGINT/SIGTERM must not wait an

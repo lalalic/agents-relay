@@ -288,12 +288,17 @@ fn http(args:&[String],path:&str,method:&str,params:&[(&str,String)],
     // unavailable from local HTTP reads during a concurrent Reconciler
     // startup. Retry only safe read-only GETs, never state-changing POSTs.
     // Actual 4xx/409 Graph rejections still return their original error.
-    for attempt in 0..3{
+    for attempt in 0..5{
         let result=once();
-        let retry=method=="GET"&&attempt<2&&result.as_ref().err()
+        let retry=method=="GET"&&attempt<4&&result.as_ref().err()
             .is_some_and(|error|error.contains("Resource temporarily unavailable")
                 ||error.contains("operation would block")
-                ||error.contains("WouldBlock"));
+                ||error.contains("WouldBlock")
+                ||error.contains("Broken pipe")
+                ||error.contains("Connection reset by peer")
+                ||error.contains("connection reset")
+                ||error.contains("unexpected EOF")
+                ||error.contains("UnexpectedEof"));
         if !retry{return result;}
         std::thread::sleep(std::time::Duration::from_millis(15*(attempt+1)));
     }
