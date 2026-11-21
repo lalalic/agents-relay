@@ -64,6 +64,8 @@ mod dependency_revision_execution_public;
 mod browser_worker_routing_public;
 #[path = "relay-rust2-parity/browser_worker_runtime_public.rs"]
 mod browser_worker_runtime_public;
+#[path = "relay-rust2-parity/planner_agent_public.rs"]
+mod planner_agent_public;
 #[path = "relay-rust2-parity/store_github_public.rs"]
 mod store_github_public;
 #[path = "relay-rust2-parity/task_actions_public.rs"]
@@ -453,6 +455,7 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=dependency_revision_execution_public::invoke(request){return output;}
     if let Some(output)=browser_worker_routing_public::invoke(request){return output;}
     if let Some(output)=browser_worker_runtime_public::invoke(request){return output;}
+    if let Some(output)=planner_agent_public::invoke(request){return output;}
     if let Some(output)=store_github_public::invoke(request){return output;}
     if let Some(output)=task_actions_public::invoke(request){return output;}
     if let Some(output)=dag_task_runtime_public::invoke(request){return output;}

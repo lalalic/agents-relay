@@ -1,6 +1,7 @@
 // Node provenance: src/planner.ts. Objective Planner results, immutable Plan
 // rounds and task-resolution validation. Graph policies stay authoritative.
-// The native worker runner is an explicit adapter; Phase1 does not execute it.
+// Owned Planner execution is an explicit adapter. Script Planner and installed
+// daemon tests verify actual Graph/SQLite commit; process exit alone is not a Plan.
 use crate::{
     agent_graph::parse_agent_graph,
     dependency_validity::validate_dependency_validity,

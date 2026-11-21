@@ -836,7 +836,7 @@ fn native_daemon_job_plan_uses_real_isolated_planner_shortcut_and_graph_apply(){
     let store=SQLiteRelayStore::open(&db,Some("91")).unwrap();
     store.save_job(&json!({"id":"91","repository":"project","projectRoot":project,
         "title":"Manual Planner Shortcut","objective":"Complete already verified work",
-        "state":"ACTIVE","prNumber":0,"priority":"P2","reviewEnabled":false,
+        "state":"DRAFT","prNumber":0,"priority":"P2","reviewEnabled":false,
         "createdAt":"2026-11-18T00:00:00.000Z","updatedAt":"2026-11-18T00:00:00.000Z",
         "tasks":[{"id":"2","jobId":"91","kind":"work","adapter":"script",
             "agentName":"implementation","title":"Already verified Task","state":"SUCCEEDED",
@@ -845,6 +845,10 @@ fn native_daemon_job_plan_uses_real_isolated_planner_shortcut_and_graph_apply(){
             "createdAt":"2026-11-18T00:00:00.000Z",
             "updatedAt":"2026-11-18T00:00:00.000Z"}],"plans":[]})).unwrap();
     store.close().unwrap();
+    // DRAFT is intentional: the original Node ManualPlan activates it
+    // transactionally with the explicitly requested round. An already
+    // ACTIVE/no-plan Job triggers background automatic initial planning,
+    // correctly rejecting a competing manual request with 409.
     let port=socket_port();let daemon=start_mode(&root,port,"--isolated-write-store-dir");
     let plan_request=json!({"command":"job.plan","jobId":"91","repository":"project",
         "guidance":"Verify the existing result"});

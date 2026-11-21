@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 90,
-    "HOLD": 14,
+    "PASS": 91,
+    "HOLD": 13,
     "EXCLUDED": 3
   },
   "records": [
@@ -1651,12 +1651,19 @@
       "source": "src/planner.ts",
       "target": "rust/src/planner.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 22,
       "staticNameMismatch": 0,
       "directDiffTests": [
         "rust/tests/head_to_head_planner_finish_public.mjs",
-        "rust/tests/head_to_head_planner_public_ports.mjs"
+        "rust/tests/head_to_head_planner_public_ports.mjs",
+        "rust/tests/head_to_head_planner_agent_public.mjs",
+        "rust/tests/native_script_planner.rs",
+        "rust/tests/native_daemon_binary_readonly.rs",
+        "rust/tests/head_to_head_planner_input_public.mjs",
+        "rust/tests/head_to_head_planner_activation.mjs",
+        "rust/tests/head_to_head_planner_child.mjs",
+        "rust/tests/head_to_head_planner_launch_public.mjs"
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/closure.rs",
@@ -1667,25 +1674,13 @@
         "rust/src/reconciler.rs",
         "rust/src/reconciler_manual_plan_public.rs"
       ],
-      "typeOrShapeReviews": [
-        "ObjectiveStatus",
-        "PlannerTaskSpec",
-        "PlannerUnblockSpec",
-        "PlannerResult",
-        "PlannerContext",
-        "SemanticTaskTreeEntry",
-        "ObjectivePlanner",
-        "PlannerRoundOptions",
-        "validatePlannerAgentRoles",
-        "CommandObjectivePlanner.constructor",
-        "AgentObjectivePlanner.constructor"
+      "typeOrShapeReviews": [],
+      "certificationEvidence": [
+        "2026-11-20: 22/22 Node runtime exports verified by static Rust declarations and owned adapters. Six original Node/Rust direct Planner suites PASS (activation 298 plus 100 planner input, 152 planningSpec/Command, 20 launch, 19 finish, child projections). Original Node AgentObjectivePlanner with disposable actual owned shell process directly compared to native AgentObjectivePlanner strategy on 8 success/failure/mismatched/invalid cases, 8/8 PASS. Rust native_script_planner 5/5 actual script→Graph→SQLite Plan apply/replay/failure/cross-Job unblock/dependent browser DAG PASS; installed native daemon real HTTP job.plan (DRAFT→ACTIVE) full Graph/SQLite SUCCEEDED Plan and COMPLETED Job, two outbox durable events and daemon restart 1/1 PASS. Fixed test precondition: ACTIVE/no-plan invokes original automatic initial Planner; concurrent manual request rightly rejects 409, while explicit DRAFT manual plan is atomic. Reviewed ObjectiveStatus, PlannerTaskSpec, PlannerUnblockSpec, PlannerResult, PlannerContext, SemanticTaskTreeEntry, ObjectivePlanner as typed strategies, PlannerRoundOptions, validatePlannerAgentRoles, CommandObjectivePlanner.constructor and AgentObjectivePlanner.constructor; external model authentication/transport belongs to daemon/reconciler-runtime production HOLD."
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 11 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
-      ],
-      "legacyLedgerNote": "Phase1 serial native Planner protocol and Graph-owned execution runtime source port; uncompiled/unverified, Stage2 API and differential closure pending."
+      "openGates": [],
+      "legacyLedgerNote": "Phase1 serial native Planner protocol and Graph-owned execution runtime source port; uncompiled/unverified, Stage2 API and differential closure pending.",
+      "status": "PASS"
     },
     {
       "source": "src/pool.ts",
