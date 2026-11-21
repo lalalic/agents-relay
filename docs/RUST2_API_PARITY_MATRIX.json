@@ -2,68 +2,21 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "22fa4e5259049ed6c31acef6d0a967a5a4700c3d",
-    "rustTree": "2656de3bf6e62abb5b9ee4f8996191d85b1b1d2a",
-    "sourceCount": 7,
+    "rustTree": "acb4835f9283fe69ecf26e81d59aafd40765bd86",
+    "sourceCount": 6,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 88,
-    "directNameMatches": 85,
+    "runtimeExportSymbols": 86,
+    "directNameMatches": 83,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 3,
-    "typeOrShapeReviewSymbols": 57,
+    "typeOrShapeReviewSymbols": 54,
     "filesWithUnmappedRuntime": 0,
     "filesWithoutDirectDiffImport": 1,
     "filesWithoutOtherRustReferences": 0
   },
   "pendingModules": [],
   "files": [
-    {
-      "source": "src/browser-worker-runtime.ts",
-      "target": "rust/src/browser_worker_runtime.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 2,
-      "directNameMatches": 2,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "BrowserReceipt",
-        "PoolSubmission",
-        "PooledRun"
-      ],
-      "directDiffImports": [
-        "rust/tests/head_to_head_browser_worker_routing_public.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/adapters.rs",
-        "rust/src/native_browser_execution.rs"
-      ],
-      "exports": [
-        {
-          "name": "BrowserReceipt",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "PoolSubmission",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "PooledRun",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "browserWorkerPool",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "pooledWebHelmRun",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
     {
       "source": "src/cli.ts",
       "target": "rust/src/cli.rs",

@@ -4,7 +4,7 @@
 use crate::{
     agent_prompt_builder::default_prompt_reference_directory,
     browser_worker_pool::BrowserWorkerPoolManager,
-    browser_worker_runtime::{pooled_webhelm_run, parse_envelope, PooledWebHelmState},
+    browser_worker_runtime::{pooled_web_helm_run, parse_envelope, PooledWebHelmState},
     continuation::{run_delivery_owned_process, DeliveryProcessOptions},
     events::random_uuid,
     owned_process::OwnedProcessManager,
@@ -433,7 +433,7 @@ impl ChatGptAdapter{
             json!({"message":request.get("prompt"),"temporary":false})
         };
         let execution_id=field(task,"executionId");
-        let (mut state,receipt)=pooled_webhelm_run(
+        let (mut state,receipt)=pooled_web_helm_run(
             socket,command,workspace,pool,provider,
             execution_id,cancelled,||Ok(json!({
                 "action":action,"config":config

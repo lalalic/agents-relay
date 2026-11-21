@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 89,
-    "HOLD": 15,
+    "PASS": 90,
+    "HOLD": 14,
     "EXCLUDED": 3
   },
   "records": [
@@ -162,29 +162,26 @@
       "source": "src/browser-worker-runtime.ts",
       "target": "rust/src/browser_worker_runtime.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 2,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
+      "directDiffTests": [
+        "rust/tests/head_to_head_browser_worker_runtime.mjs",
+        "rust/tests/native_chatgpt_webhelm_submission.rs",
+        "rust/tests/native_daemon_binary_readonly.rs"
+      ],
       "otherRustModuleReferences": [
         "rust/src/adapters.rs"
       ],
-      "typeOrShapeReviews": [
-        "BrowserReceipt",
-        "PoolSubmission",
-        "PooledRun"
-      ],
+      "typeOrShapeReviews": [],
       "certificationEvidence": [
         "2026-11-20 real worker start fix, still HOLD: WebHelm HTTP submission cannot mark daemon workerStarted; exact execution-correlated task.started must commit canonical Graph/SQLite first, and terminal clears exact execution. ChatGptAdapter never policy now requires worker-start barrier and quarantines uncertain session; canonical worker_start_timeout classified as start-ack. Tests: 5 native fake Unix WebHelm socket/pool, 2 native daemon WorkerFailure E2E, 1 native daemon WebHelm Graph terminal HTTP test, 1+1 native barrier/live Worker unit. All targeted isolated tests pass, production authenticated EventBus/provider still unbound.",
-        "2026-11-20: native after-terminal checks canonical start-ack before terminal barrier; 6/6 disposable real Unix WebHelm session/pool, 2/2 generation SQLite start/fast success/timeout and 1/1 isolated actual daemon HTTP/Graph/SQLite terminal pass. Unstarted generation quarantines; FAILED/CANCELLED cannot spoof start-ack. Authenticated external provider still HOLD. First all-target test run not green (2 unrelated native_api_escalation subprocess SIGTERM exits under Mac load)."
+        "2026-11-20: native after-terminal checks canonical start-ack before terminal barrier; 6/6 disposable real Unix WebHelm session/pool, 2/2 generation SQLite start/fast success/timeout and 1/1 isolated actual daemon HTTP/Graph/SQLite terminal pass. Unstarted generation quarantines; FAILED/CANCELLED cannot spoof start-ack. Authenticated external provider still HOLD. First all-target test run not green (2 unrelated native_api_escalation subprocess SIGTERM exits under Mac load).",
+        "2026-11-20: Direct original Node public browserWorkerPool/pooledWebHelmRun vs native Rust Browser Pool + WebHelm IPC 9 scenarios (shared fixture exact session/lease/receipt/heartbeat/probe/recovery; separate SQLite Pool; owned process) PASS, including failed stop quarantine with no false Worker failure and telemetry onRecovery callback after verified same-thread recovery; callback error quarantines and never resends. Original Node runtime 14/14 and Rust Unix socket ChatGPT adapter 6/6 passed fresh. Reviewed 3 type surfaces: BrowserReceipt -> native PooledWebHelmReceipt.receipt, PoolSubmission -> typed native pooled_webhelm_run plus explicit probe/heartbeat on owning adapter, PooledRun -> native verified receipt/state.release/cancel (sync Rust instead of JS promises). Production external Provider and authenticated terminal subscription still NOT RUN and HOLD in reconciler-runtime.ts/relayd.ts, not claimed by this standalone runtime parity."
       ],
-      "openGates": [
-        "缺独立原 Node/Rust 动态/失联 WebHelm 会话租约验证；不能把 Pool mock 看作实际 Provider 生命周期",
-        "缺直接 Node/Rust API 差分导入的静态证据；需编写或定位真实对照测试",
-        "仍有 3 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
-      ],
-      "legacyLedgerNote": "Phase1 serial native WebHelm Browser Pool lease/session/probe/recovery first port; uncompiled/untested; end-to-end wiring Phase2."
+      "openGates": [],
+      "legacyLedgerNote": "Phase1 serial native WebHelm Browser Pool lease/session/probe/recovery first port; uncompiled/untested; end-to-end wiring Phase2.",
+      "status": "PASS"
     },
     {
       "source": "src/chatgpt-platform-fallback.ts",

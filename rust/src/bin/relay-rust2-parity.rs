@@ -62,6 +62,8 @@ mod script_task_adapter_public;
 mod dependency_revision_execution_public;
 #[path = "relay-rust2-parity/browser_worker_routing_public.rs"]
 mod browser_worker_routing_public;
+#[path = "relay-rust2-parity/browser_worker_runtime_public.rs"]
+mod browser_worker_runtime_public;
 #[path = "relay-rust2-parity/store_github_public.rs"]
 mod store_github_public;
 #[path = "relay-rust2-parity/task_actions_public.rs"]
@@ -450,6 +452,7 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=execution_context_public::invoke(request){return output;}
     if let Some(output)=dependency_revision_execution_public::invoke(request){return output;}
     if let Some(output)=browser_worker_routing_public::invoke(request){return output;}
+    if let Some(output)=browser_worker_runtime_public::invoke(request){return output;}
     if let Some(output)=store_github_public::invoke(request){return output;}
     if let Some(output)=task_actions_public::invoke(request){return output;}
     if let Some(output)=dag_task_runtime_public::invoke(request){return output;}
@@ -4602,6 +4605,10 @@ fn main() {
     let args=std::env::args().skip(1).collect::<Vec<_>>();
     if args==["platform","profile","chatgpt"]{
         println!("{}", serde_json::json!({"platform":"chatgpt"}));
+        return;
+    }
+    if args==["platform","profile","z"]{
+        println!("{}", serde_json::json!({"platform":"z"}));
         return;
     }
     for line in io::stdin().lock().lines() {

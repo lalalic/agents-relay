@@ -217,8 +217,14 @@ impl PooledWebHelmState {
         match stop_webhelm_session_verified(socket,session){
             Ok(())=>pool.release(lease).map_err(|e|e.to_string()),
             Err(error)=>{
+                // Match original Node PooledRun.release: an uncertain
+                // WebHelm stop is NOT a new Task failure after a verified
+                // terminal event. Preserve the occupied Slot as
+                // QUARANTINED and finish release; an actual Pool DB error
+                // still propagates as an infrastructure failure.
                 pool.quarantine(lease).map_err(|e|e.to_string())?;
-                Err(error)
+                eprintln!("warning: WebHelm Session release quarantined: {error}");
+                Ok(())
             }
         }
     }
@@ -243,10 +249,25 @@ impl PooledWebHelmState {
     pub fn probe<Activity,Recover>(
         &mut self,socket:&Path,pool:&BrowserWorkerPoolManager,
         timeout_ms:u64,recovery_min_ms:u64,
-        mut on_activity:Activity,mut recover:Recover,
+        on_activity:Activity,recover:Recover,
     )->Result<(),String>
     where Activity:FnMut(&str)->Result<(),String>,
           Recover:FnMut(&str)->Result<Value,String>,
+    {
+        self.probe_with_recovery(socket,pool,timeout_ms,recovery_min_ms,
+            on_activity,recover,|_,_|Ok(()))
+    }
+    /// The original Node PooledRun.onRecovery is telemetry only. Report it
+    /// only AFTER independently verified same-thread recovery submission;
+    /// any callback failure after possible send makes the session uncertain.
+    pub fn probe_with_recovery<Activity,Recover,Notified>(
+        &mut self,socket:&Path,pool:&BrowserWorkerPoolManager,
+        timeout_ms:u64,recovery_min_ms:u64,
+        mut on_activity:Activity,mut recover:Recover,mut on_recovery:Notified,
+    )->Result<(),String>
+    where Activity:FnMut(&str)->Result<(),String>,
+          Recover:FnMut(&str)->Result<Value,String>,
+          Notified:FnMut(&str,&str)->Result<(),String>,
     {
         if self.stopped{return Ok(());}
         let Some(session)=self.session_id.as_deref()else{return Ok(());};
@@ -290,7 +311,18 @@ impl PooledWebHelmState {
                 "new-turn",session,&config,None);
             match answer{
                 Ok(value) if matches!(field(&value,"status"),
-                    "submitted"|"completed")&&!field(&value,"verified_by").is_empty()=>{},
+                    "submitted"|"completed")&&!field(&value,"verified_by").is_empty()=>{
+                    if on_recovery(thread,field(&value,"verified_by")).is_err(){
+                        // Unlike an unsent builder failure, the callback
+                        // runs after the WebHelm new-turn might have reached
+                        // the provider. Never retry this ambiguous send.
+                        self.recovery_outcome_uncertain=true;
+                        self.uncertain=true;
+                        if let Some(lease)=self.lease.as_ref(){
+                            pool.quarantine(lease).map_err(|e|e.to_string())?;
+                        }
+                    }
+                },
                 _=>{
                     self.recovery_outcome_uncertain=true;
                     self.uncertain=true;
@@ -309,7 +341,7 @@ impl PooledWebHelmState {
 }
 /// Synchronous native port of pooledWebHelmRun. The caller owns monitoring
 /// callbacks/intervals; a return receipt never completes a Task.
-pub fn pooled_webhelm_run<Build>(
+pub fn pooled_web_helm_run<Build>(
     socket:&Path,webhelm:&Path,workspace:&str,
     pool:&mut BrowserWorkerPoolManager,provider:&str,
     execution_id:&str,cancelled:&AtomicBool,
