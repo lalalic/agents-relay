@@ -629,3 +629,82 @@ fn installed_native_daemon_dashboard_sse_emits_node_frames_only_after_commit(){
     drop(live);drop(running);
     fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn installed_daemon_sse_watches_external_graph_sqlite_worker_commits(){
+    use agents_relay_rust2::{
+        events::event_for,execution_event_identity::execution_event_source,
+        native_worker_event_ingress::apply_verified_worker_event,
+    };
+    let home=root();job(&home,"ACTIVE",false);
+    let db=home.join("relay.sqlite");
+    let execution="outofprocess-worker-generation-001";
+    let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap();
+    store.mutate_job("17",|mut job|{
+        let task=&mut job["tasks"][0];
+        task["adapter"]=json!("chatgpt");
+        task["agentName"]=json!("implementation");
+        task["agentGraph"]=serde_json::Value::Null;
+        task["attempt"]=json!(1);
+        task["executionId"]=json!(execution);
+        task["leaseOwner"]=json!("external-Graph-writer");
+        task["leaseExpiresAt"]=json!("2027-11-21T23:59:59.000Z");
+        job["autoMerge"]=json!(false);
+        Ok(job)
+    }).unwrap();
+    drop(store);
+    let port=port();
+    let running=daemon(&home,port);
+    let mut live=TcpStream::connect(("127.0.0.1",port)).unwrap();
+    live.set_read_timeout(Some(Duration::from_secs(4))).unwrap();
+    live.write_all(b"GET /events HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+    let mut received=String::new();
+    let mut buf=[0u8;8192];
+    while !received.contains(": connected\n\n"){
+        let count=live.read(&mut buf).unwrap();assert!(count>0);
+        received.push_str(&String::from_utf8_lossy(&buf[..count]));
+    }
+    assert!(!received.contains("\"state\":\"SUCCEEDED\""),
+        "No Worker may appear completed before a real Graph/SQLite event");
+    let issued=json!({"id":execution_event_source("17","2",execution),
+        "agent":"fixture","component":"agents-relay"});
+    let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+    // These are real Graph-owned mutations from a separate SQLite connection
+    // (just as an external Worker does), not a call to daemon SSE emit.
+    let started=event_for("17","2",None,"task.started","started",
+        "external actual Graph start",None,None,Some(issued.clone()));
+    let completed=event_for("17","2",None,"task.completed","completed",
+        "external actual Graph terminal",None,None,Some(issued));
+    apply_verified_worker_event(&db,&graph,"17","2",execution,&started).unwrap();
+    apply_verified_worker_event(&db,&graph,"17","2",execution,&completed).unwrap();
+    let deadline=Instant::now()+Duration::from_secs(9);
+    loop{
+        if received.contains("\"state\":\"SUCCEEDED\""){break;}
+        assert!(Instant::now()<deadline,
+            "Native SSE missed completed out-of-process SQLite commit: {received}");
+        let count=live.read(&mut buf).unwrap();assert!(count>0);
+        received.push_str(&String::from_utf8_lossy(&buf[..count]));
+    }
+    let frames=received.split("\n\n").filter_map(|frame|
+        frame.find("data: ").and_then(|n|
+            serde_json::from_str::<serde_json::Value>(&frame[n+6..]).ok()))
+        .collect::<Vec<_>>();
+    assert!(frames.iter().any(|frame|frame["job"]["tasks"][0]["state"]=="SUCCEEDED"),
+        "EventSource must receive a real committed Task status snapshot");
+    assert!(frames.iter().all(|frame|frame.get("event").is_none()),
+        "separate process commit observation must not fabricate relay event payloads");
+    let before=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap()
+        .load_job("17").unwrap().unwrap();
+    assert_eq!(before["tasks"][0]["state"],"SUCCEEDED");
+    assert_eq!(before["tasks"][0]["attempt"],1);
+    drop(live);drop(running);
+    let restarted=daemon(&home,port);
+    thread::sleep(Duration::from_millis(150));
+    let after=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap()
+        .load_job("17").unwrap().unwrap();
+    assert_eq!(before["tasks"][0]["executionHistory"],
+        after["tasks"][0]["executionHistory"]);
+    assert_eq!(after["tasks"][0]["attempt"],1);
+    drop(restarted);
+    fs::remove_dir_all(home).unwrap();
+}

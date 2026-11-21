@@ -1009,6 +1009,16 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         let (sender,receiver)=mpsc::channel();
         self.subscriptions.push(sender);receiver
     }
+    fn observe_committed_job_snapshot(&mut self,id:&str)->Result<(),String>{
+        if self.subscriptions.is_empty(){return Ok(());}
+        // Re-read, do not trust the potentially stale inventory copy
+        // assembled before the background Worker finished. A Graph/SQLite
+        // commit in another process is visible without a synthetic wake.
+        let snapshot=self.scoped(id)?.load_job(id)?
+            .ok_or_else(||format!("Dashboard observation missing Job {id}"))?;
+        self.emit_job_snapshot(&snapshot);
+        Ok(())
+    }
     fn router_test(&mut self,_:&str,_:&str)->Result<Value,String>{Err(denied("router_test"))}
     fn decision_audit(&mut self)->Result<Vec<Value>,String>{Err(denied("decision_audit"))}
     fn account_usage(&mut self)->Result<Value,String>{Err(denied("provider account usage"))}

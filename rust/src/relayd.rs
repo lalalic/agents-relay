@@ -263,6 +263,12 @@ pub trait DaemonServices:Send{
     }
     // SSE frames are observations from the authoritative live Event Bus.
     fn subscribe_events(&mut self)->Receiver<String>;
+    /// Observe committed SQLite revisions that were written by a separate
+    /// Script/Provider worker process, outside this daemon host's in-memory
+    /// publish callbacks. Never mutate Job state or invent Worker events.
+    fn observe_committed_job_snapshot(&mut self,_id:&str)->Result<(),String>{
+        Ok(())
+    }
     fn router_test(&mut self,id:&str,task_id:&str)->Result<Value,String>;
     fn decision_audit(&mut self)->Result<Vec<Value>,String>;
     fn account_usage(&mut self)->Result<Value,String>;
@@ -461,6 +467,21 @@ pub fn run_daemon<S:DaemonServices+'static>(
                     let mut guard=services.lock()
                         .map_err(|_|"Daemon service lock poisoned")?;
                     guard.reconcile_local_completion(field(job,"id"))?;
+                }
+                // Node subscribeLocalCommits observes durable writes even
+                // from a separate Worker process. Poll the authoritative
+                // SQLite snapshot on this same daemon tick to close the
+                // native SSE gap for Script/Provider out-of-process commits.
+                // The host de-duplicates identical revisions and skips work
+                // when no SSE client is listening.
+                for job in &inventory{
+                    let id=field(job,"id");
+                    let result=services.lock()
+                        .map_err(|_|"Daemon service lock poisoned")?
+                        .observe_committed_job_snapshot(id);
+                    if let Err(error)=result{
+                        eprintln!("warning: Dashboard SQLite observation for Job {id}: {error}");
+                    }
                 }
                 // Optional remote push is a distinct, durable projection.
                 // A historic COMPLETED Job without a matching marker never
