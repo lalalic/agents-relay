@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 87,
-    "HOLD": 17,
+    "PASS": 88,
+    "HOLD": 16,
     "EXCLUDED": 3
   },
   "records": [
@@ -240,11 +240,14 @@
       "source": "src/cli-coordinator.ts",
       "target": "rust/src/cli_coordinator.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 1,
       "staticNameMismatch": 0,
       "directDiffTests": [
-        "rust/tests/head_to_head_coordinator_cli.mjs"
+        "rust/tests/head_to_head_coordinator_cli.mjs",
+        "rust/tests/native_cli_foreground.rs",
+        "rust/tests/native_daemon_binary_readonly.rs",
+        "rust/tests/native_sqlite_write_host.rs"
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/agents-relay-rust.rs",
@@ -257,13 +260,12 @@
         "Real native CLI job run -> HTTP daemon workspace_control job.run -> authoritative SQLite mutateJob with canonical Task queue and Job activation Graph: rust/src/bin/agents-relay-rust.rs, rust/src/relayd_control.rs",
         "Native isolated real binary/restart, workspace-root conflict and duplicate/start negative tests: rust/tests/native_daemon_binary_readonly.rs, rust/tests/native_sqlite_write_host.rs",
         "2026-11-20: Native CLI --foreground now real daemon-backed and tested SIGINT/SIGTERM/status/restart; CLI coordinator remains HOLD exclusively for full real provider/Worker lifecycle and production daemon cutover.",
-        "2026-11-20: isolated actual native daemon + installed CLI job run --foreground runs real trusted Script DAG child to Graph/SQLite SUCCEEDED and Job COMPLETED, durable event outbox, exactly one attempt, replay-free daemon restart and correct CLI exit. GET-only EAGAIN retry, no control POST replay. Production authenticated Model Worker/EventBus/HTTP cutover NOT evidenced; remains HOLD."
+        "2026-11-20: isolated actual native daemon + installed CLI job run --foreground runs real trusted Script DAG child to Graph/SQLite SUCCEEDED and Job COMPLETED, durable event outbox, exactly one attempt, replay-free daemon restart and correct CLI exit. GET-only EAGAIN retry, no control POST replay. Production authenticated Model Worker/EventBus/HTTP cutover NOT evidenced; remains HOLD.",
+        "2026-11-20 certified PASS: exactly one runtime export runCoordinatorJobCommand native CLI↔Graph/SQLite with 11 original Node/Rust direct cases; true installed daemon + SQLite Job/Task CAS and restart (native_daemon_binary_readonly real CLI); native_cli_foreground 7 real daemon process scenarios including successful Script DAG/Job completed, exact lease model event start+terminal via isolated loopback, SIGINT=130, SIGTERM=143, no replay and no duplicate scheduling. Source type review empty. External authenticated NATS/real Provider lifecycle belongs to daemon/reconciler-runtime modules, which remain HOLD and do not warrant blocking this separately bounded CLI module."
       ],
-      "openGates": [
-        "Real external model Worker/provider lifecycle (start acknowledgement, correlated terminal, cancel and crash recovery) not yet fully bound to native daemon",
-        "Production cutover blocked by native daemon and provider transport; --foreground local Graph/SQLite and SIGINT/SIGTERM E2E now PASS under certified cli-foreground.ts."
-      ],
-      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure."
+      "openGates": [],
+      "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure.",
+      "status": "PASS"
     },
     {
       "source": "src/cli-escalation.ts",

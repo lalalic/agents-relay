@@ -2,12 +2,12 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "22fa4e5259049ed6c31acef6d0a967a5a4700c3d",
-    "rustTree": "50ead32ea35af010f65839aa4f41cbe8f81ed73c",
-    "sourceCount": 9,
+    "rustTree": "33ddb46dbf3a58db697195ab7496d27683db7d34",
+    "sourceCount": 8,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 91,
-    "directNameMatches": 88,
+    "runtimeExportSymbols": 90,
+    "directNameMatches": 87,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 3,
     "typeOrShapeReviewSymbols": 57,
@@ -94,30 +94,6 @@
         },
         {
           "name": "runArtifactCommand",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/cli-coordinator.ts",
-      "target": "rust/src/cli_coordinator.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 1,
-      "directNameMatches": 1,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [
-        "rust/tests/head_to_head_coordinator_cli.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/agents-relay-rust.rs",
-        "rust/src/bin/relay-rust2-parity.rs",
-        "rust/src/relayd_control.rs"
-      ],
-      "exports": [
-        {
-          "name": "runCoordinatorJobCommand",
           "kind": "function",
           "static": "name-match"
         }
