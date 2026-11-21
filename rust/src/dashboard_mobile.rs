@@ -25,6 +25,20 @@ fn clip(value:&Value,max:usize)->String{
     let cut=s.encode_utf16().take(max).collect::<Vec<_>>();
     String::from_utf16_lossy(&cut)
 }
+/// Port of Node `handleMobileDashboardRequest`: the route is owned by
+/// NativeDashboardApi and uses the same authenticated Graph/SQLite service
+/// callbacks as the existing Rust daemon. This public adapter is invoked by
+/// the real HTTP dispatcher; it does not substitute a fixture or mint a
+/// response without checking live scoped identity and cancellation readback.
+pub fn handle_mobile_dashboard_request<S:crate::dashboard_api::DashboardApiServices>(
+    api:&crate::dashboard_api::NativeDashboardApi<S>,
+    services:&mut S,
+    req:&crate::dashboard::DashboardRequest<'_>,
+    parsed:&url::Url,
+)->crate::dashboard::DashboardResponse{
+    api.mobile(services,req,parsed)
+}
+
 pub fn valid_mobile_identity(id:&Value,repository:&Value)->bool{
     id.as_str().is_some_and(|s|id_pattern().is_match(s))
         &&repository.as_str().is_some_and(|s|s.encode_utf16().count()<=200&&repo_pattern().is_match(s))

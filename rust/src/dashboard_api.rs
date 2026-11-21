@@ -233,7 +233,7 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
         }
         text_response(202, "Accepted")
     }
-    fn mobile(&self,services:&mut S,req:&DashboardRequest<'_>,parsed:&Url)
+    pub(crate) fn mobile(&self,services:&mut S,req:&DashboardRequest<'_>,parsed:&Url)
         ->DashboardResponse{
         let path=parsed.path();
         let id=query(parsed,"id").unwrap_or_default();
@@ -330,7 +330,8 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
         };
         let path = parsed.path();
         if path.starts_with("/api/mobile/"){
-            return self.mobile(services,req,&parsed);
+            return crate::dashboard_mobile::handle_mobile_dashboard_request(
+                self,services,req,&parsed);
         }
         if path == "/webhooks/github" && allowed_method(req, "POST") {
             return self.webhook(services, req);
