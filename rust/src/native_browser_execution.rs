@@ -90,8 +90,18 @@ fn await_generation_barrier(
         if barrier=="worker-start" && state=="RUNNING"&&generation==execution_id{
             return Ok(());
         }
-        let old_generation=task.get("executionHistory").and_then(Value::as_array)
-            .into_iter().flatten().any(|history|field(history,"id")==execution_id);
+        let history=task.get("executionHistory").and_then(Value::as_array)
+            .into_iter().flatten().find(|history|field(history,"id")==execution_id);
+        let old_generation=history.is_some();
+        // A Worker can finish before the first poll. A Graph-authorized
+        // SUCCEEDED generation necessarily passed the Task started state;
+        // a FAILED/CANCELLED generation might instead reflect pre-submit
+        // rejection or cancellation with NO task.started. Do not let the
+        // claim-time startedAt field alone satisfy a start acknowledgement.
+        if barrier=="worker-start"&&old_generation&&state=="SUCCEEDED"
+            &&history.is_some_and(|entry|!field(entry,"startedAt").is_empty()){
+            return Ok(());
+        }
         if barrier=="terminal" &&old_generation
             &&matches!(state,"SUCCEEDED"|"FAILED"|"CANCELLED"){
             return Ok(());
@@ -182,6 +192,51 @@ pub fn submit_claimed_chatgpt_worker(
 #[cfg(test)]
 mod start_ack_barrier_tests{
     use super::*;
+    #[test]
+    fn already_terminal_exact_worker_generation_requires_durable_started_proof(){
+        let root=std::env::temp_dir().join(format!(
+            "rust2-early-terminal-start-{}-{}",
+            std::process::id(),chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)));
+        fs::create_dir_all(&root).unwrap();
+        let db=root.join("relay.sqlite");
+        let store=SQLiteRelayStore::open(&db,Some("7")).unwrap();
+        let job=serde_json::json!({"id":"7","repository":"fixture","prNumber":0,
+            "state":"ACTIVE","title":"early-terminal","tasks":[{"id":"2","jobId":"7",
+                "kind":"work","state":"SUCCEEDED","executionId":null,
+                "executionHistory":[{"id":"e1","startedAt":"2026-11-20T01:00:00.000Z",
+                    "endedAt":"2026-11-20T01:00:01.000Z"}]}]});
+        store.save_job(&job).unwrap();
+        store.close().unwrap();
+        let cancelled=AtomicBool::new(false);
+        let deadline=Instant::now()+Duration::from_millis(200);
+        assert!(await_generation_barrier(
+            &db,"7","2","e1","worker-start",deadline,&cancelled).is_ok(),
+            "a trusted task.started which completed before polling is valid");
+        assert!(await_generation_barrier(
+            &db,"7","2","e1","terminal",deadline,&cancelled).is_ok());
+        let store=SQLiteRelayStore::open(&db,Some("7")).unwrap();
+        let mut newer=store.load_job("7").unwrap().unwrap();
+        newer["tasks"][0]["executionHistory"][0]
+            .as_object_mut().unwrap().remove("startedAt");
+        store.save_job(&newer).unwrap();
+        store.close().unwrap();
+        let error=await_generation_barrier(
+            &db,"7","2","e1","worker-start",
+            Instant::now()+Duration::from_millis(5),&cancelled).unwrap_err();
+        assert!(error.contains("worker_start_timeout"),"{error}");
+        let store=SQLiteRelayStore::open(&db,Some("7")).unwrap();
+        let mut failed=store.load_job("7").unwrap().unwrap();
+        failed["tasks"][0]["state"]=serde_json::json!("FAILED");
+        failed["tasks"][0]["executionHistory"][0]["startedAt"]=
+            serde_json::json!("2026-11-20T01:00:00.000Z");
+        store.save_job(&failed).unwrap();
+        store.close().unwrap();
+        let refused=await_generation_barrier(
+            &db,"7","2","e1","worker-start",
+            Instant::now()+Duration::from_millis(5),&cancelled).unwrap_err();
+        assert!(refused.contains("worker_start_timeout"),"{refused}");
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn missing_start_ack_has_specific_canonical_timeout_phase(){
         let cancelled=AtomicBool::new(false);

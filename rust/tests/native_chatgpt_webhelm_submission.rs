@@ -21,7 +21,10 @@ fn fixture()->(PathBuf,PathBuf,PathBuf){
         SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
     fs::create_dir_all(&root).unwrap();
     let command=root.join("fake-webhelm");
-    fs::write(&command,"#!/bin/sh\nif [ \"$1\" = \"platform\" ]; then printf '{\"platform\":\"chatgpt\"}\\n'; else printf '{\"ok\":true}\\n'; fi\n").unwrap();
+    // An actual native Rust fixture executable rather than /bin/sh shebang.
+    // The verified owned-process-supervisor and WebHelm AF_UNIX socket are
+    // still exercised. The profile-only shim is never a model Worker.
+    fs::copy(env!("CARGO_BIN_EXE_relay-rust2-parity"),&command).unwrap();
     fs::set_permissions(&command,fs::Permissions::from_mode(0o700)).unwrap();
     (root.clone(),command,root.join("webhelm.sock"))
 }
@@ -86,14 +89,15 @@ fn server(socket:&Path,receipt:Value,release:bool)->thread::JoinHandle<Vec<Strin
         seen
     })
 }
-fn run_case_with_policy(temporary:bool,barrier_ok:bool,policy:&str)
+fn run_case_with_policy_with_start(
+    temporary:bool,barrier_ok:bool,policy:&str,start_ok:bool)
     ->(Result<agents_relay_rust2::adapters::WorkerExecution,String>,i64,i64,i64,Vec<String>){
     let (root,cli,socket)=fixture();
     let receipt=json!({"status":"submitted","verified_by":"fixture",
         "thread_id":"fixturethread12345",
         "thread_url":"https://chatgpt.com/c/fixturethread12345",
         "temporary":temporary});
-    let expect_release=!temporary&&barrier_ok&&policy!="never";
+    let expect_release=!temporary&&barrier_ok&&start_ok&&policy!="never";
     let hosted=server(&socket,receipt,expect_release);
     let mut pool=BrowserWorkerPoolManager::open(BrowserPoolOptions{
         path:Some(root.join("pool.sqlite")),capacity:1,queue_wait_ms:1500,
@@ -104,16 +108,47 @@ fn run_case_with_policy(temporary:bool,barrier_ok:bool,policy:&str)
         "routing":{"adapter":"chatgpt","projectId":"isolated-test"},
         "chatgptTabClosePolicy":policy,"timeoutMs":6000});
     let adapter=ChatGptAdapter::default();
+    let mut barriers=Vec::<String>::new();
     let response=adapter.launch(&task,&socket,&cli,"Relay",&mut pool,
         &AtomicBool::new(false),|barrier|{
-            assert_eq!(barrier,if policy=="never"{"worker-start"}else{"terminal"},
-                "a submitted receipt cannot substitute an authoritative barrier");
-            if barrier_ok{Ok(())}else{Err("No verified terminal event".into())}
+            assert!(matches!(barrier,"worker-start"|"terminal"),
+                "unrecognized Worker barrier: {barrier}");
+            if barrier=="terminal"{
+                assert_eq!(policy,"after-terminal");
+                assert_eq!(barriers,vec!["worker-start"],
+                    "terminal is never a substitute for committed task.started");
+            }
+            barriers.push(barrier.into());
+            if barrier=="worker-start"&&!start_ok{
+                Err("worker_start_timeout: no worker start-ack".into())
+            }else if !barrier_ok
+                &&(barrier=="terminal"||policy=="never"){
+                Err("No verified terminal event".into())
+            }else{Ok(())}
         });
+    if !temporary{
+        if !start_ok||policy=="never"{
+            assert_eq!(barriers,vec!["worker-start"]);
+        }else{
+            assert_eq!(barriers,vec!["worker-start","terminal"]);
+        }
+    }
     let snapshot=pool.snapshot("chatgpt").unwrap();
     let operations=hosted.join().unwrap();
     fs::remove_dir_all(root).unwrap();
     (response,snapshot.idle,snapshot.leased,snapshot.quarantined,operations)
+}
+fn run_case_with_policy(temporary:bool,barrier_ok:bool,policy:&str)
+    ->(Result<agents_relay_rust2::adapters::WorkerExecution,String>,i64,i64,i64,Vec<String>){
+    run_case_with_policy_with_start(temporary,barrier_ok,policy,true)
+}
+#[test]
+fn after_terminal_without_authoritative_worker_start_quarantines_immediately(){
+    let (result,idle,leased,quarantined,operations)=
+        run_case_with_policy_with_start(false,true,"after-terminal",false);
+    assert!(result.unwrap_err().contains("worker_start_timeout"));
+    assert_eq!((idle,leased,quarantined),(0,0,1));
+    assert_eq!(operations,vec!["workspace-create","start","platform-run"]);
 }
 fn run_case(temporary:bool,barrier_ok:bool)
     ->(Result<agents_relay_rust2::adapters::WorkerExecution,String>,i64,i64,Vec<String>){

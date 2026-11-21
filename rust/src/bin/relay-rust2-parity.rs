@@ -4595,6 +4595,15 @@ thread_local! {
 }
 
 fn main() {
+    // Test-owned native WebHelm CLI profile fixture. This binary is a parity
+    // harness, never the deployed Relay CLI: native integration fixtures may
+    // exercise the real process supervisor without an extra /bin/sh shebang
+    // exec that can be delayed by macOS dynamic-loader cold startup.
+    let args=std::env::args().skip(1).collect::<Vec<_>>();
+    if args==["platform","profile","chatgpt"]{
+        println!("{}", serde_json::json!({"platform":"chatgpt"}));
+        return;
+    }
     for line in io::stdin().lock().lines() {
         let output = match line {
             Ok(line) => match serde_json::from_str::<Value>(&line) {

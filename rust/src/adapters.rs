@@ -462,11 +462,16 @@ impl ChatGptAdapter{
                 return Err("browser-worker submitted to an unexpected ChatGPT thread".into());
             }
         }
-        let barrier_result=match policy.as_str(){
-            "after-start"|"never"=>await_barrier("worker-start"),
-            "after-terminal"=>await_barrier("terminal"),
-            _=>Ok(()),
-        };
+        // Every browser policy needs the original Reconciler start-ack
+        // before terminal settlement. The after-terminal tab close policy
+        // controls session release, NOT whether a submitted Worker must
+        // prove it ever started. A missing start ack must fail/quarantine
+        // at the short start-ack deadline instead of waiting the full Task
+        // timeout for a terminal event that cannot legitimately arrive.
+        let barrier_result=await_barrier("worker-start").and_then(|_|{
+            if policy=="after-terminal"{await_barrier("terminal")}
+            else{Ok(())}
+        });
         if let Err(error)=barrier_result{
             // A verified submission can still outlive a missing start or
             // terminal Graph event. The exact Session is now uncertain and

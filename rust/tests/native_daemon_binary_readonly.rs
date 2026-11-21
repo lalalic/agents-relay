@@ -652,7 +652,10 @@ fn isolated_native_daemon_submits_chatgpt_through_webhelm_and_waits_for_real_gra
     fs::create_dir_all(root.join("stores")).unwrap();
     fs::create_dir_all(&project).unwrap();
     let cli=root.join("fake-webhelm");
-    fs::write(&cli,"#!/bin/sh\nif [ \"$1\" = \"platform\" ]; then printf '{\"platform\":\"chatgpt\"}\\n'; else printf '{\"ok\":true}\\n'; fi\n").unwrap();
+    // Native-only disposable profile fixture avoids Darwin /bin/sh shebang
+    // startup stalls; the actual WebHelm Unix socket, daemon, Graph, SQLite
+    // and trusted task.started/terminal ingress remain real test code.
+    fs::copy(env!("CARGO_BIN_EXE_relay-rust2-parity"),&cli).unwrap();
     fs::set_permissions(&cli,fs::Permissions::from_mode(0o700)).unwrap();
     let socket=root.join("webhelm.sock");
     let listener=UnixListener::bind(&socket).unwrap();
