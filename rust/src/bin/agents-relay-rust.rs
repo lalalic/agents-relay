@@ -209,7 +209,12 @@ impl CliRuntimePort for DaemonClient {
                 let job=relay_control_job(args,binding)?;
                 let rendered=run_plan_context_command(args,&job,
                     |project,role|resolve_execution_context(project,role,&json!({})),
-                    |input|Ok(planner_input(input)))?;
+                    |input|{
+                        let mut native=input.clone();
+                        native["nativeRustCli"]=json!(std::env::current_exe()
+                            .map_err(|e|e.to_string())?.to_string_lossy().to_string());
+                        Ok(planner_input(&native))
+                    })?;
                 Ok(Value::String(rendered))
             },
             ("task","context")=>{

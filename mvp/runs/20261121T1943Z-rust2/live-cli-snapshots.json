@@ -1,0 +1,295 @@
+[
+  {
+    "id": "681",
+    "repo": "calculator-rust2-e2e-20261121",
+    "state": "ACTIVE",
+    "review": null,
+    "headSha": "e41f5c506c8efea51568a5acb8c96788df81f6de",
+    "localMerge": null,
+    "tasks": [
+      {
+        "id": "2069",
+        "agent": null,
+        "state": "RUNNING",
+        "attempt": 0
+      },
+      {
+        "id": "2070",
+        "agent": "calculator-builder",
+        "state": "FAILED",
+        "attempt": 0
+      },
+      {
+        "id": "2071",
+        "agent": "troubleshooter",
+        "state": "BLOCKED",
+        "attempt": 3
+      }
+    ],
+    "plans": []
+  },
+  {
+    "id": "682",
+    "repo": "rust2-script-d-e2e-20261121",
+    "state": "ACTIVE",
+    "review": "changes_required",
+    "headSha": "cd39f63906f5df165addc102f09964c493f47c54",
+    "localMerge": {
+      "sourceRef": "refs/heads/relay/job-682-ec1c7d93ba05",
+      "targetRef": "refs/heads/main",
+      "status": "pending",
+      "attempts": 0
+    },
+    "tasks": [
+      {
+        "id": "2072",
+        "agent": null,
+        "state": "SUCCEEDED",
+        "attempt": 0
+      },
+      {
+        "id": "2073",
+        "agent": "stage-a",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      },
+      {
+        "id": "2074",
+        "agent": "troubleshooter",
+        "state": "CANCELLED",
+        "attempt": 0
+      },
+      {
+        "id": "2075",
+        "agent": "stage-b",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      },
+      {
+        "id": "2076",
+        "agent": "stage-c",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      },
+      {
+        "id": "2077",
+        "agent": "job-acceptance-reviewer",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      },
+      {
+        "id": "2078",
+        "agent": "troubleshooter",
+        "state": "CANCELLED",
+        "attempt": 1
+      },
+      {
+        "id": "2083",
+        "agent": "implementation",
+        "state": "SUCCEEDED",
+        "attempt": 2
+      },
+      {
+        "id": "2088",
+        "agent": "job-acceptance-reviewer",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      },
+      {
+        "id": "2091",
+        "agent": null,
+        "state": "SUCCEEDED",
+        "attempt": 0
+      },
+      {
+        "id": "2093",
+        "agent": "stage-a",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      },
+      {
+        "id": "2094",
+        "agent": "stage-b",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      },
+      {
+        "id": "2095",
+        "agent": "stage-c",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      }
+    ],
+    "plans": [
+      {
+        "id": "plan-1",
+        "status": "SUCCEEDED",
+        "objectiveStatus": "in_progress"
+      },
+      {
+        "id": "plan-2",
+        "status": "SUCCEEDED",
+        "objectiveStatus": "in_progress"
+      }
+    ]
+  },
+  {
+    "id": "683",
+    "repo": "calculator-happy-rust2-mvp-20261121",
+    "state": "COMPLETED",
+    "review": "approved",
+    "headSha": "4b64b829b9625860003a2a6139a3b074eec2468c",
+    "localMerge": {
+      "sourceRef": "refs/heads/relay/job-683-07bed92aab16",
+      "targetRef": "refs/heads/main",
+      "status": "succeeded",
+      "attempts": 0,
+      "sourceSha": "4b64b829b9625860003a2a6139a3b074eec2468c",
+      "mergedCommitSha": "b3e14374d4f7996df804178c218030da42489b5f",
+      "projectionStrategy": "target_ref_push",
+      "updatedAt": "2026-11-21T19:17:22.216Z"
+    },
+    "tasks": [
+      {
+        "id": "2079",
+        "agent": null,
+        "state": "SUCCEEDED",
+        "attempt": 0
+      },
+      {
+        "id": "2080",
+        "agent": "calculator-builder",
+        "state": "SUCCEEDED",
+        "attempt": 3
+      },
+      {
+        "id": "2084",
+        "agent": "troubleshooter",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      },
+      {
+        "id": "2087",
+        "agent": "calculator-qa",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      },
+      {
+        "id": "2090",
+        "agent": "job-acceptance-reviewer",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      }
+    ],
+    "plans": []
+  },
+  {
+    "id": "684",
+    "repo": "rust2-model-d-e2e-20261121",
+    "state": "ACTIVE",
+    "review": "changes_required",
+    "headSha": "6910ec83bddbbe184c109c761b04520efb76763d",
+    "localMerge": {
+      "sourceRef": "refs/heads/relay/job-684-10ba045e9ee4",
+      "targetRef": "refs/heads/main",
+      "status": "pending"
+    },
+    "tasks": [
+      {
+        "id": "2081",
+        "agent": null,
+        "state": "SUCCEEDED",
+        "attempt": 0
+      },
+      {
+        "id": "2082",
+        "agent": "model-a",
+        "state": "SUCCEEDED",
+        "attempt": 2
+      },
+      {
+        "id": "2085",
+        "agent": "model-b",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      },
+      {
+        "id": "2086",
+        "agent": "model-c",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      },
+      {
+        "id": "2089",
+        "agent": "job-acceptance-reviewer",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      },
+      {
+        "id": "2098",
+        "agent": "troubleshooter",
+        "state": "FAILED",
+        "attempt": 1
+      }
+    ],
+    "plans": [
+      {
+        "id": "plan-1",
+        "status": "FAILED",
+        "objectiveStatus": null
+      }
+    ]
+  },
+  {
+    "id": "685",
+    "repo": "calculator-happy-rust2-mvp2-20261121",
+    "state": "ACTIVE",
+    "review": null,
+    "headSha": "271b469a4584ebe641d8e35f47ebe03a964ac45e",
+    "localMerge": null,
+    "tasks": [
+      {
+        "id": "2099",
+        "agent": null,
+        "state": "RUNNING",
+        "attempt": 0
+      },
+      {
+        "id": "2101",
+        "agent": "calculator-builder",
+        "state": "RUNNING",
+        "attempt": 1
+      }
+    ],
+    "plans": []
+  },
+  {
+    "id": "686",
+    "repo": "rust2-model-d-e2e-mvp2-20261121",
+    "state": "ACTIVE",
+    "review": null,
+    "headSha": "88e7add47d0b5730f49103a1f0dfe1a952d45d38",
+    "localMerge": null,
+    "tasks": [
+      {
+        "id": "2100",
+        "agent": null,
+        "state": "RUNNING",
+        "attempt": 0
+      },
+      {
+        "id": "2102",
+        "agent": "model-a",
+        "state": "SUCCEEDED",
+        "attempt": 1
+      },
+      {
+        "id": "2103",
+        "agent": "model-b",
+        "state": "RUNNING",
+        "attempt": 1
+      }
+    ],
+    "plans": []
+  }
+]

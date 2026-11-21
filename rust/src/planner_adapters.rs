@@ -126,8 +126,16 @@ pub fn build_planner_execution_prompt(
     let project_path=project.and_then(|p|p.get("gitRoot").and_then(Value::as_str)
         .or_else(||p.get("path").and_then(Value::as_str)))
         .map(str::to_string).unwrap_or_else(||fallback.to_string_lossy().to_string());
-    let provider=execution_context.and_then(|ctx|ctx.pointer(
+    let mut provider=execution_context.and_then(|ctx|ctx.pointer(
         &format!("/providerInstructions/{adapter}"))).cloned().unwrap_or(json!([]));
+    if let Some(cli)=context.get("nativeRustCli").and_then(Value::as_str)
+        .filter(|cli|Path::new(cli).is_absolute()){
+        let mut rules=provider.as_array().cloned().unwrap_or_default();
+        rules.push(json!(format!(
+            "Version-matched native Rust Relay CLI (REQUIRED): {cli}. Use this exact executable for plan context, plan apply, and state reads. Never invoke Node dist/cli.js or a different-version CLI. plan context returns the authoritative native apply_cli."
+        )));
+        provider=json!(rules);
+    }
     crate::agent_prompt_builder::build_relay_work_prompt(&json!({
         "agentName":"planner","agentContent":content,
         "suggestedSkills":suggested_skills,"adapter":adapter,

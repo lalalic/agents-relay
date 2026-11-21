@@ -1,0 +1,1081 @@
+=== native_daemon ===
+warning: unused import: `events::event_for`
+ --> src/worker_failure_orchestration.rs:7:5
+  |
+7 |     events::event_for,
+  |     ^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `json`
+ --> src/worker_failure_orchestration.rs:9:18
+  |
+9 | use serde_json::{json,Value};
+  |                  ^^^^
+
+warning: unused import: `local_merge_lock::iso8601_now`
+ --> src/local_merge_projection.rs:9:5
+  |
+9 |     local_merge_lock::iso8601_now,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `load_routing_policy`
+ --> src/model_routing.rs:7:22
+  |
+7 |     routing_policy::{load_routing_policy,policy_allows,policy_rank},
+  |                      ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Path`
+  --> src/decision_audit.rs:14:22
+   |
+14 |     io::Write,path::{Path,PathBuf}};
+   |                      ^^^^
+
+warning: unused imports: `Arc`, `collections::HashMap`, and `time::Duration`
+  --> src/script_task_adapter.rs:11:5
+   |
+11 |     collections::HashMap,fs,path::Path,
+   |     ^^^^^^^^^^^^^^^^^^^^
+12 |     sync::{Arc,atomic::{AtomicBool,Ordering}},
+   |            ^^^
+13 |     time::Duration,
+   |     ^^^^^^^^^^^^^^
+
+warning: unused import: `events::event_for`
+ --> src/native_script_planner.rs:5:5
+  |
+5 |     events::event_for,
+  |     ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `collections::HashSet`
+  --> src/execution_context.rs:10:11
+   |
+10 | use std::{collections::HashSet,path::Path};
+   |           ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `relay_store::SQLiteRelayStore`
+ --> src/cli_support.rs:7:5
+  |
+7 |     relay_store::SQLiteRelayStore,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Duration` and `SystemTime`
+  --> src/github_client.rs:20:12
+   |
+20 |     time::{Duration,SystemTime},
+   |            ^^^^^^^^ ^^^^^^^^^^
+
+warning: unused import: `PathBuf`
+  --> src/browser_worker_runtime.rs:15:17
+   |
+15 |     path::{Path,PathBuf},
+   |                 ^^^^^^^
+
+warning: unused import: `normalize_relay_job`
+  --> src/relay_store.rs:21:61
+   |
+21 |         current_job_metadata,load_relay_job,list_relay_jobs,normalize_relay_job,
+   |                                                             ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `collections::HashSet`
+  --> src/relay_store.rs:30:11
+   |
+30 | use std::{collections::HashSet,fs,path::{Path,PathBuf}};
+   |           ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `regex::Regex`
+  --> src/projected_store.rs:13:5
+   |
+13 | use regex::Regex;
+   |     ^^^^^^^^^^^^
+
+warning: unused import: `local_merge_lock::iso8601_now`
+ --> src/store_github.rs:5:5
+  |
+5 |     local_merge_lock::iso8601_now,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `planner_task_ids::assign_planner_task_ids`
+  --> src/planner_runtime.rs:12:5
+   |
+12 |     planner_task_ids::assign_planner_task_ids,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Duration` and `Instant`
+  --> src/planner_runtime.rs:25:12
+   |
+25 |     time::{Duration,Instant},
+   |            ^^^^^^^^ ^^^^^^^
+
+warning: unused import: `PathBuf`
+  --> src/planner_runtime_public.rs:22:22
+   |
+22 | use std::path::{Path,PathBuf};
+   |                      ^^^^^^^
+
+warning: unused imports: `PooledWebHelmState` and `parse_envelope`
+ --> src/adapters.rs:7:51
+  |
+7 |     browser_worker_runtime::{pooled_web_helm_run, parse_envelope, PooledWebHelmState},
+  |                                                   ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Arc` and `Mutex`
+  --> src/pool.rs:26:54
+   |
+26 |     collections::{HashMap,HashSet},path::Path,sync::{Arc,Mutex},
+   |                                                      ^^^ ^^^^^
+
+warning: unused import: `terminal_execution_claimed`
+ --> src/reconciler_runtime.rs:9:34
+  |
+9 |         execution_id_from_source,terminal_execution_claimed,
+  |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `final_review_role::is_final_review_agent` and `review_revision_settlement::settle_review_revision_round`
+  --> src/reconciler.rs:8:5
+   |
+ 8 |     final_review_role::is_final_review_agent,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+27 |     review_revision_settlement::settle_review_revision_round,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `HashMap` and `HashSet`
+  --> src/relayd_control.rs:29:25
+   |
+29 | use std::{collections::{HashMap,HashSet},path::Path};
+   |                         ^^^^^^^ ^^^^^^^
+
+warning: unused imports: `ensure_local_job_source_branch`, `local_merge_projection::reconcile_completed_local_delivery`, `prepare_local_job_execution_worktree`, `relay_store::SQLiteRelayStore`, `relay_unified_store_path`, `runnable_managed_jobs`, `runtime_summary::summarize_runtime`, and `task_requires_managed_worktree`
+  --> src/relayd.rs:9:5
+   |
+ 9 |     local_merge_projection::reconcile_completed_local_delivery,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+10 |     pool::{RepositoryWorkerPool,runnable_managed_jobs},
+   |                                 ^^^^^^^^^^^^^^^^^^^^^
+...
+13 |     relay_store::SQLiteRelayStore,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+14 |     relay_store_discovery::{
+15 |         discover_local_relay_store_snapshots,relay_unified_store_path,
+   |                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+22 |     runtime_summary::summarize_runtime,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+25 |         task_requires_managed_worktree,ensure_local_job_source_branch,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+26 |         prepare_local_job_execution_worktree},
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `chrono::Utc`
+  --> src/relayd.rs:28:5
+   |
+28 | use chrono::Utc;
+   |     ^^^^^^^^^^^
+
+warning: unused imports: `StorySize`, `dispatch_task_action_snapshot`, `read_file_utf8`, `readonly_job_for`, `story_size_timeout_ms`, and `worker_task_from_args`
+  --> src/cli.rs:9:48
+   |
+ 9 |     cli_core_support::{arg,has_arg,text_option,read_file_utf8},
+   |                                                ^^^^^^^^^^^^^^
+...
+13 |         relay_job_state_command,relay_task_command,readonly_job_for,
+   |                                                    ^^^^^^^^^^^^^^^^
+...
+23 |         worker_task_from_args,managed_worker_task_from_args,
+   |         ^^^^^^^^^^^^^^^^^^^^^
+...
+27 |     task_actions::{dispatch_task_action_snapshot,apply_task_hold_action,
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+28 |         apply_task_queue_action},
+29 |     types::{story_size_timeout_ms,StorySize},
+   |             ^^^^^^^^^^^^^^^^^^^^^ ^^^^^^^^^
+
+warning: unused import: `PathBuf`
+  --> src/cli.rs:32:26
+   |
+32 | use std::{fs,path::{Path,PathBuf}};
+   |                          ^^^^^^^
+
+warning: variable does not need to be mutable
+   --> src/blocker_recovery.rs:286:21
+    |
+286 |                 let mut candidate=result.dependent;
+    |                     ----^^^^^^^^^
+    |                     |
+    |                     help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `job_id`
+  --> src/manual_plan.rs:81:27
+   |
+81 |     graph_directory:&Path,job_id:&str,guidance:Option<&str>,timeout_ms:u64,
+   |                           ^^^^^^ help: if this is intentional, prefix it with an underscore: `_job_id`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+  --> src/blockers.rs:86:9
+   |
+86 |     let mut relation=json!({"repository":dependent_repo,"prNumber":dependent_pr,
+   |         ----^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: unused variable: `index`
+  --> src/browser_worker_runtime.rs:91:10
+   |
+91 |     for (index,line) in lines.iter().enumerate(){
+   |          ^^^^^ help: if this is intentional, prefix it with an underscore: `_index`
+
+warning: variable does not need to be mutable
+   --> src/pool.rs:404:9
+    |
+404 |         mut reconcile:Reconcile,
+    |         ----^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `job_id`
+  --> src/reconciler_manual_plan_public.rs:15:17
+   |
+15 |     graph:&Path,job_id:&str,guidance:Option<&str>,force_restate:bool,
+   |                 ^^^^^^ help: if this is intentional, prefix it with an underscore: `_job_id`
+
+warning: function `id` is never used
+ --> src/planner_child_recovery.rs:6:4
+  |
+6 | fn id(v: &Value) -> Option<&str> { v.get("id").and_then(Value::as_str) }
+  |    ^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: fields `value` and `expires_at` are never read
+  --> src/github_client.rs:59:27
+   |
+59 | struct InstallationToken {value:String,expires_at:i64}
+   |        -----------------  ^^^^^        ^^^^^^^^^^
+   |        |
+   |        fields in this struct
+   |
+   = note: `InstallationToken` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: field `installation_token` is never read
+  --> src/github_client.rs:66:5
+   |
+62 | pub struct GhApiClient {
+   |            ----------- field in this struct
+...
+66 |     installation_token:Option<InstallationToken>,
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: function `parse_number` is never used
+  --> src/projected_store.rs:26:4
+   |
+26 | fn parse_number(value:Option<&Value>)->Option<f64>{
+   |    ^^^^^^^^^^^^
+
+warning: function `nested` is never used
+  --> src/store_github.rs:17:4
+   |
+17 | fn nested<'a>(v:&'a Value,path:&str)->&'a str{
+   |    ^^^^^^
+
+warning: function `next_time` is never used
+  --> src/planner_runtime.rs:55:4
+   |
+55 | fn next_time(previous:&str,proposed:&str)->String{
+   |    ^^^^^^^^^
+
+warning: field `published` is never read
+   --> src/pool.rs:226:5
+    |
+220 | pub struct RepositoryWorkerPool {
+    |            -------------------- field in this struct
+...
+226 |     published:HashSet<String>,
+    |     ^^^^^^^^^
+
+warning: `agents-relay-rust2` (lib) generated 40 warnings (run `cargo fix --lib -p agents-relay-rust2` to apply 33 suggestions)
+warning: unused import: `route_result`
+ --> src/bin/relay-rust2-parity/decision_audit_public.rs:9:51
+  |
+9 |     recent_execution_route_results, route_reason, route_result,
+  |                                                   ^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `agents_relay_rust2::outcome_review::evaluate_outcome`
+   --> src/bin/relay-rust2-parity.rs:719:17
+    |
+719 |             use agents_relay_rust2::outcome_review::evaluate_outcome;
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+  --> src/bin/relay-rust2-parity/planner_child_recovery_public.rs:64:13
+   |
+64 |         let mut run = move |job: Value| -> Result<(), String> {
+   |             ----^^^
+   |             |
+   |             help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `comment` is never used
+  --> src/bin/relay-rust2-parity/store_github_public.rs:47:4
+   |
+47 | fn comment(id: i64, author: &str, body: &str) -> Value {
+   |    ^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `outcome` is never used
+  --> src/bin/relay-rust2-parity/store_public.rs:14:4
+   |
+14 | fn outcome(result: Result<Value, String>) -> String {
+   |    ^^^^^^^
+
+warning: `agents-relay-rust2` (bin "relay-rust2-parity") generated 5 warnings (run `cargo fix --bin "relay-rust2-parity" -p agents-relay-rust2` to apply 3 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running tests/native_daemon_binary_readonly.rs (rust/target/debug/deps/native_daemon_binary_readonly-ae477536a9a16980)
+
+running 23 tests
+test canonical_live_rust_owner_locks_sqlite_and_restarts_without_node ... ok
+test explicit_canary_webhelm_submission_still_needs_real_graph_terminal ... ok
+test isolated_native_daemon_submits_chatgpt_through_webhelm_and_waits_for_real_graph_terminal ... ok
+test isolated_write_flag_rejects_live_sqlite_symlink_hardlink_and_sidecars ... ok
+test killed_native_daemon_never_accepts_orphaned_script_completion_after_restart ... ok
+test live_shadow_requires_exact_selected_store_and_does_not_change_graph_sqlite ... ok
+test native_cli_pause_resume_round_trip_is_durable_after_daemon_restart ... ok
+test native_cli_prompt_plan_and_task_context_reads_are_real_daemon_read_only ... ok
+test native_coordinator_cli_run_uses_real_daemon_and_survives_restart ... ok
+test native_daemon_completes_planned_script_job_through_task_and_job_graph ... ok
+test native_daemon_creates_numeric_semantic_revision_and_survives_restart ... ok
+test native_daemon_failed_script_launch_is_durable_graph_failure_after_restart ... ok
+test native_daemon_job_plan_uses_real_isolated_planner_shortcut_and_graph_apply ... ok
+test native_daemon_merges_verified_source_branch_and_persists_job_terminal_state ... ok
+test native_daemon_refuses_missing_or_live_store_bindings ... ok
+test native_daemon_runs_two_dependent_script_workers_once_in_graph_order ... ok
+test native_task_events_cli_matches_original_node_real_event_history_and_rejects_stale_ids ... ok
+test native_write_daemon_reconciles_real_active_sqlite_job_but_never_fakes_worker_completion ... ok
+test native_write_mode_mutations_use_one_sqlite_cas_and_survive_process_restart ... ok
+test real_daemon_force_restate_creates_verified_work_and_survives_restart ... ok
+test real_native_daemon_claims_and_completes_shortcut_through_owned_process_graph_and_sqlite ... ok
+test real_native_daemon_reads_isolated_sqlite_rejects_mutation_and_survives_restart ... ok
+test real_webhelm_canary_requires_explicit_trust_and_distinct_workspace ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 33.31s
+
+=== lib ===
+   Compiling agents-relay-rust2 v0.1.0 (/Users/chengli/Workspace/agents-relay/rust)
+warning: unused import: `events::event_for`
+ --> src/worker_failure_orchestration.rs:7:5
+  |
+7 |     events::event_for,
+  |     ^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `json`
+ --> src/worker_failure_orchestration.rs:9:18
+  |
+9 | use serde_json::{json,Value};
+  |                  ^^^^
+
+warning: unused import: `local_merge_lock::iso8601_now`
+ --> src/local_merge_projection.rs:9:5
+  |
+9 |     local_merge_lock::iso8601_now,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `load_routing_policy`
+ --> src/model_routing.rs:7:22
+  |
+7 |     routing_policy::{load_routing_policy,policy_allows,policy_rank},
+  |                      ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Path`
+  --> src/decision_audit.rs:14:22
+   |
+14 |     io::Write,path::{Path,PathBuf}};
+   |                      ^^^^
+
+warning: unused imports: `Arc`, `collections::HashMap`, and `time::Duration`
+  --> src/script_task_adapter.rs:11:5
+   |
+11 |     collections::HashMap,fs,path::Path,
+   |     ^^^^^^^^^^^^^^^^^^^^
+12 |     sync::{Arc,atomic::{AtomicBool,Ordering}},
+   |            ^^^
+13 |     time::Duration,
+   |     ^^^^^^^^^^^^^^
+
+warning: unused import: `events::event_for`
+ --> src/native_script_planner.rs:5:5
+  |
+5 |     events::event_for,
+  |     ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `collections::HashSet`
+  --> src/execution_context.rs:10:11
+   |
+10 | use std::{collections::HashSet,path::Path};
+   |           ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `relay_store::SQLiteRelayStore`
+ --> src/cli_support.rs:7:5
+  |
+7 |     relay_store::SQLiteRelayStore,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Duration` and `SystemTime`
+  --> src/github_client.rs:20:12
+   |
+20 |     time::{Duration,SystemTime},
+   |            ^^^^^^^^ ^^^^^^^^^^
+
+warning: unused import: `normalize_relay_job`
+  --> src/relay_store.rs:21:61
+   |
+21 |         current_job_metadata,load_relay_job,list_relay_jobs,normalize_relay_job,
+   |                                                             ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `collections::HashSet`
+  --> src/relay_store.rs:30:11
+   |
+30 | use std::{collections::HashSet,fs,path::{Path,PathBuf}};
+   |           ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `regex::Regex`
+  --> src/projected_store.rs:13:5
+   |
+13 | use regex::Regex;
+   |     ^^^^^^^^^^^^
+
+warning: unused import: `local_merge_lock::iso8601_now`
+ --> src/store_github.rs:5:5
+  |
+5 |     local_merge_lock::iso8601_now,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `planner_task_ids::assign_planner_task_ids`
+  --> src/planner_runtime.rs:12:5
+   |
+12 |     planner_task_ids::assign_planner_task_ids,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Duration` and `Instant`
+  --> src/planner_runtime.rs:25:12
+   |
+25 |     time::{Duration,Instant},
+   |            ^^^^^^^^ ^^^^^^^
+
+warning: unused import: `PathBuf`
+  --> src/planner_runtime_public.rs:22:22
+   |
+22 | use std::path::{Path,PathBuf};
+   |                      ^^^^^^^
+
+warning: unused imports: `PooledWebHelmState` and `parse_envelope`
+ --> src/adapters.rs:7:51
+  |
+7 |     browser_worker_runtime::{pooled_web_helm_run, parse_envelope, PooledWebHelmState},
+  |                                                   ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Arc` and `Mutex`
+  --> src/pool.rs:26:54
+   |
+26 |     collections::{HashMap,HashSet},path::Path,sync::{Arc,Mutex},
+   |                                                      ^^^ ^^^^^
+
+warning: unused import: `terminal_execution_claimed`
+ --> src/reconciler_runtime.rs:9:34
+  |
+9 |         execution_id_from_source,terminal_execution_claimed,
+  |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `final_review_role::is_final_review_agent` and `review_revision_settlement::settle_review_revision_round`
+  --> src/reconciler.rs:8:5
+   |
+ 8 |     final_review_role::is_final_review_agent,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+27 |     review_revision_settlement::settle_review_revision_round,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `HashMap` and `HashSet`
+  --> src/relayd_control.rs:29:25
+   |
+29 | use std::{collections::{HashMap,HashSet},path::Path};
+   |                         ^^^^^^^ ^^^^^^^
+
+warning: unused imports: `ensure_local_job_source_branch`, `local_merge_projection::reconcile_completed_local_delivery`, `prepare_local_job_execution_worktree`, `relay_store::SQLiteRelayStore`, `relay_unified_store_path`, `runnable_managed_jobs`, `runtime_summary::summarize_runtime`, and `task_requires_managed_worktree`
+  --> src/relayd.rs:9:5
+   |
+ 9 |     local_merge_projection::reconcile_completed_local_delivery,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+10 |     pool::{RepositoryWorkerPool,runnable_managed_jobs},
+   |                                 ^^^^^^^^^^^^^^^^^^^^^
+...
+13 |     relay_store::SQLiteRelayStore,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+14 |     relay_store_discovery::{
+15 |         discover_local_relay_store_snapshots,relay_unified_store_path,
+   |                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+22 |     runtime_summary::summarize_runtime,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+25 |         task_requires_managed_worktree,ensure_local_job_source_branch,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+26 |         prepare_local_job_execution_worktree},
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `chrono::Utc`
+  --> src/relayd.rs:28:5
+   |
+28 | use chrono::Utc;
+   |     ^^^^^^^^^^^
+
+warning: unused imports: `StorySize`, `dispatch_task_action_snapshot`, `read_file_utf8`, `readonly_job_for`, `story_size_timeout_ms`, and `worker_task_from_args`
+  --> src/cli.rs:9:48
+   |
+ 9 |     cli_core_support::{arg,has_arg,text_option,read_file_utf8},
+   |                                                ^^^^^^^^^^^^^^
+...
+13 |         relay_job_state_command,relay_task_command,readonly_job_for,
+   |                                                    ^^^^^^^^^^^^^^^^
+...
+23 |         worker_task_from_args,managed_worker_task_from_args,
+   |         ^^^^^^^^^^^^^^^^^^^^^
+...
+27 |     task_actions::{dispatch_task_action_snapshot,apply_task_hold_action,
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+28 |         apply_task_queue_action},
+29 |     types::{story_size_timeout_ms,StorySize},
+   |             ^^^^^^^^^^^^^^^^^^^^^ ^^^^^^^^^
+
+warning: unused import: `PathBuf`
+  --> src/cli.rs:32:26
+   |
+32 | use std::{fs,path::{Path,PathBuf}};
+   |                          ^^^^^^^
+
+warning: variable does not need to be mutable
+   --> src/blocker_recovery.rs:286:21
+    |
+286 |                 let mut candidate=result.dependent;
+    |                     ----^^^^^^^^^
+    |                     |
+    |                     help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `job_id`
+  --> src/manual_plan.rs:81:27
+   |
+81 |     graph_directory:&Path,job_id:&str,guidance:Option<&str>,timeout_ms:u64,
+   |                           ^^^^^^ help: if this is intentional, prefix it with an underscore: `_job_id`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+  --> src/blockers.rs:86:9
+   |
+86 |     let mut relation=json!({"repository":dependent_repo,"prNumber":dependent_pr,
+   |         ----^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: unused variable: `index`
+  --> src/browser_worker_runtime.rs:91:10
+   |
+91 |     for (index,line) in lines.iter().enumerate(){
+   |          ^^^^^ help: if this is intentional, prefix it with an underscore: `_index`
+
+warning: variable does not need to be mutable
+   --> src/pool.rs:404:9
+    |
+404 |         mut reconcile:Reconcile,
+    |         ----^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `job_id`
+  --> src/reconciler_manual_plan_public.rs:15:17
+   |
+15 |     graph:&Path,job_id:&str,guidance:Option<&str>,force_restate:bool,
+   |                 ^^^^^^ help: if this is intentional, prefix it with an underscore: `_job_id`
+
+warning: function `id` is never used
+ --> src/planner_child_recovery.rs:6:4
+  |
+6 | fn id(v: &Value) -> Option<&str> { v.get("id").and_then(Value::as_str) }
+  |    ^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: fields `value` and `expires_at` are never read
+  --> src/github_client.rs:59:27
+   |
+59 | struct InstallationToken {value:String,expires_at:i64}
+   |        -----------------  ^^^^^        ^^^^^^^^^^
+   |        |
+   |        fields in this struct
+   |
+   = note: `InstallationToken` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: field `installation_token` is never read
+  --> src/github_client.rs:66:5
+   |
+62 | pub struct GhApiClient {
+   |            ----------- field in this struct
+...
+66 |     installation_token:Option<InstallationToken>,
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: function `parse_number` is never used
+  --> src/projected_store.rs:26:4
+   |
+26 | fn parse_number(value:Option<&Value>)->Option<f64>{
+   |    ^^^^^^^^^^^^
+
+warning: function `nested` is never used
+  --> src/store_github.rs:17:4
+   |
+17 | fn nested<'a>(v:&'a Value,path:&str)->&'a str{
+   |    ^^^^^^
+
+warning: function `next_time` is never used
+  --> src/planner_runtime.rs:55:4
+   |
+55 | fn next_time(previous:&str,proposed:&str)->String{
+   |    ^^^^^^^^^
+
+warning: field `published` is never read
+   --> src/pool.rs:226:5
+    |
+220 | pub struct RepositoryWorkerPool {
+    |            -------------------- field in this struct
+...
+226 |     published:HashSet<String>,
+    |     ^^^^^^^^^
+
+warning: `agents-relay-rust2` (lib test) generated 39 warnings (run `cargo fix --lib -p agents-relay-rust2 --tests` to apply 32 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 20.09s
+     Running unittests src/lib.rs (rust/target/debug/deps/agents_relay_rust2-a6cc15199a36cab5)
+
+running 101 tests
+test agent_content_resolver::name_inheritance_tests::detached_worktree_inherits_named_workspace_general_agent ... ok
+test agent_content_resolver::name_inheritance_tests::unsupported_prefixes_and_cycles_rejected_without_extra_root ... ok
+test agent_script_discovery::tests::layered_discovery_missing_and_path_escape ... ok
+test browser_worker_runtime::browser_submission_failure_tests::post_send_uncertainty_quarantines_without_releasing ... ok
+test browser_worker_runtime::browser_submission_failure_tests::pre_send_workspace_failure_releases_its_pool_slot ... ok
+test browser_worker_runtime::workspace_create_retry_tests::foreign_workspace_or_post_send_failure_never_retries ... ok
+test browser_worker_runtime::workspace_create_retry_tests::only_pre_submission_idle_readiness_is_retryable ... ok
+test browser_worker_runtime::workspace_create_retry_tests::persistent_idle_failure_stops_after_three_before_any_send ... ok
+test cli_artifact::tests::native_validation_honors_ajv_error_order ... ok
+test cli_artifact::tests::nested_paths_escape_json_pointer ... ok
+test cli_blocker::tests::ensure_requests_are_bound_and_authorized ... ok
+test cli_blocker::tests::rejects_unsafe_unbound_operations ... ok
+test cli_context::tests::validation_matches_cli ... ok
+test cli_core_support::tests::strict_argument_order_and_file_controls ... ok
+test cli_revision::tests::findings_validation_matches_js_contract ... ok
+test cli_revision::tests::receipt_validation_fences_identity ... ok
+test cli_workflow::tests::mutations_are_rejected_and_discovery_is_read_only ... ok
+test continuation::native_webhook_tests::webhook_posts_json_and_reports_server_rejection ... ok
+test continuation::tests::command_success_and_exit_failure ... ok
+test continuation::tests::mismatched_kind_rejected_without_any_execution ... ok
+test continuation::tests::webhook_status_and_json_body ... ok
+test dag_result_contract::tests::missing_and_invalid_output ... ok
+test dashboard::write_retry_tests::real_loopback_dashboard_streams_large_job_response_without_truncation ... ok
+test dashboard::write_retry_tests::transient_dashboard_write_keeps_exact_partial_content_length_bytes ... ok
+test dashboard_data::tests::filters_before_pagination_and_draft_semantics ... ok
+test dashboard_data::tests::inventory_is_complete_and_sorted ... ok
+test dashboard_data::tests::rate_limit_and_url_validations ... ok
+test dashboard_data::tests::workflow_read_without_live_side_effects ... ok
+test dashboard_mobile::tests::private_payload_is_never_exposed_and_scoped_identity_is_bound ... ok
+test dashboard_mobile::tests::redact_activity_and_paginate ... ok
+test events::tests::event_for_has_correlation_and_level ... ok
+test events::tests::memory_order_unsubscribe_and_failure ... ok
+test events::tests::no_live_server_needed_for_invalid_subject ... ok
+test events::tests::subject_validation ... ok
+test feedback::tests::attachment_root_fence_and_size ... ok
+test feedback::tests::legacy_validation_rejects_unsafe_references ... ok
+test feedback::tests::legacy_validation_sanitization_and_fingerprint ... ok
+test feedback::tests::markers_redact_metadata_and_decode_gt ... ok
+test feedback::tests::materialize_feedback_public_overload_dispatches_both_node_signatures ... ok
+test feedback::tests::stored_upload_hash_idempotency_and_rollback ... ok
+test force_restate::tests::exact_manual_plan_contract_forces_restate_and_propagates_result ... ok
+test github_auth::native_app_client_tests::client_factory_receives_exact_lossy_node_utf8_and_probes_in_order ... ok
+test github_auth::tests::config_precedence_and_no_partial_credentials ... ok
+test github_auth::tests::optional_probe_and_trusted_authors ... ok
+test host_invocation_store::tests::accepted_duplicate_conflicting_and_stale ... ok
+test host_invocation_store::tests::snapshot_failure_rolls_back_decision_and_event ... ok
+test job_local_repository_migration::tests::recursive_references_dont_modify_non_repository_fields ... ok
+test job_worktree_cleanup::native_cleanup_tests::local_worktree_cleanup_does_not_delete_dirty_or_unverified_paths ... ok
+test job_worktree_cleanup::tests::canonical_resolver_required_and_blocked_propagated ... ok
+test local_git_merge::native_bound_facts_tests::binds_completion_facts_from_shared_modules ... ok
+test local_git_merge::tests::checked_out_merge_is_idempotent_and_ref_validated ... ok
+test managed_worker_input::native_resolver_tests::resolves_actual_layered_agent_and_fails_closed_for_invisible_contract ... ok
+test managed_worker_input::tests::evaluation_cannot_emit_events_or_use_tools ... ok
+test managed_worker_input::tests::rejects_missing_execution_binding_before_resolution ... ok
+test native_browser_execution::start_ack_barrier_tests::already_terminal_exact_worker_generation_requires_durable_started_proof ... ok
+test native_browser_execution::start_ack_barrier_tests::missing_start_ack_has_specific_canonical_timeout_phase ... ok
+test outcome_review::tests::cli_rejects_unknown ... ok
+test outcome_review::tests::highest_verdict ... ok
+test outcome_review::wave4_runtime_tests::exported_run_blocked_is_exit_twenty_without_output_file ... ok
+test outcome_review::wave4_runtime_tests::exported_run_failure_to_write_aborts_without_stdout ... ok
+test outcome_review::wave4_runtime_tests::exported_run_stops_on_failure_before_filesystem_or_terminal_publication ... ok
+test outcome_review::wave4_runtime_tests::exported_run_writes_before_stdout_and_returns_terminal_exit_code ... ok
+test planner_child::tests::ignores_unrelated_fields_and_normalizes_optionals ... ok
+test planner_recovery::tests::rejects_nonterminal ... ok
+test planner_task_ids::tests::idempotent_scoped_aliases_and_external_dependencies ... ok
+test projection_failure_recovery::tests::terminal_dedup_suppresses_repeat_and_swallows_event_failure ... ok
+test projection_outbox::tests::atomic_receipt_failure_rolls_back_delete_and_retry ... ok
+test projection_outbox::tests::claim_commits_before_parsing_legacy_invalid_json ... ok
+test projection_outbox::tests::coalescing_does_not_delete_processing_conflicts ... ok
+test projection_outbox::tests::conflict_round_trip_and_explicit_disposition ... ok
+test projection_outbox::tests::migration_classifies_conflicts_and_rolls_back_on_error ... ok
+test projection_outbox::tests::operation_key_suffix_only_numeric ... ok
+test projection_outbox::tests::priority_fifo_upsert_dedupe_and_retry ... ok
+test projection_outbox::tests::scoped_rows_isolated_and_no_cross_job_delete ... ok
+test relayd_sqlite_write::committed_worker_observation_tests::submission_does_not_start_a_worker_but_exact_graph_event_does ... ok
+test review_chair::tests::rejects_untrusted_specialist ... ok
+test review_chair::tests::unique_ids ... ok
+test review_replan::tests::empty_jobs ... ok
+test review_replan::tests::immutable_replan ... ok
+test review_replan::tests::re_review_requires_new_verified_head_not_plan_metadata ... ok
+test review_replan::tests::review_without_plan ... ok
+test review_revision_execution::tests::targeted_generation_guard ... ok
+test review_revision_model::tests::revision_vector_generation ... ok
+test review_revision_model::tests::stale_not_coverage ... ok
+test review_revision_settlement::tests::requires_verified_child ... ok
+test review_revision_stale::tests::no_change_for_other_head ... ok
+test reviewer_thread::tests::invalid_thread ... ok
+test reviewer_thread::tests::provenance ... ok
+test reviewer_thread::wave4_legacy_store_tests::fallback_reads_and_saves_only_current_correlated_delivery ... ok
+test reviewer_thread::wave4_legacy_store_tests::legacy_store_failed_save_does_not_report_delivery ... ok
+test route_outcome_recording::jsonl_adapter_tests::real_jsonl_transport_is_append_only_redacted_and_best_effort ... ok
+test route_outcome_recording::native_audit_effect_tests::all_public_audit_effects_preserve_order_and_ignore_append_failure ... ok
+test route_outcome_recording::tests::classification_preserves_fallback_and_auth_precedence ... ok
+test route_outcome_recording::tests::outcome_audit_redacts_and_never_propagates_append_errors ... ok
+test service_publication::tests::persists_delivery_before_observer_failure ... ok
+test troubleshooter_fallback::tests::filters_unrelated ... ok
+test troubleshooter_fallback::wave4_escalation_tests::escalation_submits_real_effects_and_ignores_exact_duplicate_receipts ... ok
+test troubleshooter_fallback::wave4_escalation_tests::escalation_transport_failure_stops_later_requests ... ok
+test z_oauth::native_http_tests::complete_pkce_flow_over_disposable_local_http_server ... ok
+test z_oauth::native_http_tests::local_http_transport_preserves_redirect_location_and_request_body ... ok
+test z_oauth::tests::https_origin_validation_and_base64url_length ... ok
+
+test result: ok. 101 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.88s
+
+=== build ===
+warning: unused import: `events::event_for`
+ --> src/worker_failure_orchestration.rs:7:5
+  |
+7 |     events::event_for,
+  |     ^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `json`
+ --> src/worker_failure_orchestration.rs:9:18
+  |
+9 | use serde_json::{json,Value};
+  |                  ^^^^
+
+warning: unused import: `local_merge_lock::iso8601_now`
+ --> src/local_merge_projection.rs:9:5
+  |
+9 |     local_merge_lock::iso8601_now,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `load_routing_policy`
+ --> src/model_routing.rs:7:22
+  |
+7 |     routing_policy::{load_routing_policy,policy_allows,policy_rank},
+  |                      ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Path`
+  --> src/decision_audit.rs:14:22
+   |
+14 |     io::Write,path::{Path,PathBuf}};
+   |                      ^^^^
+
+warning: unused imports: `Arc`, `collections::HashMap`, and `time::Duration`
+  --> src/script_task_adapter.rs:11:5
+   |
+11 |     collections::HashMap,fs,path::Path,
+   |     ^^^^^^^^^^^^^^^^^^^^
+12 |     sync::{Arc,atomic::{AtomicBool,Ordering}},
+   |            ^^^
+13 |     time::Duration,
+   |     ^^^^^^^^^^^^^^
+
+warning: unused import: `events::event_for`
+ --> src/native_script_planner.rs:5:5
+  |
+5 |     events::event_for,
+  |     ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `collections::HashSet`
+  --> src/execution_context.rs:10:11
+   |
+10 | use std::{collections::HashSet,path::Path};
+   |           ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `relay_store::SQLiteRelayStore`
+ --> src/cli_support.rs:7:5
+  |
+7 |     relay_store::SQLiteRelayStore,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Duration` and `SystemTime`
+  --> src/github_client.rs:20:12
+   |
+20 |     time::{Duration,SystemTime},
+   |            ^^^^^^^^ ^^^^^^^^^^
+
+warning: unused import: `PathBuf`
+  --> src/browser_worker_runtime.rs:15:17
+   |
+15 |     path::{Path,PathBuf},
+   |                 ^^^^^^^
+
+warning: unused import: `normalize_relay_job`
+  --> src/relay_store.rs:21:61
+   |
+21 |         current_job_metadata,load_relay_job,list_relay_jobs,normalize_relay_job,
+   |                                                             ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `collections::HashSet`
+  --> src/relay_store.rs:30:11
+   |
+30 | use std::{collections::HashSet,fs,path::{Path,PathBuf}};
+   |           ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `regex::Regex`
+  --> src/projected_store.rs:13:5
+   |
+13 | use regex::Regex;
+   |     ^^^^^^^^^^^^
+
+warning: unused import: `local_merge_lock::iso8601_now`
+ --> src/store_github.rs:5:5
+  |
+5 |     local_merge_lock::iso8601_now,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `planner_task_ids::assign_planner_task_ids`
+  --> src/planner_runtime.rs:12:5
+   |
+12 |     planner_task_ids::assign_planner_task_ids,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Duration` and `Instant`
+  --> src/planner_runtime.rs:25:12
+   |
+25 |     time::{Duration,Instant},
+   |            ^^^^^^^^ ^^^^^^^
+
+warning: unused import: `PathBuf`
+  --> src/planner_runtime_public.rs:22:22
+   |
+22 | use std::path::{Path,PathBuf};
+   |                      ^^^^^^^
+
+warning: unused imports: `PooledWebHelmState` and `parse_envelope`
+ --> src/adapters.rs:7:51
+  |
+7 |     browser_worker_runtime::{pooled_web_helm_run, parse_envelope, PooledWebHelmState},
+  |                                                   ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Arc` and `Mutex`
+  --> src/pool.rs:26:54
+   |
+26 |     collections::{HashMap,HashSet},path::Path,sync::{Arc,Mutex},
+   |                                                      ^^^ ^^^^^
+
+warning: unused import: `terminal_execution_claimed`
+ --> src/reconciler_runtime.rs:9:34
+  |
+9 |         execution_id_from_source,terminal_execution_claimed,
+  |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `final_review_role::is_final_review_agent` and `review_revision_settlement::settle_review_revision_round`
+  --> src/reconciler.rs:8:5
+   |
+ 8 |     final_review_role::is_final_review_agent,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+27 |     review_revision_settlement::settle_review_revision_round,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `HashMap` and `HashSet`
+  --> src/relayd_control.rs:29:25
+   |
+29 | use std::{collections::{HashMap,HashSet},path::Path};
+   |                         ^^^^^^^ ^^^^^^^
+
+warning: unused imports: `ensure_local_job_source_branch`, `local_merge_projection::reconcile_completed_local_delivery`, `prepare_local_job_execution_worktree`, `relay_store::SQLiteRelayStore`, `relay_unified_store_path`, `runnable_managed_jobs`, `runtime_summary::summarize_runtime`, and `task_requires_managed_worktree`
+  --> src/relayd.rs:9:5
+   |
+ 9 |     local_merge_projection::reconcile_completed_local_delivery,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+10 |     pool::{RepositoryWorkerPool,runnable_managed_jobs},
+   |                                 ^^^^^^^^^^^^^^^^^^^^^
+...
+13 |     relay_store::SQLiteRelayStore,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+14 |     relay_store_discovery::{
+15 |         discover_local_relay_store_snapshots,relay_unified_store_path,
+   |                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+22 |     runtime_summary::summarize_runtime,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+25 |         task_requires_managed_worktree,ensure_local_job_source_branch,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+26 |         prepare_local_job_execution_worktree},
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `chrono::Utc`
+  --> src/relayd.rs:28:5
+   |
+28 | use chrono::Utc;
+   |     ^^^^^^^^^^^
+
+warning: unused imports: `StorySize`, `dispatch_task_action_snapshot`, `read_file_utf8`, `readonly_job_for`, `story_size_timeout_ms`, and `worker_task_from_args`
+  --> src/cli.rs:9:48
+   |
+ 9 |     cli_core_support::{arg,has_arg,text_option,read_file_utf8},
+   |                                                ^^^^^^^^^^^^^^
+...
+13 |         relay_job_state_command,relay_task_command,readonly_job_for,
+   |                                                    ^^^^^^^^^^^^^^^^
+...
+23 |         worker_task_from_args,managed_worker_task_from_args,
+   |         ^^^^^^^^^^^^^^^^^^^^^
+...
+27 |     task_actions::{dispatch_task_action_snapshot,apply_task_hold_action,
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+28 |         apply_task_queue_action},
+29 |     types::{story_size_timeout_ms,StorySize},
+   |             ^^^^^^^^^^^^^^^^^^^^^ ^^^^^^^^^
+
+warning: unused import: `PathBuf`
+  --> src/cli.rs:32:26
+   |
+32 | use std::{fs,path::{Path,PathBuf}};
+   |                          ^^^^^^^
+
+warning: variable does not need to be mutable
+   --> src/blocker_recovery.rs:286:21
+    |
+286 |                 let mut candidate=result.dependent;
+    |                     ----^^^^^^^^^
+    |                     |
+    |                     help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `job_id`
+  --> src/manual_plan.rs:81:27
+   |
+81 |     graph_directory:&Path,job_id:&str,guidance:Option<&str>,timeout_ms:u64,
+   |                           ^^^^^^ help: if this is intentional, prefix it with an underscore: `_job_id`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+  --> src/blockers.rs:86:9
+   |
+86 |     let mut relation=json!({"repository":dependent_repo,"prNumber":dependent_pr,
+   |         ----^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: unused variable: `index`
+  --> src/browser_worker_runtime.rs:91:10
+   |
+91 |     for (index,line) in lines.iter().enumerate(){
+   |          ^^^^^ help: if this is intentional, prefix it with an underscore: `_index`
+
+warning: variable does not need to be mutable
+   --> src/pool.rs:404:9
+    |
+404 |         mut reconcile:Reconcile,
+    |         ----^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `job_id`
+  --> src/reconciler_manual_plan_public.rs:15:17
+   |
+15 |     graph:&Path,job_id:&str,guidance:Option<&str>,force_restate:bool,
+   |                 ^^^^^^ help: if this is intentional, prefix it with an underscore: `_job_id`
+
+warning: function `id` is never used
+ --> src/planner_child_recovery.rs:6:4
+  |
+6 | fn id(v: &Value) -> Option<&str> { v.get("id").and_then(Value::as_str) }
+  |    ^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: fields `value` and `expires_at` are never read
+  --> src/github_client.rs:59:27
+   |
+59 | struct InstallationToken {value:String,expires_at:i64}
+   |        -----------------  ^^^^^        ^^^^^^^^^^
+   |        |
+   |        fields in this struct
+   |
+   = note: `InstallationToken` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: field `installation_token` is never read
+  --> src/github_client.rs:66:5
+   |
+62 | pub struct GhApiClient {
+   |            ----------- field in this struct
+...
+66 |     installation_token:Option<InstallationToken>,
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: function `parse_number` is never used
+  --> src/projected_store.rs:26:4
+   |
+26 | fn parse_number(value:Option<&Value>)->Option<f64>{
+   |    ^^^^^^^^^^^^
+
+warning: function `nested` is never used
+  --> src/store_github.rs:17:4
+   |
+17 | fn nested<'a>(v:&'a Value,path:&str)->&'a str{
+   |    ^^^^^^
+
+warning: function `next_time` is never used
+  --> src/planner_runtime.rs:55:4
+   |
+55 | fn next_time(previous:&str,proposed:&str)->String{
+   |    ^^^^^^^^^
+
+warning: field `published` is never read
+   --> src/pool.rs:226:5
+    |
+220 | pub struct RepositoryWorkerPool {
+    |            -------------------- field in this struct
+...
+226 |     published:HashSet<String>,
+    |     ^^^^^^^^^
+
+warning: `agents-relay-rust2` (lib) generated 40 warnings (run `cargo fix --lib -p agents-relay-rust2` to apply 33 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
+=== cli ===
+PASS    01 Create-only Job
+PASS    05 Real Script A→B→C
+PASS    08 Job COMPLETED Readback
+RESULT {"PASS":3,"FAIL":0,"BLOCKED":0,"expected":3} evidence: /private/var/folders/pr/rymvcpd54mzdg4kv34r3ht300000gn/T/agents-relay-cli-mvp-t3PaNF

@@ -676,12 +676,29 @@ impl IsolatedSQLiteWriteHost {
             return Ok(());
         }
         let declared=project.join("agents/.shortcut/planner.agent.mjs");
-        let script=std::fs::canonicalize(&declared)
-            .map_err(|e|format!("Automatic Planner has no declared trusted Shortcut: {e}"))?;
-        if !script.starts_with(&project)||!script.is_file(){
-            return Err("Automatic Planner Shortcut escapes canonical Job Git root".into());
+        // Absence may select the authorized Model provider; an existing but
+        // broken/escaping Script contract must fail closed, not fall back.
+        let script=if std::fs::symlink_metadata(&declared).is_ok(){
+            let resolved=std::fs::canonicalize(&declared)
+                .map_err(|e|format!("Invalid automatic Planner Shortcut: {e}"))?;
+            if !resolved.starts_with(&project)||!resolved.is_file(){
+                return Err("Automatic Planner Shortcut escapes canonical Job Git root".into());
+            }
+            Some(resolved)
+        }else{None};
+        // Model-only Jobs do not require a Planner Shortcut. Their Graph
+        // selected repair Plan must run through the explicitly configured,
+        // repository-scoped native Codex provider, never a Node fallback.
+        let codex=if self.live_store
+            &&self.model_codex_allowed_repositories.contains(field(&job,"repository")){
+            self.model_codex_executable.clone()
+        }else{None};
+        if script.is_none()&&codex.is_none(){
+            return Err("Automatic Planner needs a trusted Script or allowlisted native Codex provider".into());
         }
-        let interpreter=PathBuf::from(configured_script_interpreter()?);
+        let interpreter=if script.is_some(){
+            Some(PathBuf::from(configured_script_interpreter()?))
+        }else{None};
         let timeout=plan.get("timeoutMs").and_then(Value::as_u64)
             .unwrap_or(60_000).clamp(100,86_400_000);
         let graph=self.config.graph_directory.clone();
@@ -691,9 +708,14 @@ impl IsolatedSQLiteWriteHost {
         let plan_id=plan_id.to_string();
         std::thread::Builder::new().name(format!("rust-automatic-planner-{plan_id}"))
             .spawn(move||{
-                if let Err(error)=run_isolated_script_planner(
-                    &db,&store_directory,&graph,&job_id,&plan_id,
-                    &script,&interpreter,timeout){
+                let result=if let (Some(script),Some(interpreter))=(script,interpreter){
+                    run_isolated_script_planner(&db,&store_directory,&graph,
+                        &job_id,&plan_id,&script,&interpreter,timeout)
+                }else if let Some(executable)=codex{
+                    crate::native_script_planner::run_native_codex_planner(
+                        &db,&store_directory,&graph,&job_id,&plan_id,&executable,timeout)
+                }else{Err("Automatic Planner provider lost before launch".into())};
+                if let Err(error)=result{
                     eprintln!("Native automatic Planner {job_id}/{plan_id}: {error}");
                 }
             }).map_err(|e|format!("Cannot spawn isolated automatic Planner: {e}"))?;

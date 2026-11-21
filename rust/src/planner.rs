@@ -552,12 +552,16 @@ pub fn planner_input(context:&Value)->String{
         let root=Path::new(env!("CARGO_MANIFEST_DIR")).parent()
             .expect("Cargo manifest has repository root");
         let cli=root.join("dist/cli.js");
-        let path=serde_json::to_string(&cli.to_string_lossy().to_string())
+        let native_cli=context.get("nativeRustCli").and_then(Value::as_str)
+            .filter(|v|Path::new(v).is_absolute());
+        let path=serde_json::to_string(&native_cli.unwrap_or_else(||
+            cli.to_str().unwrap_or("dist/cli.js")))
             .unwrap_or_else(|_|"\"dist/cli.js\"".into());
+        let prefix=if native_cli.is_some(){""}else{"node "};
         let pr=job.get("prNumber").and_then(Value::as_i64)
             .filter(|n|*n>0).map(|n|format!("--pr {n} ")).unwrap_or_default();
         output.insert("apply_cli".into(),json!(format!(
-            "node {path} plan apply --repo {} {pr}--id {} --plan-id {} --execution-id {} --file PATH",
+            "{prefix}{path} plan apply --repo {} {pr}--id {} --plan-id {} --execution-id {} --file PATH",
             field(job,"repository"),field(job,"id"),field(execution,"planId"),
             field(execution,"executionId"))));
     }
