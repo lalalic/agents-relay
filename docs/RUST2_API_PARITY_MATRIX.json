@@ -2,7 +2,7 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "22fa4e5259049ed6c31acef6d0a967a5a4700c3d",
-    "rustTree": "e3302eb46dabac4bb1b10d97f00bb5f6ebbc3c60",
+    "rustTree": "b07c1ff36797896e94945e797aba82b82f4ff9da",
     "sourceCount": 2,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,

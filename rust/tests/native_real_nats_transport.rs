@@ -104,3 +104,160 @@ fn real_nats_broker_restart_recovers_on_next_operation_without_replaying_pub() {
     bus.close().unwrap();
     drop(second);
 }
+
+#[test]
+fn real_nats_through_installed_daemon_commits_only_subject_verified_graph_events() {
+    use agents_relay_rust2::{
+        events::{event_for, NatsEventBus},
+        execution_event_identity::execution_event_source,
+        relay_store::SQLiteRelayStore,
+        relay_store_discovery::relay_unified_store_path,
+    };
+    use std::{fs, path::Path, time::{SystemTime, UNIX_EPOCH}};
+    if Command::new("nats-server").arg("-v").output().is_err() {
+        eprintln!("SKIP: optional nats-server executable not installed");
+        return;
+    }
+    let directory = std::env::temp_dir().join(format!(
+        "rust2-real-nats-graph-{}-{}",
+        std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH)
+            .unwrap().as_nanos()
+    ));
+    struct OwnedFixture(std::path::PathBuf);
+    impl Drop for OwnedFixture {
+        fn drop(&mut self) { let _=fs::remove_dir_all(&self.0); }
+    }
+    let _fixture=OwnedFixture(directory.clone());
+    fs::create_dir_all(directory.join("stores")).unwrap();
+    let project=directory.join("fixture");
+    fs::create_dir_all(&project).unwrap();
+    assert!(Command::new("git").args(["init","-q","-b","main"])
+        .current_dir(&project).status().unwrap().success());
+    let db=relay_unified_store_path(&directory.join("stores"));
+    let store=SQLiteRelayStore::open(&db,Some("17")).unwrap();
+    let execution="real-nats-graph-execution-17-2";
+    store.save_job(&json!({
+        "id":"17","repository":"fixture","projectRoot":project,
+        "title":"Test-owned NATS Graph/SQLite","objective":"isolated ingress",
+        "state":"ACTIVE","prNumber":0,"autoMerge":false,
+        "reviewEnabled":false,"createdAt":"2026-11-20T00:00:00.000Z",
+        "updatedAt":"2026-11-20T00:00:00.000Z",
+        "tasks":[{
+            "id":"2","jobId":"17","kind":"work","agentName":"implementation",
+            "adapter":"chatgpt","state":"QUEUED","attempt":1,
+            "maxAttempts":3,"dependencies":[],
+            "executionId":execution,"leaseOwner":"owned-model-worker",
+            "leaseExpiresAt":"2027-11-21T23:59:59.000Z",
+            "createdAt":"2026-11-20T00:00:00.000Z",
+            "updatedAt":"2026-11-20T00:00:00.000Z"
+        }],"plans":[]
+    })).unwrap();
+    store.close().unwrap();
+    let free_port=||{
+        TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+    };
+    let nats_port=free_port();
+    let _broker=launch_broker(nats_port);
+    let nats=format!("nats://127.0.0.1:{nats_port}/");
+    let publisher=NatsEventBus::new(Some(&nats),None).unwrap();
+    let start=Instant::now();
+    while publisher.ping().is_err(){
+        assert!(start.elapsed()<Duration::from_secs(5),"real local NATS startup");
+        thread::sleep(Duration::from_millis(30));
+    }
+
+    struct NativeDaemon(Child);
+    impl Drop for NativeDaemon{
+        fn drop(&mut self){
+            let _=self.0.kill();let _=self.0.wait();
+        }
+    }
+    let port=free_port();
+    let daemon=Command::new(env!("CARGO_BIN_EXE_agents-relayd-rust"))
+        .args(["--isolated-write-store-dir",directory.join("stores").to_str().unwrap(),
+            "--port",&port.to_string(),"--interval","100",
+            "--isolated-nats-url",&nats,"--trust-isolated-model-events"])
+        .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(fs::File::create(directory.join("daemon.log")).unwrap()))
+        .spawn().unwrap();
+    let mut daemon=NativeDaemon(daemon);
+    // macOS native binary loading can lag while all-target Rust regression
+    // compiles in parallel; readiness is distinct from Graph/event delivery.
+    let until=Instant::now()+Duration::from_secs(35);
+    loop{
+        if let Ok(mut socket)=TcpStream::connect(("127.0.0.1",port)){
+            socket.set_read_timeout(Some(Duration::from_millis(300))).unwrap();
+            socket.write_all(b"GET /api/status HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").unwrap();
+            let mut response=String::new();
+            let _=std::io::Read::read_to_string(&mut socket,&mut response);
+            if response.starts_with("HTTP/1.1 200"){break;}
+        }
+        assert!(daemon.0.try_wait().unwrap().is_none(),
+            "native daemon exited before test ingress: {}",
+            fs::read_to_string(directory.join("daemon.log")).unwrap_or_default());
+        assert!(Instant::now()<until,
+            "native daemon never became ready: {}",
+            fs::read_to_string(directory.join("daemon.log")).unwrap_or_default());
+        thread::sleep(Duration::from_millis(35));
+    }
+    thread::sleep(Duration::from_millis(100));
+
+    let source=json!({"id":execution_event_source("17","2",execution),
+        "agent":"fixture","component":"agents-relay"});
+    let forged=event_for("17","2",None,"task.started","started",
+        "cross-job subject forged",None,None,Some(source.clone()));
+    let mut raw=TcpStream::connect(("127.0.0.1",nats_port)).unwrap();
+    raw.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let mut info=String::new();
+    BufReader::new(raw.try_clone().unwrap()).read_line(&mut info).unwrap();
+    assert!(info.starts_with("INFO "));
+    raw.write_all(b"CONNECT {\"verbose\":false}\r\n").unwrap();
+    let forged_body=forged.to_string();
+    write!(raw,"PUB relay.events.job.99.task.started {}\r\n{forged_body}\r\n",
+        forged_body.len()).unwrap();
+    raw.flush().unwrap();
+    thread::sleep(Duration::from_millis(220));
+    let before=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap();
+    let snapshot=before.load_job("17").unwrap().unwrap();
+    assert_eq!(snapshot["tasks"][0]["state"],"QUEUED",
+        "real NATS forged subject may not start another Job");
+    drop(before);
+
+    let start_event=event_for("17","2",None,"task.started","started",
+        "real NATS worker started",None,None,Some(source.clone()));
+    let terminal=event_for("17","2",None,"task.completed","completed",
+        "real NATS worker finished",None,None,Some(source));
+    publisher.publish(&start_event).unwrap();
+    // NATS is asynchronous; wait until durable Graph/SQLite start before
+    // delivering a terminal. A publish socket ACK is not a worker-start ACK.
+    let deadline=Instant::now()+Duration::from_secs(12);
+    loop {
+        let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap();
+        let current=store.load_job("17").unwrap().unwrap();
+        if current["tasks"][0]["state"]=="RUNNING"{break;}
+        assert!(Instant::now()<deadline,
+            "real NATS Worker start not committed to SQLite: {current}");
+        thread::sleep(Duration::from_millis(30));
+    }
+    publisher.publish(&terminal).unwrap();
+    let deadline=Instant::now()+Duration::from_secs(12);
+    loop {
+        let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap();
+        let current=store.load_job("17").unwrap().unwrap();
+        if current["tasks"][0]["state"]=="SUCCEEDED"{
+            let event_count:i64=store.db.query_row(
+                "SELECT COUNT(*) FROM workflow_event_outbox WHERE event_key LIKE 'model-event/17/2/%'",
+                [],|row|row.get(0)).unwrap();
+            assert_eq!(event_count,2,
+                "forged cross-subject event must not produce a Graph/SQLite receipt");
+            assert!(current["tasks"][0]["executionId"].is_null());
+            break;
+        }
+        assert!(Instant::now()<deadline,
+            "real NATS Worker completion not committed to SQLite: {current}");
+        thread::sleep(Duration::from_millis(35));
+    }
+    publisher.close().unwrap();
+    drop(daemon);
+}

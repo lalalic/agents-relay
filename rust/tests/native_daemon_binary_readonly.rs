@@ -108,8 +108,14 @@ fn real_native_daemon_reads_isolated_sqlite_rejects_mutation_and_survives_restar
         }
         assert!(cli.status.success(),"{}",String::from_utf8_lossy(&cli.stderr));
         let view:Value=serde_json::from_slice(&cli.stdout).unwrap();
-        assert_eq!(view["jobCount"],1);
-        assert_eq!(view["productionReady"],false);
+        // Node and Rust CLI status read /api/runtime-summary, not the
+        // diagnostic /api/status endpoint checked above. A DRAFT Job is
+        // discoverable (jobCount=1) but not an ACTIVE running Job.
+        assert_eq!(view["activeJobs"],0);
+        assert_eq!(view["runningTasks"],0);
+        assert_eq!(view["workers"]["chatgpt"],0);
+        assert_eq!(view["workers"]["codex"],0);
+        assert_eq!(view["running"],json!([]));
         let jobs=request(port,"GET","/api/jobs?inventory=1","").unwrap();
         assert!(jobs.starts_with("HTTP/1.1 200"),"{jobs}");
         assert!(jobs.contains("Native source review"),"{jobs}");

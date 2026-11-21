@@ -620,12 +620,19 @@ fn installed_native_daemon_dashboard_sse_emits_node_frames_only_after_commit(){
     let saved=SQLiteRelayStore::open_without_claim_reset(
         &home.join("relay.sqlite"),Some("17")).unwrap().load_job("17").unwrap().unwrap();
     assert_eq!(saved["state"],"ACTIVE");
-    let payload=got.split("data: ").find(|part|part.starts_with("{\"job\":"))
-        .expect("Node EventSource onmessage requires a data-only Job frame");
-    let job_json:serde_json::Value=serde_json::from_str(
-        payload.split_once("\n\n").unwrap().0).unwrap();
-    assert_eq!(job_json["job"]["id"],"17");
-    assert_eq!(job_json["job"]["state"],"ACTIVE");
+    // EventSource can legally receive an initial DRAFT snapshot before
+    // the committed ACTIVE revision. Verify the post-commit frame, not the
+    // first data-only Job frame (which is nondeterministic with SSE timing).
+    let frames=got.split("data: ")
+        .filter(|part|part.starts_with("{\"job\":"))
+        .filter_map(|part|part.split_once("\n\n").map(|entry|entry.0))
+        .map(|body|serde_json::from_str::<serde_json::Value>(body).unwrap())
+        .collect::<Vec<_>>();
+    assert!(!frames.is_empty(),
+        "Node EventSource onmessage requires a data-only Job frame");
+    assert!(frames.iter().all(|frame|frame["job"]["id"]=="17"));
+    assert!(frames.iter().any(|frame|frame["job"]["state"]=="ACTIVE"),
+        "SSE must deliver an ACTIVE Job frame after SQLite commit: {frames:?}");
     drop(live);drop(running);
     fs::remove_dir_all(home).unwrap();
 }
