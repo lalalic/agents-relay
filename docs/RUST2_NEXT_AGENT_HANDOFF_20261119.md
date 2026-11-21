@@ -1,3 +1,9 @@
+## 2026-11-20 latest: installed native CLI serve uses the same PID (220 / 4 / 7)
+
+- Implemented installed agents-relay-rust serve by replacing the CLI process image with the sibling agents-relayd-rust binary using POSIX CommandExt::exec. No nested daemon, no second Workflow scheduler, no Node fallback, no orphaned listener; inherited signals and stdout/stderr behave as one server. The real daemon owns its own port and requires explicit isolated --isolated-write-store-dir before any writable operation; read-only default remains safe.
+- Reproducible rust/tests/native_cli_serve_e2e.py REAL installed CLI+daemon integration PASS: isolated Git/SQLite workspace, bound OS-selected loopback TCP port, GET /api/version real version, GET /api/status runtime native-rust productionReady=false, GET /events real EventSource : connected, SIGTERM/wait closes the SAME PID and port with no orphan. This verifies the entrypoint actually works, not a mock CLI.
+- Still **220 PASS / 4 PORTING / 0 PENDING / 7 EXCLUDED**. CLI source remains PORTING for plan apply/review/run/prompt/local migration and full negative parity. Other outstanding: dashboard.ts, reconciler-runtime.ts, relayd.ts. No live cutover, user SQLite data modification, main merge, push or cleanup.
+
 ## 2026-11-20 latest: relay-store.ts certified PASS (220 / 4 / 7)
 
 - All 46 original SQLiteRelayStore class runtime exports mapped to real Rust store with 17 type/shape surfaces explicitly reviewed. NEW original Node vs Rust public SQLiteRelayStore facade wrapper E2E 4 scenarios/64 operations PASS, including scoped/unscoped, atomic saveJobWithProjection/saveAgentWithProjection with fail-closed rollback, external-only projection duplicate, workflow callback mutate+outbox atomicity/repeat event ID. Added rust/src/bin/relay-rust2-parity/relay_store_atomic_public.rs and rust/tests/head_to_head_relay_store_atomic_public.mjs to cover the actual class wrapper rather than only lower-level projection outbox.

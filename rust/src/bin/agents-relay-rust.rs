@@ -216,8 +216,43 @@ impl CliRuntimePort for DaemonClient {
         }
     }
 }
+/// The Node CLI's "serve" owns one daemon process. Re-exec the native
+/// daemon binary in-place (same PID / signals / single listener), never
+/// fork a second in-process Scheduler or silently fallback to Node Relay.
+/// The daemon itself requires explicit isolated-store options for mutation.
+#[cfg(unix)]
+fn native_serve(arguments:&[String])->Result<(),String>{
+    use std::os::unix::process::CommandExt;
+    let executable=std::env::current_exe()
+        .map_err(|e|format!("Native CLI binary path unavailable: {e}"))?;
+    let owned=executable.with_file_name("agents-relayd-rust");
+    if !owned.is_file(){
+        return Err(format!("Installed native Relay daemon binary not found: {}",owned.display()));
+    }
+    // CommandExt::exec replaces the current process and retains its PID,
+    // stdin/stdout/stderr and inherited signal semantics. No child/process
+    // monitor or untracked launch is left behind.
+    let error=std::process::Command::new(&owned).args(&arguments[1..]).exec();
+    Err(format!("Native Relay daemon exec failed: {error}"))
+}
 fn main(){
     let arguments=std::env::args().skip(1).collect::<Vec<_>>();
+    if arguments.first().is_some_and(|arg|arg=="serve")
+        && !arguments.iter().any(|arg|matches!(arg.as_str(),"--help"|"-h")){
+        #[cfg(unix)]
+        {
+            if let Err(error)=native_serve(&arguments){
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            eprintln!("Native Relay serve requires a supported Unix host");
+            std::process::exit(1);
+        }
+        return;
+    }
     if arguments.first().is_some_and(|arg|arg=="--version"){
         println!("agents-relay-rust {} (native preview)",env!("CARGO_PKG_VERSION"));
         return;
