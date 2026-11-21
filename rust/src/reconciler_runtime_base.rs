@@ -5,6 +5,7 @@ use crate::{
     events::{MemoryEventBus,NatsEventBus,Wake},
     interactive_invocation::{
         bind_interactive_invocation_snapshot,HostInteractiveInvocationCoordinator,
+        InteractiveDecisionWaiter,
     },
     reconcile_coordinator::ReconcileCoordinator,
     reconciler_runtime::{ReconcilerRuntime,RuntimeEffect},
@@ -216,6 +217,24 @@ impl ReconcilerRuntimeBase {
         let _=self.runtime.lock().map_err(|e|e.to_string())?
             .host_invocations.bind(effective,task_id,execution_id,&now,&committed)?;
         Ok(committed)
+    }
+    /// Native equivalent of the public Node bind(...).decision Promise:
+    /// reserve the exact Job/Task/Execution generation in SQLite FIRST,
+    /// then register a one-shot receiver. The receiver can wait for 60s
+    /// (Node's default timeout) and only resolves on a durable acceptance.
+    pub fn bind_interactive_invocation_with_waiter(
+        &self,job_id:&str,task:&Value,execution_id:&str,
+    )->Result<(Value,InteractiveDecisionWaiter),String>{
+        let committed=self.bind_interactive_invocation(job_id,task,execution_id)?;
+        let effective=task.get("jobId").and_then(Value::as_str)
+            .filter(|value|!value.is_empty()).unwrap_or(job_id);
+        let task_id=task.get("id").and_then(Value::as_str)
+            .ok_or("Task identity missing for Host waiter")?;
+        let now=chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis,true);
+        let (_candidate,receiver)=self.runtime.lock()
+            .map_err(|error|error.to_string())?.host_invocations.bind_with_waiter(
+                effective,task_id,execution_id,&now,&committed)?;
+        Ok((committed,receiver))
     }
     pub fn idle(&self){self.coordinator.settle();}
     pub fn close(&self)->Result<(),String>{

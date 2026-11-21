@@ -168,7 +168,10 @@ where
             accepted[key] = value.clone();
         }
     }
-    coordinator.accept(&delivery);
+    // Complete the one-shot host waiter only with the Accepted decision
+    // record, not the raw UI transport. This occurs AFTER SQLite committed
+    // the immutable decision fingerprint and authoritative Task receipt.
+    coordinator.accept(&accepted);
     on_accepted(&accepted, event)?;
     emit(&accepted_interactive_event(&accepted))?;
     Ok(json!({

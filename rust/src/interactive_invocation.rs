@@ -11,7 +11,14 @@ use crate::{
 };
 use serde_json::{json,Value};
 use sha2::{Digest,Sha256};
-use std::{collections::HashMap,path::Path};
+use std::{
+    collections::HashMap,path::Path,
+    sync::{
+        Arc,Mutex,
+        mpsc::{self,Receiver,RecvTimeoutError,Sender},
+    },
+    time::{Duration,Instant},
+};
 
 fn field<'a>(value:&'a Value,key:&str)->&'a str{
     value.get(key).and_then(Value::as_str).unwrap_or("")
@@ -237,9 +244,67 @@ pub fn should_recover_interactive_decision(
         &&decision.get("actions").and_then(Value::as_array).is_some_and(|actions|
             actions.iter().any(|action|field(action,"id")=="interactive.wakeWorker")))
 }
+// The Node bind() contract resolves one pending decision Promise only after
+// a verified, Graph-authorized SQLite receipt. Rust models the same one-shot
+// continuation with a channel Receiver and an explicit 60-second wait bound.
+enum InvocationWaiter{
+    Recorded,
+    Awaiting{id:u64,sender:Sender<Value>},
+}
+type InvocationWaiters=Arc<Mutex<HashMap<String,InvocationWaiter>>>;
+pub struct InteractiveDecisionWaiter{
+    receiver:Receiver<Value>,task_id:String,revision:String,
+    binding:String,generation:u64,registry:InvocationWaiters,
+    registered_at:Instant,
+}
+impl InteractiveDecisionWaiter{
+    pub fn wait(self)->Result<Value,String>{
+        self.wait_timeout(Duration::from_secs(60))
+    }
+    pub fn wait_timeout(self,timeout:Duration)->Result<Value,String>{
+        // Node starts the 60s rejection timer at bind(), not when its
+        // Promise is first awaited. Both a cancelled/overwritten waiter
+        // and a normal pending waiter reject at that timer, rather than
+        // turning close() into an invented human decision or immediate error.
+        let remaining=Duration::from_secs(60)
+            .saturating_sub(self.registered_at.elapsed());
+        let maximum=remaining.min(timeout);
+        let start=Instant::now();
+        match self.receiver.recv_timeout(maximum){
+            Ok(decision)=>Ok(decision),
+            Err(RecvTimeoutError::Timeout)=>Err(format!(
+                "Interactive decision timeout for task {}, revision {}",
+                self.task_id,self.revision)),
+            Err(RecvTimeoutError::Disconnected)=>{
+                // The Host may have replaced the resolver or closed. Node's
+                // outstanding Promise still rejects at the original 60s
+                // deadline, not at the moment its callback was replaced.
+                let due=maximum.saturating_sub(start.elapsed());
+                if !due.is_zero(){std::thread::sleep(due);}
+                Err(format!(
+                    "Interactive decision timeout for task {}, revision {}",
+                    self.task_id,self.revision))
+            }
+        }
+    }
+}
+impl Drop for InteractiveDecisionWaiter{
+    fn drop(&mut self){
+        // Node's 60s timeout deletes the exact Promise resolver. A timed
+        // out or abandoned Rust receiver must likewise remove *its own*
+        // generation, never a later bind of the same Job/Task/execution ID.
+        if let Ok(mut waiters)=self.registry.lock(){
+            if matches!(waiters.get(&self.binding),
+                Some(InvocationWaiter::Awaiting{id,..}) if *id==self.generation){
+                waiters.remove(&self.binding);
+            }
+        }
+    }
+}
 #[derive(Default)]
 pub struct HostInteractiveInvocationCoordinator {
-    waiters:HashMap<String,Value>,
+    waiters:InvocationWaiters,
+    next_waiter_generation:u64,
 }
 impl HostInteractiveInvocationCoordinator {
     pub fn binding_key(job_id:&str,task_id:&str,execution_id:&str)->String{
@@ -248,16 +313,51 @@ impl HostInteractiveInvocationCoordinator {
     pub fn bind(&mut self,job_id:&str,task_id:&str,execution_id:&str,
         now:&str,current:&Value)->Result<Value,String>{
         let next=bind_interactive_invocation_snapshot(current,task_id,execution_id,now)?;
-        self.waiters.insert(Self::binding_key(job_id,task_id,execution_id),
-            json!({"boundAt":now}));
+        self.waiters.lock().map_err(|error|error.to_string())?
+            .insert(Self::binding_key(job_id,task_id,execution_id),
+                InvocationWaiter::Recorded);
         Ok(next)
     }
-    pub fn accept(&mut self,delivery:&Value)->bool{
-        let key=Self::binding_key(field(delivery,"jobId"),field(delivery,"taskId"),
-            field(delivery,"executionId"));
-        self.waiters.remove(&key).is_some()
+    /// Native equivalent of Node's bind(...).decision Promise. The caller
+    /// MUST first durably bind the invocation generation in SQLite; this
+    /// only registers a one-shot receiver for the exact current generation.
+    pub fn bind_with_waiter(
+        &mut self,job_id:&str,task_id:&str,execution_id:&str,
+        now:&str,current:&Value,
+    )->Result<(Value,InteractiveDecisionWaiter),String>{
+        let next=self.bind(job_id,task_id,execution_id,now,current)?;
+        let (sender,receiver)=mpsc::channel();
+        self.next_waiter_generation=self.next_waiter_generation.saturating_add(1);
+        let generation=self.next_waiter_generation;
+        let binding=Self::binding_key(job_id,task_id,execution_id);
+        self.waiters.lock().map_err(|error|error.to_string())?
+            .insert(binding.clone(),InvocationWaiter::Awaiting{
+                id:generation,sender});
+        Ok((next,InteractiveDecisionWaiter{
+            receiver,task_id:task_id.to_string(),revision:execution_id.to_string(),
+            binding,generation,registry:Arc::clone(&self.waiters),
+            registered_at:Instant::now(),
+        }))
     }
-    pub fn close(&mut self){self.waiters.clear();}
+    pub fn accept(&mut self,decision:&Value)->bool{
+        let key=Self::binding_key(field(decision,"jobId"),field(decision,"taskId"),
+            field(decision,"executionId"));
+        let waiter=match self.waiters.lock(){
+            Ok(mut waiters)=>waiters.remove(&key),
+            Err(_)=>return false,
+        };
+        match waiter{
+            Some(InvocationWaiter::Awaiting{sender,..})=>{
+                let _=sender.send(decision.clone());
+                true
+            },
+            Some(InvocationWaiter::Recorded)=>true,
+            None=>false,
+        }
+    }
+    pub fn close(&mut self){
+        if let Ok(mut waiters)=self.waiters.lock(){waiters.clear();}
+    }
 }
 
 /// Public Node hostInvocationPorts explicitly binds durable SQLite methods;

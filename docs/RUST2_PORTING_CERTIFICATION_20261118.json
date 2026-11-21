@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 85,
-    "HOLD": 19,
+    "PASS": 86,
+    "HOLD": 18,
     "EXCLUDED": 3
   },
   "records": [
@@ -1092,14 +1092,16 @@
       "source": "src/interactive-invocation.ts",
       "target": "rust/src/interactive_invocation.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 12,
       "staticNameMismatch": 0,
       "directDiffTests": [
         "rust/tests/head_to_head_host_invocation_ports.mjs",
         "rust/tests/head_to_head_interactive_invocation_public.mjs",
         "rust/tests/head_to_head_reconciler_runtime_base.mjs",
-        "rust/tests/native_reconciler_runtime_base.rs"
+        "rust/tests/native_reconciler_runtime_base.rs",
+        "rust/tests/head_to_head_interactive_resume_public.mjs",
+        "rust/tests/native_interactive_ports_closure.rs"
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity/closure.rs",
@@ -1108,28 +1110,14 @@
         "rust/src/reconciler_runtime.rs",
         "rust/src/reconciler_runtime_base.rs"
       ],
-      "typeOrShapeReviews": [
-        "InteractiveDecision",
-        "InteractiveInvocationStatus",
-        "InteractiveInvocation",
-        "InteractiveDecisionDelivery",
-        "InteractiveDecisionOutcome",
-        "InteractiveDecisionResult",
-        "AcceptedInteractiveDecision",
-        "HostInvocationCoordinatorOptions",
-        "GenericInteractiveFeedback",
-        "HostInteractiveContext",
-        "HostInteractiveInvocationCoordinator.constructor",
-        "WorkerInteractiveContinuation"
-      ],
+      "typeOrShapeReviews": [],
       "certificationEvidence": [
-        "2026-11-20 still HOLD: verified 72 direct Node/Rust public host contract fixtures, 10 original Node/Rust real SQLite HostInvocationPorts cases, 17 original Node/Rust ReconcilerRuntimeBase scenarios. Rust ReconcilerRuntimeBase now requires an explicitly bound HostInvocation SQLite port instead of Graph-only false acceptance. Real four native SQLite/EventBus tests approve/change requested, forged source rejection, one accepted event, Graph-approved Task resume, and duplicate/restarted replay. RuntimeBaseStore default fail-closed; missing live provider binding and 60s waiter/continuation still open."
+        "2026-11-20 still HOLD: verified 72 direct Node/Rust public host contract fixtures, 10 original Node/Rust real SQLite HostInvocationPorts cases, 17 original Node/Rust ReconcilerRuntimeBase scenarios. Rust ReconcilerRuntimeBase now requires an explicitly bound HostInvocation SQLite port instead of Graph-only false acceptance. Real four native SQLite/EventBus tests approve/change requested, forged source rejection, one accepted event, Graph-approved Task resume, and duplicate/restarted replay. RuntimeBaseStore default fail-closed; missing live provider binding and 60s waiter/continuation still open.",
+        "2026-11-20: Original Node/Rust Host event/normalizer/fingerprint/bind/Graph 72, real SQLite HostInvocationPorts 10, interactive resume 190, RuntimeBase 17. Native public bind-with-waiter replicates Node 60s Promise with one-shot receiver, original bind deadline, exact-generation timeout cleanup, source/duplicate/restart rejection, full AcceptedInteractiveDecision only after real SQLite receipt and Graph; 8 native RuntimeBase actual Graph/SQLite/EventBus tests and 3 Host ports. Twelve source typed/shape/constructor interfaces reviewed against typed JSON, Graph state, injected store/callback and returned receiver. Production remote auth/Worker transport still HOLD under Reconciler Runtime and relayd. Full focused 36 Rust, 4 Node test declarations, 289 original Node/Rust scenarios pass; no real provider."
       ],
-      "openGates": [
-        "Bind Node-style Host interactive decision waiter/worker continuation with 60-second timeout and restart recovery",
-        "Connect authenticated external daemon EventBus Host invocation provider and verify concurrent terminal/replay callback semantics before PASS"
-      ],
-      "legacyLedgerNote": "Serial Phase1 native interactive invocation Graph/Host and layered execution context port; uncompiled/untested, store integration Stage2."
+      "openGates": [],
+      "legacyLedgerNote": "Serial Phase1 native interactive invocation Graph/Host and layered execution context port; uncompiled/untested, store integration Stage2.",
+      "status": "PASS"
     },
     {
       "source": "src/interactive-request.ts",
@@ -1874,11 +1862,12 @@
         "withExecutionBoundary"
       ],
       "certificationEvidence": [
-        "2026-11-20 still HOLD: verified 72 direct Node/Rust public host contract fixtures, 10 original Node/Rust real SQLite HostInvocationPorts cases, 17 original Node/Rust ReconcilerRuntimeBase scenarios. Rust ReconcilerRuntimeBase now requires an explicitly bound HostInvocation SQLite port instead of Graph-only false acceptance. Real four native SQLite/EventBus tests approve/change requested, forged source rejection, one accepted event, Graph-approved Task resume, and duplicate/restarted replay. RuntimeBaseStore default fail-closed; missing live provider binding and 60s waiter/continuation still open."
+        "2026-11-20 still HOLD: verified 72 direct Node/Rust public host contract fixtures, 10 original Node/Rust real SQLite HostInvocationPorts cases, 17 original Node/Rust ReconcilerRuntimeBase scenarios. Rust ReconcilerRuntimeBase now requires an explicitly bound HostInvocation SQLite port instead of Graph-only false acceptance. Real four native SQLite/EventBus tests approve/change requested, forged source rejection, one accepted event, Graph-approved Task resume, and duplicate/restarted replay. RuntimeBaseStore default fail-closed; missing live provider binding and 60s waiter/continuation still open.",
+        "2026-11-20: Node-style Host waiter is completed and tested in separately certified interactive-invocation.ts; production authenticated EventBus and model Worker continuation still HOLD under Reconciler Runtime."
       ],
       "openGates": [
-        "Bind Node-style Host interactive decision waiter/worker continuation with 60-second timeout and restart recovery",
-        "Connect authenticated external daemon EventBus Host invocation provider and verify concurrent terminal/replay callback semantics before PASS"
+        "Connect Reconciler Runtime to production authenticated EventBus Host/model ingress and real worker continuation callbacks",
+        "Verify actual concurrent daemon terminal events, restart and credential scoping E2E, not just injected test SQLite Host"
       ],
       "legacyLedgerNote": "Phase1 serial native Dashboard SERVER, Final Review and Event Runtime first draft; UNCOMPILED/UNTESTED, Stage2 integration and parity. Dashboard browser client unchanged."
     },

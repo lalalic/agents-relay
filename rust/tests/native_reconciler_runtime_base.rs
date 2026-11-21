@@ -235,3 +235,153 @@ fn interactive_changes_requested_is_graph_resumed_with_feedback_and_replay_fence
  runtime.close().unwrap();drop(runtime);drop(host);
  std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn interactive_host_bind_returns_one_shot_decision_only_after_sqlite_commit(){
+ use agents_relay_rust2::interactive_invocation::host_interactive_decision_event;
+ let (directory,host,_initial)=fixture();
+ host.store().mutate_job("41",|mut job|{
+  job["tasks"][0]["state"]=json!("RUNNING");
+  Ok(job)
+ }).unwrap();
+ let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+ let runtime=ReconcilerRuntimeBase::new(graph,"relay",15000,
+  Arc::clone(&host) as Arc<dyn RuntimeBaseStore>);
+ let original=host.load_job("41").unwrap();
+ let (bound,waiting)=runtime.bind_interactive_invocation_with_waiter(
+  "41",&original["tasks"][0],"execution-1").unwrap();
+ assert_eq!(bound,host.load_job("41").unwrap(),
+  "Host cannot register a volatile waiter before SQLite bind");
+ assert_eq!(bound["tasks"][0]["interactiveInvocation"]["status"],"awaiting_decision");
+ let waiting_event=event("task.interactive_waiting",
+  &execution_event_source("41","1","execution-1"));
+ runtime.handle_event(waiting_event).unwrap();
+ assert_eq!(host.load_job("41").unwrap()["tasks"][0]["state"],"AWAITING_DECISION");
+ let decision=host_interactive_decision_event(
+  &json!({"jobId":"41","taskId":"1","executionId":"execution-1"}),
+  &json!({"eventId":"decision-waiter-1","decision":"approved",
+    "feedback":"Owner explicitly approved","comments":[]}),
+  "2026-11-17T13:00:00.000Z").unwrap();
+ runtime.handle_event(decision.clone()).unwrap();
+ let received=waiting.wait().unwrap();
+ assert_eq!(received["jobId"],"41");
+ assert_eq!(received["taskId"],"1");
+ assert_eq!(received["executionId"],"execution-1");
+ assert_eq!(received["decision"],"approved");
+ assert_eq!(received["feedback"],"Owner explicitly approved");
+ assert_eq!(received["event"],decision);
+ assert_eq!(host.load_job("41").unwrap()["tasks"][0]["state"],"QUEUED");
+ assert_eq!(host.events.lock().unwrap().iter().filter(|e|
+  e["type"]=="task.interactive_decision.accepted").count(),1);
+ runtime.close().unwrap();drop(runtime);drop(host);
+ std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn interactive_host_wait_timeout_and_close_do_not_invent_human_approval(){
+ use std::time::Duration;
+ let (directory,host,_initial)=fixture();
+ host.store().mutate_job("41",|mut job|{
+  job["tasks"][0]["state"]=json!("RUNNING");
+  Ok(job)
+ }).unwrap();
+ let runtime=ReconcilerRuntimeBase::new(
+  Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
+  "relay",15000,Arc::clone(&host) as Arc<dyn RuntimeBaseStore>);
+ let task=host.load_job("41").unwrap()["tasks"][0].clone();
+ let (_,waiting)=runtime.bind_interactive_invocation_with_waiter(
+  "41",&task,"execution-1").unwrap();
+ assert_eq!(waiting.wait_timeout(Duration::from_millis(2)).unwrap_err(),
+  "Interactive decision timeout for task 1, revision execution-1");
+ assert_eq!(host.load_job("41").unwrap()["tasks"][0]["interactiveInvocation"]["status"],
+  "awaiting_decision",
+  "timeout cannot mark approval or invent Task progress");
+ let (_,another)=runtime.bind_interactive_invocation_with_waiter(
+  "41",&task,"execution-1").unwrap();
+ runtime.close().unwrap();
+ assert_eq!(another.wait_timeout(Duration::from_millis(2)).unwrap_err(),
+  "Interactive decision timeout for task 1, revision execution-1",
+  "closed Host still rejects at its Promise deadline, never claims approval");
+ assert_eq!(host.events.lock().unwrap().iter().filter(|event|
+  event["type"]=="task.interactive_decision.accepted").count(),0);
+ drop(runtime);drop(host);
+ std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn host_waiter_ignores_forged_source_and_stale_decision_until_trusted_receipt(){
+ use agents_relay_rust2::interactive_invocation::host_interactive_decision_event;
+ use std::time::Duration;
+ let (directory,host,_initial)=fixture();
+ host.store().mutate_job("41",|mut job|{
+  job["tasks"][0]["state"]=json!("RUNNING");Ok(job)
+ }).unwrap();
+ let runtime=ReconcilerRuntimeBase::new(
+  Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
+  "relay",15000,Arc::clone(&host) as Arc<dyn RuntimeBaseStore>);
+ let task=host.load_job("41").unwrap()["tasks"][0].clone();
+ let (_,waiting)=runtime.bind_interactive_invocation_with_waiter(
+  "41",&task,"execution-1").unwrap();
+ let wait_signal=event("task.interactive_waiting",
+  &execution_event_source("41","1","execution-1"));
+ runtime.handle_event(wait_signal).unwrap();
+ let genuine=host_interactive_decision_event(
+  &json!({"jobId":"41","taskId":"1","executionId":"execution-1"}),
+  &json!({"eventId":"decision-trusted-later","decision":"approved",
+   "feedback":"Verified complete","comments":[]}),
+  "2026-11-17T13:00:00.000Z").unwrap();
+ let mut forged=genuine.clone();
+ forged["event_id"]=json!("decision-forged");
+ forged["source"]["id"]=json!("job/41/task/1/execution/not-the-owner");
+ runtime.handle_event(forged).unwrap();
+ assert_eq!(host.load_job("41").unwrap()["tasks"][0]["interactiveInvocation"]["status"],
+  "awaiting_decision","untrusted UI event must never mutate authoritative invocation");
+ let mut stale=genuine.clone();
+ stale["event_id"]=json!("decision-stale");
+ stale["data"]["interactive"]["executionId"]=json!("stale-exec");
+ runtime.handle_event(stale).unwrap();
+ assert_eq!(host.events.lock().unwrap().iter()
+  .filter(|row|row["type"]=="task.interactive_decision.accepted").count(),0);
+ runtime.handle_event(genuine.clone()).unwrap();
+ let result=waiting.wait_timeout(Duration::from_millis(100)).unwrap();
+ assert_eq!(result["event"],genuine);
+ assert_eq!(result["decision"],"approved");
+ assert_eq!(host.events.lock().unwrap().iter()
+  .filter(|row|row["type"]=="task.interactive_decision.accepted").count(),1);
+ runtime.close().unwrap();drop(runtime);drop(host);
+ std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn host_waiter_delivers_changes_requested_comments_after_durable_retry(){
+ use agents_relay_rust2::interactive_invocation::host_interactive_decision_event;
+ let (directory,host,_initial)=fixture();
+ host.store().mutate_job("41",|mut job|{
+  job["tasks"][0]["state"]=json!("RUNNING");Ok(job)
+ }).unwrap();
+ let runtime=ReconcilerRuntimeBase::new(
+  Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
+  "relay",15000,Arc::clone(&host) as Arc<dyn RuntimeBaseStore>);
+ let task=host.load_job("41").unwrap()["tasks"][0].clone();
+ let (_,waiting)=runtime.bind_interactive_invocation_with_waiter(
+  "41",&task,"execution-1").unwrap();
+ runtime.handle_event(event("task.interactive_waiting",
+  &execution_event_source("41","1","execution-1"))).unwrap();
+ let data=host_interactive_decision_event(
+  &json!({"jobId":"41","taskId":"1","executionId":"execution-1"}),
+  &json!({"eventId":"decision-accepted-changes","decision":"changes_requested",
+    "feedback":"Please show new tests","comments":[{"text":"Cover stale replay"}]}),
+  "2026-11-17T13:00:00.000Z").unwrap();
+ runtime.handle_event(data.clone()).unwrap();
+ let received=waiting.wait().unwrap();
+ assert_eq!(received["decision"],"changes_requested");
+ assert_eq!(received["feedback"],"Please show new tests");
+ assert_eq!(received["comments"][0]["text"],"Cover stale replay");
+ assert_eq!(received["event"],data);
+ let persisted=host.load_job("41").unwrap();
+ assert_eq!(persisted["tasks"][0]["state"],"QUEUED");
+ assert_eq!(persisted["tasks"][0]["interactiveInvocation"]["status"],"changes_requested");
+ assert!(persisted.to_string().contains("Please show new tests"));
+ runtime.close().unwrap();drop(runtime);drop(host);
+ std::fs::remove_dir_all(directory).unwrap();
+}

@@ -72,3 +72,31 @@ fn accepted_decision_is_durable_duplicate_does_not_emit_twice(){
     assert_eq!(*accepted_count.borrow(),1);
     assert_eq!(*emitted_count.borrow(),1);
 }
+
+#[test]
+fn timed_out_prior_waiter_never_removes_rebound_same_execution_generation(){
+ use std::time::Duration;
+ let (_db,job)=fixture();
+ let mut coordinator=HostInteractiveInvocationCoordinator::default();
+ let now="2026-11-17T22:01:00.000Z";
+ let (_,old)=coordinator.bind_with_waiter(
+  "job-interactive","task-interactive","exec-1",now,&job).unwrap();
+ // Node replaces the old resolve function when bind is called again for
+ // the same Task generation. A late old Promise timeout must not erase it.
+ let (_,replacement)=coordinator.bind_with_waiter(
+  "job-interactive","task-interactive","exec-1",now,&job).unwrap();
+ assert_eq!(old.wait_timeout(Duration::from_millis(2)).unwrap_err(),
+  "Interactive decision timeout for task task-interactive, revision exec-1");
+ let accepted=json!({
+  "jobId":"job-interactive","taskId":"task-interactive",
+  "executionId":"exec-1","invocationId":"exec-1","revision":"exec-1",
+  "decision":"approved","feedback":"verified",
+  "event":{"event_id":"trusted-decision","type":"task.interactive_decision"}
+ });
+ assert!(coordinator.accept(&accepted));
+ assert_eq!(replacement.wait_timeout(Duration::from_millis(100)).unwrap(),
+  accepted,"newer decision waiter must survive older timeout cleanup");
+ assert!(!coordinator.accept(&accepted),
+  "no second callback may receive an already delivered decision");
+ coordinator.close();
+}

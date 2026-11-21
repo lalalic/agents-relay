@@ -2,15 +2,15 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "3eb0afe0968e045c3778f31cc3bc9f706318fd62",
-    "rustTree": "815a468ffa9bf33c3f87c2911522be6cfa246905",
-    "sourceCount": 11,
+    "rustTree": "95be0d6a9378a45c056291969e7252064c89ffba",
+    "sourceCount": 10,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 105,
-    "directNameMatches": 101,
+    "runtimeExportSymbols": 93,
+    "directNameMatches": 90,
     "unmappedRuntimeSymbols": 0,
-    "runtimeConstructorReviews": 4,
-    "typeOrShapeReviewSymbols": 69,
+    "runtimeConstructorReviews": 3,
+    "typeOrShapeReviewSymbols": 57,
     "filesWithUnmappedRuntime": 0,
     "filesWithoutDirectDiffImport": 2,
     "filesWithoutOtherRustReferences": 0
@@ -323,160 +323,6 @@
         },
         {
           "name": "serveDashboard",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/interactive-invocation.ts",
-      "target": "rust/src/interactive_invocation.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 12,
-      "directNameMatches": 11,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "InteractiveDecision",
-        "InteractiveInvocationStatus",
-        "InteractiveInvocation",
-        "InteractiveDecisionDelivery",
-        "InteractiveDecisionOutcome",
-        "InteractiveDecisionResult",
-        "AcceptedInteractiveDecision",
-        "HostInvocationCoordinatorOptions",
-        "GenericInteractiveFeedback",
-        "HostInteractiveContext",
-        "HostInteractiveInvocationCoordinator.constructor",
-        "WorkerInteractiveContinuation"
-      ],
-      "directDiffImports": [
-        "rust/tests/head_to_head_host_invocation_ports.mjs",
-        "rust/tests/head_to_head_interactive_invocation_public.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity/closure.rs",
-        "rust/src/interactive_invocation_ports.rs",
-        "rust/src/interactive_resume.rs",
-        "rust/src/reconciler_runtime.rs",
-        "rust/src/reconciler_runtime_base.rs"
-      ],
-      "exports": [
-        {
-          "name": "InteractiveDecision",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "InteractiveInvocationStatus",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "InteractiveInvocation",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "InteractiveDecisionDelivery",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "InteractiveDecisionOutcome",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "InteractiveDecisionResult",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "AcceptedInteractiveDecision",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "HostInvocationCoordinatorOptions",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "interactiveInvocationGraph",
-          "kind": "variable",
-          "static": "name-match"
-        },
-        {
-          "name": "GenericInteractiveFeedback",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "HostInteractiveContext",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "hostInteractiveDecisionEvent",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "normalizeInteractiveDecision",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "interactiveDecisionFingerprint",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "eventOnlyReviewEligible",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "hostInvocationPorts",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "HostInteractiveInvocationCoordinator",
-          "kind": "class",
-          "static": "name-match"
-        },
-        {
-          "name": "constructor",
-          "kind": "class-constructor",
-          "parent": "HostInteractiveInvocationCoordinator",
-          "static": "review"
-        },
-        {
-          "name": "bind",
-          "kind": "class-method",
-          "parent": "HostInteractiveInvocationCoordinator",
-          "static": "name-match"
-        },
-        {
-          "name": "applyEvent",
-          "kind": "class-method",
-          "parent": "HostInteractiveInvocationCoordinator",
-          "static": "name-match"
-        },
-        {
-          "name": "close",
-          "kind": "class-method",
-          "parent": "HostInteractiveInvocationCoordinator",
-          "static": "name-match"
-        },
-        {
-          "name": "WorkerInteractiveContinuation",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "shouldRecoverInteractiveDecision",
           "kind": "function",
           "static": "name-match"
         }
