@@ -2,12 +2,12 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "3eb0afe0968e045c3778f31cc3bc9f706318fd62",
-    "rustTree": "4426d2f68909c5148bd3356b13636c89d135dc37",
-    "sourceCount": 10,
+    "rustTree": "3a5353cba5e9b173b64f9d9cd8882a141d38a4b7",
+    "sourceCount": 9,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 93,
-    "directNameMatches": 90,
+    "runtimeExportSymbols": 91,
+    "directNameMatches": 88,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 3,
     "typeOrShapeReviewSymbols": 57,
@@ -118,38 +118,6 @@
       "exports": [
         {
           "name": "runCoordinatorJobCommand",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/cli-foreground.ts",
-      "target": "rust/src/cli_foreground.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 2,
-      "directNameMatches": 2,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [
-        "rust/tests/head_to_head_batch_a_public.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity/batch_a_public.rs"
-      ],
-      "exports": [
-        {
-          "name": "ForegroundReporter",
-          "kind": "type",
-          "static": "name-match"
-        },
-        {
-          "name": "foregroundEventLine",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "runForegroundCoordinator",
           "kind": "function",
           "static": "name-match"
         }

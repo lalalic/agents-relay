@@ -5,6 +5,7 @@ use agents_relay_rust2::{
     cli::{run_cli,CliRuntimePort},
     cli_core_support::{arg,has_arg,text_option},
     cli_coordinator::validate_coordinator_args,
+    cli_foreground::attach_foreground_daemon,
     cli_escalation::run_escalation_command,
     cli_prompt::{run_prompt_command,run_plan_context_command,
         run_task_context_command,run_task_events_command,run_task_read_command},
@@ -13,10 +14,51 @@ use agents_relay_rust2::{
     execution_context::resolve_execution_context,
     managed_worker_input::managed_worker_input_resolved,
     planner_adapters::build_planner_execution_prompt,
-    cli_support::{relay_control_command,relay_control_job,relay_service_status},
+    cli_support::{relay_control_command,relay_control_job,relay_service_status,
+        relay_job_events},
 };
 use serde_json::{json,Value};
-use std::path::Path;
+use std::{
+    path::Path,
+    sync::atomic::{AtomicI32,Ordering},
+    time::Duration,
+};
+
+static FOREGROUND_SIGNAL:AtomicI32=AtomicI32::new(0);
+extern "C" fn foreground_interrupt_signal(signal:libc::c_int){
+    FOREGROUND_SIGNAL.store(signal,Ordering::SeqCst);
+}
+struct ForegroundSignalGuard{
+    sigint:libc::sighandler_t,
+    sigterm:libc::sighandler_t,
+}
+impl ForegroundSignalGuard{
+    fn install()->Result<Self,String>{
+        FOREGROUND_SIGNAL.store(0,Ordering::SeqCst);
+        // Signal handlers only update one atomic. No allocations, locks,
+        // subprocess kills or async HTTP requests execute in signal context.
+        let old_int=unsafe{
+            libc::signal(libc::SIGINT,foreground_interrupt_signal as *const () as libc::sighandler_t)
+        };
+        if old_int==libc::SIG_ERR{return Err("Cannot install foreground SIGINT handler".into());}
+        let old_term=unsafe{
+            libc::signal(libc::SIGTERM,foreground_interrupt_signal as *const () as libc::sighandler_t)
+        };
+        if old_term==libc::SIG_ERR{
+            unsafe{libc::signal(libc::SIGINT,old_int);}
+            return Err("Cannot install foreground SIGTERM handler".into());
+        }
+        Ok(Self{sigint:old_int,sigterm:old_term})
+    }
+}
+impl Drop for ForegroundSignalGuard{
+    fn drop(&mut self){
+        unsafe{
+            libc::signal(libc::SIGINT,self.sigint);
+            libc::signal(libc::SIGTERM,self.sigterm);
+        }
+    }
+}
 
 struct DaemonClient;
 impl CliRuntimePort for DaemonClient {
@@ -91,7 +133,8 @@ impl CliRuntimePort for DaemonClient {
             ("job","run") => {
                 // Original Node CLI Coordinator contract. The daemon owns
                 // the Graph decision and authoritative SQLite transaction.
-                validate_coordinator_args(args,false)?;
+                let foreground=has_arg(args,"--foreground");
+                validate_coordinator_args(args,true)?;
                 let id=arg(args,"--id","");
                 if id.is_empty(){return Err("job requires --id".into());}
                 let task_id=arg(args,"--task-id","");
@@ -106,14 +149,36 @@ impl CliRuntimePort for DaemonClient {
                 }
                 let workspace=arg(args,"--workspace-root","");
                 let global=arg(args,"--global-root","");
-                relay_control_command(args,&json!({
-                    "command":"job.run","jobId":id,"taskId":task_id,
-                    "graphOverride":override_graph,
-                    "workspaceRoot":if workspace.is_empty(){None}else{Some(workspace)},
-                    "globalRoot":if global.is_empty(){
-                        std::env::var("AGENTS_HOME").ok()
-                    }else{Some(global.into())}
-                }))
+                let was_terminal=if foreground{
+                    let current=relay_control_job(args,id)?;
+                    matches!(current.get("state").and_then(Value::as_str),
+                        Some("COMPLETED"|"CANCELLED"))
+                }else{false};
+                let receipt=if was_terminal{Value::Null}else{
+                    relay_control_command(args,&json!({
+                        "command":"job.run","jobId":id,"taskId":task_id,
+                        "graphOverride":override_graph,
+                        "workspaceRoot":if workspace.is_empty(){None}else{Some(workspace)},
+                        "globalRoot":if global.is_empty(){
+                            std::env::var("AGENTS_HOME").ok()
+                        }else{Some(global.into())}
+                    }))?
+                };
+                if !foreground{return Ok(receipt);}
+                // Attach to the same daemon/Graph/SQLite ownership as
+                // background job.run; NEVER launch a second local scheduler.
+                let _signals=ForegroundSignalGuard::install()?;
+                let attached=attach_foreground_daemon(
+                    id,task_id,
+                    ||relay_control_job(args,id),
+                    ||relay_control_command(args,&json!({
+                        "command":"job.reconcile","jobId":id
+                    })).map(|_|()),
+                    ||relay_job_events(args,id,128),
+                    |message|println!("{message}"),
+                    Duration::from_millis(1000),&FOREGROUND_SIGNAL,
+                )?;
+                Ok(attached.job)
             },
             // --foreground, background worker scheduling, local job
             // migrations and human escalation need the actual host ports,
@@ -149,6 +214,15 @@ fn main(){
             }else{
                 println!("{}",serde_json::to_string_pretty(&result)
                     .unwrap_or_else(|_|"null".to_string()));
+            }
+            let foreground_signal=FOREGROUND_SIGNAL.load(Ordering::SeqCst);
+            if foreground_signal==libc::SIGINT{std::process::exit(130);}
+            if foreground_signal==libc::SIGTERM{std::process::exit(143);}
+            if arguments.first().is_some_and(|cmd|cmd=="job")
+                &&arguments.get(1).is_some_and(|action|action=="run")
+                &&arguments.iter().any(|argument|argument=="--foreground")
+                &&result.get("state").and_then(Value::as_str)==Some("CANCELLED"){
+                std::process::exit(1);
             }
             if arguments.first().is_some_and(|cmd|cmd=="escalation")
                 &&result.get("state").and_then(Value::as_str)==Some("technical_failure"){

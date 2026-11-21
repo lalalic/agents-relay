@@ -80,3 +80,73 @@ where
         std::thread::sleep(poll);
     }
 }
+
+
+// In production the ordinary daemon owns all Task/Graph/SQLite mutations.
+// This is strictly a foreground CLI attachment: it invokes the SAME daemon
+// reconciler route and reads durable events, never starts a parallel Worker.
+#[derive(Debug,Clone)]
+pub struct ForegroundAttachResult{
+    pub job:Value,
+    pub interrupted_signal:Option<i32>,
+}
+/// Synchronous daemon attachment. Callbacks are the actual HTTP control
+/// endpoints in the native CLI; also injectible for isolation/replay tests.
+pub fn attach_foreground_daemon<Load,Reconcile,Events,Report>(
+    job_id:&str,task_id:&str,
+    mut load:Load,mut reconcile:Reconcile,mut events:Events,
+    mut report:Report,poll:Duration,interrupted:&std::sync::atomic::AtomicI32,
+)->Result<ForegroundAttachResult,String>
+where
+    Load:FnMut()->Result<Value,String>,
+    Reconcile:FnMut()->Result<(),String>,
+    Events:FnMut()->Result<Vec<Value>,String>,
+    Report:FnMut(String),
+{
+    let mut reporter=ForegroundReporter::default();
+    let mut paused_reported=false;
+    report(format!("Coordinator job {job_id}, task {task_id}: foreground execution (Ctrl+C stops local execution; durable Job stays recoverable)"));
+    loop{
+        let signal=interrupted.load(Ordering::SeqCst);
+        if signal!=0{
+            report(format!("Leaving foreground for Job {job_id}; in-flight local workers are interrupted and Relay recovers their durable Tasks."));
+            return Ok(ForegroundAttachResult{
+                job:load()?,interrupted_signal:Some(signal),
+            });
+        }
+        let job=load()?;
+        reporter.refresh_names(&job);
+        // Polling the authoritative daemon event history is the CLI
+        // replacement for Node's local Reconciler/EventBus subscription.
+        // Duplicate and foreign-Job event IDs are suppressed across polls.
+        for event in events()?{
+            if let Some(line)=reporter.on_event(job_id,&event){report(line);}
+        }
+        let state=job.get("state").and_then(Value::as_str).unwrap_or("");
+        if matches!(state,"COMPLETED"|"CANCELLED"){
+            report(format!("Job {job_id}: {state}"));
+            return Ok(ForegroundAttachResult{
+                job,interrupted_signal:None,
+            });
+        }
+        let paused=job.get("pause").is_some_and(|value|!value.is_null());
+        if paused&&!paused_reported{
+            report(format!("Job {job_id}: PAUSED (waiting for resume)"));
+            paused_reported=true;
+        }
+        if !paused{paused_reported=false;}
+        reconcile()?;
+        let updated=load()?;
+        let state=updated.get("state").and_then(Value::as_str).unwrap_or("");
+        if matches!(state,"COMPLETED"|"CANCELLED"){continue;}
+        // Do not sleep uninterruptibly. A SIGINT/SIGTERM must not wait an
+        // entire watchdog interval, nor mutate/abandon the durable Task.
+        let mut remaining=poll;
+        while !remaining.is_zero(){
+            if interrupted.load(Ordering::SeqCst)!=0{break;}
+            let slice=remaining.min(Duration::from_millis(40));
+            std::thread::sleep(slice);
+            remaining=remaining.saturating_sub(slice);
+        }
+    }
+}

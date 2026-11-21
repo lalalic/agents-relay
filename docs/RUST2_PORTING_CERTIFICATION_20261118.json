@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 86,
-    "HOLD": 18,
+    "PASS": 87,
+    "HOLD": 17,
     "EXCLUDED": 3
   },
   "records": [
@@ -252,11 +252,12 @@
       "certificationEvidence": [
         "Original Node/Rust source public Coordinator immutable-binding/Graph/SQLite differential 11/11: rust/tests/head_to_head_coordinator_cli.mjs",
         "Real native CLI job run -> HTTP daemon workspace_control job.run -> authoritative SQLite mutateJob with canonical Task queue and Job activation Graph: rust/src/bin/agents-relay-rust.rs, rust/src/relayd_control.rs",
-        "Native isolated real binary/restart, workspace-root conflict and duplicate/start negative tests: rust/tests/native_daemon_binary_readonly.rs, rust/tests/native_sqlite_write_host.rs"
+        "Native isolated real binary/restart, workspace-root conflict and duplicate/start negative tests: rust/tests/native_daemon_binary_readonly.rs, rust/tests/native_sqlite_write_host.rs",
+        "2026-11-20: Native CLI --foreground now real daemon-backed and tested SIGINT/SIGTERM/status/restart; CLI coordinator remains HOLD exclusively for full real provider/Worker lifecycle and production daemon cutover."
       ],
       "openGates": [
-        "正式 CLI --foreground 仍被拒绝；Node 原版 runCoordinatorJobCommand 受控前台 Reconciler 等效执行、Ctrl+C/停止行为和端到端差分未通过，不可升级 PASS",
-        "需要完整 real Worker/provider 端到端验证；目前仅隔离 Script/native Graph 验证，仍非 productionReady"
+        "Real external model Worker/provider lifecycle (start acknowledgement, correlated terminal, cancel and crash recovery) not yet fully bound to native daemon",
+        "Production cutover blocked by native daemon and provider transport; --foreground local Graph/SQLite and SIGINT/SIGTERM E2E now PASS under certified cli-foreground.ts."
       ],
       "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested; production API/wiring still requires parity closure."
     },
@@ -288,22 +289,25 @@
       "source": "src/cli-foreground.ts",
       "target": "rust/src/cli_foreground.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 2,
       "staticNameMismatch": 0,
-      "directDiffTests": [],
+      "directDiffTests": [
+        "rust/tests/head_to_head_batch_a_public.mjs",
+        "rust/tests/head_to_head_coordinator_cli.mjs",
+        "rust/tests/native_cli_foreground.rs",
+        "rust/tests/native_daemon_binary_readonly.rs"
+      ],
       "otherRustModuleReferences": [],
       "typeOrShapeReviews": [],
       "certificationEvidence": [
         "2026-11-20: 15 Node/Rust foreground event-line formatting cases (timestamps, actor maps, unicode, short stamps, trailing-space trimming) in rust/tests/head_to_head_batch_a_public.mjs via parity op batchAPublicParity.",
-        "Formatter-only evidence; module remains HOLD until true Reconciler/interrupt/watch/cleanup E2E."
+        "Formatter-only evidence; module remains HOLD until true Reconciler/interrupt/watch/cleanup E2E.",
+        "2026-11-20: Native installed CLI job run --foreground owns no second scheduler and uses actual native daemon job.run/reconcile/GET Job and optional events API; real POSIX SIGINT and SIGTERM exit codes 130/143, prior handlers restored, paused Job/queued Task immutable and graphStartContext persist through daemon restart. Four fresh isolated native_cli_foreground.rs E2E fixtures pass, including terminal Job not restarted, repeated Event history dedupe, 130/143, and explicit failure-free stop; existing native_daemon_binary_readonly real coordinator CLI/daemon/restart passes. Original Node/Rust foregroundEventLine 15 cases and Coordinator Graph 11 cases plus non-foreground negative CLI remain PASS. External authenticated EventBus/Worker provider still HOLD under reconciler-runtime and relayd."
       ],
-      "openGates": [
-        "runForegroundCoordinator original Node/Rust event watch, durable Reconciler loop, SIGINT/SIGTERM/AbortSignal interrupt and cleanup have no direct parity/production CLI evidence",
-        "15-case foregroundEventLine differential certifies only formatting, not the entire module"
-      ],
+      "openGates": [],
       "legacyLedgerNote": "Phase1 serial first native Rust draft; uncompiled and untested, production API/wiring still requires parity closure.",
-      "status": "HOLD"
+      "status": "PASS"
     },
     {
       "source": "src/cli-job-create.ts",

@@ -679,8 +679,17 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         self.wake(id,"dashboard.task.setState")?;
         Ok(result["job"].clone())
     }
-    fn event_history(&mut self,_:&str,_:Option<&str>,_:i64)->Result<Vec<Value>,String>{
-        Err(denied("historical Event query"))
+    fn event_history(&mut self,id:&str,_task:Option<&str>,_limit:i64)
+        ->Result<Vec<Value>,String>{
+        // Node's dashboard-data.eventHistory catches an unavailable external
+        // EventsBus history provider and returns []. The deliberately
+        // isolated native write daemon has no authenticated EventsBus
+        // history connector: return empty rather than inventing events or
+        // rejecting an otherwise valid foreground CLI attachment. Native
+        // Task history still belongs to an installed EventBus provider.
+        self.scoped(id)?.load_job(id)?
+            .ok_or_else(||format!("SQLite Job {id} not found"))?;
+        Ok(Vec::new())
     }
     fn publish_event(&mut self,event:&Value)->Result<(),String>{
         WorkspaceControlBackend::publish(self,event)

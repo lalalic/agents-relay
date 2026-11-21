@@ -301,6 +301,15 @@ pub fn relay_control_job(args:&[String],id:&str)->Result<Value,String>{
 pub fn relay_control_command(args:&[String],body:&Value)->Result<Value,String>{
     http(args,"/api/control","POST",&[],Some(body),"control command")
 }
+/// Read-only durable event history for a foreground attachment. Never rely
+/// on UI text scraping or an unauthenticated secondary event source.
+pub fn relay_job_events(args:&[String],id:&str,limit:usize)->Result<Vec<Value>,String>{
+    let value=http(args,"/api/events","GET",&[
+        ("job",id.to_string()),("limit",limit.clamp(1,4096).to_string())
+    ],None,"foreground events")?;
+    value.as_array().cloned().ok_or(
+        "Invalid foreground events response: expected authoritative Event array".into())
+}
 pub fn relay_job_list(args:&[String])->Result<Vec<Value>,String>{
     let mut params=vec![("inventory","1".into())];
     let repo=arg(args,"--repo","");

@@ -1,0 +1,215 @@
+// Foreground attachment uses the installed native CLI + actual native daemon.
+// All Git roots/SQLite/HTTP ports/processes are isolated disposable fixtures.
+use agents_relay_rust2::{
+    cli_foreground::attach_foreground_daemon,
+    relay_store::SQLiteRelayStore,
+};
+use serde_json::json;
+use std::{
+    fs,
+    path::{Path,PathBuf},
+    net::{TcpListener,TcpStream},
+    io::{Read,Write},
+    process::{Child,Command,Stdio},
+    sync::atomic::{AtomicI32,Ordering},
+    thread,
+    time::{Duration,Instant,SystemTime,UNIX_EPOCH},
+};
+fn root()->PathBuf{
+    let p=std::env::temp_dir().join(format!("rust2-cli-foreground-{}-{}",
+        std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH)
+            .unwrap().as_nanos()));
+    fs::create_dir_all(p.join("stores")).unwrap();
+    p
+}
+fn port()->u16{
+    TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+}
+fn status(port:u16)->bool{
+    let Ok(mut socket)=TcpStream::connect(("127.0.0.1",port))else{return false};
+    let _=socket.set_read_timeout(Some(Duration::from_millis(100)));
+    if socket.write_all(b"GET /api/status HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").is_err(){return false;}
+    let mut response=String::new();
+    socket.read_to_string(&mut response).is_ok()&&response.starts_with("HTTP/1.1 200")
+}
+struct Guard(Child);
+impl Drop for Guard{
+    fn drop(&mut self){
+        if self.0.try_wait().ok().flatten().is_some(){return;}
+        unsafe{libc::kill(self.0.id() as i32,libc::SIGTERM);}
+        for _ in 0..40{
+            if self.0.try_wait().ok().flatten().is_some(){return;}
+            thread::sleep(Duration::from_millis(50));
+        }
+        let _=self.0.kill();let _=self.0.wait();
+    }
+}
+fn daemon(root:&Path,port:u16)->Guard{
+    let child=Command::new(env!("CARGO_BIN_EXE_agents-relayd-rust"))
+        .args(["--isolated-write-store-dir",
+            root.join("stores").to_str().unwrap(),"--port",&port.to_string(),
+            "--interval","100"])
+        .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(fs::File::create(root.join("daemon.log")).unwrap()))
+        .spawn().unwrap();
+    let mut child=Guard(child);
+    for _ in 0..300{
+        if status(port){return child;}
+        assert!(child.0.try_wait().unwrap().is_none(),
+            "isolated native daemon exited: {}",fs::read_to_string(
+                root.join("daemon.log")).unwrap_or_default());
+        thread::sleep(Duration::from_millis(40));
+    }
+    panic!("native daemon did not become ready on isolated loopback port");
+}
+fn job(root:&Path,state:&str,paused:bool){
+    let git=root.join("fixture");
+    fs::create_dir_all(&git).unwrap();
+    assert!(Command::new("git").args(["init","-q","-b","main"])
+        .current_dir(&git).status().unwrap().success());
+    let path=root.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&path,Some("17")).unwrap();
+    let task_state=if state=="COMPLETED"{"SUCCEEDED"}else{"QUEUED"};
+    let mut value=json!({
+        "id":"17","repository":"fixture","projectRoot":git,
+        "title":"Real native foreground attachment",
+        "objective":"No external Worker in test",
+        "state":state,"prNumber":0,"reviewEnabled":false,"autoMerge":false,
+        "createdAt":"2026-11-18T00:00:00.000Z",
+        "updatedAt":"2026-11-18T00:00:00.000Z",
+        "tasks":[{
+            "id":"2","jobId":"17","kind":"work","agentName":"coordinator",
+            "state":task_state,"attempt":0,"maxAttempts":3,
+            "dependencies":[],"agentGraph":"flowchart TD\nA[agent:developer]",
+            "createdAt":"2026-11-18T00:00:00.000Z",
+            "updatedAt":"2026-11-18T00:00:00.000Z"
+        }],"plans":[]
+    });
+    if paused{value["pause"]=json!({"reason":"Fixture maintenance","at":"2026-11-18T00:00:00.000Z"});}
+    store.save_job(&value).unwrap();
+    store.close().unwrap();
+}
+#[test]
+fn attachment_reuses_authoritative_durable_load_events_and_reconcile(){
+    use std::cell::Cell;
+    let interrupted=AtomicI32::new(0);
+    let rounds=Cell::new(0usize);
+    let mut messages=Vec::<String>::new();
+    let event_calls=Cell::new(0usize);
+    let attached=attach_foreground_daemon(
+        "17","2",
+        ||Ok(json!({"id":"17","state":if rounds.get()>=2{"COMPLETED"}else{"ACTIVE"},
+            "tasks":[{"id":"2","agentName":"coordinator","state":"QUEUED"}]})),
+        ||{rounds.set(rounds.get()+1);Ok(())},
+        ||{
+            event_calls.set(event_calls.get()+1);
+            Ok(vec![json!({"job_id":"17","task_id":"2",
+                "event_id":"unique-1","type":"task.started",
+                "message":"Started","timestamp":"2026-11-20T17:00:00.000Z"})])
+        },|message|messages.push(message),
+        Duration::from_millis(0),&interrupted
+    ).unwrap();
+    assert_eq!(attached.job["state"],"COMPLETED");
+    assert_eq!(attached.interrupted_signal,None);
+    assert_eq!(rounds.get(),2,"exactly two canonical Reconciler passes");
+    assert_eq!(event_calls.get(),3);
+    assert_eq!(messages.iter().filter(|message|message.contains("task.started")).count(),1,
+        "repeated history rows must never duplicate a foreground progress line");
+    assert!(messages.iter().any(|line|line.contains("coordinator  task.started")));
+    assert!(messages.iter().any(|line|line=="Job 17: COMPLETED"));
+}
+#[test]
+fn attachment_interrupt_never_claims_job_completed_or_cancels_durable_work(){
+    let interrupted=AtomicI32::new(0);
+    let mut messages=Vec::<String>::new();
+    let original=json!({"id":"17","state":"ACTIVE","pause":{"reason":"Fixture"},
+        "tasks":[{"id":"2","agentName":"coordinator","state":"QUEUED"}]});
+    let completed=attach_foreground_daemon(
+        "17","2",||Ok(original.clone()),
+        ||{
+            interrupted.store(libc::SIGINT,Ordering::SeqCst);
+            Ok(())
+        },
+        ||Ok(vec![]),|message|messages.push(message),
+        Duration::from_millis(500),&interrupted
+    ).unwrap();
+    assert_eq!(completed.interrupted_signal,Some(libc::SIGINT));
+    assert_eq!(completed.job,original);
+    assert!(messages.iter().any(|message|message.contains("PAUSED")));
+    assert!(messages.iter().any(|message|message.contains("durable Job stays recoverable")));
+    assert!(messages.iter().any(|message|message.contains("Leaving foreground")));
+    assert!(!messages.iter().any(|message|message=="Job 17: COMPLETED"));
+}
+#[test]
+fn installed_native_cli_attaches_to_terminal_real_daemon_without_restarting_job(){
+    let home=root();job(&home,"COMPLETED",false);
+    let before=SQLiteRelayStore::open_without_claim_reset(
+        &home.join("relay.sqlite"),Some("17")).unwrap().load_job("17").unwrap().unwrap();
+    let port=port();let running=daemon(&home,port);
+    let output=Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
+        .args(["job","run","--id","17","--task-id","2","--foreground",
+            "--port",&port.to_string()]).output().unwrap();
+    assert!(output.status.success(),"{}",
+        String::from_utf8_lossy(&output.stderr));
+    let stdout=String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Coordinator job 17, task 2: foreground execution"),"{stdout}");
+    assert!(stdout.contains("Job 17: COMPLETED"),"{stdout}");
+    assert!(stdout.contains("\"state\": \"COMPLETED\""),"{stdout}");
+    let after=SQLiteRelayStore::open_without_claim_reset(
+        &home.join("relay.sqlite"),Some("17")).unwrap().load_job("17").unwrap().unwrap();
+    assert_eq!(after,before,"completed Job must never be restarted by attaching CLI");
+    drop(running);fs::remove_dir_all(home).unwrap();
+}
+#[test]
+fn installed_native_cli_signals_detach_paused_job_keep_graph_sqlite_across_restart(){
+    for (signal,expected_exit) in [(libc::SIGINT,130),(libc::SIGTERM,143)]{
+    let home=root();job(&home,"ACTIVE",true);
+    let port=port();let running=daemon(&home,port);
+    let port_arg=port.to_string();
+    let out=home.join("foreground-stdout.log");
+    let err=home.join("foreground-stderr.log");
+    let cli=Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
+        .args(["job","run","--id","17","--task-id","2","--foreground",
+            "--workspace-root",home.to_str().unwrap(),"--port",&port_arg])
+        .stdout(Stdio::from(fs::File::create(&out).unwrap()))
+        .stderr(Stdio::from(fs::File::create(&err).unwrap()))
+        .spawn().unwrap();
+    let mut cli=Guard(cli);
+    let start=Instant::now();
+    loop{
+        let printed=fs::read_to_string(&out).unwrap_or_default();
+        if printed.contains("Job 17: PAUSED"){break;}
+        assert!(start.elapsed()<Duration::from_secs(15),"foreground CLI did not attach: stdout={printed}, stderr={}",
+            fs::read_to_string(&err).unwrap_or_default());
+        assert!(cli.0.try_wait().unwrap().is_none(),"foreground unexpectedly exited: {}",
+            fs::read_to_string(&err).unwrap_or_default());
+        thread::sleep(Duration::from_millis(80));
+    }
+    assert_eq!(unsafe{libc::kill(cli.0.id() as i32,signal)},0);
+    let deadline=Instant::now();
+    let exit=loop{
+        if let Some(status)=cli.0.try_wait().unwrap(){break status;}
+        assert!(deadline.elapsed()<Duration::from_secs(8),"SIGINT did not detach foreground CLI");
+        thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(exit.code(),Some(expected_exit),"signal needs Node-compatible exit code");
+    let output=fs::read_to_string(&out).unwrap();
+    assert!(output.contains("Leaving foreground for Job 17;"),"{output}");
+    let saved=SQLiteRelayStore::open_without_claim_reset(
+        &home.join("relay.sqlite"),Some("17")).unwrap().load_job("17").unwrap().unwrap();
+    assert_eq!(saved["state"],"ACTIVE");
+    assert_eq!(saved["tasks"][0]["state"],"QUEUED");
+    assert!(!saved["pause"].is_null());
+    assert!(saved["graphStartContext"]["projectRoot"].is_string());
+    drop(running);
+    let restarted=daemon(&home,port);
+    let replay=SQLiteRelayStore::open_without_claim_reset(
+        &home.join("relay.sqlite"),Some("17")).unwrap().load_job("17").unwrap().unwrap();
+    assert_eq!(replay["state"],saved["state"]);
+    assert_eq!(replay["tasks"][0]["state"],saved["tasks"][0]["state"]);
+    assert_eq!(replay["graphStartContext"],saved["graphStartContext"]);
+    drop(restarted);
+    fs::remove_dir_all(home).unwrap();
+    }
+}

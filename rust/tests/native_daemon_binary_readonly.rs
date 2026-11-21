@@ -931,8 +931,6 @@ fn native_coordinator_cli_run_uses_real_daemon_and_survives_restart(){
         vec!["job","run","--id","17","--task-id","absent","--port",&port_arg],
         vec!["job","run","--id","17","--task-id","2",
             "--shortcut-local","--port",&port_arg],
-        vec!["job","run","--id","17","--task-id","2",
-            "--foreground","--port",&port_arg],
     ]{
         let negative=native_cli_transient_retry(&rejected);
         assert!(!negative.status.success(),"invalid Coordinator request accepted");
