@@ -16,7 +16,7 @@ extern "C" fn stop_signal(_:libc::c_int){STOP.store(true,Ordering::Release);}
 fn main(){
     let args=std::env::args().skip(1).collect::<Vec<_>>();
     if args.iter().any(|arg|matches!(arg.as_str(),"--help"|"-h")){
-        println!("agents-relayd-rust (isolated preview)\n  --isolated-store-dir /absolute/path/to/stores (read-only)\n  --isolated-write-store-dir /absolute/path/to/stores (SQLite/Graph isolated mutations)\n  --event-history-api http://127.0.0.1:PORT/ (explicit read-only loopback Events Bus history, write mode only)\n  --trust-isolated-model-events (opt-in caller-owned loopback events as Graph-verified Worker ingress)\n  --port N\n  --interval MS\nNo production Workers or live state. No Node fallback.");
+        println!("agents-relayd-rust (isolated preview)\n  --isolated-store-dir /absolute/path/to/stores (read-only)\n  --isolated-write-store-dir /absolute/path/to/stores (SQLite/Graph isolated mutations)\n  --event-history-api http://127.0.0.1:PORT/ (explicit read-only loopback Events Bus history, write mode only)\n  --trust-isolated-model-events (opt-in caller-owned loopback events as Graph-verified Worker ingress)\n  --isolated-nats-url nats://127.0.0.1:PORT/ (optional caller-owned isolated NATS subscriber, requires trust flag)\n  --port N\n  --interval MS\nNo production Workers or live state. No Node fallback.");
         return;
     }
     if args.first().is_some_and(|a|a=="--version"){
@@ -53,6 +53,13 @@ fn execute(args:&[String])->Result<(),String>{
     let store=if writable{arg("--isolated-write-store-dir")}else{arg("--isolated-store-dir")};
     if !writable&&!arg("--event-history-api").is_empty(){
         return Err("Read-only daemon does not permit external event history provider bindings".into());
+    }
+    if !writable&&!arg("--isolated-nats-url").is_empty(){
+        return Err("Read-only daemon does not permit isolated NATS source".into());
+    }
+    if !arg("--isolated-nats-url").is_empty()
+        &&!args.iter().any(|arg|arg=="--trust-isolated-model-events"){
+        return Err("Isolated model NATS requires --trust-isolated-model-events".into());
     }
     if store.is_empty()||!Path::new(store).is_absolute()||!Path::new(store).is_dir(){
         return Err("Native daemon requires --isolated-store-dir pointing to an existing absolute caller-owned directory".into());
@@ -109,6 +116,10 @@ fn execute(args:&[String])->Result<(),String>{
         let history=arg("--event-history-api");
         if !history.is_empty(){
             host.set_loopback_event_history_api(history)?;
+        }
+        let nats=arg("--isolated-nats-url");
+        if !nats.is_empty(){
+            host.set_loopback_model_nats(nats)?;
         }
         if args.iter().any(|arg|arg=="--trust-isolated-model-events"){
             host.enable_isolated_model_event_ingress()?;

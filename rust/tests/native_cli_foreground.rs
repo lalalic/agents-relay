@@ -51,12 +51,19 @@ fn daemon_with_history(root:&Path,port:u16,history:Option<&str>)->Guard{
     daemon_with_model_ingress(root,port,history,false)
 }
 fn daemon_with_model_ingress(root:&Path,port:u16,history:Option<&str>,trust:bool)->Guard{
+    daemon_with_model_transports(root,port,history,None,trust)
+}
+fn daemon_with_model_transports(root:&Path,port:u16,
+    history:Option<&str>,nats:Option<&str>,trust:bool)->Guard{
     let mut command=Command::new(env!("CARGO_BIN_EXE_agents-relayd-rust"));
     command.args(["--isolated-write-store-dir",
             root.join("stores").to_str().unwrap(),"--port",&port.to_string(),
             "--interval","100"]);
     if let Some(history)=history{
         command.args(["--event-history-api",history]);
+    }
+    if let Some(nats)=nats{
+        command.args(["--isolated-nats-url",nats]);
     }
     if trust{command.arg("--trust-isolated-model-events");}
     let child=command
@@ -473,5 +480,99 @@ fn native_daemon_opt_in_model_event_ingress_commits_verified_worker_terminal(){
     assert_eq!(after["tasks"][0]["executionHistory"],
         saved["tasks"][0]["executionHistory"]);
     drop(store);drop(restarted);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn installed_native_daemon_receives_nats_push_as_authoritative_graph_worker_event(){
+    use agents_relay_rust2::{
+        events::event_for,execution_event_identity::execution_event_source,
+        relay_store_discovery::relay_unified_store_path,
+    };
+    use std::io::{BufRead,BufReader,Write as _};
+    let home=root();
+    job(&home,"ACTIVE",false);
+    let execution="real-daemon-nats-001";
+    let db=relay_unified_store_path(&home.join("stores"));
+    let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap();
+    store.mutate_job("17",|mut job|{
+        let task=&mut job["tasks"][0];
+        task["adapter"]=json!("chatgpt");
+        task["agentName"]=json!("implementation");
+        task["agentGraph"]=serde_json::Value::Null;
+        task["attempt"]=json!(1);
+        task["executionId"]=json!(execution);
+        task["leaseOwner"]=json!("trusted-nats-test-provider");
+        task["leaseExpiresAt"]=json!("2027-11-21T23:59:59.000Z");
+        job["autoMerge"]=json!(false);
+        Ok(job)
+    }).unwrap();
+    drop(store);
+    let source=json!({
+        "id":execution_event_source("17","2",execution),
+        "agent":"fixture","component":"agents-relay",
+    });
+    let events=vec![
+        event_for("17","2",None,"task.started","started",
+            "Real NATS leased model worker",None,None,Some(source.clone())),
+        event_for("17","2",None,"task.completed","completed",
+            "Real NATS model terminal",None,None,Some(source)),
+    ];
+    let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+    let nats_port=listener.local_addr().unwrap().port();
+    let server=thread::spawn(move||{
+        let (mut socket,_)=listener.accept().unwrap();
+        socket.set_read_timeout(Some(Duration::from_secs(4))).unwrap();
+        socket.write_all(b"INFO {}\r\n").unwrap();
+        let mut reader=BufReader::new(socket.try_clone().unwrap());
+        let mut subscribed=false;
+        for _ in 0..8{
+            let mut line=String::new();
+            if reader.read_line(&mut line).unwrap()==0{break;}
+            if line.starts_with("SUB "){
+                assert!(line.contains("relay.events.job.> 1"),"{line}");
+                subscribed=true;break;
+            }
+        }
+        assert!(subscribed,"native daemon did not subscribe to disposable NATS server");
+        for event in events{
+            let topic=format!("relay.events.job.17.{}",event["type"].as_str().unwrap());
+            let payload=event.to_string();
+            write!(socket,"MSG {topic} 1 {}\r\n{payload}\r\n",payload.len()).unwrap();
+        }
+        socket.flush().unwrap();
+        thread::sleep(Duration::from_millis(250));
+    });
+    let port=port();
+    let nats=format!("nats://127.0.0.1:{nats_port}/");
+    let running=daemon_with_model_transports(&home,port,None,Some(&nats),true);
+    let begin=Instant::now();
+    let committed=loop{
+        let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap();
+        let current=store.load_job("17").unwrap().unwrap();
+        if current["tasks"][0]["state"]=="SUCCEEDED"{break current;}
+        assert!(begin.elapsed()<Duration::from_secs(18),
+            "actual native NATS event subscription did not complete Graph/SQLite Task: {current}; daemon={}",
+            fs::read_to_string(home.join("daemon.log")).unwrap_or_default());
+        thread::sleep(Duration::from_millis(75));
+    };
+    server.join().unwrap();
+    assert!(committed["tasks"][0]["executionId"].is_null());
+    assert_eq!(committed["tasks"][0]["attempt"],1);
+    let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap();
+    let rows:i64=store.db.query_row(
+        "SELECT COUNT(*) FROM workflow_event_outbox WHERE event_key LIKE 'model-event/17/2/%'",
+        [],|row|row.get(0)).unwrap();
+    assert_eq!(rows,2,"NATS transport cannot bypass durable exact event receipts");
+    drop(store);drop(running);
+    let restarted=daemon(&home,port);
+    thread::sleep(Duration::from_millis(180));
+    let after=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap()
+        .load_job("17").unwrap().unwrap();
+    assert_eq!(after["tasks"][0]["state"],"SUCCEEDED");
+    assert_eq!(after["tasks"][0]["attempt"],1);
+    assert_eq!(after["tasks"][0]["executionHistory"],
+        committed["tasks"][0]["executionHistory"]);
+    drop(restarted);
     fs::remove_dir_all(home).unwrap();
 }

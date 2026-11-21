@@ -79,6 +79,11 @@ pub struct IsolatedSQLiteWriteHost {
     // keys fence replay on process recreation.
     model_event_ingress_enabled:bool,
     model_event_cursor:HashMap<String,i64>,
+    // NATS callback thread delivers only immutable JSON into a bounded
+    // in-process queue. Graph/SQLite is always mutated on daemon thread.
+    model_nats_subscription:Option<crate::events::NatsSubscription>,
+    model_nats_receiver:Option<Receiver<Value>>,
+    model_nats_pending:HashMap<String,Vec<Value>>,
 }
 impl IsolatedSQLiteWriteHost {
     pub fn new(config:DaemonConfig)->Self{
@@ -86,7 +91,9 @@ impl IsolatedSQLiteWriteHost {
             failure_state:std::sync::Arc::new(DaemonFailureState::new()),
             live_workers:std::sync::Arc::new(std::sync::Mutex::new(DaemonLiveWorkers::default())),
             escalation_notifier:None,event_history_api:None,
-            model_event_ingress_enabled:false,model_event_cursor:HashMap::new()}
+            model_event_ingress_enabled:false,model_event_cursor:HashMap::new(),
+            model_nats_subscription:None,model_nats_receiver:None,
+            model_nats_pending:HashMap::new()}
     }
     /// Bind the REAL Events Bus read-only HTTP history API only when the
     /// caller explicitly supplies a loopback endpoint. This isolated daemon
@@ -106,6 +113,29 @@ impl IsolatedSQLiteWriteHost {
         self.event_history_api=Some(parsed);
         Ok(())
     }
+    /// Subscribe only to an explicitly caller-owned loopback NATS service.
+    /// This never selects the default operator NATS endpoint or treats a
+    /// decoded NATS frame as a Graph/SQLite transition. NATS callback only
+    /// enqueues immutable JSON; exact leased execution is checked later.
+    pub fn set_loopback_model_nats(&mut self,raw:&str)->Result<(),String>{
+        let parsed=url::Url::parse(raw)
+            .map_err(|error|format!("Invalid isolated NATS model URL: {error}"))?;
+        if parsed.scheme()!="nats"
+            ||!matches!(parsed.host_str(),Some("127.0.0.1"|"localhost"|"::1"))
+            ||parsed.port().is_none()||parsed.path()!="/"
+            ||parsed.query().is_some()||parsed.fragment().is_some()
+            ||!parsed.username().is_empty()||parsed.password().is_some(){
+            return Err("Isolated model NATS requires explicit nats://127.0.0.1:PORT/ without credentials".into());
+        }
+        let bus=crate::events::NatsEventBus::new(Some(raw),None)?;
+        let (sender,receiver)=mpsc::channel();
+        let subscription=bus.subscribe_all(std::sync::Arc::new(move |event|{
+            sender.send(event.clone()).map_err(|e|e.to_string())
+        }))?;
+        self.model_nats_subscription=Some(subscription);
+        self.model_nats_receiver=Some(receiver);
+        Ok(())
+    }
     /// Explicit fixture transport only. No environment-derived or public
     /// GitHub/HTTPS notification endpoint can run inside isolated mode.
     pub fn set_test_loopback_escalation_notifier(
@@ -118,37 +148,110 @@ impl IsolatedSQLiteWriteHost {
         self.escalation_notifier=Some(config);
         Ok(())
     }
-    /// Isolated explicit opt-in: treat only a caller-owned loopback Events
-    /// Bus history source as a model worker event transport. This is NOT
-    /// enabled by the ordinary Dashboard read-only history switch. No
-    /// unauthenticated public HTTP writer exists.
+    /// Explicit opt-in, isolated loopback HTTP history and/or local NATS
+    /// push, entirely separate from the Dashboard read-only observation.
+    /// No public unauthenticated model Worker endpoint exists.
     pub fn enable_isolated_model_event_ingress(&mut self)->Result<(),String>{
-        if self.event_history_api.is_none(){
-            return Err("Trusted local model EventBus ingress requires an explicit loopback history endpoint".into());
+        if self.event_history_api.is_none()&&self.model_nats_receiver.is_none(){
+            return Err("Trusted local model EventBus ingress requires an explicit loopback history or NATS endpoint".into());
         }
         self.model_event_ingress_enabled=true;
         Ok(())
     }
+    fn apply_issued_model_worker_event(&mut self,id:&str,event:&Value)
+        ->Result<bool,String>{
+        if field(event,"job_id")!=id{return Ok(false);}
+        let kind=field(event,"type");
+        if !matches!(kind,"task.started"|"task.progress"|"task.completed"|"task.failed"){
+            return Ok(false);
+        }
+        let task_id=field(event,"task_id");
+        let current=self.scoped(id)?.load_job(id)?
+            .ok_or("Model Events Bus Job disappeared")?;
+        let Some(task)=current["tasks"].as_array().into_iter().flatten()
+            .find(|task|field(task,"id")==task_id)else{return Ok(false);};
+        let execution=field(task,"executionId").to_string();
+        let trusted=matches!(field(task,"adapter"),"chatgpt"|"z"|"codex")
+            &&!execution.is_empty()&&!field(task,"leaseOwner").is_empty()
+            &&event.pointer("/source/id").and_then(Value::as_str)
+                ==Some(crate::execution_event_identity::execution_event_source(
+                    id,task_id,&execution).as_str());
+        if !trusted{return Ok(false);}
+        let event_id=field(event,"event_id");
+        let key=format!("model-event/{id}/{task_id}/{execution}/{event_id}");
+        // New SQLite scopes create their outbox at the first genuine CAS.
+        let existing=self.scoped(id)?;
+        let table_exists:i64=existing.db.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='workflow_event_outbox'",
+            [],|row|row.get(0)).map_err(|error|error.to_string())?;
+        let already:i64=if table_exists==0{0}else{
+            existing.db.query_row(
+                "SELECT COUNT(*) FROM workflow_event_outbox WHERE event_key=?",
+                [&key],|row|row.get(0)).map_err(|error|error.to_string())?
+        };
+        drop(existing);
+        if already!=0{return Ok(false);}
+        self.accept_model_worker_event(id,task_id,&execution,event)?;
+        Ok(true)
+    }
     pub fn poll_isolated_model_worker_events(&mut self,id:&str)->Result<usize,String>{
         if !self.model_event_ingress_enabled{return Ok(0);}
+        // Drain a bounded number of NATS callback rows before inspecting
+        // this Job. Multi-Job events are cached for their OWN daemon turn,
+        // never applied with the wrong Job-scoped SQLite connection.
+        let mut received=Vec::new();
+        if let Some(receiver)=self.model_nats_receiver.as_ref(){
+            for _ in 0..256{
+                match receiver.try_recv(){
+                    Ok(event)=>received.push(event),
+                    Err(_)=>break,
+                }
+            }
+        }
+        for event in received{
+            let event_job=field(&event,"job_id");
+            if event_job.is_empty(){continue;}
+            let total:usize=self.model_nats_pending.values().map(Vec::len).sum();
+            if total>=1024{continue;}
+            self.model_nats_pending.entry(event_job.to_string())
+                .or_default().push(event);
+        }
         let job=self.scoped(id)?.load_job(id)?
             .ok_or("Model EventBus ingress Job is absent")?;
         self.isolated_project(&job)?;
         let has_model_lease=job["tasks"].as_array().into_iter().flatten().any(|task|
             matches!(field(task,"adapter"),"chatgpt"|"z"|"codex")
-            && !field(task,"executionId").is_empty()
-            && !field(task,"leaseOwner").is_empty()
-            && matches!(field(task,"state"),"QUEUED"|"RUNNING"));
-        if !has_model_lease{return Ok(0);}
-        let api=self.event_history_api.as_ref()
-            .ok_or("No explicit model EventBus history source")?.clone();
+            &&!field(task,"executionId").is_empty()
+            &&!field(task,"leaseOwner").is_empty()
+            &&matches!(field(task,"state"),"QUEUED"|"RUNNING"));
+        if !has_model_lease{
+            self.model_nats_pending.remove(id);
+            return Ok(0);
+        }
+        let mut applied=0;
+        let pending=self.model_nats_pending.remove(id).unwrap_or_default();
+        for (index,event) in pending.iter().enumerate(){
+            match self.apply_issued_model_worker_event(id,event){
+                Ok(true)=>applied+=1,
+                Ok(false)=>{},
+                Err(error)=>{
+                    // Original event remains pending on failed SQLite CAS
+                    // so a later daemon wake can retry; no fake ack.
+                    self.model_nats_pending.entry(id.into()).or_default()
+                        .extend_from_slice(&pending[index..]);
+                    return Err(error);
+                }
+            }
+        }
+        let Some(api)=self.event_history_api.as_ref().cloned() else{
+            return Ok(applied);
+        };
         let env=json!({
             "EVENTS_BUS_API_URL":api.as_str(),
             "EVENTS_BUS_CONFIG":self.config.store_directory.join(
                 ".eventsbus-model-ingress-no-global-config.json").to_string_lossy(),
         });
         let mut after=*self.model_event_cursor.get(id).unwrap_or(&0);
-        let mut applied=0;
         for _page in 0..4{
             let page=crate::events_bus_runtime::events_bus_history_page(
                 id,None,&json!(60),&json!({
@@ -160,50 +263,11 @@ impl IsolatedSQLiteWriteHost {
             for row in rows{
                 let cursor=row["cursor"].as_i64()
                     .ok_or("Model EventBus history cursor invalid")?;
-                let event=&row["event"];
-                let typ=field(event,"type");
-                let task_id=field(event,"task_id");
-                // The remote history is an observation, never a Task
-                // authority. Restrict to the original four model lifecycle
-                // events with canonical issued execution identity.
-                if matches!(typ,"task.started"|"task.progress"|"task.completed"|"task.failed"){
-                    let current=self.scoped(id)?.load_job(id)?
-                        .ok_or("Model EventBus Job disappeared")?;
-                    if let Some(task)=current["tasks"].as_array().into_iter().flatten()
-                        .find(|task|field(task,"id")==task_id){
-                        let execution=field(task,"executionId").to_string();
-                        let trusted=matches!(field(task,"adapter"),"chatgpt"|"z"|"codex")
-                            &&!execution.is_empty()
-                            &&!field(task,"leaseOwner").is_empty()
-                            &&event.pointer("/source/id").and_then(Value::as_str)
-                                ==Some(crate::execution_event_identity::execution_event_source(
-                                    id,task_id,&execution).as_str());
-                        if trusted{
-                            let event_id=field(event,"event_id");
-                            let key=format!("model-event/{id}/{task_id}/{execution}/{event_id}");
-                            // A brand-new SQLite scope has no workflow
-                            // outbox yet. Canonical commit creates it on the
-                            // first accepted event; absence is not an error.
-                            let existing=self.scoped(id)?;
-                            let table_exists:i64=existing.db.query_row(
-                                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='workflow_event_outbox'",
-                                [],|row|row.get(0)).map_err(|e|e.to_string())?;
-                            let already:i64=if table_exists==0{0}else{
-                                existing.db.query_row(
-                                    "SELECT COUNT(*) FROM workflow_event_outbox WHERE event_key=?",
-                                    [&key],|row|row.get(0)).map_err(|e|e.to_string())?
-                            };
-                            drop(existing);
-                            if already==0{
-                                self.accept_model_worker_event(id,task_id,&execution,event)?;
-                                applied+=1;
-                            }
-                        }
-                    }
+                if self.apply_issued_model_worker_event(id,&row["event"])?{
+                    applied+=1;
                 }
-                // Invalid/foreign event sources do not block later events.
-                // Failure to Graph-commit a correctly bound event returns
-                // before cursor advance so the original event is retried.
+                // Failure to commit a legitimate Graph event returns
+                // before cursor advance, preserving durable retry.
                 after=cursor;
                 self.model_event_cursor.insert(id.into(),after);
             }

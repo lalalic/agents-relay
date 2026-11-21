@@ -851,3 +851,98 @@ fn trusted_loopback_model_events_commit_graph_sqlite_and_reject_forged_start(){
         "no active execution after terminal: daemon restart cannot replay old events");
     assert_eq!(fixture.job(),committed);
 }
+
+#[test]
+fn opt_in_loopback_nats_push_commits_only_graph_authorized_model_worker_events(){
+    use agents_relay_rust2::{
+        events::event_for,execution_event_identity::execution_event_source,
+    };
+    use std::{io::{BufRead,BufReader,Write},net::TcpListener,thread,time::{Duration,Instant}};
+    let f=Fixture::new();
+    let execution="isolated-nats-generation-1";
+    let store=SQLiteRelayStore::open_without_claim_reset(
+        &relay_unified_store_path(&f.config.store_directory),Some("15")).unwrap();
+    store.mutate_job("15",|mut job|{
+        job["tasks"][0]["adapter"]=json!("chatgpt");
+        job["tasks"][0]["state"]=json!("QUEUED");
+        job["tasks"][0]["executionId"]=json!(execution);
+        job["tasks"][0]["leaseOwner"]=json!("isolated-owned-model");
+        job["tasks"][0]["leaseExpiresAt"]=json!("2027-11-21T23:59:59.000Z");
+        job["tasks"][0]["attempt"]=json!(1);
+        Ok(job)
+    }).unwrap();
+    drop(store);
+    let expected_source=json!({
+        "id":execution_event_source("15","7",execution),
+        "agent":"fixture","component":"agents-relay",
+    });
+    let events=vec![
+        event_for("15","7",None,"task.started","started","forged nats worker",
+            None,None,Some(json!({"id":"job/15/task/7/execution/unrelated"}))),
+        event_for("15","7",None,"task.started","started","real nats worker",
+            None,None,Some(expected_source.clone())),
+        event_for("15","7",None,"task.completed","completed","real nats completion",
+            None,None,Some(expected_source)),
+    ];
+    let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+    let api=format!("nats://127.0.0.1:{}/",listener.local_addr().unwrap().port());
+    let server=thread::spawn(move||{
+        let (mut socket,_)=listener.accept().unwrap();
+        socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        socket.write_all(b"INFO {}\r\n").unwrap();
+        let mut reader=BufReader::new(socket.try_clone().unwrap());
+        let mut saw_sub=false;
+        for _ in 0..8{
+            let mut line=String::new();
+            let bytes=reader.read_line(&mut line).unwrap();
+            if bytes==0{break;}
+            if line.starts_with("SUB "){
+                assert!(line.contains("relay.events.job.> 1"),"{line}");
+                saw_sub=true;break;
+            }
+        }
+        assert!(saw_sub,"Rust NATS client failed to subscribe to its local Job event subject");
+        for event in events{
+            let subject=format!("relay.events.job.15.{}",event["type"].as_str().unwrap());
+            let payload=event.to_string();
+            write!(socket,"MSG {} 1 {}\r\n{}\r\n",subject,payload.len(),payload).unwrap();
+        }
+        socket.flush().unwrap();
+        thread::sleep(Duration::from_millis(300));
+    });
+    let mut host=IsolatedSQLiteWriteHost::new(f.config.clone());
+    for value in ["nats://example.com:4222/","https://127.0.0.1:4222/",
+        "nats://127.0.0.1:4222/private","nats://127.0.0.1:4222/?x=1"]{
+        assert!(host.set_loopback_model_nats(value).is_err(),"{value}");
+    }
+    assert!(host.enable_isolated_model_event_ingress().is_err(),
+        "NATS and history may not be implicitly enabled");
+    host.set_loopback_model_nats(&api).unwrap();
+    assert_eq!(host.poll_isolated_model_worker_events("15").unwrap(),0,
+        "NATS subscription alone cannot bypass explicit trust opt-in");
+    host.enable_isolated_model_event_ingress().unwrap();
+    let started=Instant::now();
+    let accepted=loop{
+        let count=host.poll_isolated_model_worker_events("15").unwrap();
+        if count>0{break count;}
+        assert!(started.elapsed()<Duration::from_secs(6),
+            "Native NATS events were never admitted into Graph/SQLite");
+        thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(accepted,2,"forged NATS source cannot advance a Task");
+    server.join().unwrap();
+    let saved=f.job();
+    assert_eq!(saved["tasks"][0]["state"],"SUCCEEDED");
+    assert_eq!(saved["tasks"][0]["attempt"],1);
+    assert!(saved["tasks"][0]["executionId"].is_null());
+    let store=SQLiteRelayStore::open_without_claim_reset(
+        &relay_unified_store_path(&f.config.store_directory),Some("15")).unwrap();
+    let count:i64=store.db.query_row(
+        "SELECT COUNT(*) FROM workflow_event_outbox WHERE event_key LIKE 'model-event/15/7/%'",
+        [],|row|row.get(0)).unwrap();
+    assert_eq!(count,2);
+    drop(store);drop(host);
+    let mut restarted=IsolatedSQLiteWriteHost::new(f.config.clone());
+    assert_eq!(restarted.poll_isolated_model_worker_events("15").unwrap(),0);
+    assert_eq!(saved,f.job());
+}
