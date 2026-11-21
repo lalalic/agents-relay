@@ -22,6 +22,46 @@ fn open_read_only(path: &Path) -> Result<Connection, String> {
         .map_err(|error| error.to_string())
 }
 
+/// The read-only live shadow must not deserialize every Job on each
+/// /api/job?id= request. Fetch one immutable Job ID through SQLite's index
+/// and project the exact same publication/PR facts as the full inventory.
+/// This function never opens a writable connection or resets a lease.
+pub fn discover_unified_job_by_id(
+    directory:&Path,id:&str,
+)->Result<Option<LocalRelayStoreSnapshot>,String>{
+    let path=relay_unified_store_path(directory);
+    if !path.is_file(){return Ok(None);}
+    let db=open_read_only(&path)?;
+    let raw:Option<String>=db.query_row(
+        "SELECT json FROM job_snapshot WHERE job_id=?",params![id],
+        |row|row.get(0)).optional().map_err(|e|e.to_string())?;
+    let Some(raw)=raw else{return Ok(None);};
+    let job=normalize_legacy_job_pr_number(&parse_js_json(&raw)?);
+    if job.get("id").and_then(Value::as_str)!=Some(id){
+        return Err("Immutable SQLite Job ID differs from row scope".into());
+    }
+    let fact:Option<(String,Option<String>,Option<String>,String)>=db.query_row(
+        "SELECT state,head_ref,head_sha,observed_at FROM pull_request_facts WHERE scope_job_id=? AND id=1",
+        params![id],
+        |row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
+    ).optional().map_err(|e|e.to_string())?;
+    let facts=fact.map(|(state,head_ref,head_sha,observed_at)|{
+        let head=head_ref.zip(head_sha).map(|(reference,sha)|
+            serde_json::json!({"ref":reference,"sha":sha}));
+        serde_json::json!({"state":state,"head":head,"observedAt":observed_at})
+    });
+    let publication_raw:Option<String>=db.query_row(
+        "SELECT json FROM publication_state WHERE job_id=?",params![id],
+        |row|row.get(0)).optional().map_err(|e|e.to_string())?;
+    let mut publications=Map::new();
+    if let Some(raw)=publication_raw{
+        publications.insert(id.to_owned(),parse_js_json(&raw)?);
+    }
+    Ok(Some(LocalRelayStoreSnapshot{
+        path,jobs:vec![job],facts,publications
+    }))
+}
+
 /// Reject a missing or ambiguous PR binding. A caller-supplied immutable ID
 /// remains authoritative, unless an existing registry proves it belongs elsewhere.
 pub fn resolve_unified_job_scope(

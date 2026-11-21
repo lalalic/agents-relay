@@ -90,6 +90,10 @@ fn allowed_method(req: &DashboardRequest<'_>, method: &str) -> bool {
 /// Implementations MUST use the existing Graph actions, canonical SQLite
 /// transactions and event bus; returning an HTTP receipt is not a Task ACK.
 pub trait DashboardApiServices: Send + 'static {
+    /// Only an explicitly read-only, indexed store may bypass whole-store
+    /// inventory discovery for an immutable /api/job?id= lookup. This never
+    /// changes admission for mutable/legacy production APIs or id-less GET.
+    fn supports_indexed_readonly_job(&self)->bool{false}
     fn discovered_jobs(&mut self, force: bool) -> Result<Vec<Value>, String>;
     fn exact_job(
         &mut self,
@@ -367,8 +371,15 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                     json_response(200, &body)
                 }
                 "/api/job" => {
-                    let jobs = self.discovered(services, false)?;
-                    let id = query(&parsed, "id")
+                    let supplied_id=query(&parsed,"id");
+                    let jobs=if supplied_id.is_some()
+                        &&services.supports_indexed_readonly_job(){
+                        // The shadow's exact scoped SQLite load is indexed;
+                        // avoid parsing every live Job merely to resolve one
+                        // immutable, explicitly supplied ID.
+                        Vec::new()
+                    }else{self.discovered(services,false)?};
+                    let id = supplied_id
                         .or_else(|| {
                             jobs.first()
                                 .and_then(|job| job.get("id"))

@@ -96,7 +96,7 @@ impl DaemonConfig{
         })
     }
 }
-fn managed_view(snapshot:&LocalRelayStoreSnapshot,job:&Value)->Value{
+pub(crate) fn managed_view(snapshot:&LocalRelayStoreSnapshot,job:&Value)->Value{
     let publication=snapshot.publications.get(field(job,"id"));
     let pr_state=snapshot.facts.as_ref().and_then(|v|v.get("state"))
         .and_then(Value::as_str).unwrap_or("UNKNOWN");
@@ -296,11 +296,33 @@ pub struct DaemonDashboardBackend<S:DaemonServices>{
     pub config:DaemonConfig,pub services:Arc<Mutex<S>>,
 }
 impl<S:DaemonServices+'static> DashboardApiServices for DaemonDashboardBackend<S>{
+    fn supports_indexed_readonly_job(&self)->bool{
+        self.services.lock().map(|host|host.is_read_only_shadow())
+            .unwrap_or(false)
+    }
     fn discovered_jobs(&mut self,force:bool)->Result<Vec<Value>,String>{
         let _=force;inventory_from_local(&self.config,false)
     }
     fn exact_job(&mut self,id:&str,repo:Option<&str>,pr:Option<u64>)
         ->Result<Option<Value>,String>{
+        let mut host=self.services.lock()
+            .map_err(|_|"Daemon service lock poisoned")?;
+        if host.is_read_only_shadow(){
+            // One indexed, READ_ONLY SQLite lookup; the old full inventory
+            // parsed hundreds of large Jobs for *every* /api/job request.
+            // Preserve the same immutable ID/repo/PR admission contract.
+            let selected=match host.load(id){
+                Ok(job)=>Some(job),
+                Err(error) if error==format!("SQLite Job {id} not found")=>None,
+                Err(error)=>return Err(error),
+            };
+            return Ok(selected.filter(|job|
+                field(job,"id")==id
+                    &&repo.is_none_or(|repo|field(job,"repository")==repo)
+                    &&pr.is_none_or(|pr|job.get("prNumber").and_then(Value::as_u64)
+                        ==Some(pr))));
+        }
+        drop(host);
         exact_job(&inventory_from_local(&self.config,false)?,id,repo,pr)
     }
     fn control(&mut self,body:&Value)->Result<Value,String>{

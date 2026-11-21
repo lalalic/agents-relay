@@ -243,14 +243,35 @@ fn status_text(status: u16) -> &'static str {
         _ => "Response",
     }
 }
+/// A blocking Darwin localhost socket can still transiently return EAGAIN
+/// while writing a large Job/Task JSON response. Keep the exact write offset
+/// across retries: restarting write_all from the beginning would duplicate
+/// bytes after a partial successful send and corrupt Content-Length framing.
+fn write_full_retry(mut sink:impl Write,mut remaining:&[u8])->io::Result<()>{
+    let started=Instant::now();
+    while !remaining.is_empty(){
+        match sink.write(remaining){
+            Ok(0)=>return Err(io::Error::new(io::ErrorKind::WriteZero,
+                "Dashboard HTTP stream closed before response completed")),
+            Ok(n)=>remaining=&remaining[n..],
+            Err(error) if matches!(error.kind(),
+                io::ErrorKind::WouldBlock|io::ErrorKind::TimedOut|io::ErrorKind::Interrupted)
+                &&started.elapsed()<Duration::from_secs(5)=>{
+                thread::sleep(Duration::from_millis(5));
+            },
+            Err(error)=>return Err(error),
+        }
+    }
+    Ok(())
+}
 fn write_response(stream: &mut TcpStream, response: DashboardResponse) -> io::Result<()> {
     let headers = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nCache-Control: {}\r\nX-Content-Type-Options: nosniff\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         response.status, status_text(response.status), response.content_type,
         response.cache_control, response.body.len(),
     );
-    stream.write_all(headers.as_bytes())?;
-    stream.write_all(&response.body)
+    write_full_retry(&mut *stream,headers.as_bytes())?;
+    write_full_retry(&mut *stream,&response.body)
 }
 fn read_request(stream: &mut TcpStream) -> io::Result<(String, String, Vec<u8>, HashMap<String, String>)> {
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
@@ -404,4 +425,64 @@ pub fn serve_dashboard<B: DashboardBackend>(
         }
     }
     Ok(())
+}
+
+
+#[cfg(test)]
+mod write_retry_tests{
+    use super::*;
+    #[derive(Default)]
+    struct InterruptedWriter{
+        writes:usize,
+        bytes:Vec<u8>,
+    }
+    impl Write for InterruptedWriter{
+        fn write(&mut self,buf:&[u8])->io::Result<usize>{
+            self.writes+=1;
+            match self.writes{
+                1=>Err(io::Error::from(io::ErrorKind::WouldBlock)),
+                2=>{
+                    self.bytes.extend_from_slice(&buf[..3]);
+                    Ok(3)
+                },
+                3=>Err(io::Error::from(io::ErrorKind::Interrupted)),
+                _=>{
+                    self.bytes.extend_from_slice(buf);
+                    Ok(buf.len())
+                },
+            }
+        }
+        fn flush(&mut self)->io::Result<()> {Ok(())}
+    }
+    #[test]
+    fn transient_dashboard_write_keeps_exact_partial_content_length_bytes(){
+        let bytes=b"Content-Length: 42\r\n\r\nreliable response body";
+        let mut writer=InterruptedWriter::default();
+        write_full_retry(&mut writer,bytes).unwrap();
+        assert_eq!(writer.bytes,bytes);
+        assert_eq!(writer.writes,4);
+    }
+
+    #[test]
+    fn real_loopback_dashboard_streams_large_job_response_without_truncation(){
+        let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+        let address=listener.local_addr().unwrap();
+        let expected=900_000;
+        let server=thread::spawn(move||{
+            let (mut stream,_)=listener.accept().unwrap();
+            write_response(&mut stream,DashboardResponse::new(200,
+                "application/json","no-store",vec![b'X';expected])).unwrap();
+        });
+        let mut client=TcpStream::connect(address).unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(8))).unwrap();
+        let mut response=Vec::new();
+        client.read_to_end(&mut response).unwrap();
+        let boundary=response.windows(4).position(|b|b==b"\r\n\r\n").unwrap();
+        let headers=std::str::from_utf8(&response[..boundary]).unwrap();
+        assert!(headers.contains(&format!("Content-Length: {expected}\r\n")));
+        let body=&response[boundary+4..];
+        assert_eq!(body.len(),expected);
+        assert!(body.iter().all(|b|*b==b'X'));
+        server.join().unwrap();
+    }
 }

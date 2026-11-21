@@ -2,7 +2,10 @@
 //! Job state. This is the isolated first stage of the native daemon entrypoint:
 //! operational mutations and Worker launch remain fail-closed until their
 //! concrete Graph+SQLite services are bound and independently verified.
-use crate::relayd::{inventory_from_local,exact_job,DaemonConfig,DaemonServices};
+use crate::{
+    relayd::{inventory_from_local,exact_job,managed_view,DaemonConfig,DaemonServices},
+    relay_store_discovery::discover_unified_job_by_id,
+};
 use serde_json::{json,Value};
 use std::sync::mpsc::{self,Receiver};
 
@@ -25,6 +28,16 @@ impl DaemonServices for ReadOnlySQLiteHost {
     fn is_read_only_shadow(&self)->bool{self.shadow_live}
     fn control(&mut self,_body:&Value)->Result<Value,String>{Self::rejected("control")}
     fn load(&mut self,id:&str)->Result<Value,String>{
+        if self.shadow_live{
+            let snapshot=discover_unified_job_by_id(&self.config.store_directory,id)?
+                .ok_or_else(||format!("SQLite Job {id} not found"))?;
+            let job=snapshot.jobs.first().ok_or("Indexed Job snapshot is empty")?;
+            if !self.config.repositories.is_empty()
+                &&!self.config.repositories.iter().any(|repo|repo==job["repository"].as_str().unwrap_or("")){
+                return Err(format!("SQLite Job {id} not found"));
+            }
+            return Ok(managed_view(&snapshot,job));
+        }
         exact_job(&inventory_from_local(&self.config,false)?,id,None,None)?
             .ok_or_else(||format!("SQLite Job {id} not found"))
     }
