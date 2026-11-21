@@ -1,0 +1,142 @@
+{
+  "id": "692",
+  "title": "Rust2 D MVP No Shortcut real Model DAG after native Codex NATS sandbox repair",
+  "objective": "Run the rust2-model-d-e2e-mvp5-20261121 project workflow for the selected private canonical run.\n\nRead the run input at /Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-999f0909/neo-project-run.input.md and its source evidence at /Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-999f0909/source-reference.json. Discovery input: no source URL was supplied. First Agent must independently search public trending videos using the project research brief. A reference video is NOT licensed source media. Do not infer permission to reupload or publish. Apply project source-use, review and publication gates. Do not infer permission or publish.\n",
+  "projectRoot": "/Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121",
+  "description": "Run the rust2-model-d-e2e-mvp5-20261121 project workflow for the selected private canonical run.\n\nRead the run input at /Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-999f0909/neo-project-run.input.md and its source evidence at /Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-999f0909/source-reference.json. Discovery input: no source URL was supplied. First Agent must independently search public trending videos using the project research brief. A reference video is NOT licensed source media. Do not infer permission to reupload or publish. Apply project source-use, review and publication gates. Do not infer permission or publish.\n",
+  "priority": "P2",
+  "autoMerge": true,
+  "reviewEnabled": true,
+  "prNumber": 0,
+  "repository": "rust2-model-d-e2e-mvp5-20261121",
+  "continuation": null,
+  "createdAt": "2026-11-21T22:35:31.893Z",
+  "updatedAt": "2026-11-21T22:36:43.538Z",
+  "tasks": [
+    {
+      "jobId": "692",
+      "id": "2134",
+      "title": "Coordinator",
+      "parentTaskId": null,
+      "kind": "work",
+      "agentGraph": "flowchart TD\n A[agent:model-a] --> B[agent:model-b]\n B --> C[agent:model-c]\n",
+      "input": "Process this selected Neo Project run.\n\n- Project: rust2-model-d-e2e-mvp5-20261121\n- Canonical run: /Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-999f0909\n- Private input evidence: /Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-999f0909/source-reference.json\n\nUse the project contract and existing Agent Graph. Preserve existing run files. Discovery input: no source URL was supplied. First Agent must independently search public trending videos using the project research brief. A reference video is NOT licensed source media. Do not infer permission to reupload or publish. Source references do not establish rights or publication permission.\n",
+      "output": {
+        "kind": "file",
+        "path": "/Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-999f0909/neo-project-run.result.json"
+      },
+      "adapter": "codex",
+      "capabilities": [],
+      "dependencies": [],
+      "attempt": 0,
+      "maxAttempts": 3,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "executionId": null,
+      "threadId": null,
+      "result": {
+        "summary": "DAG coordinator",
+        "data": {
+          "dag": {
+            "version": 1,
+            "graphHash": "530b288a65dd68b71b192e17b47a9938bdb6be3fc7c392d880254bd216b93d17"
+          }
+        }
+      },
+      "error": null,
+      "timeoutMs": 2700000,
+      "createdAt": "2026-11-21T22:35:31.893Z",
+      "updatedAt": "2026-11-21T22:36:01.303Z",
+      "gitDeliveryRequired": false,
+      "state": "RUNNING"
+    },
+    {
+      "jobId": "692",
+      "id": "2135",
+      "parentTaskId": "2134",
+      "dagNode": {
+        "parentTaskId": "2134",
+        "nodeId": "A",
+        "graphHash": "530b288a65dd68b71b192e17b47a9938bdb6be3fc7c392d880254bd216b93d17",
+        "executor": "model"
+      },
+      "title": "model-a",
+      "kind": "work",
+      "agentName": "model-a",
+      "dependencies": [],
+      "capabilities": [
+        "model"
+      ],
+      "adapter": "codex",
+      "workerRequirements": {
+        "capabilities": [
+          "model"
+        ]
+      },
+      "input": "{\"taskInput\":\"Process this selected Neo Project run.\\n\\n- Project: rust2-model-d-e2e-mvp5-20261121\\n- Canonical run: /Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-999f0909\\n- Private input evidence: /Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-999f0909/source-reference.json\\n\\nUse the project contract and existing Agent Graph. Preserve existing run files. Discovery input: no source URL was supplied. First Agent must independently search public trending videos using the project research brief. A reference video is NOT licensed source media. Do not infer permission to reupload or publish. Source references do not establish rights or publication permission.\\n\",\"source\":\"relay-dag-task\",\"jobId\":\"692\",\"taskId\":\"2135\",\"parentTaskId\":\"2134\",\"nodeId\":\"A\",\"agent\":\"model-a\",\"projectPath\":\"/Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121\",\"predecessorOutputs\":{},\"outputPath\":\"/Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-999f0909/.dag-node-results/2135.json\",\"requiredResult\":{\"status\":\"COMPLETED\",\"output\":{},\"artifacts\":[]},\"instruction\":\"Execute this Agent DAG role using only declared predecessorOutputs and authorized project inputs. Write the structured result to outputPath. Do not invent source evidence, review decisions or publishing authorization.\"}",
+      "output": {
+        "kind": "file",
+        "path": "/Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-999f0909/.dag-node-results/2135.json"
+      },
+      "attempt": 1,
+      "maxAttempts": 3,
+      "leaseOwner": "live-rust-codex-27818",
+      "leaseExpiresAt": "2026-11-21T23:21:01.983075+00:00",
+      "executionId": "6e559085-2e6f-4cdf-849c-a308f25cc823",
+      "threadId": null,
+      "result": null,
+      "error": null,
+      "timeoutMs": 2700000,
+      "createdAt": "2026-11-21T22:36:01.587Z",
+      "updatedAt": "2026-11-21T22:36:43.434Z",
+      "gitDeliveryRequired": false,
+      "state": "QUEUED",
+      "workerSelection": {
+        "workerId": "codex",
+        "adapter": "codex",
+        "capabilities": [
+          "model",
+          "codex"
+        ],
+        "selectedBy": "execution-router:fallback",
+        "selectedAt": "2026-11-21T22:36:01.979Z",
+        "decisionEvidence": {
+          "mode": "off",
+          "fallback": true
+        }
+      },
+      "routing": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "decidedBy": "execution-router:fallback",
+        "decidedAt": "2026-11-21T22:36:01.979Z",
+        "decisionEvidence": {
+          "mode": "off",
+          "fallback": true
+        }
+      },
+      "executionHistory": [
+        {
+          "id": "6e559085-2e6f-4cdf-849c-a308f25cc823",
+          "attempt": 1,
+          "startedAt": "2026-11-21T22:36:01.983Z"
+        }
+      ]
+    }
+  ],
+  "graphStartContext": {
+    "projectRoot": "/Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121",
+    "workspaceRoot": "/Users/chengli/Workspace/neo",
+    "noGitHub": true
+  },
+  "state": "ACTIVE",
+  "plans": [],
+  "headSha": "ea782a325539e36499603c787801e4dac2197506",
+  "githubState": "UNKNOWN",
+  "runtimeStatus": "RUNNING",
+  "draft": false,
+  "mergedAt": null,
+  "closedAt": null,
+  "publication": null,
+  "publicationFailure": null
+}

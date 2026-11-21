@@ -84,7 +84,14 @@ pub fn execute_claimed_codex(
     // Relay Workers are restricted to workspace-write, not inherited unsafe
     // shell permissions, even for a test-owned repository.
     let mut args=vec!["exec".to_string(),"--json".into(),
-        "--sandbox".into(),"workspace-write".into()];
+        "--sandbox".into(),"workspace-write".into(),
+        // Only the explicit allowlisted native Codex executor uses this
+        // capability. The managed Task contract requires posting exact
+        // start/progress/terminal receipts to the existing localhost NATS
+        // Events Bus; default Codex workspace-write silently denies TCP
+        // even to 127.0.0.1:4222 (EPERM) and strands a valid Task lease.
+        // Retain workspace-write filesystem sandbox; never use danger-full-access.
+        "-c".into(),"sandbox_workspace_write.network_access=true".into()];
     let profile=field(route,"profile");
     if !profile.is_empty(){args.extend(["-p".into(),profile.into()]);}
     args.extend(["-m".into(),model.into()]);

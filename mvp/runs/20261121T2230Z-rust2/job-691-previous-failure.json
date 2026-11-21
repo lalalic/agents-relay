@@ -1,0 +1,219 @@
+{
+  "id": "691",
+  "title": "Rust2 D MVP model-only public research A to B to C",
+  "objective": "Run the rust2-model-d-e2e-mvp5-20261121 project workflow for the selected private canonical run.\n\nRead the run input at /Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-d8262cdc/neo-project-run.input.md and its source evidence at /Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-d8262cdc/source-reference.json. Discovery input: no source URL was supplied. First Agent must independently search public trending videos using the project research brief. A reference video is NOT licensed source media. Do not infer permission to reupload or publish. Apply project source-use, review and publication gates. Do not infer permission or publish.\n",
+  "projectRoot": "/Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121",
+  "description": "Run the rust2-model-d-e2e-mvp5-20261121 project workflow for the selected private canonical run.\n\nRead the run input at /Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-d8262cdc/neo-project-run.input.md and its source evidence at /Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-d8262cdc/source-reference.json. Discovery input: no source URL was supplied. First Agent must independently search public trending videos using the project research brief. A reference video is NOT licensed source media. Do not infer permission to reupload or publish. Apply project source-use, review and publication gates. Do not infer permission or publish.\n",
+  "priority": "P2",
+  "autoMerge": true,
+  "reviewEnabled": true,
+  "prNumber": 0,
+  "repository": "rust2-model-d-e2e-mvp5-20261121",
+  "continuation": null,
+  "createdAt": "2026-11-21T22:11:31.458Z",
+  "updatedAt": "2026-11-21T22:24:03.209Z",
+  "tasks": [
+    {
+      "jobId": "691",
+      "id": "2131",
+      "title": "Coordinator",
+      "parentTaskId": null,
+      "kind": "work",
+      "agentGraph": "flowchart TD\n A[agent:model-a] --> B[agent:model-b]\n B --> C[agent:model-c]\n",
+      "input": "Process this selected Neo Project run.\n\n- Project: rust2-model-d-e2e-mvp5-20261121\n- Canonical run: /Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-d8262cdc\n- Private input evidence: /Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-d8262cdc/source-reference.json\n\nUse the project contract and existing Agent Graph. Preserve existing run files. Discovery input: no source URL was supplied. First Agent must independently search public trending videos using the project research brief. A reference video is NOT licensed source media. Do not infer permission to reupload or publish. Source references do not establish rights or publication permission.\n",
+      "output": {
+        "kind": "file",
+        "path": "/Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-d8262cdc/neo-project-run.result.json"
+      },
+      "adapter": "codex",
+      "capabilities": [],
+      "dependencies": [],
+      "attempt": 0,
+      "maxAttempts": 3,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "executionId": null,
+      "threadId": null,
+      "result": {
+        "summary": "DAG coordinator",
+        "data": {
+          "dag": {
+            "version": 1,
+            "graphHash": "530b288a65dd68b71b192e17b47a9938bdb6be3fc7c392d880254bd216b93d17"
+          }
+        }
+      },
+      "error": null,
+      "timeoutMs": 2700000,
+      "createdAt": "2026-11-21T22:11:31.458Z",
+      "updatedAt": "2026-11-21T22:11:42.961Z",
+      "gitDeliveryRequired": false,
+      "state": "RUNNING"
+    },
+    {
+      "jobId": "691",
+      "id": "2132",
+      "parentTaskId": "2131",
+      "dagNode": {
+        "parentTaskId": "2131",
+        "nodeId": "A",
+        "graphHash": "530b288a65dd68b71b192e17b47a9938bdb6be3fc7c392d880254bd216b93d17",
+        "executor": "model"
+      },
+      "title": "model-a",
+      "kind": "work",
+      "agentName": "model-a",
+      "dependencies": [],
+      "capabilities": [
+        "model"
+      ],
+      "adapter": "codex",
+      "workerRequirements": {
+        "capabilities": [
+          "model"
+        ]
+      },
+      "input": "{\"taskInput\":\"Process this selected Neo Project run.\\n\\n- Project: rust2-model-d-e2e-mvp5-20261121\\n- Canonical run: /Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-d8262cdc\\n- Private input evidence: /Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-d8262cdc/source-reference.json\\n\\nUse the project contract and existing Agent Graph. Preserve existing run files. Discovery input: no source URL was supplied. First Agent must independently search public trending videos using the project research brief. A reference video is NOT licensed source media. Do not infer permission to reupload or publish. Source references do not establish rights or publication permission.\\n\",\"source\":\"relay-dag-task\",\"jobId\":\"691\",\"taskId\":\"2132\",\"parentTaskId\":\"2131\",\"nodeId\":\"A\",\"agent\":\"model-a\",\"projectPath\":\"/Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121\",\"predecessorOutputs\":{},\"outputPath\":\"/Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-d8262cdc/.dag-node-results/2132.json\",\"requiredResult\":{\"status\":\"COMPLETED\",\"output\":{},\"artifacts\":[]},\"instruction\":\"Execute this Agent DAG role using only declared predecessorOutputs and authorized project inputs. Write the structured result to outputPath. Do not invent source evidence, review decisions or publishing authorization.\"}",
+      "output": {
+        "kind": "file",
+        "path": "/Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121/runs/2026-11-21-discovery-d8262cdc/.dag-node-results/2132.json"
+      },
+      "attempt": 1,
+      "maxAttempts": 3,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "executionId": null,
+      "threadId": null,
+      "result": null,
+      "error": "Worker process failed: Codex exited without verified Task terminal event",
+      "timeoutMs": 2700000,
+      "createdAt": "2026-11-21T22:11:43.246Z",
+      "updatedAt": "2026-11-21T22:19:43.091Z",
+      "gitDeliveryRequired": false,
+      "state": "FAILED",
+      "workerSelection": {
+        "workerId": "codex",
+        "adapter": "codex",
+        "capabilities": [
+          "model",
+          "codex"
+        ],
+        "selectedBy": "execution-router:fallback",
+        "selectedAt": "2026-11-21T22:11:43.635Z",
+        "decisionEvidence": {
+          "mode": "off",
+          "fallback": true
+        }
+      },
+      "routing": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "decidedBy": "execution-router:fallback",
+        "decidedAt": "2026-11-21T22:11:43.635Z",
+        "decisionEvidence": {
+          "mode": "off",
+          "fallback": true
+        }
+      },
+      "executionHistory": [
+        {
+          "id": "7d1a6c47-70a2-490e-89ba-41807a50acc8",
+          "attempt": 1,
+          "startedAt": "2026-11-21T22:11:43.638Z"
+        }
+      ]
+    },
+    {
+      "jobId": "691",
+      "id": "2133",
+      "title": "Troubleshooter",
+      "recoveryForAttempt": 1,
+      "kind": "work",
+      "priority": "P0",
+      "storySize": "M",
+      "projectName": "Rust2 D MVP model-only public research A to B to C",
+      "agentName": "troubleshooter",
+      "parentTaskId": "2132",
+      "dependencies": [],
+      "capabilities": [
+        "troubleshoot",
+        "recovery"
+      ],
+      "workerRequirements": {
+        "capabilities": [
+          "model",
+          "local_repo",
+          "iterative_tools"
+        ],
+        "runtime": "codex"
+      },
+      "adapter": "codex",
+      "input": "Recover the failed/blocked task below and make it move again if technically safe.\n\nOriginal repository: rust2-model-d-e2e-mvp5-20261121\nLocal Git root: /Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121\nOriginal job: 691\nOriginal task: 2132\nOriginal task URL: unknown\nOriginal state: FAILED\nOriginal attempt: 1\nOriginal worker: codex\nOriginal routing: {\"provider\":\"openai\",\"model\":\"gpt-5.6-luna\",\"decidedBy\":\"execution-router:fallback\",\"decidedAt\":\"2026-11-21T22:11:43.635Z\",\"decisionEvidence\":{\"mode\":\"off\",\"fallback\":true}}\nFailure reason: Worker process failed: Codex exited without verified Task terminal event\n\nMANDATORY EVENT EVIDENCE BEFORE DIAGNOSIS:\nRetrieve this task's lifecycle event history before classifying the root cause or retrying:\nUse the version-matched Relay CLI: task show --id 691 --task-id 2132; task events --id 691 --task-id 2132 --limit 60 --order asc --after 0. If a page is full, continue using its nextCursor until all history is retrieved. Use the matching Relay CLI; --repo may additionally fence the Job identity.\nInspect event order, type/status, source, data/phase, duplicate events, missing expected lifecycle events, late events, and execution identifiers. If the event stream points to delivery/runtime failure, inspect the corresponding Relay/worker/tool logs too. Do not treat the final task.error string as the complete root cause.\n\nFollow the selected Troubleshooter agent contract. Diagnose root cause from durable task state, append-only comments, task-scoped event history, and relevant runtime logs before retry. The final task.error string alone is never sufficient. Independently verify every human response against evidence from the exact original failing execution context; a response or historical resolution condition alone never proves recovery. Classify evidence as model/provider/runtime, worker/tool/infrastructure, semantic task failure, or timeout/unknown. Select one graph-enabled resolution path: exact_original_retry, same_job_dependency, blocker_job_dependency, escalation_gate, or cancel_supersede. For confirmed adapter/model/provider failure, include --failure-kind, --reason, --evidence and --reroute in task recover; use --exclude-current-route only if the exact failed route should not be selected again. For semantic task failure use --failure-kind task_failure without rerouting. For uncertain failures use --failure-kind unknown and preserve routing unless evidence justifies rerouting. Request the existing agents-relay task recover or agents-relay escalation operation; submission alone is not recovery. Reload the original Task with the Relay CLI and verify the requested resolution and exact-original retry postconditions before reporting success. Bound self-healing retries to the durable Task retry budget. For a shared worker/runtime/tool defect, use its owning repository's P0/self-job workflow and verify the durable fix before requesting recovery. Never use ordinary task retry from a Troubleshooter because manual retry intentionally supersedes active recovery. Do not manually choose a provider/model or create a replacement task. If diagnosis suggests a genuine human/external blocker, invoke the escalation command; do not publish task.blocked or implement a workflow branch procedurally. Follow the Relay CLI escalation result (resolved, failed, or needs_user); do not implement a parallel recovery path. Retry this exact original task only after the blocker is removed and verify the reported Job/Task progress through Relay CLI.",
+      "output": {
+        "kind": "task_pr"
+      },
+      "continuation": null,
+      "continuationDeliveredAt": null,
+      "attempt": 1,
+      "maxAttempts": 3,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "executionId": null,
+      "threadId": null,
+      "result": null,
+      "plannerResult": null,
+      "error": "Cancelled by user",
+      "timeoutMs": 900000,
+      "createdAt": "2026-11-21T22:19:44.206Z",
+      "updatedAt": "2026-11-21T22:24:03.037Z",
+      "gitDeliveryRequired": false,
+      "state": "CANCELLED",
+      "workerSelection": {
+        "workerId": "codex",
+        "adapter": "codex",
+        "capabilities": [
+          "model",
+          "codex"
+        ],
+        "selectedBy": "execution-router:fallback",
+        "selectedAt": "2026-11-21T22:19:44.799Z",
+        "decisionEvidence": {
+          "mode": "off",
+          "fallback": true
+        }
+      },
+      "routing": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "decidedBy": "execution-router:fallback",
+        "decidedAt": "2026-11-21T22:19:44.799Z",
+        "decisionEvidence": {
+          "mode": "off",
+          "fallback": true
+        }
+      },
+      "executionHistory": [
+        {
+          "id": "4e9bad92-1f15-4796-86bb-51bfb7a476be",
+          "attempt": 1,
+          "startedAt": "2026-11-21T22:19:44.803Z"
+        }
+      ]
+    }
+  ],
+  "graphStartContext": {
+    "projectRoot": "/Users/chengli/Workspace/neo/rust2-model-d-e2e-mvp5-20261121",
+    "workspaceRoot": "/Users/chengli/Workspace/neo",
+    "noGitHub": true
+  },
+  "state": "ACTIVE",
+  "plans": [],
+  "headSha": "ea782a325539e36499603c787801e4dac2197506",
+  "githubState": "UNKNOWN",
+  "runtimeStatus": "RUNNING",
+  "draft": false,
+  "mergedAt": null,
+  "closedAt": null,
+  "publication": null,
+  "publicationFailure": null
+}

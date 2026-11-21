@@ -105,6 +105,7 @@ where
 {
     let mut reporter=ForegroundReporter::default();
     let mut paused_reported=false;
+    let mut transient_reconcile_failures=0u8;
     report(format!("Coordinator job {job_id}, task {task_id}: foreground daemon attachment (Ctrl+C detaches CLI; daemon-owned Workers continue and Job remains durable)"));
     loop{
         let signal=interrupted.load(Ordering::SeqCst);
@@ -135,7 +136,24 @@ where
             paused_reported=true;
         }
         if !paused{paused_reported=false;}
-        reconcile()?;
+        // The daemon is the single SQLite/Graph owner. The foreground CLI
+        // only wakes the idempotent job.reconcile control route; a transient
+        // Darwin EAGAIN during a concurrent Worker commit must not detach
+        // the CLI or restart another Coordinator. Bound retries preserve
+        // non-transient Graph/HTTP errors and never fabricate Job completion.
+        match reconcile(){
+            Ok(())=>transient_reconcile_failures=0,
+            Err(error) if transient_reconcile_failures<10 &&
+                (error.contains("Resource temporarily unavailable")
+                    ||error.contains("operation would block")
+                    ||error.contains("WouldBlock"))=>{
+                transient_reconcile_failures+=1;
+                if transient_reconcile_failures==1{
+                    report(format!("Job {job_id}: daemon reconcile busy; preserving CLI attachment and retrying"));
+                }
+            }
+            Err(error)=>return Err(error),
+        }
         let updated=load()?;
         let state=updated.get("state").and_then(Value::as_str).unwrap_or("");
         if matches!(state,"COMPLETED"|"CANCELLED"){continue;}

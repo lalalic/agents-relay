@@ -1,0 +1,9 @@
+{
+  "type": "isolated-codex-native-sandbox-network-check",
+  "sandbox": "workspace-write",
+  "network_config": "sandbox_workspace_write.network_access=true",
+  "command": "node -e net.connect(127.0.0.1,4222) with event-free TCP close",
+  "exit_code": 0,
+  "stdout": "LOOPBACK_NATS_TCP_OK\n",
+  "published_events": false
+}

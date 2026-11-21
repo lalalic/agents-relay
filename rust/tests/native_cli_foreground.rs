@@ -138,6 +138,37 @@ fn attachment_reuses_authoritative_durable_load_events_and_reconcile(){
     assert!(messages.iter().any(|line|line=="Job 17: COMPLETED"));
 }
 #[test]
+fn transient_foreground_reconcile_eagain_preserves_attachment_without_forging_success(){
+    use std::cell::Cell;
+    let interrupted=AtomicI32::new(0);
+    let attempts=Cell::new(0usize);
+    let mut messages=Vec::new();
+    let result=attach_foreground_daemon(
+        "17","2",
+        ||Ok(json!({"id":"17","state":if attempts.get()>=3{"COMPLETED"}else{"ACTIVE"},
+            "tasks":[]})),
+        ||{
+            attempts.set(attempts.get()+1);
+            if attempts.get()<=2{return Err("Agents Relay control command failed: Resource temporarily unavailable (os error 35)".into());}
+            Ok(())
+        },
+        ||Ok(vec![]),|message|messages.push(message),
+        Duration::from_millis(0),&interrupted).unwrap();
+    assert_eq!(attempts.get(),3);
+    assert_eq!(result.job["state"],"COMPLETED");
+    assert!(messages.iter().any(|message:&String|message.contains("reconcile busy")));
+    assert!(messages.iter().any(|message:&String|message.contains("Job 17: COMPLETED")));
+}
+#[test]
+fn permanent_foreground_reconcile_failure_remains_an_error(){
+    let interrupted=AtomicI32::new(0);
+    let failure=attach_foreground_daemon(
+        "17","2",||Ok(json!({"id":"17","state":"ACTIVE","tasks":[]})),
+        ||Err("Graph denied the requested transition".into()),
+        ||Ok(vec![]),|_|{},Duration::from_millis(0),&interrupted).unwrap_err();
+    assert!(failure.contains("Graph denied"));
+}
+#[test]
 fn attachment_interrupt_never_claims_job_completed_or_cancels_durable_work(){
     let interrupted=AtomicI32::new(0);
     let mut messages=Vec::<String>::new();
@@ -311,12 +342,17 @@ fn native_cli_foreground_runs_real_script_worker_to_verified_graph_sqlite_comple
     assert_eq!(child["attempt"],1);
     assert!(child["executionId"].is_null());
     assert_eq!(child["result"]["data"]["output"]["foreground"],true);
-    // A Coordinator is an aggregate DAG root. The verified child carries
-    // the Script result in canonical SQLite; the root's output-file field
-    // does not automatically propagate to its child.
-    assert!(!output.exists(),
-        "Coordinator root must not fabricate a Worker artifact");
+    // The Coordinator receipt projector now writes the declared file ONLY
+    // after the ordinary Graph+SQLite coordinator and child reach SUCCEEDED.
+    // It contains actual committed child output and does not invent a Task
+    // transition or copy raw stage artifacts into the Coordinator result.
+    let receipt:serde_json::Value=serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
+    assert_eq!(receipt["status"],"COMPLETED");
+    assert_eq!(receipt["coordinatorTaskId"],"2");
+    assert_eq!(receipt["output"]["nodes"]["A"]["status"],"SUCCEEDED");
+    assert_eq!(receipt["output"]["nodes"]["A"]["output"]["foreground"],true);
     let child_id=child["id"].as_str().unwrap();
+    assert_eq!(receipt["output"]["nodes"]["A"]["taskId"],child_id);
     let rows:i64=saved.db.query_row(
         "SELECT COUNT(*) FROM workflow_event_outbox WHERE event_key LIKE ?",
         [format!("script-event/17/{child_id}/%")],|row|row.get(0)).unwrap();

@@ -64,35 +64,47 @@ fn endpoint(args: &[String], route: &str) -> Result<(String, String, String), St
 }
 pub fn control(args: &[String], payload: &Value) -> Result<Value, String> {
     let (url, host, port) = endpoint(args, "/api/control")?;
-    let response = ureq::post(&url)
-        .config()
-        .http_status_as_error(false)
-        .build()
-        .header("content-type", "application/json")
-        .send_json(payload);
-    match response {
-        Ok(mut response) => {
-            if !response.status().is_success() {
-                let code = response.status();
-                let body = response.body_mut().read_to_string().unwrap_or_default();
-                return Err(format!(
-                    "Agents Relay control command failed: {}",
-                    if body.is_empty() {
-                        format!("HTTP {code}")
-                    } else {
-                        body
+    // These two Graph+SQLite transitions have execution-ID fencing and an
+    // explicit idempotent replay contract. Other writes (create, cancel,
+    // review) must never retry an uncertain HTTP POST automatically.
+    let replay_safe=matches!(payload.get("command").and_then(Value::as_str),
+        Some("job.reconcile"|"plan.apply"));
+    for attempt in 0..3 {
+        let once = (||{
+            let response = ureq::post(&url)
+                .config()
+                .http_status_as_error(false)
+                .build()
+                .header("content-type", "application/json")
+                .send_json(payload);
+            match response {
+                Ok(mut response) => {
+                    if !response.status().is_success() {
+                        let code = response.status();
+                        let body = response.body_mut().read_to_string().unwrap_or_default();
+                        return Err(format!(
+                            "Agents Relay control command failed: {}",
+                            if body.is_empty() {
+                                format!("HTTP {code}")
+                            } else {body}
+                        ));
                     }
-                ));
+                    response.body_mut().read_json::<Value>()
+                        .map_err(|e|e.to_string())
+                }
+                Err(err) => Err(format!(
+                    "Agents Relay service unavailable at {host}:{port}: {err}"
+                )),
             }
-            response
-                .body_mut()
-                .read_json::<Value>()
-                .map_err(|e| e.to_string())
-        }
-        Err(err) => Err(format!(
-            "Agents Relay service unavailable at {host}:{port}: {err}"
-        )),
+        })();
+        let transient=replay_safe && attempt<2 && once.as_ref().err()
+            .is_some_and(|error|error.contains("Resource temporarily unavailable")
+                ||error.contains("operation would block")
+                ||error.contains("WouldBlock"));
+        if !transient{return once;}
+        std::thread::sleep(std::time::Duration::from_millis(25*(attempt+1)));
     }
+    unreachable!("bounded idempotent control retry always returns")
 }
 
 pub fn job(args: &[String], job_id: &str) -> Result<Value, String> {

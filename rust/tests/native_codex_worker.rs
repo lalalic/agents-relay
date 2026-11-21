@@ -66,6 +66,27 @@ fn native_codex_uses_trusted_managed_prompt_and_correlated_event_contract(){
 }
 #[test]
 #[cfg(unix)]
+fn native_codex_model_receipt_requires_workspace_write_with_nats_network_access(){
+    use std::os::unix::fs::PermissionsExt;
+    let root=fixture();let db=root.join("relay.sqlite");
+    let capture=root.join("codex-argv.txt");
+    let executable=root.join("fake-codex-argv");
+    fs::write(&executable,format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nprintf '{{\"type\":\"turn.completed\"}}\\n'\nexit 0\n",capture.display())).unwrap();
+    fs::set_permissions(&executable,fs::Permissions::from_mode(0o700)).unwrap();
+    let record=job(&root);
+    let store=SQLiteRelayStore::open(&db,Some("9001")).unwrap();
+    store.save_job(&record).unwrap();store.close().unwrap();
+    let failure=execute_claimed_codex(&db,&record,&record["tasks"][0],&executable,&root)
+        .expect_err("provider exit without terminal Graph event is not success");
+    assert!(failure.contains("without verified Task terminal event"),"{failure}");
+    let args=fs::read_to_string(&capture).unwrap();
+    assert!(args.contains("--sandbox\nworkspace-write\n"),"{args}");
+    assert!(args.contains("-c\nsandbox_workspace_write.network_access=true\n"),"{args}");
+    assert!(!args.contains("danger-full-access"),"{args}");
+    drop(failure);fs::remove_dir_all(root).unwrap();
+}
+#[test]
+#[cfg(unix)]
 fn successful_codex_cli_exit_cannot_fabricate_graph_task_completion(){
     use std::os::unix::fs::PermissionsExt;
     let root=fixture();let db=root.join("relay.sqlite");
