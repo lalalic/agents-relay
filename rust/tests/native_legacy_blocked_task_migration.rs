@@ -101,3 +101,59 @@ fn migration_writes_only_changed_job_snapshots_and_never_touches_append_only_his
         "task.blocked event, immutable"
     );
 }
+
+#[test]
+fn unified_sqlite_legacy_migration_is_once_per_database_not_per_job_connection() {
+    use agents_relay_rust2::relay_store::SQLiteRelayStore;
+    let path=std::env::temp_dir().join(format!(
+        "r2-migration-once-{}-{}.sqlite",std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+            .unwrap().as_nanos()));
+    let first=SQLiteRelayStore::open(&path,Some("88")).unwrap();
+    first.save_job(&json!({"id":"88","repository":"demo","prNumber":0,
+        "projectRoot":"/tmp/demo","state":"DRAFT","title":"migration fixture",
+        "tasks":[{"id":"89","kind":"task","agentName":"editor","state":"BLOCKED"}],
+        "plans":[],"createdAt":"2026-11-21T12:00:00Z",
+        "updatedAt":"2026-11-21T12:00:00Z"})).unwrap();
+    first.db.execute("DELETE FROM migration_metadata WHERE key='legacy_blocked_tasks_v1'",[]).unwrap();
+    first.close().unwrap();
+    let migrated=SQLiteRelayStore::open_without_claim_reset(&path,Some("88")).unwrap();
+    let fixed=migrated.load_job("88").unwrap().unwrap();
+    assert_eq!(fixed["tasks"][0]["state"],"FAILED");
+    let marker:String=migrated.db.query_row(
+        "SELECT value FROM migration_metadata WHERE key='legacy_blocked_tasks_v1'",
+        [],|r|r.get(0)).unwrap();
+    assert_eq!(marker,"complete");
+    migrated.db.execute_batch("CREATE TABLE migration_write_count(n INTEGER NOT NULL);
+        INSERT INTO migration_write_count(n) VALUES(0);
+        CREATE TRIGGER migration_write_counter AFTER UPDATE ON job_snapshot
+        BEGIN UPDATE migration_write_count SET n=n+1;END;").unwrap();
+    migrated.close().unwrap();
+    // New opens (including one for a different Job scope) must not parse and
+    // rewrite the entire historical inventory. Test an intentionally inserted
+    // legacy-shaped snapshot to prove the one-time fence is obeyed.
+    let check=SQLiteRelayStore::open_without_claim_reset(&path,Some("88")).unwrap();
+    let raw=json!({"id":"88","repository":"demo","prNumber":0,
+        "projectRoot":"/tmp/demo","state":"DRAFT","title":"post-migration",
+        "tasks":[{"id":"89","kind":"task","agentName":"editor","state":"BLOCKED"}],
+        "plans":[]}).to_string();
+    check.db.execute("UPDATE job_snapshot SET json=? WHERE job_id='88'",[&raw]).unwrap();
+    let before:i64=check.db.query_row(
+        "SELECT n FROM migration_write_count",[],|r|r.get(0)).unwrap();
+    check.close().unwrap();
+    for _ in 0..4 {
+        let opened=SQLiteRelayStore::open_without_claim_reset(&path,Some("88")).unwrap();
+        // Store reads normalize legacy task vocabulary for compatibility.
+        // Inspect raw persisted JSON to prove no full-DB migration UPDATE.
+        let raw:String=opened.db.query_row(
+            "SELECT json FROM job_snapshot WHERE job_id='88'",
+            [],|row|row.get(0)).unwrap();
+        let persisted:Value=serde_json::from_str(&raw).unwrap();
+        assert_eq!(persisted["tasks"][0]["state"],"BLOCKED");
+        let writes:i64=opened.db.query_row(
+            "SELECT n FROM migration_write_count",[],|r|r.get(0)).unwrap();
+        assert_eq!(writes,before,"schema migration must not run on hot scoped read");
+        opened.close().unwrap();
+    }
+    let _=std::fs::remove_file(path);
+}

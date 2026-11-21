@@ -81,6 +81,37 @@ fn initialize_legacy(db:&Connection)->Result<(),String>{
         [SCHEMA_VERSION.to_string()]).map_err(sql)?;
     Ok(())
 }
+/// The Node legacy task migration is a one-time database upgrade, not an
+/// O(all historical Job JSON) operation on *every* scoped SQLite open.
+/// Unified stores carry one global, primary-keyed migration_metadata row.
+/// Do not use relay_meta: unified stores scope that table by Job ID.
+fn migrate_unified_legacy_blocked_tasks_once(db:&Connection)
+    ->Result<(),String>{
+    let marker:Option<String>=db.query_row(
+        "SELECT value FROM migration_metadata WHERE key='legacy_blocked_tasks_v1'",
+        [],|row|row.get(0)).optional().map_err(sql)?;
+    if marker.as_deref()==Some("complete"){return Ok(());}
+    db.execute_batch("BEGIN IMMEDIATE").map_err(sql)?;
+    let result=(||{
+        // A second owner cannot pass the external daemon lock, but checking
+        // inside BEGIN IMMEDIATE also protects fresh per-Job connections.
+        let marker:Option<String>=db.query_row(
+            "SELECT value FROM migration_metadata WHERE key='legacy_blocked_tasks_v1'",
+            [],|row|row.get(0)).optional().map_err(sql)?;
+        if marker.as_deref()!=Some("complete"){
+            migrate_legacy_blocked_tasks(db)?;
+            db.execute(
+                "INSERT INTO migration_metadata(key,value)
+                 VALUES('legacy_blocked_tasks_v1','complete')
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",[],
+            ).map_err(sql)?;
+        }
+        Ok::<(),String>(())
+    })();
+    db.execute_batch(if result.is_ok(){"COMMIT"}else{"ROLLBACK"})
+        .map_err(sql)?;
+    result
+}
 fn scope_guard(scope:Option<&str>,job_id:&str)->Result<(),String>{
     if let Some(bound)=scope {
         if bound!=job_id{return Err(format!(
@@ -159,7 +190,11 @@ impl SQLiteRelayStore {
         }else{
             initialize_legacy(&db)?;
         }
-        migrate_legacy_blocked_tasks(&db)?;
+        if scope_job_id.is_some(){
+            migrate_unified_legacy_blocked_tasks_once(&db)?;
+        }else{
+            migrate_legacy_blocked_tasks(&db)?;
+        }
         if reset {
             ProjectionOutbox::new(&db,scope_job_id)
                 .reset_processing(&iso8601_now())?;
