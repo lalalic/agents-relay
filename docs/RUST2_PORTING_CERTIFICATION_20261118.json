@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 88,
-    "HOLD": 16,
+    "PASS": 89,
+    "HOLD": 15,
     "EXCLUDED": 3
   },
   "records": [
@@ -217,24 +217,26 @@
       "source": "src/cli-artifact.ts",
       "target": "rust/src/cli_artifact.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 2,
       "staticNameMismatch": 0,
       "directDiffTests": [
         "rust/tests/head_to_head_batch6.mjs",
         "rust/tests/head_to_head_cli_core.mjs",
         "rust/tests/head_to_head_wave3_artifact.mjs",
-        "rust/tests/head_to_head_wave4_artifact.mjs"
+        "rust/tests/head_to_head_wave4_artifact.mjs",
+        "rust/tests/native_artifact_cli.rs"
       ],
       "otherRustModuleReferences": [
         "rust/src/bin/relay-rust2-parity.rs"
       ],
       "typeOrShapeReviews": [],
-      "certificationEvidence": [],
-      "openGates": [
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-20: Certified source module read-only Ajv-compatible CLI behavior: source has 2 original runtime exports, both bound to native validator and installed agents-relay-rust front door. Original Node/Rust schema diff tests head_to_head_batch6.mjs, head_to_head_wave3_artifact.mjs, head_to_head_wave4_artifact.mjs jointly 12/12 PASS with 277+ randomized real-filesystem validation cases, invalid schema compiler/recursive refs/Unicode and CLI output precedence. Native installed binary native_artifact_cli.rs 1/1 PASS with valid and invalid files and correct JSON stdout + exit status, no daemon or file writes. No unreviewed shapes. Full arbitrary future JSON Schema dialect compatibility is not established and must be separately tested; no claim about other CLI/service modules."
       ],
-      "legacyLedgerNote": "Wave4 B: original Node/Ajv schema-compile errors, CLI output/error priority, UTF16 Unicode/unknown-format tests plus Wave3 277 filesystem comparisons. Recursive $ref, full Ajv dialect/format and CLI edge parity remain unverified (head_to_head_wave4_artifact.mjs; head_to_head_wave3_artifact.mjs)."
+      "openGates": [],
+      "legacyLedgerNote": "Wave4 B: original Node/Ajv schema-compile errors, CLI output/error priority, UTF16 Unicode/unknown-format tests plus Wave3 277 filesystem comparisons. Recursive $ref, full Ajv dialect/format and CLI edge parity remain unverified (head_to_head_wave4_artifact.mjs; head_to_head_wave3_artifact.mjs).",
+      "status": "PASS"
     },
     {
       "source": "src/cli-coordinator.ts",

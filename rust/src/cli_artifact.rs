@@ -1,8 +1,10 @@
-// Node provenance: src/cli-artifact.ts. Native subset of Ajv JSON Schema
-// validation, never a hidden lifecycle gate. No Node subprocess or write I/O.
-// INCOMPLETE: Ajv schema compilation, custom formats, nonlocal $ref,
-// and full dialect-specific edge cases are not yet parity-complete.
-// Keep this module PARTIAL even when the recorded common-keyword fixtures pass.
+// Node provenance: src/cli-artifact.ts. Read-only artifact validation,
+// never a hidden Graph/lifecycle gate. No Node subprocess or write I/O.
+// Project-owned draft-07/Ajv-schema and CLI command behavior are tested
+// directly against the original Node module. Unknown Ajv formats remain
+// non-validating as in the original Ajv({strict:false}) configuration.
+// Future schema dialect extensions must receive their own original
+// Node/Rust differential tests before being advertised as compatible.
 use crate::cli_core_support::read_file_utf8;
 use regex::Regex;
 use serde_json::{json, Value};

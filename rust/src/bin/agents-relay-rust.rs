@@ -3,6 +3,7 @@
 //! Node. Unwired host actions explicitly fail rather than launching Node.
 use agents_relay_rust2::{
     cli::{run_cli,CliRuntimePort},
+    cli_artifact::{validate_artifact,result_json},
     cli_core_support::{arg,has_arg,text_option},
     cli_coordinator::validate_coordinator_args,
     cli_foreground::attach_foreground_daemon,
@@ -64,6 +65,16 @@ struct DaemonClient;
 impl CliRuntimePort for DaemonClient {
     fn execute(&mut self,group:&str,action:&str,args:&[String])->Result<Value,String>{
         match (group,action){
+            ("artifact","validate") => {
+                // The installed native CLI must use the same read-only
+                // validator as the original Node artifact command and the
+                // direct Node/Rust parity fixture. No daemon, subprocess,
+                // or Job mutation is involved.
+                let artifact=arg(args,"--artifact","");
+                let schema=arg(args,"--schema","");
+                validate_artifact(artifact,schema).map(|result|result_json(&result))
+            },
+            ("artifact",_)=>Err("artifact supports only validate".into()),
             ("status","") => relay_service_status(args),
             ("prompt","")=>{
                 let package_root=Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -218,6 +229,12 @@ fn main(){
             let foreground_signal=FOREGROUND_SIGNAL.load(Ordering::SeqCst);
             if foreground_signal==libc::SIGINT{std::process::exit(130);}
             if foreground_signal==libc::SIGTERM{std::process::exit(143);}
+            if arguments.first().is_some_and(|cmd|cmd=="artifact")
+                &&arguments.get(1).is_some_and(|action|action=="validate")
+                &&result.get("valid").and_then(Value::as_bool)==Some(false){
+                eprintln!("Artifact validation failed");
+                std::process::exit(1);
+            }
             if arguments.first().is_some_and(|cmd|cmd=="job")
                 &&arguments.get(1).is_some_and(|action|action=="run")
                 &&arguments.iter().any(|argument|argument=="--foreground")

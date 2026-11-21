@@ -2,12 +2,12 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "22fa4e5259049ed6c31acef6d0a967a5a4700c3d",
-    "rustTree": "2102c8336b6f771aa70d718f3de793b1651e0e0c",
-    "sourceCount": 8,
+    "rustTree": "2656de3bf6e62abb5b9ee4f8996191d85b1b1d2a",
+    "sourceCount": 7,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 90,
-    "directNameMatches": 87,
+    "runtimeExportSymbols": 88,
+    "directNameMatches": 85,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 3,
     "typeOrShapeReviewSymbols": 57,
@@ -59,41 +59,6 @@
         },
         {
           "name": "pooledWebHelmRun",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/cli-artifact.ts",
-      "target": "rust/src/cli_artifact.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 2,
-      "directNameMatches": 2,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [],
-      "directDiffImports": [
-        "rust/tests/head_to_head_batch6.mjs",
-        "rust/tests/head_to_head_cli_core.mjs",
-        "rust/tests/head_to_head_wave3_artifact.mjs",
-        "rust/tests/head_to_head_wave4_artifact.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity.rs"
-      ],
-      "exports": [
-        {
-          "name": "ArtifactValidationResult",
-          "kind": "type",
-          "static": "name-match"
-        },
-        {
-          "name": "validateArtifact",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "runArtifactCommand",
           "kind": "function",
           "static": "name-match"
         }
