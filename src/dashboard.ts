@@ -1,4 +1,5 @@
 import { inspectWorkflowSymbol } from './dashboard-workflow-inspection.js';
+import {projectMobileJobs,projectMobileTasks,projectMobileActivity,validMobileIdentity} from './dashboard-mobile.js';
 import { createServer, Server } from 'node:http';
 import { subscribeLocalCommits } from './local-commit-events.js';
 import { handleTroubleshooterQa } from './troubleshooter-qa-api.js';
@@ -223,6 +224,49 @@ export function serveDashboard(
         process.stderr.write(`warning: webhook wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
         res.writeHead(503); res.end('Webhook handling unavailable; redelivery required');
       }
+      return;
+    }
+    const mobileURL = new URL(req.url ?? '/', 'http://127.0.0.1');
+    if (mobileURL.pathname.startsWith('/api/mobile/')) {
+      const pathname=mobileURL.pathname;
+      const id=mobileURL.searchParams.get('id')??'';
+      const repo=mobileURL.searchParams.get('repo')??'';
+      try {
+        let result:unknown;
+        if(pathname==='/api/mobile/jobs'&&req.method==='GET'){
+          const offset=Number(mobileURL.searchParams.get('offset')??0);
+          const limit=Number(mobileURL.searchParams.get('limit')??20);
+          result=projectMobileJobs(await discoveredJobs(),offset,limit);
+        }else if(pathname==='/api/mobile/job-tasks'&&req.method==='GET'&&validMobileIdentity(id,repo)){
+          result=projectMobileTasks(JSON.parse((await snapshot(id,true,{repository:repo})).json),id,repo);
+        }else if(pathname==='/api/mobile/job-activity'&&req.method==='GET'&&validMobileIdentity(id,repo)){
+          // Event history is keyed only by Job ID. Reject ambiguous IDs across
+          // repositories rather than leaking another repository's activity.
+          if((await discoveredJobs()).filter(job=>job.id===id).length!==1)throw Error('Ambiguous Job ID');
+          const exact=JSON.parse((await snapshot(id,true,{repository:repo})).json);
+          if(exact?.id!==id||exact?.repository!==repo)throw Error('Job identity mismatch');
+          result={jobId:id,repository:repo,events:projectMobileActivity(await eventHistory(id,null,100))};
+        }else if(pathname==='/api/mobile/job-cancel'&&req.method==='POST'&&resolvedActions?.cancel){
+          const chunks:Buffer[]=[];let size=0;
+          for await(const chunk of req){size+=chunk.length;if(size>8192)throw Error('Cancel request too large');chunks.push(Buffer.from(chunk));}
+          const input=JSON.parse(Buffer.concat(chunks).toString('utf8')) as {id?:unknown;repository?:unknown};
+          if(!validMobileIdentity(input.id,input.repository))throw Error('Invalid Job identity');
+          // The underlying cancel action accepts only Job ID, not repository.
+          // Fail closed on cross-repository ID collisions before any mutation.
+          const matchingId=(await discoveredJobs()).filter(j=>j.id===input.id);
+          const eligible=matchingId.filter(j=>j.repository===input.repository);
+          if(matchingId.length!==1||eligible.length!==1||!['DRAFT','ACTIVE'].includes(eligible[0].state))
+            throw Error('Job not cancellable without a unique Job ID');
+          await resolvedActions.cancel(input.id);
+          // Never acknowledge cancel merely because the command was accepted.
+          const readback=JSON.parse((await snapshot(input.id,true,{repository:input.repository as string})).json);
+          if(readback?.id!==input.id||readback?.repository!==input.repository||readback?.state!=='CANCELLED')throw Error('CANCELLED readback not confirmed');
+          result={id:input.id,repository:input.repository,status:'cancelled'};
+        }else{res.writeHead(404,{'cache-control':'no-store'});res.end('Mobile API unavailable');return;}
+        res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'});
+        res.end(JSON.stringify(result));
+      }catch(error){res.writeHead(409,{'content-type':'application/json','cache-control':'no-store'});
+        res.end(JSON.stringify({error:error instanceof Error?error.message:'Mobile API unavailable'}));}
       return;
     }
     if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/jobs') {
