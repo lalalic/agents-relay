@@ -489,3 +489,200 @@ fn concurrent_isolated_daemon_human_escalations_preserve_one_sqlite_identity(){
  assert_eq!(replay,f.job());
  assert_eq!(replay["tasks"][1]["escalation"]["status"],"pending");
 }
+
+#[test]
+fn automatic_planner_graph_effect_executes_real_isolated_script_and_commits_sqlite_once(){
+ use std::{thread,time::{Duration,Instant}};
+ let f=Fixture::new();
+ let project=f.root.join("mockrepo");
+ let script_directory=project.join("agents/.shortcut");
+ fs::create_dir_all(&script_directory).unwrap();
+ fs::write(script_directory.join("planner.agent.mjs"),r#"export async function run({input}) {
+  if (input.objective !== 'Verify automatic Planner Graph execution')
+    throw Error('Unexpected objective');
+  return {objective_status:'satisfied',assessment:'Fixture objective verified',next_tasks:[],unblocks:[]};
+}"#).unwrap();
+ let database=SQLiteRelayStore::open_without_claim_reset(
+  &relay_unified_store_path(&f.config.store_directory),Some("15")).unwrap();
+ database.mutate_job("15",|mut job|{
+  job["title"]=json!("Automatic Planner isolated E2E");
+  job["objective"]=json!("Verify automatic Planner Graph execution");
+  job["reviewEnabled"]=json!(false);
+  job["autoMerge"]=json!(false);
+  job["tasks"][0]["state"]=json!("SUCCEEDED");
+  job["tasks"][0]["error"]=Value::Null;
+  job["tasks"][0]["result"]=json!({"summary":"Completed setup"});
+  job["tasks"][0]["attempt"]=json!(1);
+  job["tasks"][0]["agentName"]=json!("setup");
+  Ok(job)
+ }).unwrap();
+ drop(database);
+ let mut host=IsolatedSQLiteWriteHost::new(f.config.clone());
+ let started=DaemonServices::job_action(&mut host,"15","reconcile").unwrap();
+ assert_eq!(started["plans"][0]["status"],"PLANNING",
+  "Graph must commit the Planner round before launching an owned Worker: {started}");
+ let begin=Instant::now();
+ let completed=loop{
+  let latest=f.job();
+  if latest["plans"][0]["status"]=="SUCCEEDED"{break latest;}
+  assert!(begin.elapsed()<Duration::from_secs(20),
+   "Native Planner did not settle via Graph/SQLite: {latest}");
+  thread::sleep(Duration::from_millis(80));
+ };
+ assert_eq!(completed["plans"][0]["objectiveStatus"],"satisfied");
+ assert_eq!(completed["plans"][0]["generatedTaskIds"],json!([]));
+ assert_eq!(completed["tasks"].as_array().unwrap().len(),1);
+ let execution=completed["plans"][0]["appliedExecutionId"].as_str().unwrap();
+ assert!(!execution.is_empty());
+ let db=SQLiteRelayStore::open_without_claim_reset(
+  &relay_unified_store_path(&f.config.store_directory),Some("15")).unwrap();
+ let identity=db.load_execution_process("15","plan-1",execution).unwrap()
+  .expect("Planner must record an owned PID/PGID before running its script");
+ assert!(identity["endedAt"].is_string());
+ drop(db);
+ drop(host);
+ let mut restarted=IsolatedSQLiteWriteHost::new(f.config.clone());
+ let replay=DaemonServices::job_action(&mut restarted,"15","reconcile").unwrap();
+ assert_eq!(replay["plans"].as_array().unwrap().len(),1,
+  "Reconcile restart cannot create a second Plan after satisfied objective");
+ assert_eq!(replay["plans"][0]["appliedExecutionId"],execution,
+  "Reconcile restart cannot rerun the settled generation");
+ assert_eq!(replay,f.job());
+}
+
+#[test]
+fn automatic_planner_without_installed_script_fails_closed_before_provider_spawn(){
+ let f=Fixture::new();
+ let db=SQLiteRelayStore::open_without_claim_reset(
+  &relay_unified_store_path(&f.config.store_directory),Some("15")).unwrap();
+ db.mutate_job("15",|mut job|{
+  job["objective"]=json!("Automatic Planner unavailable");
+  job["reviewEnabled"]=json!(false);
+  job["autoMerge"]=json!(false);
+  job["tasks"][0]["state"]=json!("SUCCEEDED");
+  job["tasks"][0]["error"]=Value::Null;
+  job["tasks"][0]["agentName"]=json!("setup");
+  job["tasks"][0]["result"]=json!({"summary":"setup"});
+  Ok(job)
+ }).unwrap();
+ drop(db);
+ let mut host=IsolatedSQLiteWriteHost::new(f.config.clone());
+ let result=DaemonServices::job_action(&mut host,"15","reconcile");
+ assert!(result.is_err(),"Missing trusted Planner must not be a fake success");
+ let saved=f.job();
+ assert_ne!(saved["plans"][0]["status"],"SUCCEEDED");
+ assert!(saved["plans"][0]["appliedExecutionId"].is_null());
+ assert_eq!(saved["tasks"].as_array().unwrap().len(),1);
+}
+
+#[test]
+fn automatic_planner_recovers_pending_round_after_daemon_recreation_without_duplicate_plan(){
+ use std::{thread,time::{Duration,Instant}};
+ let f=Fixture::new();
+ let project=f.root.join("mockrepo");
+ let script_root=project.join("agents/.shortcut");
+ fs::create_dir_all(&script_root).unwrap();
+ fs::write(script_root.join("planner.agent.mjs"),r#"export async function run({input}) {
+  return {objective_status:'satisfied',assessment:'Recovered after lost daemon',next_tasks:[],unblocks:[]};
+}"#).unwrap();
+ let database=SQLiteRelayStore::open_without_claim_reset(
+  &relay_unified_store_path(&f.config.store_directory),Some("15")).unwrap();
+ database.mutate_job("15",|mut job|{
+  job["objective"]=json!("Recover existing Planner round");
+  job["reviewEnabled"]=json!(false);
+  job["autoMerge"]=json!(false);
+  job["tasks"][0]["state"]=json!("SUCCEEDED");
+  job["tasks"][0]["error"]=Value::Null;
+  job["tasks"][0]["agentName"]=json!("setup");
+  job["tasks"][0]["result"]=json!({"summary":"setup"});
+  let plan=agents_relay_rust2::planner::create_plan_round(
+    &graph(),&job,None,false,Some(6000),None)?;
+  assert_eq!(plan["status"],"PLANNING");
+  job["plans"]=json!([plan]);
+  Ok(job)
+ }).unwrap();
+ drop(database);
+ let mut host=IsolatedSQLiteWriteHost::new(f.config.clone());
+ let recovered=DaemonServices::job_action(&mut host,"15","reconcile").unwrap();
+ assert_eq!(recovered["plans"].as_array().unwrap().len(),1);
+ let begun=Instant::now();
+ let committed=loop{
+  let latest=f.job();
+  if latest["plans"][0]["status"]=="SUCCEEDED"{break latest;}
+  assert!(begun.elapsed()<Duration::from_secs(20),
+   "Pending Planner cannot recover via Graph/SQLite: {latest}");
+  thread::sleep(Duration::from_millis(90));
+ };
+ assert_eq!(committed["plans"][0]["assessment"],"Recovered after lost daemon");
+ let applied=committed["plans"][0]["appliedExecutionId"].clone();
+ assert!(applied.is_string());
+ drop(host);
+ let mut restarted=IsolatedSQLiteWriteHost::new(f.config.clone());
+ let replay=DaemonServices::job_action(&mut restarted,"15","reconcile").unwrap();
+ assert_eq!(replay["plans"].as_array().unwrap().len(),1);
+ assert_eq!(replay["plans"][0]["appliedExecutionId"],applied);
+ assert_eq!(replay,f.job());
+}
+
+#[test]
+fn native_daemon_reconciler_retries_pending_planner_cross_job_unblock_after_late_job_registration(){
+ let f=Fixture::new();
+ let db=SQLiteRelayStore::open_without_claim_reset(
+   &relay_unified_store_path(&f.config.store_directory),Some("15")).unwrap();
+ db.mutate_job("15",|mut job|{
+  job["reviewEnabled"]=json!(false);
+  job["autoMerge"]=json!(false);
+  job["objective"]=json!("Honor late cross-Job dependent registration");
+  job["tasks"][0]["state"]=json!("SUCCEEDED");
+  job["tasks"][0]["error"]=Value::Null;
+  job["tasks"][0]["agentName"]=json!("setup");
+  job["tasks"][0]["result"]=json!({"summary":"setup"});
+  job["plans"]=json!([{
+   "id":"plan-1","round":1,"status":"SUCCEEDED",
+   "objectiveStatus":"satisfied","assessment":"Completed work",
+   "pendingUnblocks":[{"repository":"dependent","prNumber":0,
+     "jobId":"41","taskId":"71","resolutionMode":"merge"}],
+   "createdAt":"2026-11-20T00:00:00.000Z",
+   "updatedAt":"2026-11-20T00:00:00.000Z"
+  }]);
+  Ok(job)
+ }).unwrap();
+ drop(db);
+ let mut host=IsolatedSQLiteWriteHost::new(f.config.clone());
+ let missing=DaemonServices::job_action(&mut host,"15","reconcile").unwrap();
+ assert_eq!(missing["plans"][0]["pendingUnblocks"].as_array().unwrap().len(),1,
+  "target Job not yet registered: do not acknowledge its dependent");
+ assert!(missing.get("unblocks").is_none_or(Value::is_null));
+ let project=f.root.join("dependent");
+ fs::create_dir_all(&project).unwrap();
+ assert!(Command::new("git").arg("init").arg("-q").arg(&project)
+  .status().unwrap().success());
+ let related=SQLiteRelayStore::open_without_claim_reset(
+  &relay_unified_store_path(&f.config.store_directory),Some("41")).unwrap();
+ related.save_job(&json!({
+  "id":"41","repository":"dependent","prNumber":0,
+  "projectRoot":project,"state":"ACTIVE","title":"Dependent Job",
+  "createdAt":"2026-11-20T00:00:00.000Z",
+  "updatedAt":"2026-11-20T00:00:00.000Z","plans":[],
+  "tasks":[{"id":"71","jobId":"41","kind":"work",
+    "agentName":"development","state":"DRAFT",
+    "attempt":0,"maxAttempts":3,"dependencies":[],
+    "input":"Await upstream fixture",
+    "createdAt":"2026-11-20T00:00:00.000Z",
+    "updatedAt":"2026-11-20T00:00:00.000Z"}]
+ })).unwrap();
+ let recovered=DaemonServices::job_action(&mut host,"15","reconcile").unwrap();
+ assert!(recovered["plans"][0].get("pendingUnblocks").is_none_or(Value::is_null),
+  "only the transactionally confirmed registration can clear pending intent");
+ assert_eq!(recovered["unblocks"][0]["jobId"],"41");
+ assert_eq!(recovered["unblocks"][0]["taskId"],"71");
+ assert_eq!(related.load_job("41").unwrap().unwrap()["tasks"][0]["blockedBy"]["jobId"],"15");
+ assert_eq!(recovered["plans"].as_array().unwrap().len(),1);
+ drop(host);
+ let mut restarted=IsolatedSQLiteWriteHost::new(f.config.clone());
+ let replay=DaemonServices::job_action(&mut restarted,"15","reconcile").unwrap();
+ assert_eq!(replay["unblocks"].as_array().unwrap().len(),1,
+   "repeated daemon reconcile must not create duplicate Blocker relation");
+ assert_eq!(replay["plans"].as_array().unwrap().len(),1);
+ assert_eq!(replay,f.job());
+}

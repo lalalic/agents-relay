@@ -56,6 +56,54 @@ test('Ajv Unicode UTF-16 string length and formats not validated by default',asy
  for(const schema of schemas) for(const data of ['🙂','🙂a','a','a🙂a',{name:'🙂'},'hello'])
  await compare(schema,data);
 });
+test('Ajv draft-07 nested boolean schemas, local refs, combinators and conditional errors',async()=>{
+ const fixtures=[
+  [{properties:{a:false}},{a:1}],
+  [{allOf:[false]},'x'],
+  [{anyOf:[true,false]},'x'],
+  [{oneOf:[true,true]},'x'],
+  [{items:false},[1]],
+  [{not:false},'x'],
+  [{if:false,then:{type:'number'},else:{type:'string'}},42],
+  [{if:false,then:{type:'number'},else:{type:'string'}},'x'],
+  [{properties:{x:{anyOf:[false,{type:'string'}]}}},{x:1}],
+  [{definitions:{a:false},properties:{x:{$ref:'#/definitions/a'}}},{x:1}],
+  [{allOf:[{type:'object',properties:{x:false}},true]},{x:'bad'}],
+  [{type:'array',contains:false},[1,2]],
+  [{type:'object',patternProperties:{'^a':false}},{apple:3}],
+  [{if:{type:'string'},then:false,else:{type:'integer'}},'bad'],
+  [{if:{type:'string'},then:false,else:{type:'integer'}},3],
+  [{oneOf:[false,{type:'integer'}]},3],
+ ];
+ for(const [schema,value] of fixtures)await compare(schema,value);
+});
+test('Ajv recursive local schema references, escaped JSON pointers and nested array errors',async()=>{
+ const schemas=[
+  {type:'object',properties:{value:{type:'integer',minimum:0},child:{$ref:'#'}},
+   required:['value']},
+  {definitions:{node:{type:'object',properties:{next:{$ref:'#/definitions/node'},flag:{const:true}},
+   required:['flag']}},properties:{node:{$ref:'#/definitions/node'}}},
+  {definitions:{'a/b':{type:'string',minLength:2}},
+   properties:{name:{$ref:'#/definitions/a~1b'}}},
+  {definitions:{'a~b':{type:'integer',minimum:3}},
+   properties:{count:{$ref:'#/definitions/a~0b'}}},
+  {$defs:{node:{type:'object',properties:{child:{$ref:'#/$defs/node'},age:{type:'integer',minimum:1}}}},
+   properties:{root:{$ref:'#/$defs/node'}}},
+  {type:'array',items:{type:'array',items:{$ref:'#/definitions/score'}},
+   definitions:{score:{type:'number',minimum:0}}},
+  {type:'object',properties:{child:{$ref:'#'}}},
+ ];
+ const artifacts=[
+  {value:3,child:{value:2,child:{value:-1}}},
+  {node:{flag:true,next:{flag:true,next:{flag:false}}}},
+  {name:'x'},
+  {count:2},
+  {root:{age:3,child:{age:0}}},
+  [[1,2,-1],[2,0]],
+  {child:{child:{child:{}}}},
+ ];
+ for(let i=0;i<schemas.length;i++)await compare(schemas[i],artifacts[i]);
+});
 test('runArtifactCommand CLI original output/exit/error precedence',async()=>{
  const artifactPath=join(fixtures,'artifact-cli.json'),schemaPath=join(fixtures,'schema-cli.json');
  for(const action of ['other','validate'])

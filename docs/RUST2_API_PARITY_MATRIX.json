@@ -2,15 +2,15 @@
   "disclaimer": "Static inventory only. Name matches and test imports do not establish behavior/API/side-effect parity. Pending modules are excluded from PORTING name-match totals but counted separately.",
   "summary": {
     "sourceTree": "3eb0afe0968e045c3778f31cc3bc9f706318fd62",
-    "rustTree": "6c0a8379cc2e383d4f7b036f5672a3466d785e99",
-    "sourceCount": 12,
+    "rustTree": "c93e1cd747678962af09ef79aa945f283c4398b0",
+    "sourceCount": 11,
     "pendingSourceModules": 0,
     "pendingRuntimeExportSymbols": 0,
-    "runtimeExportSymbols": 112,
-    "directNameMatches": 108,
+    "runtimeExportSymbols": 105,
+    "directNameMatches": 101,
     "unmappedRuntimeSymbols": 0,
     "runtimeConstructorReviews": 4,
-    "typeOrShapeReviewSymbols": 71,
+    "typeOrShapeReviewSymbols": 69,
     "filesWithUnmappedRuntime": 0,
     "filesWithoutDirectDiffImport": 2,
     "filesWithoutOtherRustReferences": 0
@@ -476,80 +476,6 @@
         },
         {
           "name": "shouldRecoverInteractiveDecision",
-          "kind": "function",
-          "static": "name-match"
-        }
-      ]
-    },
-    {
-      "source": "src/planner-runtime.ts",
-      "target": "rust/src/planner_runtime.rs",
-      "ledgerStatus": "PORTING",
-      "runtimeExports": 7,
-      "directNameMatches": 7,
-      "unmappedRuntime": [],
-      "typeOrShapeReview": [
-        "PlannerApplyValidationError.code",
-        "PlannerRuntimePorts"
-      ],
-      "directDiffImports": [
-        "rust/tests/head_to_head_planner_activation.mjs",
-        "rust/tests/head_to_head_planner_finish_public.mjs",
-        "rust/tests/head_to_head_planner_launch_public.mjs",
-        "rust/tests/head_to_head_planner_unblocks.mjs"
-      ],
-      "otherRustModuleReferences": [
-        "rust/src/bin/relay-rust2-parity/closure.rs",
-        "rust/src/bin/relay-rust2-parity/planner_finish_public.rs",
-        "rust/src/bin/relay-rust2-parity/planner_launch_public.rs",
-        "rust/src/planner_runtime_public.rs",
-        "rust/src/reconciler.rs"
-      ],
-      "exports": [
-        {
-          "name": "PlannerApplyValidationError",
-          "kind": "class",
-          "static": "name-match"
-        },
-        {
-          "name": "code",
-          "kind": "class-property",
-          "parent": "PlannerApplyValidationError",
-          "static": "review"
-        },
-        {
-          "name": "constructor",
-          "kind": "class-constructor",
-          "parent": "PlannerApplyValidationError",
-          "static": "name-match"
-        },
-        {
-          "name": "activateCommittedPlannerWork",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "PlannerRuntimePorts",
-          "kind": "type",
-          "static": "review"
-        },
-        {
-          "name": "drainPlannerUnblocks",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "retryPendingPlannerUnblocks",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "finishPlanner",
-          "kind": "function",
-          "static": "name-match"
-        },
-        {
-          "name": "launchPlanExecution",
           "kind": "function",
           "static": "name-match"
         }

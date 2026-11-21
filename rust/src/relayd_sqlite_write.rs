@@ -255,6 +255,53 @@ impl IsolatedSQLiteWriteHost {
         }
     }
 }
+impl IsolatedSQLiteWriteHost {
+    /// Automatic Reconciler Planner effect, reusing the exact native
+    /// PlannerLaunchPorts/finishPlanner Script runner as manual job.plan.
+    /// The Plan is already Graph-authorized and durably CAS-committed before
+    /// this volatile effect. Never create a second Plan or launch Codex.
+    fn launch_graph_planner_effect(&mut self,action:&Value)->Result<(),String>{
+        let id=field(action,"jobId");
+        let plan_id=field(action,"planId");
+        if id.is_empty()||plan_id.is_empty(){
+            return Err("Graph Planner launch requires exact Job/Plan ID".into());
+        }
+        let job=self.scoped(id)?.load_job(id)?
+            .ok_or("Graph Planner Job was not committed to SQLite")?;
+        let project=self.isolated_project(&job)?;
+        let plan=job.get("plans").and_then(Value::as_array)
+            .into_iter().flatten().find(|plan|field(plan,"id")==plan_id)
+            .ok_or("Graph Planner Plan was not committed to SQLite")?;
+        if field(plan,"status")!="PLANNING"{
+            // A stale planner effect may arrive after the first generation
+            // committed; never start a duplicate execution.
+            return Ok(());
+        }
+        let declared=project.join("agents/.shortcut/planner.agent.mjs");
+        let script=std::fs::canonicalize(&declared)
+            .map_err(|e|format!("Automatic Planner has no declared trusted Shortcut: {e}"))?;
+        if !script.starts_with(&project)||!script.is_file(){
+            return Err("Automatic Planner Shortcut escapes canonical Job Git root".into());
+        }
+        let interpreter=PathBuf::from(configured_script_interpreter()?);
+        let timeout=plan.get("timeoutMs").and_then(Value::as_u64)
+            .unwrap_or(60_000).clamp(100,86_400_000);
+        let graph=self.config.graph_directory.clone();
+        let store_directory=self.config.store_directory.clone();
+        let db=self.path();
+        let job_id=id.to_string();
+        let plan_id=plan_id.to_string();
+        std::thread::Builder::new().name(format!("rust-automatic-planner-{plan_id}"))
+            .spawn(move||{
+                if let Err(error)=run_isolated_script_planner(
+                    &db,&store_directory,&graph,&job_id,&plan_id,
+                    &script,&interpreter,timeout){
+                    eprintln!("Native automatic Planner {job_id}/{plan_id}: {error}");
+                }
+            }).map_err(|e|format!("Cannot spawn isolated automatic Planner: {e}"))?;
+        Ok(())
+    }
+}
 impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
     fn graph_directory(&self)->&Path{&self.config.graph_directory}
     fn store_directory(&self)->&Path{&self.config.store_directory}
@@ -666,6 +713,18 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         crate::dependency_revision_execution::reconcile_dependency_revisions(
             &self.config.graph_directory,&self.config.store_directory,
             &*self.scoped(id)?,id)?;
+        // Original Node Reconciler retries previously committed Planner
+        // cross-Job intents BEFORE scheduling fresh work. A registration
+        // error leaves that precise intent pending for the next wake.
+        let db=self.path();
+        let graph=self.config.graph_directory.clone();
+        let stores=self.config.store_directory.clone();
+        let mut registrar=|job_id:&str,request:&Value|{
+            crate::native_script_planner::register_isolated_planner_unblock(
+                &db,&stores,&graph,job_id,request)
+        };
+        crate::planner_runtime::retry_pending_planner_unblocks(
+            &*self.scoped(id)?,id,Some(&mut registrar),true)?;
         Ok(())
     }
     fn registered_agents(&mut self)->Result<Vec<Value>,String>{
@@ -680,6 +739,12 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         Ok(agents)
     }
     fn effect(&mut self,action:&Value)->Result<(),String>{
+        if matches!(field(action,"action"),"planner.launch"|"planner.recoverPending"){
+            // Both actions are selected by canonical planner-orchestration
+            // Graph. A restart recovery retries the existing Plan without
+            // allocating a second round or reusing a stale generation.
+            return self.launch_graph_planner_effect(action);
+        }
         if field(action,"action")=="effect.remoteDelivery"{
             return self.reconcile_remote_delivery(
                 field(action,"jobId"),field(action,"expectedMergedCommitSha"));

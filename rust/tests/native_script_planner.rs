@@ -181,3 +181,70 @@ fn installed_isolated_browser_worker_allows_real_planner_to_materialize_dependen
     assert_eq!(store.load_job("17").unwrap().unwrap(),finished);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn planner_cross_job_unblock_is_graph_authorized_and_committed_as_atomic_sqlite_pair(){
+ use agents_relay_rust2::native_script_planner::register_isolated_planner_unblock;
+ use std::process::Command;
+ let (root,project,db,script)=fixture(r#"export async function run() {
+   return {objective_status:'satisfied',assessment:'Cross-job request verified',
+     next_tasks:[],unblocks:[{repository:'dependent',prNumber:0,
+       jobId:'41',taskId:'71',resolutionMode:'merge'}]};
+ }"#);
+ for repository in ["project","dependent"] {
+  let directory=root.join(repository);
+  fs::create_dir_all(&directory).unwrap();
+  assert!(Command::new("git").arg("init").arg("-q").arg(&directory)
+    .status().unwrap().success());
+ }
+ let dependent_root=root.join("dependent");
+ let block=SQLiteRelayStore::open(&db,Some("17")).unwrap();
+ block.save_job(&job(&project)).unwrap();
+ seeded_plan(&block);
+ let related=SQLiteRelayStore::open_without_claim_reset(&db,Some("41")).unwrap();
+ related.save_job(&json!({"id":"41","repository":"dependent",
+  "projectRoot":dependent_root,"prNumber":0,"state":"ACTIVE",
+  "title":"Dependent isolated Job",
+  "createdAt":"2026-11-18T00:00:00.000Z",
+  "updatedAt":"2026-11-18T00:00:00.000Z","plans":[],
+  "tasks":[{"id":"71","jobId":"41","agentName":"implementation",
+    "kind":"work","state":"DRAFT","attempt":0,"maxAttempts":3,
+    "dependencies":[],"input":"Wait for upstream work",
+    "createdAt":"2026-11-18T00:00:00.000Z",
+    "updatedAt":"2026-11-18T00:00:00.000Z"}]})).unwrap();
+ let original_blocker=block.load_job("17").unwrap().unwrap();
+ let original_dependent=related.load_job("41").unwrap().unwrap();
+ let runtime=PathBuf::from(env::var("AGENTS_RELAY_SCRIPT_NODE").unwrap());
+ let completed=run_isolated_script_planner(
+    &db,&root.join("stores"),&graph(),"17","plan-1",
+    &script,&runtime,6000).unwrap();
+ assert_eq!(completed["plans"][0]["status"],"SUCCEEDED","{completed}");
+ assert_eq!(completed["plans"][0]["objectiveStatus"],"satisfied");
+ assert!(completed["plans"][0].get("pendingUnblocks")
+   .is_none_or(Value::is_null),"verified cross-Job unblock must be acked");
+ assert_eq!(completed["unblocks"][0]["jobId"],"41");
+ assert_eq!(completed["unblocks"][0]["taskId"],"71");
+ let related_now=related.load_job("41").unwrap().unwrap();
+ assert_eq!(related_now["tasks"][0]["blockedBy"]["jobId"],"17");
+ assert_eq!(related_now["tasks"][0]["blockedBy"]["repository"],"project");
+ assert_ne!(related_now,original_dependent);
+ let replay=register_isolated_planner_unblock(
+   &db,&root.join("stores"),&graph(),"17",
+   &json!({"repository":"dependent","prNumber":0,
+     "jobId":"41","taskId":"71","resolutionMode":"merge"}));
+ assert!(replay.is_ok(),"repeated registration is idempotent: {replay:?}");
+ let second=block.load_job("17").unwrap().unwrap();
+ assert_eq!(second["unblocks"].as_array().unwrap().len(),1);
+ let second_related=related.load_job("41").unwrap().unwrap();
+ assert_eq!(second_related["tasks"][0]["blockedBy"],related_now["tasks"][0]["blockedBy"]);
+ assert_ne!(second,original_blocker);
+ let foreign=register_isolated_planner_unblock(
+   &db,&root.join("stores"),&graph(),"17",
+   &json!({"repository":"wrong","prNumber":0,
+     "jobId":"41","taskId":"71","resolutionMode":"merge"}));
+ assert!(foreign.is_err(),"wrong dependent repository must fail closed");
+ assert_eq!(block.load_job("17").unwrap().unwrap(),second);
+ assert_eq!(related.load_job("41").unwrap().unwrap(),second_related);
+ drop(related);drop(block);
+ fs::remove_dir_all(root).unwrap();
+}

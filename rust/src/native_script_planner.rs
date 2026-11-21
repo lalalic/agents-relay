@@ -23,8 +23,60 @@ fn field<'a>(v:&'a Value,key:&str)->&'a str{
 fn store(db:&Path,id:&str)->Result<SQLiteRelayStore,String>{
     SQLiteRelayStore::open_without_claim_reset(db,Some(id))
 }
+/// Register one Planner-proposed cross-Job unblock only after both local
+/// repository roots and durable Task identities have been verified. Reuse
+/// the existing Graph blocker action and the SQLite two-Job CAS primitive;
+/// a partial registration or an unverified foreign Project never succeeds.
+pub fn register_isolated_planner_unblock(
+    db:&Path,store_directory:&Path,graph:&Path,
+    blocker_job_id:&str,request:&Value,
+)->Result<(),String>{
+    let dependent_id=field(request,"jobId");
+    let dependent_task_id=field(request,"taskId");
+    let expected_repository=field(request,"repository");
+    if blocker_job_id.is_empty()||dependent_id.is_empty()
+        ||dependent_task_id.is_empty()||expected_repository.is_empty(){
+        return Err("Planner unblock requires exact dependent repository, Job and Task".into());
+    }
+    let blockers=store(db,blocker_job_id)?;
+    let blocker=blockers.load_job(blocker_job_id)?
+        .ok_or("Planner blocker Job is absent")?;
+    let dependents=store(db,dependent_id)?;
+    let dependent=dependents.load_job(dependent_id)?
+        .ok_or("Planner dependent Job is absent")?;
+    if field(&dependent,"repository")!=expected_repository
+        ||dependent.get("prNumber").and_then(Value::as_i64).unwrap_or(0)
+            !=request.get("prNumber").and_then(Value::as_i64).unwrap_or(0){
+        return Err("Planner unblock dependent repository identity mismatch".into());
+    }
+    let trusted=std::fs::canonicalize(
+        store_directory.parent().ok_or("Planner Store parent missing")?)
+        .map_err(|e|e.to_string())?;
+    for job in [&blocker,&dependent] {
+        let root=std::fs::canonicalize(field(job,"projectRoot"))
+            .map_err(|e|format!("Invalid Planner cross-Job project root: {e}"))?;
+        if root==trusted||!root.starts_with(&trusted)
+            ||root.file_name().and_then(|v|v.to_str())!=Some(field(job,"repository"))
+            ||!root.join(".git").exists(){
+            return Err("Planner cross-Job unblock requires two independent trusted local Git roots".into());
+        }
+    }
+    if blocker_job_id==dependent_id
+        ||field(&blocker,"repository")==field(&dependent,"repository"){
+        return Err("Planner unblock must target a different independent Job/repository".into());
+    }
+    let proposed=crate::blockers::register_blocker_dependency(
+        graph,&blocker,&dependent,dependent_task_id,None,
+        request.get("resolutionMode").and_then(Value::as_str),None)?;
+    if proposed.blocker!=blocker || proposed.dependent!=dependent {
+        dependents.commit_blocker_recovery_pair(
+            &dependent,&proposed.dependent,Some(&blocker),&proposed.blocker)?;
+    }
+    Ok(())
+}
+
 struct PlannerPorts {
-    db:PathBuf,store_directory:PathBuf,
+    db:PathBuf,store_directory:PathBuf,graph:PathBuf,
     script:PathBuf,interpreter:PathBuf,
     owner:String,timeout_ms:u64,
     live:Option<String>,
@@ -63,6 +115,12 @@ impl PlannerFinishPorts for PlannerPorts {
             std::task::Poll::Pending=>Err(
                 "Native Planner context resolution unexpectedly suspended".into()),
         }
+    }
+    fn can_register_unblock(&self)->bool{self.db.is_file()}
+    fn register_unblock(&mut self,job_id:&str,request:&Value)
+        ->Result<(),String>{
+        register_isolated_planner_unblock(
+            &self.db,&self.store_directory,&self.graph,job_id,request)
     }
     fn registered_workers(&mut self)->Result<Vec<Value>,String>{
         // A Planner cannot promise a Codex/Z worker while those production
@@ -189,6 +247,7 @@ pub fn run_isolated_script_planner(
         .ok_or("Planner round not registered")?.clone();
     let ports=Arc::new(Mutex::new(PlannerPorts{
         db:db.to_path_buf(),store_directory:store_directory.to_path_buf(),
+        graph:graph.to_path_buf(),
         script:script.to_path_buf(),interpreter:interpreter.to_path_buf(),
         owner:format!("isolated-rust-planner-{}",std::process::id()),
         timeout_ms,live:None,

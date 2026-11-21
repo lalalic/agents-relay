@@ -64,6 +64,14 @@ fn validate(
     if depth > 128 {
         return;
     }
+    // Ajv draft-07 permits boolean schemas inside an object root.
+    // False rejects each instance at its own instancePath, true accepts.
+    // Both were silently accepted, breaking combinators and local references.
+    if schema == &Value::Bool(false){
+        error(errors,path,"boolean schema is false");
+        return;
+    }
+    if schema == &Value::Bool(true){return;}
     let Some(map) = schema.as_object() else {
         return;
     };
@@ -309,7 +317,7 @@ fn validate(
                         );
                     }
                 }
-            } else if items.is_object() {
+            } else if items.is_object() || items.is_boolean() {
                 for (index, item) in list.iter().enumerate() {
                     validate(
                         item,

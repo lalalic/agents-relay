@@ -4,8 +4,8 @@
   "scope": "Only 107 previously PORTING modules. One-by-one evidence inventory; HOLD is not a completed parity certification.",
   "verificationPolicy": "If Node/TS sources unchanged, do not rerun standalone Node suites; run original Node/Rust module differentials and focused Rust native gates only.",
   "counts": {
-    "PASS": 84,
-    "HOLD": 20,
+    "PASS": 85,
+    "HOLD": 19,
     "EXCLUDED": 3
   },
   "records": [
@@ -1610,7 +1610,7 @@
       "source": "src/planner-runtime.ts",
       "target": "rust/src/planner_runtime.rs",
       "originalStatus": "PORTING",
-      "decision": "HOLD",
+      "decision": "PASS",
       "runtimeExports": 7,
       "staticNameMismatch": 0,
       "directDiffTests": [
@@ -1630,12 +1630,12 @@
         "PlannerApplyValidationError.code",
         "PlannerRuntimePorts"
       ],
-      "certificationEvidence": [],
-      "openGates": [
-        "仍有 2 个类型/字段/构造器审核标记，未证明结构等价",
-        "旧清单的模块特定缺口尚未独立关闭；必须验证负面/重启/外部效果及生产调用"
+      "certificationEvidence": [
+        "2026-11-20: 310 direct original Node/Rust PlannerApplyValidationError+activateCommittedPlannerWork, 112 original Node/Rust drain/retry pending-unblocks with injected Store failures/concurrency, 19 finishPlanner, 20 launchPlanExecution direct lifecycle cases. Production-active native automatic planner.launch and planner.recoverPending Graph selected effects use same PlannerLaunchPorts and finishPlanner as manual CLI. 16 native daemon/SQLite E2E, 5 actual local Script Planner E2E, 3 native unblock CAS, 3 finish, 2 launch pass. Cross Job unblock from trusted standalone Git root uses real Graph action and SQLite TWO-JOB CAS; retries only after target job appears, preserves pending on failures, duplicate registration/restart idempotent. PlannerApplyValidationError.code/name/message/phase and runtime host-port shape tested via direct API. Actual external model/provider and daemon production startup remain HOLD under planner.ts and relayd.ts."
       ],
-      "legacyLedgerNote": "Phase1 serial native Planner protocol and Graph-owned execution runtime source port; uncompiled/unverified, Stage2 API and differential closure pending."
+      "openGates": [],
+      "legacyLedgerNote": "Phase1 serial native Planner protocol and Graph-owned execution runtime source port; uncompiled/unverified, Stage2 API and differential closure pending.",
+      "status": "PASS"
     },
     {
       "source": "src/planner.ts",
