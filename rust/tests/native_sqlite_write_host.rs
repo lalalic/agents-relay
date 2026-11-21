@@ -769,3 +769,78 @@ fn live_committed_graph_event_reaches_actual_nats_activity_transport() {
     let _=child.kill();let _=child.wait();
     result
 }
+
+#[test]
+fn native_live_daemon_drains_committed_script_outbox_exactly_once_to_real_nats() {
+    use agents_relay_rust2::{
+        events::{event_for,NatsEventBus},
+        execution_event_identity::execution_event_source,
+    };
+    use std::{net::TcpListener,process::{Command,Stdio},
+        sync::{Arc,mpsc},thread,time::{Duration,Instant}};
+    if Command::new("nats-server").arg("-v").output().is_err(){
+        eprintln!("SKIP: optional nats-server binary unavailable");return;
+    }
+    let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+    let port=listener.local_addr().unwrap().port();
+    drop(listener);
+    let mut broker=Command::new("nats-server").args(
+        ["-a","127.0.0.1","-p",&port.to_string()])
+        .stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
+    let result=(||{
+        let url=format!("nats://127.0.0.1:{port}/");
+        let bus=NatsEventBus::new(Some(&url),None).unwrap();
+        let started=Instant::now();
+        while bus.ping().is_err(){
+            assert!(started.elapsed()<Duration::from_secs(5));
+            thread::sleep(Duration::from_millis(30));
+        }
+        let (tx,rx)=mpsc::channel();
+        let subscription=bus.subscribe("17",Arc::new(move|event|{
+            tx.send(event.clone()).map_err(|e|e.to_string())
+        })).unwrap();
+        thread::sleep(Duration::from_millis(100));
+        let (root,config)=fixture();
+        fs::create_dir_all(&config.workspace_root).unwrap();
+        let db=root.join("relay.sqlite");
+        let scope=SQLiteRelayStore::open(&db,Some("17")).unwrap();
+        scope.save_job(&job()).unwrap();
+        let exec="fixture-worker-lease-0001";
+        let event_key=format!("script-event/17/8/{exec}/task.started");
+        let mut event=event_for("17","8",None,"task.started","running",
+            "Test-owned verified Script started",Some("orchestrator"),None,None);
+        event["source"]["id"]=json!(execution_event_source("17","8",exec));
+        event["source"]["agent"]=json!("fixture");
+        let committed=scope.commit_workflow_mutation_and_events(
+            "17",|mut row|{
+                row["state"]=json!("ACTIVE");
+                row["tasks"]=json!([{"id":"8","jobId":"17","state":"RUNNING",
+                    "executionId":exec,"leaseOwner":"test-only"}]);
+                Ok(row)
+            },&[json!({"key":event_key,"event":event})]).unwrap();
+        assert_eq!(committed["state"],"ACTIVE");
+        scope.close().unwrap();
+        let mut live=IsolatedSQLiteWriteHost::new_live(config);
+        live.set_loopback_model_nats(&url).unwrap();
+        assert_eq!(live.flush_workflow_events().unwrap(),1);
+        let observed=rx.recv_timeout(Duration::from_secs(3))
+            .expect("real NATS did not observe committed Script outbox");
+        assert_eq!(observed["event_id"],event["event_id"]);
+        assert_eq!(observed["source"]["id"],event["source"]["id"]);
+        assert_eq!(observed["type"],"task.started");
+        assert_eq!(live.flush_workflow_events().unwrap(),0,
+            "published SQLite event must not be sent again");
+        assert!(rx.recv_timeout(Duration::from_millis(350)).is_err(),
+            "repeated flush delivered duplicate Task started");
+        let check=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap();
+        let status:String=check.db.query_row(
+            "SELECT state FROM workflow_event_outbox WHERE event_key=?",
+            [event_key],|r|r.get(0)).unwrap();
+        assert_eq!(status,"published");
+        drop(check);
+        subscription.unsubscribe();drop(live);drop(bus);
+        fs::remove_dir_all(root).unwrap();
+    })();
+    let _=broker.kill();let _=broker.wait();
+    result
+}

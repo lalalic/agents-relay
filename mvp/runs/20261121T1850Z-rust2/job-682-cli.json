@@ -1,0 +1,79 @@
+{
+  "jobId": "682",
+  "repository": "rust2-script-d-e2e-20261121",
+  "state": "ACTIVE",
+  "reviewEnabled": true,
+  "headSha": "a711f1c05d0f53b4f6b8fc6518a434a28fcbc364",
+  "localMerge": {
+    "sourceRef": "refs/heads/relay/job-682-ec1c7d93ba05",
+    "targetRef": "refs/heads/main",
+    "status": "pending",
+    "attempts": 0
+  },
+  "tasks": [
+    {
+      "id": "2072",
+      "agentName": null,
+      "state": "SUCCEEDED",
+      "attempt": 0,
+      "error": null,
+      "resultSummary": "DAG completed"
+    },
+    {
+      "id": "2073",
+      "agentName": "stage-a",
+      "state": "SUCCEEDED",
+      "attempt": 1,
+      "error": null,
+      "resultSummary": "Script Worker completed"
+    },
+    {
+      "id": "2074",
+      "agentName": "troubleshooter",
+      "state": "CANCELLED",
+      "attempt": 0,
+      "error": "Superseded by manual retry of 2073",
+      "resultSummary": null
+    },
+    {
+      "id": "2075",
+      "agentName": "stage-b",
+      "state": "SUCCEEDED",
+      "attempt": 1,
+      "error": null,
+      "resultSummary": "Script Worker completed"
+    },
+    {
+      "id": "2076",
+      "agentName": "stage-c",
+      "state": "SUCCEEDED",
+      "attempt": 1,
+      "error": null,
+      "resultSummary": "Script Worker completed"
+    },
+    {
+      "id": "2077",
+      "agentName": "job-acceptance-reviewer",
+      "state": "SUCCEEDED",
+      "attempt": 1,
+      "error": null,
+      "resultSummary": "task.completed"
+    },
+    {
+      "id": "2078",
+      "agentName": "troubleshooter",
+      "state": "CANCELLED",
+      "attempt": 1,
+      "error": "Superseded by manual retry of 2077",
+      "resultSummary": null
+    },
+    {
+      "id": "2083",
+      "agentName": "implementation",
+      "state": "QUEUED",
+      "attempt": 2,
+      "error": null,
+      "resultSummary": null
+    }
+  ]
+}

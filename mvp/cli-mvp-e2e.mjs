@@ -116,7 +116,7 @@ function successScript(name, previous) {
   const old = previous ? join(project, `${previous}.txt`) : null;
   script(name, `import {readFileSync,writeFileSync,appendFileSync} from 'node:fs';\nexport async function run({input}) {\n${old ? `if (!readFileSync(${JSON.stringify(old)},'utf8').includes('done')) throw Error('dependency missing');` : ''}\nwriteFileSync(${JSON.stringify(target)},'done '+input.executionId+'\\n');\nappendFileSync(${JSON.stringify(join(project, 'worker-invocations.jsonl'))},JSON.stringify({agent:${JSON.stringify(name)},executionId:input.executionId,at:Date.now()})+'\\n');\nreturn {status:'COMPLETED',output:{agent:${JSON.stringify(name)},executionId:input.executionId},artifacts:{file:${JSON.stringify(target)}}};\n}\n`);
 }
-function graphJob(title, graph, args = ['--no-review','--no-auto-merge']) {
+function graphJob(title, graph, args = ['--no-review']) {
   const key = ++sequence;
   const graphFile = join(root, `graph-${key}.mmd`);
   const inputFile = join(root, `input-${key}.md`);

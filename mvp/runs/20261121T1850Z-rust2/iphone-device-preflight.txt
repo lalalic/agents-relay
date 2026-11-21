@@ -1,0 +1,4 @@
+Name                  Hostname                             Identifier                             State         Model
+-------------------   ----------------------------------   ------------------------------------   -----------   --------------------------
+17                    17.coredevice.local                  FC6AEF41-F3A8-5176-8FEB-841232FF2237   unavailable   iPhone 17 (iPhone18,3)
+Cheng’s Apple Watch   Chengs-AppleWatch.coredevice.local   35B47ECA-00AF-53BC-89B1-CCFA2414783A   unavailable   Apple Watch SE (Watch5,11)

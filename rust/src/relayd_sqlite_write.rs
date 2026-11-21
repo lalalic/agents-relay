@@ -83,6 +83,10 @@ pub struct IsolatedSQLiteWriteHost {
     // keys fence replay on process recreation.
     model_event_ingress_enabled:bool,
     model_webhelm_canary:Option<IsolatedWebHelmConfig>,
+    // Explicit non-browser Codex execution path. No PATH lookup/Node relay.
+    model_codex_executable:Option<PathBuf>,
+    // Opt-in is restricted to only the explicit E2E repository names.
+    model_codex_allowed_repositories:HashSet<String>,
     model_event_cursor:HashMap<String,i64>,
     // NATS callback thread delivers only immutable JSON into a bounded
     // in-process queue. Graph/SQLite is always mutated on daemon thread.
@@ -97,6 +101,7 @@ pub struct IsolatedSQLiteWriteHost {
     model_nats_wake:std::sync::Arc<std::sync::atomic::AtomicBool>,
     model_nats_last_retry:Option<std::time::Instant>,
     model_nats_pending:HashMap<String,Vec<Value>>,
+    workflow_outbox_last_poll:Option<std::time::Instant>,
     // Observational SSE de-duplication: an unchanged Graph/SQLite snapshot
     // must not trigger an extra render on every daemon wake.
     last_sse_snapshot:HashMap<String,String>,
@@ -108,6 +113,8 @@ impl IsolatedSQLiteWriteHost {
             live_workers:std::sync::Arc::new(std::sync::Mutex::new(DaemonLiveWorkers::default())),
             escalation_notifier:None,event_history_api:None,
             model_event_ingress_enabled:false,model_webhelm_canary:None,
+            model_codex_executable:None,
+            model_codex_allowed_repositories:HashSet::new(),
             model_event_cursor:HashMap::new(),
             model_nats_subscription:None,model_nats_publisher:None,
             model_nats_receiver:None,
@@ -115,6 +122,7 @@ impl IsolatedSQLiteWriteHost {
             model_nats_token:None,
             model_nats_wake:std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             model_nats_last_retry:None,model_nats_pending:HashMap::new(),
+            workflow_outbox_last_poll:None,
             last_sse_snapshot:HashMap::new()}
     }
     /// Construct a Graph/SQLite writer for the canonical store only after
@@ -249,6 +257,43 @@ impl IsolatedSQLiteWriteHost {
             return Err("Live WebHelm Worker requires explicit Events Bus ingress".into());
         }
         self.model_webhelm_canary=Some(config);
+        Ok(())
+    }
+    /// The native Codex provider is non-browser and executes only inside the
+    /// canonical Rust-owned live store. Credentials belong to Codex itself;
+    /// Relay never imports or places them in a Task/CLI argument.
+    pub fn set_live_codex_executable(
+        &mut self,raw:&str,allowed_repositories:&str,
+    )->Result<(),String>{
+        if !self.live_store || !self.model_event_ingress_enabled{
+            return Err("Live Codex requires native owner and trusted EventBus".into());
+        }
+        let declared=Path::new(raw);
+        if !declared.is_absolute(){
+            return Err("Live Codex executable must be absolute".into());
+        }
+        let path=std::fs::canonicalize(declared)
+            .map_err(|_|"Live Codex executable unavailable")?;
+        if !path.is_file(){
+            return Err("Live Codex executable is not a regular file".into());
+        }
+        #[cfg(unix)]{
+            use std::os::unix::fs::PermissionsExt;
+            if path.metadata().map_err(|e|e.to_string())?
+                .permissions().mode()&0o111==0{
+                return Err("Live Codex executable is not executable".into());
+            }
+        }
+        let allowed=allowed_repositories.split(',').map(str::trim)
+            .filter(|s|!s.is_empty()).collect::<Vec<_>>();
+        if allowed.is_empty()||allowed.iter().any(|name|
+            *name=="."||*name==".."||!name.bytes().all(|b|
+                b.is_ascii_alphanumeric()||matches!(b,b'-'|b'_'|b'.'))){
+            return Err("Live Codex requires a safe nonempty repository allowlist".into());
+        }
+        self.model_codex_allowed_repositories=
+            allowed.into_iter().map(str::to_owned).collect();
+        self.model_codex_executable=Some(path);
         Ok(())
     }
     /// Explicit opt-in, isolated loopback HTTP history and/or local NATS
@@ -1241,6 +1286,67 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
     fn poll_model_events(&mut self,id:&str)->Result<usize,String>{
         self.poll_isolated_model_worker_events(id)
     }
+    fn flush_workflow_events(&mut self)->Result<usize,String>{
+        let Some(publisher)=self.model_nats_publisher.as_ref() else {
+            return Ok(0);
+        };
+        if !self.live_store{return Ok(0);}
+        use rusqlite::{Connection,params};
+        // One bounded batch each tick; never open every historical Job.
+        // An event is already durably committed with its Task generation.
+        // A failure leaves that exact event pending for safe replay.
+        let db=Connection::open(self.path()).map_err(|e|e.to_string())?;
+        let mut query=db.prepare(
+            "SELECT event_key,event_id,payload_json FROM workflow_event_outbox
+             WHERE state='pending' ORDER BY created_at,event_key LIMIT 64"
+        ).map_err(|e|e.to_string())?;
+        let rows=query.query_map([],|r|Ok((r.get::<_,String>(0)?,
+            r.get::<_,String>(1)?,r.get::<_,String>(2)?)))
+            .map_err(|e|e.to_string())?
+            .collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
+        drop(query);
+        let mut count=0;
+        let mut emitted=Vec::new();
+        for (key,kind,raw) in rows{
+            let event:Value=serde_json::from_str(&raw)
+                .map_err(|e|format!("Durable Worker event JSON invalid: {e}"))?;
+            let event_job=field(&event,"job_id");
+            let event_task=field(&event,"task_id");
+            let event_kind=field(&event,"type");
+            let event_id=field(&event,"event_id");
+            let generation=event.pointer("/source/id").and_then(Value::as_str)
+                .unwrap_or("");
+            let expected_prefix=format!("script-event/{event_job}/{event_task}/");
+            let valid_generation=key.strip_prefix(&expected_prefix)
+                .and_then(|suffix|suffix.strip_suffix(&format!("/{event_kind}")))
+                .filter(|execution|!execution.is_empty())
+                .is_some_and(|execution|generation==
+                    crate::execution_event_identity::execution_event_source(
+                        event_job,event_task,execution));
+            if event["version"]!=1||event_kind!=kind
+                ||event_id.is_empty()||!valid_generation
+                ||!matches!(event_kind,"task.started"|"task.completed"|"task.failed"){
+                return Err(format!(
+                    "Refusing invalid/out-of-scope durable Worker event {key}"));
+            }
+            publisher.publish(&event)?;
+            // NATS accepts the earlier PUB before responding to this PING.
+            // An uncertain disconnect does not acknowledge the SQLite row;
+            // any later replay retains the SAME event_id for consumer de-dupe.
+            publisher.ping()?;
+            let changed=db.execute(
+                "UPDATE workflow_event_outbox
+                 SET state='published',published_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                 WHERE event_key=? AND state='pending'",params![key]
+            ).map_err(|e|e.to_string())?;
+            if changed==1{
+                count+=1;
+                emitted.push(event);
+            }
+        }
+        for event in emitted{self.emit(event);}
+        Ok(count)
+    }
     fn has_pending_model_events(&mut self)->bool{
         // NATS disconnect does not create a new MSG callback. Check the
         // subscription's actual reader liveness on the watchdog sleep path,
@@ -1258,7 +1364,23 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         let native_wake=std::mem::take(&mut self.wake_pending);
         let provider_wake=self.model_nats_wake.swap(
             false,std::sync::atomic::Ordering::AcqRel);
-        native_wake||provider_wake
+        if native_wake||provider_wake{return true;}
+        // Out-of-process Worker commits have no in-process daemon wake.
+        // Probe one indexed outbox row at a bounded interval rather than
+        // waiting for the five-minute Pool scan (or reparsing all Jobs).
+        if self.live_store&&self.model_nats_publisher.is_some()
+            &&self.workflow_outbox_last_poll.is_none_or(|instant|
+                instant.elapsed()>=std::time::Duration::from_millis(250)){
+            self.workflow_outbox_last_poll=Some(std::time::Instant::now());
+            if let Ok(db)=rusqlite::Connection::open_with_flags(self.path(),
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY){
+                if db.query_row(
+                    "SELECT 1 FROM workflow_event_outbox WHERE state='pending' LIMIT 1",
+                    [],|row|row.get::<_,i64>(0))
+                    .is_ok(){return true;}
+            }
+        }
+        false
     }
     fn prepare_dependency_revisions(&mut self,id:&str)->Result<(),String>{
         let source=self.scoped(id)?.load_job(id)?
@@ -1316,10 +1438,91 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         // transport before a Task generation can be reserved. No Node Relay
         // fallback, no implicit production WebHelm, no receipt-based success.
         let adapter=field(task,"adapter");
-        if adapter!="script"&&adapter!="chatgpt"{
+        if adapter!="script"&&adapter!="chatgpt"&&adapter!="codex"{
             return Err(denied("unsupported model Worker adapter"));
         }
-        let _project_root=self.isolated_project(&original)?;
+        let project_root=self.isolated_project(&original)?;
+        if adapter=="codex"{
+            if !self.model_codex_allowed_repositories.contains(
+                field(&original,"repository")){
+                return Err("Native Codex provider not authorized for this repository".into());
+            }
+            let executable=self.model_codex_executable.clone()
+                .ok_or("Non-browser Codex adapter not explicitly configured")?;
+            let candidates=json!([
+                {"id":"codex","name":"codex","capabilities":["model","codex"]}
+            ]);
+            let mut ready=original.clone();
+            if task.get("routing").is_none_or(Value::is_null){
+                let route=crate::reconciler_review::route_task_for_execution(
+                    &self.config.graph_directory,&self.config.profile_home,
+                    &self.config.policy_path,&self.config.router_rules_path,
+                    &original,task,candidates.as_array().expect("static candidates"),
+                    &[],None,&json!({"decisionMode":"off"}))?;
+                if route.job==original{
+                    return Err("Model Router did not select a real Codex route".into());
+                }
+                if route.job["tasks"].as_array().into_iter().flatten()
+                    .find(|t|field(t,"id")==task_id)
+                    .is_none_or(|t|field(t,"adapter")!="codex"
+                        ||t.get("routing").is_none_or(Value::is_null)){
+                    return Err("Native non-browser route selected an unsupported adapter".into());
+                }
+                ready=self.persist_exact(id,&original,&route.job)?;
+                // Route events only after the exact durable Graph CAS.
+                for event in &route.events{
+                    WorkspaceControlBackend::publish(self,event)?;
+                }
+            }
+            let mut reconciler=Reconciler::new(
+                self.config.graph_directory.clone(),self.config.store_directory.clone(),
+                self.config.profile_home.clone(),self.config.policy_path.clone(),
+                self.config.router_rules_path.clone(),
+                json!({"owner":format!("live-rust-codex-{}",std::process::id()),
+                    "maxConcurrent":self.config.concurrency,"leaseMs":self.config.lease_ms}),
+            );
+            let claimed=reconciler.claim_task_execution(&ready,task_id,
+                self.config.lease_ms)?.ok_or("Codex Task no longer eligible for launch")?;
+            self.persist_exact(id,&ready,&claimed)?;
+            let task=claimed["tasks"].as_array().into_iter().flatten()
+                .find(|t|field(t,"id")==task_id).cloned()
+                .ok_or("Claimed Codex Task disappeared")?;
+            let db=self.path();
+            let graph=self.config.graph_directory.clone();
+            let job_id=id.to_string();let task_id=task_id.to_string();
+            let execution_id=field(&task,"executionId").to_string();
+            let audit_path=self.config.store_directory.parent()
+                .map(|parent|parent.join("decision-audit.jsonl"));
+            let profile_home=Some(self.config.profile_home.clone());
+            let live_workers=std::sync::Arc::clone(&self.live_workers);
+            let failure_state=std::sync::Arc::clone(&self.failure_state);
+            live_workers.lock().expect("daemon Worker lock poisoned")
+                .register(&task_id,&execution_id);
+            std::thread::Builder::new().name(format!("rust-codex-task-{task_id}"))
+                .spawn(move||{
+                    let result=crate::native_codex_execution::execute_claimed_codex(
+                        &db,&claimed,&task,&executable,&project_root);
+                    if let Err(error)=result{
+                        eprintln!("Native Codex Worker {job_id}/{task_id}: {error}");
+                        let phase=classify_native_launch_phase(&error);
+                        let mut ports=DaemonWorkerFailurePorts::new(
+                            db.clone(),graph.clone(),Some(job_id.clone()),
+                            None,audit_path.clone(),profile_home.clone(),
+                            candidates.as_array().cloned().unwrap_or_default(),
+                            std::sync::Arc::clone(&live_workers),
+                            std::sync::Arc::clone(&failure_state));
+                        if let Err(recovery)=crate::worker_failure_recovery::
+                            handle_worker_launch_failure(&mut ports,&job_id,&task_id,
+                                Some(&execution_id),&json!(error),phase){
+                            eprintln!("Native Codex Worker recovery {job_id}/{task_id}: {recovery}");
+                        }
+                    }else{
+                        live_workers.lock().expect("Codex live Worker lock poisoned")
+                            .remove(&task_id);
+                    }
+                }).map_err(|e|format!("Cannot launch Rust Codex Worker: {e}"))?;
+            return Ok(());
+        }
         if adapter=="chatgpt"{
             let config=match &self.model_webhelm_canary{
                 Some(canary)=>canary.clone(),

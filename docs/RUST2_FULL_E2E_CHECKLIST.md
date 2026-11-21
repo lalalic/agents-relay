@@ -88,6 +88,17 @@ For every case save real CLI/API input, Graph transition sequence, authoritative
 
 **Non-WebHelm D subtests (verified):** native Script process execution **4/4 PASS**; native daemon dependency-ordered A→B Script chain **1/1 PASS**; planned Script Job terminal state **1/1 PASS**; immutable local Git merged terminal **1/1 PASS**. Evidence: \`/tmp/rust2-D-script-worker.log\`, \`/tmp/rust2-D-dependency-e2e.log\`, \`/tmp/rust2-D-terminal-e2e.log\`, \`/tmp/rust2-D-git-merge-e2e.log\`. Full three-worker A→B→C and real Project Runner Calculator remain pending; these subsets do **not** authorize a D PASS.
 
+### Four real MVP acceptance cases (2026-11-21 request)
+
+| MVP | Required real acceptance | Actual status |
+| --- | --- | --- |
+| **D-MVP-1 — Calculator happy path** | Actual \`neo project run\` on clean calculator seed \`ae2f833\`; non-Shortcut Model Builder produces new \`index.html\`; independent browser/QA and Final Review; **Job COMPLETED**, no failed Task. | **PENDING** — do not reuse previous failed Job 681 as a happy-path pass. |
+| **D-MVP-2 — Calculator error → Troubleshooter** | Independently seeded calculator Job, one actual failed implementation and a **real Troubleshooter Task**; repair/retry, QA, Final Review, **Job COMPLETED** with failure and recovery lineage. | **PENDING** — Job 681 currently demonstrates failed Builder/queued or failed Troubleshooter, not repaired completion. |
+| **D-MVP-3 — DAG with Shortcuts** | Genuine \`neo project run\` three-node A→B→C with real owned \`.shortcut/*.agent.mjs\`; correlated Worker lifecycle events and Review; **Job COMPLETED**. | **PARTIAL** — live Job 682's A/B/C and Coordinator \`SUCCEEDED\`, real NATS + Mobile Activities; native Codex Final Reviewer previously \`FAILED\`, so Job remains \`ACTIVE\`. |
+| **D-MVP-4 — DAG without Shortcuts** | Genuine \`neo project run\` with at least one Model-only agent lacking a source-owned Shortcut; native Rust Codex-owned worker, correlated start/terminal Events, actual outputs, Review and **Job COMPLETED**. | **PENDING** — native non-WebHelm Codex Worker transport being ported; no real terminal verified yet. |
+
+All four MVPs must be evidenced separately with exact Job ID, source Git SHA, Task/Review lineage, real artifacts, EventBus history, and terminal Job readback. Test-only fake model/broker/SQLite outcomes never count as live MVP passes. Gate C's WebHelm Browser Worker remains deferred.
+
 ## Gate D-ProjectRunner — real Project Runner calculator Job (**after native D core, before E**)
 
 Use the **existing calculator acceptance project** at `/Users/chengli/Workspace/html-calculator-rust-relay` and its source-of-truth `job-objective.md` / `AGENTS.md`. The current repository already contains a calculator produced by an earlier Rust Worker run; its `qa/verification.md` records `jobId=91`, Model Task `101` and Script QA Task `102` as successful **but the Job remained ACTIVE pending Final Review**. This is prior partial evidence, **not** a Project Runner PASS.
@@ -160,3 +171,14 @@ Statuses below mean **complete gate** status; a green subtest does not turn its 
 - **Full acceptance: 2/9 gates PASS** for their stated scoped criteria (A and B); **7 gates not yet PASS**. The exhaustive suites deferred from A/B remain blocking requirements under D/E/F/G. An intention to finish today is not acceptance evidence.
 
 **Definition of DONE:** all **nine** gates (A, B, B-Dashboard, C, D, D-ProjectRunner, E, F and G) PASS at a reviewed and identified build SHA; real external provider + correlated terminal; a **new calculator Project Runner Job independently reviewed and COMPLETED**; real iPhone UI; exclusive production ownership; proven rollback; original Node state preserved. Only then reconsider upgrading src/reconciler-runtime.ts and src/relayd.ts from PORTING to PASS and declare PORTING=0.
+
+### 2026-11-21 autonomous Rust2 native MVP follow-up (verified as of 18:55Z)
+
+- **Rust baseline regression PASS:** `native_codex_worker` 2/2; `native_sqlite_write_host` 18/18; `native_real_nats_transport` 6/6; `native_daemon_binary_readonly` 23/23; Rust library 101/101, build successful (150 tests). After adding canonical non-browser managed prompt, 3/3 native Codex + 18/18 SQLite + 6/6 NATS + 101/101 library + 23/23 native daemon and build passed. Final rebuilt native binary quick CLI MVP 3/3 passed again.
+- **CLI smoke 3/3 PASS:** canonical Graph needs autoMerge for terminal; corrected the Node-based *test harness only*, not the stable Node daemon. Real CLI A→B→C Script worker output, strict order, and Job terminal after daemon restart all verified.
+- **WebHelm Dashboard 3/3 PASS:** real Chrome Job 682, Task 2073 lifecycle/events and accessible JEL nodes; only owned browser Session released.
+- **Neo Mobile iPhoneHelm 0/4 BLOCKED:** physical iPhone 17 reports `unavailable` in CoreDevice, preventing authorized iPhoneHelm Session. No simulator substituted.
+- **Gate D not PASS:** genuine Jobs 681–684 remain ACTIVE: Builder failure→Troubleshooter, Shortcut Final Review CHANGES REQUIRED with genuine revision Task, Calculator generated artifact but invalid DAG result, and model-only Agent A execution/reroute. No Job COMPLETED claim.
+- **Provider blocker:** live `glm-5.3-flash` quota exhausted on 2026-11-21 (reset advertised 2026-11-22 07:32:55); native routing visibly selected alternative for some retries. Do not fabricate provider success.
+- **Next native hotfix deployment:** canonical managed Codex Agent/Event contract compiled and regression-tested, **not restarted live while in-flight Rust Workers own genuine model leases**. Preserve PM2 and live SQLite; deploy only after safe no-active-worker boundary.
+- **Evidence:** `mvp/runs/20261121T1850Z-rust2/summary.md`, CLI report, physical CoreDevice inventory, Rust test logs, and live CLI Job snapshots. This is an honest partial acceptance, NOT `PORTING=0` or `10/10`.

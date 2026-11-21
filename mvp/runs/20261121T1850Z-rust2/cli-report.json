@@ -1,0 +1,45 @@
+{
+  "schema": "agents-relay-cli-mvp.v1",
+  "mode": "quick",
+  "cliBin": "/Users/chengli/Workspace/agents-relay/rust/target/debug/agents-relay-rust",
+  "daemonBin": "/Users/chengli/Workspace/agents-relay/rust/target/debug/agents-relayd-rust",
+  "root": "/private/var/folders/pr/rymvcpd54mzdg4kv34r3ht300000gn/T/agents-relay-cli-mvp-bTc9gx",
+  "results": [
+    {
+      "name": "01 Create-only Job",
+      "status": "PASS",
+      "ms": 135,
+      "detail": {
+        "jobId": "1"
+      }
+    },
+    {
+      "name": "05 Real Script A→B→C",
+      "status": "PASS",
+      "ms": 5888,
+      "detail": {
+        "jobId": "2",
+        "childTaskIds": [
+          "2",
+          "3",
+          "4"
+        ],
+        "invocations": 3
+      }
+    },
+    {
+      "name": "08 Job COMPLETED Readback",
+      "status": "PASS",
+      "ms": 406,
+      "detail": {
+        "jobId": "2"
+      }
+    }
+  ],
+  "summary": {
+    "PASS": 3,
+    "FAIL": 0,
+    "BLOCKED": 0,
+    "expected": 3
+  }
+}

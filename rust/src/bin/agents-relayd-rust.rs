@@ -54,6 +54,22 @@ fn execute(args:&[String])->Result<(),String>{
     let live_webhelm=args.iter().any(|flag|matches!(flag.as_str(),
         "--live-webhelm-socket"|"--live-webhelm-executable"
         |"--live-webhelm-workspace"));
+    // PM2 --update-env is a safer activation path than replacing the running
+    // daemon's authoritative argv. Both values are explicit and repository
+    // scoped; an absent or partially configured pair never enables a worker.
+    let codex_exec_env=std::env::var("AGENTS_RELAY_LIVE_CODEX_EXECUTABLE")
+        .unwrap_or_default();
+    let codex_scope_env=std::env::var("AGENTS_RELAY_LIVE_CODEX_REPOSITORIES")
+        .unwrap_or_default();
+    let codex_exec=if !arg("--live-codex-executable").is_empty(){
+        arg("--live-codex-executable")
+    }else{&codex_exec_env};
+    let codex_scope=if !arg("--live-codex-allow-repositories").is_empty(){
+        arg("--live-codex-allow-repositories")
+    }else{&codex_scope_env};
+    let live_codex=args.iter().any(|flag|matches!(flag.as_str(),
+        "--live-codex-executable"|"--live-codex-allow-repositories"))
+        ||!codex_exec_env.is_empty()||!codex_scope_env.is_empty();
     let trust_events=if live_write{
         args.iter().any(|flag|flag=="--trust-model-events")
     }else{
@@ -71,8 +87,13 @@ fn execute(args:&[String])->Result<(),String>{
     if !live_write&&args.iter().any(|flag|matches!(flag.as_str(),
         "--trust-model-events"|"--model-nats-url"|"--model-nats-token-file"
         |"--live-webhelm-socket"|"--live-webhelm-executable"
-        |"--live-webhelm-workspace")){
+        |"--live-webhelm-workspace"|"--live-codex-executable"
+        |"--live-codex-allow-repositories")){
         return Err("Live Model/EventBus options require --live-store-dir".into());
+    }
+    if live_codex&&(!live_write||codex_exec.is_empty()
+        ||codex_scope.is_empty()||!trust_events||nats.is_empty()){
+        return Err("Live non-browser Codex Worker requires --live-store-dir, an explicit absolute executable, and trusted NATS Events Bus".into());
     }
     if live_webhelm&&(!live_write
         ||arg("--live-webhelm-socket").is_empty()
@@ -106,7 +127,8 @@ fn execute(args:&[String])->Result<(),String>{
             "--trust-isolated-model-events"|"--isolated-nats-token-file"
             |"--isolated-nats-url"|"--event-history-api"
             |"--canary-webhelm-socket"|"--canary-webhelm-executable"
-            |"--canary-webhelm-workspace"))){
+            |"--canary-webhelm-workspace"|"--live-codex-executable"
+            |"--live-codex-allow-repositories"))){
         return Err("Production shadow is read-only and cannot attach EventBus or Worker inputs".into());
     }
     if args.iter().any(|value|value=="--event-history-api")
@@ -280,6 +302,9 @@ fn execute(args:&[String])->Result<(),String>{
                 arg("--canary-webhelm-executable"),
                 arg("--canary-webhelm-workspace"))?;
             host.set_model_webhelm_canary(config)?;
+        }
+        if live_codex{
+            host.set_live_codex_executable(codex_exec,codex_scope)?;
         }
         if live_webhelm{
             let config=IsolatedWebHelmConfig::from_explicit_live(

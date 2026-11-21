@@ -1,0 +1,34 @@
+{
+  "jobId": "681",
+  "repository": "calculator-rust2-e2e-20261121",
+  "state": "ACTIVE",
+  "reviewEnabled": true,
+  "headSha": "e41f5c506c8efea51568a5acb8c96788df81f6de",
+  "localMerge": null,
+  "tasks": [
+    {
+      "id": "2069",
+      "agentName": null,
+      "state": "RUNNING",
+      "attempt": 0,
+      "error": null,
+      "resultSummary": "DAG coordinator"
+    },
+    {
+      "id": "2070",
+      "agentName": "calculator-builder",
+      "state": "FAILED",
+      "attempt": 0,
+      "error": "Rust isolated-write daemon unsupported model Worker adapter not bound; refusing unsafe side effect",
+      "resultSummary": null
+    },
+    {
+      "id": "2071",
+      "agentName": "troubleshooter",
+      "state": "QUEUED",
+      "attempt": 3,
+      "error": null,
+      "resultSummary": null
+    }
+  ]
+}

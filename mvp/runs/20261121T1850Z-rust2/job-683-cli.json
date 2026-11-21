@@ -1,0 +1,38 @@
+{
+  "jobId": "683",
+  "repository": "calculator-happy-rust2-mvp-20261121",
+  "state": "ACTIVE",
+  "reviewEnabled": true,
+  "headSha": "675bde8769a9509dafaa07f88ca96f268b708235",
+  "localMerge": {
+    "sourceRef": "refs/heads/relay/job-683-07bed92aab16",
+    "targetRef": "refs/heads/main",
+    "status": "pending"
+  },
+  "tasks": [
+    {
+      "id": "2079",
+      "agentName": null,
+      "state": "RUNNING",
+      "attempt": 0,
+      "error": null,
+      "resultSummary": "DAG coordinator"
+    },
+    {
+      "id": "2080",
+      "agentName": "calculator-builder",
+      "state": "QUEUED",
+      "attempt": 3,
+      "error": null,
+      "resultSummary": null
+    },
+    {
+      "id": "2084",
+      "agentName": "troubleshooter",
+      "state": "SUCCEEDED",
+      "attempt": 1,
+      "error": null,
+      "resultSummary": "task.completed"
+    }
+  ]
+}

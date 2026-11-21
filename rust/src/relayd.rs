@@ -258,6 +258,10 @@ pub trait DaemonServices:Send{
     /// Model Workers independently from Pool admission: a Worker already
     /// running cannot be "runnable" merely to get its terminal event.
     fn poll_model_events(&mut self,_id:&str)->Result<usize,String>{Ok(0)}
+    /// Publish only transactionally committed Worker outbox receipts to the
+    /// existing Events Bus. External Worker processes do not call the
+    /// daemon's in-process broadcast port, so that port alone is insufficient.
+    fn flush_workflow_events(&mut self)->Result<usize,String>{Ok(0)}
     /// An observed broker callback requests one early Graph/SQLite scan.
     /// The callback never applies Worker events or mutates the Job directly.
     fn has_pending_model_events(&mut self)->bool{false}
@@ -467,6 +471,16 @@ pub fn run_daemon<S:DaemonServices+'static>(
             }
             let result=(||->Result<(),String>{
                 let inventory=inventory_from_local(&config,true)?;
+                // Script/Model Workers commit Graph facts and append identical
+                // durable event receipts from separate subprocesses. Flush
+                // their outbox before reconciling successors, with a broker
+                // round-trip acknowledgment before marking an event delivered.
+                // A disconnected Event Bus must not block Script admission.
+                if let Err(error)=services.lock()
+                    .map_err(|_|"Daemon service lock poisoned")?
+                    .flush_workflow_events(){
+                    eprintln!("warning: durable Worker EventBus outbox: {error}");
+                }
                 // The live Model event subscription is a daemon-level
                 // observation. A leased QUEUED/RUNNING Task is intentionally
                 // not in the Pool's runnable admission set, but still needs

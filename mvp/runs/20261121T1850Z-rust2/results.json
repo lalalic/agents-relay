@@ -1,0 +1,78 @@
+{
+  "schema": "relay-quick-mvp.v1",
+  "date": "2026-11-21",
+  "results": [
+    {
+      "id": "C01",
+      "name": "CLI create-only Job",
+      "status": "PASS",
+      "evidence": "cli-report.json"
+    },
+    {
+      "id": "C05",
+      "name": "CLI real Script A→B→C",
+      "status": "PASS",
+      "evidence": "cli-report.json"
+    },
+    {
+      "id": "C08",
+      "name": "CLI COMPLETED restart readback",
+      "status": "PASS",
+      "evidence": "cli-report.json"
+    },
+    {
+      "id": "D01",
+      "name": "Dashboard Jobs",
+      "status": "PASS",
+      "evidence": "WebHelm physical Chrome Session 7edb8889949ca2ee Job 682"
+    },
+    {
+      "id": "D02",
+      "name": "Dashboard Task Activities",
+      "status": "PASS",
+      "evidence": "WebHelm selected 2073 and observed task.started and task.completed"
+    },
+    {
+      "id": "D03",
+      "name": "Dashboard JEL",
+      "status": "PASS",
+      "evidence": "WebHelm real SVG graph Inspect Task buttons 2072 2073 2075 2076 2083"
+    },
+    {
+      "id": "M01",
+      "name": "Mobile Jobs list",
+      "status": "BLOCKED",
+      "reason": "Physical iPhone 17 unavailable per devicectl",
+      "evidence": "iphone-device-preflight.txt"
+    },
+    {
+      "id": "M02",
+      "name": "Mobile Activities list",
+      "status": "BLOCKED",
+      "reason": "Physical iPhone 17 unavailable per devicectl",
+      "evidence": "iphone-device-preflight.txt"
+    },
+    {
+      "id": "M03",
+      "name": "Mobile SSE live",
+      "status": "BLOCKED",
+      "reason": "Physical iPhone 17 unavailable per devicectl",
+      "evidence": "iphone-device-preflight.txt"
+    },
+    {
+      "id": "M04",
+      "name": "Mobile chat hello bubble",
+      "status": "BLOCKED",
+      "reason": "Physical iPhone 17 unavailable per devicectl",
+      "evidence": "iphone-device-preflight.txt"
+    }
+  ],
+  "summary": {
+    "PASS": 6,
+    "FAIL": 0,
+    "BLOCKED": 4,
+    "expected": 10
+  },
+  "noSimulator": true,
+  "noSQLiteWrites": true
+}

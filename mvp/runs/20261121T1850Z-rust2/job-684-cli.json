@@ -1,0 +1,26 @@
+{
+  "jobId": "684",
+  "repository": "rust2-model-d-e2e-20261121",
+  "state": "ACTIVE",
+  "reviewEnabled": true,
+  "headSha": "6910ec83bddbbe184c109c761b04520efb76763d",
+  "localMerge": null,
+  "tasks": [
+    {
+      "id": "2081",
+      "agentName": null,
+      "state": "RUNNING",
+      "attempt": 0,
+      "error": null,
+      "resultSummary": "DAG coordinator"
+    },
+    {
+      "id": "2082",
+      "agentName": "model-a",
+      "state": "QUEUED",
+      "attempt": 2,
+      "error": null,
+      "resultSummary": null
+    }
+  ]
+}
