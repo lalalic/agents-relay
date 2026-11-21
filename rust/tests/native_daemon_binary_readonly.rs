@@ -1670,6 +1670,15 @@ fn live_shadow_requires_exact_selected_store_and_does_not_change_graph_sqlite() 
     let rejected=request(port,"POST","/api/control",
         r#"{"action":"job.cancel","id":"17"}"#).unwrap();
     assert!(!rejected.starts_with("HTTP/1.1 200"),"{rejected}");
+    // Even a nominally read-only endpoint must reject POST in shadow
+    // mode; returning the Job with HTTP 200 would conceal an unsafe
+    // control-plane method fallthrough.
+    for path in ["/api/job?id=17","/api/jobs","/api/mobile/jobs",
+        "/api/mobile/job-cancel","/api/control"] {
+        let response=request(port,"POST",path,"{}").unwrap();
+        assert!(response.starts_with("HTTP/1.1 405"),
+            "Shadow unexpectedly accepted POST {path}: {response}");
+    }
     let current=SQLiteRelayStore::open_without_claim_reset(
         &database,Some("17")).unwrap();
     let job=current.load_job("17").unwrap().unwrap();

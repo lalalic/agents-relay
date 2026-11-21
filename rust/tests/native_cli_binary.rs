@@ -63,7 +63,10 @@ fn cli_uses_real_daemon_http_get_and_post_without_node(){
             let data=format!("{first}{}",String::from_utf8_lossy(&bytes));
             drop(reader);
             let body=if i==0{
-                assert!(data.starts_with("GET /api/status"));
+                // Node src/cli.ts status uses the public runtime summary,
+                // not the lower-level /api/status health endpoint.
+                assert!(data.starts_with("GET /api/runtime-summary"),
+                    "Native CLI must match stable Node status route: {data}");
                 json!({"runtime":"rust-native-test","active":0})
             }else{
                 assert!(data.starts_with("POST /api/control"));

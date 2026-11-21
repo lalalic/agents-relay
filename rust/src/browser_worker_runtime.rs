@@ -112,14 +112,85 @@ pub fn parse_envelope(raw:&str)->Result<Value,String>{
     }
     Err("WebHelm returned no structured result".into())
 }
+/// The managed Chrome extension may need a moment for a *newly created*
+/// idle tab to finish navigating to its own chrome-extension:// page.
+/// Retrying the idempotent workspace-create RPC here is safe because no
+/// Session exists and no browser prompt has been submitted. NEVER apply
+/// this retry to platform-run/new-thread/new-turn or a timed-out Send.
+fn retry_owned_idle_workspace<F>(
+    workspace:&str,mut create:F,
+)->Result<Value,String>
+where F:FnMut()->Result<Value,String>{
+    let mut attempt=0;
+    loop{
+        match create(){
+            Ok(result)=>return Ok(result),
+            Err(error)=>{
+                // WebHelm may wrap extension RPC errors with the literal
+                // JavaScript "Error: " prefix. Normalize only that wrapper;
+                // do not broaden admission to generic browser or Send timeouts.
+                let detail=error.strip_prefix("Error: ").unwrap_or(&error);
+                let transient=detail.starts_with("Timed out waiting for workspace ")
+                    &&detail.contains(" idle tab ")
+                    &&detail.contains(&format!("workspace {workspace} idle tab "));
+                if !transient || attempt>=2{return Err(error);}
+                attempt+=1;
+                std::thread::sleep(Duration::from_millis(150*attempt));
+            }
+        }
+    }
+}
 pub fn ensure_relay_workspace(
     socket:&Path,webhelm:&Path,workspace:&str,
 )->Result<(),String>{
     let args=vec!["ensure".into()];
     cli_command(webhelm,&args,None,None)?;
-    daemon(socket,&json!({"op":"workspace-create","name":workspace,
-        "pool_size":RELAY_WORKSPACE_CAPACITY}),150_000,None)?;
+    retry_owned_idle_workspace(workspace,||
+        daemon(socket,&json!({"op":"workspace-create","name":workspace,
+            "pool_size":RELAY_WORKSPACE_CAPACITY}),150_000,None))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod workspace_create_retry_tests{
+    use super::*;
+    #[test]
+    fn only_pre_submission_idle_readiness_is_retryable(){
+        let mut attempts=0;
+        let created=retry_owned_idle_workspace("Rust2CanaryFake",||{
+            attempts+=1;
+            if attempts==1 {
+                Err("Error: Timed out waiting for workspace Rust2CanaryFake idle tab 25".into())
+            }else{Ok(json!({"initialized":true,"idle":1}))}
+        }).unwrap();
+        assert_eq!(attempts,2);
+        assert_eq!(created["idle"],1);
+    }
+    #[test]
+    fn foreign_workspace_or_post_send_failure_never_retries(){
+        for error in [
+            "Timed out waiting for workspace Relay idle tab 25",
+            "ChatGPT did not assign a durable thread id after Send click",
+            "WebHelm daemon platform-run timed out",
+        ]{
+            let mut attempts=0;
+            let actual=retry_owned_idle_workspace("Rust2CanaryFake",||{
+                attempts+=1;Err(error.into())
+            }).unwrap_err();
+            assert_eq!(actual,error);
+            assert_eq!(attempts,1);
+        }
+    }
+    #[test]
+    fn persistent_idle_failure_stops_after_three_before_any_send(){
+        let mut attempts=0;
+        let result=retry_owned_idle_workspace("Rust2CanaryFake",||{
+            attempts+=1;
+            Err("Timed out waiting for workspace Rust2CanaryFake idle tab 25".into())
+        });
+        assert!(result.is_err());
+        assert_eq!(attempts,3);
+    }
 }
 pub fn config_run(
     socket:&Path,workspace:&str,provider:&str,
@@ -341,6 +412,21 @@ impl PooledWebHelmState {
 }
 /// Synchronous native port of pooledWebHelmRun. The caller owns monitoring
 /// callbacks/intervals; a return receipt never completes a Task.
+/// Mirror Node browser-worker-runtime.ts catch/stop: a pre-Send failure
+/// MUST free the acquired Browser Pool lease; post-Send uncertainty MUST
+/// quarantine it, and neither path may re-submit the browser prompt.
+fn browser_submission_failure(
+    state:&mut PooledWebHelmState,pool:&BrowserWorkerPoolManager,
+    socket:&Path,provider:&str,submitted:bool,error:String,
+)->String{
+    if submitted{state.uncertain=true;}
+    let diagnostic=if submitted{error}
+        else{format!("{provider} pre-submission failure: {error}")};
+    match state.release(pool,socket){
+        Ok(())=>diagnostic,
+        Err(cleanup)=>format!("{diagnostic}; pool cleanup failed: {cleanup}"),
+    }
+}
 pub fn pooled_web_helm_run<Build>(
     socket:&Path,webhelm:&Path,workspace:&str,
     pool:&mut BrowserWorkerPoolManager,provider:&str,
@@ -372,16 +458,27 @@ where Build:FnMut()->Result<Value,String>,
         let _=state.release(pool,socket);
         return Err(format!("WebHelm platform {provider} missing"));
     }
-    ensure_relay_workspace(socket,webhelm,workspace)?;
-    let session=daemon(socket,&json!({"op":"start","workspace":workspace}),
-        60_000,Some(cancelled))?;
+    if let Err(error)=ensure_relay_workspace(socket,webhelm,workspace){
+        return Err(browser_submission_failure(
+            &mut state,pool,socket,provider,false,error));
+    }
+    let session=match daemon(socket,&json!({"op":"start","workspace":workspace}),
+        60_000,Some(cancelled)){
+        Ok(session)=>session,
+        Err(error)=>return Err(browser_submission_failure(
+            &mut state,pool,socket,provider,false,error)),
+    };
     let session_id=field(&session,"session_id").to_string();
     if session_id.is_empty(){
         let _=state.release(pool,socket);
         return Err("No WebHelm session ID".into());
     }
     state.session_id=Some(session_id.clone());
-    pool.bind_session(&mut lease,&session_id).map_err(|e|e.to_string())?;
+    if let Err(error)=pool.bind_session(&mut lease,&session_id){
+        return Err(browser_submission_failure(
+            &mut state,pool,socket,provider,false,error.to_string()));
+    }
+    state.lease=Some(lease.clone());
     if field(&session,"workspace")!=workspace
         ||session.get("workspace_supported")!=Some(&Value::Bool(true)){
         let _=state.release(pool,socket);
@@ -391,7 +488,11 @@ where Build:FnMut()->Result<Value,String>,
         let _=state.release(pool,socket);
         return Err("Browser worker cancelled before submission".into());
     }
-    let config=build()?;
+    let config=match build(){
+        Ok(config)=>config,
+        Err(error)=>return Err(browser_submission_failure(
+            &mut state,pool,socket,provider,false,error)),
+    };
     let action=field(&config,"action");
     let payload=config.get("config").cloned().unwrap_or(json!({}));
     state.submission_attempted=true;
@@ -400,16 +501,11 @@ where Build:FnMut()->Result<Value,String>,
     let receipt=match submitted{
         Ok(answer) if matches!(field(&answer,"status"),"submitted"|"completed")
             &&!field(&answer,"verified_by").is_empty()=>answer,
-        Ok(_)=>{
-            state.uncertain=true;
-            let _=state.release(pool,socket);
-            return Err("Submission outcome unknown: no verified receipt".into());
-        },
-        Err(error)=>{
-            state.uncertain=true;
-            let _=state.release(pool,socket);
-            return Err(error);
-        }
+        Ok(_)=>return Err(browser_submission_failure(
+            &mut state,pool,socket,provider,true,
+            "Submission outcome unknown: no verified receipt".into())),
+        Err(error)=>return Err(browser_submission_failure(
+            &mut state,pool,socket,provider,true,error)),
     };
     state.verified_submitted=true;
     let thread_url=field(&receipt,"thread_url").to_string();
@@ -419,11 +515,18 @@ where Build:FnMut()->Result<Value,String>,
                 if provider=="z"{"chat.z.ai"}else{"chatgpt.com"},
                 field(&receipt,"thread_id"))
         }else{String::new()};
-    pool.bind_thread(&mut lease,&thread_url).map_err(|e|e.to_string())?;
+    if let Err(error)=pool.bind_thread(&mut lease,&thread_url){
+        return Err(browser_submission_failure(
+            &mut state,pool,socket,provider,true,error.to_string()));
+    }
+    state.lease=Some(lease.clone());
     let thread_id=if !field(&receipt,"thread_id").is_empty(){
         field(&receipt,"thread_id").to_string()
     }else{thread_url.split('/').next_back().unwrap_or("").into()};
-    pool.report_healthy(provider).map_err(|e|e.to_string())?;
+    if let Err(error)=pool.report_healthy(provider){
+        return Err(browser_submission_failure(
+            &mut state,pool,socket,provider,true,error.to_string()));
+    }
     state.lease=Some(lease);
     state.thread_id=Some(thread_id.clone());
     state.thread_url=Some(thread_url.clone());
@@ -432,4 +535,61 @@ where Build:FnMut()->Result<Value,String>,
         verified_by:field(&receipt,"verified_by").into(),
         provider:provider.into(),session_id,thread_id,thread_url,receipt
     }))
+}
+
+#[cfg(test)]
+mod browser_submission_failure_tests {
+    use super::*;
+    use crate::browser_worker_pool::BrowserPoolOptions;
+
+    fn fixture() -> (BrowserWorkerPoolManager, PathBuf) {
+        let path=std::env::temp_dir().join(format!("r2-browser-failure-{}-{}.sqlite",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_nanos()));
+        let pool=BrowserWorkerPoolManager::open(BrowserPoolOptions {
+            path:Some(path.clone()),capacity:1,
+            ..Default::default()
+        }).unwrap();
+        (pool,path)
+    }
+
+    #[test]
+    fn pre_send_workspace_failure_releases_its_pool_slot() {
+        let (mut pool,path)=fixture();
+        let lease=pool.acquire("chatgpt","pre-send-lease",None).unwrap();
+        assert_eq!(pool.snapshot("chatgpt").unwrap().leased,1);
+        let mut state=PooledWebHelmState::default();
+        state.lease=Some(lease);
+        let error=browser_submission_failure(&mut state,&pool,
+            Path::new("/tmp/nonexistent-webhelm-test-socket"),
+            "chatgpt",false,"idle tab readiness failed".into());
+        assert!(error.contains("pre-submission failure"));
+        let snapshot=pool.snapshot("chatgpt").unwrap();
+        assert_eq!(snapshot.leased,0);
+        assert_eq!(snapshot.quarantined,0);
+        assert_eq!(snapshot.idle,1);
+        drop(pool);
+        let _=std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn post_send_uncertainty_quarantines_without_releasing() {
+        let (mut pool,path)=fixture();
+        let lease=pool.acquire("chatgpt","submitted-lease",None).unwrap();
+        let mut state=PooledWebHelmState::default();
+        state.lease=Some(lease);
+        state.submission_attempted=true;
+        let error=browser_submission_failure(&mut state,&pool,
+            Path::new("/tmp/nonexistent-webhelm-test-socket"),
+            "chatgpt",true,"durable thread id unavailable".into());
+        assert_eq!(error,"durable thread id unavailable");
+        assert!(state.uncertain);
+        let snapshot=pool.snapshot("chatgpt").unwrap();
+        assert_eq!(snapshot.leased,0);
+        assert_eq!(snapshot.quarantined,1);
+        assert_eq!(snapshot.idle,0);
+        drop(pool);
+        let _=std::fs::remove_file(path);
+    }
 }

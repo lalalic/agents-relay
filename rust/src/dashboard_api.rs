@@ -329,6 +329,13 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
             Err(_) => return text_response(400, "Invalid URL"),
         };
         let path = parsed.path();
+        // A live-store shadow can only observe SQLite. Reject non-GET
+        // methods before routing, including routes that accidentally
+        // return an ordinary read response for POST /api/job or /api/jobs.
+        // Do not rely on individual effects to notice a shadow request.
+        if services.supports_indexed_readonly_job() && req.method != "GET" {
+            return text_response(405,"Read-only shadow forbids HTTP mutations");
+        }
         if path.starts_with("/api/mobile/"){
             return crate::dashboard_mobile::handle_mobile_dashboard_request(
                 self,services,req,&parsed);
