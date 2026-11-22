@@ -23,6 +23,10 @@ The full file-producing Spec Kit Skills require a valid `.specify/` project in a
 
 This contract defines orchestrator-owned exception workflows that sit above normal Agents Relay task/job execution.
 
+## Reuse architecture from an earlier Job
+
+For a follow-on or cross-repository Job, retrieve the relevant upstream Job through the version-matched Relay `job show --id UPSTREAM_JOB_ID` before Specify/Clarify and preflight. Bring forward the necessary `## Architecture Design` Markdown from the upstream **Job objective** (including source Job/Architect Task attribution) into the new Job objective, together with its own scope and acceptance criteria. Do not rely on prior repository files or thread memory, infer that new Jobs automatically inherit design, or treat a previous Architect recommendation as a user authorization to enlarge scope. If design changes the user's decisions, clarify and review the new proposal before creation.
+
 ## Review-driven JEL continuation
 
 After the Initial Plan materializes its Tasks, Relay waits for **all non-review Tasks to be terminal**, including Troubleshooter recoveries. The Final Reviewer reads every Task result (including FAILED and CANCELLED), the original Job objective, the immutable head and test evidence. An outstanding required failure must be reported as a finding and cannot pass the merge gate. The Final Review is the **completion check**; do not schedule a second Planner merely to ask whether the objective is satisfied.

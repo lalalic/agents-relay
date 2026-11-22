@@ -60,7 +60,7 @@ New Plan rounds assign at most one newly authored Task per effective Agent role.
 
 ### Architect design handoff
 
-When the Planner selects an Agency Architect, follow [Architect Design Handoff](architect-design-handoff.md). Its Task input defines the tracked design file and design acceptance requirements. The Architect writes and self-reviews that artifact and records its path/version in the completed Task Result. The Planner verifies the artifact in a subsequent Plan round before scheduling implementation dependent on the design. Do not accept a summary alone as architecture evidence. A Spec Kit `plan.md` belongs in a valid, authorized project; otherwise use the project's standard design path. Keep Relay execution state in its existing store.
+When the Planner selects an Agency Architect, follow [Job-native Architect Design Handoff](architect-design-handoff.md). The Architect puts its **complete self-reviewed Markdown design** in the durable Task Result; the Planner verifies it and appends the accepted `## Architecture Design` to `Job.objective` via the existing version-matched `job update --objective-file` CLI, preserving original goal/acceptance sections and checking the read-back. Do not require a repository design file or depend on truncated `plan context` summaries. A downstream Job must explicitly import the relevant design from the upstream Job objective before its own preflight. Keep execution state in the canonical Relay store.
 
 ### Planning graph and semantic Task tree
 
