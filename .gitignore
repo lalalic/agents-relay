@@ -13,3 +13,6 @@ coverage/
 
 # E2E runtime results and per-run performance receipts
 e2e/runs/
+
+# Local MVP acceptance artifacts; preserve private per-device evidence outside Git
+mvp/runs/
