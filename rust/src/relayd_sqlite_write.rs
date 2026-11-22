@@ -1218,10 +1218,13 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                 Ok(saved)
             }
             "reconcile"=>{
-                // Node Pool only admits ACTIVE Jobs. For DRAFT/terminal Jobs,
-                // accept the wake but do not invoke a Model/Planner effect or
-                // require a Git project that has not yet been activated.
-                if field(&current,"state")!="ACTIVE"{
+                // Terminal Jobs never re-enter the Graph or change their
+                // immutable accepted Git head. A DRAFT Job, however, must
+                // still pass through the same Graph snapshot reconciler so
+                // a verified local Git HEAD replaces a stale cached headSha
+                // without launching a Worker or changing the Job lifecycle.
+                // The Graph itself decides that DRAFT cannot dispatch work.
+                if !matches!(field(&current,"state"),"ACTIVE"|"DRAFT"){
                     self.wake(id,"dashboard.job.reconcile")?;
                     return Ok(current);
                 }

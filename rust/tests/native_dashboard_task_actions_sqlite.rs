@@ -208,6 +208,40 @@ fn dashboard_reconcile_executes_canonical_graph_with_real_git_head_and_durable_r
 }
 
 #[test]
+fn dashboard_reconcile_never_rewrites_completed_job_review_sha_after_git_moves(){
+ let f=Fixture::new();
+ let project=f.root.join("mockrepo");
+ let commit=Command::new("git").args(["-C"]).arg(&project).args([
+  "-c","user.name=Rust Test","-c","user.email=rust-test@example.invalid",
+  "commit","--allow-empty","-m","new unapproved head after completion"]).output().unwrap();
+ assert!(commit.status.success(),"{}",String::from_utf8_lossy(&commit.stderr));
+ let store=SQLiteRelayStore::open_without_claim_reset(
+  &relay_unified_store_path(&f.config.store_directory),Some("15")).unwrap();
+ store.mutate_job("15",|mut job|{
+  job["state"]=json!("COMPLETED");
+  job["headSha"]=json!("immutable-approved-head");
+  job["reviewEnabled"]=json!(true);
+  job["review"]=json!({"outcome":"approved","headSha":"immutable-approved-head",
+   "taskId":"review-previous"});
+  job["tasks"][0]["state"]=json!("SUCCEEDED");
+  job["tasks"][0]["executionId"]=Value::Null;
+  job["tasks"][0]["leaseOwner"]=Value::Null;
+  job["tasks"][0]["leaseExpiresAt"]=Value::Null;
+  Ok(job)
+ }).unwrap();
+ drop(store);
+ let before=f.job();
+ let mut host=IsolatedSQLiteWriteHost::new(f.config.clone());
+ let after=DaemonServices::job_action(&mut host,"15","reconcile").unwrap();
+ assert_eq!(after,before,"completed Job/review must remain immutable");
+ assert_eq!(f.job(),before,"Dashboard reconcile must not rewrite terminal SHA");
+ drop(host);
+ let mut restarted=IsolatedSQLiteWriteHost::new(f.config.clone());
+ assert_eq!(DaemonServices::job_action(&mut restarted,"15","reconcile").unwrap(),
+  before,"restart cannot reopen an approved terminal Job");
+}
+
+#[test]
 fn daemon_reconciler_exhausted_troubleshooter_creates_one_durable_human_gate(){
  let f=Fixture::new();
  let db=SQLiteRelayStore::open_without_claim_reset(
