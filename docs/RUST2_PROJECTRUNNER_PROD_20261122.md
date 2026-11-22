@@ -58,6 +58,14 @@ Neo ProjectRunner source, on main and pushed:
 
 ProjectRunner behavioral test suite: 38 PASS / 0 FAIL (existing unrelated CLI packaging staging test excluded). Unfiltered suite still has one pre-existing package staging FAIL because skills/iphone-helm is a Git symlink rejected by scripts/stage-neo-cli.mjs; this test must not be misrepresented as passed or modified to hide its failure.
 
+## Additional authentic ProjectRunner restart acceptance — Job717
+
+On 2026-11-22, a fresh three-node source-owned ProjectRunner run deliberately interrupted Script Task2236 while genuinely RUNNING under native Rust PID66439, following exact preflight/WAL backup and no other current-owner Workers. The old Script PID77411 ended with a genuine failed event. Native Rust PID77509 recovered through independent real Codex Troubleshooter2237, retrying the immutable original Task2236 as a second execution PID85456. Both distinct process generations are durably recorded and ended. Script B2238 and C2239 SUCCEEDED with exact Run-local SHA-linked proofs. C enforced two distinct process-start markers, Coordinator2235 SUCCEEDED, and independent real Final Reviewer2240 approved. Job717 COMPLETED with all 6 Task leases null, without fake terminal or manual SQLite state edits.
+
+Production Outbox FIFO temporarily exposed a cross-Task visibility bug: 15 pending legitimate Planner/Script/Model events starved behind a Planner started row. Rust fix 84a7d18 validated canonical Planner outbox keys, 112/112 Rust library tests serial PASS and 24/24 native SQLite/NATS PASS. WAL-backed single-Rust-owner restart replayed all 15 exact immutable event IDs; all 335 unique outbox rows published and Job717 JSON SHA unchanged. Real task events now reports old Script failed generation and recovered Script completed generation; Model/Reviewer history may show duplicate OBSERVATIONS sharing the same event ID, not duplicate Graph terminals. This adds scoped actual RUNNING-restart ProjectRunner proof; QUEUED/review-wait and three-node fencing remain independent unverified Gate E2 requirements.
+
+Detailed evidence: docs/RUST2_GATE_E1_E2_PRODUCTION_20261122.md and the production audit files in mvp/runs/20261122T1323-gate-e2-running-owner-restart/.
+
 ## Scoped ProjectRunner sign-off and remaining global gates
 
 D-ProjectRunner DPR1–DPR8: **8/8 PASS for the user-selected live production Rust Relay environment**. Original four true COMPLETED MVPs, new recovered Calculator Job713 COMPLETED, fresh Reviewer/lease-clean Job715 COMPLETED, original Calculator untouched, browser Sessions closed, no test Codex processes, test-owned failed Job714 cancelled, real artifacts/event history/Git evidence retained. This explicitly replaces the older requirement for a separate isolated Relay daemon/store at the user's request.
