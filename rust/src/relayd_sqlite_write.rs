@@ -71,6 +71,30 @@ fn verified_worker_outbox_event(key:&str,kind:&str,event:&Value)->bool{
         ||task.is_empty()||event_id.is_empty()||kind!=event_type{
         return false;
     }
+    // The native Planner commits these events to the SAME durable SQLite
+    // outbox as Script/Model Workers, but uses an independent Graph/Plan
+    // identity, not a Task execution generation. A well-formed Planner
+    // record must not poison FIFO publication of all subsequent Workers.
+    // Require the exact internal Planner key, immutable event_id, Plan Task
+    // namespace, canonical status and trusted optional source. Never admit
+    // arbitrary event types or rewrite an unverified row as published.
+    if matches!(event_type,"planner.started"|"planner.completed"|"planner.failed"){
+        let expected_status=match event_type{
+            "planner.started"=>"running",
+            "planner.completed"=>"succeeded",
+            _=>"failed",
+        };
+        let source_ok=event.get("source").is_none_or(|source|
+            source.is_object()
+            &&field(source,"agent")=="planner"
+            &&field(source,"component")=="agents-relay"
+            &&source.get("id").is_none_or(Value::is_null));
+        return task.starts_with("plan-")&&task.len()>5
+            &&field(event,"status")==expected_status
+            &&event.get("parent_task_id").is_none_or(Value::is_null)
+            &&source_ok
+            &&key==format!("isolated-planner/{job}/{event_type}/{event_id}");
+    }
     let (prefix,allowed)=if matches!(event_type,"task.started"|"task.completed"|"task.failed"){
         (format!("script-event/{job}/{task}/"),true)
     }else{(String::new(),false)};
@@ -1785,6 +1809,42 @@ mod verified_worker_outbox_tests {
             "task.started",&fake));
         assert!(!verified_worker_outbox_event(&format!("model-event/{job}/{task}/{lease}/{id}"),
             "task.failed",&event));
+    }
+
+    #[test]
+    fn graph_owned_planner_event_is_published_without_unblocking_forged_events(){
+        let started=crate::events::event_for("716","plan-1",None,
+            "planner.started","running","Real Graph Planner started",
+            Some("orchestrator"),None,None);
+        let id=field(&started,"event_id");
+        let key=format!("isolated-planner/716/planner.started/{id}");
+        assert!(verified_worker_outbox_event(&key,
+            "planner.started",&started),
+            "durably committed Planner event must not stall unrelated Script/Model outbox");
+        assert!(!verified_worker_outbox_event(&format!(
+            "isolated-planner/717/planner.started/{id}"),"planner.started",&started));
+        assert!(!verified_worker_outbox_event(&format!(
+            "isolated-planner/716/planner.started/other-id"),"planner.started",&started));
+        let mut wrong_plan=started.clone();
+        wrong_plan["task_id"]=json!("2236");
+        assert!(!verified_worker_outbox_event(&key,"planner.started",&wrong_plan));
+        let mut wrong_status=started.clone();
+        wrong_status["status"]=json!("succeeded");
+        assert!(!verified_worker_outbox_event(&key,"planner.started",&wrong_status));
+        let mut fake_source=started.clone();
+        fake_source["source"]=json!({"agent":"planner","component":"malicious"});
+        assert!(!verified_worker_outbox_event(&key,"planner.started",&fake_source));
+        let mut foreign_kind=started.clone();
+        foreign_kind["type"]=json!("job.completed");
+        assert!(!verified_worker_outbox_event(&key,"job.completed",&foreign_kind));
+        for (ty,status) in [("planner.completed","succeeded"),("planner.failed","failed")]{
+            let mut terminal=started.clone();
+            terminal["type"]=json!(ty);
+            terminal["status"]=json!(status);
+            terminal["source"]=json!({"agent":"planner","component":"agents-relay"});
+            assert!(verified_worker_outbox_event(&format!(
+                "isolated-planner/716/{ty}/{id}"),ty,&terminal));
+        }
     }
 }
 

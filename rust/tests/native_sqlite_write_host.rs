@@ -771,7 +771,7 @@ fn live_committed_graph_event_reaches_actual_nats_activity_transport() {
 }
 
 #[test]
-fn native_live_daemon_drains_committed_script_outbox_exactly_once_to_real_nats() {
+fn native_live_daemon_drains_planner_then_script_outbox_exactly_once_to_real_nats() {
     use agents_relay_rust2::{
         events::{event_for,NatsEventBus},
         execution_event_identity::execution_event_source,
@@ -811,32 +811,49 @@ fn native_live_daemon_drains_committed_script_outbox_exactly_once_to_real_nats()
             "Test-owned verified Script started",Some("orchestrator"),None,None);
         event["source"]["id"]=json!(execution_event_source("17","8",exec));
         event["source"]["agent"]=json!("fixture");
+        let planner=event_for("17","plan-1",None,
+            "planner.started","running","Graph Planner started",
+            Some("orchestrator"),None,None);
+        let planner_key=format!("isolated-planner/17/planner.started/{}",
+            planner["event_id"].as_str().unwrap());
+        // A genuine Planner event may precede a source-correlated Script
+        // event in the same FIFO. It must not starve the Script terminal.
         let committed=scope.commit_workflow_mutation_and_events(
             "17",|mut row|{
                 row["state"]=json!("ACTIVE");
+                row["plans"]=json!([{"id":"plan-1","status":"PLANNING"}]);
                 row["tasks"]=json!([{"id":"8","jobId":"17","state":"RUNNING",
                     "executionId":exec,"leaseOwner":"test-only"}]);
                 Ok(row)
-            },&[json!({"key":event_key,"event":event})]).unwrap();
+            },&[json!({"key":planner_key,"event":planner}),
+                json!({"key":event_key,"event":event})]).unwrap();
         assert_eq!(committed["state"],"ACTIVE");
         scope.close().unwrap();
         let mut live=IsolatedSQLiteWriteHost::new_live(config);
         live.set_loopback_model_nats(&url).unwrap();
-        assert_eq!(live.flush_workflow_events().unwrap(),1);
-        let observed=rx.recv_timeout(Duration::from_secs(3))
+        assert_eq!(live.flush_workflow_events().unwrap(),2,
+            "Planner row must not poison FIFO and prevent Script publication");
+        let first=rx.recv_timeout(Duration::from_secs(3))
+            .expect("real NATS did not observe committed Planner event");
+        let second=rx.recv_timeout(Duration::from_secs(3))
             .expect("real NATS did not observe committed Script outbox");
-        assert_eq!(observed["event_id"],event["event_id"]);
-        assert_eq!(observed["source"]["id"],event["source"]["id"]);
-        assert_eq!(observed["type"],"task.started");
+        let observed=vec![first,second];
+        assert!(observed.iter().any(|item|item["type"]=="planner.started"
+            &&item["event_id"]==planner["event_id"]));
+        assert!(observed.iter().any(|item|item["type"]=="task.started"
+            &&item["event_id"]==event["event_id"]
+            &&item["source"]["id"]==event["source"]["id"]));
         assert_eq!(live.flush_workflow_events().unwrap(),0,
-            "published SQLite event must not be sent again");
+            "published SQLite events must not be sent again");
         assert!(rx.recv_timeout(Duration::from_millis(350)).is_err(),
-            "repeated flush delivered duplicate Task started");
+            "repeated flush delivered duplicate Planner or Script event");
         let check=SQLiteRelayStore::open_without_claim_reset(&db,Some("17")).unwrap();
-        let status:String=check.db.query_row(
-            "SELECT state FROM workflow_event_outbox WHERE event_key=?",
-            [event_key],|r|r.get(0)).unwrap();
-        assert_eq!(status,"published");
+        for key in [planner_key,event_key]{
+            let status:String=check.db.query_row(
+                "SELECT state FROM workflow_event_outbox WHERE event_key=?",
+                [key],|r|r.get(0)).unwrap();
+            assert_eq!(status,"published");
+        }
         drop(check);
         subscription.unsubscribe();drop(live);drop(bus);
         fs::remove_dir_all(root).unwrap();
