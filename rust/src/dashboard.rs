@@ -353,6 +353,15 @@ fn read_request(stream: &mut TcpStream) -> io::Result<(String, String, Vec<u8>, 
     body.truncate(length);
     Ok((method, target, body, headers))
 }
+/// Never forward Dashboard's potentially private JSON to Mobile subscribers.
+/// An authenticated Mobile SSE stream is only a wake-up signal.
+fn mobile_change_frame(frame: &str) -> Option<&'static [u8]> {
+    let has_change = frame.lines().filter_map(|line| line.strip_prefix("data:"))
+        .filter_map(|data| serde_json::from_str::<serde_json::Value>(data.trim()).ok())
+        .any(|payload| payload.get("event").is_some_and(|v| v.is_object())
+            || payload.get("job").is_some_and(|v| v.is_object()));
+    has_change.then_some(b"event: change\ndata: {\"refresh\":true}\n\n")
+}
 fn handle_connection<B: DashboardBackend>(
     mut stream: TcpStream,
     backend: Arc<B>,
@@ -371,13 +380,22 @@ fn handle_connection<B: DashboardBackend>(
     if let Some(response) = static_response(&method, &target) {
         return write_response(&mut stream, response);
     }
-    if method == "GET" && target == "/events" {
+    if method == "GET" && (target == "/events" || target == "/api/mobile/events") {
+        let mobile = target == "/api/mobile/events";
         stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nX-Content-Type-Options: nosniff\r\n\r\n: connected\n\n")?;
         let receiver = backend.subscribe_events();
         let mut last_heartbeat = Instant::now();
         while !shutdown.load(Ordering::Relaxed) {
             match receiver.recv_timeout(Duration::from_millis(200)) {
-                Ok(frame) => stream.write_all(frame.as_bytes())?,
+                Ok(frame) => {
+                    if mobile {
+                        if let Some(safe) = mobile_change_frame(&frame) {
+                            stream.write_all(safe)?;
+                        }
+                    } else {
+                        stream.write_all(frame.as_bytes())?;
+                    }
+                },
                 Err(RecvTimeoutError::Disconnected) => break,
                 Err(RecvTimeoutError::Timeout) => {}
             }
@@ -431,6 +449,19 @@ pub fn serve_dashboard<B: DashboardBackend>(
 #[cfg(test)]
 mod write_retry_tests{
     use super::*;
+    #[test]
+    fn mobile_sse_never_leaks_dashboard_job_or_event_payload() {
+        let event = r#"event: relay
+data: {"event":{"type":"task.progress","message":"PRIVATE PROMPT","path":"/Users/private/secret"}}
+
+"#;
+        let projected = b"event: change\ndata: {\"refresh\":true}\n\n".as_slice();
+        assert_eq!(mobile_change_frame(event), Some(projected));
+        assert_eq!(mobile_change_frame("data: {\"job\":{\"id\":\"694\",\"prompt\":\"PRIVATE\"}}\n\n"),Some(projected));
+        assert_eq!(mobile_change_frame(": heartbeat\n\n"),None);
+        assert_eq!(mobile_change_frame("data: invalid-json\n\n"),None);
+        assert_eq!(mobile_change_frame("data: {\"unexpected\":\"PRIVATE\"}\n\n"),None);
+    }
     #[derive(Default)]
     struct InterruptedWriter{
         writes:usize,
@@ -454,6 +485,56 @@ mod write_retry_tests{
         }
         fn flush(&mut self)->io::Result<()> {Ok(())}
     }
+    #[test]
+    fn mobile_sse_loopback_streams_only_sanitized_wakeups() {
+        use std::sync::{mpsc, Mutex};
+        use std::io::{Read, Write};
+        struct Fixture { sender: Mutex<Option<mpsc::Sender<String>>> }
+        impl DashboardBackend for Fixture {
+            fn api(&self, _req: DashboardRequest<'_>) -> DashboardResponse {
+                DashboardResponse::text(404,"Not found")
+            }
+            fn subscribe_events(&self) -> mpsc::Receiver<String> {
+                let (sender, receiver) = mpsc::channel();
+                *self.sender.lock().unwrap() = Some(sender);
+                receiver
+            }
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let backend = Arc::new(Fixture { sender: Mutex::new(None) });
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let server = {
+            let backend = Arc::clone(&backend);
+            let shutdown = Arc::clone(&shutdown);
+            thread::spawn(move || serve_dashboard(listener,backend,shutdown).unwrap())
+        };
+        let mut client=TcpStream::connect(("127.0.0.1",port)).unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        client.write_all(b"GET /api/mobile/events HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").unwrap();
+        let sender = (0..80).find_map(|_| {
+            if let Some(s) = backend.sender.lock().unwrap().clone() { return Some(s); }
+            thread::sleep(Duration::from_millis(20));
+            None
+        }).expect("SSE client should subscribe");
+        sender.send("event: relay\ndata: {\"event\":{\"type\":\"task.progress\",\"message\":\"PRIVATE\"}}\n\n".into()).unwrap();
+        let mut response=Vec::new();
+        let mut buf=[0u8;2048];
+        for _ in 0..8 {
+            let n=client.read(&mut buf).unwrap();
+            response.extend_from_slice(&buf[..n]);
+            if response.windows(b"event: change\n".len()).any(|w|w==b"event: change\n"){break;}
+        }
+        let response=String::from_utf8(response).unwrap();
+        assert!(response.contains("HTTP/1.1 200 OK"),"{response}");
+        assert!(response.contains("Content-Type: text/event-stream"),"{response}");
+        assert!(response.contains("event: change\ndata: {\"refresh\":true}\n\n"),"{response}");
+        assert!(!response.contains("PRIVATE"),"SSE exposed private event data");
+        shutdown.store(true,Ordering::Relaxed);
+        drop(client);
+        server.join().unwrap();
+    }
+
     #[test]
     fn transient_dashboard_write_keeps_exact_partial_content_length_bytes(){
         let bytes=b"Content-Length: 42\r\n\r\nreliable response body";
