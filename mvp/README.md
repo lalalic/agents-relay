@@ -15,6 +15,10 @@ This directory is the **single source of truth** for the quick MVP. It is intent
 
 CLI `--full` retains the earlier **12 CLI-only checks** as an *optional extended suite*, not part of the default `run relay mvp` pass criteria. Other features (Dashboard responsive/live updates; Mobile Review/cancel/etc.) are outside the minimum scope.
 
+## Extended Rust2 L3 acceptance (separate)
+
+`node mvp/rust-l3-e2e.mjs` runs the five native Rust2 Coordinator/Agent Review scenarios in disposable fixtures. See [L3 checklist](checklists/rust-l3-native.md). Its test-only Review Host is **not** a human UI, and missing real Codex Model access is reported `BLOCKED`, never mocked as `PASS`. This suite is **not** included in the default 10 checks or CLI Full 12.
+
 ## Instructions for the next autonomous ChatGPT thread
 
 1. After the usual single Neo bootstrap, read this file, `mvp/SKILL.md`, the two checklists, and the two named Agent definitions. Discover current WebHelm/iPhoneHelm skills and authoritative CLI help. Do not repeat the bootstrap. No additional questions when enough information is available.

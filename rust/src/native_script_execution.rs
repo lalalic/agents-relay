@@ -149,9 +149,25 @@ pub fn run_claimed_script_task(
     let result=launch_script_task(task,&context,&roots,&cancelled,&mut invoke,&mut publish);
     match result{
         Ok(launch) if launch.result["status"]=="WAITING_REVIEW"=>{
-            // The provider requires the host-owned Review Graph, which is not
-            // connected to this isolated Worker path. Fail closed rather than
-            // leave a phantom interactive review behind.
+            // The independently host-bound review.begin + review.wait must
+            // already have committed AWAITING_DECISION through Graph/SQLite.
+            // Never convert an unbound Script return value into approval (or
+            // another lease). This also permits genuine Script Agent Review
+            // while keeping the prior fail-closed behavior for fake receipts.
+            let bound=SQLiteRelayStore::open_without_claim_reset(db_path,Some(job_id))?
+                .load_job(job_id)?.and_then(|job|job.get("tasks")
+                    .and_then(Value::as_array).and_then(|tasks|tasks.iter()
+                        .find(|row|field(row,"id")==task_id)).cloned())
+                .is_some_and(|row|field(&row,"state")=="AWAITING_DECISION"
+                    &&row.pointer("/interactiveInvocation/status")
+                        .and_then(Value::as_str)==Some("awaiting_decision")
+                    &&row.pointer("/interactiveInvocation/executionId")
+                        .and_then(Value::as_str)==Some(execution_id)
+                    &&row.pointer("/interactiveInvocation/invocationId")
+                        .and_then(Value::as_str)==Some(execution_id)
+                    &&row.pointer("/interactiveInvocation/revision")
+                        .and_then(Value::as_str)==Some(execution_id));
+            if bound{return Ok(launch.result);}
             let error="Native Script WAITING_REVIEW requires a verified human review invocation";
             let failure=event_for(job_id,task_id,
                 task.get("parentTaskId").and_then(Value::as_str),

@@ -192,6 +192,23 @@ fn control_review<B:WorkspaceControlBackend>(
             let event=interactive_waiting_event(
                 job_id,task_id,current.get("parentTaskId").and_then(Value::as_str),
                 execution);
+            // Publishing an SSE observation is not a Task transition. Apply
+            // the correlated event through the SAME canonical Graph before
+            // acknowledging the host-owned wait, and CAS it into SQLite.
+            let graph=backend.graph_directory().to_path_buf();
+            let mut runtime=ReconcilerRuntime::new("interactive-review-wait",15_000);
+            let result=runtime.apply_event(&graph,job,&event,None)?;
+            let waiting=result.job.get("tasks").and_then(Value::as_array)
+                .into_iter().flatten().find(|row|field(row,"id")==task_id)
+                .is_some_and(|row|field(row,"state")=="AWAITING_DECISION"
+                    &&row.pointer("/interactiveInvocation/status")
+                        .and_then(Value::as_str)==Some("awaiting_decision")
+                    &&row.pointer("/interactiveInvocation/executionId")
+                        .and_then(Value::as_str)==Some(execution));
+            if !result.applied || !waiting {
+                return Err("Interactive review waiting was not accepted by Task Graph".into());
+            }
+            persist_candidate(backend,job_id,job,&result.job)?;
             backend.publish(&event)?;
             backend.wake(job_id,"interactive.wait")?;
             Ok(json!({"waiting":true,"taskState":"AWAITING_DECISION"}))
