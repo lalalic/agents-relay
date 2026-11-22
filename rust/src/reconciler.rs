@@ -140,8 +140,9 @@ impl Reconciler{
             let eligible=state=="RUNNING"
                 ||state=="QUEUED"&&task.get("executionId").is_some_and(|v|!v.is_null());
             let lease=task.get("leaseExpiresAt").and_then(Value::as_str);
-            eligible&&lease.is_some_and(|lease|DateTime::parse_from_rfc3339(lease)
+            eligible&&(lease.is_some_and(|lease|DateTime::parse_from_rfc3339(lease)
                 .map(|time|time.timestamp_millis()<=now).unwrap_or(true))
+                ||crate::process_identity::dead_native_relay_owner(field(task,"leaseOwner")))
         }){
             let task_id=field(stale,"id");
             let fresh=host.load(job_id)?;
@@ -157,11 +158,16 @@ impl Reconciler{
                 &&current.get("executionId").is_some_and(|v|!v.is_null())){
                 continue;
             }
-            if !current.get("leaseExpiresAt").and_then(Value::as_str)
+            let expired=current.get("leaseExpiresAt").and_then(Value::as_str)
                 .is_some_and(|lease|DateTime::parse_from_rfc3339(lease)
-                    .map(|time|time.timestamp_millis()<=now).unwrap_or(true)){
-                continue;
-            }
+                    .map(|time|time.timestamp_millis()<=now).unwrap_or(true));
+            // An orphan is safe to revisit before its long lease deadline only
+            // if the exact native daemon PID is demonstrably gone. Never
+            // mistake a live owner or an unknown PID for a crashed daemon.
+            let orphaned=!expired &&field(current,"leaseOwner")!=self.runtime.owner
+                &&crate::process_identity::dead_native_relay_owner(
+                    field(current,"leaseOwner"));
+            if !expired && !orphaned{continue;}
             let generation=current.get("executionId").and_then(Value::as_str);
             let safe={
                 // Scope the synchronous Future so all borrowed host/owner
@@ -184,8 +190,9 @@ impl Reconciler{
             let retry_available=task.get("attempt").and_then(Value::as_u64)
                 .unwrap_or(0)<task.get("maxAttempts").and_then(Value::as_u64)
                 .unwrap_or(0);
+            let event=if orphaned{"execution.orphaned"}else{"lease.expired"};
             let decision=try_transition_task_event(&self.graph_directory,
-                task,"lease.expired",&json!({"retryAvailable":retry_available}),
+                task,event,&json!({"retryAvailable":retry_available}),
                 &iso8601_now())?;
             if decision.get("accepted")!=Some(&Value::Bool(true)){
                 continue;
@@ -193,8 +200,18 @@ impl Reconciler{
             let failed=field(task,"state")=="FAILED";
             let parent=task.get("parentTaskId").and_then(Value::as_str)
                 .map(str::to_owned);
-            let message=task.get("error").and_then(Value::as_str)
-                .unwrap_or("Execution lease expired").to_owned();
+            let message=if orphaned{"Native daemon exited before Script completion"}
+                else{"Execution lease expired"};
+            // Script effects are testable/idempotent after the exact old
+            // process group has been fenced. Model/browser sends are uncertain:
+            // do not automatically resubmit them after an owner crash.
+            if orphaned &&retry_available &&field(task,"adapter")=="script"{
+                let retried=try_transition_task_event(&self.graph_directory,
+                    task,"retry",&json!({}),&iso8601_now())?;
+                if retried.get("accepted")!=Some(&Value::Bool(true)){
+                    return Err("Native Script orphan retry rejected by Task Graph".into());
+                }
+            }
             host.persist(job_id,&fresh,&candidate)?;
             // Audit is an optional observation AFTER the exact SQLite CAS.
             // Neither missing Decision ID nor audit I/O can reverse a real
@@ -202,8 +219,9 @@ impl Reconciler{
             let audit_path=self.decision_audit_path();
             record_watchdog_route_outcome_jsonl(&audit_path,&candidate["tasks"][index],
                 &json!({"executionId":generation,"failedExit":false,
-                    "rawError":"execution lease expired",
-                    "failureReason":"lease_expired","failureMessage":message,
+                    "rawError":message,
+                    "failureReason":if orphaned{"startup_orphaned"}else{"lease_expired"},
+                    "failureMessage":message,
                     "exitCode":null}));
             if let Some(generation)=generation{
                 self.runtime.cancel_execution_generation(job_id,task_id,generation);
@@ -211,7 +229,7 @@ impl Reconciler{
             if failed{
                 host.broadcast(&event_for(job_id,task_id,parent.as_deref(),
                     "task.failed","failed",&message,Some("user"),
-                    Some(json!({"reason":"lease_expired"})),None))?;
+                    Some(json!({"reason":if orphaned{"startup_orphaned"}else{"lease_expired"}})),None))?;
             }
         }
         Ok(())

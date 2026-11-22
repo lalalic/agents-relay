@@ -17,6 +17,18 @@ fn invalid_pids_never_invent_live_processes() {
 }
 
 #[test]
+fn native_relay_owner_probe_never_reclaims_a_live_pid_or_unknown_identity() {
+    use agents_relay_rust2::process_identity::dead_native_relay_owner;
+    let here = std::process::id();
+    assert!(!dead_native_relay_owner(&format!("isolated-rust-daemon-{here}")));
+    assert!(!dead_native_relay_owner(&format!("live-rust-daemon-{here}")));
+    assert!(!dead_native_relay_owner("isolated-rust-daemon-0"));
+    assert!(!dead_native_relay_owner("isolated-rust-daemon-invalid"));
+    assert!(!dead_native_relay_owner("relayd-12345"));
+    assert!(dead_native_relay_owner("isolated-rust-daemon-2147483647"));
+}
+
+#[test]
 fn remote_and_nonleader_records_refuse_group_signals() {
     let remote = json!({"pid":42,"pgid":42,"host":"not.local.test.invalid","startToken":"fake"});
     assert_eq!(probe_process_record(&remote), "unknown");

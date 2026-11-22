@@ -122,6 +122,18 @@ pub fn probe_process_record(record: &Value) -> &'static str {
     }
 }
 
+/// A native daemon's PID must be confirmed absent before recovering its
+/// unexpired Script leases. PID reuse and unknown OS responses fail closed.
+/// This never marks an arbitrary provider or browser session as safe to retry.
+pub fn dead_native_relay_owner(owner: &str) -> bool {
+    let Some(pid_text) = owner.strip_prefix("isolated-rust-daemon-")
+        .or_else(|| owner.strip_prefix("live-rust-daemon-")) else { return false; };
+    let Ok(pid) = pid_text.parse::<i32>() else { return false; };
+    if pid < 2 { return false; }
+    if unsafe { libc::kill(pid, 0) } == 0 { return false; }
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+}
+
 pub fn active_relay_lease_owner(owner: &str) -> bool {
     let re = Regex::new(r"^relayd-(\d+)$").expect("constant lease regex");
     let Some(captures) = re.captures(owner) else {

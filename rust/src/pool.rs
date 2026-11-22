@@ -159,8 +159,9 @@ pub fn needs_lifecycle_reconciliation(
     Ok(tasks.iter().any(|t|{
         matches!(field(t,"state"),"RUNNING"|"QUEUED")
         &&t.get("executionId").is_some_and(|v|!v.is_null())
-        &&t.get("leaseExpiresAt").and_then(Value::as_str)
+        &&(t.get("leaseExpiresAt").and_then(Value::as_str)
             .and_then(millis).is_some_and(|expires|expires<=now)
+            ||crate::process_identity::dead_native_relay_owner(field(t,"leaseOwner")))
     }))
 }
 pub fn active_worker_slots(job:&Value)->usize{
@@ -338,9 +339,11 @@ impl RepositoryWorkerPool{
                 let expired=rows(&local,"tasks").iter().any(|t|
                     matches!(field(t,"state"),"RUNNING"|"QUEUED")
                     &&t.get("executionId").is_some_and(|v|!v.is_null())
-                    &&t.get("leaseExpiresAt").and_then(Value::as_str)
+                    &&(t.get("leaseExpiresAt").and_then(Value::as_str)
                         .and_then(millis).is_some_and(
-                            |time|time<=Utc::now().timestamp_millis()));
+                            |time|time<=Utc::now().timestamp_millis())
+                       ||crate::process_identity::dead_native_relay_owner(
+                           field(t,"leaseOwner"))));
                 let allowance=if ready>0||expired{
                     capacity.min(ready.max(1)).max(1)
                 }else{0};
