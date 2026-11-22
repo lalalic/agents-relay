@@ -27,6 +27,8 @@ New source Tasks (`gitDeliveryRequired: true`) must commit with `Relay-Task: ID`
 
 Use Relay for durable multi-Task work with explicit objectives and acceptance criteria.
 
+For every **Agent-created Job**, apply the `speckit-specify` and `speckit-clarify` requirements/clarification contracts, then obtain an independent future-Final-Reviewer preflight with `review run --prompt-file` **before** `job create`. Only `PASS` authorizes creation; revise `CHANGE_REQUIRED`, stop on `BLOCKED`/review failure. A conversation-only design is not authorization. Full Spec Kit file-producing workflows require an authorized `.specify/` checkout; see `contracts/task-job-contract.md` and `contracts/orchestrator-workflows.md`.
+
 Consult CLI help; examples:
 
 ```sh

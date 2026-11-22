@@ -19,6 +19,22 @@ When creating a new Job from an active discussion, the orchestrator must consoli
 
 Use `job create` with standalone objective Markdown. Existing PRs are not imported as Jobs. Use Relay CLI for subsequent Job reads and updates; do not infer Job state or objective from GitHub.
 
+## Agent-created Job quality gate (before `job create`)
+
+An Agent creating a Job (including a user-facing orchestrator) owns the quality of the **proposed Markdown objective before persistence**. This applies to Planner-backed, create-only, P0/self and Coordinator Graph Jobs. It is an **Agent authoring contract**; existing direct CLI/API callers are not runtime-gated by this document.
+
+1. **Authorization and intent:** distinguish discussion/specification from authorization to create or execute a Job. Preserve the original request and settled user decisions; do not invent scope or silently override a required implementation choice.
+2. **Specify:** use the installed `speckit-specify` Skill and its requirements-quality checklist to form a standalone Markdown objective: goal, user-visible behavior, requirements, in/out-of-scope boundaries, known constraints, assumptions and measurable acceptance criteria. Include the original user request or faithful context so an independent reviewer can detect omissions.
+3. **Clarify:** use the installed `speckit-clarify` Skill to discover material ambiguities. Resolve from reliable prior decisions and project context when possible; ask the user only when a consequential scope, risk, experience or acceptance choice cannot be safely resolved. Zero questions is valid when the intent is already clear.
+4. **Independent preflight:** submit the **original request and proposed objective**, plus relevant spec/checklist evidence, to the existing `agents-relay review run --prompt-file FILE --project-path DIR` Outcome Reviewer. Request the **future Final Reviewer's perspective**: is the proposed Job faithful, bounded, feasible to plan and independently testable? Its generic reviewer is implicit; `--agents` may add professional reviewers only when resolvable through the configured Agent catalog. Do **not** invoke the immutable-head `review job` lifecycle for a Job not yet created.
+5. **Decision:** on `PASS`, the authorized creator may call `job create`; on `CHANGE_REQUIRED`, revise the objective and re-review within a bounded correction loop; on `BLOCKED` or review execution failure, resolve missing evidence or user decisions before proceeding. A missing/failed review is never PASS. Do not create a Job to bypass this gate.
+
+The full file-producing Specify/Clarify workflows require a valid `.specify/` project and authorized checkout. Before a repository is selected, apply their analysis and quality **contracts** during conversation without claiming that `spec.md` was written or creating unauthorized files. If required quality guidance or independent review is unavailable, report the blocker rather than certifying the Job.
+
+Use Markdown sections inside the existing `objective` field rather than adding one Relay field for every Spec Kit section. Preserve stable spec references when available, but include enough context and acceptance criteria to work and review independently of the original chat; `description` is not required by the current `job create` CLI. Material changes to accepted scope or criteria require renewed clarification and preflight, not an unreviewed rewrite.
+
+This preflight is creator-owned authoring evidence, **not** a new Relay lifecycle state or a replacement for Planner quality checks, worker self-review, or the independent immutable-head Final Review.
+
 ## Agent definitions and advisory frontmatter
 
 Agent frontmatter `skills`, `model`, and `reasoning` are optional **hints**, not Task requirements. See the canonical [Agent Definition Contract](agent-contract.md) for syntax, inheritance, the separate Worker/Router prompt consumers, and the unchanged hard-gate/Skill resolution semantics. Task producers must not turn those hints into durable Task routing constraints or required Skills.

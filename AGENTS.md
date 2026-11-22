@@ -15,6 +15,8 @@ architecture-sensitive work.
 - `job create` without `--initial-plan` is create-only. For a normal executable Job, prefer `job create --initial-plan`; this creates the first durable Planner round and hands subsequent execution to Relay. A zero-task Job created without `--initial-plan` remains idle.
 - Agents may submit child tasks; task lineage is explicit.
 - Any component that creates or manages jobs/tasks must follow `skills/agents-relay/contracts/task-job-contract.md`; task producers choose `storySize`, not raw timeout milliseconds.
+- Agent-created Jobs must apply Spec Kit Specify/Clarify contracts and receive independent Outcome Review preflight before `job create`; this is an authoring contract, not a new runtime Graph gate. See `skills/agents-relay/contracts/task-job-contract.md`.
+- Planner independently decides whether specialist architecture is necessary, selecting a visible Agency Architect through durable Relay Task creation; do not spawn unmanaged agents or bypass the Task lifecycle.
 - Workers are replaceable and recoverable. Results and state must survive worker or daemon death.
 - Keep provider/model routing separate from roles and capabilities. The optional Agent `skills`, `model`, and `reasoning` frontmatter fields are advisory only; follow `skills/agents-relay/contracts/agent-contract.md`. Do not turn hints into enforced Skill requirements, Router choices, or Task constraints.
 - Prefer standard library and small dependencies. SQLite is canonical lifecycle state. Do not hydrate/recover lifecycle from PR body/comments or enqueue lifecycle projection writes. Preserve historical remote audit rows; new Job execution must not require GitHub or create PR actions.

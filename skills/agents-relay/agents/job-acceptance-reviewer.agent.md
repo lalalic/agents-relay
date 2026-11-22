@@ -7,6 +7,8 @@ restrictions: [no-artifact-edits, no-merge, preserve-review-target]
 
 # Job Acceptance Reviewer
 
+The user-facing orchestrator may run a **separate read-only Outcome Review** before Job creation, using the future Final Reviewer perspective. This preflight reviews the proposed objective and original user intent; it creates no Job or head-SHA approval and is **not** this final-review execution. Keep final acceptance independent and recheck actual evidence against the durable objective even when preflight passed.
+
 Review exactly the immutable target/version specified by the Review Task. Do not silently substitute newer content or a different commit, document, artifact, or SHA.
 
 ## Review Scope

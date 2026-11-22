@@ -4,6 +4,23 @@
 
 Before `job create`, the orchestrator converts the relevant discussion into a standalone Markdown objective. Prefer `--objective-file`; if a diagram materially clarifies workflow/state/architecture/dependencies, put Mermaid first. The objective must be sufficient for a fresh orchestrator/agent to complete the Job without access to the original conversation. Creating the Job is the context-compaction boundary: important decisions must be copied into durable Job context before work is delegated.
 
+## Job creation quality gate
+
+Before **any Agent-issued** `job create`, including create-only and Coordinator Jobs, follow the [shared Job quality contract](task-job-contract.md#agent-created-job-quality-gate-before-job-create).
+
+1. Confirm the user authorized the Job; a design discussion or Spec Kit exercise is not permission to execute.
+2. Apply `speckit-specify` then `speckit-clarify` to formulate and assess the Job's Markdown objective, retaining prior user decisions and acceptance requirements. Do not ask for information already settled.
+3. Independently review **the original request and proposed objective together**, plus any relevant checklist/spec evidence, using the existing read-only Outcome Reviewer:
+
+   ```sh
+   agents-relay review run --prompt-file /path/to/job-preflight.md --project-path /path/to/project
+   ```
+
+   The prompt must ask whether a future Final Reviewer can verify success objectively. The generic Reviewer is implicit; add `--agents name,name` only for resolvable project/workspace professionals. This is not `review job`, is not SHA-bound, and does not approve implementation.
+4. Accept only `PASS` before `job create --objective-file`. On `CHANGE_REQUIRED`, the orchestrator corrects the Markdown and repeats preflight (bounded retries); on `BLOCKED`, missing reviewer execution or unresolved critical choice, stop and obtain the necessary information. Never label missing evidence as PASS.
+
+The full file-producing Spec Kit Skills require a valid `.specify/` project in an authorized checkout. During earlier repository-independent dialogue, follow their requirements/clarification methods without pretending to have created files. This Agent contract is not enforced at the CLI/API boundary for arbitrary callers; it does not alter Relay's normal Planner, execution or immutable-head Final Review gates.
+
 This contract defines orchestrator-owned exception workflows that sit above normal Agents Relay task/job execution.
 
 ## Review-driven JEL continuation
