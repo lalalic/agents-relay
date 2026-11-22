@@ -466,6 +466,13 @@ pub fn apply_review_event(
     let terminal=field(&task_event,"target")!="RUNNING";
     candidate["error"]=Value::Null;
     if terminal{
+        // Review verdicts are normalized separately from Worker terminal
+        // events. They still terminate an owned execution generation and
+        // MUST release the same lease fields as task.completed. Otherwise a
+        // COMPLETED Job can retain a ghost Reviewer lease indefinitely.
+        candidate["executionId"]=Value::Null;
+        candidate["leaseOwner"]=Value::Null;
+        candidate["leaseExpiresAt"]=Value::Null;
         candidate["result"]=json!({"summary":event.get("message")
             .and_then(Value::as_str).unwrap_or("Review settled"),
             "data":event.get("data")});
