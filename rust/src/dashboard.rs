@@ -399,7 +399,11 @@ fn handle_connection<B: DashboardBackend>(
                 Err(RecvTimeoutError::Disconnected) => break,
                 Err(RecvTimeoutError::Timeout) => {}
             }
-            if last_heartbeat.elapsed() >= Duration::from_secs(15) {
+            // Cloud-tunnel/mobile listeners may drop an idle SSE response
+            // before the generic Dashboard's 15-second heartbeat. Keep the
+            // authenticated Mobile stream alive without exposing Job data.
+            let heartbeat_interval = if mobile { 2 } else { 15 };
+            if last_heartbeat.elapsed() >= Duration::from_secs(heartbeat_interval) {
                 stream.write_all(b": heartbeat\n\n")?;
                 last_heartbeat = Instant::now();
             }
@@ -533,6 +537,41 @@ data: {"event":{"type":"task.progress","message":"PRIVATE PROMPT","path":"/Users
         shutdown.store(true,Ordering::Relaxed);
         drop(client);
         server.join().unwrap();
+    }
+
+    #[test]
+    fn mobile_idle_stream_sends_early_heartbeat_through_real_http() {
+        use std::sync::{mpsc, Mutex};
+        use std::io::{Read, Write};
+        struct Quiet { sender: Mutex<Option<mpsc::Sender<String>>> }
+        impl DashboardBackend for Quiet {
+            fn api(&self, _: DashboardRequest<'_>) -> DashboardResponse {
+                DashboardResponse::text(404,"Not found")
+            }
+            fn subscribe_events(&self) -> mpsc::Receiver<String> {
+                let (sender, receiver) = mpsc::channel();
+                *self.sender.lock().unwrap() = Some(sender);
+                receiver
+            }
+        }
+        let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+        let address=listener.local_addr().unwrap();
+        let shutdown=Arc::new(AtomicBool::new(false));
+        let backend=Arc::new(Quiet{sender:Mutex::new(None)});
+        let thread={let backend=Arc::clone(&backend);let shutdown=Arc::clone(&shutdown);
+            thread::spawn(move||serve_dashboard(listener,backend,shutdown).unwrap())};
+        let mut conn=TcpStream::connect(address).unwrap();
+        conn.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        conn.write_all(b"GET /api/mobile/events HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+        let started=Instant::now();let mut response=Vec::new();let mut buf=[0;1024];
+        for _ in 0..10 {
+            let n=conn.read(&mut buf).unwrap();response.extend_from_slice(&buf[..n]);
+            if response.windows(b": heartbeat\n\n".len()).any(|w|w==b": heartbeat\n\n") {break;}
+        }
+        assert!(response.windows(b": heartbeat\n\n".len()).any(|w|w==b": heartbeat\n\n"),"mobile needs early proxy keepalive");
+        assert!(started.elapsed()<Duration::from_secs(5));
+        shutdown.store(true,Ordering::Relaxed);
+        drop(conn);drop(backend);thread.join().unwrap();
     }
 
     #[test]
