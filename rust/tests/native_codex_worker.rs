@@ -106,3 +106,23 @@ fn successful_codex_cli_exit_cannot_fabricate_graph_task_completion(){
     assert_eq!(persisted["tasks"][0]["attempt"],1);
     drop(store);fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn codex_review_handoff_requires_exact_live_host_binding_not_completion(){
+    use agents_relay_rust2::native_codex_execution::valid_codex_review_handoff;
+    use serde_json::json;
+    let run="actual-model-generation";
+    let valid=json!({"state":"AWAITING_DECISION",
+        "interactiveInvocation":{"status":"awaiting_decision",
+          "executionId":run,"invocationId":run,"revision":run}});
+    assert!(valid_codex_review_handoff(&valid,run));
+    assert!(!valid_codex_review_handoff(&valid,"different-generation"));
+    for state in ["RUNNING","QUEUED","SUCCEEDED","FAILED"]{
+        let mut changed=valid.clone();changed["state"]=json!(state);
+        assert!(!valid_codex_review_handoff(&changed,run));
+    }
+    for field in ["status","executionId","invocationId","revision"]{
+        let mut changed=valid.clone();changed["interactiveInvocation"][field]=json!("unknown");
+        assert!(!valid_codex_review_handoff(&changed,run));
+    }
+}

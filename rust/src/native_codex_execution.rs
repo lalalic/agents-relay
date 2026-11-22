@@ -51,6 +51,19 @@ pub fn native_codex_managed_prompt(
     }
     Ok(prompt)
 }
+/// A Codex Model can ask the independent Host for real human review and
+/// legitimately exit while the Graph persists the waiting invocation.
+/// This is not Task success: the Job remains ACTIVE/WAITING, and only the
+/// future authenticated Host decision can release the same Task.
+pub fn valid_codex_review_handoff(task:&Value,execution_id:&str)->bool{
+    let binding=task.get("interactiveInvocation").unwrap_or(&Value::Null);
+    field(task,"state")=="AWAITING_DECISION"
+        &&field(binding,"status")=="awaiting_decision"
+        &&field(binding,"executionId")==execution_id
+        &&field(binding,"invocationId")==execution_id
+        &&field(binding,"revision")==execution_id
+}
+
 /// Exactly one leased generation and an explicitly configured absolute
 /// Codex binary. Never claim Task success merely from process exit code 0.
 pub fn execute_claimed_codex(
@@ -190,6 +203,9 @@ pub fn execute_claimed_codex(
                 .into_iter().flatten().any(|v|field(v,"id")==execution_id){
             return Ok(());
         }
+        // The Worker may have handed off to a verified, execution-bound
+        // human Review. Never mark it SUCCEEDED: the Graph is still waiting.
+        if valid_codex_review_handoff(durable,execution_id){return Ok(());}
         if matches!(field(durable,"state"),"FAILED"|"CANCELLED"){
             return Err("Codex Task canonical Graph outcome is not successful".into());
         }
