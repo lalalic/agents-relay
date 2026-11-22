@@ -58,6 +58,10 @@ Before Task decomposition, distinguish tests achievable before publishing from l
 
 New Plan rounds assign at most one newly authored Task per effective Agent role. Group design, coding, Graph changes, CLI, testing, self-review, and internal phases in the same implementation worker Task instead of decomposing by technical subsystem. A missing/blank `agentName` is normalized to `implementation` for duplicate checks. PLAN_APPLY_VALIDATION_FAILED rejects duplicate effective roles atomically, with corrective detail. Distinct Agents may own truly independent work, and a later Plan round can reuse the same role for genuine revision/recovery. The automatic SHA-bound Final Review gate creates `job-acceptance-reviewer` itself; Planner does not emit that agent as an ordinary Task. Legacy review agents and historical Plans are read compatibly.
 
+### Architect design handoff
+
+When the Planner selects an Agency Architect, follow [Architect Design Handoff](architect-design-handoff.md). Its Task input defines the tracked design file and design acceptance requirements. The Architect writes and self-reviews that artifact and records its path/version in the completed Task Result. The Planner verifies the artifact in a subsequent Plan round before scheduling implementation dependent on the design. Do not accept a summary alone as architecture evidence. A Spec Kit `plan.md` belongs in a valid, authorized project; otherwise use the project's standard design path. Keep Relay execution state in its existing store.
+
 ### Planning graph and semantic Task tree
 
 The planning graph expresses execution flow. The Task tree expresses semantic ownership. `dependencies` answer which durable outcomes must succeed before a Task can run; `parentTaskId` answers which durable artifact or milestone owns the Task. These are independent relationships.
