@@ -132,9 +132,9 @@ All four MVPs must be evidenced separately with exact Job ID, source Git SHA, Ta
 
 ## Gate E — transport, restart, ownership and adversarial safety
 
-- [ ] E1. Persist unique correlated started/progress/completed/failed and outbox receipts; reject duplicate, out-of-order and forged model-worker events.
-- [ ] E2. Kill/restart test-owned Rust during queued, running, review-wait and terminal reconciliation. Verify generation fencing, durable leases, exact-once effects and convergence.
-- [ ] E3. Bounce a **test-owned** authenticated Events Bus broker; verify durable replay, recovery and no invented started/terminal; validate **intended production transport/security**, not solely loopback-token fixture.
+- [x] E1. **Production-scoped PASS:** Real Job713 failed/retry/completed and Job715 Reviewer approved; exactly one published terminal Outbox key for two same-execution activity observations. 313/313 published workflow outbox records, unique keys, SQLite quick_check=ok. Seven native adversarial suites **38/38 PASS**: authenticated NATS, forged/misbound/wrong-token source rejected, Model pre-start/duplicate/stale/colliding-event rejected with rollback and exactly-once publication. Full production-broker disruption is still E3. Evidence: docs/RUST2_GATE_E1_E2_PRODUCTION_20261122.md.
+- [ ] E2. **Partial — completed-Job restart PASS:** WAL-consistent backup, sole production Rust daemon restarted, entire Job713 and Job715 JSON SHA byte-identical, 505 Jobs unchanged, 313 published outbox records unchanged, three HTTP routes 200, and existing Job715 ProjectRunner Run reopened with reused:true. Pending queued/running/interactive-review-wait interruption and exact lease fencing. Evidence: docs/RUST2_GATE_E1_E2_PRODUCTION_20261122.md.
+- [ ] E3. **Native authenticated test-owned Broker-restart subcase PASS:** Rust native daemon Graph/SQLite event ingress survives broker drop/restart with token re-authentication without invented start/terminal or automatic resend; full production Broker security/outage certification remains open.
 - [ ] E4. Model provider reject before submit may retry safely; uncertainty after send must quarantine without duplicate or released slot.
 - [ ] E5. Run multiple Jobs/Workers with capacity, FIFO, backpressure and timeout; never starve or exceed leases.
 - [ ] E6. Reject cross-repo Job-ID collision, stale execution/generation, invalid task event, oversized mobile cancellation, unauthorized write and stale review decision.
