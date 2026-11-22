@@ -330,6 +330,7 @@ pub mod native_script_worker;
 pub mod native_script_execution;
 pub mod native_codex_execution;
 pub mod native_worker_event_ingress;
+pub mod native_host_review_ingress;
 pub mod native_browser_execution;
 pub mod native_script_planner;
 pub mod cli_prompt;

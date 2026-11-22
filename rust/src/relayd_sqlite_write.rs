@@ -12,6 +12,7 @@ use crate::{
     agent_script_discovery::discover_script_agent,
     native_script_execution::run_claimed_script_task,
     native_worker_event_ingress::apply_verified_worker_event,
+    native_host_review_ingress::apply_durable_host_review_event,
     route_outcome_recording::record_terminal_route_outcome_jsonl,
     daemon_worker_failure::{
         classify_native_launch_phase, DaemonFailureState, DaemonLiveWorkers,
@@ -347,6 +348,19 @@ impl IsolatedSQLiteWriteHost {
         ->Result<bool,String>{
         if field(event,"job_id")!=id{return Ok(false);}
         let kind=field(event,"type");
+        if kind=="task.interactive_decision"{
+            let job=self.scoped(id)?.load_job(id)?
+                .ok_or("Interactive Review EventBus Job disappeared")?;
+            self.isolated_project(&job)?;
+            if let Some((resumed,accepted))=apply_durable_host_review_event(
+                &self.path(),&self.config.graph_directory,id,event)?{
+                if !accepted.is_null(){self.emit(accepted);}
+                self.emit_job_snapshot(&resumed);
+                self.wake(id,"native-host-review.decision")?;
+                return Ok(true);
+            }
+            return Ok(false);
+        }
         if !matches!(kind,"task.started"|"task.progress"|"task.completed"|"task.failed"){
             return Ok(false);
         }
@@ -423,7 +437,12 @@ impl IsolatedSQLiteWriteHost {
             &&!field(task,"executionId").is_empty()
             &&!field(task,"leaseOwner").is_empty()
             &&matches!(field(task,"state"),"QUEUED"|"RUNNING"));
-        if !has_model_lease{
+        let has_review_wait=job["tasks"].as_array().into_iter().flatten().any(|task|
+            field(task,"state")=="AWAITING_DECISION"
+            &&field(&task["interactiveInvocation"],"status")=="awaiting_decision");
+        // A human Review has already dropped the Worker lease. Do not gate
+        // its authenticated decision on the unrelated Model-lease heuristic.
+        if !has_model_lease&&!has_review_wait{
             self.model_nats_pending.remove(id);
             return Ok(0);
         }
