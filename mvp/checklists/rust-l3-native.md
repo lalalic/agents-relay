@@ -32,6 +32,10 @@ node mvp/rust-l3-e2e.mjs --case C02  # targeted case, also uses an isolated stor
 
 The runner uses the native **public CLI**, a real isolated Rust2 daemon and real Script Worker processes. `Job` and `Task` status is read via CLI; no Node Relay internals are imported and the driver never reads/writes SQLite. The test-only Review Host binary accesses its own disposable SQLite using canonical native Graph/HostInvocation ports. Every case owns and stops its daemon. A new `results.json` plus `transcript.json` is written to the printed temporary evidence directory; store a copy under ignored `mvp/runs/` for review.
 
+## Supplemental genuine live C03 E2E (2026-11-22)
+
+A test-only Job710 in an already-authorized native Codex local Git repository genuinely exercised physical iPhone Review v1 Request Changes, real Codex Model correction, second compiled Markcut Preview, physical phone Approve, original Task2207 release and downstream Script C. See docs/RUST2_FULL_E2E_CHECKLIST.md and saved local ignored evidence mvp/runs/20261122T0908-rust-l3-c03-live/. The post-approval Script fixture initially failed and needed an explicit same-Task retry after fixing the fixture. Thus it proves a functional live review cycle but NOT a strict clean isolated five-case harness PASS. Formal isolated Model-dependent scenarios remain BLOCKED pending genuinely authenticated isolated Codex provider; never substitute live-only receipts for independent isolation.
+
 ## Current execution limitations
 
 - `--isolated-write-store-dir` does **not** authorize `adapter=codex`; native Codex currently requires `--live-store-dir`, a trusted Events Bus and repository allowlist. A WebHelm canary config cannot secretly stand in for this distinct Model adapter.
