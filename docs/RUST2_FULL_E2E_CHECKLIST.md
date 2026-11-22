@@ -1,5 +1,7 @@
 # Rust2 Relay — full E2E acceptance checklist
 
+**Native Rust single-node release decision, 2026-11-22:** The current Neo Master sole-writer Rust Relay is ACCEPTED as **production-ready for its existing single-node deployment**, based on actual completed ProjectRunner Jobs 683/685/692/693/713/715/717, live iPhone verification, authentic Final Reviewer, mid-RUNNING Script restart/recovery and 335/335 unique durable Outbox records published. This is a scoped product release, NOT full nine-gate or three-node HA/rollback certification. The older generic HTTP productionReady=false field tracks the still-open broader Gate G. See [release scope and evidence](RUST_SINGLE_NODE_PRODUCTION_RELEASE_20261122.md).
+
 **Purpose:** certify actual native Rust2 from Job creation to terminal Graph/SQLite, Script and browser Model Workers, Events Bus, Dashboard, Neo Mobile on a **real iPhone**, and eventually three-node live deployment. This file defines **future acceptance gates**; it does not claim that tests were run.
 
 **Canonical requirements:** [AGENTS.md](../AGENTS.md), [DESIGN-PRINCIPLES.md](../DESIGN-PRINCIPLES.md), [Rust2 handoff](RUST2_NEXT_AGENT_HANDOFF_20261119.md), [migration ledger](RUST2_HEAD_TO_HEAD_CHECKLIST.md), [browser pool](BROWSER_WORKER_POOL.md).

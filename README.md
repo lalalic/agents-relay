@@ -1,6 +1,6 @@
 # Agents Relay
 
-Agents Relay is a TypeScript runtime for durable asynchronous agent Jobs driven locally by SQLite and canonical workflow Graphs. The EventBus wakes reconciliation; an EventBus message or GitHub PR comment is never the lifecycle authority. Job, Plan, Task, Review, Execution, Lease and Recovery state survive daemon restarts in SQLite.
+Agents Relay is a durable asynchronous agent runtime driven by local SQLite and canonical workflow Graphs. Its native Rust daemon is the production runtime for the verified single-node Neo Master deployment; TypeScript remains in the repository for legacy/reference and migration coverage. The EventBus wakes reconciliation; an EventBus message or GitHub PR comment is never the lifecycle authority. Job, Plan, Task, Review, Execution, Lease and Recovery state survive daemon restarts in SQLite.
 
 Every Job is keyed by an immutable local Git identity: `repository` is the Git root directory name and `projectRoot` is its validated canonical path. Every Neo Project is an independent Git repository; worktrees never become Job roots. SQLite owns the durable Job/Task/Review state. Local Git is the source of truth for review and merge. Only after completion, Relay may fast-forward-push verified local `main` if `origin/main` already exists and the effective fetch and push URLs match. No `origin` or no remote `main` means skip; unreachable, mismatched or divergent destinations are retried separately, never changing Job state.
 
@@ -10,6 +10,13 @@ Agent frontmatter hints (`skills`, `model`, `reasoning`) are described in [Agent
 The canonical V2 architecture contract is
 [DESIGN-PRINCIPLES.md](DESIGN-PRINCIPLES.md). README sections below describe
 the runtime; they do not replace that contract.
+
+**Native Rust single-node release (2026-11-22):** **Production-ready for the
+existing Neo Master sole-writer deployment**. This scoped decision does not
+certify multi-node HA, rollback, or deferred full-system gates. See the
+[release record](docs/RUST_SINGLE_NODE_PRODUCTION_RELEASE_20261122.md).
+The legacy HTTP productionReady=false status is an uncompleted FULL Gate G
+certification flag, not a denial of this accepted single-node release.
 
 **Escalation executor:** `AGENTS_RELAY_ESCALATION_COMMAND` selects an external
 executable (absolute path) or a JSON argv array with a fixed command prefix.
