@@ -1,7 +1,7 @@
 # Neo Mobile MVP — 4 fast iPhoneHelm smoke checks
 
 **Agent:** `neo-mobile-mvp-agent` (`mvp/agents/neo-mobile-mvp-agent.agent.md`)
-**Status:** `NOT_RUN`. This defines **minimum validation of not-yet-implemented features**; no claimed implementation or PASS.
+**Status (2026-11-22): `PASS 4/4` on physical iPhone 17 using authenticated iPhoneHelm and live Rust Relay (no Simulator).** Evidence: real UI snapshots of Jobs 705/706; selected Job 705 Task 2192 activities including real started/progress/completed; new CLI-created Job 707 in the Jobs screen changed `Idle → Queued` without manual refresh while the authentic native Rust Script ran; one `hello` entered/sent in Neo Mobile yielded a new user bubble and a new `Hello. How can I help?` assistant bubble. Test Job 707 was cancelled after evidence; Task 2199 had genuinely succeeded. iPhoneHelm Sessions were closed by the CLI. This is the four-check MVP only, not real-human Review/Cancel QA.
 
 ## Preconditions (not checklist items)
 
@@ -11,10 +11,10 @@
 
 ## Minimum acceptance checklist
 
-- [ ] **M01 — Jobs:** Open **Jobs** on the real iPhone; the CLI-created Job appears with the correct ID/title/state. Tap it successfully.
-- [ ] **M02 — Activities:** In the selected Job, see genuine Task Activities containing a known Task's start and terminal event; event identities match the Job and Task.
-- [ ] **M03 — SSE live update:** While viewing Jobs/Activities **without manual refresh**, trigger a real external CLI-owned Task transition and observe the updated status/activity on the phone automatically via SSE. A push notification, polling-only refresh or API status is not PASS.
-- [ ] **M04 — Chat `hello`:** Open **Chat**, send `hello` once, and verify both the outgoing user bubble and the correlated assistant reply bubble in the same iPhone conversation. APNs-only or reply visible only on the web is FAIL.
+- [x] **M01 — Jobs:** Open **Jobs** on the real iPhone; the CLI-created Job appears with the correct ID/title/state. Tap it successfully.
+- [x] **M02 — Activities:** In the selected Job, see genuine Task Activities containing a known Task's start and terminal event; event identities match the Job and Task.
+- [x] **M03 — SSE live update:** While viewing Jobs/Activities **without manual refresh**, trigger a real external CLI-owned Task transition and observe the updated status/activity on the phone automatically via SSE. A push notification, polling-only refresh or API status is not PASS.
+- [x] **M04 — Chat `hello`:** Open **Chat**, send `hello` once, and verify both the outgoing user bubble and the correlated assistant reply bubble in the same iPhone conversation. APNs-only or reply visible only on the web is FAIL.
 
 **Pass:** M01–M04 all demonstrated on the physical iPhone with screenshots/snapshots and app build, fixture IDs and observed result. Individual `PASS | FAIL | BLOCKED | NOT_RUN`. A missing feature reached on a working device = `FAIL`, an unavailable device/fixture = `BLOCKED`.
 
