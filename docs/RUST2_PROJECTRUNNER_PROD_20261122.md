@@ -25,18 +25,43 @@ On 2026-11-22, a fresh owned WebHelm Session in managed Google Chrome opened Job
 
 Raw evidence: mvp/runs/20261122T1021-projectrunner-production/, containing Job snapshots, exact Reviewer and Worker event histories, real Run bindings, Chrome command output, and PNGs.
 
-## New live repeatability probe: Job713
+## Fresh live Calculator repeatability and recovery — Job713 COMPLETED
 
-A NEW actual neo project run on 2026-11-22 produced Job713, Coordinator 2218, Builder 2219, from a fresh no-index private Run (created 2026-11-22-discovery-7f86613b). Builder authored and tested a calculator but incorrectly wrote index.html and qa/verification.md into parent Project Git rather than canonical Run Git. Git commit under parent .git was sandbox-denied; authentic task.failed events were durably ingested and native Troubleshooter Task 2220 created. An independent QA comment about the wrong Git root was appended to the original Builder Task. The genuine Troubleshooter repaired the Run root, browser-verified and committed Run-local SHA 183f15c, then requested a retry of original Builder Task2219. This is failure-recovery evidence, NOT clean-repeatability PASS. Job713 must not be reported COMPLETED unless final independent QA, Reviewer and Job are actually terminal.
+A real new neo project run on 2026-11-22 created Calculator Job713 from a no-index private Run. Coordinator2218, real Codex Builder2219, Troubleshooter2220, independent real Codex QA2221 and Final Reviewer2222 all SUCCEEDED; Job713 truly reached COMPLETED / COMPLETED, independent Review approved.
+
+- Initial Builder wrote index.html and QA artifacts into reusable Project Git rather than canonical private Run. A real sandbox Git delivery failure triggered Troubleshooter2220, which moved the work to Run Git and committed 183f15c. The original Builder2219 retried on the SAME Task and fixed a genuine post-Equals new-digit-reset bug, committing Run Git bfc7d732edbb9e23431f223637a319743f3bdd2b. Managed Chrome independently verified the restored Calculator at 320/375/430/1280px, including decimal precision, multiplication, division, Backspace, keyboard Enter, fresh input after Equals, offline resources and visible focus. Independent QA2221 completed two rounds; Reviewer2222 approved the project SHA271b469 and Run Git SHA bfc7d73.
+- Wrong-root, test-only untracked files were archived as evidence after successful recovery; original Calculator Git remained untouched. No direct SQLite mutation, fabricated reviewer verdict or Task terminal.
+- Native Rust pre-patch bug was exposed: the COMPLETED Job713 Final Reviewer2222 retained historical executionId and leaseOwner metadata. That old record is intentionally NOT represented as automatically repaired or manually edited. Rust source fix ab0a5a8 clears executionId, leaseOwner and leaseExpiresAt on a genuine terminal Reviewer verdict, while preserving exact original generation for fencing. New and existing Reviewer lifecycle tests: 9/9 PASS. Only Rust PM2 owner was restarted after a WAL-consistent production SQLite backup at ~/.agents-relay/backups/rust2-20261122-pre-reviewer-lease.sqlite. API returned HTTP 200 and SQLite integrity check ok after restart.
+
+Job713 is a genuine functional recovery PASS, not a zero-retry clean PASS.
+
+## Declarative video-domain fix and clean live Reviewer canary — Job715 COMPLETED
+
+The non-Vlog Shortcut test project actually requires authentic public trending-video discovery. The original project-name heuristic withheld the required research directive, and genuine production Job714 Script A FAILED. Only test-owned Job714 was cancelled after durable failure evidence; it is never counted as passed.
+
+Neo source fix b0c58ee adds named DAG domain video|general as explicit configuration, preserving video behavior and project-specific Calculator prompts, with 38/38 scoped tests PASS. The test-only Shortcut repository declares domain video at local Git commit a5a45a5. Existing unrelated CLI packaging staging has one pre-existing failure on a rejected iphone-helm symlink; it is NOT claimed to have passed.
+
+A NEW authentic neo project run, production Job715, then validated both the video declaration and Rust Reviewer lease fix:
+- Coordinator2226 and source-owned Script A/B/C Tasks2227/2228/2229 each SUCCEEDED with exact execution-correlated Events Bus evidence. A genuinely fetched eight public reference-video records, B/C produced Run-bounded analysis/evidence. noMediaDownloaded=true, rightsDecision=NOT_ASSESSED, publicationAuthorized=false. No media publication.
+- Independent real Codex Final Reviewer2230 issued approved through authentic correlated task.completed. Job715 COMPLETED / COMPLETED in 320 seconds, all five Tasks SUCCEEDED and ALL terminal executionId, leaseOwner and leaseExpiresAt fields NULL, including Reviewer2230 — direct proof that newly deployed Rust ab0a5a8 fixes the ghost lease on actual live production review.
+- Parent Project immutable HEAD a5a45a5ea8abdc05ec868a203527050a856479ef and Run HEAD 6ccb6921852f56f08074bc84d7c7cd85da9fa52c were checked. SQLite PRAGMA quick_check=ok; workflow EventBus outbox 313 published, no nonpublished Job715 projection operations. No lingering test Codex OS process, sole production native Rust PM2 owner online.
+
+Machine-checked evidence: mvp/runs/20261122T1021-projectrunner-production/job-713-final-audit.json, job-715-final-audit.json, exact Job snapshots, authentic per-Task events, private ProjectRunner bindings, original wrong-root artifact archive, real Chrome screenshot/QA evidence and SHA256 hashes.
 
 ## Source repairs
 
 Neo ProjectRunner source, on main and pushed:
 - 20ed95c: domain-specific discovery prompts, preserving video-domain behavior; no more generic viral-video sourcing in Calculator input
 - 4944f89: explicit private Run Git artifact boundary in newly generated immutable Coordinator/Agent input; requires source/QA files and Git HEAD in the Run, not the parent Project
+- b0c58ee: explicit video/general discovery domain for non-Vlog named DAGs
+- Rust ab0a5a8: release exact terminal Reviewer lease on genuine Graph verdict, validated by fresh production Job715
 
-ProjectRunner behavioral test suite: 37 PASS / 0 FAIL (existing unrelated CLI packaging staging test excluded). Unfiltered suite still has one pre-existing package staging FAIL because skills/iphone-helm is a Git symlink rejected by scripts/stage-neo-cli.mjs; this test must not be misrepresented as passed or modified to hide its failure.
+ProjectRunner behavioral test suite: 38 PASS / 0 FAIL (existing unrelated CLI packaging staging test excluded). Unfiltered suite still has one pre-existing package staging FAIL because skills/iphone-helm is a Git symlink rejected by scripts/stage-neo-cli.mjs; this test must not be misrepresented as passed or modified to hide its failure.
 
-## Checklist and residual gate
+## Scoped ProjectRunner sign-off and remaining global gates
 
-Four functional D-MVPs PASS with real production evidence. DPR1-DPR6 have substantive live proof under the explicit production-environment override; DPR7 remains open for the complete native outbox/lease and repeatability sign-off; DPR8 remains open until active Job713 is settled and test-owned wrong-root artifacts are cleaned without touching unrelated Jobs. Do not mark the entire D-ProjectRunner Gate PASS while the new live regression is unresolved. Gate D full requirements and other gates remain independent.
+D-ProjectRunner DPR1–DPR8: **8/8 PASS for the user-selected live production Rust Relay environment**. Original four true COMPLETED MVPs, new recovered Calculator Job713 COMPLETED, fresh Reviewer/lease-clean Job715 COMPLETED, original Calculator untouched, browser Sessions closed, no test Codex processes, test-owned failed Job714 cancelled, real artifacts/event history/Git evidence retained. This explicitly replaces the older requirement for a separate isolated Relay daemon/store at the user's request.
+
+**Historical debt:** the already-COMPLETED pre-fix Job713 Reviewer2222 still retains old stale terminal lease metadata; no process is running and the record was not directly modified. Fresh Job715 proves all lease fields clean on the updated native Rust path. Historical cleanup must use a separately reviewed safe migration, not an unsafe manual SQLite edit.
+
+Global Gates D/E/F/G, rollback/three-node fencing, full non-ProjectRunner tests and productionReady=true signoff remain separate. One preexisting unfiltered Neo packaging test fails due to an iphone-helm symlink; the scoped 38 ProjectRunner behavior tests pass.
