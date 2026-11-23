@@ -60,24 +60,16 @@ Task/Planner context rejects stale identities. Planner submits via `apply_cli`; 
 
 `agentGraph` is a dependency DAG: one durable Coordinator Task plus one durable Agent Task per ready node. Coordinator owns the Graph without a Worker lease. Script/Model Tasks share retry, review and terminal semantics; terminal events immediately release successors, respecting capacity and dependencies.
 
-To create a plan-free Coordinator Job, include its Graph and execution paths
-**in the original Job creation**, atomically with the durable Job. For example:
+Coordinator DAGs are **Neo Project Run-only**. Do not create Coordinator
+Jobs directly for ordinary Relay work, even when an Implementation Job has a
+single Agent. Run `neo project run` for a declared Project `graph.mmd` or
+`project.run.json` named `.mmd` Graph; that caller supplies the validated
+`--project-run-manifest` and private Run-local input/output. Relay retains
+Coordinator support for previously created Jobs. Ordinary Jobs use one direct
+Implementation Task (or normal dependencies), optional Planner and independent
+Final Review.
 
-```sh
-agents-relay job create --repo LOCAL_ROOT_NAME --project-root /absolute/project/root --title "Episode" \
-  --objective-file job.md \
-  --coordinator-graph-file /absolute/project/graph.mmd \
-  --coordinator-input-file /absolute/run/neo-project-run.input.md \
-  --coordinator-output-path /absolute/run/neo-project-run.result.json \
-  --coordinator-project-root /absolute/project \
-  --coordinator-workspace-root /absolute/workspace \
-agents-relay job run --repo LOCAL_ROOT_NAME --id JOB_ID --task-id NUMERIC_TASK_ID \
-  --workspace-root /absolute/workspace
-# Immediate CLI execution and live events (no background scheduling wait):
-# append --foreground to the `job run` invocation.
-```
-
-Creation atomically persists a DRAFT Job and numeric Coordinator Task ID; reuse returned `taskId` for activation and caller Run bindings. DAG identity is `parentTaskId`/`nodeId`/`graphHash`. Normal activation queues; `--foreground` runs immediately and prints events, retaining durable state on interruption. `neo project run` binds and resumes the same Job. Reject legacy shortcut flags/modes. Final Review (`--review`/`--no-review`) and local merge (`--auto-merge`/`--no-auto-merge`) remain independent Job policies.
+For Project runs, creation atomically persists a DRAFT Job and numeric Coordinator Task ID; reuse returned `taskId` for activation and caller Run bindings. DAG identity is `parentTaskId`/`nodeId`/`graphHash`. Normal activation queues; `--foreground` runs immediately and prints events, retaining durable state on interruption. `neo project run` binds and resumes the same Job. Reject legacy shortcut flags/modes. Final Review (`--review`/`--no-review`) and local merge (`--auto-merge`/`--no-auto-merge`) remain independent Job policies.
 
 ## 3. Verify, review, and recover
 

@@ -368,6 +368,7 @@ pub mod relayd;
 pub mod relayd_sqlite_observer;
 pub mod relayd_sqlite_write;
 pub mod cli;
+pub mod cli_project_run_mode;
 pub mod cli_runtime_public;
 pub mod cli_service_public;
 pub mod reconciler_manual_plan_public;

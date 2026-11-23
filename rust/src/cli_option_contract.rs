@@ -8,7 +8,7 @@ pub fn validate_cli_options(args:&[String])->Result<(),String>{
         "--canary-webhelm-socket", "--canary-webhelm-workspace", "--capabilities", "--chatgpt-project", "--chatgpt-tab-close-policy",
         "--classification", "--codex", "--commit-sha", "--concurrency", "--condition",
         "--content-only", "--context", "--context-file", "--continue-input", "--continue-kind",
-        "--continue-target", "--coordinator-graph", "--coordinator-graph-file", "--coordinator-input", "--coordinator-input-file",
+        "--continue-target", "--project-run-manifest", "--coordinator-graph", "--coordinator-graph-file", "--coordinator-input", "--coordinator-input-file",
         "--coordinator-output-path", "--coordinator-project-root", "--coordinator-workspace-root", "--creator-thread-id", "--cron",
         "--cwd", "--dependency-validity", "--dependent-job", "--dependent-task", "--deps",
         "--draft", "--endpoint", "--endpoint-kind", "--ephemeral", "--eval-file",

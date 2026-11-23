@@ -8,10 +8,11 @@ from choosing its independent Final Review/Merge policy.
 ## Lifecycle
 
 1. `job create --initial-plan` is the normal objective-first, Planner-led path.
-   When a project supplies an existing Agent DAG, use **one**
-   `job create --coordinator-graph-file ... --coordinator-input-file ...
-   --coordinator-output-path ... --coordinator-project-root ...
-   --coordinator-workspace-root ...` instead. This atomically creates a DRAFT
+   For a declared Neo Project DAG, use `neo project run` with the
+   Project-owned `.mmd` graph. Its wrapper supplies the validated
+   `--project-run-manifest` and private Run input/output to Relay.
+   Ordinary Jobs use direct Worker Tasks; do not synthesize a DAG merely
+   to skip planning. This atomically creates a DRAFT
    Job and its queued Coordinator Task in SQLite. No initial Planner is required.
 2. `job run --id JOB --task-id NUMERIC_TASK_ID` using the Task ID returned by
    creation activates that same ordinary Job

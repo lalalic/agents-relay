@@ -8,6 +8,7 @@ pub use crate::cli_service_public::{create_service,start_service,Service};
 use crate::{
     cli_core_support::{arg,has_arg,text_option,read_file_utf8},
     cli_help::help_text,
+    cli_project_run_mode::validate_project_run,
     cli_support::{
         relay_control_command,relay_control_job,relay_job_list,
         relay_job_state_command,relay_task_command,readonly_job_for,
@@ -89,7 +90,7 @@ pub fn job_create_request(args:&[String],stdin:Option<&str>)
     }
     let task_only=["--start","--task-id","--input","--input-file",
         "--adapter","--provider","--model","--profile","--reasoning",
-        "--story-size","--agent","--parent","--deps","--capabilities",
+        "--story-size","--agent","--agent-graph","--agent-graph-file","--parent","--deps","--capabilities",
         "--attachments","--max-attempts","--timeout","--cwd",
         "--chatgpt-project","--output","--draft","--queue"];
     if let Some(flag)=task_only.iter().find(|flag|has_arg(args,flag)){
@@ -106,7 +107,14 @@ pub fn job_create_request(args:&[String],stdin:Option<&str>)
     ];
     let coordinator_enabled=coordinator_fields.iter().any(|key|
         has_arg(args,key));
+    if has_arg(args,"--coordinator-graph") || has_arg(args,"--coordinator-input") {
+        return Err("Coordinator requires a Project Run .mmd graph and file-backed input".into());
+    }
+    if !coordinator_enabled && has_arg(args,"--project-run-manifest") {
+        return Err("--project-run-manifest requires Coordinator Project Run fields".into());
+    }
     let coordinator=if coordinator_enabled{
+        validate_project_run(args)?;
         for key in coordinator_fields{
             if !has_arg(args,key)||arg(args,key,"").is_empty(){
                 return Err("Coordinator requires graph-file, input-file, output-path, project-root and workspace-root".into());
@@ -300,6 +308,9 @@ pub fn run_job_command<P:CliRuntimePort>(
 pub fn task_update_request(
     args:&[String],job:&Value,task:&Value,stdin:Option<&str>,
 )->Result<Value,String>{
+    if has_arg(args,"--agent-graph") || has_arg(args,"--agent-graph-file") {
+        return Err("Task graphs are reserved for neo project run Coordinator creation".into());
+    }
     let state=field(task,"state");
     if matches!(state,"RUNNING"|"SUCCEEDED"|"CANCELLED"){
         return Err(format!("Task {} is {state}; execution fields are immutable",
@@ -628,4 +639,39 @@ pub fn dashboard_job_action<P:crate::cli_runtime_public::DashboardJobActionPorts
     ports:&mut P,action:&str,job_id:&str,
 )->Result<Value,String>{
     crate::cli_runtime_public::dashboard_job_action(ports,action,job_id)
+}
+
+#[cfg(test)]
+mod project_mode_cli_tests {
+    use super::*;
+    #[test]
+    fn ordinary_job_does_not_require_a_coordinator_or_planner() {
+        let args = vec!["--repo", "neox", "--objective", "Fix microphone"]
+            .into_iter().map(str::to_owned).collect::<Vec<_>>();
+        let request = job_create_request(&args, None).unwrap();
+        assert!(request["options"].get("coordinator").is_none());
+        assert_eq!(request["initialPlan"], false);
+    }
+    #[test]
+    fn ordinary_job_rejects_unmanaged_graph_and_inline_graph() {
+        let basic = ["--repo", "neox", "--objective", "Fix microphone"];
+        let mut args = basic.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        args.extend(["--coordinator-graph-file", "/tmp/arbitrary.mmd"].map(str::to_owned));
+        assert!(job_create_request(&args,None).unwrap_err().contains("neo project run"));
+        let mut args = basic.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        args.extend(["--coordinator-graph", "flowchart TD\na[agent:a]"].map(str::to_owned));
+        assert!(job_create_request(&args,None).unwrap_err().contains("file-backed"));
+        let mut args = basic.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        args.extend(["--agent-graph-file", "/tmp/graph.mmd"].map(str::to_owned));
+        assert!(job_create_request(&args,None).unwrap_err().contains("does not accept Task option"));
+    }
+    #[test]
+    fn ordinary_task_rejects_embedded_dag_without_touching_store() {
+        let args = ["--input", "Implement change", "--output", "local-git", "--agent-graph-file", "/tmp/graph.mmd"]
+            .map(str::to_owned).to_vec();
+        let job = json!({"id":"720", "repository":"neox", "tasks":[]});
+        let err = managed_worker_task_from_args(Path::new("workflow"), &job,
+            &args, "2026-11-22T00:00:00Z", None).unwrap_err();
+        assert!(err.contains("Neo Project"));
+    }
 }

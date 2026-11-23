@@ -1,7 +1,6 @@
 // Node provenance: src/cli-worker-task.ts. Parse public CLI Task input,
 // reserve a global SQLite numeric ID and apply the canonical Task creation Graph.
 use crate::{
-    agent_graph::parse_agent_graph,
     cli_core_support::{arg,has_arg,text_option},
     dependency_validity::validate_dependency_validity,
     job_task_id_sequence::allocate_entity_id,
@@ -71,11 +70,9 @@ fn task_from_args_inner(
     let output_kind=arg(args,"--output","");
     let output_path=arg(args,"--output-path","");
     let input=text_option(args,"--input","--input-file",stdin)?;
-    let graph=if has_arg(args,"--agent-graph")||has_arg(args,"--agent-graph-file"){
-        let raw=text_option(args,"--agent-graph","--agent-graph-file",stdin)?;
-        if !raw.is_empty(){parse_agent_graph(&raw)?;}
-        nonempty(&raw).map(str::to_owned)
-    }else{None};
+    if has_arg(args,"--agent-graph") || has_arg(args,"--agent-graph-file") {
+        return Err("Task Graphs are only supported by a declared Neo Project Coordinator".into());
+    }
     if input.trim().is_empty(){
         return Err("task create requires --input-file PATH|- or --input MARKDOWN".into());
     }
@@ -180,7 +177,6 @@ fn task_from_args_inner(
     if requirements.is_null(){fields.as_object_mut().expect("Task fields").remove("workerRequirements");}
     if let Some(policy)=tab_close_policy{fields["chatgptTabClosePolicy"]=json!(policy);}
     if let Some(validity)=validity{fields["dependencyValidity"]=validity;}
-    if let Some(graph)=graph{fields["agentGraph"]=json!(graph);}
     for (flag,key) in [("--title","title"),("--project","projectName"),
         ("--agent","agentName"),("--parent","parentTaskId")] {
         if let Some(value)=nonempty(arg(args,flag,"")){

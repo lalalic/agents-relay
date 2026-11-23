@@ -61,7 +61,7 @@ Common options:
 
 Coordinator/DAG creation and activation (no initial Planner required):
   agents-relay job create --repo LOCAL_ROOT_NAME --project-root /absolute/git/root --objective-file job.md
-    --coordinator-graph-file /abs/graph.mmd --coordinator-input-file /abs/input.md
+    --project-run-manifest /abs/project/project.run.json --coordinator-graph-file /abs/graph.mmd --coordinator-input-file /abs/input.md
     --coordinator-output-path /abs/result.json --coordinator-project-root /abs/project
     --coordinator-workspace-root /abs/workspace
   agents-relay job run --id JOB --task-id NUMERIC_TASK_ID
@@ -143,10 +143,11 @@ Required: --repo LOCAL_ROOT_NAME and a standalone Job objective. Job ID defaults
 Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-root ABSOLUTE_GIT_ROOT, --priority P0|P1|P2|P3, --initial-plan, --review|--no-review, --auto-merge|--no-auto-merge, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
 Optional local Git branch binding: --local-merge-source refs/heads/FEATURE --local-merge-target refs/heads/main (both required together). For ordinary code tasks Relay can also bind its isolated local source branch automatically; no remote service or PR is required.
 Creation enables auto-merge and Final Review by default. For plan-free DAG
-jobs, pass --coordinator-graph-file GRAPH --coordinator-input-file INPUT
+jobs, only neo project run may pass --project-run-manifest PROJECT/project.run.json,
+--coordinator-graph-file GRAPH --coordinator-input-file INPUT
 --coordinator-output-path ABS --coordinator-project-root ABS
 --coordinator-workspace-root ABS to atomically
-persist the Job plus one Coordinator Task. Use job run to activate it.
+persist the Job plus one Coordinator Task. Use job run to activate it. Direct unmanaged Coordinator creation is rejected.
 Without a Coordinator, create-only DRAFT Jobs can start the Planner with
 --initial-plan. Final Review and Git Merge are independent of how work starts.
 The --no-review and --no-auto-merge policies are separate; creation is
@@ -274,7 +275,7 @@ Relay verifies the current execution's started Git baseline, source branch HEAD,
 
 Required: --repo LOCAL_ROOT_NAME --id NUMERIC_JOB_ID, --input-file PATH|- (preferred) or --input MARKDOWN, and --output local-git|file. --input and --input-file are mutually exclusive.
 --output local-git marks code changes for local Git merge; --output file also requires --output-path PATH. Neither creates a remote request.
-Common: --title TITLE (optional; otherwise derived from the first non-empty input line), --idempotency-key KEY, --priority P0|P1|P2|P3, --story-size S|M|L, --agent NAME, --agent-graph-file PATH|-, --deps 201,202, --dependency-validity JSON, --parent ID, --draft. Relay allocates the store-global increasing numeric Task ID and rejects caller-supplied IDs. The JSON maps declared dependency Task IDs to order-only, revalidate, or rerun. Normal model-backed Tasks omit adapter/provider/model so Relay runs one Execution Router decision over complete worker+model routes. New Tasks are worker-routed; legacy adapter=orchestrator records are recovery-only and cannot be created or manually executed.
+Common: --title TITLE (optional; otherwise derived from the first non-empty input line), --idempotency-key KEY, --priority P0|P1|P2|P3, --story-size S|M|L, --agent NAME, --deps 201,202, --dependency-validity JSON, --parent ID, --draft. Relay allocates the store-global increasing numeric Task ID and rejects caller-supplied IDs. The JSON maps declared dependency Task IDs to order-only, revalidate, or rerun. Normal model-backed Tasks omit adapter/provider/model so Relay runs one Execution Router decision over complete worker+model routes. New Tasks are worker-routed; legacy adapter=orchestrator records are recovery-only and cannot be created or manually executed.
 Tasks with dependencies start DRAFT; tasks without dependencies start QUEUED unless --draft is given.
 Directly-created Tasks are not wrapped in a synthetic Plan. Planner-generated Tasks are created internally by Relay from planner output.
 
@@ -286,7 +287,7 @@ Example:
         r##########"Update mutable durable Task fields in place.
 
 Required: --id JOB_ID --task-id ID. Optional --repo LOCAL_ROOT_NAME fences the Job identity.
-Mutable while not RUNNING/SUCCEEDED/CANCELLED: --title, --adapter, --priority, --story-size, --input-file PATH|- or --input MARKDOWN, --project, --agent, --agent-graph-file PATH|-, --parent, --deps, --dependency-validity JSON, --capabilities, --timeout (inactivity window), --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy, --draft, --queue.
+Mutable while not RUNNING/SUCCEEDED/CANCELLED: --title, --adapter, --priority, --story-size, --input-file PATH|- or --input MARKDOWN, --project, --agent, --parent, --deps, --dependency-validity JSON, --capabilities, --timeout (inactivity window), --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy, --draft, --queue.
 Accepted task.started and newer current-execution task.progress events reset --timeout.
 Use --clear-routing to remove routing metadata.
 

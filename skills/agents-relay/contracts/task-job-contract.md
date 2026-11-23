@@ -72,12 +72,15 @@ A later Planner round must inspect the existing semantic tree and attach review,
 
 ### Declarative Agent DAG and Coordinator ownership
 
-For an executable `agentGraph`, create the Job and its Coordinator Task
-atomically through `job create --coordinator-graph-file ...` (with input,
-output, project/workspace paths); activate it with
+An executable `agentGraph` is reserved for a declared **Neo Project Run**
+(`neo project run`), using its Project-owned `graph.mmd` or named `.mmd` Graph.
+Only this caller may create a Coordinator Job with the validated
+`--project-run-manifest` and private Run-local input/output; arbitrary Relay
+`job create` and `task create --agent-graph-file` must not create DAGs.
+Neo Project creates its Job and Coordinator Task atomically and activates it with
 `job run --id JOB --task-id NUMERIC_TASK_ID` using the Task ID returned by Job
-creation. This is an alternative to an
-initial Planner, **not** a separate Job mode or nested runner.
+creation. Ordinary Jobs should use a direct Implementation Task (or normal
+Task dependencies) and independent Final Review without a Coordinator.
 
 The Coordinator stays durable and does not consume a Worker lease. Each graph
 node materializes as an independently durable Agent Task, with its own
