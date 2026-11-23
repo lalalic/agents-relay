@@ -138,6 +138,9 @@
     .event-meta { display:flex; flex-wrap:wrap; gap:.4rem; color:var(--muted); font-size:.68rem; }
     .event-kind { color:var(--accent); font-weight:800; }
     .event-message { margin:.12rem 0 0; overflow-wrap:anywhere; }
+    .event-details { margin:.15rem 0 0; font-size:.72rem; }
+    .event-details summary { cursor:pointer; color:var(--muted); }
+    .event-data { max-height:12rem; margin:.25rem 0 0; padding:.4rem; border-radius:.25rem; background:var(--surface2); font-size:.69rem; white-space:pre-wrap; overflow-wrap:anywhere; overflow:auto; }
     #usage-view,#graphs-view,#rules-view,#shortcuts-view,#worker-rules-view { grid-column:1 / -1; }
     .graphs-browser { display:grid; grid-template-columns:minmax(190px,260px) minmax(0,1fr); gap:.75rem; min-height:60vh; }
     .graph-list { display:grid; align-content:start; gap:.35rem; }

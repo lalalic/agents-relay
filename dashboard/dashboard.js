@@ -83,6 +83,7 @@ let workflowGraphs=[];
 let selectedGraphId='entry';
 const WORKFLOW_SOURCE_REF=window.__RELAY_DASHBOARD_CONFIG.sourceRef;
 let eventTaskId=selectedTaskId;
+let eventHistoryRequestSequence=0;
 const collapsedTasks=new Set();
 const expandedTasks=new Set();
 const displayedEventIds=new Set();
@@ -110,7 +111,26 @@ function taskCommentField(task){const box=element('div','detail-group');box.appe
 function parseAgentGraphSource(source){if(typeof source!=='string'||!source.trim())return null;const agents=new Map(),edges=[];for(const raw of source.split(/\r?\n/)){const line=raw.trim();if(!line||line.startsWith('%%')||line.startsWith('flowchart '))continue;let match=line.match(/^([A-Za-z_][A-Za-z0-9_.-]*)(?:\[agent:([A-Za-z_][A-Za-z0-9_.-]*)\])?\s*-->\s*([A-Za-z_][A-Za-z0-9_.-]*)(?:\[agent:([A-Za-z_][A-Za-z0-9_.-]*)\])?$/);if(match){agents.set(match[1],match[2]||agents.get(match[1])||match[1]);agents.set(match[3],match[4]||agents.get(match[3])||match[3]);edges.push([match[1],match[3]]);continue;}match=line.match(/^([A-Za-z_][A-Za-z0-9_.-]*)\[agent:([A-Za-z_][A-Za-z0-9_.-]*)\]$/);if(match){agents.set(match[1],match[2]);continue;}return null;}const incoming=new Map([...agents.keys()].map(id=>[id,0]));for(const [,to] of edges)incoming.set(to,(incoming.get(to)||0)+1);const remaining=new Map(incoming),waves=[];let ready=[...remaining].filter(([,degree])=>degree===0).map(([id])=>id).sort();while(ready.length){waves.push(ready);const next=[];for(const id of ready)for(const [from,to] of edges)if(from===id){const degree=(remaining.get(to)||0)-1;remaining.set(to,degree);if(degree===0)next.push(to);}ready=[...new Set(next)].sort();}return {agents,waves};}
 function agentGraphField(task){if(typeof task.agentGraph!=='string'||!task.agentGraph.trim())return null;const box=element('div','detail-group');box.style.gridColumn='1 / -1';box.append(element('p','detail-label',text('Task agent graph')));const graph=element('div','agent-graph');const parsed=parseAgentGraphSource(task.agentGraph);if(parsed&&parsed.waves.length){parsed.waves.forEach((wave,index)=>{const row=element('div','agent-wave');if(index>0)row.append(element('span','agent-arrow',text('↓')));for(const id of wave)row.append(element('span','agent-node',text(id+' · '+(parsed.agents.get(id)||id))));graph.append(row);});}const source=document.createElement('pre');source.className='agent-graph-source';source.textContent=task.agentGraph;graph.append(source);box.append(graph);return box;}
 function clearEvents(){displayedEventIds.clear();eventFeed.replaceChildren(element('li','empty',text('Waiting for events.')));}
-async function loadEventHistory(){const job=selected();if(!job){clearEvents();return;}const params=new URLSearchParams({job:job.id,limit:String(MAX_EVENTS)});if(eventTaskId)params.set('task',eventTaskId);try{const history=await loadJSON(RELAY_PREFIX+'/api/events?'+params.toString());clearEvents();for(const event of Array.isArray(history)?history.slice().reverse():[])addEvent(event);}catch{clearEvents();}}
+async function loadEventHistory(){
+  const job=selected();if(!job){clearEvents();return;}
+  const jobKey=jobSelectionKey(job),taskScope=eventTaskId,request=++eventHistoryRequestSequence;
+  const params=new URLSearchParams({job:job.id,limit:String(MAX_EVENTS)});
+  if(taskScope)params.set('task',taskScope);
+  try{
+    const history=await loadJSON(RELAY_PREFIX+'/api/events?'+params.toString());
+    if(request!==eventHistoryRequestSequence||jobSelectionKey(selected())!==jobKey||eventTaskId!==taskScope)return;
+    eventFeed.querySelector('.event-history-error')?.remove();
+    // Do not erase SSE events received during the history fetch. Merge by
+    // event_id instead; an empty history response is never a reset signal.
+    for(const event of Array.isArray(history)?history:[])addEvent(event);
+  }catch{
+    if(request!==eventHistoryRequestSequence||jobSelectionKey(selected())!==jobKey||eventTaskId!==taskScope)return;
+    if(!eventFeed.querySelector('.event-history-error')){
+      eventFeed.querySelector('.empty')?.remove();
+      eventFeed.append(element('li','empty event-history-error',text('Event history temporarily unavailable. Live events remain visible; refresh to retry.')));
+    }
+  }
+}
 function copySelectedJobIdentity(job){if(!job||!navigator.clipboard?.writeText)return;void navigator.clipboard.writeText(repoName(job.repository)+'/'+value(job.id)).catch(()=>{});}
 function selectJob(job){selectedJob=jobSelectionKey(job);selectedTaskId=null;eventTaskId=null;rememberSelection();clearEvents();location.hash=selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs';copySelectedJobIdentity(job);renderAll();void loadEventHistory();}
 function matchesQuickFilter(job){return !selectedStatus?window.__RELAY_DASHBOARD_CONFIG.statuses.some(status=>status==='DRAFT'?job.draft||job.state==='DRAFT':job.state===status):selectedStatus==='DRAFT'?job.draft||job.state==='DRAFT':job.state===selectedStatus;}
@@ -431,7 +451,47 @@ async function refresh(force=true){const requestSequence=++jobsRequestSequence;j
 function renderEventScope(){const task=eventTaskId&&selected()?.tasks?.find(candidate=>candidate.id===eventTaskId);eventsAllTasks.disabled=!task;eventsAllTasks.setAttribute('aria-pressed',String(!task));eventsScope.textContent=task?'Task '+task.id+' · newest first · 60 max':'Job-wide · newest first · 60 max';}
 function eventLabel(type){return ({'task.process.launched':'Process launched','task.started':'Worker started','task.process.exited':'Sync process exited','task.process.async_exited':'Async process exited','task.completed':'Worker completed','task.failed':'Worker failed','task.blocked':'Worker blocked','review.started':'Review started','review.approved':'Review approved','review.changes_required':'Review changes required','review.blocked':'Review blocked'})[type]||type||'Event';}
 function eventSeverity(event,level){const type=String(event?.type||'').toLowerCase(),eventLevel=String(event?.level||level||'').toLowerCase(),outcome=String(event?.outcome||event?.status||'').toLowerCase();if(eventLevel==='error'||outcome==='failed'||type.endsWith('.failed')||type==='task.failed')return 'error';if(eventLevel==='warn'||outcome==='blocked'||type.endsWith('.blocked')||type==='task.blocked'||type==='review.blocked')return 'warn';return 'normal';}
-function addEvent(event,level){const current=selected();if(!event||current&&event.job_id&&event.job_id!==current.id||eventTaskId&&event.task_id!==eventTaskId)return;if(event.event_id&&displayedEventIds.has(event.event_id))return;if(event.event_id)displayedEventIds.add(event.event_id);const severity=eventSeverity(event,level);const item=element('li','event-item'+(severity==='error'?' event-error':severity==='warn'?' event-warn':''));const meta=element('div','event-meta');meta.append(element('span','event-kind',text(eventLabel(event.type))),element('span','event-type',text(event.type||'event')),element('span','',text(relativeTime(event.timestamp))),element('span','',text('task: '+value(event.task_id))));item.append(meta);const message=element('p','event-message',text(event.message||'Event received'));item.append(message);eventFeed.querySelector('.empty')?.remove();eventFeed.prepend(item);while(eventFeed.children.length>MAX_EVENTS)eventFeed.lastElementChild?.remove();}
+function eventMessage(event){
+  const data=event.data&&typeof event.data==='object'?event.data:{};
+  const evidence=data.evidence&&typeof data.evidence==='object'?data.evidence:{};
+  let message=String(event.message||'Event received');
+  if(typeof data.phase==='string'&&(!event.message||event.message===event.type))message=data.phase;
+  if(Number.isFinite(evidence.framesRendered)&&Number.isFinite(evidence.framesTotal))
+    message+=' · '+evidence.framesRendered+' / '+evidence.framesTotal+' frames';
+  else if(typeof evidence.render==='string')message+=' · '+evidence.render;
+  if(typeof data.next==='string')message+=' · Next: '+data.next;
+  return message.slice(0,650);
+}
+function isSelectedEvent(event,job,taskScope){
+  // An unscoped SSE event must never appear in whichever Job happens to be
+  // selected. Exact Task identity is also required when Task-scoped.
+  return Boolean(event&&job&&event.job_id===job.id&&(!taskScope||event.task_id===taskScope));
+}
+function addEvent(event,level){
+  if(!isSelectedEvent(event,selected(),eventTaskId))return;
+  if(event.event_id&&displayedEventIds.has(event.event_id))return;
+  if(event.event_id)displayedEventIds.add(event.event_id);
+  const severity=eventSeverity(event,level),item=element('li','event-item'+(severity==='error'?' event-error':severity==='warn'?' event-warn':''));
+  const meta=element('div','event-meta');
+  const age=element('span','',text(relativeTime(event.timestamp)));
+  if(event.timestamp)age.title=new Date(event.timestamp).toLocaleString();
+  meta.append(element('span','event-kind',text(eventLabel(event.type))),element('span','event-type',text(event.type||'event')),age,element('span','',text('task: '+value(event.task_id))));
+  item.append(meta,element('p','event-message',text(eventMessage(event))));
+  if(event.data&&typeof event.data==='object'&&Object.keys(event.data).length){
+    const details=element('details','event-details');
+    details.append(element('summary','',text('Details')),element('pre','event-data',text(JSON.stringify(event.data,null,2))));
+    item.append(details);
+  }
+  const epoch=Date.parse(event.timestamp),stamp=Number.isFinite(epoch)?epoch:0;
+  item.dataset.eventTime=String(stamp);
+  if(event.event_id)item.dataset.eventId=event.event_id;
+  eventFeed.querySelector('.empty')?.remove();
+  // Merge history and SSE by timestamp, keeping the newest 60 distinct events.
+  const older=[...eventFeed.querySelectorAll('li.event-item')].find(node=>Number(node.dataset.eventTime)<stamp);
+  eventFeed.insertBefore(item,older||null);
+  const items=eventFeed.querySelectorAll('li.event-item');
+  if(items.length>MAX_EVENTS){const last=items[items.length-1];if(last.dataset.eventId)displayedEventIds.delete(last.dataset.eventId);last.remove();}
+}
 function resetText(windowData){if(!Number.isFinite(windowData.resetsAt))return '';const at=new Date(windowData.resetsAt*1000);const minutes=Math.max(0,Math.ceil((at.getTime()-Date.now())/60000));const relative=minutes<60?minutes+'m':minutes<1440?Math.floor(minutes/60)+'h '+minutes%60+'m':Math.floor(minutes/1440)+'d '+Math.floor((minutes%1440)/60)+'h';return 'Resets '+at.toLocaleString()+' · in '+relative;}
 function usageBar(label,windowData){const percent=Math.max(0,Math.min(100,100-windowData.usedPercent));const row=element('div','usage-row');const heading=element('div','usage-label');heading.append(element('span','',text(label)),element('span','',text(Math.round(percent)+'%')));const track=element('div','usage-track');track.setAttribute('role','progressbar');track.setAttribute('aria-label',label+' available');track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');track.setAttribute('aria-valuenow',String(percent));const fill=element('div','usage-fill');fill.style.width=percent+'%';track.append(fill);row.append(heading,track);const reset=resetText(windowData);if(reset)row.append(element('div','subtle',text(reset)));return row;}
 function usageProvider(provider){const card=element('section','usage-provider');card.append(element('h3','',text(provider.label)));const usage=provider.usage||{};if(!usage.available||!usage.fiveHour||!usage.weekly){card.append(element('p','empty',text(usage.reason||'Account usage telemetry is unavailable.')));return card;}const bars=element('div','usage-bars');bars.append(usageBar('5-hour remaining',usage.fiveHour),usageBar('Weekly remaining',usage.weekly));card.append(bars);return card;}
@@ -610,9 +670,12 @@ function applyStatePatch(patch){if(!patch?.jobId)return false;const job=jobs.fin
 async function refreshJobSnapshot(jobId){const known=jobs.find(job=>job.id===jobId);if(!known)return;try{const params=new URLSearchParams({id:known.id,repo:known.repository});const latest=await loadJSON(RELAY_PREFIX+'/api/job?'+params);upsertFreshJob(latest);renderAll();}catch{/* The current stream and next manual refresh remain available. */}}
 function upsertFreshJob(incoming){if(!incoming)return;const index=jobs.findIndex(job=>jobSelectionKey(job)===jobSelectionKey(incoming));if(index<0){jobs.push(incoming);return;}if(isFreshEnough(incoming.updatedAt,jobs[index].updatedAt))jobs[index]=incoming;}
 const stream=new EventSource(RELAY_PREFIX+'/events');
+// Reconnect can miss messages during an SSE outage; fill the gap from the
+// bounded authoritative history without resetting newer live events.
+stream.addEventListener('open',()=>{if(selected())void loadEventHistory();});
 stream.onmessage=message=>{const payload=parseMessage(message);if(payload?.job){upsertFreshJob(payload.job);renderAll();void drawRuntimeSummary();}};
 stream.addEventListener('relay',message=>{const payload=parseMessage(message);if(payload?.job)upsertFreshJob(payload.job);else if(payload?.statePatch)applyStatePatch(payload.statePatch);if(payload?.statePatch)void refreshJobSnapshot(payload.statePatch.jobId);if(payload?.event)addEvent(payload.event);renderAll();void drawRuntimeSummary();});
 if(location.hash==='#/usage')showView('usage');else if(graphFromHash())showView('graphs');else if(location.hash==='#/execution-router-rules')showView('rules');else if(location.hash==='#/troubleshooter-qa')showView('qa');else showView('jobs');void refresh(false);
 setInterval(()=>{if(location.hash==='#/usage')void drawUsage();},30000);
 setInterval(()=>void refreshVersion(),30000);
-async function refreshSelected(){const job=selected();if(!job){await refresh();return;}selectedJobRefresh.disabled=true;try{const params=new URLSearchParams({id:job.id,repo:job.repository});const updated=await loadJSON(RELAY_PREFIX+'/api/job?'+params.toString());const index=jobs.findIndex(candidate=>jobSelectionKey(candidate)===jobSelectionKey(job));if(index>=0)jobs[index]=updated;else jobs.push(updated);selectedJob=jobSelectionKey(updated);rememberSelection();renderAll();}catch(error){jobsFeedback.textContent='Selected job refresh failed: '+error.message;}finally{selectedJobRefresh.disabled=false;}}
+async function refreshSelected(){const job=selected();if(!job){await refresh();return;}selectedJobRefresh.disabled=true;try{const params=new URLSearchParams({id:job.id,repo:job.repository});const updated=await loadJSON(RELAY_PREFIX+'/api/job?'+params.toString());const index=jobs.findIndex(candidate=>jobSelectionKey(candidate)===jobSelectionKey(job));if(index>=0)jobs[index]=updated;else jobs.push(updated);selectedJob=jobSelectionKey(updated);rememberSelection();renderAll();await loadEventHistory();}catch(error){jobsFeedback.textContent='Selected job refresh failed: '+error.message;}finally{selectedJobRefresh.disabled=false;}}

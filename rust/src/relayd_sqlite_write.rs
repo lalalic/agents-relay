@@ -1360,11 +1360,8 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             .any(|row|field(row,"id")==task_id)){
             return Err("Events Bus history requested an unrelated Task".into());
         }
-        let Some(api)=self.event_history_api.as_ref() else{
-            // No installed Events Bus history port. Node dashboard-data
-            // catches unavailable history and returns [], not fake events.
-            return Ok(Vec::new());
-        };
+        let api=self.event_history_api.as_ref()
+            .ok_or("Dashboard event history is not configured")?;
         // Reuse the production Node-compatible /events reader, including
         // cursor ordering, exact Job/Task checks and bounded response rows.
         // Missing/unavailable external history is *observational only* and
@@ -1374,11 +1371,15 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             "EVENTS_BUS_CONFIG":self.config.store_directory.join(
                 ".eventsbus-history-no-global-config.json").to_string_lossy(),
         });
+        // EventBus history frequently exceeds 1.2s under live render load.
+        // A timeout is an unavailable read, not proof that zero events exist.
+        // Keep the dashboard feed intact on HTTP failure; the SSE channel
+        // remains independent and continues delivering real-time events.
         let fetched=crate::events_bus_runtime::events_bus_history_page(
-            id,task,&json!(limit.max(1)),&json!({"timeoutMs":1200}),&env);
-        Ok(fetched.ok()
-            .and_then(|page|page["events"].as_array().cloned())
-            .unwrap_or_default())
+            id,task,&json!(limit.max(1)),&json!({"timeoutMs":5000}),&env)
+            .map_err(|error|format!("Dashboard event history unavailable: {error}"))?;
+        fetched["events"].as_array().cloned()
+            .ok_or("Dashboard event history returned invalid events".into())
     }
     fn publish_event(&mut self,event:&Value)->Result<(),String>{
         WorkspaceControlBackend::publish(self,event)

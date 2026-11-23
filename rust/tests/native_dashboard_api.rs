@@ -107,6 +107,9 @@ impl DashboardApiServices for FixtureServices {
         ))
     }
     fn events(&mut self, id: &str, task: Option<&str>, limit: i64) -> Result<Vec<Value>, String> {
+        if task==Some("simulate-history-timeout"){
+            return Err("Dashboard event history unavailable: timeout".into());
+        }
         Ok(vec![
             self.log("events", json!({"id":id,"task":task,"limit":limit}))
         ])
@@ -178,6 +181,16 @@ fn call(
 }
 fn data(result: DashboardResponse) -> Value {
     serde_json::from_slice(&result.body).unwrap()
+}
+#[test]
+fn event_history_timeout_is_an_http_error_not_successful_empty_event_feed(){
+    let (backend,_,_,_)=fixture();
+    let response=call(&backend,"GET",
+        "/api/events?job=101&task=simulate-history-timeout&limit=60",None);
+    assert_eq!(response.status,502);
+    assert_ne!(response.body,b"[]");
+    assert!(String::from_utf8_lossy(&response.body)
+        .contains("Dashboard event history unavailable"));
 }
 #[test]
 fn dynamic_dashboard_routes_converge_on_service_backend() {
