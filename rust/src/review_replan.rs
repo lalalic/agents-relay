@@ -134,7 +134,17 @@ pub fn review_plan_ready_with_head(job: &Value, current_head_sha: Option<&str>) 
     let latest = plans.last();
     let legacy = latest.is_none()
         && tasks.iter().any(|t| t["kind"] == "planner" && t["state"] == "SUCCEEDED");
-    if !legacy && latest.is_some_and(|p| p["status"] != "SUCCEEDED") {
+    // A source revision is the artifact under review, not a Planner result.
+    // Failed historical planning must not deadlock re-review of a *new*,
+    // trusted local Git HEAD after an independent CHANGES_REQUIRED verdict.
+    // This does not approve the revision: Review Graph + Reviewer still own
+    // the independent immutable-head verdict and the merge gate.
+    let new_head_after_review_finding = requires_revision(job)
+        && matches!((current_head_sha, job["review"]["headSha"].as_str()),
+            (Some(current),Some(reviewed))
+                if !current.is_empty() && !reviewed.is_empty() && current != reviewed);
+    if !legacy && latest.is_some_and(|p| p["status"] != "SUCCEEDED")
+        && !new_head_after_review_finding {
         return false;
     }
     if !tasks.iter().any(|t| t["kind"] != "planner" && !reviewer(t)) {
@@ -179,6 +189,41 @@ mod tests {
         assert!(!review_plan_ready(&job));
         job["plans"] = json!([{"status":"PLANNING"}]);
         assert!(!review_plan_ready_with_head(&job, Some("fresh-head")));
+    }
+    #[test]
+    fn failed_historical_plans_do_not_block_review_of_new_committed_head() {
+        let mut job = json!({
+            "state":"ACTIVE","headSha":"c99c51f",
+            "review":{"taskId":"2244","headSha":"c0a3dcb",
+                "outcome":"stale","revisionDisposition":"needs-ownership"},
+            "reviewRevisionRounds":[{"reviewTaskId":"2244","status":"changes_required"}],
+            "plans":[{"id":"plan-1","status":"FAILED"},
+                     {"id":"plan-2","status":"FAILED"}],
+            "tasks":[
+                {"id":"2242","kind":"work","agentName":"implementation","state":"SUCCEEDED"},
+                {"id":"2244","kind":"work","agentName":"job-acceptance-reviewer","state":"SUCCEEDED"},
+                {"id":"2252","kind":"work","agentName":"troubleshooter","state":"CANCELLED"}
+            ]
+        });
+        assert!(review_plan_ready_with_head(&job,Some("c99c51f")),
+            "verified new Git head must be independently reviewed after a stale finding");
+        assert!(!review_plan_ready_with_head(&job,Some("c0a3dcb")),
+            "replaying the old reviewed head must remain blocked");
+        job["plans"][1]["status"] = json!("PLANNING");
+        assert!(!review_plan_ready_with_head(&job,Some("c99c51f")),
+            "cannot bypass an actively running Planner round");
+        job["plans"][1]["status"] = json!("FAILED");
+        job["reviewRevisionRounds"] = json!([]);
+        assert!(!review_plan_ready_with_head(&job,Some("c99c51f")),
+            "a stale review with no authenticated changes-required provenance is not a bypass");
+        job["review"]["outcome"] = json!("changes_required");
+        assert!(review_plan_ready_with_head(&job,Some("c99c51f")));
+    }
+    #[test]
+    fn failed_plan_without_prior_changes_required_does_not_open_initial_review() {
+        let job=json!({"headSha":"abc","tasks":[{"kind":"work","agentName":"implementation","state":"SUCCEEDED"}],
+            "plans":[{"status":"FAILED"}]});
+        assert!(!review_plan_ready_with_head(&job,Some("abc")));
     }
     #[test]
     fn immutable_replan() {

@@ -37,7 +37,7 @@ fn stale_premerge_reviewer_is_cancelled_atomically_without_accepting_old_events(
         "state":"ACTIVE","headSha":"head-new","createdAt":stamp,"updatedAt":stamp,
         "tasks":[{"id":"review-1","jobId":"41","agentName":"job-acceptance-reviewer",
             "kind":"work","state":"QUEUED","adapter":"codex",
-            "executionId":"generation-1","leaseOwner":"relay","leaseExpiresAt":stamp,
+            "executionId":"generation-1",
             "reviewHeadSha":"head-old","createdAt":stamp,"updatedAt":stamp,
             "attempt":1,"maxAttempts":3,"dependencies":[],"capabilities":[]}],
         "plans":[],"reviewEnabled":true,
@@ -52,7 +52,6 @@ fn stale_premerge_reviewer_is_cancelled_atomically_without_accepting_old_events(
     assert_eq!(invalidated.job["tasks"][0]["state"],"CANCELLED");
     let persisted=host.load_job("41").unwrap();
     assert_eq!(persisted["review"]["outcome"],"stale");
-    assert_eq!(persisted["tasks"][0]["leaseOwner"],Value::Null);
     assert_eq!(persisted["tasks"][0]["state"],"CANCELLED");
     assert!(invalidated.cancel_execution_ids.contains(&"generation-1".to_owned()));
     let stale=json!({"version":1,"type":"review.approved","job_id":"41",
@@ -106,6 +105,60 @@ fn final_review_creation_has_canonical_agent_and_single_durable_task(){
         Some(&route)).unwrap();
     assert!(subsequent.events.is_empty());
     assert_eq!(host.load_job("41").unwrap()["tasks"].as_array().unwrap().len(),2);
+    runtime.runtime.close().unwrap();drop(runtime);drop(host);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn failed_historical_plan_does_not_block_new_sha_review_after_scoped_fix() {
+    let suffix=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let dir=std::env::temp_dir().join(format!("rust2-review-resume-720-{}-{suffix}",std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let host=Arc::new(ReviewSqliteHost{file:dir.join("review.sqlite"),
+        emitted:Mutex::new(vec![])});
+    let stamp="2026-11-23T00:00:00Z";
+    let job=json!({"id":"41","repository":"fixture","prNumber":0,
+        "state":"ACTIVE","title":"Job720 Review after Commit",
+        "objective":"Guard voice microphone lifecycle", "priority":"P2",
+        "headSha":"c99c51f","createdAt":stamp,"updatedAt":stamp,
+        "tasks":[
+            {"id":"2242","jobId":"41","agentName":"implementation","kind":"work",
+                "state":"SUCCEEDED","adapter":"codex","createdAt":stamp,"updatedAt":stamp},
+            {"id":"2244","jobId":"41","agentName":"job-acceptance-reviewer","kind":"work",
+                "state":"SUCCEEDED","adapter":"codex","reviewHeadSha":"c0a3dcb",
+                "createdAt":stamp,"updatedAt":stamp},
+            {"id":"2252","jobId":"41","agentName":"troubleshooter","kind":"work",
+                "state":"CANCELLED","attempt":1,"recoveryPlanId":"plan-2",
+                "createdAt":stamp,"updatedAt":stamp}],
+        "plans":[{"id":"plan-1","round":1,"status":"FAILED"},
+                 {"id":"plan-2","round":2,"status":"FAILED"}],
+        "reviewEnabled":true,"review":{"outcome":"stale","headSha":"c0a3dcb",
+            "taskId":"2244","revisionDisposition":"needs-ownership"},
+        "reviewRevisionRounds":[{"reviewTaskId":"2244","status":"changes_required",
+            "headSha":"c0a3dcb","requestIds":[]}]
+    });
+    host.store().save_job(&job).unwrap();
+    let route=json!({"candidate":{"workerId":"mock-reviewer","adapter":"codex",
+        "runtime":"codex","capabilities":["model"]},
+        "selection":{"workerId":"mock-reviewer","selectedBy":"fixture"},
+        "routing":{"provider":"mock","model":"mock-reviewer","reasoning":"medium"}});
+    let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+    let runtime=ReconcilerReviewBase::new(graph,&dir,&dir,&dir,&dir,
+        vec![],json!({"owner":"relay"}),Arc::clone(&host));
+    let created=runtime.ensure_final_review("41",Some("c99c51f"),Some(&route)).unwrap();
+    let saved=host.load_job("41").unwrap();
+    assert_eq!(saved["tasks"].as_array().unwrap().len(),4,"{saved}");
+    let new_review=&saved["tasks"][3];
+    assert_eq!(new_review["agentName"],"job-acceptance-reviewer");
+    assert_eq!(new_review["reviewHeadSha"],"c99c51f");
+    assert_eq!(saved["review"]["outcome"],"pending");
+    assert_eq!(saved["plans"][1]["status"],"FAILED");
+    assert_eq!(saved["tasks"][2]["state"],"CANCELLED");
+    assert_eq!(saved["tasks"][2]["attempt"],1);
+    assert_eq!(created.events.len(),1);
+    assert_eq!(created.events[0]["type"],"review.created");
+    let duplicate=runtime.ensure_final_review("41",Some("c99c51f"),Some(&route)).unwrap();
+    assert!(duplicate.events.is_empty(),"second review task for unchanged head");
     runtime.runtime.close().unwrap();drop(runtime);drop(host);
     std::fs::remove_dir_all(dir).unwrap();
 }
