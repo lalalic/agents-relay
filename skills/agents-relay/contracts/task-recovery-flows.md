@@ -141,3 +141,16 @@ prompts receive current authoritative state and relevant task comments as runtim
 context; Troubleshooters independently verify a response against evidence from
 the original failing execution. Repeating an identical escalation with unchanged
 evidence is idempotent.
+
+## One-shot Troubleshooter policy
+
+Each Troubleshooter has **one execution** (`maxAttempts=1`). A failed
+Troubleshooter is never retried, reopened, rerouted or recreated for the same
+original Task. Failure immediately enters the existing durable escalation
+contract; if no executor is configured, preserve the unresolved escalated
+state rather than claiming success. A verified fix may authorize recovering
+**the original Task**; that is not a retry of the Troubleshooter itself.
+
+Routine Codex provider quota/429 failures without tool side effects are
+handled by the normal Model Router / Task Graph fallback, never by creating a
+Troubleshooter.

@@ -190,12 +190,29 @@ pub fn discover_model_candidates(
     candidates.retain(|c|seen.insert(model_choice_id(c)));
     candidates
 }
+/// One configured model per Codex profile: the base config is the implicit
+/// `default` profile, and each `<name>.config.toml` defines exactly one model.
+/// Catalog models are deliberately NOT fallback profiles.
+pub fn codex_profile_candidates(home:&Path,usage:Option<&Value>,now_ms:i64)->Vec<Value>{
+    let mut used=HashSet::new();
+    discover_model_candidates(&json!({"adapter":"codex","workerId":"codex"}),
+        &[],usage,home,now_ms).into_iter().filter(|candidate|{
+        field(candidate,"id").starts_with("default:")
+            ||candidate.get("profile").and_then(Value::as_str)
+                .is_some_and(|v|!v.is_empty())
+    }).filter(|candidate|{
+        let profile=candidate.get("profile").and_then(Value::as_str)
+            .unwrap_or("default");
+        used.insert(profile.to_string())
+    }).collect()
+}
+
 fn same_route(candidate:&Value,route:&Value)->bool{
     ["provider","model"].iter().all(|key|
         route.get(*key).and_then(Value::as_str)
             .is_none_or(|v|v.is_empty()||v==field(candidate,key)))
         && route.get("profile").is_none_or(|profile|
-            candidate.get("profile")==Some(profile))
+            candidate.get("profile").unwrap_or(&Value::Null)==profile)
 }
 pub fn eligible_models(
     candidates:&[Value],constraints:Option<&Value>,

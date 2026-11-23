@@ -31,10 +31,6 @@ recoverComplete["guard: recoverableExecution"]
 recoverBlocked["guard: recoverableExecution"]
 recoverFailed["guard: recoverableExecution"]
 recoverCancelled["guard: recoverableExecution"]
-troubleshooterRecovery["guard: troubleshooterRecovery"]
-recoveryReopenClearError["action: mutation.clearError"]
-recoveryReopenClearReason["action: mutation.clearFailureReason"]
-recoveryReopenClearExecution["action: mutation.clearExecution"]
 
 plannerRetryAvailable["guard: retryAvailable"]
 platformFallbackSafe["guard: platformFallbackSafe"]
@@ -162,9 +158,10 @@ sourceDeliveryReady -->|true| completeClearError
 completeClearError --> completeClearReason
 completeClearReason --> succeeded
 running -->|on: task.failed| failed
-running -->|on: worker.platform_failure| runningPlatformFailureQuarantine
-runningPlatformFailureQuarantine["action: mutation.quarantinePlatformFailure"]
-runningPlatformFailureQuarantine --> failed
+%% A confirmed side-effect-free provider rejection can retry the original
+%% Task on a new owned execution generation through the ranked Model Router.
+%% The previous Codex thread ID survives; failed profiles are excluded.
+running -->|on: worker.platform_failure| platformFallbackSafe
 running -->|on: planner.failed| plannerRetryAvailable
 running -->|on: process.exited| processExitMark
 plannerRetryAvailable -->|true| plannerRetryClearError
@@ -206,10 +203,4 @@ failed -->|on: task.cancelled| recoverCancelled
 recoverCancelled -->|true| cancelled
 failed -->|on: cancel| cancelled
 
-%% Only a persistent Troubleshooter may reopen a terminal recovery for a new failure episode.
-succeeded -->|on: recovery.reopen| troubleshooterRecovery
-cancelled -->|on: recovery.reopen| troubleshooterRecovery
-troubleshooterRecovery -->|true| recoveryReopenClearError
-recoveryReopenClearError --> recoveryReopenClearReason
-recoveryReopenClearReason --> recoveryReopenClearExecution
-recoveryReopenClearExecution --> queued
+%% One-shot Troubleshooters never reopen. A failed recovery escalates.

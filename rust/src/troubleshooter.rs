@@ -35,7 +35,7 @@ pub fn failure_input(job:&Value,task:&Value)->String {
     let reason=task.get("failureReason").and_then(Value::as_str)
         .or_else(||task.get("error").and_then(Value::as_str))
         .unwrap_or("unknown");
-    format!(r#"Recover the failed/blocked task below and make it move again if technically safe.
+    format!(r#"Recover the failed/blocked task below and make it move again if technically safe. You have ONE execution: do not retry yourself. If you cannot verify a real fix, request escalation with the exact blocker and evidence instead of re-running diagnosis.
 
 Original repository: {}
 Local Git root: {}
@@ -66,49 +66,14 @@ fn recovery_for(original:&Value,recovery:&Value)->bool{
     field(recovery,"agentName")=="troubleshooter"
         && recovery.get("parentTaskId")==original.get("id")
 }
-fn episode(recovery:&Value)->i64{
-    recovery.get("recoveryForAttempt").and_then(Value::as_i64).unwrap_or(-1)
-}
-pub fn pending_troubleshooter_reopens(job:&Value)->Vec<Value>{
-    let mut result=Vec::new();
-    for original in tasks(job){
-        if field(original,"kind")=="planner"
-            ||field(original,"agentName")=="troubleshooter"
-            ||field(original,"state")!="FAILED"{continue;}
-        let recoveries:Vec<&Value>=tasks(job).iter().filter(|item|
-            recovery_for(original,item)).collect();
-        if recoveries.is_empty()||recoveries.iter().any(|r|
-            matches!(field(r,"state"),"DRAFT"|"QUEUED"|"RUNNING"|"BLOCKED")){continue;}
-        let best=recoveries.into_iter().max_by_key(|r|episode(r))
-            .expect("recoveries non-empty");
-        if !matches!(field(best,"state"),"SUCCEEDED"|"CANCELLED")
-            ||episode(best)>=original.get("attempt").and_then(Value::as_i64).unwrap_or(0){
-            continue;
-        }
-        result.push(json!({"original":original,"recovery":best}));
-    }
-    result
-}
-pub fn pending_troubleshooter_retries(job:&Value)->Vec<Value>{
-    tasks(job).iter().filter_map(|recovery|{
-        if field(recovery,"agentName")!="troubleshooter"
-            ||field(recovery,"state")!="FAILED"
-            ||recovery.get("attempt").and_then(Value::as_u64).unwrap_or(0)
-                >=recovery.get("maxAttempts").and_then(Value::as_u64).unwrap_or(0){
-            return None;
-        }
-        tasks(job).iter().find(|original|
-            original.get("id")==recovery.get("parentTaskId")
-                &&matches!(field(original,"state"),"FAILED"|"BLOCKED"))
-            .map(|original|json!({"original":original,"recovery":recovery}))
-    }).collect()
-}
+// A Troubleshooter is a one-shot recovery specialist. Failed/reopened
+// recoveries are escalated, never resubmitted as the same Agent.
+pub fn pending_troubleshooter_reopens(_job:&Value)->Vec<Value>{Vec::new()}
+pub fn pending_troubleshooter_retries(_job:&Value)->Vec<Value>{Vec::new()}
 pub fn refresh_troubleshooter_input(job:&Value,original:&Value,recovery:&mut Value){
     recovery["input"]=json!(failure_input(job,original));
     recovery["recoveryForAttempt"]=original.get("attempt").cloned().unwrap_or(Value::Null);
-    let attempt=recovery.get("attempt").and_then(Value::as_u64).unwrap_or(0);
-    let budget=recovery.get("maxAttempts").and_then(Value::as_u64).unwrap_or(0);
-    recovery["maxAttempts"]=json!(budget.max(attempt.saturating_add(3)));
+    recovery["maxAttempts"]=json!(1);
     if let Some(object)=recovery.as_object_mut(){
         object.remove("routing");object.remove("workerSelection");
     }
@@ -147,7 +112,7 @@ pub fn pending_troubleshooter_tasks(
                 "runtime":"codex"},"adapter":"codex",
             "input":failure_input(job,original),"output":{"kind":"task_pr"},
             "continuation":null,"continuationDeliveredAt":null,
-            "attempt":0,"maxAttempts":3,"executionId":null,"threadId":null,
+            "attempt":0,"maxAttempts":1,"executionId":null,"threadId":null,
             "result":null,"plannerResult":null,"error":null,
             "timeoutMs":900_000,"createdAt":now,"updatedAt":now
         });
@@ -161,7 +126,7 @@ pub fn exhausted_troubleshooter_recoveries(job:&Value)->Vec<Value>{
         if field(recovery,"agentName")!="troubleshooter"
             ||field(recovery,"state")!="FAILED"
             ||recovery.get("attempt").and_then(Value::as_u64).unwrap_or(0)
-                <recovery.get("maxAttempts").and_then(Value::as_u64).unwrap_or(0)
+                <1
             ||field(recovery,"parentTaskId").is_empty(){continue;}
         let Some(original)=tasks(job).iter().find(|candidate|
             candidate.get("id")==recovery.get("parentTaskId")

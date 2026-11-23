@@ -15,6 +15,23 @@ Relay owns durable Jobs and Tasks; do one-shot work directly. On Neo Master, use
 - Deliver: optional verified non-force origin/main push after completion; never changes Job state.
 - Daemon: no Workspace scan and no `--workspace` requirement. Restart PM2 intentionally after installing a verified Rust binary; never rely on npm package publications.
 
+## Codex Thread-aware routing and recovery
+
+Every Codex Task persists its `threadId` from verified Codex JSONL
+`thread.started` to SQLite, fenced by the exact current `executionId`. A
+new execution of the **same Task** resumes that ID with turn-scoped
+Profile, Model, Provider and reasoning instead of creating a new thread.
+The Model Router offers exactly one configured Model per Profile (including
+the implicit `default` Profile) and ranks eligible Profiles according to the
+configured routing policy and health. Quota/429 failures with proven zero
+tool-side-effects can exclude the failed Profile and reschedule the original
+Task through the Graph in a *new* owned process generation. Never replay an
+ambiguous or side-effectful turn. If no eligible Profile remains, fail closed.
+
+Troubleshooter is a **one-execution specialist** (`maxAttempts=1`). It is
+never retried/reopened or used for routine provider quota fallback. On an
+unresolved failure, invoke the existing durable escalation workflow.
+
 ## Native Codex Worker execution permissions
 
 **Every** trusted local Codex subprocess launched by Relay uses the shared

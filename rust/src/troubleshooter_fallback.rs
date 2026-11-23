@@ -3,84 +3,16 @@
 // and transactionally persisted; downstream human notification is separate.
 use crate::local_merge_lock::iso8601_now;
 use crate::workflow::lifecycle::dispatch_task_lifecycle_sync;
-use regex::Regex;
 use serde_json::{json, Value};
 use std::path::Path;
-const MARKER: &str = "[Relay execution fallback attempted]";
 pub fn fallback_failed_troubleshooters(
-    root: &Path,
-    job: &mut Value,
-) -> Result<Vec<String>, String> {
-    let snapshot = job["tasks"].as_array().cloned().unwrap_or_default();
-    let plans = job["plans"].as_array().cloned().unwrap_or_default();
-    let mut queued = Vec::new();
-    let pattern=Regex::new("(?i)worker_process_failed|worker_start_timeout|terminal_event_timeout|model.*not supported|unsupported.model|delivery|process.exited|provider").map_err(|e|e.to_string())?;
-    for recovery in snapshot.iter().filter(|t| {
-        t["agentName"] == "troubleshooter"
-            && t["state"] == "FAILED"
-            && t["attempt"].as_i64().unwrap_or(0) >= t["maxAttempts"].as_i64().unwrap_or(i64::MAX)
-            && !t["input"].as_str().unwrap_or("").contains(MARKER)
-    }) {
-        let original = snapshot
-            .iter()
-            .find(|t| t["id"] == recovery["parentTaskId"]);
-        let plan = plans.iter().find(|p| p["id"] == recovery["recoveryPlanId"]);
-        if !original.is_some_and(|t| t["state"] == "FAILED")
-            && !plan.is_some_and(|p| p["status"] == "FAILED")
-        {
-            continue;
-        }
-        if original.is_some_and(|t| {
-            t["resolution"]["path"] == "same_job_dependency"
-                && matches!(
-                    t["resolution"]["state"].as_str(),
-                    Some("waiting" | "active")
-                )
-        }) {
-            continue;
-        }
-        let reason = format!(
-            "{} {}",
-            recovery["failureReason"].as_str().unwrap_or(""),
-            recovery["error"].as_str().unwrap_or("")
-        );
-        if !pattern.is_match(&reason) {
-            continue;
-        }
-        let Some(task) = job["tasks"]
-            .as_array_mut()
-            .and_then(|v| v.iter_mut().find(|t| t["id"] == recovery["id"]))
-        else {
-            continue;
-        };
-        if task["state"] != "FAILED" || task["input"].as_str().unwrap_or("").contains(MARKER) {
-            continue;
-        }
-        let decision =
-            dispatch_task_lifecycle_sync(root, task, "retry", &json!({}), &iso8601_now())?;
-        if decision["accepted"] != true {
-            return Err(format!(
-                "Fallback retry rejected for {}",
-                task["id"].as_str().unwrap_or("undefined")
-            ));
-        }
-        let attempts = task["attempt"].as_i64().unwrap_or(0);
-        task["maxAttempts"] = json!(task["maxAttempts"].as_i64().unwrap_or(0).max(attempts + 1));
-        task["input"]=json!(format!("{}\n\n{MARKER} Retry diagnosis with Codex config default model; report valid resolution or explicit blocker.",
-            task["input"].as_str().unwrap_or("")));
-        task["routing"] = json!({"provider":"","model":"","decidedBy":"troubleshooter-fallback:codex-config-default",
-            "decidedAt":iso8601_now()});
-        if let Some(obj) = task.as_object_mut() {
-            obj.remove("workerSelection");
-        }
-        task["executionId"] = Value::Null;
-        queued.push(task["id"].as_str().unwrap_or("").to_owned());
-    }
-    Ok(queued)
+    _root:&Path,_job:&mut Value,
+)->Result<Vec<String>,String>{
+    // The Troubleshooter never has an automatic alternate-model retry.
+    // An unresolved one-shot execution is handed to escalation.
+    Ok(Vec::new())
 }
-/// Commit retry marker, Graph Task transition and fallback routing as one
-/// authoritative Job mutation. A failed persistence operation cannot leave a
-/// retried Task visible or report a Task as queued.
+/// Retained compatibility entry point: no retry mutation is ever scheduled.
 pub fn fallback_failed_troubleshooters_atomic<W, E>(
     store: &mut crate::relay_workflow_operations::SQLiteWorkflowOperations<'_, W, E>,
     graph_dir: &Path,
@@ -107,7 +39,7 @@ pub fn exhausted_troubleshooter_escalations(job: &Value) -> Vec<Value> {
     tasks.iter().filter_map(|recovery| {
         if recovery["agentName"] != "troubleshooter" || recovery["state"] != "FAILED"
             || recovery["attempt"].as_i64().unwrap_or(0)
-                < recovery["maxAttempts"].as_i64().unwrap_or(i64::MAX)
+                < 1
             || recovery.get("escalation").is_some_and(|v| !v.is_null())
         { return None; }
         let original = tasks.iter().find(|task| task["id"] == recovery["parentTaskId"]);
@@ -136,7 +68,7 @@ pub fn exhausted_troubleshooter_escalations(job: &Value) -> Vec<Value> {
             "taskId": recovery["id"],
             "requiredAction":format!("Inspect {subject} and Troubleshooter {recovery_id}; correct provider/runtime or supply a concrete recovery decision and supporting evidence."),
             "resolutionCondition":format!("User supplies a corrective action or verified recovery instructions for {subject}."),
-            "context":format!("Automatic Troubleshooter {recovery_id} could not produce a verified resolution after {} attempts. Last failure: {last}. Original {subject}: {failure}.",
+            "context":format!("One-shot Troubleshooter {recovery_id} could not produce a verified resolution after {} execution(s). Last failure: {last}. Original {subject}: {failure}.",
                 recovery["attempt"]),
         }))
     }).collect()
@@ -272,7 +204,7 @@ where
             let recovery=current["tasks"][recovery_index].clone();
             if recovery["agentName"]!="troubleshooter"
                 || recovery["state"]!="FAILED"
-                || recovery["attempt"].as_i64().unwrap_or(0)<recovery["maxAttempts"].as_i64().unwrap_or(i64::MAX)
+                || recovery["attempt"].as_i64().unwrap_or(0)<1
                 || !recovery["escalation"].is_null() {
                 return Ok((current,vec![]));
             }

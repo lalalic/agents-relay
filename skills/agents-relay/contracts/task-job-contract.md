@@ -265,7 +265,7 @@ forbids it.
 
 `dependencies` describe normal DAG ordering. An unmet dependency keeps ordinary work in `DRAFT`; dispatchable work is `QUEUED`. Dependency completion does not create an unblock lifecycle event or Planner unblock trigger; Relay releases dependent work when its prerequisites succeed. Worker, platform, semantic, and unknown-outcome failures are `FAILED`. Unknown worker outcome fails closed and never justifies rerouting. Only a Troubleshooter waiting for an authoritative human response may become `BLOCKED`.
 
-A BLOCKED Troubleshooter resumes only after an authorized Relay CLI unblock with a human response. The CLI must report that same Troubleshooter moving from `BLOCKED` to `QUEUED`. The queued Troubleshooter must execute again, verify the condition from fresh evidence, and issue a fresh resolution before Relay may retry or replan the original FAILED Task. Prior `resolved` metadata never authorizes another attempt. Historical failures must not be silently reclassified as success.
+A Troubleshooter is **one-shot**, and never retries, reopens, or executes a second time after a human response. When it cannot verify a real recovery, it must escalate through the durable authorized Relay CLI escalation workflow, with precise evidence. A human correction may authorize recovering the **original failed Task** through its own Graph and a new execution generation, but must not queue the Troubleshooter again. Prior `resolved` metadata and historical failure reports never authorize an attempt or prove success.
 
 Do not create or infer an `UNBLOCKED` state for ordinary Tasks.
 

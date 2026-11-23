@@ -162,40 +162,13 @@ pub fn request_troubleshooter_escalation(
         "duplicate":false,"event":event}))
 }
 
-pub fn resume_troubleshooter(graph_dir:&Path, current:&Value,task_id:&str,
-    response:&str,now:Option<&str>)->Result<Value,String>{
-    if response.trim().is_empty(){return Err("Troubleshooter response is required".into());}
-    let mut job=current.clone();
-    let now=now.map(str::to_owned).unwrap_or_else(iso8601_now);
-    let Some(task)=job.get_mut("tasks").and_then(Value::as_array_mut)
-        .and_then(|tasks|tasks.iter_mut().find(|task|text(task,"id")==task_id))
-    else {return Err(format!("Task {task_id} is not a Troubleshooter escalation"));};
-    if text(task,"agentName")!="troubleshooter"
-        || task.get("escalation").is_none_or(Value::is_null) {
-        return Err(format!("Task {task_id} is not a Troubleshooter escalation"));
-    }
-    let esc_id=text(&task["escalation"],"id").to_owned();
-    if text(&task["escalation"],"status")!="pending"{
-        return Err(format!("Escalation {esc_id} already has a response"));
-    }
-    if text(task,"state")!="BLOCKED"{
-        return Err(format!("Task {task_id} is not a blocked Troubleshooter escalation"));
-    }
-    let decision=try_transition_task_event(graph_dir,task,"task.unblocked",&json!({}),&now)?;
-    if decision.get("accepted")!=Some(&Value::Bool(true)) {
-        return Err(format!("Troubleshooter {task_id} cannot be resumed"));
-    }
-    task["escalation"]["status"]=json!("responded");
-    task["escalation"]["response"]=json!(response.trim());
-    task["escalation"]["respondedAt"]=json!(now);
-    task["result"]=Value::Null;
-    task["error"]=Value::Null;
-    if let Some(map)=task.as_object_mut(){map.remove("failureReason");}
-    clear_execution(task);
-    task["updatedAt"]=json!(now);
-    let updated=task.clone();
-    job["updatedAt"]=json!(now);
-    Ok(json!({"job":job,"task":updated}))
+/// A one-shot recovery cannot be resumed after escalation. A verified
+/// correction must be applied to the original Task through its own Graph.
+pub fn resume_troubleshooter(
+    _graph_dir:&Path,_current:&Value,_task_id:&str,
+    _response:&str,_now:Option<&str>,
+)->Result<Value,String>{
+    Err("Troubleshooter is one-shot: cannot resume; verify remediation and recover the original Task".into())
 }
 pub fn has_pending_troubleshooter_escalation(job:&Value,original:&Value)->bool {
     active_recovery(job,original).is_some_and(|task|

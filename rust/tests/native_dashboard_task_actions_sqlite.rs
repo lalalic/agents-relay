@@ -307,7 +307,7 @@ fn daemon_reconciler_exhausted_troubleshooter_creates_one_durable_human_gate(){
 }
 
 #[test]
-fn daemon_reconciler_snapshot_binds_only_one_bounded_fallback_before_human_gate(){
+fn daemon_reconciler_one_shot_troubleshooter_escalates_without_retry(){
  let f=Fixture::new();
  let job_store=SQLiteRelayStore::open_without_claim_reset(
   &relay_unified_store_path(&f.config.store_directory),Some("15")).unwrap();
@@ -343,18 +343,17 @@ fn daemon_reconciler_snapshot_binds_only_one_bounded_fallback_before_human_gate(
  let adapters:Vec<Value>=vec![];
  let first=reconciler.reconcile_snapshot(&job,None,&f.root.join("mockrepo"),
   &json!({"workspaceRoot":f.root}),&adapters,&[],None).unwrap();
- assert_eq!(first.job["tasks"][1]["state"],"QUEUED");
- assert_eq!(first.job["tasks"][1]["maxAttempts"],4);
- assert!(first.job["tasks"][1]["input"].as_str()
-  .unwrap().contains("[Relay execution fallback attempted]"));
- assert_eq!(first.job["tasks"][1]["routing"]["provider"],"");
- assert_eq!(first.job["tasks"][1]["routing"]["model"],"");
- assert!(first.events.iter().any(|event|
-  event["type"]=="troubleshooter.retry_queued"
-  &&event["task_id"]=="8"));
- assert!(agents_relay_rust2::troubleshooter_fallback::
-  exhausted_troubleshooter_escalations(&first.job).is_empty(),
-  "last-model retry cannot request premature human escalation");
+ assert_eq!(first.job["tasks"][1]["state"],"FAILED");
+ assert_eq!(first.job["tasks"][1]["maxAttempts"],3,
+  "historical budget is preserved but never extended or retried");
+ assert_eq!(first.job["tasks"][1]["input"],"Investigate provider failure");
+ assert!(first.job["tasks"][1]["routing"].is_null());
+ assert!(!first.events.iter().any(|event|
+  event["type"]=="troubleshooter.retry_queued"),
+  "one-shot Troubleshooter never schedules an alternate model retry");
+ assert_eq!(agents_relay_rust2::troubleshooter_fallback::
+  exhausted_troubleshooter_escalations(&first.job).len(),1,
+  "one failed Troubleshooter execution is immediately escalation eligible");
  assert_eq!(f.job(),job,"snapshot must never mutate SQLite before CAS");
 }
 

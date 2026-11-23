@@ -3,7 +3,7 @@
 // all routes pass an authoritative hard-gate evaluation before selection.
 use crate::{
     local_merge_lock::iso8601_now,
-    model_routing::discover_model_candidates,
+    model_routing::{discover_model_candidates,codex_profile_candidates,deterministic_model},
     router_rules::{append_agent_model_preference,append_routing_instruction},
     routing_policy::{
         load_execution_router_rules,load_routing_policy,policy_allows,
@@ -106,7 +106,7 @@ fn same_model_route(candidate:&Value,route:&Value)->bool{
         route.get(key).and_then(Value::as_str).is_none_or(|raw|
             raw.is_empty()||raw==field(candidate,key)))
         && route.get("profile").is_none_or(|profile|
-            candidate.get("profile")==Some(profile))
+            candidate.get("profile").unwrap_or(&Value::Null)==profile)
 }
 pub fn model_gate_reasons(model:&Value,constraints:Option<&Value>,
     excluded:&[Value],policy:&Value)->Vec<String>{
@@ -312,7 +312,9 @@ pub fn discover_execution_routes(
     let mut configured_defaults=HashMap::new();
     for worker in workers{
         let reasons=worker_gate_reasons(worker,requirements);
-        let discovered=discover_model_candidates(worker,registered,usage,home,now_ms);
+        let discovered=if field(worker,"adapter")=="codex" {
+            codex_profile_candidates(home,usage,now_ms)
+        }else{discover_model_candidates(worker,registered,usage,home,now_ms)};
         let defaults=profile_defaults(&discovered);
         configured_defaults.insert(field(worker,"workerId").into(),defaults.clone());
         let choices:Vec<Value>=list(&rules["parsed"],"choices").iter()
@@ -424,8 +426,15 @@ pub fn route_execution_with_choice(
     if discovery.routes.is_empty(){
         return Err("No executable worker+model route satisfies authoritative constraints".into());
     }
-    let fallback=fallback_route(&discovery.routes)
-        .expect("routes checked non-empty");
+    let fallback=if discovery.routes.iter().all(|r|
+        r.pointer("/worker/adapter").and_then(Value::as_str)==Some("codex")){
+        let models:Vec<Value>=discovery.routes.iter().map(|r|r["model"].clone()).collect();
+        let chosen=deterministic_model(&models,
+            options.pointer("/taskFacts/task/kind").and_then(Value::as_str),
+            &discovery.policy["policy"]);
+        discovery.routes.iter().find(|r|r["model"]==chosen)
+            .cloned().expect("ranked route must be eligible")
+    }else{fallback_route(&discovery.routes).expect("routes checked non-empty")};
     let mode=options.get("decisionMode").and_then(Value::as_str).unwrap_or("off");
     let mut selected=fallback.clone();
     if let Some(choice)=model_choice {

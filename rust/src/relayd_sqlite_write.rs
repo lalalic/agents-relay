@@ -1608,6 +1608,8 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             let audit_path=self.config.store_directory.parent()
                 .map(|parent|parent.join("decision-audit.jsonl"));
             let profile_home=Some(self.config.profile_home.clone());
+            let codex_policy=self.config.policy_path.clone();
+            let codex_rules=self.config.router_rules_path.clone();
             let live_workers=std::sync::Arc::clone(&self.live_workers);
             let failure_state=std::sync::Arc::clone(&self.failure_state);
             live_workers.lock().expect("daemon Worker lock poisoned")
@@ -1624,7 +1626,8 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                             None,audit_path.clone(),profile_home.clone(),
                             candidates.as_array().cloned().unwrap_or_default(),
                             std::sync::Arc::clone(&live_workers),
-                            std::sync::Arc::clone(&failure_state));
+                            std::sync::Arc::clone(&failure_state))
+                            .with_routing_policy(codex_policy.clone(),codex_rules.clone());
                         if let Err(recovery)=crate::worker_failure_recovery::
                             handle_worker_launch_failure(&mut ports,&job_id,&task_id,
                                 Some(&execution_id),&json!(error),phase){

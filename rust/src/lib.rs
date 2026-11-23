@@ -326,6 +326,7 @@ pub mod script_task_adapter;
 pub mod native_script_worker;
 pub mod native_script_execution;
 pub mod native_codex_execution;
+pub mod native_codex_thread;
 pub mod codex_permissions;
 pub mod native_worker_event_ingress;
 pub mod native_host_review_ingress;

@@ -55,6 +55,9 @@ pub fn apply_task_retry_action(
     if field(task,"kind")=="planner"{
         return Err(format!("Legacy planner Task {} is read-only; retry the Plan instead",field(task,"id")));
     }
+    if field(task,"agentName")=="troubleshooter"{
+        return Err("Troubleshooter is one-shot: unresolved failure must escalate, not retry".into());
+    }
     transition(directory,task,"retry","restartable",&json!({}),now)?;
     if extend_budget {
         let attempt=task.get("attempt").and_then(Value::as_f64).unwrap_or(0.0);
@@ -69,6 +72,9 @@ pub fn apply_task_retry_action(
     Ok(())
 }
 pub fn apply_task_unblock_retry_action(directory:&Path,task:&mut Value,now:&str)->Result<(),String>{
+    if field(task,"agentName")=="troubleshooter"{
+        return Err("Troubleshooter is one-shot: human response must recover original Task, not retry Troubleshooter".into());
+    }
     if field(task,"state")=="BLOCKED" {
         transition(directory,task,"task.unblocked","retryable after unblock",&json!({}),now)?;
     }

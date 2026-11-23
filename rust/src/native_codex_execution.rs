@@ -2,7 +2,8 @@
 //! Provider process exit is NOT a Graph task.started/completed receipt.
 use crate::{
     execution_process_tracker::monitor_execution_process,
-    codex_permissions::exec_args,
+    native_codex_thread::{build_codex_turn_args,parse_thread_started,persist_task_thread,
+        quota_failure_without_effects},
     owned_process::{OwnedProcessManager,OwnedProcessOptions,TerminationReason},
     relay_store::SQLiteRelayStore,
     execution_context::resolve_execution_context,
@@ -11,7 +12,7 @@ use crate::{
     reconciler_context::resolve_task_context,
 };
 use serde_json::{json,Value};
-use std::{io::Read,path::Path,thread,time::Duration};
+use std::{io::{Read,BufRead,BufReader},path::Path,thread,time::Duration};
 fn field<'a>(v:&'a Value,k:&str)->&'a str{
     v.get(k).and_then(Value::as_str).unwrap_or("")
 }
@@ -99,15 +100,9 @@ pub fn execute_claimed_codex(
     // normal SwiftPM/Xcode caches outside the checked-out repository.
     // The owned process, Task execution identity, and Graph completion gates
     // remain mandatory; unrestricted shell access is not Task success.
-    let mut args=exec_args(true);
-    let profile=field(route,"profile");
-    if !profile.is_empty(){args.extend(["-p".into(),profile.into()]);}
-    args.extend(["-m".into(),model.into()]);
-    let reasoning=field(route,"reasoning");
-    if !reasoning.is_empty(){
-        args.extend(["-c".into(),format!("model_reasoning_effort={reasoning}")]);
-    }
-    args.extend(["-C".into(),cwd.into(),"--".into(),prompt]);
+    let prior_thread=task.get("threadId").and_then(Value::as_str)
+        .filter(|id|!id.is_empty());
+    let args=build_codex_turn_args(route,cwd,&prompt,prior_thread)?;
     let refs=args.iter().map(String::as_str).collect::<Vec<_>>();
     let mut manager=OwnedProcessManager::default();
     let child=manager.spawn_owned_process_piped(
@@ -142,10 +137,41 @@ pub fn execute_claimed_codex(
     }
     let stdout=child.take_stdout().ok_or("Codex JSONL stdout not owned")?;
     let stderr=child.take_stderr().ok_or("Codex stderr not owned")?;
+    let db_for_thread=db.to_path_buf();
+    let jid=job_id.to_owned();let tid=task_id.to_owned();
+    let xid=execution_id.to_owned();
+    let prior=prior_thread.map(str::to_owned);
     let output_thread=thread::spawn(move||{
         let mut data=Vec::new();
-        stdout.take(2*1024*1024+1).read_to_end(&mut data)
-            .map(|_|data).map_err(|e|e.to_string())
+        let mut recorded=prior.is_some();
+        let mut read_error:Option<String>=None;
+        // Always drain the entire owned stdout pipe even after an invalid
+        // thread/oversized output. Exiting the reader early could block the
+        // child on a full pipe and strand the process monitor indefinitely.
+        for line in BufReader::new(stdout).lines(){
+            let line=line.map_err(|e|e.to_string())?;
+            if read_error.is_some(){continue;}
+            if !recorded {
+                if let Some(id)=parse_thread_started(&line){
+                    match persist_task_thread(&db_for_thread,&jid,&tid,&xid,&id){
+                        Ok(())=>recorded=true,
+                        Err(error)=>{read_error=Some(error);continue;}
+                    }
+                }
+            }else if let Some(id)=parse_thread_started(&line){
+                if prior.as_ref().is_some_and(|previous|previous!=&id){
+                    read_error=Some("Codex resumed a different thread".into());
+                    continue;
+                }
+            }
+            if data.len()+line.len()+1>2*1024*1024{
+                read_error=Some("Codex JSONL output exceeded 2MiB cap".into());
+                continue;
+            }
+            data.extend_from_slice(line.as_bytes());data.push(b'\n');
+        }
+        if let Some(error)=read_error{return Err(error);}
+        Ok::<Vec<u8>,String>(data)
     });
     let error_thread=thread::spawn(move||{
         let mut data=Vec::new();
@@ -167,7 +193,10 @@ pub fn execute_claimed_codex(
         (field(&event,"type")=="turn.failed").then(||event.pointer("/error/message")
             .and_then(Value::as_str).unwrap_or("Codex turn failed").to_owned())
     }).last();
-    if !status.success(){
+    if !status.success() || structured.is_some(){
+        if let Some(reason)=quota_failure_without_effects(&stdout,&stderr){
+            return Err(format!("codex_quota_no_side_effects: {reason}"));
+        }
         return Err(structured.unwrap_or_else(||{
             if stderr.trim().is_empty(){format!("Codex exited {status}")}
             else{stderr.chars().rev().take(1500).collect::<String>()

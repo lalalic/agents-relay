@@ -63,7 +63,13 @@ pub fn classify_worker_launch_failure(
                 <task.get("maxAttempts").and_then(Value::as_i64).unwrap_or(0));
     let no_start_allowed=can_no_start && codex_no_start_route;
     let normalized_phase=if matches!(phase,"process"|"terminal"){"delivery"}else{phase};
+    let codex_quota=task.is_some_and(|task|
+        field(task,"adapter")=="codex"
+        &&field(task,"agentName")!="troubleshooter")
+        &&message.starts_with("codex_quota_no_side_effects:");
     let platform_failure=if browser {Some(classify_chat_gpt_platform_failure(error,normalized_phase))}
+        else if codex_quota{Some(json!({"classification":"quota_exhausted",
+            "safeToReroute":true,"evidence":message}))}
         else{None};
     let classification=platform_failure.as_ref().map(|value|field(value,"classification")).unwrap_or("");
     let unknown=phase=="start-ack"
@@ -71,6 +77,7 @@ pub fn classify_worker_launch_failure(
         || (phase=="launch" && active_execution_id==execution_id && active_execution_id.is_some())
         || (phase=="delivery" && active_execution_id==execution_id
             && active_execution_id.is_some() && active_worker_started);
+    let unknown=unknown && !codex_quota;
     let browser_failure=Regex::new(
         r"(?i)WEBHELM_UNAVAILABLE|webhelm runtime dependency unavailable|webhelm session start returned no session_id|no close frame received or sent"
     ).expect("static failure regex").is_match(&message);
@@ -97,10 +104,31 @@ pub fn apply_launch_failure_mutation(
     let status=field(decision,"target");
     if let Some(ref platform)=proposal.platform_failure {
         if proposal.event!="worker.no_start_failed" {
-            persist_chatgpt_platform_failure(updated,original,
-                proposal.expected_execution_id.as_deref(),
-                field(platform,"classification"),field(platform,"evidence"),
-                platform.get("safeToReroute")==Some(&Value::Bool(true)));
+            if original.is_some_and(|v|field(v,"adapter")=="codex"){
+                if let Some(prior)=original{
+                    let mut excluded=updated.get("routingExclusions")
+                        .and_then(Value::as_array).cloned().unwrap_or_default();
+                    let route=&prior["routing"];
+                    let failure=json!({"provider":route.get("provider"),
+                        "model":route.get("model"),"profile":route.get("profile"),
+                        "reason":"quota_exhausted","at":crate::local_merge_lock::iso8601_now()});
+                    if !excluded.iter().any(|v|v.get("provider")==route.get("provider")
+                        &&v.get("profile")==route.get("profile")
+                        &&v.get("model")==route.get("model")){
+                        excluded.push(failure.clone());
+                    }
+                    updated["routingExclusions"]=json!(excluded);
+                    updated["platformFailure"]=json!({"classification":"quota_exhausted",
+                        "executionId":proposal.expected_execution_id,
+                        "route":failure,"evidence":platform.get("evidence"),
+                        "safeToReroute":true});
+                }
+            }else{
+                persist_chatgpt_platform_failure(updated,original,
+                    proposal.expected_execution_id.as_deref(),
+                    field(platform,"classification"),field(platform,"evidence"),
+                    platform.get("safeToReroute")==Some(&Value::Bool(true)));
+            }
         }
     }
     if proposal.event=="worker.no_start_failed"
@@ -118,7 +146,11 @@ pub fn apply_launch_failure_mutation(
         if !reason.is_empty(){updated["failureReason"]=json!(reason);}
         else if let Some(map)=updated.as_object_mut(){map.remove("failureReason");}
     }
+    // Releasing a finished execution generation also releases its owned
+    // durable lease. A future dispatch must claim a new process identity.
     updated["executionId"]=Value::Null;
+    updated["leaseOwner"]=Value::Null;
+    updated["leaseExpiresAt"]=Value::Null;
 }
 pub fn launch_failure_event(
     job_id:&str,task_id:&str,parent_task_id:Option<&str>,

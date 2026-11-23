@@ -152,6 +152,8 @@ pub struct DaemonWorkerFailurePorts {
     pub pool_path: Option<PathBuf>,
     pub audit_path: Option<PathBuf>,
     pub profile_home: Option<PathBuf>,
+    pub policy_path: Option<PathBuf>,
+    pub rules_path: Option<PathBuf>,
     pub adapters: Vec<Value>,
     pub live: Arc<Mutex<DaemonLiveWorkers>>,
     pub state: Arc<DaemonFailureState>,
@@ -176,10 +178,17 @@ impl DaemonWorkerFailurePorts {
             pool_path,
             audit_path,
             profile_home,
+            policy_path:None,
+            rules_path:None,
             adapters,
             live,
             state,
         }
+    }
+    pub fn with_routing_policy(mut self,policy:PathBuf,rules:PathBuf)->Self{
+        self.policy_path=Some(policy);
+        self.rules_path=Some(rules);
+        self
     }
     fn store(&self) -> Result<SQLiteRelayStore, String> {
         SQLiteRelayStore::open_without_claim_reset(
@@ -211,6 +220,20 @@ impl WorkerFailurePorts for DaemonWorkerFailurePorts {
     }
     fn has_safe_alternative(&mut self, task: Option<&Value>, agents: &[Value],
         usage: Option<&Value>) -> Result<bool, String> {
+        if let Some(task)=task.filter(|task|field(task,"adapter")=="codex") {
+            let Some(home)=self.profile_home.as_ref()else{return Ok(false)};
+            let profiles=crate::model_routing::codex_profile_candidates(home,usage,now_ms());
+            let Some(policy_path)=self.policy_path.as_ref()else{return Ok(false)};
+            let Some(rules_path)=self.rules_path.as_ref()else{return Ok(false)};
+            let policy=crate::routing_policy::load_routing_policy(
+                &policy_path.to_string_lossy(),&rules_path.to_string_lossy());
+            let current=&task["routing"];
+            let mut excluded=task.get("routingExclusions").and_then(Value::as_array)
+                .cloned().unwrap_or_default();
+            excluded.push(current.clone());
+            return Ok(!crate::model_routing::eligible_models(
+                &profiles,None,&policy["policy"],&excluded).is_empty());
+        }
         let Some(pool) = self.open_pool() else { return Ok(false); };
         Ok(has_safe_alternative_worker_with_pool(
             task, &self.adapters, agents, usage, now_ms(), &pool,
@@ -282,6 +305,16 @@ impl WorkerFailurePorts for DaemonWorkerFailurePorts {
                 apply_task_graph_target(&mut updated,
                     decision["target"].as_str().ok_or("Missing Graph target")?,
                     &iso8601_now(), false)?;
+                // Execute Graph-selected mutation effects, including
+                // `preparePlatformFallback` which must remove stale routing
+                // before the next ranked Profile decision. Never invent a
+                // second procedural fallback decision in the daemon.
+                for action in decision["actions"].as_array().into_iter().flatten(){
+                    if let Some(name)=action.as_str().filter(|s|s.starts_with("mutation.")){
+                        crate::workflow::runtime::apply_task_mutation(
+                            &mut updated,name,&iso8601_now())?;
+                    }
+                }
                 apply_launch_failure_mutation(&mut updated, Some(&task),
                     admission, &decision);
                 job["tasks"][index] = updated.clone();
