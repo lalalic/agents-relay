@@ -275,6 +275,28 @@ impl PlannerLaunchPorts for PlannerPorts {
                             store.finish_execution_process(&job_id,&plan_id,&execution,None));
                         let stdout=reader.join().map_err(|_|"Model Planner reader panicked")??;
                         let stderr=errors.join().map_err(|_|"Model Planner stderr reader panicked")??;
+                        // Observe a real Codex JSONL thread even if the
+                        // Planner's CLI apply or model response failed. The
+                        // exact execution ID fences the durable Plan record.
+                        if let Some(thread_id)=stdout.lines().find_map(
+                            crate::native_codex_thread::parse_thread_started){
+                            store(&db,&job_id)?.mutate_job(&job_id,|mut latest|{
+                                let current=latest.get_mut("plans").and_then(Value::as_array_mut)
+                                    .and_then(|plans|plans.iter_mut().find(|p|field(p,"id")==plan_id))
+                                    .ok_or("Planner Thread target Plan missing")?;
+                                let authorized=(field(current,"status")=="PLANNING"
+                                    &&field(current,"executionId")==execution)
+                                    ||(field(current,"status")=="SUCCEEDED"
+                                        &&field(current,"appliedExecutionId")==execution);
+                                if !authorized{return Err("Stale Planner execution cannot attach Codex Thread".into());}
+                                let previous=field(current,"threadId");
+                                if !previous.is_empty()&&previous!=thread_id{
+                                    return Err("Codex Planner resumed a different Thread ID".into());
+                                }
+                                current["threadId"]=json!(thread_id);
+                                Ok(latest)
+                            })?;
+                        }
                         if stdout.len()>8*1024*1024||stderr.len()>128*1024{
                             return Err("Model Planner provider output exceeded size limit".into());
                         }

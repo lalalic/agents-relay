@@ -3,7 +3,7 @@
 // authority: an executor process exiting zero never proves a Plan is applied.
 use serde_json::{json,Map,Value};
 use std::{fs,path::{Path,PathBuf}};
-use crate::planner::{build_planner_codex_args,parse_planner_agent_message,
+use crate::planner::{build_planner_codex_resume_args,parse_planner_agent_message,
     planner_input,validate_planner_receipt};
 
 fn string<'a>(value:&'a Value,key:&str)->&'a str{
@@ -167,7 +167,11 @@ impl AgentObjectivePlanner{
         let (plan_id,execution_id)=plan_identity(context)?;
         let prompt=build_planner_execution_prompt(context,repository_root,
             self.agent_file.as_deref(),"codex",prompt_snapshot_dir)?;
-        let argv=build_planner_codex_args(store_directory,&prompt);
+        let previous=context.pointer("/job/plans").and_then(Value::as_array)
+            .into_iter().flatten().find(|p|string(p,"id")==plan_id)
+            .and_then(|p|p.get("threadId")).and_then(Value::as_str)
+            .filter(|id|crate::native_codex_thread::valid_thread_id(id));
+        let argv=build_planner_codex_resume_args(store_directory,&prompt,previous);
         let cwd=context.pointer("/executionContext/project/gitRoot")
             .or_else(||context.pointer("/executionContext/project/path"))
             .and_then(Value::as_str).map(Path::new);

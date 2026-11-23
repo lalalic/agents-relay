@@ -248,6 +248,18 @@ pub fn create_final_review_task(
     let thread=prepare_reviewer_thread_delivery(job,&fields,
         reviewer_options.get("threadId"))?;
     if !thread.is_null(){fields["chatgptThreadDelivery"]=thread;}
+    // Preserve role conversation continuity between independent immutable
+    // SHA-bound Review Tasks. The previous PASS/CHANGES_REQUIRED verdict is
+    // NOT reused; it is merely prior conversation context.
+    if fields["adapter"]=="codex"{
+        if let Some(previous)=tasks(job).iter().rev().find(|task|
+            review_task(task)
+                &&field(task,"adapter")=="codex"
+                &&field(task,"state")=="SUCCEEDED"
+                &&crate::native_codex_thread::valid_thread_id(field(task,"threadId"))){
+            fields["threadId"]=previous["threadId"].clone();
+        }
+    }
     create_task_entity(graph_directory,job,&fields,false,&now)
 }
 pub fn ensure_final_review(

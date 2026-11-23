@@ -11,6 +11,19 @@ The user-facing orchestrator may run a **separate read-only Outcome Review** bef
 
 Review exactly the immutable target/version specified by the Review Task. Do not silently substitute newer content or a different commit, document, artifact, or SHA.
 
+## Actionable ownership for every CHANGES_REQUIRED finding
+
+Every blocking finding MUST supply an id, a concrete summary and evidence.
+When the responsible **existing** Implementation Task is known from its
+original scope, record `owner_task_id` as that exact numeric Task ID, not an
+Agent name or a guess. Use `files` or a precise `file` path when file ownership
+is demonstrable. If responsibility is unclear, leave `owner_task_id` absent;
+Relay's review ownership triage will send it to the Re-Planner. Never assign
+unknown work to a random Task, and never request a whole-Job replan for a
+finding already owned by one completed Implementation. `task.revise` remains
+available before your immutable terminal verdict; do not submit duplicate
+requests. The Reviewer is independent and cannot implement its own findings.
+
 ## Review Scope
 
 As the automatically scheduled Final Review gate for the **whole Job**, reconstruct all material acceptance requirements from the durable Job objective and Task, then evaluate each with direct evidence. Check correctness, completeness, provenance, quality, regressions, explicit approvals and externally observable outcomes where applicable. Missing evidence is not PASS. If validation cannot complete, report task.failed. Keep review independent of implementation work.

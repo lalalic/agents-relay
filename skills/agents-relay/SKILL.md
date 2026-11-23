@@ -53,7 +53,7 @@ New source Tasks (`gitDeliveryRequired: true`) must commit with `Relay-Task: ID`
 
 ## Job Execution Lifecycle (JEL)
 
-**JEL:** Create → [Plan] → Execute → Final Review → local Merge → Completed. Plan-free Coordinator uses the same lifecycle. PASS merges; CHANGES_REQUIRED records findings and starts Planner N+1 for minimal fixes, then re-reviews. No post-success Plan. Planner/Workers use **ponytail** (YAGNI, reuse, minimal Tasks) without bypassing safety gates.
+**JEL:** Create → [Plan] → Execute → Final Review → local Merge → Completed. Plan-free Coordinator uses the same lifecycle. PASS merges. CHANGES_REQUIRED first verifies each finding's original Implementation owner; a fully attributed review directly creates Graph-owned Targeted Revision Task(s), reusing the original Codex Thread without mutating its succeeded evidence. Ambiguous/new findings go to the existing Planner for minimal new work, not a redundant whole-Job plan. Every subsequent Final Review gets a new SHA-bound verdict while retaining the prior Reviewer Thread when its Codex identity is valid. No post-success Plan. Planner/Workers use **ponytail** (YAGNI, reuse, minimal Tasks) without bypassing safety gates.
 
 ## 1. Choose and start a Job
 

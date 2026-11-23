@@ -126,6 +126,7 @@ fn failed_historical_plan_does_not_block_new_sha_review_after_scoped_fix() {
                 "state":"SUCCEEDED","adapter":"codex","createdAt":stamp,"updatedAt":stamp},
             {"id":"2244","jobId":"41","agentName":"job-acceptance-reviewer","kind":"work",
                 "state":"SUCCEEDED","adapter":"codex","reviewHeadSha":"c0a3dcb",
+                "threadId":"38f84f9e-410d-4e36-96e0-a420594a102d",
                 "createdAt":stamp,"updatedAt":stamp},
             {"id":"2252","jobId":"41","agentName":"troubleshooter","kind":"work",
                 "state":"CANCELLED","attempt":1,"recoveryPlanId":"plan-2",
@@ -151,6 +152,8 @@ fn failed_historical_plan_does_not_block_new_sha_review_after_scoped_fix() {
     let new_review=&saved["tasks"][3];
     assert_eq!(new_review["agentName"],"job-acceptance-reviewer");
     assert_eq!(new_review["reviewHeadSha"],"c99c51f");
+    assert_eq!(new_review["threadId"],"38f84f9e-410d-4e36-96e0-a420594a102d",
+        "a new independent review generation should resume the previous Reviewer Codex conversation");
     assert_eq!(saved["review"]["outcome"],"pending");
     assert_eq!(saved["plans"][1]["status"],"FAILED");
     assert_eq!(saved["tasks"][2]["state"],"CANCELLED");

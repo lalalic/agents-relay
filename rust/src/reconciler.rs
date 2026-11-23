@@ -710,6 +710,18 @@ impl Reconciler{
             }
             self.reconcile_troubleshooters(&mut result)?;
             self.reconcile_tasks(&mut result,project,roots)?;
+            // Route correlated Final Review findings BEFORE the Planner Graph.
+            // Fully owned feedback becomes a targeted Revision of existing
+            // Implementation work. Unowned feedback stays with Re-Planner.
+            let routed=crate::review_ownership::route_review_ownership(
+                &self.graph_directory,&self.store_directory,&mut result.job)?;
+            for decision in routed{
+                result.events.push(event_for(field(&result.job,"id"),
+                    field(&decision,"revisionTaskId"),None,
+                    "review.ownership_assigned","queued",
+                    "Final Review finding assigned to original Task",
+                    Some("orchestrator"),Some(decision.clone()),None));
+            }
             let reviewer_options=self.options.get("reviewer").cloned()
                 .unwrap_or(json!({}));
             let need_review=crate::reconciler_review::review_facts(

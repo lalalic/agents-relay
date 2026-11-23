@@ -40,7 +40,7 @@ fn unverified_codex_receipt_never_marks_plan_succeeded(){
     let (root,_project,db)=fixture();
     let fake=root.join("fake-codex");
     let executed=root.join("provider-executed");
-    fs::write(&fake,format!("#!/bin/sh\nprintf 'executed' > {}\nprintf '{{\"type\":\"item.completed\",\"item\":{{\"type\":\"agent_message\",\"text\":\"PLAN_APPLIED:plan-1:unverified\"}}}}\\n'\nexit 0\n",executed.display())).unwrap();
+    fs::write(&fake,format!("#!/bin/sh\nprintf 'executed' > {}\nprintf '{{\"type\":\"thread.started\",\"thread_id\":\"38f84f9e-410d-4e36-96e0-a420594a102d\"}}\\n'\nprintf '{{\"type\":\"item.completed\",\"item\":{{\"type\":\"agent_message\",\"text\":\"PLAN_APPLIED:plan-1:unverified\"}}}}\\n'\nexit 0\n",executed.display())).unwrap();
     fs::set_permissions(&fake,fs::Permissions::from_mode(0o700)).unwrap();
     let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
     let _=run_native_codex_planner(&db,&root.join("stores"),&graph,
@@ -49,6 +49,8 @@ fn unverified_codex_receipt_never_marks_plan_succeeded(){
     let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("903")).unwrap();
     let current=store.load_job("903").unwrap().unwrap();
     assert_ne!(current["plans"][0]["status"],"SUCCEEDED","{current}");
+    assert_eq!(current["plans"][0]["threadId"],"38f84f9e-410d-4e36-96e0-a420594a102d",
+        "failed Planner generation still records verified original Codex Thread");
     assert_eq!(current["tasks"].as_array().unwrap().len(),1);
     assert_eq!(current["state"],"ACTIVE");
     drop(store);
@@ -79,4 +81,25 @@ fn native_planner_context_names_exact_rust_cli_for_apply(){
     assert!(apply.starts_with("\"/tmp/agents-relay-rust\" plan apply"),"{apply}");
     assert!(!apply.contains("dist/cli.js"),"{apply}");
     assert!(apply.contains("--plan-id plan-2 --execution-id execution-2"));
+}
+
+#[test]
+fn planner_new_round_resumes_previous_codex_thread_but_not_plan_verdict(){
+    let (root,_project,db)=fixture();
+    let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+    let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("903")).unwrap();
+    let mut job=store.load_job("903").unwrap().unwrap();
+    job["plans"][0]["status"]=json!("FAILED");
+    job["plans"][0]["threadId"]=json!("38f84f9e-410d-4e36-96e0-a420594a102d");
+    let second=create_plan_round(&graph,&job,None,false,None,None).unwrap();
+    assert_eq!(second["id"],"plan-2");
+    assert_eq!(second["threadId"],"38f84f9e-410d-4e36-96e0-a420594a102d");
+    assert_eq!(second["status"],"PLANNING");
+    assert!(second["executionId"].is_null());
+    let args=agents_relay_rust2::planner::build_planner_codex_resume_args(
+        &root.join("stores"),"Continue planning",second["threadId"].as_str());
+    assert_eq!(&args[0..4],&["exec","--json","resume", "--dangerously-bypass-approvals-and-sandbox"]);
+    assert!(args.contains(&"38f84f9e-410d-4e36-96e0-a420594a102d".to_string()));
+    assert!(!args.contains(&"--last".to_string()));
+    drop(store);fs::remove_dir_all(root).unwrap();
 }

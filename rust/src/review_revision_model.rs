@@ -33,6 +33,23 @@ pub fn record_targeted_revision_request(
     job: &mut Value,
     input: &Value,
 ) -> Result<Value, String> {
+    record_revision_request_inner(graph_dir,job,input,false)
+}
+
+/// Graph-owned automation after a verified immutable-head Final Review.
+/// Never exposed through the public task.revise CLI. Its source must be the
+/// durable completed Reviewer, exact recorded verdict, and review round.
+pub(crate) fn record_review_owned_revision_request(
+    graph_dir:&Path,job:&mut Value,input:&Value,
+)->Result<Value,String>{
+    record_revision_request_inner(graph_dir,job,input,true)
+}
+fn record_revision_request_inner(
+    graph_dir: &Path,
+    job: &mut Value,
+    input: &Value,
+    after_review: bool,
+) -> Result<Value, String> {
     let request_id = field(input, "requestId");
     if request_id.trim().is_empty() || request_id.encode_utf16().count() > 160 {
         return Err("revision request requires stable request ID (max 160)".into());
@@ -87,8 +104,20 @@ pub fn record_targeted_revision_request(
         .cloned();
     let reviewer_ok = reviewer.as_ref().is_some_and(|reviewer| {
         is_final_review_agent(reviewer["agentName"].as_str())
-            && reviewer["state"] == "RUNNING"
-            && reviewer["executionId"] == execution
+            && if after_review {
+                reviewer["state"]=="SUCCEEDED"
+                    && matches!(reviewer.pointer("/result/data/verdict").and_then(Value::as_str),
+                        Some("changes-required"|"changes_required"))
+                    && job["review"]["outcome"]=="changes_required"
+                    && job["review"]["taskId"]==reviewer["id"]
+                    && arr(job,"reviewRevisionRounds").iter().any(|round|
+                        round["reviewTaskId"]==reviewer["id"]
+                            && round["reviewExecutionId"]==execution
+                            && round["headSha"]==head
+                            && round["status"]=="changes_required")
+            }else{
+                reviewer["state"]=="RUNNING" && reviewer["executionId"]==execution
+            }
     });
     let head_ok = reviewer
         .as_ref()
@@ -99,8 +128,8 @@ pub fn record_targeted_revision_request(
                 && job["review"]["taskId"] == input["reviewTaskId"]
                 && matches!(
                     job["review"]["outcome"].as_str(),
-                    Some("pending" | "started")
-                )));
+                    Some("pending" | "started" | "changes_required")
+                ) && (after_review || job["review"]["outcome"]!="changes_required")));
     let owner_ok = owner.as_ref().is_some_and(|owner| {
         owner["state"] == "SUCCEEDED"
             && owner["kind"] != "planner"
@@ -211,6 +240,14 @@ pub fn record_targeted_revision_request(
         });
         for key in ["projectName", "workerRequirements", "adapter", "timeoutMs"] {
             put_optional(&mut value, key, &owner, key);
+        }
+        // The completed Task remains immutable. Its targeted Revision is a
+        // new execution generation of the SAME Codex conversation.
+        if field(&owner,"adapter")=="codex"{
+            let id=field(&owner,"threadId");
+            if crate::native_codex_thread::valid_thread_id(id){
+                value["threadId"]=json!(id);
+            }
         }
         let child = create_task_entity(graph_dir, job, &value, true, &now)?;
         job["tasks"]

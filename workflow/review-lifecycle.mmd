@@ -133,6 +133,21 @@ started -->|on: head.changed| cancelStarted
 cancelStarted --> stale
 approved -->|on: head.changed| cancelApproved
 cancelApproved --> stale
+%% A completed immutable-head Review may be triaged by the Reconciler.
+%% Only fully owned findings may use existing Targeted Revision Graph,
+%% otherwise Planner resolves new/ambiguous responsibilities.
+changes -->|on: review.ownership_routed| autoOwnershipVerified
+autoOwnershipVerified["guard: ownershipResolved"]
+autoOwnershipTargeted["action: review.awaitTargetedRevisions"]
+autoOwnershipVerified -->|true| autoOwnershipTargeted
+autoOwnershipVerified -->|false| autoOwnershipPartial
+%% Mixed reviews route known owners directly, leaving only unowned findings
+%% to the Planner. The Review remains CHANGES_REQUIRED until all work closes.
+autoOwnershipPartial["guard: ownershipPartial"]
+autoOwnershipRouteKnown["action: review.routeKnownOwners"]
+autoOwnershipPartial -->|true| autoOwnershipRouteKnown
+autoOwnershipRouteKnown --> changes
+autoOwnershipTargeted --> changes
 changes -->|on: revision.settled| targetedVerified
 %% Only the Review Graph selects re-review; settlement is proven by correlated
 %% child terminal evidence and explicit revision request provenance.

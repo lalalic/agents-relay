@@ -197,6 +197,13 @@ pub fn create_plan_round(
         "timeoutMs":timeout_ms.unwrap_or(900_000),
         "manualPlanning":manual,"createdAt":now,"updatedAt":now
     });
+    // Role conversation belongs to the Job, not to one Plan execution.
+    // Keep prior immutable round records; continue a valid Codex thread in
+    // a new independently fenced Plan round.
+    if let Some(previous)=plans.iter().rev().find(|p|
+        crate::native_codex_thread::valid_thread_id(field(p,"threadId"))){
+        result["threadId"]=previous["threadId"].clone();
+    }
     if let Some(guidance)=guidance{result["guidance"]=json!(guidance);}
     // JSON.stringify omits undefined Node Plan fields rather than storing
     // JSON null. A missing initial Git HEAD must remain absent.
@@ -649,7 +656,16 @@ pub fn planner_input(context:&Value)->String{
     Value::Object(output).to_string()
 }
 
-pub fn build_planner_codex_args(_store_dir:&Path,input:&str)->Vec<String>{
+pub fn build_planner_codex_args(store_dir:&Path,input:&str)->Vec<String>{
+    build_planner_codex_resume_args(store_dir,input,None)
+}
+pub fn build_planner_codex_resume_args(_store_dir:&Path,input:&str,thread_id:Option<&str>)->Vec<String>{
+    if let Some(id)=thread_id.filter(|id|
+        crate::native_codex_thread::valid_thread_id(id)){
+        return vec!["exec".into(),"--json".into(),"resume".into(),
+            crate::codex_permissions::FULL_ACCESS_NO_APPROVALS.into(),
+            id.into(),input.into()];
+    }
     let mut args=crate::codex_permissions::exec_args(true);
     args.extend(["--".to_owned(),input.to_owned()]);
     args
