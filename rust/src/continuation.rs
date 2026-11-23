@@ -86,7 +86,8 @@ where
             let command = command_override.unwrap_or("codex");
             let code = (adapters.run_owned)(
                 command,
-                &["exec", "resume", target, input],
+                &["exec", "resume",
+                    crate::codex_permissions::FULL_ACCESS_NO_APPROVALS, target, input],
                 "continuation.codex",
             )?;
             if code != 0 {

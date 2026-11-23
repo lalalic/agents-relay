@@ -17,15 +17,18 @@ Relay owns durable Jobs and Tasks; do one-shot work directly. On Neo Master, use
 
 ## Native Codex Worker execution permissions
 
-The trusted local Codex Worker executor uses `codex exec --dangerously-bypass-approvals-and-sandbox`:
-no Codex sandbox and no interactive shell approval prompts. This allows Xcode,
+**Every** trusted local Codex subprocess launched by Relay uses the shared
+`--dangerously-bypass-approvals-and-sandbox` permission profile: Planner,
+Implementation, Troubleshooter, other Model Workers, standalone Outcome Reviewers,
+and Codex thread Continuations. No Codex sandbox and no interactive shell approval
+prompts. This allows Xcode,
 SwiftPM, and other developer tools to access system/user cache paths outside the
 repository. This is an operator-authorized, high-trust execution mode; only
 allowlisted native Codex executables and authorized Task contexts may be run.
 It does not bypass Relay's durable process ownership, Task/Graph completion,
 independent Final Review, or external/public/paid-action authorization rules.
-This setting applies to native Codex Workers; Browser Workers and Planner
-launch policies are independent.
+This setting applies to all Codex subprocess launch paths. Browser Workers,
+non-Codex tools, and external provider policies remain independent.
 
 ## Source Worker completion
 

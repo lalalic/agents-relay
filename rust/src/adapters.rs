@@ -91,7 +91,7 @@ pub fn append_tail(current:&str,chunk:&str,max_bytes:usize)->String{
     String::from_utf8_lossy(&bytes[bytes.len()-max_bytes..]).into_owned()
 }
 pub fn build_codex_args(route:&Value,input:&str)->Vec<String>{
-    let mut args=vec!["exec".into(),"--json".into()];
+    let mut args=crate::codex_permissions::exec_args(true);
     let profile=field(route,"profile");
     let provider=field(route,"provider");
     if !profile.is_empty(){args.extend(["-p".into(),profile.into()]);}

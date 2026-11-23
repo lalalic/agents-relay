@@ -649,11 +649,10 @@ pub fn planner_input(context:&Value)->String{
     Value::Object(output).to_string()
 }
 
-pub fn build_planner_codex_args(store_dir:&Path,input:&str)->Vec<String>{
-    let parent=store_dir.parent().unwrap_or(store_dir).to_string_lossy();
-    ["exec","--json","--sandbox","workspace-write","--add-dir",
-        &parent,"-c","sandbox_workspace_write.network_access=true",
-        "--",input].iter().map(|s|s.to_string()).collect()
+pub fn build_planner_codex_args(_store_dir:&Path,input:&str)->Vec<String>{
+    let mut args=crate::codex_permissions::exec_args(true);
+    args.extend(["--".to_owned(),input.to_owned()]);
+    args
 }
 pub fn parse_planner_agent_message(line:&str)->Option<String>{
     let value:Value=serde_json::from_str(line).ok()?;

@@ -30,7 +30,7 @@ fn public_continuation_adapters_delegate_exact_owned_process_and_http_contract()
             "Continuation is not a Codex thread");
     }
     assert_eq!(effects,vec![
-        ("/bin/codex-fixture".into(),vec!["exec".into(),"resume".into(),"thread-1".into(),"hello".into()],"continuation.codex".into()),
+        ("/bin/codex-fixture".into(),vec!["exec".into(),"resume".into(),"--dangerously-bypass-approvals-and-sandbox".into(),"thread-1".into(),"hello".into()],"continuation.codex".into()),
         ("/bin/fixture".into(),vec!["world".into()],"continuation.command".into()),
     ]);
 }

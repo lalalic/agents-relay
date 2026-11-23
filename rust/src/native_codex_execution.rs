@@ -2,6 +2,7 @@
 //! Provider process exit is NOT a Graph task.started/completed receipt.
 use crate::{
     execution_process_tracker::monitor_execution_process,
+    codex_permissions::exec_args,
     owned_process::{OwnedProcessManager,OwnedProcessOptions,TerminationReason},
     relay_store::SQLiteRelayStore,
     execution_context::resolve_execution_context,
@@ -98,8 +99,7 @@ pub fn execute_claimed_codex(
     // normal SwiftPM/Xcode caches outside the checked-out repository.
     // The owned process, Task execution identity, and Graph completion gates
     // remain mandatory; unrestricted shell access is not Task success.
-    let mut args=vec!["exec".to_string(),"--json".into(),
-        "--dangerously-bypass-approvals-and-sandbox".into()];
+    let mut args=exec_args(true);
     let profile=field(route,"profile");
     if !profile.is_empty(){args.extend(["-p".into(),profile.into()]);}
     args.extend(["-m".into(),model.into()]);

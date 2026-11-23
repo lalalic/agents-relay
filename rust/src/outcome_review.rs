@@ -126,8 +126,20 @@ pub fn combine_outcome_reviews(reviews: &[Value]) -> Value {
 /// classification without launching any external model or process.
 /// Node evaluateOutcome production path: resolve the real reviewer
 /// definitions (built-in reviewer file or the layered agent resolver) and
-/// run the owned read-only codex exec subprocess per reviewer, then combine
+/// run the owned full-access Codex exec subprocess per reviewer, then combine
 /// the verdicts. Exit-code mapping is applied by run_outcome_review_*.
+/// Standalone Outcome Review uses the same Codex permissions as every other
+/// Relay role, while retaining its own JSON schema and reviewer contract.
+pub fn outcome_review_codex_args(project:&Path)->Vec<String>{
+    let mut args=crate::codex_permissions::exec_args(false);
+    args.extend([
+        "--ephemeral".into(),"--skip-git-repo-check".into(),
+        "--output-schema".into(),"agents/outcome-review.schema.json".into(),
+        "-C".into(),project.to_string_lossy().to_string(),"-".into(),
+    ]);
+    args
+}
+
 pub fn evaluate_outcome(
     options: &Value,
     workspace_root: &Path,
@@ -179,10 +191,7 @@ pub fn evaluate_outcome(
             project.display()
         );
         let output = std::process::Command::new(codex_bin)
-            .args(["exec", "--ephemeral", "--sandbox", "read-only",
-                "--skip-git-repo-check",
-                "--output-schema", "agents/outcome-review.schema.json",
-                "-C", &project.to_string_lossy(), "-"])
+            .args(outcome_review_codex_args(project))
             .current_dir(project)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
