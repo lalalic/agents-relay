@@ -92,6 +92,7 @@ for(const data of [
  }]});
 }
 
+test('Node/Rust dashboard mobile privacy, identity and pagination',()=>{
  const build=spawnSync('cargo',['build','--offline','--manifest-path','rust/Cargo.toml',
   '--bin','relay-rust2-parity'],{encoding:'utf8',maxBuffer:3*1024*1024});
  assert.equal(build.status,0,build.stderr);
