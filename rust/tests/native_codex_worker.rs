@@ -66,7 +66,7 @@ fn native_codex_uses_trusted_managed_prompt_and_correlated_event_contract(){
 }
 #[test]
 #[cfg(unix)]
-fn native_codex_model_receipt_requires_workspace_write_with_nats_network_access(){
+fn native_codex_worker_gets_unrestricted_access_without_approval_prompts(){
     use std::os::unix::fs::PermissionsExt;
     let root=fixture();let db=root.join("relay.sqlite");
     let capture=root.join("codex-argv.txt");
@@ -80,9 +80,15 @@ fn native_codex_model_receipt_requires_workspace_write_with_nats_network_access(
         .expect_err("provider exit without terminal Graph event is not success");
     assert!(failure.contains("without verified Task terminal event"),"{failure}");
     let args=fs::read_to_string(&capture).unwrap();
-    assert!(args.contains("--sandbox\nworkspace-write\n"),"{args}");
-    assert!(args.contains("-c\nsandbox_workspace_write.network_access=true\n"),"{args}");
-    assert!(!args.contains("danger-full-access"),"{args}");
+    let argv:Vec<&str>=args.lines().collect();
+    assert_eq!(argv.first(),Some(&"exec"));
+    assert!(argv.contains(&"--json"),"{argv:?}");
+    assert_eq!(argv.iter().filter(|&&v|
+        v=="--dangerously-bypass-approvals-and-sandbox").count(),1,"{argv:?}");
+    assert!(!argv.contains(&"--sandbox"),"{argv:?}");
+    assert!(!argv.contains(&"workspace-write"),"{argv:?}");
+    assert!(!argv.contains(&"sandbox_workspace_write.network_access=true"),"{argv:?}");
+    assert_eq!(argv.iter().filter(|&&v|v=="-m").count(),1,"{argv:?}");
     drop(failure);fs::remove_dir_all(root).unwrap();
 }
 #[test]

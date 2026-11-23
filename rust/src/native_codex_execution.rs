@@ -92,18 +92,14 @@ pub fn execute_claimed_codex(
     // unverified lease even when the implementation is correct.
     let prompt=native_codex_managed_prompt(db,job,task,project)?;
     let cwd=project.to_str().ok_or("Codex project path is not UTF-8")?;
-    // User Codex profile currently defaults to danger-full-access. Native
-    // Relay Workers are restricted to workspace-write, not inherited unsafe
-    // shell permissions, even for a test-owned repository.
+    // The operator explicitly authorizes native Codex Workers to run with
+    // unrestricted filesystem/network access and without approval prompts.
+    // Unlike workspace-write, this permits macOS toolchains to write their
+    // normal SwiftPM/Xcode caches outside the checked-out repository.
+    // The owned process, Task execution identity, and Graph completion gates
+    // remain mandatory; unrestricted shell access is not Task success.
     let mut args=vec!["exec".to_string(),"--json".into(),
-        "--sandbox".into(),"workspace-write".into(),
-        // Only the explicit allowlisted native Codex executor uses this
-        // capability. The managed Task contract requires posting exact
-        // start/progress/terminal receipts to the existing localhost NATS
-        // Events Bus; default Codex workspace-write silently denies TCP
-        // even to 127.0.0.1:4222 (EPERM) and strands a valid Task lease.
-        // Retain workspace-write filesystem sandbox; never use danger-full-access.
-        "-c".into(),"sandbox_workspace_write.network_access=true".into()];
+        "--dangerously-bypass-approvals-and-sandbox".into()];
     let profile=field(route,"profile");
     if !profile.is_empty(){args.extend(["-p".into(),profile.into()]);}
     args.extend(["-m".into(),model.into()]);

@@ -15,6 +15,18 @@ Relay owns durable Jobs and Tasks; do one-shot work directly. On Neo Master, use
 - Deliver: optional verified non-force origin/main push after completion; never changes Job state.
 - Daemon: no Workspace scan and no `--workspace` requirement. Restart PM2 intentionally after installing a verified Rust binary; never rely on npm package publications.
 
+## Native Codex Worker execution permissions
+
+The trusted local Codex Worker executor uses `codex exec --dangerously-bypass-approvals-and-sandbox`:
+no Codex sandbox and no interactive shell approval prompts. This allows Xcode,
+SwiftPM, and other developer tools to access system/user cache paths outside the
+repository. This is an operator-authorized, high-trust execution mode; only
+allowlisted native Codex executables and authorized Task contexts may be run.
+It does not bypass Relay's durable process ownership, Task/Graph completion,
+independent Final Review, or external/public/paid-action authorization rules.
+This setting applies to native Codex Workers; Browser Workers and Planner
+launch policies are independent.
+
 ## Source Worker completion
 
 New source Tasks (`gitDeliveryRequired: true`) must commit with `Relay-Task: ID` and `Relay-Execution: EXECUTION_ID` trailers, then run the matching `agents-relay task complete` CLI with `--repo --id --task-id --execution-id --commit-sha --summary`. Relay verifies clean Git HEAD and execution before emitting completion. **Never directly emit `task.completed`**. File, Reviewer, Troubleshooter and legacy Tasks retain normal events.
