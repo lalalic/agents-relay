@@ -219,6 +219,16 @@ where
                     text(&item["event"], "type"),
                     &item["event"],
                 )?;
+                if item["alreadyPublished"]==true {
+                    // An incoming Events Bus event has already reached NATS.
+                    // Write its published receipt in the same transaction as
+                    // the Graph mutation, so a crash cannot echo it later.
+                    self.db.execute(
+                        "UPDATE workflow_event_outbox SET state='published',
+                         published_at=? WHERE event_key=? AND state='pending'",
+                        params![now(),text(item,"key")],
+                    ).map_err(|e|e.to_string())?;
+                }
             }
             Ok(next)
         })();

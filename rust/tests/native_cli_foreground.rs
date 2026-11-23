@@ -771,6 +771,16 @@ fn installed_daemon_sse_watches_external_graph_sqlite_worker_commits(){
         "external actual Graph terminal",None,None,Some(issued));
     apply_verified_worker_event(&db,&graph,"17","2",execution,&started).unwrap();
     apply_verified_worker_event(&db,&graph,"17","2",execution,&completed).unwrap();
+    // Source worker events were already published to Events Bus. Their
+    // transactional receipts must not be queued for a second publication.
+    {
+        let conn=rusqlite::Connection::open(&db).unwrap();
+        let receipt_states=conn.prepare(
+            "SELECT state FROM workflow_event_outbox WHERE event_key LIKE 'model-event/17/2/%' ORDER BY event_key"
+        ).unwrap().query_map([],|row|row.get::<_,String>(0)).unwrap()
+            .collect::<Result<Vec<_>,_>>().unwrap();
+        assert_eq!(receipt_states,vec!["published","published"]);
+    }
     let deadline=Instant::now()+Duration::from_secs(9);
     loop{
         if received.contains("\"state\":\"SUCCEEDED\""){break;}

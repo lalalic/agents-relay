@@ -61,9 +61,13 @@ pub fn apply_verified_worker_event(
     let candidate=applied.job;
     // The event_id (rather than its type) is unique: progress messages from
     // the same execution may have many genuine, independently fenced events.
+    // The authoritative Worker already published this event to Events Bus.
+    // Keep its identity in the transactional outbox as an idempotency receipt,
+    // but never re-publish it back into that same transport.
     let durable=json!({
         "key":format!("model-event/{job_id}/{task_id}/{execution_id}/{event_id}"),
         "event":event,
+        "alreadyPublished":true,
     });
     store.commit_workflow_mutation_and_events(job_id,move |current|{
         if current!=prior{
