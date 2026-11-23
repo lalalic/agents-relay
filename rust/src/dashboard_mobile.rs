@@ -131,6 +131,53 @@ pub fn project_mobile_tasks(row:&Value,id:&Value,repository:&Value)->Result<Valu
         }).collect::<Vec<_>>();
     Ok(json!({"jobId":id,"repository":repository,"tasks":tasks}))
 }
+// Match the Node owner-safe mobile projection: source messages are untrusted.
+// Expose only a bounded, conservative plain-language summary for selected
+// lifecycle event types; otherwise the mobile UI uses the event action label.
+fn public_activity_text(raw:&Value,private:&Regex)->Option<String>{
+    let raw=raw.as_str()?;
+    let summary=raw.chars().map(|c|if c.is_control(){' '}else{c})
+        .collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ");
+    let length=summary.encode_utf16().count();
+    if length<12||length>800||
+        matches!(summary.to_ascii_lowercase().as_str(),
+            "implementation"|"troubleshooter"|"coordinator"|"reviewer"|
+            "planner"|"developer"|"worker"|"architect")||
+        summary.starts_with("task.")||summary.starts_with("review.")||
+        summary.starts_with("planner.")||private.is_match(&summary){return None}
+    Some(String::from_utf16_lossy(
+        &summary.encode_utf16().take(240).collect::<Vec<_>>()))
+}
+fn mobile_activity_summary(entry:&Value,kind:&str)->Option<String>{
+    if !matches!(kind,"task.progress"|"task.completed"|"task.failed"|
+        "planner.completed"|"review.approved"|"review.changes_required"){
+        return None
+    }
+    static PRIVATE:OnceLock<Regex>=OnceLock::new();
+    let private=PRIVATE.get_or_init(||Regex::new(
+        r"(?i)(https?://|www\.|[/\\\x60<>$@{}\[\]]|(secret|token|password|passphrase|credential|authorization|bearer|private|prompt|objective|api[_ -]?key)|[A-Za-z0-9_-]{36,})"
+    ).unwrap());
+    let data=entry.get("data").filter(|value|value.is_object());
+    // Whitelist data.message, data.reason and event.message, not raw data.
+    for candidate in [data.and_then(|v|v.get("message")),
+        data.and_then(|v|v.get("reason")),entry.get("message")].into_iter().flatten(){
+        if let Some(summary)=public_activity_text(candidate,private){
+            return Some(summary);
+        }
+    }
+    static PHASE:OnceLock<Regex>=OnceLock::new();
+    let phase_pattern=PHASE.get_or_init(||Regex::new(r"^[-a-z0-9_]{2,60}$").unwrap());
+    let phase=data.and_then(|v|v.get("phase"))?.as_str()?;
+    if !phase_pattern.is_match(phase)||private.is_match(phase){return None}
+    let label=phase.split(|ch|ch=='-'||ch=='_').filter(|word|!word.is_empty())
+        .collect::<Vec<_>>().join(" ");
+    if label.is_empty(){return None}
+    if kind=="task.failed"{return Some(format!("Failed during {label}"))}
+    let mut chars=label.chars();
+    let first=chars.next()?;
+    Some(first.to_uppercase().collect::<String>()+chars.as_str())
+}
+
 pub fn project_mobile_activity(rows:&Value)->Value{
     let events=rows.as_array().into_iter().flatten()
         .rev().take(100).collect::<Vec<_>>();
@@ -156,6 +203,9 @@ pub fn project_mobile_activity(rows:&Value)->Value{
                 .filter(|s|id_pattern().is_match(s)){
                 projection["taskId"]=json!(id);
             }
+            if let Some(content)=mobile_activity_summary(entry,&kind){
+                projection["content"]=json!(content);
+            }
             Some(projection)
         }).collect::<Vec<_>>();
     Value::Array(std::mem::take(&mut events))
@@ -180,6 +230,51 @@ mod tests{
         assert!(!tasks.to_string().contains("SECRET"));
         assert!(project_mobile_tasks(&data,&json!("a"),&json!("other")).is_err());
         assert!(project_mobile_jobs(&json!([data]),0.0,21.0).is_err());
+    }
+    #[test]
+    fn mobile_activity_uses_safe_action_specific_details_only(){
+        let at="2026-11-20T01:01:01Z";
+        let events=project_mobile_activity(&json!([
+            {"type":"task.progress","timestamp":at,"task_id":"2242",
+                "message":"Verified the full iOS build and completed two review rounds."},
+            {"type":"task.failed","timestamp":at,"task_id":"2242",
+                "message":"Xcode validation blocked on the build host."},
+            {"type":"task.started","timestamp":at,
+                "message":"Task started with a private objective"},
+            {"type":"task.progress","timestamp":at,
+                "message":"Troubleshooter"},
+            {"type":"task.progress","timestamp":at,
+                "message":"SECRET_MESSAGE"},
+            {"type":"task.progress","timestamp":at,
+                "message":"Open /Users/person/Library/Caches for details."},
+            {"type":"task.progress","timestamp":at,
+                "message":"Read https://internal.example.org now."},
+        ]));
+        assert_eq!(events.as_array().unwrap().len(),7);
+        assert_eq!(events[0]["content"],
+            "Verified the full iOS build and completed two review rounds.");
+        assert_eq!(events[1]["content"],
+            "Xcode validation blocked on the build host.");
+        for index in 2..7 {assert!(events[index].get("content").is_none());}
+        assert!(!events.to_string().contains("SECRET_MESSAGE"));
+        assert!(!events.to_string().contains("/Users/person"));
+        let nested=project_mobile_activity(&json!([
+            {"type":"task.progress","timestamp":at,"task_id":"2242",
+                "message":"task.progress","data":{"phase":"self-review-round-2-complete",
+                "objective":"SECRET_PROMPT"}},
+            {"type":"task.failed","timestamp":at,"task_id":"2242",
+                "message":"task.failed","data":{"phase":"validation",
+                "reason":"Xcode could not compile because the build host was unavailable."}},
+            {"type":"task.progress","timestamp":at,"task_id":"2242",
+                "message":"task.progress","data":{"message":"Read /Users/private/document now.",
+                "phase":"context-loaded"}},
+        ]));
+        assert_eq!(nested[0]["content"],"Self review round 2 complete");
+        assert_eq!(nested[1]["content"],
+            "Xcode could not compile because the build host was unavailable.");
+        assert_eq!(nested[2]["content"],"Context loaded");
+        assert!(!nested.to_string().contains("SECRET_PROMPT"));
+        assert!(!nested.to_string().contains("/Users/"));
     }
     #[test]
     fn redact_activity_and_paginate(){

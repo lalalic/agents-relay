@@ -40,6 +40,51 @@ test('mobile activity strips user content and only allows lifecycle event labels
  assert.ok(!JSON.stringify(projected).includes('secret'));
 });
 
+test('mobile activity uses only privacy-screened progress and failure summaries',()=>{
+ const at='2026-11-20T09:00:00Z';
+ const events=projectMobileActivity([
+  {type:'task.progress',timestamp:at,task_id:'2242',
+   message:'Verified the full iOS build and completed two review rounds.'},
+  {type:'task.started',timestamp:at,task_id:'2242',message:'Task started with a private objective'},
+  {type:'task.failed',timestamp:at,task_id:'2242',message:'Xcode validation blocked on the build host.'},
+  {type:'task.progress',timestamp:at,task_id:'2243',message:'Troubleshooter'},
+  {type:'task.progress',timestamp:at,task_id:'2243',message:'SECRET_MESSAGE'},
+  {type:'task.progress',timestamp:at,task_id:'2243',message:'See /Users/person/private/file for details.'},
+  {type:'task.progress',timestamp:at,task_id:'2243',message:'Token ABCDEFGHIJKL and more information.'},
+  {type:'task.progress',timestamp:at,task_id:'2243',message:'https://internal.example.net/readme was checked.'},
+  {type:'task.progress',timestamp:at,task_id:'2243',message:'Build passes; objective prompt and private user data.'},
+ ]);
+ assert.equal(events.length,9);
+ assert.equal(events[0].content,'Verified the full iOS build and completed two review rounds.');
+ assert.equal(events[2].content,'Xcode validation blocked on the build host.');
+ for(const index of [1,3,4,5,6,7,8]) assert.equal(events[index].content,undefined);
+ assert.ok(!JSON.stringify(events).includes('SECRET_MESSAGE'));
+ assert.ok(!JSON.stringify(events).includes('/Users/person'));
+ assert.ok(!JSON.stringify(events).includes('https://'));
+ const nested=projectMobileActivity([
+   {type:'task.progress',timestamp:at,task_id:'2242',
+     message:'task.progress',data:{phase:'self-review-round-2-complete',
+       evidence:'/Users/private/no',objective:'SECRET_PROMPT'}},
+   {type:'task.progress',timestamp:at,task_id:'2242',
+     message:'task.progress',data:{phase:'round-1-repair-validation'}},
+   {type:'task.failed',timestamp:at,task_id:'2242',
+     message:'task.failed',data:{phase:'validation',
+       reason:'Xcode could not compile because the build host was unavailable.'}},
+   {type:'task.progress',timestamp:at,task_id:'2242',
+     message:'task.progress',data:{message:'Validated the full iOS app using device SDK.'}},
+   {type:'task.progress',timestamp:at,task_id:'2242',
+     message:'task.progress',data:{message:'Read /Users/private/document now.',
+       phase:'context-loaded'}},
+ ]);
+ assert.equal(nested[0].content,'Self review round 2 complete');
+ assert.equal(nested[1].content,'Round 1 repair validation');
+ assert.equal(nested[2].content,
+   'Xcode could not compile because the build host was unavailable.');
+ assert.equal(nested[3].content,'Validated the full iOS app using device SDK.');
+ assert.equal(nested[4].content,'Context loaded');
+ assert.ok(!JSON.stringify(nested).includes('SECRET_PROMPT'));
+ assert.ok(!JSON.stringify(nested).includes('/Users/'));
+});
 test('real loopback Node HTTP mobile endpoints preserve scoped identity and redact job payload',async()=>{
  const {managedDashboard}=await import('./test-runtime.js');
  const {once}=await import('node:events');

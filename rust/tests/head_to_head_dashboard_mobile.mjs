@@ -62,7 +62,36 @@ for(let i=0;i<90;i++){
  }));
  add('projectMobileActivity',{rows});
 }
-test('Node/Rust dashboard mobile privacy, identity and pagination',()=>{
+for(const message of [
+ 'Verified the full iOS build and completed two review rounds.',
+ 'Xcode validation blocked on the build host.',
+ 'Troubleshooter','SECRET_MESSAGE',
+ 'See /Users/private/path to reproduce.',
+ 'Read https://internal.example.org now.',
+ 'The speech recognition tests passed; no new failures.',
+ '完成 iPhone 真实设备测试并验证界面没有崩溃。',
+ 'A'.repeat(1000)
+]){
+ add('projectMobileActivity',{rows:[{
+  type:'task.progress',timestamp:'2026-11-20T01:00:00Z',
+  task_id:'2242',message
+ }]});
+}
+for(const data of [
+ {phase:'self-review-round-2-complete',objective:'SECRET_PROMPT'},
+ {phase:'round-1-repair-validation'},
+ {phase:'validation',reason:'Xcode could not compile because the build host was unavailable.'},
+ {phase:'context-loaded',message:'Read /Users/private/document now.'},
+ {phase:'context-loaded',message:'Validated the full iOS app using device SDK.'},
+ {phase:'unsafe-long-token-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'},
+ {phase:'secret-key-included'}
+]){
+ add('projectMobileActivity',{rows:[{
+  type:'task.progress',timestamp:'2026-11-20T01:00:00Z',
+  task_id:'2242',message:'task.progress',data
+ }]});
+}
+
  const build=spawnSync('cargo',['build','--offline','--manifest-path','rust/Cargo.toml',
   '--bin','relay-rust2-parity'],{encoding:'utf8',maxBuffer:3*1024*1024});
  assert.equal(build.status,0,build.stderr);

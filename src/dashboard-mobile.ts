@@ -43,13 +43,51 @@ export function projectMobileTasks(row:unknown,id:string,repository:string){
   });
   return {jobId:id,repository,tasks};
 }
+// A short, conservative user-visible summary; raw worker messages and data
+// are never forwarded. Unsafe/free-form records fall back to the event type.
+const PUBLIC_ACTIVITY_TYPES=new Set([
+  'task.progress','task.completed','task.failed',
+  'planner.completed','review.approved','review.changes_required',
+]);
+const PRIVATE_ACTIVITY_PATTERN=/(?:https?:\/\/|www\.|[/\\`<>$@{}\[\]]|(?:secret|token|password|passphrase|credential|authorization|bearer|private|prompt|objective|api[_ -]?key)|[A-Za-z0-9_-]{36,})/i;
+function publicActivityText(raw:unknown):string|undefined{
+  if(typeof raw!=='string')return undefined;
+  const summary=raw.replace(/[\u0000-\u001f\u007f]/g,' ')
+    .replace(/\s+/g,' ').trim();
+  if(summary.length<12||summary.length>800||
+     /^(?:implementation|troubleshooter|coordinator|reviewer|planner|developer|worker|architect)$/i.test(summary)||
+     summary.startsWith('task.')||summary.startsWith('review.')||
+     summary.startsWith('planner.')||PRIVATE_ACTIVITY_PATTERN.test(summary))return undefined;
+  return summary.slice(0,240);
+}
+function mobileActivitySummary(entry:Record<string,unknown>,type:string):string|undefined{
+  if(!PUBLIC_ACTIVITY_TYPES.has(type))return undefined;
+  // Only explicitly selected, privacy-screened fields may become UI text.
+  // The other nested worker data is never serialized to the phone.
+  const data=entry.data&&typeof entry.data==='object'&&!Array.isArray(entry.data)
+    ?entry.data as Record<string,unknown>:null;
+  for(const candidate of [data?.message,data?.reason,entry.message]){
+    const summary=publicActivityText(candidate);
+    if(summary)return summary;
+  }
+  const phase=data?.phase;
+  if(typeof phase!=='string'||!/^[-a-z0-9_]{2,60}$/.test(phase)||
+     PRIVATE_ACTIVITY_PATTERN.test(phase))return undefined;
+  const label=phase.replace(/[-_]+/g,' ').trim();
+  if(!label)return undefined;
+  const humanized=label[0].toUpperCase()+label.slice(1);
+  return type==='task.failed'?`Failed during ${label}`:humanized;
+}
+
 export function projectMobileActivity(rows:unknown){
   return (Array.isArray(rows)?rows:[]).slice(-100).flatMap((entry:unknown)=>{
     if(!entry||typeof entry!=='object')return [];
     const v=entry as Record<string,unknown>;
     const type=clip(v.type,80),timestamp=clip(v.timestamp,40);
     if(!/^(job|task|review|planner)\.[a-z_]+$/.test(type)||!/^\d{4}-\d\d-\d\dT/.test(timestamp))return [];
-    return [{type,timestamp,...(typeof v.task_id==='string'&&ID.test(v.task_id)?{taskId:v.task_id}:{})}];
+    const content=mobileActivitySummary(v,type);
+    return [{type,timestamp,...(typeof v.task_id==='string'&&ID.test(v.task_id)?{taskId:v.task_id}:{}),
+      ...(content?{content}:{})}];
   });
 }
 
