@@ -232,7 +232,7 @@ impl PlannerLaunchPorts for PlannerPorts {
                         let child=owner_process.spawn_owned_process_piped(program,&refs,
                             OwnedProcessOptions{
                                 invocation:format!("rust-model-planner:{job_id}/{plan_id}"),
-                                cwd:Some(cwd.to_path_buf()),timeout_ms:Some(timeout),
+                                cwd:Some(cwd.to_path_buf()),timeout_ms:None,
                                 grace_ms:500,supervisor_path:None,
                             })?;
                         let tracked=store(&db,&job_id)?;
@@ -241,14 +241,13 @@ impl PlannerLaunchPorts for PlannerPorts {
                         let matching=latest.get("plans").and_then(Value::as_array)
                             .into_iter().flatten().any(|p|field(p,"id")==plan_id
                                 &&field(p,"executionId")==execution
-                                &&field(p,"leaseOwner")==owner
                                 &&field(p,"status")=="PLANNING");
                         if !matching{
                             child.terminate(TerminationReason::Abort,Some(100));
                             return Err("Model Planner process belongs to stale execution".into());
                         }
                         let record=capture_process_record(&job_id,&plan_id,&execution,
-                            &owner,child.pid() as i64)
+                            child.pid() as i64)
                             .ok_or("Cannot prove Model Planner process identity")?;
                         if let Err(error)=tracked.record_execution_process(&record){
                             child.terminate(TerminationReason::Abort,Some(100));
@@ -268,18 +267,12 @@ impl PlannerLaunchPorts for PlannerPorts {
                                 .map_err(|e|e.to_string())?;
                             String::from_utf8(bytes).map_err(|e|e.to_string())
                         });
-                        let deadline=Instant::now()+Duration::from_millis(timeout);
                         let status=loop{
-                            if let Some(status)=child.exit_status()?{break Ok(status);}
-                            if Instant::now()>deadline{
-                                child.terminate(TerminationReason::Timeout,Some(100));
-                                break Err("Model Planner execution timed out".to_owned());
-                            }
+                            if let Some(status)=child.exit_status()?{break status;}
                             thread::sleep(Duration::from_millis(100));
                         };
                         let _=store(&db,&job_id).and_then(|store|
                             store.finish_execution_process(&job_id,&plan_id,&execution,None));
-                        let status=status?;
                         let stdout=reader.join().map_err(|_|"Model Planner reader panicked")??;
                         let stderr=errors.join().map_err(|_|"Model Planner stderr reader panicked")??;
                         if stdout.len()>8*1024*1024||stderr.len()>128*1024{
@@ -289,18 +282,17 @@ impl PlannerLaunchPorts for PlannerPorts {
                     });
             }
             let run=invoke_trusted_script_recorded(&interpreter,&script,&context,
-                &AtomicBool::new(false),timeout,|pid|{
+                &AtomicBool::new(false),|pid|{
                     let tracked=store(&db,&job_id)?;
                     let latest=tracked.load_job(&job_id)?
                         .ok_or("Planner Job missing")?;
                     let matching=latest.get("plans").and_then(Value::as_array)
                         .into_iter().flatten().any(|plan|field(plan,"id")==plan_id
                             &&field(plan,"executionId")==execution
-                            &&field(plan,"leaseOwner")==owner
                             &&field(plan,"status")=="PLANNING");
                     if !matching{return Err("Planner process belongs to stale execution".into());}
                     let record=capture_process_record(&job_id,&plan_id,&execution,
-                        &owner,pid as i64)
+                        pid as i64)
                         .ok_or("Cannot prove isolated Planner process identity")?;
                     tracked.record_execution_process(&record)
                 });
@@ -347,7 +339,7 @@ pub fn apply_isolated_planner_proposal(
     }
     if field(plan,"status")=="PLANNING"
         &&(field(plan,"executionId")!=execution_id
-            ||field(plan,"leaseOwner").is_empty()){
+            ||field(plan,"executionId").is_empty()){
         return Err("Planner apply requires exact currently leased generation".into());
     }
     let mut ports=PlannerPorts{

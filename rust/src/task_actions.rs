@@ -36,8 +36,6 @@ fn lifecycle_rejection(task:&Value,action:&str)->String{
 }
 fn clear_execution(task:&mut Value) {
     task["error"]=Value::Null;
-    task["leaseOwner"]=Value::Null;
-    task["leaseExpiresAt"]=Value::Null;
     task["executionId"]=Value::Null;
 }
 fn transition(
@@ -90,8 +88,6 @@ pub fn try_apply_task_cancel_action(
     let decision=try_transition_task_event(directory,task,"cancel",&json!({}),now)?;
     if decision.get("accepted")!=Some(&Value::Bool(true)) {return Ok(false);}
     task["error"]=json!(reason);
-    task["leaseOwner"]=Value::Null;
-    task["leaseExpiresAt"]=Value::Null;
     task["executionId"]=Value::Null;
     Ok(true)
 }

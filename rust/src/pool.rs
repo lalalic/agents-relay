@@ -159,9 +159,7 @@ pub fn needs_lifecycle_reconciliation(
     Ok(tasks.iter().any(|t|{
         matches!(field(t,"state"),"RUNNING"|"QUEUED")
         &&t.get("executionId").is_some_and(|v|!v.is_null())
-        &&(t.get("leaseExpiresAt").and_then(Value::as_str)
-            .and_then(millis).is_some_and(|expires|expires<=now)
-            ||crate::process_identity::dead_native_relay_owner(field(t,"leaseOwner")))
+        &&matches!(field(t,"adapter"),"codex"|"script")
     }))
 }
 pub fn active_worker_slots(job:&Value)->usize{
@@ -171,7 +169,6 @@ pub fn active_worker_slots(job:&Value)->usize{
     }
     let leased=tasks.iter().filter(|task|{
         task.get("executionId").is_some_and(|v|!v.is_null())
-            &&!field(task,"leaseOwner").is_empty()
             &&matches!(field(task,"state"),"RUNNING"|"QUEUED")
             &&!unified_dag(job,task)
     }).count();
@@ -321,7 +318,8 @@ impl RepositoryWorkerPool{
         let mut capacity=remaining_worker_slots(self.concurrency,&jobs);
         let mut updated=Vec::new();
         for job in jobs{
-            if capacity==0{break;}
+            // Dead-process cleanup must run even when all Worker slots are
+            // occupied. A stuck generation must not block its own recovery.
             let id=field(&job,"id").to_owned();
             if !self.in_reconcile.insert(id.clone()){continue;}
             let run:Result<Option<(Option<Value>,usize)>,String>=(||{
@@ -336,16 +334,12 @@ impl RepositoryWorkerPool{
                         &&task.get("executionId").is_none_or(Value::is_null))
                     ||(field(task,"state")=="DRAFT"
                         &&!rows(task,"dependencies").is_empty())).count();
-                let expired=rows(&local,"tasks").iter().any(|t|
+                let process_check=rows(&local,"tasks").iter().any(|t|
                     matches!(field(t,"state"),"RUNNING"|"QUEUED")
-                    &&t.get("executionId").is_some_and(|v|!v.is_null())
-                    &&(t.get("leaseExpiresAt").and_then(Value::as_str)
-                        .and_then(millis).is_some_and(
-                            |time|time<=Utc::now().timestamp_millis())
-                       ||crate::process_identity::dead_native_relay_owner(
-                           field(t,"leaseOwner"))));
-                let allowance=if ready>0||expired{
-                    capacity.min(ready.max(1)).max(1)
+                    &&!field(t,"executionId").is_empty()
+                    &&matches!(field(t,"adapter"),"codex"|"script"));
+                let allowance=if ready>0||process_check{
+                    capacity.min(ready.max(1))
                 }else{0};
                 // Node catches only the per-Job Reconciler effect error.
                 // Local SQLite lookup, Graph eligibility and hydration errors

@@ -63,8 +63,7 @@ fn runnable(task:&Value,by_id:&HashMap<String,Value>,candidates:&[Value])->bool 
         && dependency_satisfied(task,by_id)
         && eligible_worker_route(task,candidates)
         && (text(task,"state")!="RUNNING"
-            || (task.get("executionId").is_some_and(|v|!v.is_null())
-                && task.get("leaseOwner").is_some_and(|v|!v.is_null())))
+            || task.get("executionId").is_some_and(|v|!v.is_null()))
 }
 fn dependency_waiting(task:&Value,by_id:&HashMap<String,Value>,candidates:&[Value],
     visiting:&mut HashSet<String>) -> bool {
@@ -174,8 +173,6 @@ pub fn apply_planner_history_cleanup(
                 continue;
             }
             task["error"]=json!(format!("Cancelled by Force Restate: {}",text(item,"reason")));
-            task["leaseOwner"]=Value::Null;
-            task["leaseExpiresAt"]=Value::Null;
             task["executionId"]=Value::Null;
             task["updatedAt"]=json!(now);
         } else {

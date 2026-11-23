@@ -66,7 +66,7 @@ pub fn persist_native_script_event(
         apply_launch_failure_mutation(task,Some(current),&admission,&decision);
         candidate
     }else{
-        let mut runtime=ReconcilerRuntime::new("native-script-worker",15_000);
+        let mut runtime=ReconcilerRuntime::new("native-script-worker");
         let output=runtime.apply_event(graph_directory,&before,event,None)?;
         if !output.applied{
             return Err(format!("Script Task Graph rejected {}: {}",
@@ -96,7 +96,7 @@ pub fn run_claimed_script_task(
     let task_id=field(task,"id");
     let execution_id=field(task,"executionId");
     if job_id.is_empty()||task_id.is_empty()||execution_id.is_empty()
-        ||field(task,"leaseOwner").is_empty()||field(task,"state")!="QUEUED"{
+        ||field(task,"state")!="QUEUED"{
         return Err("Native Script requires a committed queued execution lease".into());
     }
     let project=Path::new(field(job,"projectRoot"));
@@ -111,7 +111,7 @@ pub fn run_claimed_script_task(
             job_id,task_id,execution_id,event).map(|_|())
     };
     let mut invoke=|script:&Path,input:&Value,signal:&AtomicBool|{
-        let run=invoke_trusted_script_recorded(interpreter,script,input,signal,timeout_ms,
+        let run=invoke_trusted_script_recorded(interpreter,script,input,signal,
             |pid|{
                 let store=SQLiteRelayStore::open_without_claim_reset(db_path,Some(job_id))?;
                 let fresh=store.load_job(job_id)?.ok_or("Script execution Job not found")?;
@@ -119,7 +119,6 @@ pub fn run_claimed_script_task(
                     .find(|task|field(task,"id")==task_id)
                     .ok_or("Script execution Task not found")?;
                 if field(current,"executionId")!=execution_id
-                    ||field(current,"leaseOwner")!=field(task,"leaseOwner")
                     ||field(current,"state")!="RUNNING"{
                     return Err("Script process belongs to stale Task lease".into());
                 }
@@ -127,8 +126,7 @@ pub fn run_claimed_script_task(
                 // exact owned PID identity first, authoritative SQLite
                 // registration second, before accepting any worker receipt.
                 let future=monitor_execution_process(
-                    job_id,task_id,execution_id,field(task,"leaseOwner"),
-                    Some(pid as i64),
+                    job_id,task_id,execution_id,Some(pid as i64),
                     |record|std::future::ready(store.record_execution_process(&record)));
                 let mut future=std::pin::pin!(future);
                 let mut context=std::task::Context::from_waker(std::task::Waker::noop());

@@ -6,10 +6,8 @@ use chrono::{DateTime, NaiveDate, NaiveDateTime};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
     path::Path,
-    sync::{Arc, Condvar, Mutex},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 pub fn now_ms() -> i64 {
@@ -85,125 +83,6 @@ pub fn is_correlated_worker_event(task: &Value, event: &Value) -> bool {
         == Some(execution_event_source(job_id, task_id, execution_id).as_str())
 }
 
-pub fn inactivity_deadline(
-    task: &Value,
-    execution_id: &str,
-    post_exit_grace_ms: i64,
-    now: i64,
-) -> i64 {
-    let history_start = task["executionHistory"]
-        .as_array()
-        .and_then(|items| {
-            items
-                .iter()
-                .find(|item| string(item, "id") == Some(execution_id))
-        })
-        .and_then(|item| string(item, "startedAt"));
-    // JS nullish-coalescing: invalid lastProgressAt takes precedence over valid history timestamps.
-    let progress_at = string(task, "lastProgressAt")
-        .or(history_start)
-        .or_else(|| string(task, "updatedAt"))
-        .and_then(parse_ms)
-        .unwrap_or(now);
-    let timeout_ms = task
-        .get("timeoutMs")
-        .and_then(Value::as_i64)
-        .unwrap_or(0)
-        .max(1);
-    let timeout_at = progress_at.saturating_add(timeout_ms);
-    let exit_at = if !matches!(string(task, "adapter"), Some("chatgpt" | "z")) {
-        string(task, "processExitedAt").and_then(parse_ms)
-    } else {
-        None
-    };
-    exit_at.map_or(timeout_at, |ms| {
-        timeout_at.min(ms.saturating_add(post_exit_grace_ms))
-    })
-}
-pub fn arm_deadline(
-    task: &Value,
-    execution_id: &str,
-    post_exit_grace_ms: i64,
-    now: i64,
-) -> Option<i64> {
-    if !task.get("jobId").is_some_and(js_truthy)
-        || string(task, "executionId") != Some(execution_id)
-        || !matches!(string(task, "state"), Some("QUEUED" | "RUNNING"))
-    {
-        return None;
-    }
-    Some((inactivity_deadline(task, execution_id, post_exit_grace_ms, now) - now).max(1))
-}
-/// A cancelled Node timer is cleared immediately. Use a notified wait rather
-/// than a sleeping detached thread, so repeated re-arms do not retain a backlog
-/// of obsolete threads until an hours-long worker timeout elapses.
-#[derive(Default)]
-struct TimerCancellation {
-    cancelled: Mutex<bool>,
-    wake: Condvar,
-}
-impl TimerCancellation {
-    fn cancel(&self) {
-        *self.cancelled.lock().expect("watchdog cancellation") = true;
-        self.wake.notify_all();
-    }
-}
-#[derive(Default)]
-pub struct WatchdogTimers {
-    timers: HashMap<String, Arc<TimerCancellation>>,
-}
-impl WatchdogTimers {
-    pub fn cancel(&mut self, task_id: &str) {
-        if let Some(flag) = self.timers.remove(task_id) {
-            flag.cancel();
-        }
-    }
-    pub fn arm(
-        &mut self,
-        task: &Value,
-        execution_id: &str,
-        post_exit_grace_ms: i64,
-        on_expire: impl FnOnce() + Send + 'static,
-    ) -> Option<i64> {
-        let task_id = string(task, "id")?.to_string();
-        self.cancel(&task_id);
-        let delay = arm_deadline(task, execution_id, post_exit_grace_ms, now_ms())?;
-        let cancellation = Arc::new(TimerCancellation::default());
-        self.timers.insert(task_id, Arc::clone(&cancellation));
-        std::thread::spawn(move || {
-            let lock = cancellation
-                .cancelled
-                .lock()
-                .expect("watchdog cancellation");
-            let (cancelled, expiry) = cancellation
-                .wake
-                .wait_timeout_while(lock, Duration::from_millis(delay as u64), |cancelled| {
-                    !*cancelled
-                })
-                .expect("watchdog timer wait");
-            if !*cancelled && expiry.timed_out() {
-                drop(cancelled);
-                on_expire();
-            }
-        });
-        Some(delay)
-    }
-}
-impl Drop for WatchdogTimers {
-    fn drop(&mut self) {
-        for flag in self.timers.values() {
-            flag.cancel();
-        }
-    }
-}
-/// Node armInactivityWatchdog is a lifecycle-neutral timer effect; one Task
-/// identity can have at most one active timer in the caller-owned collection.
-pub fn arm_inactivity_watchdog(
-    task:&Value,execution_id:&str,timers:&mut WatchdogTimers,
-    post_exit_grace_ms:i64,on_expire:impl FnOnce()+Send+'static,
-)->Option<i64>{
-    timers.arm(task,execution_id,post_exit_grace_ms,on_expire)
-}
 /// Equivalent to acceptTaskProgress eligibility plus mutation. A durable transition adapter must
 /// apply the returned Task atomically through the Task Graph before publishing success.
 pub fn task_progress_mutation(task: &Value, event: &Value, now: i64) -> Option<Value> {

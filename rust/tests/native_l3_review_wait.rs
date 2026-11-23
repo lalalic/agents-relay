@@ -25,7 +25,7 @@ impl Fixture {
             profile_home:root.join("profiles"),policy_path:root.join("routing.json"),
             router_rules_path:root.join("rules.md"),dashboard_asset:root.join("index.html"),
             repositories:vec!["fixture".into()],port:0,concurrency:1,interval_ms:100,
-            lease_ms:300_000,event_transport:json!({}),
+            event_transport:json!({}),
         };
         let store=SQLiteRelayStore::open(&root.join("relay.sqlite"),Some("17")).unwrap();
         store.save_job(&json!({

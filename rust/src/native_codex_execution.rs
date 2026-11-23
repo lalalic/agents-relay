@@ -10,7 +10,7 @@ use crate::{
     reconciler_context::resolve_task_context,
 };
 use serde_json::{json,Value};
-use std::{io::Read,path::Path,thread,time::{Duration,Instant}};
+use std::{io::Read,path::Path,thread,time::Duration};
 fn field<'a>(v:&'a Value,k:&str)->&'a str{
     v.get(k).and_then(Value::as_str).unwrap_or("")
 }
@@ -71,9 +71,8 @@ pub fn execute_claimed_codex(
 )->Result<(),String>{
     let job_id=field(job,"id");let task_id=field(task,"id");
     let execution_id=field(task,"executionId");
-    let owner=field(task,"leaseOwner");
     if job_id.is_empty()||task_id.is_empty()||execution_id.is_empty()
-        ||owner.is_empty()||field(task,"adapter")!="codex"
+        ||field(task,"adapter")!="codex"
         ||field(task,"state")!="QUEUED"{
         return Err("Codex Worker requires exactly one committed Task lease".into());
     }
@@ -114,20 +113,18 @@ pub fn execute_claimed_codex(
     }
     args.extend(["-C".into(),cwd.into(),"--".into(),prompt]);
     let refs=args.iter().map(String::as_str).collect::<Vec<_>>();
-    let timeout=task.get("timeoutMs").and_then(Value::as_u64)
-        .unwrap_or(900_000).max(1);
     let mut manager=OwnedProcessManager::default();
     let child=manager.spawn_owned_process_piped(
         executable.to_str().ok_or("Codex binary path is not UTF-8")?,
         &refs,OwnedProcessOptions{
             invocation:format!("rust-codex-task:{job_id}/{task_id}"),
-            cwd:Some(project.to_path_buf()),timeout_ms:Some(timeout),
+            cwd:Some(project.to_path_buf()),timeout_ms:None,
             grace_ms:500,supervisor_path:None,
         })?;
     {
     let store=SQLiteRelayStore::open_without_claim_reset(db,Some(job_id))?;
     let monitor=monitor_execution_process(
-        job_id,task_id,execution_id,owner,Some(i64::from(child.pid())),
+        job_id,task_id,execution_id,Some(i64::from(child.pid())),
         |record|std::future::ready(store.record_execution_process(&record)));
     let mut monitor=std::pin::pin!(monitor);
     let mut cx=std::task::Context::from_waker(std::task::Waker::noop());
@@ -159,20 +156,12 @@ pub fn execute_claimed_codex(
         stderr.take(64*1024+1).read_to_end(&mut data)
             .map(|_|data).map_err(|e|e.to_string())
     });
-    let deadline=Instant::now()+Duration::from_millis(timeout);
-    let exit:Result<std::process::ExitStatus,String>=loop{
-        match child.exit_status()?{
-            Some(status)=>break Ok(status),
-            None if Instant::now()>deadline=>{
-                child.terminate(TerminationReason::Timeout,Some(100));
-                break Err("Codex Worker exceeded execution timeout".into());
-            },
-            _=>thread::sleep(Duration::from_millis(70)),
-        }
+    let status=loop{
+        if let Some(status)=child.exit_status()?{break status;}
+        thread::sleep(Duration::from_millis(70));
     };
     let _=SQLiteRelayStore::open_without_claim_reset(db,Some(job_id))
         .and_then(|store|store.finish_execution_process(job_id,task_id,execution_id,None));
-    let status=exit?;
     let output=output_thread.join().map_err(|_|"Codex stdout reader panicked")??;
     let errors=error_thread.join().map_err(|_|"Codex stderr reader panicked")??;
     let stdout=String::from_utf8_lossy(&output);
@@ -189,29 +178,22 @@ pub fn execute_claimed_codex(
                 .chars().rev().collect()}
         }));
     }
-    // The exact leased generation must finish through the authenticated
-    // Events Bus / Relay CLI Graph, not through a Codex JSONL turn receipt.
-    let grace=Instant::now()+Duration::from_secs(15);
-    loop{
-        let store=SQLiteRelayStore::open_without_claim_reset(db,Some(job_id))?;
-        let latest=store.load_job(job_id)?.ok_or("Codex Job disappeared")?;
-        let durable=latest.get("tasks").and_then(Value::as_array)
-            .into_iter().flatten().find(|v|field(v,"id")==task_id)
-            .ok_or("Codex Task disappeared")?;
-        if field(durable,"state")=="SUCCEEDED"
-            &&durable.get("executionHistory").and_then(Value::as_array)
-                .into_iter().flatten().any(|v|field(v,"id")==execution_id){
-            return Ok(());
-        }
-        // The Worker may have handed off to a verified, execution-bound
-        // human Review. Never mark it SUCCEEDED: the Graph is still waiting.
-        if valid_codex_review_handoff(durable,execution_id){return Ok(());}
-        if matches!(field(durable,"state"),"FAILED"|"CANCELLED"){
-            return Err("Codex Task canonical Graph outcome is not successful".into());
-        }
-        if Instant::now()>grace{
-            return Err("Codex exited without verified Task terminal event".into());
-        }
-        thread::sleep(Duration::from_millis(250));
+    // Only the execution-correlated Graph result is successful. A process
+    // exiting without a terminal event is recovered by the daemon process
+    // monitor, not by a countdown or guessed success.
+    let store=SQLiteRelayStore::open_without_claim_reset(db,Some(job_id))?;
+    let latest=store.load_job(job_id)?.ok_or("Codex Job disappeared")?;
+    let durable=latest.get("tasks").and_then(Value::as_array)
+        .into_iter().flatten().find(|v|field(v,"id")==task_id)
+        .ok_or("Codex Task disappeared")?;
+    if field(durable,"state")=="SUCCEEDED"
+        &&durable.get("executionHistory").and_then(Value::as_array)
+            .into_iter().flatten().any(|v|field(v,"id")==execution_id){
+        return Ok(());
     }
+    if valid_codex_review_handoff(durable,execution_id){return Ok(());}
+    if matches!(field(durable,"state"),"FAILED"|"CANCELLED"){
+        return Err("Codex Task canonical Graph outcome is not successful".into());
+    }
+    Err("Codex process exited without verified Task terminal event".into())
 }

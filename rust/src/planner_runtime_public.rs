@@ -148,8 +148,6 @@ fn apply_candidate(
         if let Some(object)=plan.as_object_mut(){
             object.remove("error");object.remove("retryFeedback");
         }
-        plan["leaseOwner"]=Value::Null;
-        plan["leaseExpiresAt"]=Value::Null;
         plan["executionId"]=Value::Null;
         if let Some(id)=execution_id{plan["appliedExecutionId"]=json!(id);}
         plan["updatedAt"]=json!(now);
@@ -191,8 +189,6 @@ fn apply_candidate(
             if try_transition_task_event(graph,task,"cancel",&json!({}),now)
                 .is_ok_and(|decision|decision["accepted"]==true){
                 task["error"]=json!(format!("Superseded by successful unblock plan {plan_id}"));
-                task["leaseOwner"]=Value::Null;
-                task["leaseExpiresAt"]=Value::Null;
                 task["executionId"]=Value::Null;
             }
         }
@@ -302,8 +298,6 @@ pub fn finish_planner<P:PlannerFinishPorts>(
                     fresh["error"]=json!(message);
                     fresh["assessment"]=json!(format!("Planning {}: {message}",
                         if retry{"retry"}else{"failed"}));
-                    fresh["leaseOwner"]=Value::Null;
-                    fresh["leaseExpiresAt"]=Value::Null;
                     fresh["executionId"]=Value::Null;
                     fresh["updatedAt"]=json!(iso8601_now());
                     applied=true;

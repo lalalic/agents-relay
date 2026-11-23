@@ -213,7 +213,6 @@ where Script:FnMut(&str,&Path,&Value)->Result<bool,String>{
                     "input":input.to_string(),
                     "output":{"kind":"file","path":output_path.to_string_lossy()},
                     "attempt":0,"maxAttempts":3,
-                    "leaseOwner":null,"leaseExpiresAt":null,
                     "executionId":null,"threadId":null,"result":null,"error":null,
                     "timeoutMs":crate::types::task_overall_timeout_ms(crate::types::StorySize::L,None),"createdAt":now,"updatedAt":now
                 });

@@ -170,7 +170,7 @@ fn task_from_args_inner(
         "attachments":text_array(args,"--attachments"),
         "routing":routing,"continuation":continuation,"continuationDeliveredAt":null,
         "attempt":0,"maxAttempts":max_attempts,
-        "leaseOwner":null,"leaseExpiresAt":null,"executionId":null,
+        "executionId":null,
         "threadId":null,"result":null,"error":null,"timeoutMs":timeout,
         "createdAt":now,"updatedAt":now
     });

@@ -78,43 +78,6 @@ pub fn invoke(req:&Value)->Option<Result<String,String>>{
             };
             Ok(output.to_string())
         })()),
-        "certExecutionRecovery"=>Some((||{
-            use std::{cell::RefCell,rc::Rc,future::{ready,Future},pin::pin,task::{Context,Poll,Waker}};
-            use agents_relay_rust2::execution_recovery as ex;
-            let records=Rc::new(RefCell::new(Vec::<Value>::new()));
-            let retrieved=req["latestJob"].clone();
-            let output=records.clone();
-            let mode=req["mode"].as_str().unwrap_or("expired");
-            let execute=|recorded:Rc<RefCell<Vec<Value>>>,job:Value,mode:&str|{
-                let reclaim=req["allowReclaim"].as_bool().unwrap_or(true);
-                let original=req["job"].clone();
-                let callbacks=move|task:Value,event:String,reason:String|{
-                    recorded.borrow_mut().push(json!({"id":task.get("id"),
-                        "executionId":task.get("executionId"),
-                        "event":event,"reason":reason}));
-                    ready(Ok::<(),String>(()))
-                };
-                if mode=="startup" {
-                    let f=ex::recover_startup_orphans(&original,
-                        req["owner"].as_str().unwrap_or("new-owner"),
-                        ||ready(Ok::<_,String>(job.clone())),
-                        move|_task|ready(Ok::<_,String>(reclaim)),callbacks);
-                    let mut f=pin!(f);let mut cx=Context::from_waker(Waker::noop());
-                    match f.as_mut().poll(&mut cx){Poll::Ready(v)=>v,
-                        Poll::Pending=>Err("Injected startup recovery suspended".into())}
-                }else{
-                    let f=ex::recover_expired_executions(&original,
-                        req["nowMs"].as_i64().unwrap_or(1795000000000),
-                        ||ready(Ok::<_,String>(job.clone())),
-                        move|_task|ready(Ok::<_,String>(reclaim)),callbacks);
-                    let mut f=pin!(f);let mut cx=Context::from_waker(Waker::noop());
-                    match f.as_mut().poll(&mut cx){Poll::Ready(v)=>v,
-                        Poll::Pending=>Err("Injected lease recovery suspended".into())}
-                }
-            };
-            execute(output,retrieved,mode)?;
-            Ok(json!({"recovered":records.borrow().clone()}).to_string())
-        })()),
         "certManualPlan"=>Some((||{
             use std::{cell::RefCell,rc::Rc,future::{ready,Future},pin::pin,task::{Context,Poll,Waker}};
             use agents_relay_rust2::{manual_plan::execute_manual_plan,planner::create_plan_round};

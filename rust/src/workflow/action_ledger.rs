@@ -126,7 +126,6 @@ impl<'a> WorkflowActionLedger<'a> {
             let generation = identity.get("generation");
             let valid = text(task, "state") == allowed_state
                 && task.get("executionId") == identity.get("executionId")
-                && task.get("leaseOwner") == identity.get("leaseOwner")
                 && task.get("attempt") == attempt
                 && attempt == generation
                 && task
@@ -141,12 +140,7 @@ impl<'a> WorkflowActionLedger<'a> {
                 && job
                     .get("pause")
                     .is_none_or(|pause| pause.is_null() || pause == false)
-                && task
-                    .get("leaseExpiresAt")
-                    .and_then(Value::as_str)
-                    .and_then(parse_timestamp)
-                    .zip(parse_timestamp(clock))
-                    .is_some_and(|(expiration, now)| expiration > now);
+                ;
             if !valid {
                 return Err("stale execution, owner, attempt or lease: action fenced".into());
             }

@@ -4,7 +4,6 @@
 //! WebHelm transports and sender authentication are NOT bound here.
 use crate::{
     adapters::{ChatGptAdapter,WorkerExecution},
-    types::chatgpt_start_ack_timeout_ms,
     browser_worker_pool::{BrowserPoolOptions,BrowserWorkerPoolManager},
     browser_worker_runtime::relay_workspace_name,
     execution_context::resolve_execution_context,
@@ -16,7 +15,7 @@ use serde_json::Value;
 use std::{
     fs,path::{Path,PathBuf},
     sync::atomic::{AtomicBool,Ordering},
-    thread,time::{Duration,Instant},
+    thread,time::Duration,
 };
 fn field<'a>(v:&'a Value,key:&str)->&'a str{
     v.get(key).and_then(Value::as_str).unwrap_or("")
@@ -138,18 +137,11 @@ impl IsolatedWebHelmConfig {
 }
 fn await_generation_barrier(
     db_path:&Path,job_id:&str,task_id:&str,execution_id:&str,
-    barrier:&str,deadline:Instant,cancelled:&AtomicBool,
+    barrier:&str,cancelled:&AtomicBool,
 )->Result<(),String>{
     loop{
         if cancelled.load(Ordering::Acquire){
             return Err("Native WebHelm Worker was cancelled".into());
-        }
-        if Instant::now()>deadline{
-            if barrier=="worker-start"{
-                return Err(format!(
-                    "Task {task_id} worker_start_timeout: no worker task.started start-ack"));
-            }
-            return Err(format!("Native WebHelm {barrier} Graph event barrier expired"));
         }
         let store=SQLiteRelayStore::open_without_claim_reset(db_path,Some(job_id))?;
         let job=store.load_job(job_id)?.ok_or("Browser Worker Job was removed")?;
@@ -177,6 +169,10 @@ fn await_generation_barrier(
             &&matches!(state,"SUCCEEDED"|"FAILED"|"CANCELLED"){
             return Ok(());
         }
+        if barrier=="worker-start"&&old_generation
+            &&matches!(state,"FAILED"|"CANCELLED"){
+            return Err("WebHelm Worker stopped without a verified task.started".into());
+        }
         if generation!=execution_id && !old_generation{
             return Err("Native WebHelm event barrier saw a stale execution generation".into());
         }
@@ -191,7 +187,7 @@ pub fn submit_claimed_chatgpt_worker(
 )->Result<WorkerExecution,String>{
     let task_id=field(task,"id");let execution_id=field(task,"executionId");
     if field(task,"adapter")!="chatgpt"||task_id.is_empty()
-        ||execution_id.is_empty()||field(task,"leaseOwner").is_empty()
+        ||execution_id.is_empty()||field(task,"executionId").is_empty()
         ||field(task,"state")!="QUEUED"{
         return Err("Native WebHelm launch requires a committed ChatGPT execution lease".into());
     }
@@ -201,7 +197,6 @@ pub fn submit_claimed_chatgpt_worker(
         .into_iter().flatten().find(|v|field(v,"id")==task_id)
         .ok_or("Browser Worker Task missing")?;
     if field(fresh,"executionId")!=execution_id
-        ||field(fresh,"leaseOwner")!=field(task,"leaseOwner")
         ||field(fresh,"state")!="QUEUED"{
         return Err("Native WebHelm launch was superseded by another Task generation".into());
     }
@@ -241,21 +236,10 @@ pub fn submit_claimed_chatgpt_worker(
     let mut pool=BrowserWorkerPoolManager::open(BrowserPoolOptions{
         path:Some(config.pool_db.clone()),..Default::default()
     }).map_err(|e|e.to_string())?;
-    let timeout=task.get("timeoutMs").and_then(Value::as_u64)
-        .unwrap_or(900_000).clamp(500,86_400_000);
-    // Node reconciler startAck: the worker-start barrier runs on the
-    // canonical start-ack timeout (min 120s / max 600s / overall/3), not
-    // the raw overall timeout; the terminal barrier keeps the full budget.
-    let deadline=Instant::now()+Duration::from_millis(timeout);
     let launched=ChatGptAdapter::default().launch(&submitted_task,
         &config.socket,&config.executable,&config.workspace,
         &mut pool,cancelled,|barrier|await_generation_barrier(
-            db_path,job_id,task_id,execution_id,barrier,
-            if barrier=="worker-start"{
-                Instant::now()+Duration::from_millis(
-                    chatgpt_start_ack_timeout_ms(timeout))
-            }else{deadline},
-            cancelled));
+            db_path,job_id,task_id,execution_id,barrier,cancelled));
     pool.close().map_err(|e|e.to_string())?;
     launched
 }
@@ -264,10 +248,17 @@ pub fn submit_claimed_chatgpt_worker(
 mod start_ack_barrier_tests{
     use super::*;
     #[test]
-    fn already_terminal_exact_worker_generation_requires_durable_started_proof(){
+    fn cancelled_worker_barrier_exits_without_a_deadline(){
+        let cancelled=AtomicBool::new(true);
+        let error=await_generation_barrier(
+            Path::new("/dev/null"),"job-7","task-9","exec-2",
+            "worker-start",&cancelled).unwrap_err();
+        assert!(error.contains("cancelled"),"{error}");
+    }
+    #[test]
+    fn exact_terminal_worker_completion_satisfies_both_barriers(){
         let root=std::env::temp_dir().join(format!(
-            "rust2-early-terminal-start-{}-{}",
-            std::process::id(),chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)));
+            "rust2-terminal-{}-{}",std::process::id(),chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)));
         fs::create_dir_all(&root).unwrap();
         let db=root.join("relay.sqlite");
         let store=SQLiteRelayStore::open(&db,Some("7")).unwrap();
@@ -279,49 +270,8 @@ mod start_ack_barrier_tests{
         store.save_job(&job).unwrap();
         store.close().unwrap();
         let cancelled=AtomicBool::new(false);
-        let deadline=Instant::now()+Duration::from_millis(200);
-        assert!(await_generation_barrier(
-            &db,"7","2","e1","worker-start",deadline,&cancelled).is_ok(),
-            "a trusted task.started which completed before polling is valid");
-        assert!(await_generation_barrier(
-            &db,"7","2","e1","terminal",deadline,&cancelled).is_ok());
-        let store=SQLiteRelayStore::open(&db,Some("7")).unwrap();
-        let mut newer=store.load_job("7").unwrap().unwrap();
-        newer["tasks"][0]["executionHistory"][0]
-            .as_object_mut().unwrap().remove("startedAt");
-        store.save_job(&newer).unwrap();
-        store.close().unwrap();
-        let error=await_generation_barrier(
-            &db,"7","2","e1","worker-start",
-            Instant::now()+Duration::from_millis(5),&cancelled).unwrap_err();
-        assert!(error.contains("worker_start_timeout"),"{error}");
-        let store=SQLiteRelayStore::open(&db,Some("7")).unwrap();
-        let mut failed=store.load_job("7").unwrap().unwrap();
-        failed["tasks"][0]["state"]=serde_json::json!("FAILED");
-        failed["tasks"][0]["executionHistory"][0]["startedAt"]=
-            serde_json::json!("2026-11-20T01:00:00.000Z");
-        store.save_job(&failed).unwrap();
-        store.close().unwrap();
-        let refused=await_generation_barrier(
-            &db,"7","2","e1","worker-start",
-            Instant::now()+Duration::from_millis(5),&cancelled).unwrap_err();
-        assert!(refused.contains("worker_start_timeout"),"{refused}");
+        assert!(await_generation_barrier(&db,"7","2","e1","worker-start",&cancelled).is_ok());
+        assert!(await_generation_barrier(&db,"7","2","e1","terminal",&cancelled).is_ok());
         fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    fn missing_start_ack_has_specific_canonical_timeout_phase(){
-        let cancelled=AtomicBool::new(false);
-        let expired=Instant::now()-Duration::from_millis(2);
-        let start=await_generation_barrier(
-            Path::new("/dev/null"),"job-7","task-9","exec-2",
-            "worker-start",expired,&cancelled).unwrap_err();
-        assert!(start.contains("worker_start_timeout"),"{start}");
-        assert_eq!(crate::daemon_worker_failure::classify_native_launch_phase(&start),
-            "start-ack");
-        let terminal=await_generation_barrier(
-            Path::new("/dev/null"),"job-7","task-9","exec-2",
-            "terminal",expired,&cancelled).unwrap_err();
-        assert!(terminal.contains("terminal Graph event barrier expired"),"{terminal}");
-        assert!(!terminal.contains("worker_start_timeout"));
     }
 }

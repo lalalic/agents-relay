@@ -30,7 +30,7 @@ fn fingerprint(request:&Value,execution_id:Option<&Value>)->String {
     format!("{:x}",Sha256::digest(raw.as_bytes()))
 }
 fn clear_execution(task:&mut Value) {
-    for key in ["leaseOwner","leaseExpiresAt","executionId"] {task[key]=Value::Null;}
+    for key in ["executionId"] {task[key]=Value::Null;}
 }
 pub fn request_troubleshooter_escalation(
     graph_directory:&Path, current:&Value, recovery_task_id:&str,

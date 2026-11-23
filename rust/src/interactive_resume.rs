@@ -59,8 +59,6 @@ where
         }
     };
     task["executionId"] = Value::Null;
-    task["leaseOwner"] = Value::Null;
-    task["leaseExpiresAt"] = Value::Null;
     task["error"] = Value::Null;
     if let Some(map) = task.as_object_mut() {
         map.remove("blockedBy");

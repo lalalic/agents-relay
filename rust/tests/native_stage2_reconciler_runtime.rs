@@ -40,7 +40,7 @@ fn event(kind:&str,source:&str)->Value{
 }
 #[test]
 fn unrelated_event_and_spoofed_start_never_mutate_job(){
-    let mut runtime=ReconcilerRuntime::new("relay",15000);
+    let mut runtime=ReconcilerRuntime::new("relay");
     let original=job();
     let unrelated=runtime.apply_event(&graph(),&original,
         &event("other","untrusted"),None).unwrap();
@@ -57,7 +57,7 @@ fn unrelated_event_and_spoofed_start_never_mutate_job(){
 }
 #[test]
 fn start_requires_correct_generation_and_graph_transition(){
-    let mut runtime=ReconcilerRuntime::new("relay",15000);
+    let mut runtime=ReconcilerRuntime::new("relay");
     let original=job();
     runtime.register_execution("101","2","e1",None).unwrap();
     assert!(runtime.register_execution("101","2","e2",None).is_err());
@@ -69,15 +69,13 @@ fn start_requires_correct_generation_and_graph_transition(){
     assert_eq!(started.job["tasks"][0]["executionId"],"e1");
     assert!(!started.reconcile);
     assert!(!runtime.live.get("2").unwrap().worker_started);
-    assert!(!runtime.inactive_deadlines.contains_key("2"));
     runtime.finalize_after_commit(&started);
     assert!(runtime.live.get("2").unwrap().worker_started);
-    assert!(runtime.inactive_deadlines.contains_key("2"));
     assert!(!runtime.idle());
 }
 #[test]
 fn terminal_is_authoritative_only_after_sqlite_commit(){
-    let mut runtime=ReconcilerRuntime::new("relay",15000);
+    let mut runtime=ReconcilerRuntime::new("relay");
     runtime.register_execution("101","2","e1",None).unwrap();
     let source=execution_event_source("101","2","e1");
     let started=runtime.apply_event(&graph(),&job(),
@@ -103,7 +101,7 @@ fn terminal_is_authoritative_only_after_sqlite_commit(){
 }
 #[test]
 fn final_review_cannot_approve_with_generic_worker_completed(){
-    let mut runtime=ReconcilerRuntime::new("relay",15000);
+    let mut runtime=ReconcilerRuntime::new("relay");
     let mut original=job();
     original["tasks"][0]["agentName"]=json!("final-review");
     original["tasks"][0]["reviewHeadSha"]=json!("head1");
@@ -123,7 +121,7 @@ fn real_sqlite_rollback_preserves_owned_generation_until_durable_accept(){
     let store=SQLiteRelayStore::open(Path::new(":memory:"),None).unwrap();
     let baseline=job();
     store.save_job(&baseline).unwrap();
-    let mut runtime=ReconcilerRuntime::new("relay",15000);
+    let mut runtime=ReconcilerRuntime::new("relay");
     runtime.register_execution("101","2","e1",None).unwrap();
     let source=execution_event_source("101","2","e1");
     let start=runtime.apply_event(&graph(),&baseline,
@@ -131,7 +129,6 @@ fn real_sqlite_rollback_preserves_owned_generation_until_durable_accept(){
     assert!(store.mutate_job("101",|_|Err("simulated write failure".into())).is_err());
     assert_eq!(store.load_job("101").unwrap().unwrap()["tasks"][0]["state"],"QUEUED");
     assert!(!runtime.live.get("2").unwrap().worker_started);
-    assert!(!runtime.inactive_deadlines.contains_key("2"));
     let started=store.mutate_job("101",|latest|{
         assert_eq!(latest["tasks"][0]["executionId"],"e1");
         Ok(start.job.clone())

@@ -324,7 +324,7 @@ fn execute(args:&[String])->Result<(),String>{
                 runtime.router_rules_path.clone(),
                 json!({"owner":format!("{}-rust-daemon-{}",
                         if live_write{"live"}else{"isolated"},std::process::id()),
-                    "maxConcurrent":runtime.concurrency,"leaseMs":runtime.lease_ms,
+                    "maxConcurrent":runtime.concurrency,
                     "noGitHub":true,"productionReady":false})
             ))
         })

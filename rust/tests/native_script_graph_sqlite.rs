@@ -1,4 +1,4 @@
-//! Real Rust-owned JS Shortcut, exact leased Task generation, Graph state
+//! Real Rust-owned JS Shortcut, exact claimed Task generation, Graph state
 //! transitions, committed SQLite event outbox and output artifact.
 use agents_relay_rust2::{
     native_script_execution::run_claimed_script_task,
@@ -37,10 +37,11 @@ fn real_worker_script_module_succeeds_only_after_sqlite_and_graph_started_and_co
     let store=SQLiteRelayStore::open(&db,Some("17")).unwrap();
     let job=make_job(&project,&root);store.save_job(&job).unwrap();
     let mut reconciler=Reconciler::new(graph(),root.join("stores"),root.join("profiles"),
-        root.join("routing.json"),root.join("rules.md"),json!({"owner":"native-test","leaseMs":300000}));
-    let candidate=reconciler.claim_task_execution(&job,"2",300000).unwrap().expect("Task must claim lease");
+        root.join("routing.json"),root.join("rules.md"),json!({"owner":"native-test"}));
+    let candidate=reconciler.claim_task_execution(&job,"2").unwrap().expect("Task must claim execution generation");
     assert_eq!(candidate["tasks"][0]["state"],"QUEUED");
-    assert_eq!(candidate["tasks"][0]["leaseOwner"],"native-test");
+    assert!(candidate["tasks"][0]["executionId"].as_str().is_some_and(|id|!id.is_empty()));
+    assert!(candidate["tasks"][0].get("leaseOwner").is_none());
     store.save_job(&candidate).unwrap();
     let task=candidate["tasks"][0].clone();
     let interpreter=PathBuf::from(env::var("AGENTS_RELAY_SCRIPT_NODE").unwrap());
@@ -73,7 +74,7 @@ fn assert_terminal_script_failure(script_source:&str,expected:&str){
     store.save_job(&job).unwrap();
     let mut reconciler=Reconciler::new(graph(),root.join("stores"),root.join("profiles"),
         root.join("routing.json"),root.join("rules.md"),json!({"owner":"native-failure-test"}));
-    let claimed=reconciler.claim_task_execution(&job,"2",300000).unwrap().unwrap();
+    let claimed=reconciler.claim_task_execution(&job,"2").unwrap().unwrap();
     store.save_job(&claimed).unwrap();
     let task=claimed["tasks"][0].clone();
     let interpreter=PathBuf::from(env::var("AGENTS_RELAY_SCRIPT_NODE").unwrap());
@@ -104,7 +105,7 @@ fn interactive_script_without_review_host_fails_closed_instead_of_phantom_approv
 
 /// Original public ScriptTaskAdapter emits task.failed even if a selected
 /// Agent has no Shortcut. The production Graph must durably accept exactly
-/// one pre-start failure on its original lease, then reject stale replay.
+/// one pre-start failure on its original execution generation, then reject stale replay.
 #[test]
 fn missing_selected_agent_shortcut_fails_native_graph_before_start_once(){
     let (root,project,db)=fixture();
@@ -115,8 +116,8 @@ fn missing_selected_agent_shortcut_fails_native_graph_before_start_once(){
     store.save_job(&job).unwrap();
     let mut reconciler=Reconciler::new(graph(),root.join("stores"),root.join("profiles"),
         root.join("routing.json"),root.join("rules.md"),json!({"owner":"native-missing-script"}));
-    let claimed=reconciler.claim_task_execution(&job,"2",300000)
-        .unwrap().expect("fresh Task lease");
+    let claimed=reconciler.claim_task_execution(&job,"2")
+        .unwrap().expect("fresh Task generation");
     store.save_job(&claimed).unwrap();
     let task=claimed["tasks"][0].clone();
     let interpreter=PathBuf::from(env::var("AGENTS_RELAY_SCRIPT_NODE").unwrap());
@@ -154,8 +155,8 @@ fn real_script_runcommand_output_is_graph_fenced_and_durably_delivered(){
     store.save_job(&job).unwrap();
     let mut reconciler=Reconciler::new(graph(),root.join("stores"),root.join("profiles"),
         root.join("routing.json"),root.join("rules.md"),json!({"owner":"native-command-verified"}));
-    let claimed=reconciler.claim_task_execution(&job,"2",300000)
-        .unwrap().expect("Task must obtain a unique durable lease");
+    let claimed=reconciler.claim_task_execution(&job,"2")
+        .unwrap().expect("Task must obtain a unique durable generation");
     store.save_job(&claimed).unwrap();
     let task=claimed["tasks"][0].clone();
     let interpreter=PathBuf::from(env::var("AGENTS_RELAY_SCRIPT_NODE").unwrap());

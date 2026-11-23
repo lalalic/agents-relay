@@ -196,7 +196,7 @@ fn control_review<B:WorkspaceControlBackend>(
             // the correlated event through the SAME canonical Graph before
             // acknowledging the host-owned wait, and CAS it into SQLite.
             let graph=backend.graph_directory().to_path_buf();
-            let mut runtime=ReconcilerRuntime::new("interactive-review-wait",15_000);
+            let mut runtime=ReconcilerRuntime::new("interactive-review-wait");
             let result=runtime.apply_event(&graph,job,&event,None)?;
             let waiting=result.job.get("tasks").and_then(Value::as_array)
                 .into_iter().flatten().find(|row|field(row,"id")==task_id)
@@ -425,7 +425,7 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
                     "component":"agents-relay-cli"})));
             // Delegate the success decision and all Task field mutations to
             // the canonical Graph through the same ReconcilerRuntime entrypoint.
-            let mut runtime=ReconcilerRuntime::new("control.task.complete",0);
+            let mut runtime=ReconcilerRuntime::new("control.task.complete");
             let effect=runtime.apply_event(&graph,&stored,&event,None)?;
             if !effect.applied{
                 return Err(format!("task.complete rejected by Task Graph: {}",effect.reason));

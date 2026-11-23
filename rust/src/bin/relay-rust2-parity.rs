@@ -509,7 +509,6 @@ fn invoke(request: &Value) -> Result<String, String> {
                     request["jobId"].as_str().unwrap_or("17"),
                     request["taskId"].as_str().unwrap_or("2"),
                     request["executionId"].as_str().unwrap_or("ex-1"),
-                    request["owner"].as_str().unwrap_or("fixture"),
                     pid,|record|{saved.push(record);std::future::ready(Ok(()))});
                 let mut future=std::pin::pin!(future);
                 let _result=loop{
@@ -526,7 +525,6 @@ fn invoke(request: &Value) -> Result<String, String> {
                 let reclaimed={
                 let future=reclaim_stale_execution_process(
                     &request["task"],
-                    request["currentOwner"].as_str(),
                     |_,_,_|{calls+=1;std::future::ready(Ok(record))});
                 let mut future=std::pin::pin!(future);
                 let reclaimed=loop{
@@ -746,7 +744,6 @@ fn invoke(request: &Value) -> Result<String, String> {
         "apiReviewBase" => review_base_public::invoke(request),
         "apiRuntimeBase" => runtime_base_public::invoke(request),
         "apiReconcilerPlanJob" => reconciler_recovery_public::plan(request),
-        "apiReconcilerRecovery" => reconciler_recovery_public::invoke(request),
         "apiReconcilerReconcile" => reconcile_public::invoke(request),
         "apiReconcilerCurrentGitHead" => reconciler_git_head_public::invoke(request),
         "apiCliRuntimePublic" => cli_runtime_public::invoke(request),
@@ -2116,12 +2113,6 @@ fn invoke(request: &Value) -> Result<String, String> {
                 "correlated" => json!(watchdog::is_correlated_worker_event(
                     task,
                     &request["event"]
-                )),
-                "deadline" => json!(watchdog::inactivity_deadline(
-                    task,
-                    request["executionId"].as_str().unwrap_or(""),
-                    request["graceMs"].as_i64().unwrap_or(0),
-                    request["now"].as_i64().unwrap_or(0),
                 )),
                 action => return Err(format!("unknown wave4 watchdog action {action}")),
             };
@@ -3958,7 +3949,6 @@ fn invoke(request: &Value) -> Result<String, String> {
                 request["jobId"].as_str().unwrap_or(""),
                 request["taskId"].as_str().unwrap_or(""),
                 request["executionId"].as_str().unwrap_or(""),
-                request["leaseOwner"].as_str().unwrap_or(""),
                 request["pid"].as_i64().unwrap_or(0),
             )
             .unwrap_or(Value::Null)

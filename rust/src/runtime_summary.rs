@@ -51,15 +51,7 @@ pub fn has_live_execution(job: &Value, task: &Value, now_ms: i64) -> bool {
     if text(job, "state") != Some("ACTIVE") || text(task, "state") != Some("RUNNING") {
         return false;
     }
-    if !truthy(task.get("executionId"))
-        || !truthy(task.get("leaseOwner"))
-        || !truthy(task.get("leaseExpiresAt"))
-    {
-        return false;
-    }
-    text(task, "leaseExpiresAt")
-        .and_then(parse_date_ms)
-        .is_some_and(|value| value > now_ms)
+    truthy(task.get("executionId"))
 }
 pub fn summarize_runtime(jobs: &[Value], now_ms: i64) -> Value {
     let mut active_jobs = 0usize;
@@ -99,7 +91,7 @@ pub fn summarize_runtime(jobs: &[Value], now_ms: i64) -> Value {
                 "jobTitle":job["title"],"taskId":task["id"],"agentName":task["agentName"],
                 "worker":effective_adapter(task),"provider":task.pointer("/routing/provider").unwrap_or(&Value::Null),
                 "model":task.pointer("/routing/model").unwrap_or(&Value::Null),
-                "executionId":task["executionId"],"leaseExpiresAt":task["leaseExpiresAt"],
+                "executionId":task["executionId"],
             }));
         }
     }

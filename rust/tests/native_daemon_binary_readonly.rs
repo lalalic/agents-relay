@@ -36,17 +36,11 @@ impl Drop for Guard{
     }
 }
 fn start_mode(root:&Path,port:u16,store_flag:&str)->Guard{
-    start_mode_with_lease(root,port,store_flag,None)
-}
-fn start_mode_with_lease(root:&Path,port:u16,store_flag:&str,lease_ms:Option<u64>)->Guard{
     let mut command=Command::new(binary());
     command.current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
         .arg(store_flag).arg(root.join("stores"))
         .arg("--port").arg(port.to_string())
         .arg("--interval").arg("100");
-    if let Some(lease)=lease_ms{
-        command.arg("--lease-ms").arg(lease.to_string());
-    }
     let child=command.stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::from(
             fs::File::create(root.join("native-daemon.log")).unwrap()))
@@ -484,8 +478,8 @@ fn killed_native_daemon_never_accepts_orphaned_script_completion_after_restart()
             "createdAt":"2026-11-18T00:00:00.000Z",
             "updatedAt":"2026-11-18T00:00:00.000Z"}],"plans":[]})).unwrap();
     store.close().unwrap();
-    let port=socket_port();let mut daemon=start_mode_with_lease(&root,port,
-        "--isolated-write-store-dir",Some(400));
+    let port=socket_port();let mut daemon=start_mode(&root,port,
+        "--isolated-write-store-dir");
     let mut leased=Value::Null;
     for _ in 0..70{
         let reply=request(port,"GET","/api/job?id=77","").unwrap();
@@ -507,7 +501,7 @@ fn killed_native_daemon_never_accepts_orphaned_script_completion_after_restart()
     drop(daemon);
     thread::sleep(Duration::from_millis(2600));
     assert!(!late.exists(),"Orphaned Script kept writing after daemon SIGKILL");
-    let restart=start_mode_with_lease(&root,port,"--isolated-write-store-dir",Some(400));
+    let restart=start_mode(&root,port,"--isolated-write-store-dir");
     let mut restored=Value::Null;
     for _ in 0..50{
         restored=body(&request(port,"GET","/api/job?id=77","").unwrap());

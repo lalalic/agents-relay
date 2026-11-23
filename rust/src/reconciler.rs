@@ -122,115 +122,67 @@ impl Reconciler{
     /// exact recorded POSIX identity before any Graph mutation. A stale
     /// candidate cannot overwrite a replacement execution: every recovery
     /// Task transition is committed through an authoritative whole-Job CAS.
-    fn recover_expired_generations<P:crate::reconciler_durable::ReconcileHost>(
+    /// Reconcile a local Worker only after its exact registered POSIX process
+    /// generation is gone. No lease, deadline or time-based eviction exists.
+    /// Remote browser/thread Workers settle through their own session events.
+    fn recover_exited_processes<P:crate::reconciler_durable::ReconcileHost>(
         &mut self,job_id:&str,host:&mut P,
     )->Result<(),String>{
         let initial=host.load(job_id)?;
         if !active(&initial)||initial.get("pause").is_some_and(|v|!v.is_null()){
             return Ok(());
         }
-        let now=self.options.get("now").and_then(Value::as_str)
-            .and_then(|value|DateTime::parse_from_rfc3339(value).ok())
-            .map(|value|value.timestamp_millis())
-            .or_else(||self.options.get("now").and_then(Value::as_i64))
-            .unwrap_or_else(||Utc::now().timestamp_millis());
-        for stale in tasks(&initial).iter().filter(|task|{
-            if field(task,"kind")=="planner"{return false;}
-            let state=field(task,"state");
-            let eligible=state=="RUNNING"
-                ||state=="QUEUED"&&task.get("executionId").is_some_and(|v|!v.is_null());
-            let lease=task.get("leaseExpiresAt").and_then(Value::as_str);
-            eligible&&(lease.is_some_and(|lease|DateTime::parse_from_rfc3339(lease)
-                .map(|time|time.timestamp_millis()<=now).unwrap_or(true))
-                ||crate::process_identity::dead_native_relay_owner(field(task,"leaseOwner")))
-        }){
+        for stale in tasks(&initial).iter().filter(|task|
+            matches!(field(task,"adapter"),"codex"|"script")
+            &&matches!(field(task,"state"),"RUNNING"|"QUEUED")
+            &&!field(task,"executionId").is_empty()
+            &&field(task,"kind")!="planner"){
             let task_id=field(stale,"id");
             let fresh=host.load(job_id)?;
             let Some(index)=tasks(&fresh).iter().position(|task|
                 field(task,"id")==task_id)else{continue;};
             let current=&fresh["tasks"][index];
-            if !["executionId","leaseOwner","leaseExpiresAt"].iter()
-                .all(|key|current.get(*key)==stale.get(*key)){
+            if field(current,"executionId")!=field(stale,"executionId")
+                ||!matches!(field(current,"state"),"RUNNING"|"QUEUED"){
                 continue;
             }
-            let state=field(current,"state");
-            if state!="RUNNING"&&!(state=="QUEUED"
-                &&current.get("executionId").is_some_and(|v|!v.is_null())){
-                continue;
-            }
-            let expired=current.get("leaseExpiresAt").and_then(Value::as_str)
-                .is_some_and(|lease|DateTime::parse_from_rfc3339(lease)
-                    .map(|time|time.timestamp_millis()<=now).unwrap_or(true));
-            // An orphan is safe to revisit before its long lease deadline only
-            // if the exact native daemon PID is demonstrably gone. Never
-            // mistake a live owner or an unknown PID for a crashed daemon.
-            let orphaned=!expired &&field(current,"leaseOwner")!=self.runtime.owner
-                &&crate::process_identity::dead_native_relay_owner(
-                    field(current,"leaseOwner"));
-            if !expired && !orphaned{continue;}
-            let generation=current.get("executionId").and_then(Value::as_str);
-            let safe={
-                // Scope the synchronous Future so all borrowed host/owner
-                // state is released BEFORE Graph persistence or wake effects.
-                let future=reclaim_stale_execution_process(
-                    current,Some(&self.runtime.owner),|j,t,e|{
-                        std::future::ready(host.load_execution_process(&j,&t,&e))
-                    });
+            let exited={
+                let future=reclaim_stale_execution_process(current,|j,t,e|{
+                    std::future::ready(host.load_execution_process(&j,&t,&e))
+                });
                 let mut future=std::pin::pin!(future);
                 let mut context=std::task::Context::from_waker(std::task::Waker::noop());
                 match std::future::Future::poll(future.as_mut(),&mut context){
                     std::task::Poll::Ready(result)=>result?,
                     std::task::Poll::Pending=>return Err(
-                        "Native execution process reclaim unexpectedly suspended".into()),
+                        "Local process inspection unexpectedly suspended".into()),
                 }
             };
-            if !safe{continue;}
+            if !exited{continue;}
+            // The immutable executionId is the CAS fence; a late event from
+            // the old process cannot mutate a new generation.
             let mut candidate=fresh.clone();
             let task=&mut candidate["tasks"][index];
-            let retry_available=task.get("attempt").and_then(Value::as_u64)
-                .unwrap_or(0)<task.get("maxAttempts").and_then(Value::as_u64)
-                .unwrap_or(0);
-            let event=if orphaned{"execution.orphaned"}else{"lease.expired"};
             let decision=try_transition_task_event(&self.graph_directory,
-                task,event,&json!({"retryAvailable":retry_available}),
-                &iso8601_now())?;
+                task,"process.exited",&json!({}),&iso8601_now())?;
             if decision.get("accepted")!=Some(&Value::Bool(true)){
                 continue;
             }
-            let failed=field(task,"state")=="FAILED";
             let parent=task.get("parentTaskId").and_then(Value::as_str)
                 .map(str::to_owned);
-            let message=if orphaned{"Native daemon exited before Script completion"}
-                else{"Execution lease expired"};
-            // Script effects are testable/idempotent after the exact old
-            // process group has been fenced. Model/browser sends are uncertain:
-            // do not automatically resubmit them after an owner crash.
-            if orphaned &&retry_available &&field(task,"adapter")=="script"{
-                let retried=try_transition_task_event(&self.graph_directory,
-                    task,"retry",&json!({}),&iso8601_now())?;
-                if retried.get("accepted")!=Some(&Value::Bool(true)){
-                    return Err("Native Script orphan retry rejected by Task Graph".into());
-                }
-            }
+            let execution_id=field(stale,"executionId").to_owned();
+            let error="Local Worker process exited without a verified terminal event";
             host.persist(job_id,&fresh,&candidate)?;
-            // Audit is an optional observation AFTER the exact SQLite CAS.
-            // Neither missing Decision ID nor audit I/O can reverse a real
-            // Graph lease recovery or falsify its durable result.
-            let audit_path=self.decision_audit_path();
-            record_watchdog_route_outcome_jsonl(&audit_path,&candidate["tasks"][index],
-                &json!({"executionId":generation,"failedExit":false,
-                    "rawError":message,
-                    "failureReason":if orphaned{"startup_orphaned"}else{"lease_expired"},
-                    "failureMessage":message,
-                    "exitCode":null}));
-            if let Some(generation)=generation{
-                self.runtime.cancel_execution_generation(job_id,task_id,generation);
-            }
-            if failed{
-                host.broadcast(&event_for(job_id,task_id,parent.as_deref(),
-                    "task.failed","failed",&message,Some("user"),
-                    Some(json!({"reason":if orphaned{"startup_orphaned"}else{"lease_expired"}})),None))?;
-            }
+            record_watchdog_route_outcome_jsonl(&self.decision_audit_path(),
+                &candidate["tasks"][index],&json!({
+                    "executionId":execution_id,"failedExit":true,
+                    "rawError":error,"failureReason":"process_exited",
+                    "failureMessage":error,"exitCode":null,
+                }));
+            self.runtime.cancel_execution_generation(job_id,task_id,&execution_id);
+            host.broadcast(&event_for(job_id,task_id,parent.as_deref(),
+                "task.failed","failed",error,Some("user"),
+                Some(json!({"reason":"process_exited","executionId":execution_id})),None))?;
         }
         Ok(())
     }
@@ -244,7 +196,7 @@ impl Reconciler{
         // Task/Planner effects. Failed or missing channels cannot masquerade
         // as delivered human approval.
         host.deliver_pending_escalations(job_id)?;
-        self.recover_expired_generations(job_id,host)?;
+        self.recover_exited_processes(job_id,host)?;
         let before=host.load(job_id)?;
         let outcome=self.reconcile_snapshot(&before,verified_head,
             project,roots,adapters,registered,usage)?;
@@ -444,7 +396,7 @@ impl Reconciler{
             store_directory:store_directory.into(),
             profile_home:profile_home.into(),
             policy_path:policy_path.into(),rules_path:rules_path.into(),
-            options,runtime:ReconcilerRuntime::new(owner,grace),
+            options,runtime:ReconcilerRuntime::new(owner),
             reconciling:HashSet::new()}
     }
     fn event(&self,job:&Value,task:&Value,
@@ -550,16 +502,8 @@ impl Reconciler{
         ->Result<(),String>{
         if !active(&result.job){return Ok(());}
         let pending=pending_plan(&result.job);
-        let recoverable=pending.as_ref().is_some_and(|p|{
-            let id=field(p,"id");
-            !self.runtime.planner_live.contains_key(id)
-                &&(field(p,"executionId").is_empty()
-                    ||field(p,"leaseOwner")!=self.runtime.owner
-                    ||p.get("leaseExpiresAt").and_then(Value::as_str)
-                        .and_then(|raw|DateTime::parse_from_rfc3339(raw).ok())
-                        .is_none_or(|date|date.timestamp_millis()
-                            <=Utc::now().timestamp_millis()))
-        });
+        let recoverable=pending.as_ref().is_some_and(|p|
+            !self.runtime.planner_live.contains_key(field(p,"id")));
         let facts=planner_orchestration_facts(&result.job,recoverable);
         let decision=decide_planner_orchestration(
             &self.graph_directory,&facts)?;
@@ -677,7 +621,7 @@ impl Reconciler{
         Ok(())
     }
     pub fn claim_task_execution(
-        &mut self,job:&Value,task_id:&str,lease_ms:u64,
+        &mut self,job:&Value,task_id:&str,
     )->Result<Option<Value>,String>{
         let Some(task)=tasks(job).iter().find(|t|field(t,"id")==task_id)
             .cloned() else{return Ok(None);};
@@ -695,15 +639,10 @@ impl Reconciler{
         let mut candidate=job.clone();
         let index=tasks(&candidate).iter().position(|t|field(t,"id")==task_id)
             .ok_or("Task vanished")?;
-        let now=Utc::now();
         let execution_id=random_uuid();
         let next=&mut candidate["tasks"][index];
         next["attempt"]=json!(next.get("attempt").and_then(Value::as_u64)
             .unwrap_or(0)+1);
-        next["leaseOwner"]=json!(self.runtime.owner);
-        next["leaseExpiresAt"]=json!((now+chrono::Duration::milliseconds(
-            lease_ms.max(next.get("timeoutMs")
-                .and_then(Value::as_u64).unwrap_or(0)) as i64)).to_rfc3339());
         next["executionId"]=json!(execution_id);
         for key in ["lastProgressAt","lastProgressEventAt","processExitedAt"]{
             if let Some(map)=next.as_object_mut(){map.remove(key);}
@@ -862,36 +801,6 @@ impl Reconciler{
             &self.graph_directory,job_id,guidance,force_restate,timeout,
             has_atomic_store,load,mutate,append_plan,save_job,launch).await
     }
-    /// Node Reconciler.recoverLostExecutions delegates to the canonical
-    /// generation-fenced lease recovery. Caller supplies authoritative SQLite
-    /// loads, OS process-group reclamation, and Graph task persistence ports.
-    pub async fn recover_lost_executions<Load,LFut,Reclaim,RFut,Recover,OFut>(
-        &mut self,job:&Value,now_ms:i64,load:Load,reclaim:Reclaim,recover:Recover,
-    )->Result<(),String>
-    where
-        Load:FnMut()->LFut, LFut:std::future::Future<Output=Result<Value,String>>,
-        Reclaim:FnMut(Value)->RFut, RFut:std::future::Future<Output=Result<bool,String>>,
-        Recover:FnMut(Value,String,String)->OFut,
-        OFut:std::future::Future<Output=Result<(),String>>,
-    {
-        crate::execution_recovery::recover_expired_executions(
-            job,now_ms,load,reclaim,recover).await
-    }
-    pub fn recover_startup_orphans(
-        &mut self,job:&Value,now:i64,
-    )->Vec<Value>{
-        tasks(job).iter().filter(|task|{
-            matches!(field(task,"state"),"RUNNING"|"QUEUED")
-                &&!matches!(field(task,"adapter"),"chatgpt"|"z")
-                &&field(task,"kind")!="planner"
-                &&task.get("executionId").is_some_and(|v|!v.is_null())
-                &&!field(task,"leaseOwner").is_empty()
-                &&field(task,"leaseOwner")!=self.runtime.owner
-                &&task.get("leaseExpiresAt").and_then(Value::as_str)
-                    .and_then(|s|DateTime::parse_from_rfc3339(s).ok())
-                    .is_some_and(|t|t.timestamp_millis()<=now)
-        }).cloned().collect()
-    }
     pub fn apply_event(&mut self,job:&Value,event:&Value,
         verified_head:Option<&str>)->Result<RuntimeEffect,String>{
         self.runtime.apply_event(&self.graph_directory,job,event,verified_head)
@@ -911,8 +820,6 @@ impl Reconciler{
                 "cancel",&json!({}),&iso8601_now())?;
             if decision.get("accepted")!=Some(&Value::Bool(true)){continue;}
             candidate["error"]=json!(reason);
-            candidate["leaseOwner"]=Value::Null;
-            candidate["leaseExpiresAt"]=Value::Null;
             candidate["executionId"]=Value::Null;
             result.job["tasks"][idx]=candidate;
             if !execution.is_empty(){

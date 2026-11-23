@@ -126,8 +126,6 @@ pub fn reconcile_dependency_revision_facts(
                     stale,"cancel",&json!({}),&now)?;
                 if transition.get("accepted")==Some(&Value::Bool(true)) {
                     stale["error"]=json!("Superseded upstream dependency evidence vector changed before execution");
-                    stale["leaseOwner"]=Value::Null;
-                    stale["leaseExpiresAt"]=Value::Null;
                     stale["executionId"]=Value::Null;
                     changed_stale.push(stale_id);
                 }
@@ -227,7 +225,7 @@ pub fn reconcile_dependency_revision_facts(
                 "basedOnHeadSha":job.get("headSha").and_then(Value::as_str).unwrap_or(""),
                 "dependencyVector":vector},
             "attempt":0,"maxAttempts":original.get("maxAttempts").and_then(Value::as_i64).unwrap_or(3).max(3),
-            "leaseOwner":null,"leaseExpiresAt":null,"executionId":null,"threadId":null,
+            "executionId":null,"threadId":null,
             "result":null,"error":null,"timeoutMs":original.get("timeoutMs"),
             "createdAt":now,"updatedAt":now,"continuation":null,"continuationDeliveredAt":null,
         });

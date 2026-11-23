@@ -98,7 +98,7 @@ fn real_git_commit_cli_graph_and_sqlite_end_to_end_deny_forgery_and_replay(){
     let f=Fixture::new();let mut backend=Backend::new(&f);
     let event=event_for("1","task-2",None,"task.completed","succeeded","fake",Some("worker"),
         None,Some(json!({"id":execution_event_source("1","task-2","ex-1")})));
-    let mut runtime=ReconcilerRuntime::new("fixture",0);
+    let mut runtime=ReconcilerRuntime::new("fixture");
     let state=backend.db.load_job("1").unwrap().unwrap();
     assert!(!runtime.apply_event(&backend.graph,&state,&event,None).unwrap().applied,
         "untrusted Task terminal event cannot bypass absent Git receipt");
@@ -136,7 +136,7 @@ fn real_task_start_snapshots_exact_source_branch_baseline() {
     let event=event_for("1","task-2",None,"task.started","running","started",Some("worker"),
         None,Some(json!({"id":execution_event_source("1","task-2","ex-1")})));
     let graph=Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("workflow");
-    let mut runtime=ReconcilerRuntime::new("start-test",1000);
+    let mut runtime=ReconcilerRuntime::new("start-test");
     let result=runtime.apply_event(&graph,&job,&event,None).unwrap();
     assert!(result.applied);
     let started=&result.job["tasks"][0];

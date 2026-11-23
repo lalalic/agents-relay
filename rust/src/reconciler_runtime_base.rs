@@ -106,7 +106,7 @@ impl ReconcilerRuntimeBase {
     pub fn new(graph_directory:impl Into<PathBuf>,owner:impl Into<String>,
         grace_ms:i64,host:Arc<dyn RuntimeBaseStore>)->Self{
         let directory=graph_directory.into();
-        let runtime=Arc::new(Mutex::new(ReconcilerRuntime::new(owner,grace_ms)));
+        let runtime=Arc::new(Mutex::new(ReconcilerRuntime::new(owner)));
         let consuming_host=Arc::clone(&host);
         let consuming_runtime=Arc::clone(&runtime);
         let graph=directory.clone();

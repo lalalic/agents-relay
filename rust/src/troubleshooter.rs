@@ -147,8 +147,7 @@ pub fn pending_troubleshooter_tasks(
                 "runtime":"codex"},"adapter":"codex",
             "input":failure_input(job,original),"output":{"kind":"task_pr"},
             "continuation":null,"continuationDeliveredAt":null,
-            "attempt":0,"maxAttempts":3,"leaseOwner":null,
-            "leaseExpiresAt":null,"executionId":null,"threadId":null,
+            "attempt":0,"maxAttempts":3,"executionId":null,"threadId":null,
             "result":null,"plannerResult":null,"error":null,
             "timeoutMs":900_000,"createdAt":now,"updatedAt":now
         });

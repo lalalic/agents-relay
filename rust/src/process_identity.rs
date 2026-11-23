@@ -67,7 +67,6 @@ pub fn capture_process_record(
     job_id: &str,
     task_id: &str,
     execution_id: &str,
-    lease_owner: &str,
     pid: i64,
 ) -> Option<Value> {
     let observed = observe_process(pid)?;
@@ -76,7 +75,7 @@ pub fn capture_process_record(
     }
     Some(
         json!({"jobId":job_id,"taskId":task_id,"executionId":execution_id,
-        "leaseOwner":lease_owner,"host":hostname().ok()?,"pid":pid,"pgid":pid,
+        "host":hostname().ok()?,"pid":pid,"pgid":pid,
         "startToken":observed["startToken"],"observedAt":iso8601_now()}),
     )
 }

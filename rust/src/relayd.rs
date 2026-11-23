@@ -53,7 +53,6 @@ pub struct DaemonConfig{
     pub port:u16,
     pub concurrency:usize,
     pub interval_ms:u64,
-    pub lease_ms:u64,
     pub event_transport:Value,
 }
 impl DaemonConfig{
@@ -73,8 +72,6 @@ impl DaemonConfig{
             .map_err(|_|"Invalid --concurrency")?.max(1);
         let interval_ms=value(args,"--interval","300000").parse::<u64>()
             .map_err(|_|"Invalid --interval")?;
-        let lease_ms=value(args,"--lease-ms","300000").parse::<u64>()
-            .map_err(|_|"Invalid --lease-ms")?;
         let repositories=roots.repository.into_iter().collect::<Vec<_>>();
         let event_transport=crate::events_bus_runtime::resolve_events_bus_runtime(
             options.get("environment").unwrap_or(&json!({})))?;
@@ -90,7 +87,7 @@ impl DaemonConfig{
                 ".agents-relay/execution-router-rules.md"),
             dashboard_asset:get_path("dashboardAsset",
                 "dist/dashboard.html"),
-            repositories,port,concurrency,interval_ms,lease_ms,
+            repositories,port,concurrency,interval_ms,
             event_transport,
         })
     }

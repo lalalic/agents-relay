@@ -5,7 +5,6 @@ use agents_relay_rust2::{
     browser_worker_pool::{BrowserPoolOptions,BrowserWorkerPoolManager},
     owned_process::{owned_process_termination_reason,OwnedProcess},
     relay_store::SQLiteRelayStore,
-    task_inactivity_watchdog::{WatchdogTimers,arm_inactivity_watchdog},
     local_managed_store::open_local_managed_store,
     reconciler_context::resolve_planner_context,
 };
@@ -29,13 +28,6 @@ fn explicit_close_releases_only_owned_sqlite_resources(){
     BrowserWorkerPoolManager::open(BrowserPoolOptions{
         path:Some(PathBuf::from(":memory:")),..BrowserPoolOptions::default()
     }).unwrap().close().unwrap();
-}
-#[test]
-fn ineligible_watchdog_cancels_old_task_timer_and_never_fires(){
-    let mut timers=WatchdogTimers::default();
-    let declined=json!({"id":"8","jobId":"32","state":"FAILED","executionId":"gen-a"});
-    assert_eq!(arm_inactivity_watchdog(&declined,"gen-a",&mut timers,100,||panic!("ineligible")),None);
-    assert_eq!(arm_inactivity_watchdog(&declined,"gen-b",&mut timers,100,||panic!("wrong generation")),None);
 }
 #[test]
 fn process_reason_requires_an_owned_handle_and_cannot_probe_foreign_pid(){

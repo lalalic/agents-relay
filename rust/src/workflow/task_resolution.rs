@@ -219,8 +219,6 @@ pub fn classify_task_resolution(
         && task["state"] == "FAILED"
         && task["failureReason"] != "worker_outcome_unknown"
         && !truthy(&task["executionId"])
-        && !truthy(&task["leaseOwner"])
-        && !truthy(&task["leaseExpiresAt"])
         && task["resolutionClassification"].is_null()
         && task.pointer("/resolution/state").and_then(Value::as_str) != Some("active")
         && task.pointer("/resolution/state").and_then(Value::as_str) != Some("waiting");

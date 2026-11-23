@@ -61,14 +61,7 @@ pub fn apply_task_mutation(task: &mut Value, mutation: &str, now_at: &str) -> Re
     match mutation {
         "mutation.clearError" => set(task, "error", Value::Null),
         "mutation.clearFailureReason" => erase(task, "failureReason"),
-        "mutation.clearLease" => {
-            set(task, "leaseOwner", Value::Null);
-            set(task, "leaseExpiresAt", Value::Null);
-        }
         "mutation.clearExecution" => set(task, "executionId", Value::Null),
-        "mutation.markLeaseExpired" => {
-            set(task, "error", json!("Lease expired after maximum attempts"))
-        }
         "mutation.markStartupOrphanedExhausted" => set(
             task,
             "error",
@@ -151,7 +144,7 @@ pub fn apply_task_mutation(task: &mut Value, mutation: &str, now_at: &str) -> Re
             for key in ["routing", "workerSelection"] {
                 erase(task, key);
             }
-            for key in ["leaseOwner", "leaseExpiresAt", "executionId"] {
+            for key in ["executionId"] {
                 set(task, key, Value::Null);
             }
         }
@@ -161,7 +154,7 @@ pub fn apply_task_mutation(task: &mut Value, mutation: &str, now_at: &str) -> Re
             for key in ["routing", "workerSelection"] {
                 erase(task, key);
             }
-            for key in ["leaseOwner", "leaseExpiresAt", "executionId"] {
+            for key in ["executionId"] {
                 set(task, key, Value::Null);
             }
         }
@@ -169,7 +162,7 @@ pub fn apply_task_mutation(task: &mut Value, mutation: &str, now_at: &str) -> Re
             for key in ["routing", "workerSelection"] {
                 erase(task, key);
             }
-            for key in ["leaseOwner", "leaseExpiresAt", "executionId"] {
+            for key in ["executionId"] {
                 set(task, key, Value::Null);
             }
             let classification = task

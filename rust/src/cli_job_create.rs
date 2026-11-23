@@ -189,7 +189,7 @@ where
             "output":{"kind":"file","path":coordinator.get("outputPath")},
             "adapter":"codex","capabilities":[],"dependencies":[],
             "attempt":0,"maxAttempts":3,
-            "leaseOwner":null,"leaseExpiresAt":null,"executionId":null,
+            "executionId":null,
             "threadId":null,"result":null,"error":null,
             "timeoutMs":crate::types::task_overall_timeout_ms(crate::types::StorySize::L,None),
             "createdAt":now,"updatedAt":now

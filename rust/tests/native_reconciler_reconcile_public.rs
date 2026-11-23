@@ -37,7 +37,7 @@ impl ReconcileHost for Host{
      let task_id=action["taskId"].as_str().ok_or("Task ID missing")?;
      let current=self.store.load_job(job_id)?.ok_or("Job missing")?;
      let mut rec=rec(&self.root);
-     let claimed=rec.claim_task_execution(&current,task_id,300000)?
+     let claimed=rec.claim_task_execution(&current,task_id)?
          .ok_or("Task execution already claimed")?;
      self.store.mutate_job(job_id,|fresh|{
          if fresh!=current{return Err("Task lease CAS conflict".into());}

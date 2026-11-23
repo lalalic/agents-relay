@@ -14,7 +14,7 @@ pub const UNIFIED_RELAY_SCHEMA_SQL: &str = r####"
       CREATE TABLE IF NOT EXISTS publication_delivery (job_id TEXT NOT NULL, delivery_id TEXT NOT NULL, type TEXT NOT NULL, json TEXT NOT NULL, observed_at TEXT NOT NULL, PRIMARY KEY(job_id,delivery_id));
       CREATE TABLE IF NOT EXISTS agent_snapshot (scope_job_id TEXT NOT NULL REFERENCES source_registry(job_id), agent_id TEXT NOT NULL, json TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(scope_job_id,agent_id));
       CREATE TABLE IF NOT EXISTS event_receipt (scope_job_id TEXT NOT NULL REFERENCES source_registry(job_id), event_id TEXT NOT NULL, stream TEXT, sequence INTEGER, received_at TEXT NOT NULL, PRIMARY KEY(scope_job_id,event_id));
-      CREATE TABLE IF NOT EXISTS execution_process (job_id TEXT NOT NULL, task_id TEXT NOT NULL, execution_id TEXT NOT NULL, lease_owner TEXT NOT NULL, host TEXT NOT NULL, pid INTEGER NOT NULL, pgid INTEGER NOT NULL, start_token TEXT NOT NULL, observed_at TEXT NOT NULL, ended_at TEXT, PRIMARY KEY(job_id,task_id,execution_id));
+      CREATE TABLE IF NOT EXISTS execution_process (job_id TEXT NOT NULL, task_id TEXT NOT NULL, execution_id TEXT NOT NULL, host TEXT NOT NULL, pid INTEGER NOT NULL, pgid INTEGER NOT NULL, start_token TEXT NOT NULL, observed_at TEXT NOT NULL, ended_at TEXT, PRIMARY KEY(job_id,task_id,execution_id));
 
   CREATE TABLE IF NOT EXISTS host_invocation_event (
     job_id TEXT NOT NULL,

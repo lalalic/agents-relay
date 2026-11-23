@@ -1,6 +1,9 @@
 # Agents Relay — Rust runtime
 
-Agents Relay is a native **Rust** CLI and daemon for durable, local Git-backed agent Jobs. **Rust is the sole backend implementation**. Workflow decisions come from [`workflow/*.mmd`](workflow/), while SQLite is the authority for Jobs, Tasks, Plans, Reviews, leases and recovery. EventBus messages are notifications and wake-ups, not durable Job truth.
+Agents Relay is a native **Rust** CLI and daemon for durable, local Git-backed agent Jobs. **Rust is the sole backend implementation**. Workflow decisions come from [`workflow/*.mmd`](workflow/), while SQLite is the authority for Jobs, Tasks, Plans, Reviews, execution identities and recovery. EventBus messages are notifications and wake-ups, not durable Job truth.
+
+Worker liveness is process/thread-based rather than deadline-based; see
+[Worker process lifecycle](docs/WORKER_PROCESS_LIFECYCLE.md).
 
 The canonical rules are [`AGENTS.md`](AGENTS.md), [`DESIGN-PRINCIPLES.md`](DESIGN-PRINCIPLES.md) and [`skills/agents-relay/SKILL.md`](skills/agents-relay/SKILL.md).
 

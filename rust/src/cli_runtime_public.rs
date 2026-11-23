@@ -64,8 +64,6 @@ pub fn runtime(args:&[String],paths:RuntimePaths)->Result<RuntimeReconciler,Stri
     let owner=if owner.is_empty(){format!("cli-{}",std::process::id())}else{owner.into()};
     let count=arg(args,"--concurrency","4").parse::<f64>()
         .ok().filter(|n|n.is_finite()).unwrap_or(f64::NAN);
-    let lease=arg(args,"--lease-ms","300000").parse::<f64>()
-        .ok().filter(|n|n.is_finite()).unwrap_or(f64::NAN);
     let option=|name:&str,env:&str|{
         let requested=arg(args,name,"");
         if !requested.is_empty(){Some(requested.to_owned())}
@@ -81,7 +79,6 @@ pub fn runtime(args:&[String],paths:RuntimePaths)->Result<RuntimeReconciler,Stri
     let configured=json!({
         "owner":owner,
         "maxConcurrent":if count.is_nan(){Value::Null}else{json!(count)},
-        "leaseMs":if lease.is_nan(){Value::Null}else{json!(lease)},
         "adapters":[
             {"id":"codex","name":"codex","command":model,"capabilities":["model","codex"]},
             {"id":"chatgpt/browser-worker","name":"chatgpt",

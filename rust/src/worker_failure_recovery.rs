@@ -118,8 +118,6 @@ pub fn apply_launch_failure_mutation(
         if !reason.is_empty(){updated["failureReason"]=json!(reason);}
         else if let Some(map)=updated.as_object_mut(){map.remove("failureReason");}
     }
-    updated["leaseOwner"]=Value::Null;
-    updated["leaseExpiresAt"]=Value::Null;
     updated["executionId"]=Value::Null;
 }
 pub fn launch_failure_event(

@@ -147,7 +147,6 @@ pub fn cleanup_completed_job_worktree(
     };
     let owns_lease = |record: &Value| {
         record.get("executionId").is_some_and(|v| !v.is_null())
-            || record.get("leaseOwner").is_some_and(|v| !v.is_null())
     };
     if job["tasks"]
         .as_array()

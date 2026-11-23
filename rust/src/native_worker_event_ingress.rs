@@ -47,12 +47,11 @@ pub fn apply_verified_worker_event(
         return Err("Model Worker event cannot mutate another adapter".into());
     }
     if field(current,"executionId")!=execution_id
-        ||field(current,"leaseOwner").is_empty()
         ||(field(event,"type")=="task.started" && field(current,"state")!="QUEUED")
         ||(field(event,"type")!="task.started" && field(current,"state")!="RUNNING"){
         return Err("Model Worker generation lease is missing, stale or terminal".into());
     }
-    let mut runtime=ReconcilerRuntime::new("native-worker-event-ingress",15_000);
+    let mut runtime=ReconcilerRuntime::new("native-worker-event-ingress");
     let applied=runtime.apply_event(graph,&prior,event,None)?;
     if !applied.applied{
         return Err(format!("Model Worker Graph denied {}: {}",

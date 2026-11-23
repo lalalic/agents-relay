@@ -24,7 +24,7 @@ fn executes_trusted_js_shortcut_and_receives_single_json_output(){
     }"#);
     let cancelled=AtomicBool::new(false);
     let value=invoke_trusted_script(&node(),&script,
-        &json!({"message":"hello", "executionId":"run-2"}),&cancelled,6000).unwrap();
+        &json!({"message":"hello", "executionId":"run-2"}),&cancelled).unwrap();
     assert_eq!(value["output"],json!({"message":"hello","execution":"run-2"}));
     assert_eq!(value["status"],"COMPLETED");
     fs::remove_dir_all(root).unwrap();
@@ -33,26 +33,22 @@ fn executes_trusted_js_shortcut_and_receives_single_json_output(){
 fn reports_untrusted_module_failures_and_rejects_nonabsolute_paths(){
     let (root,script)=fixture("export const notRun = () => 'bad';\n");
     let cancelled=AtomicBool::new(false);
-    let err=invoke_trusted_script(&node(),&script,&json!({}),&cancelled,6000).unwrap_err();
+    let err=invoke_trusted_script(&node(),&script,&json!({}),&cancelled).unwrap_err();
     assert!(err.contains("Agent Shortcut must export run(context)"),"{err}");
-    assert!(invoke_trusted_script(Path::new("node"),&script,&json!({}),&cancelled,6000)
+    assert!(invoke_trusted_script(Path::new("node"),&script,&json!({}),&cancelled)
         .unwrap_err().contains("absolute interpreter"));
     fs::remove_dir_all(root).unwrap();
 }
 #[test]
-fn script_timeout_terminates_owned_process_group_before_delayed_output(){
-    let (root,script)=fixture(r#"import {writeFile} from 'node:fs/promises';
-        export async function run({input}) {
-            await new Promise(resolve => setTimeout(resolve,1500));
-            await writeFile(input.late, 'should-not-exist');
-            return {status:'COMPLETED',output:{},artifacts:{}};
-        }"#);
-    let late=root.join("late-output.txt");
+fn script_runs_until_process_exits_without_a_time_limit(){
+    let (root,script)=fixture(r#"export async function run({input}) {
+        await new Promise(resolve => setTimeout(resolve,300));
+        return {status:'COMPLETED',output:{duration:input.expected},artifacts:{}};
+    }"#);
     let cancelled=AtomicBool::new(false);
-    let err=invoke_trusted_script(&node(),&script,&json!({"late":late}),&cancelled,85).unwrap_err();
-    assert!(err.contains("timed out"),"{err}");
-    thread::sleep(Duration::from_millis(260));
-    assert!(!late.exists(),"Owned subprocess kept executing after timeout");
+    let result=invoke_trusted_script(&node(),&script,
+        &json!({"expected":"process-lived"}),&cancelled).unwrap();
+    assert_eq!(result["output"]["duration"],"process-lived");
     fs::remove_dir_all(root).unwrap();
 }
 #[test]
@@ -67,7 +63,7 @@ fn script_cancellation_has_no_delayed_effect(){
     let cancelled=Arc::new(AtomicBool::new(false));
     let marker=Arc::clone(&cancelled);
     thread::spawn(move||{thread::sleep(Duration::from_millis(50));marker.store(true,Ordering::Release);});
-    let err=invoke_trusted_script(&node(),&script,&json!({"late":late}),&cancelled,4500).unwrap_err();
+    let err=invoke_trusted_script(&node(),&script,&json!({"late":late}),&cancelled).unwrap_err();
     assert!(err.contains("cancelled"),"{err}");
     thread::sleep(Duration::from_millis(260));
     assert!(!late.exists(),"Owned subprocess kept executing after cancellation");

@@ -411,7 +411,6 @@ where
         let started = task.is_some_and(|t| {
             t["state"] == "RUNNING"
                 && t["executionId"] == execution_id
-                && js_truthy(&t["leaseOwner"])
                 && t["executionHistory"]
                     .as_array()
                     .into_iter()

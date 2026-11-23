@@ -395,7 +395,7 @@ impl IsolatedSQLiteWriteHost {
             .find(|task|field(task,"id")==task_id)else{return Ok(false);};
         let execution=field(task,"executionId").to_string();
         let trusted=matches!(field(task,"adapter"),"chatgpt"|"z"|"codex")
-            &&!execution.is_empty()&&!field(task,"leaseOwner").is_empty()
+            &&!execution.is_empty()
             &&event.pointer("/source/id").and_then(Value::as_str)
                 ==Some(crate::execution_event_identity::execution_event_source(
                     id,task_id,&execution).as_str());
@@ -459,7 +459,7 @@ impl IsolatedSQLiteWriteHost {
         let has_model_lease=job["tasks"].as_array().into_iter().flatten().any(|task|
             matches!(field(task,"adapter"),"chatgpt"|"z"|"codex")
             &&!field(task,"executionId").is_empty()
-            &&!field(task,"leaseOwner").is_empty()
+
             &&matches!(field(task,"state"),"QUEUED"|"RUNNING"));
         let has_review_wait=job["tasks"].as_array().into_iter().flatten().any(|task|
             field(task,"state")=="AWAITING_DECISION"
@@ -782,14 +782,23 @@ impl IsolatedSQLiteWriteHost {
             // committed; never start a duplicate execution.
             return Ok(());
         }
-        // A foreground Coordinator or another authorized Planner may have
-        // already claimed this exact generation after the Graph committed the
-        // launch effect. Its durable, unexpired SQLite lease wins regardless
-        // of process owner. Never race it with a second native model process.
-        if !field(plan,"executionId").is_empty()
-            &&plan.get("leaseExpiresAt").and_then(serde_json::Value::as_str)
-                .and_then(|value|chrono::DateTime::parse_from_rfc3339(value).ok())
-                .is_some_and(|until|until>chrono::Utc::now()){
+        // An existing OS process owns its exact Planner generation. The
+        // current process identity, not a deadline, prevents duplicate launch.
+        if !field(plan,"executionId").is_empty(){
+            let execution=field(plan,"executionId");
+            let record=self.scoped(id)?.load_execution_process(id,plan_id,execution)?;
+            // The claimed Plan may still be starting: missing identity is
+            // not evidence that the new process exited.
+            let Some(record)=record else{return Ok(());};
+            let state=crate::process_identity::probe_process_record(&record);
+            if state=="alive"||state=="unknown"{return Ok(());}
+            let recovered=crate::planner_runtime::fail_plan_execution(
+                &self.config.graph_directory,&job,plan_id,execution,
+                "Planner process exited without a verified Plan result",
+                &crate::local_merge_lock::iso8601_now())?;
+            if recovered!=job{
+                self.persist_exact(id,&job,&recovered)?;
+            }
             return Ok(());
         }
         let declared=project.join("agents/.shortcut/planner.agent.mjs");
@@ -1254,7 +1263,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                             config.router_rules_path.clone(),
                             json!({"owner":owner,
                                 "maxConcurrent":config.concurrency,
-                                "leaseMs":config.lease_ms})))
+                                })))
                     })
             },
             _=>Err(format!("Unsupported Job action {action}")),
@@ -1585,10 +1594,9 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                 self.config.profile_home.clone(),self.config.policy_path.clone(),
                 self.config.router_rules_path.clone(),
                 json!({"owner":format!("live-rust-codex-{}",std::process::id()),
-                    "maxConcurrent":self.config.concurrency,"leaseMs":self.config.lease_ms}),
+                    "maxConcurrent":self.config.concurrency}),
             );
-            let claimed=reconciler.claim_task_execution(&ready,task_id,
-                self.config.lease_ms)?.ok_or("Codex Task no longer eligible for launch")?;
+            let claimed=reconciler.claim_task_execution(&ready,task_id)?.ok_or("Codex Task no longer eligible for launch")?;
             self.persist_exact(id,&ready,&claimed)?;
             let task=claimed["tasks"].as_array().into_iter().flatten()
                 .find(|t|field(t,"id")==task_id).cloned()
@@ -1642,10 +1650,9 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                 self.config.profile_home.clone(),self.config.policy_path.clone(),
                 self.config.router_rules_path.clone(),
                 json!({"owner":format!("isolated-rust-daemon-{}",std::process::id()),
-                    "maxConcurrent":self.config.concurrency,"leaseMs":self.config.lease_ms}),
+                    "maxConcurrent":self.config.concurrency}),
             );
-            let claimed=reconciler.claim_task_execution(&original,task_id,
-                self.config.lease_ms)?.ok_or("ChatGPT Task no longer eligible for launch")?;
+            let claimed=reconciler.claim_task_execution(&original,task_id)?.ok_or("ChatGPT Task no longer eligible for launch")?;
             self.persist_exact(id,&original,&claimed)?;
             let task=claimed.get("tasks").and_then(Value::as_array).into_iter().flatten()
                 .find(|task|field(task,"id")==task_id).cloned()
@@ -1732,10 +1739,9 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             self.config.profile_home.clone(),self.config.policy_path.clone(),
             self.config.router_rules_path.clone(),
             json!({"owner":format!("isolated-rust-daemon-{}",std::process::id()),
-                "maxConcurrent":self.config.concurrency,"leaseMs":self.config.lease_ms}),
+                "maxConcurrent":self.config.concurrency}),
         );
-        let claimed=reconciler.claim_task_execution(&original,task_id,
-            self.config.lease_ms)?.ok_or("Script Task no longer eligible for launch")?;
+        let claimed=reconciler.claim_task_execution(&original,task_id)?.ok_or("Script Task no longer eligible for launch")?;
         // One immutable generation claim, committed via same transactional CAS.
         self.persist_exact(id,&original,&claimed)?;
         let task=claimed.get("tasks").and_then(Value::as_array).into_iter().flatten()
@@ -1835,7 +1841,7 @@ mod committed_worker_observation_tests{
         let mut live=DaemonLiveWorkers::default();
         live.register("2","exec-new");
         let queued=json!({"tasks":[{"id":"2","state":"QUEUED",
-            "executionId":"exec-new","leaseOwner":"isolated"}]});
+            "executionId":"exec-new"}]});
         update_live_worker_from_committed_event(
             &mut live,&queued,"2","exec-new","task.process.launched");
         assert!(!live.get("2").unwrap().worker_started,
@@ -1845,7 +1851,7 @@ mod committed_worker_observation_tests{
         assert!(!live.get("2").unwrap().worker_started,
             "a Graph-denied/stale task.started cannot mark a worker started");
         let running=json!({"tasks":[{"id":"2","state":"RUNNING",
-            "executionId":"exec-new","leaseOwner":"isolated"}]});
+            "executionId":"exec-new"}]});
         update_live_worker_from_committed_event(
             &mut live,&running,"2","exec-old","task.started");
         assert!(!live.get("2").unwrap().worker_started,

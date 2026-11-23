@@ -3,7 +3,7 @@
 //! Rust daemon/Graph alone decides Task state. No Node Relay subprocess.
 use crate::owned_process::{OwnedProcessManager,OwnedProcessOptions,TerminationReason};
 use serde_json::{json,Value};
-use std::{io::{Read,Write},path::Path,sync::atomic::{AtomicBool,Ordering},thread,time::{Duration,Instant}};
+use std::{io::{Read,Write},path::Path,sync::atomic::{AtomicBool,Ordering},thread,time::Duration};
 
 /// An explicit absolute script interpreter is required. PATH lookup or an
 /// implicit Node daemon fallback would make deployments nondeterministic.
@@ -19,16 +19,16 @@ pub fn configured_script_interpreter()->Result<String,String>{
 /// Job/task/execution IDs are fed into that module by launch_script_task.
 pub fn invoke_trusted_script(
     interpreter:&Path,script:&Path,input:&Value,
-    cancelled:&AtomicBool,timeout_ms:u64,
+    cancelled:&AtomicBool,
 )->Result<Value,String>{
-    invoke_trusted_script_recorded(interpreter,script,input,cancelled,timeout_ms,|_|Ok(()))
+    invoke_trusted_script_recorded(interpreter,script,input,cancelled,|_|Ok(()))
 }
 /// The exact owned PID must be durably recorded by the caller before any
 /// untrusted Shortcut JS begins. A failed identity record terminates this
 /// original process group and rejects its eventual stdout as completion.
 pub fn invoke_trusted_script_recorded<Record>(
     interpreter:&Path,script:&Path,input:&Value,
-    cancelled:&AtomicBool,timeout_ms:u64,mut record:Record,
+    cancelled:&AtomicBool,mut record:Record,
 )->Result<Value,String>
 where Record:FnMut(u32)->Result<(),String>{
     if !interpreter.is_absolute()||!interpreter.is_file(){
@@ -50,7 +50,7 @@ where Record:FnMut(u32)->Result<(),String>{
     let worker=owned.spawn_owned_process_stdio(interpreter,
         &["--input-type=module","--eval",RUNNER],OwnedProcessOptions{
         invocation:"rust-relay-script-worker".into(),cwd:Some(project.to_path_buf()),
-        timeout_ms:Some(timeout_ms.max(1)),grace_ms:250,supervisor_path:None,
+        timeout_ms:None,grace_ms:250,supervisor_path:None,
     })?;
     record(worker.pid())?;
     let mut stdin=worker.take_stdin().ok_or("Script runner stdin not owned")?;
@@ -62,15 +62,10 @@ where Record:FnMut(u32)->Result<(),String>{
         stdout.take(8*1024*1024+1).read_to_end(&mut output)
             .map(|_|output).map_err(|e|e.to_string())
     });
-    let deadline=Instant::now()+Duration::from_millis(timeout_ms.max(1));
     loop{
         if cancelled.load(Ordering::Acquire){
             worker.terminate(TerminationReason::Cancel,Some(100));
             return Err("Script Task cancelled".into());
-        }
-        if Instant::now()>deadline{
-            worker.terminate(TerminationReason::Timeout,Some(100));
-            return Err("Script Worker timed out".into());
         }
         if worker.exit_status()?.is_some(){break;}
         thread::sleep(Duration::from_millis(15));

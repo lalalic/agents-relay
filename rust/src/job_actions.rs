@@ -33,8 +33,6 @@ fn cancel_active_work(graph_directory:&Path,job:&mut Value,reason:&str,now:&str)
             plan["status"]=json!("FAILED");
             plan["error"]=json!(reason);
             plan["assessment"]=json!(format!("Planning failed: {reason}"));
-            plan["leaseOwner"]=Value::Null;
-            plan["leaseExpiresAt"]=Value::Null;
             plan["executionId"]=Value::Null;
             plan["updatedAt"]=json!(now);
         }
@@ -45,8 +43,6 @@ fn cancel_active_work(graph_directory:&Path,job:&mut Value,reason:&str,now:&str)
             let decision=try_transition_task_event(graph_directory,task,"cancel",&json!({}),now)?;
             if decision.get("accepted")!=Some(&Value::Bool(true)){continue;}
             task["error"]=json!(reason);
-            task["leaseOwner"]=Value::Null;
-            task["leaseExpiresAt"]=Value::Null;
             task["executionId"]=Value::Null;
         }
     }

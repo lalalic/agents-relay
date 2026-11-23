@@ -164,8 +164,6 @@ pub fn unblock_task_snapshot(
     updated["attempt"]=json!(0);
     updated["maxAttempts"]=json!(updated.get("maxAttempts").and_then(Value::as_u64).unwrap_or(0).max(3));
     updated["error"]=Value::Null;
-    updated["leaseOwner"]=Value::Null;
-    updated["leaseExpiresAt"]=Value::Null;
     updated["executionId"]=Value::Null;
     if let Some(map)=updated.as_object_mut(){map.remove("blockedBy");}
     updated["updatedAt"]=json!(now);

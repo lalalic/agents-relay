@@ -1,17 +1,15 @@
 // Node provenance: src/execution-process-tracker.ts. SQLite records correlate
 // immutable execution generation with owned POSIX process identity.
 use crate::process_identity::{
-    active_relay_lease_owner, capture_process_record, probe_process_record,
-    stop_orphaned_process_group,
+    capture_process_record, probe_process_record,
 };
 use serde_json::Value;
 use std::future::Future;
-use std::time::Duration;
 
 /// Register a newly started execution only after a verified POSIX process
 /// identity has been captured. Caller owns the completion monitor.
 pub async fn monitor_execution_process<Save, Fut>(
-    job_id: &str, task_id: &str, execution_id: &str, owner: &str,
+    job_id: &str, task_id: &str, execution_id: &str,
     pid: Option<i64>, mut save_record: Save,
 ) -> Result<Option<Value>, String>
 where
@@ -19,7 +17,7 @@ where
     Fut: Future<Output = Result<(), String>>,
 {
     let record = pid.and_then(|pid|
-        capture_process_record(job_id, task_id, execution_id, owner, pid));
+        capture_process_record(job_id, task_id, execution_id, pid));
     if let Some(ref record) = record { save_record(record.clone()).await?; }
     Ok(record)
 }
@@ -27,7 +25,7 @@ where
 /// Reaping requires a dead, reused, or safely cancellable *exact* process
 /// generation, never matching by an executable name.
 pub async fn reclaim_stale_execution_process<Load, Fut>(
-    task: &Value, current_owner: Option<&str>, load: Load,
+    task: &Value, load: Load,
 ) -> Result<bool, String>
 where
     Load: FnOnce(String, String, String) -> Fut,
@@ -43,17 +41,11 @@ where
     let (Some(job_id), Some(task_id), Some(execution_id)) =
         (job_id, task_id, execution_id) else { return Ok(true); };
     let record = load(job_id.into(), task_id.into(), execution_id.into()).await?;
-    let owner = task.get("leaseOwner").and_then(Value::as_str);
-    if owner.is_some_and(|owner|
-        Some(owner) != current_owner && active_relay_lease_owner(owner))
-    { return Ok(false); }
-    let Some(record) = record else { return Ok(true); };
+    // Claim may be committed before the child has been spawned and recorded.
+    // Missing proof must never mark a just-starting Worker as dead.
+    let Some(record) = record else { return Ok(false); };
     if record.get("endedAt").is_some_and(|value| !value.is_null()) { return Ok(true); }
-    let state = probe_process_record(&record);
-    if state == "gone" || state == "reused" { return Ok(true); }
-    if state != "alive"
-        || owner.is_some_and(|owner|
-            Some(owner) != current_owner && active_relay_lease_owner(owner))
-    { return Ok(false); }
-    Ok(stop_orphaned_process_group(&record, Duration::from_millis(750)))
+    // Never kill a live process based on elapsed time or a vanished daemon.
+    // A matching PID + PGID + process start token is the source of truth.
+    Ok(matches!(probe_process_record(&record),"gone"|"reused"))
 }

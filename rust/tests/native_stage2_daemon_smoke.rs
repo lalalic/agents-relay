@@ -88,7 +88,7 @@ fn native_daemon_serves_original_ui_and_sqlite_first_status_then_stops_cleanly()
         policy_path:root.join("policy"),
         router_rules_path:root.join("rules"),
         dashboard_asset:html,repositories:Vec::new(),
-        port,concurrency:4,interval_ms:150,lease_ms:300000,
+        port,concurrency:4,interval_ms:150,
         event_transport:json!({}),
     };
     let stop=Arc::new(AtomicBool::new(false));

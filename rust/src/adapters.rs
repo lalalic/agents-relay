@@ -161,8 +161,7 @@ impl CodexAdapter{
         let execution=run_delivery_owned_process(
             &mut manager,&self.command,&references,cwd.map(Path::new),
             &format!("worker.codex:{}",field(task,"id")),
-            DeliveryProcessOptions{timeout:task.get("timeoutMs")
-                .and_then(Value::as_u64).map(Duration::from_millis),
+            DeliveryProcessOptions{timeout:None,
                 cancelled:Some(cancelled),supervisor_path:None,environment:None})?;
         let mut thread=None;
         let mut failure:Option<(String,u8)>=None;

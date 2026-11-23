@@ -2,9 +2,9 @@
 use agents_relay_rust2::{
     reconciler_cancellation::{cancel_active_tasks, cancel_task_action},
     task_inactivity_watchdog::{
-        arm_deadline, inactivity_deadline, is_correlated_worker_event,
+        is_correlated_worker_event,
         is_recoverable_watchdog_failure, requires_worker_inactivity_watchdog,
-        task_progress_mutation, WatchdogTimers,
+        task_progress_mutation,
     },
     worker_start_ack::{create_worker_start_ack, WorkerEventBus},
 };
@@ -80,7 +80,6 @@ fn watchdog_validates_event_source_monotonic_timestamp_and_limits_post_exit() {
     let task = json!({"id":"21","jobId":"34","state":"RUNNING","executionId":"gen-1","adapter":"shell","timeoutMs":120000,"lastProgressAt":"2026-11-17T01:00:00.000Z","processExitedAt":"2026-11-17T01:00:01.000Z","updatedAt":"2026-11-16T23:00:00.000Z"});
     let event = json!({"type":"task.progress","timestamp":"2026-11-17T01:00:00.123Z","job_id":"34","task_id":"21","source":{"id":"job/34/task/21/execution/gen-1"}});
     assert!(is_correlated_worker_event(&task, &event));
-    assert_eq!(inactivity_deadline(&task, "gen-1", 5000, 0), 1794877206000);
     let timestamp = 1794877200123_i64;
     let next = task_progress_mutation(&task, &event, timestamp + 100).unwrap();
     assert_eq!(next["lastProgressAt"], "2026-11-17T01:00:00.223Z");
@@ -91,22 +90,13 @@ fn watchdog_validates_event_source_monotonic_timestamp_and_limits_post_exit() {
     let mut future = event.clone();
     future["timestamp"] = json!("2026-11-17T02:00:00.000Z");
     assert!(task_progress_mutation(&task, &future, timestamp + 100).is_none());
-    assert!(arm_deadline(&task, "stale-gen", 5000, timestamp).is_none());
     assert!(is_recoverable_watchdog_failure(
         &json!({"failureReason":"worker_start_timeout"})
     ));
     assert!(!requires_worker_inactivity_watchdog(
         &json!({"agentGraph":{},"executionId":null})
     ));
-    let mut timers = WatchdogTimers::default();
-    let hit = Arc::new(Mutex::new(false));
-    let reported = Arc::clone(&hit);
-    let armed = json!({"id":"1","jobId":"34","state":"RUNNING","executionId":"g","timeoutMs":1,"updatedAt":"2020-01-01T00:00:00.000Z"});
-    timers
-        .arm(&armed, "g", 5000, move || *reported.lock().unwrap() = true)
-        .unwrap();
-    std::thread::sleep(Duration::from_millis(40));
-    assert!(*hit.lock().unwrap());
+
 }
 #[test]
 fn cancellation_effect_preserves_plan_first_and_uses_task_graph() {

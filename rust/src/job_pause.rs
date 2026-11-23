@@ -49,8 +49,6 @@ where Transition: FnMut(&mut Value, &str) -> bool {
             return Err(format!("Cannot pause running Task {id}"));
         }
         task["executionId"] = Value::Null;
-        task["leaseOwner"] = Value::Null;
-        task["leaseExpiresAt"] = Value::Null;
         task["updatedAt"] = json!(now);
     }
     if let Some(plans) = job.get_mut("plans").and_then(Value::as_array_mut) {
@@ -60,8 +58,6 @@ where Transition: FnMut(&mut Value, &str) -> bool {
                 plan["pausedExecutionId"] = execution_id;
             }
             plan["executionId"] = Value::Null;
-            plan["leaseOwner"] = Value::Null;
-            plan["leaseExpiresAt"] = Value::Null;
             plan["updatedAt"] = json!(now);
         }
     }

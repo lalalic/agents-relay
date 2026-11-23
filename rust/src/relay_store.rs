@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS event_receipt (
   event_id TEXT PRIMARY KEY,stream TEXT,sequence INTEGER,received_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS execution_process (
   job_id TEXT NOT NULL,task_id TEXT NOT NULL,execution_id TEXT NOT NULL,
-  lease_owner TEXT NOT NULL,host TEXT NOT NULL,pid INTEGER NOT NULL,
+  host TEXT NOT NULL,pid INTEGER NOT NULL,
   pgid INTEGER NOT NULL,start_token TEXT NOT NULL,observed_at TEXT NOT NULL,
   ended_at TEXT,PRIMARY KEY(job_id,task_id,execution_id));"#;
 fn initialize_legacy(db:&Connection)->Result<(),String>{
@@ -563,10 +563,9 @@ impl SQLiteRelayStore {
         }
         self.db.execute(
             "INSERT OR IGNORE INTO execution_process(
-             job_id,task_id,execution_id,lease_owner,host,pid,pgid,start_token,
-             observed_at,ended_at)VALUES(?,?,?,?,?,?,?,?,?,?)",
+             job_id,task_id,execution_id,host,pid,pgid,start_token,
+             observed_at,ended_at)VALUES(?,?,?,?,?,?,?,?,?)",
             params![id.0,id.1,id.2,
-                record.get("leaseOwner").and_then(Value::as_str),
                 record.get("host").and_then(Value::as_str),
                 record.get("pid").and_then(Value::as_i64),
                 record.get("pgid").and_then(Value::as_i64),
@@ -580,17 +579,16 @@ impl SQLiteRelayStore {
         &self,job_id:&str,task_id:&str,execution_id:&str,
     )->Result<Option<Value>,String>{
         self.db.query_row(
-            "SELECT lease_owner,host,pid,pgid,start_token,observed_at,ended_at
+            "SELECT host,pid,pgid,start_token,observed_at,ended_at
              FROM execution_process WHERE job_id=? AND task_id=? AND execution_id=?",
             params![job_id,task_id,execution_id],|row|{
                 Ok(json!({
                     "jobId":job_id,"taskId":task_id,"executionId":execution_id,
-                    "leaseOwner":row.get::<_,String>(0)?,
-                    "host":row.get::<_,String>(1)?,
-                    "pid":row.get::<_,i64>(2)?,"pgid":row.get::<_,i64>(3)?,
-                    "startToken":row.get::<_,String>(4)?,
-                    "observedAt":row.get::<_,String>(5)?,
-                    "endedAt":row.get::<_,Option<String>>(6)?
+                    "host":row.get::<_,String>(0)?,
+                    "pid":row.get::<_,i64>(1)?,"pgid":row.get::<_,i64>(2)?,
+                    "startToken":row.get::<_,String>(3)?,
+                    "observedAt":row.get::<_,String>(4)?,
+                    "endedAt":row.get::<_,Option<String>>(5)?
                 }))
             }
         ).optional().map_err(sql)

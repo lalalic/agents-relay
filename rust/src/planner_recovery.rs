@@ -52,8 +52,7 @@ Relay will create a NEW authoritative Plan round after your completed recovery e
         "parentTaskId":null,"dependencies":[],"capabilities":["troubleshoot","recovery"],
         "workerRequirements":{"capabilities":["model","local_repo","iterative_tools"],"runtime":"codex"},
         "adapter":"codex","input":input,"output":{"kind":"task_pr"},"continuation":null,
-        "continuationDeliveredAt":null,"attempt":0,"maxAttempts":3,"leaseOwner":null,"leaseExpiresAt":null,
-        "executionId":null,"threadId":null,"result":null,"plannerResult":null,"error":null,
+        "continuationDeliveredAt":null,"attempt":0,"maxAttempts":3,"executionId":null,"threadId":null,"result":null,"plannerResult":null,"error":null,
         "timeoutMs":900000,"createdAt":now,"updatedAt":now
     });
     // TS createTaskEntity may add defaults/mutate status using task Graph.

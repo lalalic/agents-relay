@@ -16,11 +16,8 @@ use crate::{
     },
     local_merge_lock::iso8601_now,
     reconciler_review::{apply_review_event,ReviewSnapshot},
-    route_outcome_recording::classify_routing_failure,
-    task_actions::apply_task_retry_action,
     task_inactivity_watchdog::{
-        inactivity_deadline,is_correlated_worker_event,
-        is_recoverable_watchdog_failure,
+        is_correlated_worker_event,is_recoverable_watchdog_failure,
     },
     task_transitions::try_transition_task_event,
 };
@@ -74,7 +71,6 @@ pub struct RuntimeEffect{
     pub cancel_generations:Vec<String>,
     // Volatile effects are applied only after authoritative SQLite commit.
     pub start_acknowledgements:Vec<(String,String)>,
-    pub watchdog_reschedules:Vec<(String,String)>,
 }
 impl RuntimeEffect{
     pub fn ignored(job:&Value,reason:impl Into<String>)->Self{
@@ -82,7 +78,7 @@ impl RuntimeEffect{
             reconcile_detached:false,reason:reason.into(),
             events:Vec::new(),completed_generations:Vec::new(),
             cancel_generations:Vec::new(),
-            start_acknowledgements:Vec::new(),watchdog_reschedules:Vec::new()}
+            start_acknowledgements:Vec::new()}
     }
     pub fn recognized(job:&Value,reason:impl Into<String>,reconcile:bool)->Self{
         let mut output=Self::ignored(job,reason);
@@ -91,24 +87,21 @@ impl RuntimeEffect{
 }
 pub struct ReconcilerRuntime {
     pub owner:String,
-    pub grace_ms:i64,
     pub live:HashMap<String,LiveExecution>,
     pub planner_live:HashMap<String,String>,
     pub continuation_live:HashSet<String>,
     pub launch_failure_claims:HashSet<String>,
     pub terminal_waiters:HashMap<String,String>,
-    pub inactive_deadlines:HashMap<String,i64>,
     pub host_invocations:HostInteractiveInvocationCoordinator,
     pub closed:bool,
 }
 impl ReconcilerRuntime{
-    pub fn new(owner:impl Into<String>,grace_ms:i64)->Self{
-        Self{owner:owner.into(),grace_ms,
+    pub fn new(owner:impl Into<String>)->Self{
+        Self{owner:owner.into(),
             live:HashMap::new(),planner_live:HashMap::new(),
             continuation_live:HashSet::new(),
             launch_failure_claims:HashSet::new(),
             terminal_waiters:HashMap::new(),
-            inactive_deadlines:HashMap::new(),
             host_invocations:HostInteractiveInvocationCoordinator::default(),
             closed:false}
     }
@@ -133,7 +126,6 @@ impl ReconcilerRuntime{
         if correct{
             self.live.remove(task_id);
             self.terminal_waiters.remove(task_id);
-            self.inactive_deadlines.remove(task_id);
         }
         correct
     }
@@ -143,13 +135,7 @@ impl ReconcilerRuntime{
         if remove{
             self.live.remove(task_id);
             self.terminal_waiters.remove(task_id);
-            self.inactive_deadlines.remove(task_id);
         }
-    }
-    pub fn arm_inactivity_watchdog(&mut self,task:&Value,execution_id:&str){
-        let now=Utc::now().timestamp_millis();
-        let deadline=inactivity_deadline(task,execution_id,self.grace_ms,now);
-        self.inactive_deadlines.insert(field(task,"id").into(),deadline);
     }
     fn task_progress(
         &mut self,directory:&Path,job:&Value,event:&Value,
@@ -180,7 +166,6 @@ impl ReconcilerRuntime{
         new_task["lastProgressEventAt"]=json!(stamp);
         result.job["tasks"][index]=new_task.clone();
         if let Some(execution)=new_task.get("executionId").and_then(Value::as_str){
-            result.watchdog_reschedules.push((id.into(),execution.into()));
         }
         let _=directory;
         Ok(result)
@@ -202,12 +187,6 @@ impl ReconcilerRuntime{
         if execution.is_empty()||!correlated(task,event)||!valid{
             return Ok(RuntimeEffect::ignored(job,"task.started.ignored"));
         }
-        let lease=!field(task,"leaseOwner").is_empty();
-        let live=self.live.get(id).is_some_and(|run|
-            run.job_id==field(event,"job_id")&&run.execution_id==execution);
-        if !lease&&!live&&!is_recoverable_watchdog_failure(task){
-            return Ok(RuntimeEffect::ignored(job,"task.started.ignored"));
-        }
         let old=field(task,"state");
         let mut result=RuntimeEffect::recognized(job,"task.started",false);
         let mut next=task.clone();
@@ -225,7 +204,6 @@ impl ReconcilerRuntime{
         next["lastProgressEventAt"]=json!(field(event,"timestamp"));
         result.job["tasks"][index]=next.clone();
         result.start_acknowledgements.push((id.into(),execution.into()));
-        result.watchdog_reschedules.push((id.into(),execution.into()));
         if old=="FAILED"{
             result.reconcile=true;result.reconcile_detached=true;
             result.reason="task.started.recovery".into();
@@ -314,8 +292,6 @@ impl ReconcilerRuntime{
         }
         if !prev.is_empty(){result.cancel_generations.push(prev.clone());}
         let now=iso8601_now();
-        candidate["leaseOwner"]=Value::Null;
-        candidate["leaseExpiresAt"]=Value::Null;
         candidate["executionId"]=Value::Null;
         candidate["updatedAt"]=json!(now);
         if let Some(tag)=event.pointer("/data/tag").filter(|v|v.is_object()){
@@ -437,7 +413,7 @@ impl ReconcilerRuntime{
             reason:reason.into(),events:review.events,
             completed_generations:Vec::new(),
             cancel_generations:review.cancel_execution_ids,
-            start_acknowledgements:Vec::new(),watchdog_reschedules:Vec::new()
+            start_acknowledgements:Vec::new()
         }
     }
     pub fn runtime_settled(
@@ -492,94 +468,6 @@ impl ReconcilerRuntime{
                 "agent":"relay","component":"agents-relay"}))));
         Ok(result_mut)
     }
-    pub fn timeout_task(
-        &mut self,directory:&Path,job:&Value,
-        task_id:&str,execution_id:&str,now_ms:i64,
-    )->Result<RuntimeEffect,String>{
-        let Some(index)=task_index(job,task_id)else{
-            return Ok(RuntimeEffect::ignored(job,"watchdog.stale"));
-        };
-        let task=&job["tasks"][index];
-        if field(task,"executionId")!=execution_id
-            ||!matches!(field(task,"state"),"QUEUED"|"RUNNING"){
-            return Ok(RuntimeEffect::ignored(job,"watchdog.stale"));
-        }
-        let deadline=inactivity_deadline(task,execution_id,self.grace_ms,now_ms);
-        if deadline>now_ms{
-            self.inactive_deadlines.insert(task_id.into(),deadline);
-            return Ok(RuntimeEffect::ignored(job,"watchdog.deferred"));
-        }
-        let live=self.live.get(task_id);
-        if is_browser(task)&&field(task,"state")=="QUEUED"
-            &&live.is_none_or(|r|!r.worker_started){
-            return Ok(RuntimeEffect::recognized(job,
-                "watchdog.no-start-fallback",true));
-        }
-        let failed_exit=live.and_then(|run|run.process_exit.as_ref())
-            .is_some_and(|exit|exit.get("exitCode")!=Some(&json!(0))
-                ||exit.get("signal").is_some_and(|v|!v.is_null()));
-        let stderr=live.and_then(|run|run.process_error.as_deref()
-            .or_else(||run.process_exit.as_ref().and_then(|v|
-                v.get("stderr").and_then(Value::as_str)))).unwrap_or("");
-        let reason=if failed_exit{
-            classify_routing_failure(stderr,"terminal_event_timeout")
-        }else{"terminal_event_timeout".into()};
-        let message=if failed_exit{
-            if !stderr.trim().is_empty(){stderr.into()}
-            else{"Worker process exited without terminal event".into()}
-        }else{format!("Task {task_id} exceeded its inactivity timeout without a terminal event")};
-        let mut candidate=task.clone();
-        let decision=try_transition_task_event(directory,&mut candidate,
-            "watchdog.failed",&json!({}),&iso8601_now())?;
-        if decision.get("accepted")!=Some(&Value::Bool(true)){
-            return Ok(RuntimeEffect::ignored(job,"watchdog.graph-rejected"));
-        }
-        candidate["error"]=json!(message);
-        candidate["failureReason"]=json!(reason);
-        candidate["leaseOwner"]=Value::Null;
-        candidate["leaseExpiresAt"]=Value::Null;
-        let mut result=RuntimeEffect::recognized(job,
-            "watchdog.failed",true);
-        result.job["tasks"][index]=candidate.clone();
-        result.cancel_generations.push(execution_id.into());
-        let max=candidate.get("maxAttempts").and_then(Value::as_u64).unwrap_or(3);
-        let attempt=candidate.get("attempt").and_then(Value::as_u64).unwrap_or(0);
-        if ["provider_rate_limited","provider_quota_exhausted",
-            "worker_launch_failed","authentication_rejected"].contains(
-                &reason.as_str()) &&attempt<max{
-            let retry=&mut result.job["tasks"][index];
-            let failed=retry.get("routing").filter(|v|!v.is_null()).cloned();
-            apply_task_retry_action(directory,retry,true,&iso8601_now())?;
-            if let Some(route)=failed{
-                let duplicate=retry.get("routingExclusions")
-                    .and_then(Value::as_array).into_iter().flatten()
-                    .any(|ex|ex.get("provider")==route.get("provider")
-                        &&ex.get("model")==route.get("model")
-                        &&ex.get("profile")==route.get("profile"));
-                if !duplicate{
-                    let mut exclusion=route.clone();
-                    exclusion["reason"]=json!(reason);
-                    exclusion["at"]=json!(iso8601_now());
-                    if let Some(array)=retry.get_mut("routingExclusions")
-                        .and_then(Value::as_array_mut){array.push(exclusion);}
-                    else{retry["routingExclusions"]=json!([exclusion]);}
-                }
-            }
-            for key in ["routing","workerSelection"]{
-                if let Some(map)=retry.as_object_mut(){map.remove(key);}
-            }
-            result.events.push(event_for(field(job,"id"),task_id,None,
-                "task.rerouting","queued","Worker rejected route; retrying with fresh routing and usage data",
-                Some("orchestrator"),Some(json!({"previousFailure":reason})),None));
-        }
-        result.events.push(event_for(field(job,"id"),task_id,None,
-            "task.failed","failed",&message,Some("user"),
-            Some(json!({"reason":reason,"workflowEvent":"watchdog.failed",
-                "executionId":execution_id,"timeoutMs":task.get("timeoutMs")})),
-            Some(json!({"agent":"relay","component":"agents-relay",
-                "watchdog":true}))));
-        Ok(result)
-    }
     /// Source rule: all irrecoverable effects run after a successful SQLite
     /// commit. This function is the single post-commit reconciliation boundary.
     pub fn finalize_after_commit(&mut self,effect:&RuntimeEffect){
@@ -591,13 +479,6 @@ impl ReconcilerRuntime{
             if let Some(active)=self.live.get_mut(task_id){
                 if active.job_id==job_id&&active.execution_id==*execution_id{
                     active.worker_started=true;
-                }
-            }
-        }
-        for (task_id,execution_id) in &effect.watchdog_reschedules{
-            if let Some(task)=current(&effect.job,task_id){
-                if field(task,"executionId")==execution_id{
-                    self.arm_inactivity_watchdog(task,execution_id);
                 }
             }
         }
@@ -624,7 +505,7 @@ impl ReconcilerRuntime{
     }
     pub fn close(&mut self){
         self.closed=true;self.live.clear();self.planner_live.clear();
-        self.terminal_waiters.clear();self.inactive_deadlines.clear();
+        self.terminal_waiters.clear();
         self.continuation_live.clear();self.host_invocations.close();
     }
     pub fn idle(&self)->bool{

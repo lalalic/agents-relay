@@ -73,8 +73,7 @@ pub fn eval_scenario_from_args(
         "agentName":agent,"adapter":adapter,"input":input,
         "output":{"kind":"file","path":".evals/reports/evaluation-only.json"},
         "parentTaskId":null,"dependencies":[],"capabilities":[],
-        "attempt":0,"maxAttempts":1,"leaseOwner":null,
-        "leaseExpiresAt":null,"executionId":format!("eval-{case}-isolated"),
+        "attempt":0,"maxAttempts":1,"executionId":format!("eval-{case}-isolated"),
         "threadId":null,"result":null,"error":null,"timeoutMs":0,
         "createdAt":now,"updatedAt":now
     });

@@ -58,7 +58,6 @@ impl PlannerLaunchPorts for Fixture{
     fn has_planner(&self)->bool{self.has_planner}
     fn owner(&self)->&str{"relay"}
     fn now(&self)->String{self.now.clone()}
-    fn lease_ms(&self)->u64{300_000}
     fn timeout_ms(&self)->u64{120_000}
     fn head_sha(&mut self)->Result<Option<String>,String>{
         self.calls.push(json!(["headSha"]));Ok(None)

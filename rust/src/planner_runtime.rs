@@ -63,21 +63,14 @@ fn next_time(previous:&str,proposed:&str)->String{
 }
 pub fn claim_plan_execution(
     directory:&Path,job:&Value,plan_id:&str,owner:&str,
-    execution_id:&str,lease_timeout_ms:u64,now:&str,
+    execution_id:&str,now:&str,
 )->Result<Value,String>{
     let mut candidate=job.clone();
     let idx=plan_index(&candidate,plan_id)
         .ok_or_else(||format!("Plan {plan_id} not found"))?;
     let plan=&candidate["plans"][idx];
     let state=field(plan,"status");
-    let current_lease=plan.get("leaseExpiresAt").and_then(Value::as_str)
-        .and_then(|value|DateTime::parse_from_rfc3339(value).ok())
-        .map(|time|time.timestamp_millis());
-    let now_ms=DateTime::parse_from_rfc3339(now)
-        .map_err(|e|e.to_string())?.timestamp_millis();
-    let available=field(plan,"leaseOwner").is_empty()
-        ||current_lease.is_none_or(|expire|expire<=now_ms)
-        ||field(plan,"leaseOwner")==owner;
+    let available=field(plan,"executionId").is_empty();
     let facts=json!({
         "claimAvailable":available,
         "retryAvailable":plan.get("attempt").and_then(Value::as_u64).unwrap_or(0)
@@ -87,11 +80,6 @@ pub fn claim_plan_execution(
     });
     graph_action(directory,state,"planner.claim",&facts,"planner.reserveLease")?;
     let plan=&mut candidate["plans"][idx];
-    plan["leaseOwner"]=json!(owner);
-    plan["leaseExpiresAt"]=json!(DateTime::<Utc>::from_timestamp_millis(
-        now_ms+lease_timeout_ms as i64)
-        .ok_or("Invalid Planner lease deadline")?
-        .to_rfc3339_opts(SecondsFormat::Millis,true));
     plan["executionId"]=json!(execution_id);
     plan["attempt"]=json!(plan.get("attempt").and_then(Value::as_u64).unwrap_or(0)+1);
     plan["updatedAt"]=json!(now);
@@ -158,8 +146,6 @@ pub fn settlement_result(
     changed["generatedTaskIds"]=json!(appended.iter()
         .filter_map(|t|t.get("id")).collect::<Vec<_>>());
     changed["appliedExecutionId"]=json!(execution_id);
-    changed["leaseOwner"]=Value::Null;
-    changed["leaseExpiresAt"]=Value::Null;
     changed["executionId"]=Value::Null;
     changed["updatedAt"]=json!(now);
     candidate["updatedAt"]=json!(now);
@@ -193,8 +179,6 @@ pub fn fail_plan_execution(
     plan["error"]=json!(error);
     plan["assessment"]=json!(format!("Planning failed: {error}"));
     plan["executionId"]=Value::Null;
-    plan["leaseOwner"]=Value::Null;
-    plan["leaseExpiresAt"]=Value::Null;
     plan["updatedAt"]=json!(now);
     candidate["updatedAt"]=json!(now);
     Ok(candidate)
@@ -220,7 +204,7 @@ where
     let job=(ports.load)(job_id).await?;
     let execution_id=random_uuid();
     let lease=claim_plan_execution(graph_dir,&job,plan_id,owner,
-        &execution_id,timeout_ms,&iso8601_now())?;
+        &execution_id,&iso8601_now())?;
     let claimed=(ports.save)(lease).await?;
     let plan=claimed.get("plans").and_then(Value::as_array).into_iter().flatten()
         .find(|p|field(p,"id")==plan_id).ok_or("Claimed Plan missing")?.clone();
@@ -260,47 +244,6 @@ where
         },
     }
 }
-pub fn planner_recovery_needed(job:&Value)->Vec<Value>{
-    job.get("plans").and_then(Value::as_array).into_iter().flatten()
-        .filter(|plan|field(plan,"status")=="PLANNING"
-            &&plan.get("executionId").is_some_and(|v|!v.is_null())
-            &&plan.get("leaseExpiresAt").and_then(Value::as_str)
-                .and_then(|s|DateTime::parse_from_rfc3339(s).ok())
-                .is_some_and(|t|t.timestamp_millis()<Utc::now().timestamp_millis()))
-        .cloned().collect()
-}
-pub fn planner_reconciler_step(
-    directory:&Path,job:&Value,now:&str,
-)->Result<Value,String>{
-    let mut candidate=job.clone();
-    let current=DateTime::parse_from_rfc3339(now)
-        .map_err(|e|e.to_string())?.timestamp_millis();
-    if let Some(plans)=candidate.get_mut("plans").and_then(Value::as_array_mut){
-        for plan in plans{
-            if field(plan,"status")!="PLANNING"{continue;}
-            let expiration=plan.get("leaseExpiresAt").and_then(Value::as_str)
-                .and_then(|s|DateTime::parse_from_rfc3339(s).ok())
-                .map(|d|d.timestamp_millis());
-            if expiration.is_none_or(|t|t>current){continue;}
-            let attempt=plan.get("attempt").and_then(Value::as_u64).unwrap_or(0);
-            let max=plan.get("maxAttempts").and_then(Value::as_u64).unwrap_or(3);
-            let decision=choose_policy(directory,"planner-orchestration","PLANNING",
-                "planner.lease_expired",&json!({"retryAvailable":attempt<max,
-                    "executionCurrent":true}),14,|s|s.starts_with("check_"))?;
-            if decision.get("accepted")!=Some(&Value::Bool(true)){continue;}
-            if field(&decision,"target")=="FAILED"{
-                plan["status"]=json!("FAILED");
-                plan["error"]=json!("Planner lease expired after maximum attempts");
-            }
-            plan["leaseOwner"]=Value::Null;
-            plan["leaseExpiresAt"]=Value::Null;
-            plan["executionId"]=Value::Null;
-            plan["updatedAt"]=json!(now);
-        }
-    }
-    Ok(candidate)
-}
-
 /// Node PlannerApplyValidationError: retain the structured typed diagnosis
 /// while preserving its stable JSON message and nonretryable fencing phase.
 #[derive(Clone,Debug,PartialEq,Eq)]

@@ -20,7 +20,7 @@ pub fn validate_cli_options(args:&[String])->Result<(),String>{
         "--host", "--id", "--idempotency-key", "--implementation-thread-id", "--initial-plan",
         "--input", "--input-file", "--intent", "--intent-file", "--interval",
         "--isolated-nats-token-file", "--isolated-nats-url", "--isolated-store-dir", "--isolated-write-store-dir", "--job",
-        "--labels", "--lease-ms", "--legacy-shortcut-runtime", "--limit", "--live-codex-allow-repositories",
+        "--labels", "--legacy-shortcut-runtime", "--limit", "--live-codex-allow-repositories",
         "--live-codex-executable", "--live-store-dir", "--live-webhelm-executable", "--live-webhelm-socket", "--live-webhelm-workspace",
         "--local-merge-source", "--local-merge-target", "--max-attempts", "--message", "--message-file",
         "--missed-run-policy", "--mode", "--model", "--model-nats-token-file", "--model-nats-url",
@@ -57,7 +57,7 @@ pub fn validate_daemon_options(args:&[String])->Result<(),String>{
     const ALLOWED:&[&str]=&[
         "--canary-webhelm-executable", "--canary-webhelm-socket", "--canary-webhelm-workspace", "--concurrency", "--event-history-api",
         "--execution-router-rules", "--help", "--interval", "--isolated-nats-token-file", "--isolated-nats-url",
-        "--isolated-store-dir", "--isolated-write-store-dir", "--lease-ms", "--live-codex-allow-repositories", "--live-codex-executable",
+        "--isolated-store-dir", "--isolated-write-store-dir", "--live-codex-allow-repositories", "--live-codex-executable",
         "--live-store-dir", "--live-webhelm-executable", "--live-webhelm-socket", "--live-webhelm-workspace", "--model-nats-token-file",
         "--model-nats-url", "--port", "--repo", "--shadow-live-store-dir", "--trust-isolated-model-events",
         "--trust-model-events", "--version", "--workspace", "--workspace-root",

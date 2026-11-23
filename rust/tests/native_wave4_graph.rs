@@ -1,5 +1,4 @@
 // Wave4 live native mechanics: no user's SQLite, browser, or managed Relay Job.
-use agents_relay_rust2::task_inactivity_watchdog::{now_ms, WatchdogTimers};
 use agents_relay_rust2::workflow::planner_orchestration_v2::{
     dispatch_planner_orchestration_async, planner_orchestration_v2,
 };
@@ -23,60 +22,6 @@ fn ready<T>(future: impl Future<Output = T>) -> T {
         Poll::Ready(value) => value,
         Poll::Pending => panic!("isolated async effect must resolve synchronously"),
     }
-}
-fn running_task(execution: &str, timeout_ms: u64) -> Value {
-    let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(now_ms())
-        .unwrap()
-        .to_rfc3339();
-    json!({"jobId":"31","id":"42","state":"RUNNING","executionId":execution,
-        "timeoutMs":timeout_ms,"updatedAt":timestamp,"lastProgressAt":timestamp})
-}
-#[test]
-fn watchdog_rearm_cancels_old_generation_before_it_can_expire() {
-    let (tx, rx) = mpsc::channel();
-    let mut timers = WatchdogTimers::default();
-    let first = running_task("ex-old", 220);
-    let old = tx.clone();
-    assert!(timers
-        .arm(&first, "ex-old", 100, move || {
-            old.send("old").unwrap();
-        })
-        .is_some());
-    thread::sleep(Duration::from_millis(15));
-    let second = running_task("ex-new", 55);
-    assert!(timers
-        .arm(&second, "ex-new", 100, move || {
-            tx.send("new").unwrap();
-        })
-        .is_some());
-    assert_eq!(rx.recv_timeout(Duration::from_millis(600)).unwrap(), "new");
-    assert!(rx.recv_timeout(Duration::from_millis(250)).is_err());
-}
-#[test]
-fn watchdog_ineligible_rearm_clears_previous_timer_and_drop_cancels_pending() {
-    let (tx, rx) = mpsc::channel();
-    let mut timers = WatchdogTimers::default();
-    let task = running_task("ex-1", 55);
-    let old = tx.clone();
-    assert!(timers
-        .arm(&task, "ex-1", 40, move || {
-            old.send("old").unwrap();
-        })
-        .is_some());
-    let mut finished = task;
-    finished["state"] = json!("SUCCEEDED");
-    assert_eq!(
-        timers.arm(&finished, "ex-1", 40, || panic!("must not arm")),
-        None
-    );
-    assert!(rx.recv_timeout(Duration::from_millis(120)).is_err());
-    assert!(timers
-        .arm(&running_task("ex-2", 200), "ex-2", 40, move || {
-            tx.send("after-drop").unwrap();
-        })
-        .is_some());
-    drop(timers);
-    assert!(rx.recv_timeout(Duration::from_millis(250)).is_err());
 }
 #[test]
 fn planner_public_runtime_declares_all_node_exports_and_strict_boolean_guards() {

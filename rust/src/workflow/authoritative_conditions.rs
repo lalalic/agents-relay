@@ -65,9 +65,6 @@ pub fn verify_authoritative_condition(
         "task.failed" => task["state"] == "FAILED",
         "task.routing-cleared" => {
             task.get("executionId") == Some(&Value::Null)
-                && !task
-                    .get("leaseOwner")
-                    .is_some_and(|v| !v.is_null() && v != false && v != "")
         }
         "task.execution-stopped" => {
             let Some(execution_id) = execution_id.filter(|id| !id.is_empty()) else {

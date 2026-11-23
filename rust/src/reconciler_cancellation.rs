@@ -59,8 +59,6 @@ pub fn cancel_task_action(
         .ok_or("missing cancellation target")?;
     apply_task_graph_target(task, target, &now_iso(), false)?;
     task["error"] = json!(reason);
-    task["leaseOwner"] = Value::Null;
-    task["leaseExpiresAt"] = Value::Null;
     task["executionId"] = Value::Null;
     Ok(())
 }
@@ -88,8 +86,6 @@ pub fn cancel_active_tasks(
             plan["status"] = json!("FAILED");
             plan["error"] = json!(reason);
             plan["assessment"] = json!(format!("Planning failed: {reason}"));
-            plan["leaseOwner"] = Value::Null;
-            plan["leaseExpiresAt"] = Value::Null;
             plan["executionId"] = Value::Null;
             plan["updatedAt"] = json!(now_iso());
             save_plan(plan)?;

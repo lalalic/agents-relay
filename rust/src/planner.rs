@@ -193,7 +193,7 @@ pub fn create_plan_round(
         "headSha":trigger.get("currentHeadSha").filter(|v|!v.is_null())
             .or_else(||job.get("headSha")),
         "attempt":0,"maxAttempts":if manual{1}else{3},
-        "leaseOwner":null,"leaseExpiresAt":null,"executionId":null,
+        "executionId":null,
         "timeoutMs":timeout_ms.unwrap_or(900_000),
         "manualPlanning":manual,"createdAt":now,"updatedAt":now
     });
@@ -513,8 +513,6 @@ pub fn materialize_planner_child(
     }
     fields["attempt"]=json!(0);
     fields["maxAttempts"]=spec.get("maxAttempts").cloned().unwrap_or(json!(3));
-    fields["leaseOwner"]=Value::Null;
-    fields["leaseExpiresAt"]=Value::Null;
     fields["executionId"]=Value::Null;
     fields["threadId"]=Value::Null;
     fields["result"]=Value::Null;

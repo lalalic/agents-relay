@@ -18,7 +18,7 @@ fn fixture()->(PathBuf,DaemonConfig){
         profile_home:root.join("profiles"),policy_path:root.join("routing.json"),
         router_rules_path:root.join("rules.md"),dashboard_asset:root.join("index.html"),
         repositories:vec!["fixture".into()],port:9918,concurrency:1,interval_ms:100,
-        lease_ms:300000,event_transport:json!({}),
+        event_transport:json!({}),
     };
     (root,config)
 }
@@ -430,7 +430,6 @@ fn correlated_model_worker_event_stream_is_graph_sqlite_durable_and_replay_fence
         "reviewEnabled":false,"priority":"P2","tasks":[{
             "id":"2","jobId":"17","kind":"work","adapter":"chatgpt","agentName":"implementation",
             "title":"Model Worker","state":"QUEUED","attempt":1,"maxAttempts":1,
-            "leaseOwner":"isolated-native","leaseExpiresAt":"2099-01-01T00:00:00.000Z",
             "executionId":execution,"gitDeliveryRequired":false,"dependencies":[],
             "routing":{"decisionId":"decision-17-worker","provider":"chatgpt",
                 "model":"account-defaults","profile":"default","reasoning":"medium"},
@@ -523,7 +522,7 @@ fn source_commit_required_model_task_rejects_false_completion_receipt(){
     job["state"]=json!("ACTIVE");
     job["tasks"]=json!([{"id":"2","jobId":"17","kind":"work","adapter":"codex",
         "agentName":"implementation","state":"RUNNING","attempt":1,"maxAttempts":1,
-        "executionId":execution,"leaseOwner":"isolated-native",
+        "executionId":execution,
         "gitDeliveryRequired":true,"output":{"kind":"task_pr"},
         "createdAt":"2026-11-18T00:00:00.000Z",
         "updatedAt":"2026-11-18T00:00:00.000Z"}]);
@@ -658,15 +657,13 @@ fn native_pause_resume_persists_graph_task_snapshots_and_rollback(){
         "tasks":[
             {"id":"2","jobId":"17","kind":"work","agentName":"developer",
                 "state":"RUNNING","attempt":2,"maxAttempts":2,
-                "executionId":"execution-a","leaseOwner":"runner",
-                "leaseExpiresAt":"2100-01-01T00:00:00.000Z"},
+                "executionId":"execution-a"},
             {"id":"3","jobId":"17","kind":"work","state":"SUCCEEDED",
                 "attempt":1,"maxAttempts":2},
             {"id":"4","jobId":"17","kind":"planner","state":"RUNNING",
-                "executionId":"planner-task","leaseOwner":"planner"}],
+                "executionId":"planner-task"}],
         "plans":[{"id":"5","jobId":"17","status":"PLANNING",
-            "executionId":"planning-execution","leaseOwner":"planner",
-            "leaseExpiresAt":"2100-01-01T00:00:00.000Z"}],
+            "executionId":"planning-execution"}],
         "updatedAt":"2026-11-18T00:00:00.000Z"
     });
     store.save_job(&original).unwrap();
@@ -678,11 +675,11 @@ fn native_pause_resume_persists_graph_task_snapshots_and_rollback(){
     assert_eq!(paused["tasks"][0]["state"],"QUEUED");
     assert_eq!(paused["tasks"][0]["pausedExecution"]["id"],"execution-a");
     assert_eq!(paused["tasks"][0]["pausedExecution"]["state"],"RUNNING");
-    assert_eq!(paused["tasks"][0]["leaseOwner"],Value::Null);
+    assert!(paused["tasks"][0].get("leaseOwner").is_none());
     assert_eq!(paused["tasks"][1],baseline["tasks"][1]);
     assert_eq!(paused["tasks"][2],baseline["tasks"][2],"planner Task is not paused");
     assert_eq!(paused["plans"][0]["pausedExecutionId"],"planning-execution");
-    assert_eq!(paused["plans"][0]["leaseOwner"],Value::Null);
+    assert!(paused["plans"][0].get("leaseOwner").is_none());
     assert_eq!(store.load_job("17").unwrap().unwrap(),paused);
     let resumed=workspace_control(&mut host,&json!({
         "command":"job.resume","jobId":"17"})).unwrap();
@@ -860,7 +857,7 @@ fn native_live_daemon_drains_planner_then_script_outbox_exactly_once_to_real_nat
                 row["state"]=json!("ACTIVE");
                 row["plans"]=json!([{"id":"plan-1","status":"PLANNING"}]);
                 row["tasks"]=json!([{"id":"8","jobId":"17","state":"RUNNING",
-                    "executionId":exec,"leaseOwner":"test-only"}]);
+                    "executionId":exec}]);
                 Ok(row)
             },&[json!({"key":planner_key,"event":planner}),
                 json!({"key":event_key,"event":event})]).unwrap();

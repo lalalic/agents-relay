@@ -106,7 +106,6 @@ pub fn derive_job_runtime_status(job: &Value, _pr_state: &str) -> &'static str {
     let leased = tasks.iter().any(|task| {
         text(task, "state") == "RUNNING"
             && task.get("executionId") != Some(&Value::Null)
-            && truthy(task.get("leaseOwner"))
     });
     if waiting && !leased {
         return "WAITING";

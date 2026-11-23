@@ -36,7 +36,6 @@ fn job_slot(id:&str)->Result<Arc<Mutex<()>>,String>{
 pub trait PlannerLaunchPorts:PlannerFinishPorts+Send+'static{
     fn has_planner(&self)->bool;
     fn owner(&self)->&str;
-    fn lease_ms(&self)->u64{300_000}
     fn timeout_ms(&self)->u64{story_size_timeout_ms(StorySize::M)}
     fn now(&self)->String{Utc::now().to_rfc3339_opts(SecondsFormat::Millis,true)}
     fn head_sha(&mut self)->Result<Option<String>,String>{Ok(None)}
@@ -100,8 +99,6 @@ pub fn launch_plan_execution<P:PlannerLaunchPorts>(
                         fresh["status"]=json!("FAILED");
                         fresh["error"]=json!("Planner unavailable");
                         fresh["assessment"]=json!("Planning failed: Planner unavailable");
-                        fresh["leaseOwner"]=Value::Null;
-                        fresh["leaseExpiresAt"]=Value::Null;
                         fresh["executionId"]=Value::Null;
                         fresh["updatedAt"]=json!(failed_at);
                         failed=true;
@@ -145,7 +142,6 @@ pub fn launch_plan_execution<P:PlannerLaunchPorts>(
             return Ok(());
         }
         if !field(&plan,"executionId").is_empty()
-            &&field(&plan,"leaseOwner")==host.owner()
             &&host.has_live(&plan_id,Some(field(&plan,"executionId"))){
             return Ok(());
         }
@@ -154,7 +150,6 @@ pub fn launch_plan_execution<P:PlannerLaunchPorts>(
             .map_err(|error|format!("Invalid Planner start time: {error}"))?;
         let timeout=plan.get("timeoutMs").and_then(Value::as_u64)
             .unwrap_or_else(||host.timeout_ms());
-        let lease=host.lease_ms().max(timeout);
         let execution_id=random_uuid();
         let head=host.head_sha()?;
         let mut claimed=plan.clone();
@@ -175,9 +170,6 @@ pub fn launch_plan_execution<P:PlannerLaunchPorts>(
         if claimed.get("timeoutMs").is_none_or(Value::is_null){
             claimed["timeoutMs"]=json!(timeout);
         }
-        claimed["leaseOwner"]=json!(host.owner());
-        claimed["leaseExpiresAt"]=json!((at+Duration::milliseconds(lease as i64))
-            .to_rfc3339_opts(SecondsFormat::Millis,true));
         claimed["executionId"]=json!(execution_id);
         claimed["updatedAt"]=json!(at.to_rfc3339_opts(SecondsFormat::Millis,true));
         host.save_claimed_plan(&job_id,&claimed)?;

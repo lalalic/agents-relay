@@ -284,7 +284,6 @@ pub mod workflow_effect_failures;
 pub mod cli_escalation;
 pub mod cli_coordinator;
 pub mod execution_process_tracker;
-pub mod execution_recovery;
 pub mod job_pause;
 pub mod local_managed_store;
 pub mod router_evals;

@@ -195,10 +195,6 @@ pub struct Plan {
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub max_attempts:Option<u64>,
     #[serde(default,skip_serializing_if="Option::is_none")]
-    pub lease_owner:Option<String>,
-    #[serde(default,skip_serializing_if="Option::is_none")]
-    pub lease_expires_at:Option<String>,
-    #[serde(default,skip_serializing_if="Option::is_none")]
     pub execution_id:Option<String>,
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub applied_execution_id:Option<String>,
@@ -333,8 +329,6 @@ pub struct Task {
     pub state:TaskState,
     pub attempt:u64,
     pub max_attempts:u64,
-    pub lease_owner:Option<String>,
-    pub lease_expires_at:Option<String>,
     pub execution_id:Option<String>,
     pub thread_id:Option<String>,
     pub result:Option<ResultRecord>,

@@ -205,7 +205,7 @@ pub fn record_targeted_revision_request(
             "revision":{"kind":"targeted","originalTaskId":owner["id"],
                 "requestIds":[request_id],"reviewTaskId":reviewer["id"],"basedOnHeadSha":head},
             "attempt":0,"maxAttempts":std::cmp::max(3,owner["maxAttempts"].as_i64().unwrap_or(0)),
-            "leaseOwner":null,"leaseExpiresAt":null,"executionId":null,"threadId":null,
+            "executionId":null,"threadId":null,
             "result":null,"error":null,"continuation":null,"continuationDeliveredAt":null,
             "createdAt":now,"updatedAt":now,
         });

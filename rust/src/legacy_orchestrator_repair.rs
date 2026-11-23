@@ -42,7 +42,7 @@ where
         let Some(current_task)=current.get("tasks").and_then(Value::as_array)
             .and_then(|ts|ts.iter().find(|t|t.get("id")==stale.get("id")))
             .cloned() else {continue;};
-        let same_generation=["executionId","leaseOwner","leaseExpiresAt"]
+        let same_generation=["executionId"]
             .iter().all(|key|current_task.get(*key)==stale.get(*key));
         if !same_generation {continue;}
         let mut repaired=current_task.clone();

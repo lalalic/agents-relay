@@ -18,16 +18,8 @@ fn millis(raw: &str) -> Option<i64> {
         .ok()
         .map(|value| value.timestamp_millis())
 }
-fn expired(task: &Value, now: i64) -> bool {
-    let expiration = task
-        .get("leaseExpiresAt")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    if expiration.is_empty() {
-        true
-    } else {
-        millis(expiration).is_some_and(|expiry| expiry <= now)
-    }
+fn no_execution(task:&Value)->bool {
+    task.get("executionId").is_none_or(Value::is_null)
 }
 pub fn orchestrator_rescue_facts(task: &Value, now: i64) -> Value {
     let legacy_active = task["kind"] != "planner"
@@ -37,8 +29,8 @@ pub fn orchestrator_rescue_facts(task: &Value, now: i64) -> Value {
         && task.get("result").is_some_and(|value| !value.is_null())
         && task.pointer("/result/data/externalCompletionVerified") == Some(&Value::Bool(true));
     json!({"legacyActive":legacy_active,"verifiedExternalCompletion":verified,
-        "unknownStartedOutcome":legacy_active&&task["state"]=="RUNNING"&&!verified&&expired(task,now),
-        "rescuable":legacy_active&&task["state"]=="QUEUED"&&!verified&&expired(task,now)})
+        "unknownStartedOutcome":legacy_active&&task["state"]=="RUNNING"&&!verified&&no_execution(task),
+        "rescuable":legacy_active&&task["state"]=="QUEUED"&&!verified&&no_execution(task)})
 }
 pub fn decide_orchestrator_rescue(
     directory: &Path,
@@ -84,7 +76,7 @@ pub fn prepare_orchestrator_repair(
             .ok_or("invalid time")?
             .to_rfc3339_opts(SecondsFormat::Millis, true);
         dispatch_task_lifecycle_sync(directory, task, "task.completed", &json!({}), &stamp)?;
-        for key in ["leaseOwner", "leaseExpiresAt", "executionId", "threadId"] {
+        for key in ["executionId", "threadId"] {
             task[key] = Value::Null;
         }
         task["updatedAt"] = json!(stamp);
@@ -100,7 +92,7 @@ pub fn prepare_orchestrator_repair(
         dispatch_task_lifecycle_sync(directory, task, "task.failed", &json!({}), &stamp)?;
         task["error"]=json!("Legacy orchestrator execution outcome is unknown; Troubleshooter diagnosis is required before retry.");
         task["failureReason"] = json!("worker_outcome_unknown");
-        for key in ["leaseOwner", "leaseExpiresAt", "executionId", "threadId"] {
+        for key in ["executionId", "threadId"] {
             task[key] = Value::Null;
         }
         task["updatedAt"] = json!(stamp);
@@ -113,7 +105,7 @@ pub fn prepare_orchestrator_repair(
             object.shift_remove(key);
         }
     }
-    for key in ["leaseOwner", "leaseExpiresAt", "executionId", "threadId"] {
+    for key in ["executionId", "threadId"] {
         task[key] = Value::Null;
     }
     task["timeoutMs"] = json!(match task["storySize"].as_str().unwrap_or("M") {

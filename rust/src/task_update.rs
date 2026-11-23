@@ -37,7 +37,6 @@ where Transition: FnMut(&mut Value, &str) -> bool {
     let state = current.get("state").and_then(Value::as_str).unwrap_or("");
     if matches!(state, "RUNNING" | "SUCCEEDED" | "CANCELLED")
         || current.get("executionId").is_some_and(|v| !v.is_null())
-        || current.get("leaseOwner").is_some_and(|v| !v.is_null())
     { return Err("Task is not mutable while active or terminal".into()); }
     let attempt = current.get("attempt").and_then(Value::as_i64).unwrap_or(0);
     if attempt > 0 && current.get("adapter") != proposed.get("adapter") {

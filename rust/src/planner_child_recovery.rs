@@ -78,7 +78,7 @@ where
                 .filter(|v| !v.is_null()).or_else(||job.get("headSha")),
             "attempt":planner.get("attempt"),
             "maxAttempts":planner.get("maxAttempts"),
-            "leaseOwner":null,"leaseExpiresAt":null,"executionId":null,
+            "executionId":null,
             "timeoutMs":planner.get("timeoutMs"),"manualPlanning":planner.get("manualPlanning"),
             "createdAt":planner.get("createdAt"),"updatedAt":planner.get("updatedAt")
         });

@@ -167,10 +167,8 @@ fn pool_sequence(request: &Value) -> Result<Value, String> {
 fn watchdog_fixture(request: &Value) -> Value {
     let task = &request["task"];
     let event = &request["event"];
-    let execution = string(request, "executionId");
-    let grace = request["graceMs"].as_i64().unwrap_or(5000);
     let now = request["now"].as_i64().unwrap_or_else(watchdog::now_ms);
-    json!({"requires":watchdog::requires_worker_inactivity_watchdog(task),"recoverable":watchdog::is_recoverable_watchdog_failure(task),"correlated":watchdog::is_correlated_worker_event(task,event),"deadline":watchdog::inactivity_deadline(task,execution,grace,now),"armDelay":watchdog::arm_deadline(task,execution,grace,now),"progressAccepted":watchdog::task_progress_mutation(task,event,now).is_some()})
+    json!({"requires":watchdog::requires_worker_inactivity_watchdog(task),"recoverable":watchdog::is_recoverable_watchdog_failure(task),"correlated":watchdog::is_correlated_worker_event(task,event),"progressAccepted":watchdog::task_progress_mutation(task,event,now).is_some()})
 }
 fn cancel_fixture(request: &Value) -> Result<Value, String> {
     use std::cell::RefCell;

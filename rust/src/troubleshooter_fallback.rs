@@ -73,8 +73,6 @@ pub fn fallback_failed_troubleshooters(
         if let Some(obj) = task.as_object_mut() {
             obj.remove("workerSelection");
         }
-        task["leaseOwner"] = Value::Null;
-        task["leaseExpiresAt"] = Value::Null;
         task["executionId"] = Value::Null;
         queued.push(task["id"].as_str().unwrap_or("").to_owned());
     }
@@ -342,8 +340,6 @@ where
             task["escalation"]=escalation;
             task["error"]=json!(format!("Waiting for human action: {request_action}"));
             task["failureReason"]=json!("human_action_required");
-            task["leaseOwner"]=Value::Null;
-            task["leaseExpiresAt"]=Value::Null;
             task["executionId"]=Value::Null;
             task["updatedAt"]=json!(at);
             current["updatedAt"]=json!(at);

@@ -118,7 +118,6 @@ fn verify(
         }
         "task.routing-cleared" => {
             if task["executionId"].is_null()
-                && task["leaseOwner"].as_str().is_none_or(str::is_empty)
             {
                 "Verified"
             } else {

@@ -131,8 +131,6 @@ pub fn stale_review_revisions(
                 } else {
                     "Targeted revision evidence became stale after review head changed"
                 });
-                child["leaseOwner"] = Value::Null;
-                child["leaseExpiresAt"] = Value::Null;
                 child["executionId"] = Value::Null;
                 child["updatedAt"] = json!(iso8601_now());
                 if let Some(e) = execution {

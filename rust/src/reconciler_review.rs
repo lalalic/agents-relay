@@ -126,8 +126,6 @@ pub fn invalidate_stale_review(
             try_transition_task_event(directory,task,"cancel",&json!({}),
                 &iso8601_now())?;
             task["error"]=json!("Review evidence became stale after the PR head changed");
-            task["leaseOwner"]=Value::Null;
-            task["leaseExpiresAt"]=Value::Null;
         }
     }
     let cancelled=stale_review_revisions(directory,&mut result.job,
@@ -239,7 +237,7 @@ pub fn create_final_review_task(
         "reviewHeadSha":head,"attempt":0,
         "maxAttempts":reviewer_options.get("maxAttempts")
             .and_then(Value::as_u64).unwrap_or(2),
-        "leaseOwner":null,"leaseExpiresAt":null,"executionId":null,
+        "executionId":null,
         "threadId":null,"result":null,"plannerResult":null,
         "error":null,
         "timeoutMs":reviewer_options.get("timeoutMs")
@@ -471,8 +469,6 @@ pub fn apply_review_event(
         // MUST release the same lease fields as task.completed. Otherwise a
         // COMPLETED Job can retain a ghost Reviewer lease indefinitely.
         candidate["executionId"]=Value::Null;
-        candidate["leaseOwner"]=Value::Null;
-        candidate["leaseExpiresAt"]=Value::Null;
         candidate["result"]=json!({"summary":event.get("message")
             .and_then(Value::as_str).unwrap_or("Review settled"),
             "data":event.get("data")});
