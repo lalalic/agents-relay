@@ -156,6 +156,8 @@ where
         "providerInstructions":provider,
         "skillPath":package_root.join("skills/agents-relay/SKILL.md").to_string_lossy().to_string(),
         "taskTitle":task["title"],"workerSelfReview":role=="worker",
+        "dagNode":task.get("dagNode"),"gitDeliveryRequired":task["gitDeliveryRequired"],
+        "repository":job["repository"],
         "jobId":job["id"],"taskId":task["id"],"executionId":task["executionId"]
     });
     build_relay_work_prompt(&input, reference_directory)

@@ -122,3 +122,23 @@ fn invalid_binding_and_relative_reference_have_explicit_failures() {
         "Cannot snapshot empty instructions"
     );
 }
+#[test]
+fn dag_and_source_workers_have_non_bypassable_completion_instructions(){
+    let dir=temp();fs::create_dir_all(&dir).unwrap();
+    let skill=dir.join("skill.md");fs::write(&skill,"# Skill").unwrap();
+    let base=json!({"agentName":"editor","agentContent":"# Editor",
+        "contracts":[],"contexts":[],"skillPath":skill.to_string_lossy(),
+        "jobId":"721","taskId":"2259","executionId":"exec-1","repository":"vlog",
+        "projectPath":"/tmp/vlog","workerSelfReview":true});
+    let mut dag=base.clone();
+    dag["dagNode"]=json!({"nodeId":"editor"});
+    let prompt=build_relay_work_prompt(&dag,Some(dir.to_str().unwrap())).unwrap();
+    assert!(prompt.contains("DAG TERMINAL: Do NOT publish `task.completed`"));
+    assert!(prompt.contains("agents-relay task complete --repo vlog --id 721 --task-id 2259"));
+    assert!(prompt.contains("NO --commit-sha"));
+    let mut source=base.clone();source["gitDeliveryRequired"]=json!(true);
+    let prompt=build_relay_work_prompt(&source,Some(dir.to_str().unwrap())).unwrap();
+    assert!(prompt.contains("SOURCE TERMINAL: Only call `agents-relay task complete`"));
+    assert!(!prompt.contains("DAG TERMINAL:"));
+    fs::remove_dir_all(dir).unwrap();
+}

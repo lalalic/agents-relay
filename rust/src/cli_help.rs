@@ -259,15 +259,15 @@ Actions:
     ),
     (
         r##########"task complete"##########,
-        r##########"Complete a commit-required source Task through the Relay daemon. Direct task.completed Event Bus submissions cannot complete such a Task.
+        r##########"Complete a current DAG file-result Task or commit-required source Task through one server-side validation and Graph gate. NEVER publish task.completed directly for these Tasks.
 
-Required: --repo LOCAL_ROOT_NAME --id JOB_ID --task-id TASK_ID --execution-id CURRENT_EXECUTION --commit-sha FULL_GIT_SHA --summary TEXT.
+DAG child Task: agents-relay task complete --repo LOCAL_ROOT_NAME --id JOB --task-id TASK --execution-id CURRENT_EXECUTION [--summary TEXT]
+  No --commit-sha. Relay reads ONLY the declared Task output file, validates status COMPLETED, output object, artifact paths and any project.run.json Stage validator before Graph+SQLite Task success and Events Bus terminal publication. Validation errors leave Task RUNNING in the same execution: repair and retry this command.
 
-Before calling, commit the Task changes on the Job source branch and ensure its checkout is fully clean. The final commit message must contain exact trailers:
-  Relay-Task: TASK_ID
-  Relay-Execution: CURRENT_EXECUTION
+Commit-required source Task: agents-relay task complete --repo LOCAL_ROOT_NAME --id JOB --task-id TASK --execution-id CURRENT_EXECUTION --commit-sha FULL_GIT_SHA [--summary TEXT]
+  Before calling, commit Task changes on its source branch, ensure clean tracked/untracked status, and include exact trailers Relay-Task: TASK_ID and Relay-Execution: CURRENT_EXECUTION. Relay verifies branch HEAD, baseline, ancestry, and immutable source binding before completion. An identical verified completion receipt is idempotent.
 
-Relay verifies the current execution's started Git baseline, source branch HEAD, nonempty new commit, commit trailers, exact worktree and clean tracked/untracked status. It saves the proof and transitions the Task through the canonical lifecycle graph; retries with the same accepted proof are idempotent. A mismatched or uncommitted source cannot succeed. Historical pre-enforcement Tasks keep their original event contract."##########,
+Both modes reject stale execution/incorrect repository binding. The daemon (not the CLI) owns validation, Task lifecycle transitions and publication."##########,
     ),
     (
         r##########"task create"##########,

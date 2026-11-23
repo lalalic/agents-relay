@@ -11,6 +11,10 @@ This worker self-review **does not replace** Relay's independent SHA-bound final
 
 For read-only research or diagnostic Tasks, validate findings and evidence; do not invent artifact modifications or review rounds.
 
+## DAG file-result Tasks
+
+For every DAG child, complete all self-review and Stage validation work within the original Worker execution. Write its declared JSON result with `status: "COMPLETED"`, an `output` object, and `artifacts` (array of existing files or an object matching the Stage's schema). Then invoke the execution-fenced common `agents-relay task complete --repo REPO --id JOB --task-id TASK --execution-id EXEC --summary SUMMARY` with NO commit SHA. The daemon runs the final pre-completion gate and emits `task.completed` only after Graph/SQLite acceptance. If it rejects missing `output`, an artifact, or a Stage violation, **fix and retry the same Worker**: do not publish `task.completed` directly, send `task.failed` for a repairable validator error, or create a Troubleshooter. The non-DAG source delivery contract below is unchanged.
+
 ## Commit-required source Tasks
 
 If the authoritative Task Context says `gitDeliveryRequired: true`, the final self-review is followed by a **real Git commit** on the Task's Job source branch, before completion. Include exact `Relay-Task: TASK_ID` and `Relay-Execution: EXECUTION_ID` commit trailers; verify no untracked or modified source files remain. Call the same-version `agents-relay task complete` CLI with the full commit SHA and bound execution ID. This CLI is the only authorized success path for the Task. A direct `task.completed` Event Bus message is not acceptable. Missing output, dirty source, wrong commit ancestry, stale execution or failed checks are not success; keep working or report an evidenced blocker.

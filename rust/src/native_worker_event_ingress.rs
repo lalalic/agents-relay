@@ -46,6 +46,13 @@ pub fn apply_verified_worker_event(
     if !matches!(field(current,"adapter"),"codex"|"chatgpt"|"z"){
         return Err("Model Worker event cannot mutate another adapter".into());
     }
+    // Model DAG workers must complete through the daemon-owned validated
+    // `task complete` action. Direct EventBus completion cannot return
+    // actionable validation errors or guarantee a pre-terminal repair loop.
+    if field(event,"type")=="task.completed"
+        &&current.get("dagNode").is_some_and(|v|!v.is_null()){
+        return Err("DAG_COMPLETION_REQUIRES_TASK_COMPLETE: use agents-relay task complete; repair validation errors in the same execution".into());
+    }
     if field(current,"executionId")!=execution_id
         ||(field(event,"type")=="task.started" && field(current,"state")!="QUEUED")
         ||(field(event,"type")!="task.started" && field(current,"state")!="RUNNING"){

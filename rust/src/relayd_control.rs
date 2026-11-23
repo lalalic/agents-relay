@@ -79,6 +79,12 @@ pub trait WorkspaceControlBackend{
     }
     fn blocker_ensure(&mut self,request:&Value)->Result<Value,String>;
     fn blocker_resolve(&mut self,id:&str,mode:&str)->Result<Value,String>;
+    /// One server-side pre-completion verifier for DAG file-result Tasks.
+    /// The host must validate the result contract and project stage gate;
+    /// no client-supplied result path or execution identity is trusted.
+    fn validate_dag_result(&mut self,_job:&Value,_task:&Value)->Result<Value,String>{
+        Err("DAG pre-completion validator is not connected".into())
+    }
     fn local_head(&mut self,job:&Value)->Result<String,String>;
     fn fail_interactive(&mut self,id:&str,task_id:&str,execution:&str,reason:&str)
         ->Result<Value,String>;
@@ -386,14 +392,61 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
             let commit_sha=field(body,"commitSha");
             let repository=field(body,"repository");
             let summary=field(body,"summary").trim();
-            if task_id.is_empty()||execution_id.is_empty()||commit_sha.is_empty()
+            if task_id.is_empty()||execution_id.is_empty()
                 ||summary.is_empty()||repository!=field(&job,"repository")
                 ||summary.encode_utf16().count()>4000{
-                return Err("task.complete requires matching repository, Task/Execution IDs, commit SHA and bounded summary".into());
+                return Err("task.complete requires matching repository, Task/Execution IDs and bounded summary".into());
             }
-            let original=task(&job,task_id).ok_or("task.complete is for commit-required source Tasks only")?;
-            if original["gitDeliveryRequired"]!=true{
-                return Err("task.complete is for commit-required source Tasks only".into());
+            let original=task(&job,task_id).ok_or("task.complete Task not found")?;
+            if original.get("dagNode").is_some_and(|v|!v.is_null()){
+                if !commit_sha.is_empty()||original["gitDeliveryRequired"]==true{
+                    return Err("DAG file-result completion must not carry a Git commit SHA".into());
+                }
+                if original["state"]=="SUCCEEDED"
+                    &&original.pointer("/result/data/validated_dag_result")==Some(&json!(true))
+                    &&original.get("executionHistory").and_then(Value::as_array)
+                        .is_some_and(|rows|rows.iter().any(|entry|field(entry,"id")==execution_id)){
+                    return Ok(json!({"accepted":true,"idempotent":true,"task":original}));
+                }
+                if original["state"]!="RUNNING"
+                    ||field(original,"executionId")!=execution_id{
+                    return Err("DAG task.complete refused: stale or non-running execution".into());
+                }
+                // Validation is deliberately BEFORE creating any terminal
+                // event or mutating SQLite. Errors return to THIS worker,
+                // leaving RUNNING so it can repair and retry in place.
+                let proof=backend.validate_dag_result(&job,original)?;
+                let event=event_for(&job_id,task_id,
+                    original.get("parentTaskId").and_then(Value::as_str),
+                    "task.completed","succeeded",summary,Some("worker"),
+                    Some(json!({"validated_dag_result":true,"dag_result_proof":proof})),
+                    Some(json!({"id":execution_event_source(&job_id,task_id,execution_id),
+                        "agent":field(original,"agentName"),
+                        "component":"agents-relay-cli"})));
+                let mut runtime=ReconcilerRuntime::new("control.task.complete");
+                let effect=runtime.apply_event(&graph,&job,&event,None)?;
+                if !effect.applied{
+                    return Err(format!("DAG task.complete rejected by Task Graph: {}",effect.reason));
+                }
+                let expected=job.clone();
+                let candidate=effect.job.clone();
+                let saved=backend.mutate_job(&job_id,&|fresh|{
+                    if fresh!=&expected{
+                        return Err("Concurrent Job mutation; recompute from SQLite snapshot".into());
+                    }
+                    crate::dag_precompletion::verify_dag_precompletion_receipt(
+                        &expected,original,&proof)?;
+                    *fresh=candidate.clone();
+                    Ok(())
+                })?;
+                // The SQLite+Graph receipt is authoritative even if Events
+                // Bus temporarily cannot publish. Do not re-run the worker.
+                let _=backend.publish(&event);
+                backend.wake(&job_id,"control.task.complete")?;
+                return Ok(json!({"accepted":true,"task":task(&saved,task_id)}));
+            }
+            if commit_sha.is_empty()||original["gitDeliveryRequired"]!=true{
+                return Err("task.complete requires a commit SHA for source Tasks, or a DAG file-result Task".into());
             }
             if original["state"]=="SUCCEEDED"
                 &&original.pointer("/gitDelivery/executionId").and_then(Value::as_str)==Some(execution_id)

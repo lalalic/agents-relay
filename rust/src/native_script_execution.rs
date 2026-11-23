@@ -40,6 +40,18 @@ pub fn persist_native_script_event(
     if event.pointer("/source/id").and_then(Value::as_str)!=Some(expected.as_str()){
         return Err("Script Task event source identity mismatch".into());
     }
+    let dag_proof=if field(event,"type")=="task.completed"
+        &&current.get("dagNode").is_some_and(|v|!v.is_null()){
+        let interpreter=crate::native_script_worker::configured_script_interpreter()?;
+        Some(crate::dag_precompletion::validate_dag_precompletion(
+            &before,current,Path::new(&interpreter))?)
+    }else{None};
+    let mut validated_event=event.clone();
+    if let Some(proof)=&dag_proof{
+        validated_event["data"]["validated_dag_result"]=json!(true);
+        validated_event["data"]["dag_result_proof"]=proof.clone();
+    }
+    let event=&validated_event;
     let candidate=if field(current,"state")=="QUEUED"
         && field(event,"type")=="task.failed"{
         // The original ScriptTaskAdapter reports an asynchronous failure
@@ -81,6 +93,13 @@ pub fn persist_native_script_event(
     });
     let recorded=scope.commit_workflow_mutation_and_events(job_id,move |fresh|{
         if fresh!=expected{return Err("Script Task generation changed during SQLite CAS".into());}
+        if let Some(proof)=&dag_proof{
+            let original=expected["tasks"].as_array().into_iter().flatten()
+                .find(|task|field(task,"id")==task_id)
+                .ok_or("Script DAG Task vanished during pre-completion CAS")?;
+            crate::dag_precompletion::verify_dag_precompletion_receipt(
+                &expected,original,proof)?;
+        }
         Ok(candidate)
     },&[durable_event])?;
     Ok(recorded)

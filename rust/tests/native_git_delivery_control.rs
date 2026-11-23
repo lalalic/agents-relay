@@ -59,13 +59,14 @@ impl Fixture{
 impl Drop for Fixture{fn drop(&mut self){let _=fs::remove_dir_all(&self.base);}}
 struct Backend{
     db:SQLiteRelayStore,graph:PathBuf,base:PathBuf,wakes:Vec<String>,events:Vec<Value>,
+    inject_file_race:bool,
 }
 impl Backend{
     fn new(f:&Fixture)->Self{
         let db=SQLiteRelayStore::open(&f.base.join("state.sqlite"),None).unwrap();
         db.save_job(&f.job()).unwrap();
         Self{db,graph:Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("workflow"),
-            base:f.base.clone(),wakes:vec![],events:vec![]}
+            base:f.base.clone(),wakes:vec![],events:vec![],inject_file_race:false}
     }
 }
 impl WorkspaceControlBackend for Backend{
@@ -87,6 +88,16 @@ impl WorkspaceControlBackend for Backend{
     fn refresh_inventory(&mut self)->Result<(),String>{Ok(())}
     fn publish(&mut self,event:&Value)->Result<(),String>{self.events.push(event.clone());Ok(())}
     fn manual_plan(&mut self,_:&str,_:Option<&str>,_:bool)->Result<Value,String>{unimplemented!()}
+    fn validate_dag_result(&mut self,job:&Value,task:&Value)->Result<Value,String>{
+        let proof=agents_relay_rust2::dag_precompletion::validate_dag_precompletion(
+            job,task,Path::new("/usr/bin/true"))?;
+        if self.inject_file_race{
+            let path=Path::new(task.pointer("/output/path").unwrap().as_str().unwrap());
+            fs::write(path,r#"{"status":"COMPLETED","output":{"raced":true},"artifacts":[]}"#)
+                .unwrap();
+        }
+        Ok(proof)
+    }
     fn review_targeted(&mut self,_:&str,_:&Value)->Result<Value,String>{unimplemented!()}
     fn blocker_ensure(&mut self,_:&Value)->Result<Value,String>{unimplemented!()}
     fn blocker_resolve(&mut self,_:&str,_:&str)->Result<Value,String>{unimplemented!()}
@@ -173,7 +184,7 @@ fn native_cli_task_complete_routes_exact_request_to_daemon_control_only(){
         "summary":"actual proof"}));
     let bad=["task","complete","--id","1"].map(str::to_string);
     let mut rejected=CliCapture{request:None};
-    assert!(run_cli(&mut rejected,&bad,None).unwrap_err().contains("--commit-sha"));
+    assert!(run_cli(&mut rejected,&bad,None).unwrap_err().contains("--execution-id"));
     assert!(rejected.request.is_none());
 }
 #[test]
@@ -186,4 +197,81 @@ fn dirty_worktree_rejects_without_sqlite_mutation(){
     assert!(err.contains("uncommitted or untracked"),"{err}");
     assert_eq!(backend.db.load_job("1").unwrap().unwrap(),before);
     assert!(backend.events.is_empty()&&backend.wakes.is_empty());
+}
+#[test]
+fn dag_cli_precompletion_rejects_and_repairs_same_execution(){
+    let f=Fixture::new();let mut backend=Backend::new(&f);
+    let dir=f.root.join("runs/test/.dag-node-results");
+    fs::create_dir_all(&dir).unwrap();
+    let result=dir.join("dag-child.json");
+    let media=f.root.join("runs/test/generated.mp4");
+    let mut job=f.job();
+    job["tasks"][0]=json!({
+        "id":"task-2","jobId":"1","kind":"work","agentName":"editor",
+        "adapter":"codex","dagNode":{"nodeId":"editor","parentTaskId":"coordinator","graphHash":"example"},
+        "output":{"kind":"file","path":result},
+        "state":"RUNNING","executionId":"ex-1","attempt":1,"maxAttempts":3,
+        "executionHistory":[{"id":"ex-1","attempt":1}],
+        "createdAt":"2026-11-18T00:00:00.000Z","updatedAt":"2026-11-18T00:00:00.000Z"
+    });
+    backend.db.save_job(&job).unwrap();
+    // Native model ingress uses a scoped SQLite schema, unlike the legacy
+    // unscoped Git-control fixture database above.
+    let scoped_path=f.base.join("model-ingress.sqlite");
+    let scoped=SQLiteRelayStore::open(&scoped_path,Some("1")).unwrap();
+    scoped.save_job(&job).unwrap();
+    drop(scoped);
+    let direct=event_for("1","task-2",None,"task.completed","succeeded","bypass",
+        Some("worker"),None,
+        Some(json!({"id":execution_event_source("1","task-2","ex-1")})));
+    let error=agents_relay_rust2::native_worker_event_ingress::apply_verified_worker_event(
+        &scoped_path,&backend.graph,"1","task-2","ex-1",&direct)
+        .unwrap_err();
+    assert!(error.contains("DAG_COMPLETION_REQUIRES_TASK_COMPLETE"),"{error}");
+    assert_eq!(backend.db.load_job("1").unwrap().unwrap()["tasks"][0]["state"],"RUNNING");
+    let req=json!({"command":"task.complete","jobId":"1","taskId":"task-2",
+        "repository":"root","executionId":"ex-1","commitSha":"",
+        "summary":"Validated Editor result"});
+    fs::write(&result,r#"{"status":"COMPLETED","artifacts":[]}"#).unwrap();
+    let error=workspace_control(&mut backend,&req).unwrap_err();
+    assert!(error.contains("output object"),"{error}");
+    assert_eq!(backend.db.load_job("1").unwrap().unwrap()["tasks"][0]["state"],"RUNNING");
+    assert!(backend.events.is_empty()&&backend.wakes.is_empty());
+    fs::write(&result,serde_json::to_vec(&json!({
+        "status":"COMPLETED","output":{},"artifacts":[media]
+    })).unwrap()).unwrap();
+    let error=workspace_control(&mut backend,&req).unwrap_err();
+    assert!(error.contains("unavailable"),"{error}");
+    assert_eq!(backend.db.load_job("1").unwrap().unwrap()["tasks"][0]["state"],"RUNNING");
+    fs::write(&media,b"valid artifact").unwrap();
+    backend.inject_file_race=true;
+    let race=workspace_control(&mut backend,&req).unwrap_err();
+    assert!(race.contains("DAG_PRECOMPLETION_STALE"),"{race}");
+    assert_eq!(backend.db.load_job("1").unwrap().unwrap()["tasks"][0]["state"],"RUNNING");
+    assert!(backend.events.is_empty());
+    backend.inject_file_race=false;
+    fs::write(&result,serde_json::to_vec(&json!({
+        "status":"COMPLETED","output":{},"artifacts":[media]
+    })).unwrap()).unwrap();
+    let completed=workspace_control(&mut backend,&req).unwrap();
+    assert_eq!(completed["task"]["state"],"SUCCEEDED");
+    assert_eq!(completed["task"]["result"]["data"]["validated_dag_result"],true);
+    assert_eq!(backend.events.len(),1);
+    assert_eq!(backend.wakes,["control.task.complete"]);
+    assert_eq!(workspace_control(&mut backend,&req).unwrap()["idempotent"],true);
+    assert_eq!(backend.events.len(),1);
+    let mut stale=req.clone();stale["executionId"]=json!("other-execution");
+    assert!(workspace_control(&mut backend,&stale).is_err());
+    let mut mixed=req.clone();mixed["commitSha"]=json!("a".repeat(40));
+    assert!(workspace_control(&mut backend,&mixed).is_err());
+}
+#[test]
+fn dag_cli_accepts_omitted_commit_sha_and_delegates_to_daemon(){
+    let args=["task","complete","--id","1","--task-id","task-2",
+        "--repo","root","--execution-id","ex-1"].map(str::to_string);
+    let mut capture=CliCapture{request:None};
+    assert_eq!(run_cli(&mut capture,&args,None).unwrap()["accepted"],true);
+    let request=capture.request.unwrap();
+    assert_eq!(request["commitSha"],"");
+    assert_eq!(request["summary"],"DAG Task task-2 validated output");
 }

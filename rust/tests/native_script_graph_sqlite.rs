@@ -173,3 +173,35 @@ fn real_script_runcommand_output_is_graph_fenced_and_durably_delivered(){
         "SCRIPT_COMMAND_OWNED_OK");
     fs::remove_dir_all(root).unwrap();
 }
+#[test]
+fn native_script_dag_result_rejects_then_accepts_validated_completion(){
+    use agents_relay_rust2::{
+        native_script_execution::persist_native_script_event,
+        events::event_for,
+        execution_event_identity::execution_event_source,
+    };
+    let (root,project,db)=fixture();
+    let path=project.join("runs/test/.dag-node-results/2.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut job=make_job(&project,&root);
+    job["tasks"][0]["dagNode"]=json!({"nodeId":"fixture","parentTaskId":"1","graphHash":"example"});
+    job["tasks"][0]["state"]=json!("RUNNING");
+    job["tasks"][0]["executionId"]=json!("exec-1");
+    job["tasks"][0]["executionHistory"]=json!([{"id":"exec-1","attempt":1}]);
+    job["tasks"][0]["output"]=json!({"kind":"file","path":path});
+    let store=SQLiteRelayStore::open(&db,Some("17")).unwrap();
+    store.save_job(&job).unwrap();
+    let event=event_for("17","2",None,"task.completed","succeeded","Script completed",
+        Some("worker"),Some(json!({"status":"COMPLETED","output":{},"artifacts":[]})),
+        Some(json!({"id":execution_event_source("17","2","exec-1")})));
+    fs::write(&path,r#"{"status":"COMPLETED","artifacts":[]}"#).unwrap();
+    let err=persist_native_script_event(&db,&graph(),"17","2","exec-1",&event).unwrap_err();
+    assert!(err.contains("output object"),"{err}");
+    assert_eq!(store.load_job("17").unwrap().unwrap()["tasks"][0]["state"],"RUNNING");
+    fs::write(&path,r#"{"status":"COMPLETED","output":{},"artifacts":[]}"#).unwrap();
+    let done=persist_native_script_event(&db,&graph(),"17","2","exec-1",&event).unwrap();
+    assert_eq!(done["tasks"][0]["state"],"SUCCEEDED");
+    assert_eq!(done["tasks"][0]["result"]["data"]["validated_dag_result"],true);
+    assert!(done["tasks"][0]["result"]["data"]["dag_result_proof"]["resultSha256"].is_string());
+    fs::remove_dir_all(root).unwrap();
+}

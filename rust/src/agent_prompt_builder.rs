@@ -264,6 +264,8 @@ pub fn build_relay_work_prompt(
     let _skill = prompt_file_reference(string_field(input, "skillPath"), "context")?;
     let agent_name = string_field(input, "agentName");
     let is_planner = agent_name == "planner";
+    let is_dag = input.get("dagNode").is_some_and(|v|v.is_object());
+    let is_commit_required = input["gitDeliveryRequired"]==true;
     let mut bootstrap=vec![
         format!("Git repository working directory (cwd): {}",string_field(input,"projectPath")),
         "Use this repository as cwd for local execution. For remote execution, access it only through the configured file/tool provider.".into(),
@@ -306,9 +308,18 @@ pub fn build_relay_work_prompt(
             format!("EVENT SOURCE (exact): job/{job_id}/task/{task_id}/execution/{execution_id}"),
             "START: After Bootstrap and the minimal event-contract preflight, publish `task.started` through the canonical events-bus before beginning Task work. Verify the publish response.".into(),
             "PROGRESS: Publish `task.progress` with concrete progress/evidence during long-running work and before the inactivity timeout. Progress is not completion.".into(),
-            "TERMINAL: After verifying durable output, publish exactly ONE `task.completed`; if you cannot fulfill the Task, publish `task.failed` with phase, reason and evidence. Do not silently exit or treat a process/browser receipt as completion.".into(),
+        ]);
+        if is_dag {
+            lines.push(format!("DAG TERMINAL: Do NOT publish `task.completed` using Events Bus. First write the complete structured DAG result to the exact declared Task output path with status COMPLETED, an output object and artifacts. Complete only using `agents-relay task complete --repo {} --id {job_id} --task-id {task_id} --execution-id {execution_id} --summary 'Validated DAG result'` (NO --commit-sha). The shared daemon validates the DAG result, artifact file paths and project stage contract BEFORE publishing task.completed and committing the Graph transition. On a validation rejection, repair the output in THIS SAME worker execution and rerun task complete; do not exit or create a Troubleshooter for a repairable schema error.",string_field(input,"repository")));
+        } else if is_commit_required {
+            lines.push("SOURCE TERMINAL: Only call `agents-relay task complete` with the verified commit SHA, execution ID and Git trailers, per worker-self-review.md. Never publish `task.completed` directly using Events Bus.".into());
+        } else {
+            lines.push("TERMINAL: After verifying durable output, publish exactly ONE `task.completed`; if you cannot fulfill the Task, publish `task.failed` with phase, reason and evidence. Do not silently exit or treat a process/browser receipt as completion.".into());
+        }
+        lines.extend([
+            "FAILURE: If a verified blocker makes completion impossible, publish `task.failed` with concrete phase, reason and evidence. Repair feasible validation errors inside the same execution instead of failing.".into(),
             "INTERACTIVE REVIEW: If this Job requires review, use only the review action and binding supplied by its Execution Context. Relay owns the suspension and resume state. Never invent a review tool or emit a terminal event while awaiting review. After resumption read the authoritative Task Context for the decision.".into(),
-            "Every event MUST use the exact source above. Do not publish `task.blocked` or `task.unblocked`; those are Relay-owned states. Relay must accept the correlated event.".into(),
+            "Every Event Bus event MUST use the exact source above. Do not publish `task.blocked` or `task.unblocked`; those are Relay-owned states. Relay must accept the correlated event.".into(),
         ]);
     }
     lines.extend(["", "## Contexts"].map(str::to_string));

@@ -388,6 +388,14 @@ impl IsolatedSQLiteWriteHost {
                 ==Some(crate::execution_event_identity::execution_event_source(
                     id,task_id,&execution).as_str());
         if !trusted{return Ok(false);}
+        // Direct DAG Model terminal events are explicitly unsupported after
+        // the shared task.complete cutover. They were already published to
+        // EventBus, so consume/skip them rather than retrying forever and
+        // poisoning the pending FIFO/history cursor for valid later events.
+        if kind=="task.completed"&&task.get("dagNode").is_some_and(|v|!v.is_null()){
+            eprintln!("warning: ignored direct DAG Model completion for Job {id} Task {task_id}; use agents-relay task complete");
+            return Ok(false);
+        }
         // At-least-once NATS delivery can include an additional start event
         // with a different event_id for the SAME leased generation. Once the
         // Graph has committed RUNNING, start is permanently stale for that
@@ -1099,6 +1107,15 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
         Ok(plan.receipt)
     }
     fn blocker_resolve(&mut self,_:&str,_:&str)->Result<Value,String>{Err(denied("blocker_resolve"))}
+    fn validate_dag_result(&mut self,job:&Value,task:&Value)->Result<Value,String>{
+        // Identical shared validator is used by native Script and CLI Model
+        // completion. The canonical project is checked against the daemon's
+        // isolated/live workspace before reading any caller-owned output.
+        self.isolated_project(job)?;
+        let interpreter=crate::native_script_worker::configured_script_interpreter()?;
+        crate::dag_precompletion::validate_dag_precompletion(
+            job,task,Path::new(&interpreter))
+    }
     fn local_head(&mut self,job:&Value)->Result<String,String>{source_commit_sha(job)}
     fn fail_interactive(&mut self,id:&str,task:&str,execution:&str,reason:&str)
         ->Result<Value,String>{

@@ -49,7 +49,9 @@ non-Codex tools, and external provider policies remain independent.
 
 ## Source Worker completion
 
-New source Tasks (`gitDeliveryRequired: true`) must commit with `Relay-Task: ID` and `Relay-Execution: EXECUTION_ID` trailers, then run the matching `agents-relay task complete` CLI with `--repo --id --task-id --execution-id --commit-sha --summary`. Relay verifies clean Git HEAD and execution before emitting completion. **Never directly emit `task.completed`**. File, Reviewer, Troubleshooter and legacy Tasks retain normal events.
+DAG child Tasks (`dagNode` set) **must not publish `task.completed` directly**. After writing the declared structured result file (`status: COMPLETED`, `output: {}`, `artifacts: []` or declared object), call `agents-relay task complete --repo --id --task-id --execution-id [--summary]` WITHOUT `--commit-sha`. Relay validates the result, string artifact paths, and declared project stage before atomically completing the Graph Task and publishing the terminal event. An invalid result returns an error without failing the Task; repair it in the same Worker execution and retry. The native Script Adapter invokes this same DAG pre-completion validator before its internal terminal event.
+
+New source Tasks (`gitDeliveryRequired: true`) must commit with `Relay-Task: ID` and `Relay-Execution: EXECUTION_ID` trailers, then run the matching `agents-relay task complete` CLI with `--repo --id --task-id --execution-id --commit-sha --summary`. Relay verifies clean Git HEAD and execution before emitting completion. **Never directly emit `task.completed`**. Non-DAG file, Reviewer, Troubleshooter and legacy Tasks retain normal events.
 
 ## Job Execution Lifecycle (JEL)
 
