@@ -28,6 +28,44 @@ fn job()->Value{
         "createdAt":"2026-11-18T00:00:00.000Z","updatedAt":"2026-11-18T00:00:00.000Z",
         "tasks":[],"plans":[]})
 }
+// Regression: the native HTTP control must persist the Job from the
+// Troubleshooter resume receipt, not the receipt object itself.
+#[test]
+fn native_control_human_resume_preserves_job_identity_for_both_entrypoints(){
+    for action in ["task.unblock","task.resume-troubleshooter"] {
+        let (root,config)=fixture();
+        let store=SQLiteRelayStore::open(&root.join("relay.sqlite"),Some("17")).unwrap();
+        let mut snapshot=job();
+        snapshot["state"]=json!("ACTIVE");
+        snapshot["tasks"]=json!([
+            {"id":"2","jobId":"17","kind":"work","agentName":"implementation",
+                "state":"FAILED","attempt":1,"maxAttempts":6,
+                "createdAt":"2026-11-18T00:00:00.000Z",
+                "updatedAt":"2026-11-18T00:00:00.000Z"},
+            {"id":"3","jobId":"17","kind":"work","agentName":"troubleshooter",
+                "parentTaskId":"2","state":"BLOCKED","attempt":3,"maxAttempts":3,
+                "error":"Awaiting response","escalation":{"id":"esc3","status":"pending"},
+                "createdAt":"2026-11-18T00:00:00.000Z",
+                "updatedAt":"2026-11-18T00:00:00.000Z"}
+        ]);
+        store.save_job(&snapshot).unwrap();
+        let mut host=IsolatedSQLiteWriteHost::new(config);
+        let request=json!({"command":action,"jobId":"17","taskId":"3",
+            "response":"Owner verified a successful Xcode device build"});
+        let result=workspace_control(&mut host,&request).unwrap();
+        assert_eq!(result["id"],"17","{action} must return authoritative Job");
+        let task=&result["tasks"][1];
+        assert_eq!(task["escalation"]["status"],"responded");
+        assert_eq!(task["escalation"]["response"],request["response"]);
+        assert!(matches!(task["state"].as_str(),Some("QUEUED"|"DRAFT")));
+        assert_eq!(result,store.load_job("17").unwrap().unwrap());
+        assert_eq!(agents_relay_rust2::relayd::DaemonServices::status(&mut host)["wakeCount"],1);
+        assert!(workspace_control(&mut host,&request).is_err(),
+            "Repeated human response must not mutate or wake again");
+        assert_eq!(result,store.load_job("17").unwrap().unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
+}
 #[test]
 fn native_daemon_cas_refuses_stale_writer_across_independent_sqlite_connections(){
     let (root,config)=fixture();

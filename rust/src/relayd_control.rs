@@ -497,7 +497,11 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
             // response is required') fires before any Task lookup.
             let id=body.get("taskId").and_then(Value::as_str).unwrap_or("");
             let response=body.get("response").and_then(Value::as_str).unwrap_or("");
-            let snapshot=resume_troubleshooter(&graph,&job,id,response,None)?;
+            // Recovery returns a receipt { job, task }; persistence must
+            // receive the Job snapshot, not that composite receipt.
+            let outcome=resume_troubleshooter(&graph,&job,id,response,None)?;
+            let snapshot=outcome.get("job").cloned()
+                .ok_or("Troubleshooter recovery did not return a Job")?;
             persist_candidate(backend,&job_id,&job,&snapshot)?;
             backend.publish(&event_for_unblock(&job_id,id,
                 "Human response recorded"))?;
@@ -515,7 +519,10 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
                 &&original.pointer("/escalation/status")
                     .and_then(Value::as_str)==Some("pending")
                 &&response.is_some(){
-                resume_troubleshooter(&graph,&job,id,response.unwrap_or(""),None)?
+                let outcome=resume_troubleshooter(
+                    &graph,&job,id,response.unwrap_or(""),None)?;
+                outcome.get("job").cloned()
+                    .ok_or("Troubleshooter recovery did not return a Job")?
             }else{
                 unblock_task_snapshot(&graph,&job,id,"cli",
                     field(body,"reason"),None,None,None,None)?.0
