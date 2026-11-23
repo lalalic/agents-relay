@@ -20,7 +20,7 @@ keep hidden workflow state or independently choose the next workflow step.
 
 ### 3. Graph outcomes select Actions
 
-TypeScript runtime code provides facts, persistence, locking/claims, adapters,
+Rust runtime code provides facts, persistence, locking/claims, adapters,
 I/O, and primitive guards/effects. It must not reproduce graph-owned policy as
 a second procedural state machine.
 
@@ -67,7 +67,7 @@ materially apply:
 2. Which canonical graph owns that decision?
 3. Which action/effect performs the selected mutation or side effect?
 4. Where does the durable state live?
-5. Does any TypeScript, CLI, dashboard, scheduler, webhook, daemon, or API path
+5. Does any Rust CLI, dashboard, scheduler, webhook, daemon, or API path
    duplicate graph authority?
 6. Do all entry points for the same intent converge on the same semantics?
 7. Is execution flow being confused with semantic Task ownership?
@@ -92,7 +92,7 @@ the durable Job objective. In particular, review must detect:
 - a workflow decision implemented outside its canonical graph;
 - an action/effect that owns hidden workflow state or independently decides the
   next step;
-- procedural code that duplicates graph authority;
+- procedural Rust code that duplicates graph authority;
 - divergent semantics between entry points for the same intent;
 - operational state persisted in the wrong authority layer; or
 - Task dependencies used as a substitute for semantic Task ownership, or vice

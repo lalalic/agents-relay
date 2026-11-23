@@ -2,7 +2,7 @@
 import {spawnSync} from 'node:child_process';
 import {basename} from 'node:path';
 const skill="agents-relay";
-const definitions=[["daemon", "npx", ["--yes", "--package", "agents-relay@latest", "agents-relayd", "--port", "8787", "--concurrency", "4", "--interval", "300000", "--refresh-ms", "300000"]], ["dashboard-tunnel", "cloudflared", ["tunnel", "--protocol", "http2", "--no-autoupdate", "run", "--url", "http://127.0.0.1:8787", "agents-relay-dashboard"]]];
+const definitions=[["daemon", "agents-relayd", ["--live-store-dir", "__HOME__/.agents-relay/stores", "--port", "8787", "--concurrency", "4", "--interval", "300000"]], ["dashboard-tunnel", "cloudflared", ["tunnel", "--protocol", "http2", "--no-autoupdate", "run", "--url", "http://127.0.0.1:8787", "agents-relay-dashboard"]]];
 const home=process.env.HOME||'';
 const expand=s=>s.replaceAll('__HOME__',home);
 const action=process.argv[2]||'status';
@@ -16,13 +16,14 @@ const configured=(binary,args,live)=>{
   const expected=args.map(expand);
   const actual=Array.isArray(env.args)?env.args.map(String):[];
   const launch=String(env.pm_exec_path||'');
-  const isNode=binary==='node';
-  const binaryMatches=isNode?launch===expected[0]:basename(launch)===binary;
-  const expectedArgs=isNode?expected.slice(1):expected;
-  return binaryMatches&&JSON.stringify(actual)===JSON.stringify(expectedArgs);
+  const binaryName=basename(launch);
+  const binaryMatches=binaryName===binary||(binary==='agents-relayd'&&binaryName==='agents-relayd-rust');
+  // Operators may configure additional NATS/WebHelm options after the core
+  // startup arguments. Do not declare drift solely for those native options.
+  return binaryMatches&&JSON.stringify(actual.slice(0,expected.length))===JSON.stringify(expected);
 };
 try {
- const pm2=JSON.parse(run('npx',['--yes','pm2','jlist']));
+ const pm2=JSON.parse(run('pm2',['jlist']));
  const report=[];
  for(const [service,binary,args] of definitions){
    const id=skill+'/'+service;
@@ -33,7 +34,7 @@ try {
       if(result.error)throw result.error;
       if(result.status!==0)throw new Error('failed to define '+id);
    }
-   const live=action==='setup'?JSON.parse(run('npx',['--yes','pm2','jlist'])).find(x=>x.name===id):current;
+   const live=action==='setup'?JSON.parse(run('pm2',['jlist'])).find(x=>x.name===id):current;
    report.push({service:id,state:live?.pm2_env?.status||'missing',registered:Boolean(live),
      configuration:!live?'missing':configured(binary,args,live)?'match':'drift'});
  }

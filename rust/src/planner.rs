@@ -549,17 +549,16 @@ pub fn planner_input(context:&Value)->String{
     let mut output=Map::new();
     put(&mut output,"objective",context.get("objective"));
     if let Some(execution)=context.get("planExecution").filter(|v|!v.is_null()){
-        let root=Path::new(env!("CARGO_MANIFEST_DIR")).parent()
-            .expect("Cargo manifest has repository root");
-        let cli=root.join("dist/cli.js");
+        // The provided native path is version-pinned by the daemon. A manual
+        // offline invocation without that binding uses the installed Rust CLI,
+        // never a second Node implementation.
         let native_cli=context.get("nativeRustCli").and_then(Value::as_str)
-            .filter(|v|Path::new(v).is_absolute());
-        let path=serde_json::to_string(&native_cli.unwrap_or_else(||
-            cli.to_str().unwrap_or("dist/cli.js")))
-            .unwrap_or_else(|_|"\"dist/cli.js\"".into());
-        let prefix=if native_cli.is_some(){""}else{"node "};
+            .filter(|v|Path::new(v).is_absolute())
+            .unwrap_or("agents-relay");
+        let path=serde_json::to_string(native_cli)
+            .unwrap_or_else(|_|"\"agents-relay\"".into());
         output.insert("apply_cli".into(),json!(format!(
-            "{prefix}{path} plan apply --repo {} --id {} --plan-id {} --execution-id {} --file PATH",
+            "{path} plan apply --repo {} --id {} --plan-id {} --execution-id {} --file PATH",
             field(job,"repository"),field(job,"id"),field(execution,"planId"),
             field(execution,"executionId"))));
     }

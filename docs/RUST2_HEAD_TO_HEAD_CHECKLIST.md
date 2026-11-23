@@ -1,5 +1,7 @@
 # Rust2: Node.js → Rust head-to-head port checklist
 
+> **ARCHIVED MIGRATION RECORD — not current instructions.** The Node.js `src/` and `test/` implementations and differential suites were deleted from `main` after Rust became the sole backend. Historic baselines/porting statuses below describe the completed migration process, not today's source layout or test commands. See the root README and `rust/tests/` for current verification.
+
 > Migration contract: the historical 227-file inventory at `234a8151fe0fe616c39c0109b4b014326044e17e` is retained for provenance. The authoritative current Node source is `main` at `ba22e4cbdfa68cdd4ccb08dc7e02df49b57e7a90` (225 active source files: 3 removed, 1 added). The existing Rust rewrite is deliberately retired; **no legacy Rust implementation is reused**. No parity is claimed until independent differential verification passes.
 
 ## Rules and exit criteria

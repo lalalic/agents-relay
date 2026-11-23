@@ -8,7 +8,7 @@ pub mod review_revision_settlement;
 pub mod review_revision_stale;
 pub mod reviewer_thread;
 pub mod troubleshooter_fallback;
-// New rust2 library: routes one-to-one ports of Node src modules without importing the retired Rust rewrite.
+// Canonical Rust Relay library: Graph effects, SQLite authority and native CLI/daemon APIs.
 pub mod audit_tail;
 pub mod cli_local_merge_config;
 pub mod cli_shutdown;

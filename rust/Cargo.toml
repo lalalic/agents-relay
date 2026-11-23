@@ -1,21 +1,21 @@
-# New rust2 crate: replaces the discarded rewrite with only verified head-to-head Node source ports.
+# Canonical Rust runtime crate for Agents Relay (CLI, daemon and native tests).
 [package]
 name = "agents-relay-rust2"
-version = "0.1.0"
+version = "2.0.258"
 edition = "2021"
 
 [dependencies]
-ureq = { version = "3.5.2", default-features = false, features = ["rustls", "json"] } # Native TLS/HTTP Events Bus API client for Node src/events-bus-runtime.ts.
-url = "2.5.8" # WHATWG URL path and query encoding parity for Events Bus cursor paging.
-serde = { version = "1", features = ["derive"] } # Browser Pool wire snapshots match Node camelCase JSON.
+ureq = { version = "3.5.2", default-features = false, features = ["rustls", "json"] } # Native TLS/HTTP Events Bus API client.
+url = "2.5.8" # URL encoding for Events Bus cursor paging.
+serde = { version = "1", features = ["derive"] } # Browser Pool wire snapshots use camelCase JSON.
 
 serde_json = { version = "1", features = ["preserve_order"] }
-libc = "0.2" # POSIX locale collation for Node localeCompare parity on macOS.
-regex = "1.13" # Port Node worker rejection regex semantics, including mixed separators.
+libc = "0.2" # POSIX locale collation on macOS.
+regex = "1.13" # Worker rejection regex semantics, including mixed separators.
 sha2 = "0.10"
-chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] } # Node Date.parse and ISO timestamps for dashboard JEL parity.
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] } # ISO timestamps for dashboard JEL.
 
-rusqlite = { version = "0.37.0", features = ["backup"] } # Node src/task-id-migration.ts: native SQLite online backup and atomic migration.
+rusqlite = { version = "0.37.0", features = ["backup"] } # Native SQLite online backup and atomic migration.
 
 [[bin]]
 name = "relay-rust2-parity"

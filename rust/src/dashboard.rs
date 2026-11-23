@@ -11,7 +11,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{Receiver, RecvTimeoutError},
-        Arc, OnceLock,
+        Arc,
     },
     thread,
     time::{Duration, Instant},
@@ -62,13 +62,7 @@ pub trait DashboardBackend: Send + Sync + 'static {
     fn subscribe_events(&self) -> Receiver<String>;
 }
 pub fn dashboard_version() -> &'static str {
-    static VERSION: OnceLock<String> = OnceLock::new();
-    VERSION.get_or_init(|| {
-        serde_json::from_str::<serde_json::Value>(include_str!("../../package.json"))
-            .ok()
-            .and_then(|pkg| pkg.get("version")?.as_str().map(str::to_owned))
-            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_owned())
-    })
+    env!("CARGO_PKG_VERSION")
 }
 fn source_revision() -> Option<String> {
     let valid = |value: &str| value.len() == 40 && value.bytes().all(|b| b.is_ascii_hexdigit());

@@ -20,7 +20,7 @@ architecture-sensitive work.
 - Workers are replaceable and recoverable. Results and state must survive worker or daemon death.
 - Keep provider/model routing separate from roles and capabilities. The optional Agent `skills`, `model`, and `reasoning` frontmatter fields are advisory only; follow `skills/agents-relay/contracts/agent-contract.md`. Do not turn hints into enforced Skill requirements, Router choices, or Task constraints.
 - Prefer standard library and small dependencies. SQLite is canonical lifecycle state. Do not hydrate/recover lifecycle from PR body/comments or enqueue lifecycle projection writes. Preserve historical remote audit rows; new Job execution must not require GitHub or create PR actions.
-- TypeScript must use explicit types and avoid `any`.
+- Rust is the only Relay backend implementation. Keep Graph policy in `workflow/*.mmd` and native Rust code in `rust/src/`; do not reintroduce Node/TypeScript server or a mirrored test suite.
 - UI must remain usable without a frontend framework unless a framework becomes necessary.
 - Tests must cover state transitions, parser/serialization, reconciliation, and recovery-sensitive logic.
 - Repository test commands must isolate `AGENTS_RELAY_STORE_DIR`; tests and child CLIs must never use the canonical user store under `~/.agents-relay/stores`.
@@ -34,8 +34,8 @@ code change and classify it afterward.
 
 - **Graph** owns workflow policy: legal transitions, branching, eligibility, ordering, and decisions about **when**, **whether**, or **what happens next**. If existing workflow behavior changes, inspect the canonical `workflow/*.mmd` graphs first and change the owning graph when that policy belongs there.
 - **Action / effect** performs a concrete mutation or external side effect already selected by a graph. It may validate inputs and report success/failure, but it must not make a second workflow decision.
-- **TypeScript code** owns non-policy mechanics: facts, pure calculations, parsing/serialization, persistence primitives, leases/claims, I/O adapters, runtime projections, and concrete guard/action implementations.
-- Do not duplicate graph-owned policy in CLI, dashboard, reconciler, webhook, daemon, API, helper, or runtime code.
+- **Rust code** owns non-policy mechanics: facts, pure calculations, parsing/serialization, persistence primitives, leases/claims, I/O adapters, runtime projections, and concrete guard/action implementations.
+- Do not duplicate graph-owned policy in Rust CLI, dashboard backend, reconciler, webhook, daemon, API, helper, or runtime code.
 - For the same intent, every entry point must converge on the same graph/action semantics.
 - Final Review must verify the applicable Design Principles, not only code correctness.
 - Canonical workflow graph filenames and identities do not use `v1`/`v2`/etc suffixes. Git history is the version history; keep one stable current graph name.

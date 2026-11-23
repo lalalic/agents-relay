@@ -279,26 +279,10 @@ fn rust_dashboard_preserves_node_api_route_allowlist() {
 }
 
 #[test]
-fn rust_runtime_config_is_byte_identical_to_node_config() {
-    use std::{path::Path, process::Command};
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    let output = Command::new("node")
-        .args([
-            "--input-type=module",
-            "-e",
-            "import { dashboardConfigScript } from './dist/dashboard-html.js'; process.stdout.write(dashboardConfigScript());",
-        ])
-        .current_dir(root)
-        .output()
-        .expect("Node runtime is required for differential test");
-    assert!(
-        output.status.success(),
-        "Node config error: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        output.stdout,
-        dashboard_config_script().as_bytes(),
-        "Node/Rust live config JS differs"
-    );
+fn rust_runtime_config_is_self_contained_and_safe_to_serve() {
+    let script=dashboard_config_script();
+    assert!(!script.is_empty());
+    assert!(script.contains("buildJelDiagram:function jobJelDiagram("));
+    assert!(script.contains("\"statuses\":[\"DRAFT\",\"ACTIVE\",\"COMPLETED\"]"));
+    assert!(!script.contains("</script>"),"config JS must not break its script element");
 }

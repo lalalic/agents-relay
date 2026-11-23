@@ -1,0 +1,35 @@
+name: Rust Relay checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify Rust is the only tracked Relay backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -E '^(src/|test/|bin/|dist/|package(-lock)?\.json$|tsconfig\.json$|rust/tests/head_to_head.*\.mjs$)'; then
+            echo 'Removed Node backend/test paths were reintroduced' >&2
+            exit 1
+          fi
+          test -f rust/Cargo.toml
+          test -f rust/src/bin/agents-relay-rust.rs
+          test -f rust/src/bin/agents-relayd-rust.rs
+      - name: Compile native CLI and daemon
+        working-directory: rust
+        run: cargo check --locked --bins
+      - name: Native library regressions
+        working-directory: rust
+        run: cargo test --locked --lib
+      - name: Durable SQLite and Dashboard regressions
+        working-directory: rust
+        run: cargo test --locked --test native_sqlite_write_host --test native_dashboard_pwa

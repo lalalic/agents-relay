@@ -8,7 +8,7 @@ pub const CLI_HELP_ENTRIES: &[(&str, &str)] = &[
         r##########"Agents Relay coordinates durable asynchronous agent jobs through local SQLite and workflow graphs.
 
 Usage:
-  npx agents-relay <command> [options]
+  agents-relay <command> [options]
 
 Jobs use local Git identity and SQLite lifecycle state. After completion, Relay may push main to configured origin with fast-forward-only semantics.
 
@@ -34,15 +34,15 @@ Commands:
   serve                    Run the dashboard and reconciliation service
   migrate-local-repositories  Migrate canonical SQLite Jobs to local Git identities (daemon stopped)
 
-Run 'npx agents-relay <command> --help' for command options and examples.
-Use 'node dist/cli.js' only for explicit local development/demo mode."##########,
+Run 'agents-relay <command> --help' for command options and examples.
+The installed command and local Rust build use the same native implementation."##########,
     ),
     (
         r##########"job"##########,
         r##########"Manage SQLite-authoritative durable jobs.
 
 Usage:
-  npx agents-relay job <create|update|show|list|run|unblock|cancel|pause|resume> [options]
+  agents-relay job <create|update|show|list|run|unblock|cancel|pause|resume> [options]
 
 Actions:
   create  Atomically create a durable Job, optionally with its Coordinator DAG Task
@@ -78,7 +78,7 @@ its successors are dispatched immediately when capacity permits. Independent
 Final Review and Git Merge policies remain in force. Review previews do not
 create Git commits. No Shortcut Runner or execution mode remains.
 Example:
-  npx agents-relay job show --id 101"##########,
+  agents-relay job show --id 101"##########,
     ),
     (
         r##########"prompt"##########,
@@ -104,7 +104,7 @@ The generic Outcome Reviewer is implicit. Exit 0=PASS, 10=CHANGE_REQUIRED, 20=BL
 
 Request a new SHA-bound reviewer turn through the existing Relay lifecycle.
 
-Usage: npx agents-relay review job --repo LOCAL_ROOT_NAME --id JOB_ID [--thread-id THREAD_ID]
+Usage: agents-relay review job --repo LOCAL_ROOT_NAME --id JOB_ID [--thread-id THREAD_ID]
 
 When provided, --thread-id persists a reviewer destination; otherwise the Job reviewer thread, then creator thread, then legacy review route is used. The command wakes Relay. Review Task creation, idempotency, routing and delivery remain graph/daemon-owned. Rejects in-flight/queued reviews; does not itself mark review delivered.
 
@@ -153,7 +153,7 @@ The --no-review and --no-auto-merge policies are separate; creation is
 idempotent and does not rewrite an existing Job.
 
 Example:
-  npx agents-relay job create --repo vlog --project-root /absolute/path/to/vlog --title "Episode" --objective-file episode.md --initial-plan"##########,
+  agents-relay job create --repo vlog --project-root /absolute/path/to/vlog --title "Episode" --objective-file episode.md --initial-plan"##########,
     ),
     (
         r##########"job run"##########,
@@ -179,7 +179,7 @@ Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, -
 Unspecified fields are preserved. Local Job identity mismatch is rejected.
 
 Example:
-  npx agents-relay job update --id 101 --priority P0 --no-auto-merge"##########,
+  agents-relay job update --id 101 --priority P0 --no-auto-merge"##########,
     ),
     (
         r##########"job show"##########,
@@ -188,7 +188,7 @@ Example:
 Required: --id JOB_ID. Optional: --repo LOCAL_ROOT_NAME validates the repository.
 
 Example:
-  npx agents-relay job show --id 101"##########,
+  agents-relay job show --id 101"##########,
     ),
     (
         r##########"job list"##########,
@@ -197,7 +197,7 @@ Example:
 Optional: --repo LOCAL_ROOT_NAME filters results.
 
 Example:
-  npx agents-relay job list"##########,
+  agents-relay job list"##########,
     ),
     (
         r##########"job unblock"##########,
@@ -234,7 +234,7 @@ Required: --intent TEXT|--intent-file PATH and --blocked-on TEXT|--blocked-on-fi
         r##########"Show live aggregate runtime status from the running Agents Relay service.
 
 Usage:
-  npx agents-relay status [--host HOST] [--port PORT]
+  agents-relay status [--host HOST] [--port PORT]
 
 Returns the same summary used by the dashboard header plus a running array with concrete RUNNING task and execution identities. Defaults to 127.0.0.1:8787."##########,
     ),
@@ -243,7 +243,7 @@ Returns the same summary used by the dashboard header plus a running array with 
         r##########"Manage durable tasks.
 
 Usage:
-  npx agents-relay task <create|update|show|events|list|revise|complete|retry|unblock|cancel> [options]
+  agents-relay task <create|update|show|events|list|revise|complete|retry|unblock|cancel> [options]
 
 Actions:
   create  Create one durable Task under an existing Job
@@ -279,7 +279,7 @@ Tasks with dependencies start DRAFT; tasks without dependencies start QUEUED unl
 Directly-created Tasks are not wrapped in a synthetic Plan. Planner-generated Tasks are created internally by Relay from planner output.
 
 Example:
-  npx agents-relay task create --repo LOCAL_ROOT_NAME --id 101 --output file --output-path story.md --input-file task.md"##########,
+  agents-relay task create --repo LOCAL_ROOT_NAME --id 101 --output file --output-path story.md --input-file task.md"##########,
     ),
     (
         r##########"task update"##########,
@@ -291,7 +291,7 @@ Accepted task.started and newer current-execution task.progress events reset --t
 Use --clear-routing to remove routing metadata.
 
 Example:
-  npx agents-relay task update --repo LOCAL_ROOT_NAME --id 101 --task-id 202 --adapter chatgpt --provider chatgpt --model gpt-5.6-sol --reasoning high"##########,
+  agents-relay task update --repo LOCAL_ROOT_NAME --id 101 --task-id 202 --adapter chatgpt --provider chatgpt --model gpt-5.6-sol --reasoning high"##########,
     ),
     (
         r##########"task revise"##########,
@@ -380,14 +380,14 @@ Optional: --prompt TEXT or --prompt-file PATH|- (mutually exclusive). The prompt
 The command persists one real plan-N round, materializes validated next_tasks with planner provenance, and wakes normal reconciliation. It works for zero-task DRAFT Jobs. Historical planner-N rounds remain readable, but new rounds use plan-N.
 
 Example:
-  npx agents-relay plan --repo LOCAL_ROOT_NAME --id 101 --prompt "Plan the full implementation now; keep independent work parallel.""##########,
+  agents-relay plan --repo LOCAL_ROOT_NAME --id 101 --prompt "Plan the full implementation now; keep independent work parallel.""##########,
     ),
     (
         r##########"blocker"##########,
         r##########"Manage durable cross-Job blocker dependencies.
 
 Usage:
-  npx agents-relay blocker <add|resolve|show> [options]
+  agents-relay blocker <add|resolve|show> [options]
 
 The blocker Job owns reverse `unblocks` references. `add` registers a failed/blocked dependent task. `resolve` is the explicit verified-resolution path; merge-mode blockers resolve against the blocker Job’s authoritative local merge."##########,
     ),
@@ -423,7 +423,7 @@ Required: --repo LOCAL_ROOT_NAME --id JOB_ID. This explicit path is required for
         r##########"Resolve the shared execution context used by XChat and Relay.
 
 Usage:
-  npx agents-relay context resolve --project-path PATH --role ROLE [options]
+  agents-relay context resolve --project-path PATH --role ROLE [options]
 
 Actions:
   resolve  Resolve instructions, visible skills/agents, and runtime/delegation metadata"##########,
@@ -437,7 +437,7 @@ Common: --role orchestrator|planner|reviewer|worker|nested-worker, --skills a,b,
 Root overrides: --workspace-root PATH (or AGENTS_RELAY_WORKSPACE_ROOT), --global-root PATH. Agent names resolve through the workspace and project layers.
 
 Example:
-  npx agents-relay context resolve --project-path ~/Workspace/agents-relay --role orchestrator"##########,
+  agents-relay context resolve --project-path ~/Workspace/agents-relay --role orchestrator"##########,
     ),
     (
         r##########"record"##########,
@@ -447,7 +447,7 @@ Required: --file PATH or --repo/--id, plus --summary TEXT.
 Common: --task-id ID, --commit SHA, --project NAME.
 
 Example:
-  npx agents-relay record --file .agents-relay.json --summary "Built release" --commit abc123"##########,
+  agents-relay record --file .agents-relay.json --summary "Built release" --commit abc123"##########,
     ),
     (
         r##########"reconcile"##########,
@@ -458,7 +458,7 @@ Required: --file PATH for local demo mode, or --repo LOCAL_ROOT_NAME --id JOB_ID
 SQLite-backed local Git Jobs are reconciled by agents-relayd. The CLI publishes a job.wake request and does not launch workers; NATS is auto-detected when reachable; use --events nats to require it explicitly. Local/runtime invocations may use --thread-id ID to override the durable reviewer/creator thread for ChatGPT review delivery.
 
 Example:
-  npx agents-relay reconcile --repo LOCAL_ROOT_NAME --id 101"##########,
+  agents-relay reconcile --repo LOCAL_ROOT_NAME --id 101"##########,
     ),
     (
         r##########"init"##########,
@@ -467,7 +467,7 @@ Example:
 Common: --id ID, --title TEXT, --objective TEXT, --priority P0|P1|P2|P3. All Jobs replan to an explicit satisfied objective; execution modes and schedules are unsupported.
 
 Example:
-  npx agents-relay init --repo LOCAL_ROOT_NAME --id 101 --title "Objective""##########,
+  agents-relay init --repo LOCAL_ROOT_NAME --id 101 --title "Objective""##########,
     ),
     (
         r##########"serve"##########,
@@ -477,7 +477,7 @@ Required: --file PATH for local demo mode, or --repo LOCAL_ROOT_NAME --id JOB_ID
 Common: --port PORT, --interval MS, --events nats (optional; reachable NATS is auto-detected), --thread-id ID (reviewer-thread override).
 
 Example:
-  npx agents-relay serve --repo LOCAL_ROOT_NAME --id 101"##########,
+  agents-relay serve --repo LOCAL_ROOT_NAME --id 101"##########,
     ),
     (
         r##########"agent-register"##########,
@@ -487,7 +487,7 @@ Required for durable service mode: --repo LOCAL_ROOT_NAME --id JOB_ID plus --nam
 Common: --capabilities a,b, --runtime shell|codex|chatgpt, --provider NAME, --model NAME.
 
 Example:
-  npx agents-relay agent-register --file .agents-relay.json --name builder --responsibility "Build code" --role engineer --endpoint shell"##########,
+  agents-relay agent-register --file .agents-relay.json --name builder --responsibility "Build code" --role engineer --endpoint shell"##########,
     ),
     (
         r##########"agent-discover"##########,
@@ -497,7 +497,7 @@ Required for durable service mode: --repo LOCAL_ROOT_NAME --id JOB_ID. Use --fil
 Common: --capabilities a,b, --runtime NAME, --availability available,busy, --task-kind NAME, --explore.
 
 Example:
-  npx agents-relay agent-discover --file .agents-relay.json --capabilities shell"##########,
+  agents-relay agent-discover --file .agents-relay.json --capabilities shell"##########,
     ),
 ];
 fn stored(key: &str) -> Option<&'static str> {
