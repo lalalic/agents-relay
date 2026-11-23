@@ -24,7 +24,7 @@ impl DashboardApiServices for FakeBackend {
             "state":"ACTIVE","priority":"P2","createdAt":"2026-11-17T12:00:00.000Z",
             "updatedAt":"2026-11-17T12:00:00.000Z","tasks":[],"plans":[]})])
     }
-    fn exact_job(&mut self,id:&str,_repo:Option<&str>,_pr:Option<u64>)
+    fn exact_job(&mut self,id:&str,_repo:Option<&str>)
         ->Result<Option<Value>,String>{
         Ok((id=="101").then(||json!({"id":id,"state":"ACTIVE","title":"Alpha"})))
     }
@@ -67,7 +67,7 @@ fn fixture()->(NativeDashboardApi<FakeBackend>,Arc<Mutex<Vec<Value>>>){
         graph_directory:PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
         router_rules_path:std::env::temp_dir().join(format!("stage2-dashboard-rules-{}",std::process::id())),
         webhook_secret:None,webhook_repositories:HashSet::new(),
-        webhook_job_id:None,webhook_pr_number:None,
+        webhook_job_id:None,
     };
     (NativeDashboardApi::new(opts,backend),records)
 }

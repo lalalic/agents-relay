@@ -175,9 +175,6 @@ pub fn invoke(req:&Value)->Option<Result<String,String>>{
                     req["name"].as_str().unwrap_or("--id"),
                     req["fallback"].as_str().unwrap_or(""))),
                 "choices"=>json!(d::first_stage_choices(req.get("decision"))),
-                "coalesce"=>json!(d::should_coalesce_pull_request_refresh(
-                    req["completedAt"].as_i64(),req["now"].as_i64().unwrap_or(1000),
-                    req["force"].as_bool().unwrap_or(false))),
                 "merge"=>json!(d::merge_operational_inventory(
                     req["current"].as_array().map(Vec::as_slice).unwrap_or(&[]),
                     req["discovered"].as_array().map(Vec::as_slice).unwrap_or(&[]))),
@@ -191,15 +188,14 @@ pub fn invoke(req:&Value)->Option<Result<String,String>>{
                         req["workspaceEnv"].as_str())?;
                     json!({"repository":parsed.repository,
                         "workspaceRoot":parsed.workspace_root,
-                        "pullRequest":parsed.pull_request,"jobId":parsed.job_id,
                         "serviceArguments":parsed.service_arguments})
                 },
                 "overlay"=>{
                     use std::{future::{Future,ready},pin::pin,task::{Context,Poll,Waker}};
                     let overviews=req["overviews"].as_array().map(Vec::as_slice).unwrap_or(&[]);
-                    let mut f=pin!(d::overlay_operational_overviews(overviews,|repo,pr,mut job|{
+                    let mut f=pin!(d::overlay_operational_overviews(overviews,|repo,id,mut job|{
                         let injected=req["updates"].get(&repo)
-                            .and_then(|r|r.get(pr.to_string())).cloned();
+                            .and_then(|r|r.get(id.as_str()).or_else(||r.get("0"))).cloned();
                         if let Some(v)=injected{job=v;}
                         ready(Ok::<_,String>(job))
                     }));
@@ -330,7 +326,7 @@ pub fn invoke(req:&Value)->Option<Result<String,String>>{
                 "path"=>json!(d::relay_unified_store_path(directory).to_string_lossy()),
                 "scope"=>json!(d::resolve_unified_job_scope(
                     directory,req["repository"].as_str().unwrap_or(""),
-                    req["prNumber"].as_i64().unwrap_or(0),req["hintId"].as_str())?),
+                    req["hintId"].as_str().unwrap_or(""))?),
                 "inventory"=>{
                     let rows=d::discover_local_relay_store_snapshots(directory)?;
                     json!(rows.into_iter().map(|row|json!({

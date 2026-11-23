@@ -7,7 +7,7 @@
 // - src/router-evals.ts     ROUTER_EVAL_CASES / worker_for_route / run_router_evals
 // - src/dashboard-actions.ts dashboard task/job setState adapters
 // - src/blocker-recovery.ts validate_input / intent_fingerprint / make_request
-// - src/cli-job-create.ts   ensure_managed_github_job validation-first paths
+// - src/cli-job-create.ts   ensure_managed_local_job validation-first paths
 use agents_relay_rust2::{
     blocker_recovery as blocker_recovery_mod,
     cli_foreground::foreground_event_line,
@@ -356,7 +356,7 @@ pub fn invoke(request: &Value) -> Result<Option<String>, String> {
         ))
         .to_string(),
         "cliJobValidate" => {
-            // Validation-first paths of ensure_managed_github_job that do not
+            // Validation-first paths of ensure_managed_local_job that do not
             // need a real filesystem: coordinator shape and option guards.
             let options = request["options"].clone();
             let coordinator = options.get("coordinator").filter(|v| !v.is_null());

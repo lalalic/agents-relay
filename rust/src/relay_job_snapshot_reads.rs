@@ -1,6 +1,6 @@
 // Direct port of Node src/relay-job-snapshot-reads.ts: immutable normalized Job read projections from the authoritative SQLite snapshots.
 use crate::{
-    job_pr_number_migration::{normalize_legacy_job_pr_number, parse_js_json},
+    json_wire_parse::parse_js_json,
     legacy_blocked_task_migration::normalize_legacy_task_lifecycle,
 };
 use rusqlite::{params, Connection, OptionalExtension};
@@ -27,7 +27,7 @@ pub fn current_job_metadata(job: &Value) -> Value {
 
 pub fn normalize_relay_job(raw: &str) -> Result<Value, String> {
     let initial = parse_js_json(raw)?;
-    let mut job = current_job_metadata(&normalize_legacy_job_pr_number(&initial));
+    let mut job = current_job_metadata(&initial);
     let tasks = job
         .get_mut("tasks")
         .and_then(Value::as_array_mut)

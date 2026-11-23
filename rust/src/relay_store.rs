@@ -7,7 +7,6 @@ use crate::{
         has_host_invocation_decision,record_host_invocation_decision,
         record_host_invocation_event,HOST_INVOCATION_TABLES_SQL,
     },
-    job_pr_number_migration::migrate_legacy_job_pr_numbers,
     legacy_blocked_task_migration::migrate_legacy_blocked_tasks,
     local_merge_lock::iso8601_now,
     projection_outbox::{logical_operation_key,ProjectionOutbox,SCHEMA_VERSION},
@@ -64,7 +63,6 @@ fn initialize_legacy(db:&Connection)->Result<(),String>{
     db.execute_batch(crate::projection_outbox::create_receipt_table_sql())
         .map_err(sql)?;
     db.execute_batch(crate::projection_outbox::create_index_sql()).map_err(sql)?;
-    migrate_legacy_job_pr_numbers(db)?;
     let version=db.query_row(
         "SELECT value FROM relay_meta WHERE key='schema_version'",
         [],|r|r.get::<_,String>(0)).optional().map_err(sql)?
@@ -182,7 +180,7 @@ impl SQLiteRelayStore {
                 let schema=db.query_row(
                     "SELECT value FROM migration_metadata WHERE key='schema'",
                     [],|row|row.get::<_,String>(0)).optional().map_err(sql)?;
-                if schema.as_deref()!=Some("single-sqlite-staging-v1"){
+                if schema.as_deref()!=Some("local-git-id-v2"){
                     return Err("Unified Relay schema is missing or unsupported".into());
                 }
             }

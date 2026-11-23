@@ -3,7 +3,6 @@
 use serde_json::Value;
 use std::{collections::HashMap, env, future::Future, path::{Path,PathBuf}};
 
-pub const PR_REFRESH_COALESCE_MS:i64=1_000;
 pub const DAEMON_HELP:&str=r#"Agents Relay daemon runs the dashboard and worker pool.
 
 Usage:
@@ -34,8 +33,6 @@ pub const daemonHelp:&str=DAEMON_HELP;
 pub struct DaemonArguments {
     pub repository:Option<String>,
     pub workspace_root:Option<PathBuf>,
-    pub pull_request:Option<i64>,
-    pub job_id:Option<String>,
     pub service_arguments:Vec<String>,
 }
 pub fn value<'a>(args:&'a [String],name:&str,fallback:&'a str)->&'a str {
@@ -60,18 +57,7 @@ fn absolute_path(value:&str)->Result<PathBuf,String> {
 pub fn normalize_daemon_arguments(
     argv:&[String],env_workspace_root:Option<&str>,
 )->Result<DaemonArguments,String>{
-    let obsolete=[
-        "--github-repo","--pr","--no-github","--dependent-pr",
-        "--head","--base","--body","--github-app-id",
-        "--github-app-installation-id","--github-app-private-key-file",
-        "--github-webhook-secret","--github-webhook-secret-file",
-        "--github-token","--github-token-file","--projection-ms","--id"
-    ];
-    if let Some(flag)=obsolete.iter().find(|flag|
-        argv.iter().any(|arg|arg==**flag
-            || arg.starts_with(&format!("{flag}=")))) {
-        return Err(format!("Unsupported option {flag}: daemon Jobs use local Git identity and SQLite lifecycle state"));
-    }
+    crate::cli_option_contract::validate_daemon_options(argv)?;
     let repository=value(argv,"--repo","");
     if !repository.is_empty() && argv.iter().any(|arg|arg=="--workspace") {
         return Err("--repo and --workspace are mutually exclusive".into());
@@ -88,7 +74,7 @@ pub fn normalize_daemon_arguments(
     let workspace_root=workspace.map(absolute_path).transpose()?;
     Ok(DaemonArguments{
         repository:(!repository.is_empty()).then(||repository.into()),
-        workspace_root,pull_request:None,job_id:None,
+        workspace_root,
         service_arguments:argv.to_vec(),
     })
 }
@@ -98,17 +84,11 @@ pub fn first_stage_choices(decision:Option<&Value>)->Vec<String> {
         .and_then(|contract|contract.get("choices")).and_then(Value::as_array)
         .into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect()
 }
-pub fn should_coalesce_pull_request_refresh(
-    completed_at:Option<i64>,now:i64,force:bool,
-)->bool {
-    !force && completed_at.is_some_and(|end|now>=end && now-end<PR_REFRESH_COALESCE_MS)
-}
 fn overview_key(item:&Value)->String {
     let job=&item["job"];
     let repository=job.get("repository").and_then(Value::as_str).unwrap_or("undefined");
-    let pr=job.get("prNumber").map(|v|v.to_string()).unwrap_or_else(||"undefined".into());
     let id=job.get("id").and_then(Value::as_str).unwrap_or("undefined");
-    format!("{repository}#{pr}:{id}")
+    format!("{repository}:{id}")
 }
 pub fn merge_operational_inventory(current:&[Value],discovered:&[Value])->Vec<Value> {
     let mut values=Vec::<Value>::new();
@@ -151,7 +131,7 @@ pub async fn overlay_operational_overviews<Hydrate,HFut>(
     overviews:&[Value],mut hydrate:Hydrate,
 )->Result<Vec<Value>,String>
 where
-    Hydrate:FnMut(String,i64,Value)->HFut,
+    Hydrate:FnMut(String,String,Value)->HFut,
     HFut:Future<Output=Result<Value,String>>,
 {
     let mut result=Vec::with_capacity(overviews.len());
@@ -159,8 +139,8 @@ where
         let job=overview.get("job").ok_or("Managed overview missing Job")?;
         let repo=job.get("repository").and_then(Value::as_str)
             .ok_or("Managed Job missing repository")?;
-        let pr=job.get("prNumber").and_then(Value::as_i64).unwrap_or(0);
-        let authoritative=hydrate(repo.into(),pr,job.clone()).await?;
+        let id=job.get("id").and_then(Value::as_str).ok_or("Managed Job missing ID")?;
+        let authoritative=hydrate(repo.into(),id.into(),job.clone()).await?;
         let mut row=overview.clone();
         row["job"]=authoritative;
         result.push(row);

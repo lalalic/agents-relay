@@ -1125,19 +1125,6 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             self.wake(job_id,"native-plan.apply")?;
             return Ok(committed);
         }
-        if field(body,"command")=="job.create"{
-            // Stable Node src/relayd-control.ts injects daemon noGitHub
-            // into the trusted factory options, independently of whether
-            // the HTTP/CLI caller supplied a flag. The native service has
-            // no GitHub transport; recording false here breaks the immutable
-            // Coordinator start binding at the subsequent job run.
-            let mut normalized=body.clone();
-            if !normalized.get("options").is_some_and(Value::is_object){
-                normalized["options"]=json!({});
-            }
-            normalized["options"]["noGitHub"]=json!(true);
-            return workspace_control(self,&normalized);
-        }
         workspace_control(self,body)
     }
     fn deliver_pending_escalations(&mut self,id:&str)->Result<(),String>{
@@ -1327,15 +1314,8 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
     fn job_set_state(&mut self,id:&str,state:&str,_target:&Value)->Result<Value,String>{
         let original=WorkspaceControlBackend::load_job(self,id)?;
         self.isolated_project(&original)?;
-        let (next,close_optional_pr)=dashboard_job_set_state(
+        let (next,_)=dashboard_job_set_state(
             &self.config.graph_directory,&original,state)?;
-        // Stable Node dashboardJobSetState first commits the canonical
-        // Graph cancellation and only *optionally* closes a remote PR.
-        // Rust's noGitHub daemon has no remote transport: a missing source
-        // ref must not prevent the local CANCELLED transition.
-        if close_optional_pr&&!self.config.no_github{
-            return Err(denied("remote job state effect"));
-        }
         if next==original{return Ok(original);}
         let committed=self.persist_exact(id,&original,&next)?;
         if state=="CANCELLED"{self.wake(id,"dashboard.job.cancel")?;}
@@ -1348,8 +1328,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         self.isolated_project(&current)?;
         if target.get("repository").and_then(Value::as_str)
             .is_some_and(|repo|repo!=field(&current,"repository"))
-            ||target.get("prNumber").and_then(Value::as_i64)
-                .is_some_and(|pr|pr!=0&&current["prNumber"]!=json!(pr)){
+{
             return Err("Dashboard Task target does not match immutable Job binding".into());
         }
         let command=dashboard_task_set_state(&current,task_id,state)?;

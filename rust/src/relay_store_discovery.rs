@@ -1,6 +1,6 @@
 // Node provenance: src/relay-store-discovery.ts. Read-only, SQLite-authoritative
 // Job inventory and immutable scope lookup; never opens a writable connection.
-use crate::job_pr_number_migration::{normalize_legacy_job_pr_number, parse_js_json};
+use crate::json_wire_parse::parse_js_json;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
@@ -36,7 +36,7 @@ pub fn discover_unified_job_by_id(
         "SELECT json FROM job_snapshot WHERE job_id=?",params![id],
         |row|row.get(0)).optional().map_err(|e|e.to_string())?;
     let Some(raw)=raw else{return Ok(None);};
-    let job=normalize_legacy_job_pr_number(&parse_js_json(&raw)?);
+    let job=parse_js_json(&raw)?;
     if job.get("id").and_then(Value::as_str)!=Some(id){
         return Err("Immutable SQLite Job ID differs from row scope".into());
     }
@@ -62,50 +62,21 @@ pub fn discover_unified_job_by_id(
     }))
 }
 
-/// Reject a missing or ambiguous PR binding. A caller-supplied immutable ID
-/// remains authoritative, unless an existing registry proves it belongs elsewhere.
+/// Resolve a local Job only from its immutable Job ID and repository.
 pub fn resolve_unified_job_scope(
-    directory: &Path,
-    repository: &str,
-    pr_number: i64,
-    hint_id: Option<&str>,
-) -> Result<String, String> {
-    let path = relay_unified_store_path(directory);
-    if let Some(id) = hint_id {
-        if !path.exists() { return Ok(id.to_string()); }
+    directory:&Path,repository:&str,job_id:&str,
+)->Result<String,String>{
+    if job_id.is_empty() {return Err("Immutable Job ID is required".into());}
+    let path=relay_unified_store_path(directory);
+    if !path.exists() {return Ok(job_id.into());}
+    let db=open_read_only(&path)?;
+    let bound:Option<String>=db.query_row(
+        "SELECT repository FROM source_registry WHERE job_id=?",params![job_id],
+        |row|row.get(0)).optional().map_err(|e|e.to_string())?;
+    if bound.as_deref().is_some_and(|name|name!=repository){
+        return Err(format!("Job {job_id} belongs to another local repository"));
     }
-    let db = open_read_only(&path)?;
-    let has_registry: Option<i64> = db.query_row(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='source_registry'",
-        [], |row| row.get(0),
-    ).optional().map_err(|error| error.to_string())?;
-    if has_registry.is_none() {
-        return hint_id.map(str::to_owned).ok_or_else(||
-            format!("Unified Job scope is missing for {repository} PR {pr_number}; supply immutable Job ID"));
-    }
-    if let Some(id) = hint_id {
-        let binding: Option<(String, i64)> = db.query_row(
-            "SELECT repository,pr_number FROM source_registry WHERE job_id=?",
-            params![id], |row| Ok((row.get(0)?, row.get(1)?)),
-        ).optional().map_err(|error| error.to_string())?;
-        if let Some((bound_repo, bound_pr)) = binding {
-            if bound_repo != repository || (pr_number > 0 && bound_pr != pr_number) {
-                return Err(format!("Job {id} is bound to another repository or PR"));
-            }
-        }
-        return Ok(id.to_string());
-    }
-    let mut stmt = db.prepare(
-        "SELECT job_id FROM source_registry WHERE repository=? AND pr_number=?",
-    ).map_err(|error| error.to_string())?;
-    let ids = stmt.query_map(params![repository, pr_number], |row| row.get::<_, String>(0))
-        .map_err(|error| error.to_string())?
-        .collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
-    if ids.len() != 1 {
-        let kind = if ids.is_empty() { "missing" } else { "ambiguous" };
-        return Err(format!("Unified Job scope is {kind} for {repository} PR {pr_number}; supply immutable Job ID"));
-    }
-    Ok(ids[0].clone())
+    Ok(job_id.into())
 }
 
 /// Inventory reads must not reset leases, projection claims or outbox state.
@@ -145,7 +116,7 @@ pub fn discover_local_relay_store_snapshots(
         .collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
     let mut snapshots = Vec::with_capacity(jobs.len());
     for raw in jobs {
-        let job = normalize_legacy_job_pr_number(&parse_js_json(&raw)?);
+        let job = parse_js_json(&raw)?;
         let job_id = job.get("id").and_then(Value::as_str)
             .ok_or("Snapshot Job missing immutable id")?;
         let fact: Option<(String, Option<String>, Option<String>, String)> = db.query_row(

@@ -158,7 +158,7 @@ pub fn create_service<S:DaemonServices+'static>(
         graph_directory:config.graph_directory.clone(),
         router_rules_path:config.router_rules_path.clone(),
         webhook_secret:None,webhook_repositories:HashSet::new(),
-        webhook_job_id:None,webhook_pr_number:None,
+        webhook_job_id:None,
     },DaemonDashboardBackend{config:config.clone(),services:Arc::clone(&services)}));
     let server_stop=Arc::clone(&stop);
     let dashboard=thread::spawn(move||serve_dashboard(listener,api,server_stop)

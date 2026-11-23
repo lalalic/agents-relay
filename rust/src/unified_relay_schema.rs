@@ -3,8 +3,8 @@
 use rusqlite::Connection;
 
 pub const UNIFIED_RELAY_SCHEMA_SQL: &str = r####"
-      CREATE TABLE IF NOT EXISTS source_registry (job_id TEXT PRIMARY KEY, source_file TEXT NOT NULL UNIQUE, repository TEXT NOT NULL, pr_number INTEGER NOT NULL);
-      CREATE INDEX IF NOT EXISTS source_registry_repo_pr ON source_registry(repository,pr_number);
+      CREATE TABLE IF NOT EXISTS source_registry (job_id TEXT PRIMARY KEY, source_file TEXT NOT NULL UNIQUE, repository TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS source_registry_repo ON source_registry(repository);
       CREATE TABLE IF NOT EXISTS migration_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS relay_meta (scope_job_id TEXT NOT NULL REFERENCES source_registry(job_id), key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(scope_job_id,key));
       CREATE TABLE IF NOT EXISTS job_snapshot (job_id TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -50,7 +50,7 @@ pub const UNIFIED_RELAY_SCHEMA_SQL: &str = r####"
       CREATE TABLE IF NOT EXISTS projection_receipt (scope_job_id TEXT NOT NULL REFERENCES source_registry(job_id), operation_key TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('succeeded','failed')), attempts INTEGER NOT NULL, detail_json TEXT, recorded_at TEXT NOT NULL, PRIMARY KEY(scope_job_id,operation_key));
       CREATE TABLE IF NOT EXISTS sequences (repository TEXT NOT NULL, kind TEXT NOT NULL, value INTEGER NOT NULL, PRIMARY KEY(repository,kind));
       CREATE TABLE IF NOT EXISTS idempotency (repository TEXT NOT NULL, kind TEXT NOT NULL, request_key TEXT NOT NULL, entity_id TEXT NOT NULL, PRIMARY KEY(repository,kind,request_key));
-      INSERT INTO migration_metadata(key,value) VALUES('schema','single-sqlite-staging-v1'),('job_count','0');
+      INSERT INTO migration_metadata(key,value) VALUES('schema','local-git-id-v2'),('job_count','0');
     "####;
 
 /// Bootstrap one authoritative SQLite store. Preserve Node's repeated-boot

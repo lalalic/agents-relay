@@ -168,11 +168,6 @@ pub fn search_dashboard_jobs(jobs: &[Value], query: &str) -> Value {
         .trim()
         .to_string();
     let search = js_lower(param(query, &["q"]).unwrap_or_default().trim());
-    let pr_prefixed = search
-        .strip_prefix("pr")
-        .map(|s| s.trim_start_matches(char::is_whitespace))
-        .unwrap_or(&search);
-    let pr = pr_prefixed.strip_prefix('#').unwrap_or(pr_prefixed);
     let matching_status = |job: &Value, wanted: &str| {
         if wanted == "DRAFT" {
             job["draft"] == true || text(job, "state") == "DRAFT"
@@ -203,13 +198,7 @@ pub fn search_dashboard_jobs(jobs: &[Value], query: &str) -> Value {
             })
             .contains(&search)
                 || js_lower(text(job, "id")).contains(&search)
-                || (!pr.is_empty()
-                    && job
-                        .get("prNumber")
-                        .and_then(Value::as_i64)
-                        .filter(|n| *n != 0)
-                        .map(|n| n.to_string().contains(pr))
-                        .unwrap_or(false))
+
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -218,37 +207,6 @@ pub fn search_dashboard_jobs(jobs: &[Value], query: &str) -> Value {
     matching.truncate(DASHBOARD_JOB_RESULT_LIMIT);
     matching.sort_by(display_order);
     result(matching, jobs, total)
-}
-pub fn github_pr_url(repository: &Value, pr_number: &Value) -> Option<String> {
-    let repo = repository.as_str()?;
-    let num = pr_number.as_i64()?;
-    if num <= 0 {
-        return None;
-    }
-    let (owner, name) = repo.split_once('/')?;
-    if name.contains('/')
-        || name.is_empty()
-        || name.len() > 100
-        || !name
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-    {
-        return None;
-    }
-    if owner.is_empty()
-        || owner.len() > 38
-        || owner.starts_with('-')
-        || owner.ends_with('-')
-        || !owner
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-    {
-        return None;
-    }
-    if name == "." || name == ".." {
-        return None;
-    }
-    Some(format!("https://github.com/{owner}/{name}/pull/{num}"))
 }
 pub fn effective_github_usage(snapshot: Option<&Value>, runtime: Option<&Value>) -> Option<Value> {
     let mut smallest: Option<(f64, Value)> = None;
@@ -340,14 +298,6 @@ mod tests {
     }
     #[test]
     fn rate_limit_and_url_validations() {
-        assert_eq!(
-            github_pr_url(&json!("acme/tool"), &json!(123)),
-            Some("https://github.com/acme/tool/pull/123".into())
-        );
-        for repo in ["a/-/z", "bad owner/repo", "a/..", "a/b/c"] {
-            assert_eq!(github_pr_url(&json!(repo), &json!(1)), None)
-        }
-        assert_eq!(github_pr_url(&json!("a/r"), &json!(-1)), None);
         let usage=effective_github_usage(Some(&json!({"resources":{"core":{"limit":100,"remaining":80,"reset":10},"search":{"limit":20,"remaining":2,"reset":11}}})),None).unwrap();
         assert_eq!(usage["remaining"], 2.0);
     }

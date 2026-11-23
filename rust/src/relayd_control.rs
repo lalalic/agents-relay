@@ -6,7 +6,7 @@ use crate::{
     agent_graph::parse_agent_graph,
     cli_coordinator::bind_coordinator_start,
     blockers::register_blocker_dependency,
-    cli_job_create::ensure_managed_github_job,
+    cli_job_create::ensure_managed_local_job,
     interactive_request::{begin_interactive_review,abort_interactive_review,interactive_waiting_event},
     job_pause::{pause_job,resume_job},
     local_merge_lock::iso8601_now,
@@ -132,7 +132,7 @@ fn control_create<B:WorkspaceControlBackend>(
     let graph=backend.graph_directory().to_path_buf();
     let stores=backend.store_directory().to_path_buf();
     let all=backend.known_jobs()?;
-    let response=ensure_managed_github_job(
+    let response=ensure_managed_local_job(
         &graph,&stores,&repository,Path::new(&root),
         &opts,&all,|id|Ok(all.iter().find(|j|field(j,"id")==id).cloned()),
         |job|Ok(job.clone()))?;
@@ -282,7 +282,7 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
                 let updated=bind_coordinator_start(
                     current,task_id,source,
                     &project_root.to_string_lossy(),&workspace_root.to_string_lossy(),
-                    global_root,true,false,
+                    global_root,false,
                     |task|try_transition_task_event(
                         &graph,task,"queue",
                         &json!({"dependenciesSatisfied":true}),&now)

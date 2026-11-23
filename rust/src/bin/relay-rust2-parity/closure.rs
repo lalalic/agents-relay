@@ -677,12 +677,10 @@ pub(super) fn invoke(request:&Value)->Result<Option<String>,String>{
                 "jobTagFromArgs"=>cli::job_tag_from_args(&args)?,
                 "continuation"=>cli::continuation(&args),
                 "rejectRemovedJobOptions"=>{cli::reject_removed_job_options(&args)?;Value::Null},
-                "rejectRemoteLifecycleOptions"=>{cli::reject_remote_lifecycle_options(&args)?;Value::Null},
                 "integerArg"=>json!(cli::integer_arg(&args,request["flag"].as_str().unwrap_or(""),
                     request["fallback"].as_u64().unwrap_or(0))?),
                 "newLocalRepository"=>json!(cli::new_local_repository(&args)?),
                 "repository"=>json!(cli::repository(&args)?),
-                "optionalLegacyPr"=>json!(cli::optional_legacy_pr(&args)?),
                 "eventBusResolutionMessage"=>json!(cli::event_bus_resolution_message(&request["resolution"])),
                 _=>return Err("unknown CLI support method".into()),
             };

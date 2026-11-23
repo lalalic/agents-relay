@@ -11,6 +11,20 @@ The canonical V2 architecture contract is
 [DESIGN-PRINCIPLES.md](DESIGN-PRINCIPLES.md). README sections below describe
 the runtime; they do not replace that contract.
 
+**Rust local Job ID schema v2:** Native CLI/daemon reject retired PR/GitHub
+CLI switches and use the immutable `--id` + local Git repository. Fresh stores
+use `source_registry(job_id, source_file, repository)`, without `pr_number`.
+Existing `single-sqlite-staging-v1` databases are **not** read through a
+compatibility shim. Before installing the new daemon, let active Jobs reach a
+safe stopping point, stop the sole-writer daemon, make a consistent SQLite
+backup (including WAL transactions, using SQLite backup API), then apply
+`rust/sql/upgrade_local_job_registry_v2.sql` to the canonical `relay.sqlite`.
+Verify `PRAGMA integrity_check`, `PRAGMA foreign_key_check`, retained Job count,
+and `migration_metadata.schema = local-git-id-v2` before restarting Rust. The
+schema migration was tested with a production read-only snapshot; it is not an
+authorization to rewrite a concurrently active database. Optional
+post-completion verified `origin/main` fast-forward delivery remains supported.
+
 **Native Rust single-node release (2026-11-22):** **Production-ready for the
 existing Neo Master sole-writer deployment**. This scoped decision does not
 certify multi-node HA, rollback, or deferred full-system gates. See the

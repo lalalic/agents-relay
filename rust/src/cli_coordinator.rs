@@ -21,7 +21,7 @@ pub fn bind_coordinator_start<Queue, Activate>(
     job: &Value, task_id: &str, agent_graph: &str,
     project_root: &str, workspace_root: &str,
     global_root: Option<&str>,
-    no_github: bool, foreground: bool,
+    foreground: bool,
     mut queue_task: Queue, mut activate_job: Activate,
 ) -> Result<Value, String>
 where
@@ -60,11 +60,10 @@ where
     }
     let mut binding = json!({
         "projectRoot": project_root, "workspaceRoot": workspace_root,
-        "noGitHub": no_github,
     });
     if let Some(root) = global_root { binding["globalRoot"] = json!(root); }
     if let Some(existing) = current.get("graphStartContext").filter(|v| !v.is_null()) {
-        for key in ["projectRoot", "workspaceRoot", "globalRoot", "noGitHub"] {
+        for key in ["projectRoot", "workspaceRoot", "globalRoot"] {
             if existing.get(key) != binding.get(key) {
                 return Err("Coordinator start context differs from original binding".into());
             }
@@ -138,12 +137,11 @@ pub fn run_coordinator_job_command(
     let global_root=Some(arg(args,"--global-root",""))
         .filter(|value|!value.is_empty()).or(env_global_root);
     let now=iso8601_now();
-    let no_github=true;
     store.mutate_job(id,|current|{
         bind_coordinator_start(
             &current,task_id,graph,
             &project.to_string_lossy(),&workspace.to_string_lossy(),
-            global_root,no_github,in_foreground,
+            global_root,in_foreground,
             |task|try_transition_task_event(
                 graph_directory,task,"queue",
                 &json!({"dependenciesSatisfied":true}),&now)

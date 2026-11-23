@@ -38,7 +38,7 @@ impl DaemonServices for ReadOnlySQLiteHost {
             }
             return Ok(managed_view(&snapshot,job));
         }
-        exact_job(&inventory_from_local(&self.config,false)?,id,None,None)?
+        exact_job(&inventory_from_local(&self.config,false)?,id,None)?
             .ok_or_else(||format!("SQLite Job {id} not found"))
     }
     fn save_exact(&mut self,_id:&str,_prior:&Value,_next:&Value)->Result<Value,String>{

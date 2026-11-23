@@ -89,7 +89,7 @@ fn native_daemon_serves_original_ui_and_sqlite_first_status_then_stops_cleanly()
         router_rules_path:root.join("rules"),
         dashboard_asset:html,repositories:Vec::new(),
         port,concurrency:4,interval_ms:150,lease_ms:300000,
-        no_github:true,event_transport:json!({}),
+        event_transport:json!({}),
     };
     let stop=Arc::new(AtomicBool::new(false));
     let for_thread=stop.clone();

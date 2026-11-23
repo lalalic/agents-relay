@@ -38,7 +38,7 @@ fn complete_authoritative_sqlite_schema_includes_job_task_projection_and_review_
         assert_eq!(rows, 1, "missing {table}");
     }
     for index in [
-        "source_registry_repo_pr",
+        "source_registry_repo",
         "job_snapshot_updated",
         "projection_unified_due",
         "projection_unified_coalesce",
@@ -60,7 +60,7 @@ fn complete_authoritative_sqlite_schema_includes_job_task_projection_and_review_
             |row| row.get::<_, String>(0)
         )
         .unwrap(),
-        "single-sqlite-staging-v1"
+        "local-git-id-v2"
     );
     assert_eq!(
         db.query_row(
@@ -73,12 +73,12 @@ fn complete_authoritative_sqlite_schema_includes_job_task_projection_and_review_
     );
 }
 #[test]
-fn constraint_checks_reject_cross_job_missing_foreign_keys_and_invalid_pr_states() {
+fn constraint_checks_reject_cross_job_missing_foreign_keys_and_invalid_states() {
     let db = db();
     migrate_unified_relay_schema(&db).unwrap();
     assert!(db.execute("INSERT INTO pull_request_facts(scope_job_id,id,state,observed_at) VALUES ('absent',1,'OPEN','now')",[]).is_err());
     db.execute(
-        "INSERT INTO source_registry VALUES ('j1','file1','repo',0)",
+        "INSERT INTO source_registry VALUES ('j1','file1','repo')",
         [],
     )
     .unwrap();
@@ -87,7 +87,7 @@ fn constraint_checks_reject_cross_job_missing_foreign_keys_and_invalid_pr_states
     db.execute("INSERT INTO pull_request_facts(scope_job_id,id,state,observed_at) VALUES ('j1',1,'OPEN','now')",[]).unwrap();
     assert!(db
         .execute(
-            "INSERT INTO source_registry VALUES('j2','file1','repo',0)",
+            "INSERT INTO source_registry VALUES('j2','file1','repo')",
             []
         )
         .is_err());
@@ -123,4 +123,15 @@ fn startup_metadata_is_one_time_and_second_boot_reports_exact_duplicate_constrai
         .unwrap(),
         1
     );
+}
+
+#[test]
+fn local_git_registry_has_no_pr_identity_column_or_index() {
+    let db=db();
+    migrate_unified_relay_schema(&db).unwrap();
+    let mut stmt=db.prepare("PRAGMA table_info(source_registry)").unwrap();
+    let fields=stmt.query_map([],|r|r.get::<_,String>(1)).unwrap()
+        .collect::<Result<Vec<_>,_>>().unwrap();
+    assert_eq!(fields,vec!["job_id","source_file","repository"]);
+    assert_eq!(db.query_row("SELECT count(*) FROM sqlite_master WHERE type='index' AND name='source_registry_repo_pr'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
 }

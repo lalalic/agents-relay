@@ -71,13 +71,8 @@ fn query(parsed: &Url, key: &str) -> Option<String> {
         .find(|(name, _)| name == key)
         .map(|(_, value)| value.into_owned())
 }
-fn target(parsed: &Url) -> (Option<String>, Option<u64>) {
-    (
-        query(parsed, "repo").filter(|v| !v.is_empty()),
-        query(parsed, "pr")
-            .and_then(|v| v.parse::<u64>().ok())
-            .filter(|n| *n > 0),
-    )
+fn target(parsed:&Url)->Option<String>{
+    query(parsed,"repo").filter(|v|!v.is_empty())
 }
 fn parse_json(req: &DashboardRequest<'_>) -> Result<Value, String> {
     serde_json::from_slice(req.body).map_err(|error| format!("Invalid JSON: {error}"))
@@ -99,7 +94,6 @@ pub trait DashboardApiServices: Send + 'static {
         &mut self,
         job_id: &str,
         repository: Option<&str>,
-        pr: Option<u64>,
     ) -> Result<Option<Value>, String>;
     fn control(&mut self, body: &Value) -> Result<Value, String>;
     fn job_action(&mut self, job_id: &str, action: &str) -> Result<Value, String>;
@@ -144,7 +138,6 @@ pub struct DashboardApiOptions {
     pub webhook_secret: Option<String>,
     pub webhook_repositories: HashSet<String>,
     pub webhook_job_id: Option<String>,
-    pub webhook_pr_number: Option<u64>,
 }
 pub struct NativeDashboardApi<S: DashboardApiServices> {
     services: Mutex<S>,
@@ -202,12 +195,7 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                     .and_then(Value::as_str)
                     .is_some_and(|actual| actual != scope)
             })
-            || self.options.webhook_pr_number.is_some_and(|expected| {
-                event
-                    .get("pullRequest")
-                    .and_then(Value::as_u64)
-                    .is_some_and(|actual| actual != expected)
-            })
+
         {
             return text_response(202, "Ignored");
         }
@@ -264,7 +252,7 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                     project_mobile_jobs(&json!(jobs),offset,limit)
                 },
                 "/api/mobile/job-tasks" if valid_get=>{
-                    let job=services.exact_job(&id,Some(&repo),None)?
+                    let job=services.exact_job(&id,Some(&repo))?
                         .ok_or("Job unavailable")?;
                     project_mobile_tasks(&job,&json!(id),&json!(repo))
                 },
@@ -276,7 +264,7 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                     if rows.iter().filter(|job|field(job,"id")==id).count()!=1{
                         return Err("Ambiguous Job ID".into());
                     }
-                    let job=services.exact_job(&id,Some(&repo),None)?
+                    let job=services.exact_job(&id,Some(&repo))?
                         .ok_or("Job unavailable")?;
                     if field(&job,"id")!=id||field(&job,"repository")!=repo{
                         return Err("Job identity mismatch".into());
@@ -304,7 +292,7 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                         return Err("Job not cancellable without a unique Job ID".into());
                     }
                     services.job_action(bound_id,"cancel")?;
-                    let after=services.exact_job(bound_id,Some(bound_repo),None)?
+                    let after=services.exact_job(bound_id,Some(bound_repo))?
                         .ok_or("CANCELLED readback not confirmed")?;
                     if field(&after,"id")!=bound_id||field(&after,"repository")!=bound_repo
                         ||field(&after,"state")!="CANCELLED"{
@@ -398,8 +386,8 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                     if !allowed_job_id(&id) {
                         return Ok(text_response(400, "Invalid job id"));
                     }
-                    let (repo, pr) = target(&parsed);
-                    let exact = services.exact_job(&id, repo.as_deref(), pr)?;
+                    let repo = target(&parsed);
+                    let exact = services.exact_job(&id, repo.as_deref())?;
                     let chosen = exact
                         .or_else(|| {
                             jobs.into_iter().find(|job| {
@@ -407,9 +395,7 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                                     && repo
                                         .as_deref()
                                         .is_none_or(|repo| field(job, "repository") == repo)
-                                    && pr.is_none_or(|pr| {
-                                        job.get("prNumber").and_then(Value::as_u64) == Some(pr)
-                                    })
+
                             })
                         })
                         .ok_or("Managed job not found")?;
@@ -558,13 +544,13 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                     {
                         return Ok(text_response(404, "Job state override unavailable"));
                     }
-                    let (repo, pr) = target(&parsed);
+                    let repo = target(&parsed);
                     json_response(
                         200,
                         &services.job_set_state(
                             &id,
                             &state,
-                            &json!({"repository":repo,"prNumber":pr}),
+                            &json!({"repository":repo}),
                         )?,
                     )
                 }
@@ -589,14 +575,14 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                     {
                         return Ok(text_response(404, "Task state override unavailable"));
                     }
-                    let (repo, pr) = target(&parsed);
+                    let repo = target(&parsed);
                     json_response(
                         200,
                         &services.task_set_state(
                             &id,
                             &task,
                             &state,
-                            &json!({"repository":repo,"prNumber":pr}),
+                            &json!({"repository":repo}),
                         )?,
                     )
                 }

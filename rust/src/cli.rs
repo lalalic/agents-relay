@@ -11,7 +11,7 @@ use crate::{
     cli_support::{
         relay_control_command,relay_control_job,relay_job_list,
         relay_job_state_command,relay_task_command,readonly_job_for,
-        new_local_repository,integer_arg,reject_remote_lifecycle_options,
+        new_local_repository,integer_arg,
     },
     cli_revision::{revision_request,validate_revision_receipt},
     cli_unblock::{job_unblock_request,task_unblock_request},
@@ -86,11 +86,6 @@ pub fn job_create_request(args:&[String],stdin:Option<&str>)
     }
     if has_arg(args,"--auto-merge")&&has_arg(args,"--no-auto-merge"){
         return Err("Choose only one of --auto-merge or --no-auto-merge".into());
-    }
-    let legacy=["--pr","--head","--base","--body"]
-        .into_iter().find(|flag|has_arg(args,flag));
-    if let Some(flag)=legacy{
-        return Err(format!("job create does not accept {flag}"));
     }
     let task_only=["--start","--task-id","--input","--input-file",
         "--adapter","--provider","--model","--profile","--reasoning",
@@ -558,9 +553,7 @@ pub fn agent_control_request(action:&str,args:&[String])->Result<Value,String>{
 pub fn run_cli<P:CliRuntimePort>(
     port:&mut P,argv:&[String],stdin:Option<&str>,
 )->Result<Value,String>{
-    // Do not resurrect retired GitHub/PR compatibility through secondary
-    // command paths, including help: these flags are not part of native CLI.
-    reject_remote_lifecycle_options(argv)?;
+    crate::cli_option_contract::validate_cli_options(argv)?;
     let Some(command)=argv.first().map(String::as_str)else{
         return Ok(json!(help_text(None,None)));
     };
@@ -570,14 +563,6 @@ pub fn run_cli<P:CliRuntimePort>(
     let args=&argv[1..];
     if args.iter().any(|v|matches!(v.as_str(),"--help"|"-h")){
         return Ok(json!(help_text(Some(command),args.first().map(String::as_str))));
-    }
-    // Remote GitHub lifecycle switches are deliberately rejected: local
-    // sqlite Job ID is the authority for create/merge/reconcile.
-    for banned in ["--github-repo","--github-app-id",
-        "--github-app-installation-id","--remote-lifecycle"]{
-        if has_arg(args,banned){
-            return Err(format!("Unsupported remote lifecycle option {banned}"));
-        }
     }
     match command{
         "job"=>run_job_command(port,

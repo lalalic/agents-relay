@@ -1,5 +1,5 @@
 // Direct port of Node src/legacy-blocked-task-migration.ts and its normalizeLegacyTaskLifecycle dependency in src/types.ts.
-use crate::job_pr_number_migration::parse_js_json;
+use crate::json_wire_parse::parse_js_json;
 use crate::observability::json_wire;
 use chrono::{DateTime, NaiveDateTime};
 use rusqlite::{params, Connection};

@@ -154,7 +154,7 @@ pub mod unified_job_registry;
 // Direct Node src/legacy-blocked-task-migration.ts historical Task state migration.
 pub mod legacy_blocked_task_migration;
 // Direct Node src/job-pr-number-migration.ts historical PR-number and Task-title migration.
-pub mod job_pr_number_migration;
+pub mod json_wire_parse;
 
 // Direct Node src/unified-relay-schema.ts authoritative SQLite DDL port.
 pub mod unified_relay_schema;
@@ -162,7 +162,6 @@ pub mod unified_relay_schema;
 // Direct Node src/relay-job-snapshot-reads.ts durable Job normalization/reads.
 pub mod relay_job_snapshot_reads;
 // Direct Node src/no-github.ts fail-closed transport guard.
-pub mod no_github;
 
 // Direct Node src/task-comments.ts immutable comment history and reconciliation.
 pub mod task_comments;
@@ -266,7 +265,6 @@ pub mod projection_failure_recovery;
 
 pub mod z_oauth;
 
-pub mod github_auth;
 pub mod job_worktree_cleanup;
 
 pub mod continuation;
@@ -340,6 +338,7 @@ pub mod interactive_invocation;
 pub mod interactive_invocation_ports;
 pub mod execution_context;
 pub mod cli_support;
+pub mod cli_option_contract;
 pub mod cli_support_events;
 pub mod workspace;
 pub mod github_client;
@@ -376,7 +375,6 @@ pub mod reconciler_manual_plan_public;
 pub mod reconciler_runtime_base;
 pub mod reconciler_review_base;
 
-pub mod store_pull_request;
 
 pub mod blocker_store_port;
 // Top-level blocker recovery port: Node src/blocker-recovery.ts service layer.

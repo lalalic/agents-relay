@@ -55,28 +55,6 @@ fn require_coordinator(coordinator:&Value)->Result<(),String>{
     }
     Ok(())
 }
-fn external_pr_number(options:&Value)->Result<i64,String>{
-    let value=match options.get("prNumber"){
-        None|Some(Value::Null)=>return Ok(0),
-        Some(value)=>value,
-    };
-    // Original Node Number.isInteger, not a lossy serde as_i64 fallback.
-    let n=value.as_f64().ok_or("Invalid external PR binding number")?;
-    if !n.is_finite()||n<0.0||n.fract()!=0.0||n>=i64::MAX as f64{
-        return Err("Invalid external PR binding number".into());
-    }
-    Ok(n as i64)
-}
-fn placeholder(id:&str,options:&Value,number:i64)->Value{
-    json!({
-        "number":number,
-        "title":optional(options,"title").unwrap_or(id),
-        "body":optional(options,"body")
-            .or_else(||optional(options,"objective")).unwrap_or(""),
-        "state":"OPEN","head":optional(options,"head").unwrap_or(""),
-        "base":optional(options,"base").unwrap_or("")
-    })
-}
 fn same_coordinator(existing:&Value,requested:&Value)->bool{
     existing.get("tasks").and_then(Value::as_array).into_iter().flatten()
         .find(|task|field(task,"title")=="Coordinator"
@@ -94,9 +72,9 @@ fn normalize_thread(value:Option<&Value>,label:&str)->Result<Option<String>,Stri
     }
 }
 /// `known_jobs` must be obtained from the unified SQLite read-only inventory,
-/// not from GitHub PR labels. `load_job` and `persist` are authoritative
+/// not from any remote registry. `load_job` and `persist` are authoritative
 /// Store ports, which enforce idempotent job creation under BEGIN IMMEDIATE.
-pub fn ensure_managed_github_job<Load,Persist>(
+pub fn ensure_managed_local_job<Load,Persist>(
     graph_dir:&Path,store_dir:&Path,repository:&str,
     project_root:&Path,options:&Value,known_jobs:&[Value],
     mut load_job:Load,mut persist:Persist,
@@ -125,8 +103,6 @@ where
     let id=requested.map(str::to_owned).map(Ok).unwrap_or_else(||
         allocate_entity_id(store_dir,repository,"job",
             options.get("idempotencyKey").and_then(Value::as_str),&occupied))?;
-    let number=external_pr_number(options)?;
-    let mut pr=placeholder(&id,options,number);
     let matching:Vec<&Value>=known_jobs.iter()
         .filter(|job|field(job,"id")==id).collect();
     if matching.len()>1{
@@ -135,9 +111,8 @@ where
     if let Some(existing)=matching.first(){
         if field(existing,"repository")!=repository
             || field(existing,"projectRoot")!=path
-            || (options.get("prNumber").is_some() &&
-                existing.get("prNumber").and_then(Value::as_i64)!=Some(number)){
-            return Err("Immutable Job ID is already bound to a different local repository, project root, or external PR".into());
+{
+            return Err("Immutable Job ID is bound to a different local Git repository or project root".into());
         }
         if requested.is_none() && optional(options,"idempotencyKey").is_none(){
             return Err("Automatically allocated Job ID unexpectedly belongs to an existing Job".into());
@@ -151,36 +126,27 @@ where
             && !same_coordinator(existing,&options["coordinator"]){
             return Err("Coordinator idempotency key reused for a different Graph or Run".into());
         }
-        pr["number"]=existing.get("prNumber").cloned().unwrap_or(json!(number));
-        return Ok(json!({"job":existing,"pr":pr}));
+        return Ok(json!({"job":existing}));
     }
     if requested.is_some() && is_generated_entity_id(&id,repository,"job"){
         return Err("Reserved auto-generated Job ID cannot be assigned manually".into());
     }
     if let Some(existing)=load_job(&id)?{
-        return Ok(json!({"job":existing,"pr":pr}));
+        return Ok(json!({"job":existing}));
     }
     if optional(options,"localMergeTarget").is_some_and(|t|t!="refs/heads/main"){
         return Err("Local merge target must always be main".into());
     }
-    if optional(options,"base").is_some_and(|t|t!="main"){
-        return Err("Job base must always be main".into());
-    }
     let now=iso8601_now();
-    let local_source=optional(options,"localMergeSource")
-        .map(str::to_owned).or_else(||optional(options,"head")
-            .map(|h|format!("refs/heads/{h}")));
+    let local_source=optional(options,"localMergeSource").map(str::to_owned);
     let mut job=json!({
         "id":id,"title":optional(options,"title").unwrap_or(&id),
-        "objective":optional(options,"objective")
-            .or_else(||optional(options,"body")),
+        "objective":optional(options,"objective"),
         "projectRoot":path,
-        "description":pr.get("body").and_then(Value::as_str)
-            .filter(|body|!body.is_empty()),
+        "description":optional(options,"description"),
         "priority":optional(options,"priority").unwrap_or("P2"),
         "autoMerge":options.get("autoMerge").and_then(Value::as_bool).unwrap_or(true),
         "reviewEnabled":options.get("reviewEnabled").and_then(Value::as_bool).unwrap_or(true),
-        "prNumber":number,
         "repository":repository,
         "continuation":options.get("continuation"),"createdAt":now,
         "updatedAt":now,"tasks":[]
@@ -202,8 +168,7 @@ where
     if let Some(coordinator)=options.get("coordinator").filter(|v|!v.is_null()){
         let mut graph=json!({
             "projectRoot":coordinator.get("projectRoot"),
-            "workspaceRoot":coordinator.get("workspaceRoot"),
-            "noGitHub":options.get("noGitHub")==Some(&Value::Bool(true))
+            "workspaceRoot":coordinator.get("workspaceRoot")
         });
         for key in ["globalRoot"]{
             if let Some(value)=coordinator.get(key).filter(|v|!v.is_null()){
@@ -242,5 +207,5 @@ where
         if loaded.get("plans").is_none(){loaded["plans"]=json!([]);}
         loaded
     };
-    Ok(json!({"job":persisted,"pr":pr}))
+    Ok(json!({"job":persisted}))
 }

@@ -17,6 +17,10 @@ static STOP:AtomicBool=AtomicBool::new(false);
 extern "C" fn stop_signal(_:libc::c_int){STOP.store(true,Ordering::Release);}
 fn main(){
     let args=std::env::args().skip(1).collect::<Vec<_>>();
+    if let Err(error)=agents_relay_rust2::cli_option_contract::validate_daemon_options(&args){
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
     if args.iter().any(|arg|matches!(arg.as_str(),"--help"|"-h")){
         println!("agents-relayd-rust (native Relay daemon)\n  --live-store-dir /absolute/canonical/live/stores (exclusive writable production owner)\n  --isolated-store-dir /absolute/path/to/stores (read-only)\n  --shadow-live-store-dir /absolute/path/to/live/stores (strictly read-only, explicit opt-in)\n  --isolated-write-store-dir /absolute/path/to/stores (SQLite/Graph isolated mutations)\n  --event-history-api http://127.0.0.1:PORT/ (explicit read-only loopback Events Bus history, write mode only)\n  --trust-isolated-model-events (opt-in caller-owned loopback events as Graph-verified Worker ingress)\n  --isolated-nats-url nats://127.0.0.1:PORT/ (optional caller-owned isolated NATS subscriber, requires trust flag)\n  --isolated-nats-token-file /absolute/path/to/store/token (0600 isolated loopback authentication only)\n  --canary-webhelm-socket /absolute/path/to/real-webhelm.sock (explicit real provider, disposable Job store only)\n  --canary-webhelm-executable /absolute/path/to/webhelm\n  --canary-webhelm-workspace Rust2CanaryID\n  --model-nats-url nats://127.0.0.1:PORT/ (explicit live NATS)\n  --model-nats-token-file /absolute/path/to/store/token\n  --trust-model-events (explicit Graph-fenced ingress)\n  --live-webhelm-socket /absolute/path/to/webhelm.sock\n  --live-webhelm-executable /absolute/path/to/webhelm\n  --live-webhelm-workspace Relay\n  --port N\n  --interval MS\nLive mode requires Node stopped and exclusive SQLite ownership. No Node fallback.");
         return;

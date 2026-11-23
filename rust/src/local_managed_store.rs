@@ -1,4 +1,4 @@
-// Node provenance: src/local-managed-store.ts. Validate local Job/PR
+// Native local-managed-store: validate immutable local Job
 // identity before constructing any SQLite-authoritative store adapters.
 use crate::relay_store_discovery::{
     relay_unified_store_path, resolve_unified_job_scope,
@@ -11,24 +11,20 @@ pub struct LocalManagedStoreLocation {
     pub directory: PathBuf,
     pub sqlite_path: PathBuf,
     pub scope_job_id: String,
-    pub github_enabled: bool,
 }
 pub fn open_local_managed_store_location(
-    repository: &str,
-    pr_number: i64,
-    directory: &Path,
-    job_id: Option<&str>,
-    no_github: bool,
-) -> Result<LocalManagedStoreLocation, String> {
-    let valid_repo = Regex::new(r"^[A-Za-z0-9_.-]+$")
+    repository:&str,directory:&Path,job_id:&str,
+)->Result<LocalManagedStoreLocation,String>{
+    let valid_repo=Regex::new(r"^[A-Za-z0-9_.-]+$")
         .expect("constant repository identity expression");
-    if !valid_repo.is_match(repository) || matches!(repository, "." | "..")
-        || pr_number < 0 || (pr_number == 0 && job_id.is_none())
-    { return Err("Local managed store requires a local repository identity and either a positive PR number or immutable jobId".into()); }
-    let scope_job_id = resolve_unified_job_scope(directory, repository, pr_number, job_id)?;
-    Ok(LocalManagedStoreLocation {
-        directory: directory.into(), sqlite_path: relay_unified_store_path(directory),
-        scope_job_id, github_enabled: pr_number > 0 && !no_github,
+    if !valid_repo.is_match(repository)||matches!(repository,"."|"..")
+        ||job_id.is_empty(){
+        return Err("Local managed store requires repository and immutable Job ID".into());
+    }
+    let scope_job_id=resolve_unified_job_scope(directory,repository,job_id)?;
+    Ok(LocalManagedStoreLocation{
+        directory:directory.into(),sqlite_path:relay_unified_store_path(directory),
+        scope_job_id,
     })
 }
 
@@ -36,13 +32,10 @@ pub fn open_local_managed_store_location(
 /// LocalAuthority Store using the same validated immutable Job scope.
 /// Rust owns the SQLite connection inside `authority` (single source of truth).
 pub fn open_local_managed_store(
-    repository:&str,pr_number:i64,directory:&Path,
-    job_id:Option<&str>,no_github:bool,
+    repository:&str,directory:&Path,job_id:&str,
 )->Result<crate::local_authority_store::LocalAuthorityDurableStore,String>{
-    let location=open_local_managed_store_location(repository,pr_number,
-        directory,job_id,no_github)?;
+    let location=open_local_managed_store_location(repository,directory,job_id)?;
     let relay=crate::relay_store::SQLiteRelayStore::open(
         &location.sqlite_path,Some(&location.scope_job_id))?;
-    Ok(crate::local_authority_store::LocalAuthorityDurableStore::new(
-        relay,!location.github_enabled))
+    Ok(crate::local_authority_store::LocalAuthorityDurableStore::new(relay,true))
 }

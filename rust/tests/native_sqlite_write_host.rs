@@ -18,7 +18,7 @@ fn fixture()->(PathBuf,DaemonConfig){
         profile_home:root.join("profiles"),policy_path:root.join("routing.json"),
         router_rules_path:root.join("rules.md"),dashboard_asset:root.join("index.html"),
         repositories:vec!["fixture".into()],port:9918,concurrency:1,interval_ms:100,
-        lease_ms:300000,no_github:true,event_transport:json!({}),
+        lease_ms:300000,event_transport:json!({}),
     };
     (root,config)
 }
@@ -710,8 +710,7 @@ fn native_control_job_create_is_real_git_graph_sqlite_and_idempotent_after_resta
     git(&project,&["init","-q","-b","main"]);
     let opts=json!({"projectRoot":project,"title":"Native initial Job",
         "objective":"Create through real daemon Control",
-        "idempotencyKey":"first-control","reviewEnabled":false,
-        "noGitHub":true});
+        "idempotencyKey":"first-control","reviewEnabled":false});
     let request=json!({"command":"job.create","repository":"fixture",
         "initialPlan":false,"options":opts});
     let mut host=IsolatedSQLiteWriteHost::new(config.clone());

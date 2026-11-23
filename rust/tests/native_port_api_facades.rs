@@ -44,7 +44,7 @@ fn process_reason_requires_an_owned_handle_and_cannot_probe_foreign_pid(){
 #[test]
 fn local_managed_store_opens_a_scoped_canonical_sqlite_connection(){
     let root=fixture_dir();let directory=root.join("stores");std::fs::create_dir_all(&directory).unwrap();
-    let store=open_local_managed_store("my-repo",0,&directory,Some("123"),true).unwrap();
+    let store=open_local_managed_store("my-repo",&directory,"123").unwrap();
     assert_eq!(store.authority.scope_job_id.as_deref(),Some("123"));
     assert!(store.no_github);
     assert_eq!(store.authority.path,root.join("relay.sqlite"));

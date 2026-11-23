@@ -404,7 +404,6 @@ pub struct Job {
     pub id:String,
     pub title:String,
     pub project_root:String,
-    pub pr_number:i64,
     pub repository:String,
     pub state:JobLifecycleState,
     pub continuation:Option<Continuation>,

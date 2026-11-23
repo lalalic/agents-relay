@@ -558,10 +558,8 @@ pub fn planner_input(context:&Value)->String{
             cli.to_str().unwrap_or("dist/cli.js")))
             .unwrap_or_else(|_|"\"dist/cli.js\"".into());
         let prefix=if native_cli.is_some(){""}else{"node "};
-        let pr=job.get("prNumber").and_then(Value::as_i64)
-            .filter(|n|*n>0).map(|n|format!("--pr {n} ")).unwrap_or_default();
         output.insert("apply_cli".into(),json!(format!(
-            "{prefix}{path} plan apply --repo {} {pr}--id {} --plan-id {} --execution-id {} --file PATH",
+            "{prefix}{path} plan apply --repo {} --id {} --plan-id {} --execution-id {} --file PATH",
             field(job,"repository"),field(job,"id"),field(execution,"planId"),
             field(execution,"executionId"))));
     }

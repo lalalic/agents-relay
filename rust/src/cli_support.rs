@@ -84,19 +84,6 @@ pub fn reject_removed_job_options(args:&[String])->Result<(),String>{
     }
     Ok(())
 }
-pub fn reject_remote_lifecycle_options(args:&[String])->Result<(),String>{
-    let obsolete=["--github-repo","--pr","--no-github","--dependent-pr",
-        "--head","--base","--body","--github-app-id",
-        "--github-app-installation-id","--github-app-private-key-file",
-        "--github-webhook-secret","--github-webhook-secret-file",
-        "--github-token","--github-token-file","--projection-ms"];
-    if let Some(flag)=obsolete.into_iter().find(|flag|args.iter().any(|arg|
-        arg==flag||arg.starts_with(&format!("{flag}=")))){
-        return Err(format!("Unsupported option {flag}: Jobs use local Git identity and SQLite lifecycle state"));
-    }
-    Ok(())
-}
-
 // JS Number(value) accepts blank/whitespace and 0x/0b/0o literals;
 // from_str::<u64> silently diverges for valid Node CLI options.
 fn js_number(raw:&str)->f64{
@@ -111,9 +98,6 @@ fn js_number(raw:&str)->f64{
     text.parse::<f64>().unwrap_or(f64::NAN)
 }
 fn number_is_integer(n:f64)->bool{n.is_finite()&&n.fract()==0.0}
-fn number_is_safe_positive_integer(n:f64)->bool{
-    number_is_integer(n)&&n>0.0&&n<=9_007_199_254_740_991.0
-}
 fn json_integer_js(number:f64)->Value{
     // A JS Number can be an integer well beyond u64::MAX. Preserve the
     // original accepted Number.isInteger semantics without truncating.
@@ -143,17 +127,9 @@ pub fn new_local_repository(args:&[String])->Result<&str,String>{
     }
     Ok(repository)
 }
-pub fn pull_request(args:&[String])->Result<Value,String>{
-    let raw=arg(args,"--pr","");
-    let pr=js_number(raw);
-    if !number_is_integer(pr)||pr<=0.0{
-        return Err("--pr is required for GitHub-backed operation".into());
-    }
-    Ok(json_integer_js(pr))
-}
 pub fn validate_read_only_job_binding(args:&[String])->Result<(),String>{
     for flag in [
-        "--id","--repo","--pr","--file","--store-dir",
+        "--id","--repo","--file","--store-dir",
         "--task-id","--plan-id","--execution-id"
     ]{
         let count=args.iter().filter(|item|item.as_str()==flag).count();
@@ -167,12 +143,6 @@ pub fn validate_read_only_job_binding(args:&[String])->Result<(),String>{
     }
     if !has_arg(args,"--id"){
         return Err("--id is required for read-only Relay commands".into());
-    }
-    if has_arg(args,"--pr"){
-        let pr=js_number(arg(args,"--pr",""));
-        if !number_is_safe_positive_integer(pr){
-            return Err("--pr must be a positive integer".into());
-        }
     }
     Ok(())
 }
@@ -196,11 +166,6 @@ pub fn readonly_job_for(
                 &&job.get("repository").and_then(Value::as_str)!=Some(repository){
                 return Err("Local --file repository binding mismatch".into());
             }
-            let bound_pr=job.get("prNumber").and_then(Value::as_i64).unwrap_or(0).max(0);
-            if has_arg(args,"--pr")
-                &&bound_pr.to_string()!=arg(args,"--pr",""){
-                return Err("Local --file PR binding mismatch".into());
-            }
         }
         return Ok((job,Some(file.into())));
     }
@@ -218,13 +183,6 @@ pub fn readonly_job_for(
     if !repo.is_empty() &&job.get("repository").and_then(Value::as_str)!=Some(repo){
         return Err(format!("Immutable local Job not found for repository: {id}"));
     }
-    if has_arg(args,"--pr"){
-        let supplied=arg(args,"--pr","");
-        let bound_pr=job.get("prNumber").and_then(Value::as_i64).unwrap_or(0).max(0);
-        if supplied!=bound_pr.to_string(){
-            return Err("Local Job/PR binding mismatch".into());
-        }
-    }
     Ok((job,None))
 }
 pub fn save_local(file:Option<&Path>,job:&Value)->Result<(),String>{
@@ -233,14 +191,6 @@ pub fn save_local(file:Option<&Path>,job:&Value)->Result<(),String>{
             .map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
     }
     Ok(())
-}
-pub fn optional_legacy_pr(args:&[String])->Result<Option<u64>,String>{
-    if !has_arg(args,"--pr"){return Ok(None);}
-    let value=js_number(arg(args,"--pr",""));
-    if !number_is_safe_positive_integer(value){
-        return Err("--pr must be a positive integer (deprecated; use --id for normal operations)".into());
-    }
-    Ok(Some(value as u64))
 }
 pub fn endpoint(args:&[String])->Result<(String,u16),String>{
     let host=arg(args,"--host","127.0.0.1");
@@ -309,7 +259,6 @@ fn job_params(args:&[String],id:&str)->Result<Vec<(&'static str,String)>,String>
     let mut params=vec![("id",id.into())];
     let repo=arg(args,"--repo","");
     if !repo.is_empty(){params.push(("repo",repo.into()));}
-    if let Some(pr)=optional_legacy_pr(args)?{params.push(("pr",pr.to_string()));}
     Ok(params)
 }
 /// Read-only live daemon status. A native CLI never infers success from an
@@ -438,12 +387,6 @@ pub fn store_for(
             if !repository.is_empty() && field(&read,"repository")!=repository{
                 return Err("Local --file repository binding mismatch".into());
             }
-            if has_arg(args,"--pr"){
-                let pr=read.get("prNumber").and_then(Value::as_f64).unwrap_or(0.0).max(0.0);
-                if pr!=js_number(arg(args,"--pr","")){
-                    return Err("Local --file PR binding mismatch".into());
-                }
-            }
         }
         return Ok(CliStoreBinding{store:CliBoundStore::InMemory(store),
             job:read,local_file:Some(PathBuf::from(file))});
@@ -462,14 +405,6 @@ pub fn store_for(
         .ok_or_else(||format!("Immutable local Job not found for repository: {job_id}"))?;
     if !repository.is_empty()&&field(&selected.job,"repository")!=repository{
         return Err(format!("Immutable local Job not found for repository: {job_id}"));
-    }
-    let supplied_pr=arg(args,"--pr","");
-    if !supplied_pr.is_empty(){
-        let bound=selected.job.get("prNumber").and_then(Value::as_f64)
-            .unwrap_or(0.0).max(0.0);
-        if bound!=js_number(supplied_pr){
-            return Err("Local Job/PR binding mismatch".into());
-        }
     }
     if allow_id_only{
         let job=normalize_relay_job(&selected.job.to_string())?;

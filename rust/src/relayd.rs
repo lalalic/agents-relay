@@ -54,7 +54,6 @@ pub struct DaemonConfig{
     pub concurrency:usize,
     pub interval_ms:u64,
     pub lease_ms:u64,
-    pub no_github:bool,
     pub event_transport:Value,
 }
 impl DaemonConfig{
@@ -92,7 +91,7 @@ impl DaemonConfig{
             dashboard_asset:get_path("dashboardAsset",
                 "dist/dashboard.html"),
             repositories,port,concurrency,interval_ms,lease_ms,
-            no_github:true,event_transport,
+            event_transport,
         })
     }
 }
@@ -162,13 +161,11 @@ pub fn repository_bindings(inventory:&[Value])->Result<HashMap<String,String>,St
     }
     Ok(bound)
 }
-pub fn exact_job(inventory:&[Value],job_id:&str,repo:Option<&str>,
-    pr:Option<u64>)->Result<Option<Value>,String>{
+pub fn exact_job(inventory:&[Value],job_id:&str,repo:Option<&str>)->Result<Option<Value>,String>{
     let matches=inventory.iter().filter(|job|
         field(job,"id")==job_id
             &&repo.is_none_or(|repo|field(job,"repository")==repo)
-            &&pr.is_none_or(|pr|job.get("prNumber").and_then(Value::as_u64)
-                ==Some(pr))).collect::<Vec<_>>();
+).collect::<Vec<_>>();
     if matches.len()>1{
         return Err(format!("Job {job_id} has ambiguous durable SQLite identities"));
     }
@@ -180,7 +177,7 @@ pub fn require_local_job_binding(
     config:&DaemonConfig,job_id:&str,
 )->Result<Value,String>{
     let inventory=inventory_from_local(config,false)?;
-    exact_job(&inventory,job_id,None,None)?.ok_or_else(||format!(
+    exact_job(&inventory,job_id,None)?.ok_or_else(||format!(
         "Local Job {job_id} not found or ambiguous in SQLite registry"))
 }
 pub struct DaemonWorkPort<'a>{
@@ -307,7 +304,7 @@ impl<S:DaemonServices+'static> DashboardApiServices for DaemonDashboardBackend<S
     fn discovered_jobs(&mut self,force:bool)->Result<Vec<Value>,String>{
         let _=force;inventory_from_local(&self.config,false)
     }
-    fn exact_job(&mut self,id:&str,repo:Option<&str>,pr:Option<u64>)
+    fn exact_job(&mut self,id:&str,repo:Option<&str>)
         ->Result<Option<Value>,String>{
         let mut host=self.services.lock()
             .map_err(|_|"Daemon service lock poisoned")?;
@@ -323,11 +320,10 @@ impl<S:DaemonServices+'static> DashboardApiServices for DaemonDashboardBackend<S
             return Ok(selected.filter(|job|
                 field(job,"id")==id
                     &&repo.is_none_or(|repo|field(job,"repository")==repo)
-                    &&pr.is_none_or(|pr|job.get("prNumber").and_then(Value::as_u64)
-                        ==Some(pr))));
+));
         }
         drop(host);
-        exact_job(&inventory_from_local(&self.config,false)?,id,repo,pr)
+        exact_job(&inventory_from_local(&self.config,false)?,id,repo)
     }
     fn control(&mut self,body:&Value)->Result<Value,String>{
         self.services.lock().map_err(|_|"Daemon service lock poisoned")?.control(body)
@@ -441,7 +437,7 @@ pub fn run_daemon<S:DaemonServices+'static>(
         graph_directory:config.graph_directory.clone(),
         router_rules_path:config.router_rules_path.clone(),
         webhook_secret:None,webhook_repositories:HashSet::new(),
-        webhook_job_id:None,webhook_pr_number:None,
+        webhook_job_id:None,
     };
     let read_only_shadow=services.is_read_only_shadow();
     let services=Arc::new(Mutex::new(services));

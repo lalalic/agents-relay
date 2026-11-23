@@ -120,17 +120,6 @@ pub fn job(args: &[String], job_id: &str) -> Result<Value, String> {
     if !repo.is_empty() {
         query.append_pair("repo", repo);
     }
-    if has_arg(args, "--pr") {
-        let value = arg(args, "--pr", "");
-        let number = value.parse::<i64>().unwrap_or(0);
-        if number <= 0 || number.to_string() != value {
-            return Err(
-                "--pr must be a positive integer (deprecated; use --id for normal operations)"
-                    .into(),
-            );
-        }
-        query.append_pair("pr", value);
-    }
     let response = ureq::get(&format!("{url}?{}", query.finish()))
         .config()
         .http_status_as_error(false)

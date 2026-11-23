@@ -34,10 +34,6 @@ pub fn dashboard_overview(
             .and_then(Value::as_str).filter(|s|!s.is_empty()) {
             if field(job, "repository") != repository { return false; }
         }
-        if let Some(pr) = target.and_then(|t|t.get("prNumber"))
-            .and_then(Value::as_i64).filter(|n|*n!=0) {
-            if job.get("prNumber").and_then(Value::as_i64) != Some(pr) { return false; }
-        }
         true
     }).cloned()
 }

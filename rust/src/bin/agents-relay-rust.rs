@@ -338,6 +338,10 @@ fn native_serve(arguments:&[String])->Result<(),String>{
 }
 fn main(){
     let arguments=std::env::args().skip(1).collect::<Vec<_>>();
+    if let Err(error)=agents_relay_rust2::cli_option_contract::validate_cli_options(&arguments){
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
     if arguments.first().is_some_and(|arg|arg=="serve")
         && !arguments.iter().any(|arg|matches!(arg.as_str(),"--help"|"-h")){
         #[cfg(unix)]

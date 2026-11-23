@@ -740,49 +740,6 @@ fn invoke(request: &Value) -> Result<String, String> {
                 Err(error)=>json!({"ok":false,"error":error}),
             },"inputs":inputs}).to_string())
         }
-        "apiResolvePullRequest" => {
-            use agents_relay_rust2::{
-                store_pull_request::resolve_pull_request,
-                store_github::GitHubApi,
-            };
-            struct FixtureClient {responses:Vec<Value>,calls:Vec<Value>}
-            impl FixtureClient {
-                fn next(&mut self)->Result<Value,String>{
-                    if self.responses.is_empty(){
-                        return Err("Fixture GitHub effect exhausted".into());
-                    }
-                    let row=self.responses.remove(0);
-                    if let Some(error)=row.get("fixtureError").and_then(Value::as_str){
-                        return Err(error.to_owned());
-                    }
-                    Ok(row)
-                }
-            }
-            impl GitHubApi for FixtureClient {
-                fn graphql(&mut self,query:&str,variables:&Value)->Result<Value,String>{
-                    self.calls.push(json!({"kind":"graphql",
-                        "query":query,"variables":variables}));
-                    self.next()
-                }
-                fn request(&mut self,path:&str,method:&str,body:Option<&Value>)
-                    ->Result<Value,String>{
-                    self.calls.push(json!({"kind":"request",
-                        "path":path,"method":method,"body":body}));
-                    self.next()
-                }
-            }
-            let mut client=FixtureClient{
-                responses:request["responses"].as_array().cloned().unwrap_or_default(),
-                calls:Vec::new()
-            };
-            let result=resolve_pull_request(&mut client,
-                request["repository"].as_str().unwrap_or(""),
-                &request["options"]);
-            Ok(json!({"outcome":match result{
-                Ok(value)=>json!({"ok":true,"value":value}),
-                Err(error)=>json!({"ok":false,"error":error}),
-            },"calls":client.calls}).to_string())
-        }
         "apiPlannerLaunch" => planner_launch_public::invoke(request),
         "apiPlannerFinish" => planner_finish_public::invoke(request),
         "apiPlannerApplyTree" => planner_finish_public::apply_tree(request),
@@ -3440,58 +3397,6 @@ fn invoke(request: &Value) -> Result<String, String> {
                 results
             )))
         }
-        "noGitHubMode" => {
-            let args = request["args"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect::<Vec<_>>();
-            let process_args = request["processArgs"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect::<Vec<_>>();
-            Ok(json!(agents_relay_rust2::no_github::no_github_mode(
-                &args,
-                &process_args,
-                request["envValue"].as_str()
-            ))
-            .to_string())
-        }
-        "disabledGitHubMethod" => {
-            let client = agents_relay_rust2::no_github::DisabledGitHubClient::new();
-            let execute = async {
-                match request["method"].as_str().unwrap_or("") {
-                    "request" => client.request().await,
-                    "graphql" => client.graphql().await,
-                    "rateLimitSnapshot" => client.rate_limit_snapshot().await,
-                    "currentLogin" => client.current_login().await,
-                    _ => Err("Unsupported disabled GitHub method".into()),
-                }
-            };
-            use std::{
-                future::Future,
-                pin::pin,
-                task::{Context, Poll, Waker},
-            };
-            let mut future = pin!(execute);
-            let mut context = Context::from_waker(Waker::noop());
-            let result = loop {
-                if let Poll::Ready(value) = future.as_mut().poll(&mut context) {
-                    break value;
-                }
-            };
-            Ok(json!(match result {
-                Ok(()) => json!({"ok":true}),
-                Err(error) => json!({"ok":false,"error":error}),
-            })
-            .to_string())
-        }
-
         "unifiedRelaySchemaScenario" => {
             use rusqlite::Connection;
             let db = Connection::open_in_memory().map_err(|error| error.to_string())?;
@@ -3549,11 +3454,6 @@ fn invoke(request: &Value) -> Result<String, String> {
             )
             .to_string(),
         ),
-        "normalizeLegacyJobPrNumber" => Ok(agents_relay_rust2::observability::json_wire(
-            &agents_relay_rust2::job_pr_number_migration::normalize_legacy_job_pr_number(
-                &request["job"],
-            ),
-        )),
         "legacyMigrationsScenario" => {
             use rusqlite::{params, Connection};
             let db = Connection::open_in_memory().map_err(|error| error.to_string())?;
@@ -3569,17 +3469,12 @@ fn invoke(request: &Value) -> Result<String, String> {
                 )
                 .map_err(|error| error.to_string())?;
             }
-            let migration = request["migration"].as_str().unwrap_or("blocked");
-            let status = if migration == "blocked" {
-                agents_relay_rust2::legacy_blocked_task_migration::migrate_legacy_blocked_tasks(&db)
-            } else {
-                agents_relay_rust2::job_pr_number_migration::migrate_legacy_job_pr_numbers(&db)
-            };
+            let status=agents_relay_rust2::legacy_blocked_task_migration::migrate_legacy_blocked_tasks(&db);
             let mut query = db
                 .prepare("SELECT job_id,json,updated_at FROM job_snapshot ORDER BY job_id")
                 .map_err(|error| error.to_string())?;
             let rows=query.query_map([],|row|Ok(json!({"job_id":row.get::<_,String>(0)?,
-                "json":agents_relay_rust2::job_pr_number_migration::parse_js_json(&row.get::<_,String>(1)?).unwrap_or(Value::Null),
+                "json":agents_relay_rust2::json_wire_parse::parse_js_json(&row.get::<_,String>(1)?).unwrap_or(Value::Null),
                 "updated_at":row.get::<_,String>(2)?})))
                 .map_err(|error|error.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())?;
             let mut query = db
@@ -3598,7 +3493,7 @@ fn invoke(request: &Value) -> Result<String, String> {
         "unifiedJobRegistryScenario" => {
             use rusqlite::{params, Connection};
             let mut db = Connection::open_in_memory().map_err(|error| error.to_string())?;
-            db.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE source_registry(job_id TEXT PRIMARY KEY,source_file TEXT NOT NULL UNIQUE,repository TEXT NOT NULL,pr_number INTEGER NOT NULL); CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL);")
+            db.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE source_registry(job_id TEXT PRIMARY KEY,source_file TEXT NOT NULL UNIQUE,repository TEXT NOT NULL); CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL);")
                 .map_err(|error|error.to_string())?;
             for job in request["preexisting"].as_array().into_iter().flatten() {
                 let id = job["id"].as_str().ok_or("preexisting id required")?;
@@ -3642,9 +3537,9 @@ fn invoke(request: &Value) -> Result<String, String> {
                     Err(error) => json!({"ok":false,"error":error}),
                 });
             }
-            let mut source=db.prepare("SELECT job_id,source_file,repository,pr_number FROM source_registry ORDER BY job_id")
+            let mut source=db.prepare("SELECT job_id,source_file,repository FROM source_registry ORDER BY job_id")
                 .map_err(|error|error.to_string())?;
-            let bindings=source.query_map([],|row|Ok(json!({"job_id":row.get::<_,String>(0)?,"source_file":row.get::<_,String>(1)?,"repository":row.get::<_,String>(2)?,"pr_number":row.get::<_,i64>(3)?})))
+            let bindings=source.query_map([],|row|Ok(json!({"job_id":row.get::<_,String>(0)?,"source_file":row.get::<_,String>(1)?,"repository":row.get::<_,String>(2)?})))
                 .map_err(|error|error.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())?;
             let mut query = db
                 .prepare("SELECT job_id,json FROM job_snapshot ORDER BY job_id")

@@ -19,23 +19,15 @@ fn cli_help_version_and_unwired_actions_fail_closed(){
         .contains("job run requires --task-id"));
 }
 #[test]
-fn obsolete_remote_cli_flags_fail_before_help_or_daemon_dispatch(){
-    for flag in ["--pr","--pr=42","--github-repo","--github-token",
-        "--github-app-id","--github-app-installation-id","--no-github",
-        "--dependent-pr","--github-webhook-secret-file","--projection-ms"]{
-        for prefix in [["job","show","--id","17"].as_slice(),
-            ["job","create","--help"].as_slice(),
-            ["--help"].as_slice()]{
-            let mut args=prefix.to_vec();
-            args.push(flag);
-            let output=Command::new(binary()).args(&args).output().unwrap();
-            assert!(!output.status.success(),
-                "retired flag must fail even before help: {args:?}");
-            assert!(String::from_utf8_lossy(&output.stderr)
-                .contains("Unsupported option"),
-                "expected fail-closed retired flag {flag}: {}",
-                String::from_utf8_lossy(&output.stderr));
-        }
+fn unknown_cli_flags_fail_before_help_or_daemon_dispatch(){
+    for command in [["job","show","--id","17"].as_slice(),
+        ["job","create","--help"].as_slice(),["--help"].as_slice()]{
+        let mut args=command.to_vec();
+        args.push("--never-supported");
+        let output=Command::new(binary()).args(&args).output().unwrap();
+        assert!(!output.status.success(), "unknown flag must fail: {args:?}");
+        assert!(String::from_utf8_lossy(&output.stderr)
+            .contains("Unknown option --never-supported"));
     }
 }
 #[test]

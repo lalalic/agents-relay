@@ -7,12 +7,6 @@ fn job_str<'a>(job: &'a Value, key: &str) -> Result<&'a str, String> {
         .and_then(Value::as_str)
         .ok_or_else(|| format!("Job {key} must be a string"))
 }
-fn pr_number(job: &Value) -> Result<i64, String> {
-    job.get("prNumber")
-        .and_then(Value::as_i64)
-        .ok_or_else(|| "Job prNumber must be an integer".into())
-}
-
 pub fn ensure_unified_job_registry(
     db: &Connection,
     job: &Value,
@@ -25,32 +19,13 @@ pub fn ensure_unified_job_registry(
         ));
     }
     let repository = job_str(job, "repository")?;
-    let pr_number = pr_number(job)?;
-    db.execute("INSERT INTO source_registry(job_id,source_file,repository,pr_number) VALUES(?,?,?,?) ON CONFLICT(job_id) DO NOTHING",
-        params![id,format!("unified:{id}"),repository,pr_number]).map_err(|error|error.to_string())?;
-    let binding = db
-        .query_row(
-            "SELECT repository,pr_number FROM source_registry WHERE job_id=?",
-            params![id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
-        )
-        .optional()
-        .map_err(|error| error.to_string())?;
-    let Some((existing_repo, existing_number)) = binding else {
+    db.execute("INSERT INTO source_registry(job_id,source_file,repository) VALUES(?,?,?) ON CONFLICT(job_id) DO NOTHING",
+        params![id,format!("unified:{id}"),repository]).map_err(|error|error.to_string())?;
+    let bound: Option<String> = db.query_row(
+        "SELECT repository FROM source_registry WHERE job_id=?",params![id],
+        |row|row.get(0)).optional().map_err(|error|error.to_string())?;
+    if bound.as_deref()!=Some(repository){
         return Err(format!("Job {id} has conflicting repository identity"));
-    };
-    if existing_repo != repository {
-        return Err(format!("Job {id} has conflicting repository identity"));
-    }
-    if existing_number > 0 && pr_number != existing_number {
-        return Err(format!("Job {id} cannot change an established PR binding"));
-    }
-    if existing_number == 0 && pr_number > 0 {
-        db.execute(
-            "UPDATE source_registry SET pr_number=? WHERE job_id=? AND pr_number=0",
-            params![pr_number, id],
-        )
-        .map_err(|error| error.to_string())?;
     }
     Ok(())
 }

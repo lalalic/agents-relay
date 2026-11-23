@@ -2,7 +2,7 @@
 // mutations are restricted to caller-owned temporary Git/SQLite directories;
 // no provider, live Store, branch, PR or remote side effect can be invoked.
 use agents_relay_rust2::{
-    cli_job_create::ensure_managed_github_job,
+    cli_job_create::ensure_managed_local_job,
     relay_store::SQLiteRelayStore,
     relay_store_discovery::{discover_local_relay_store_snapshots,relay_unified_store_path},
 };
@@ -38,7 +38,7 @@ pub fn invoke(request:&Value)->Result<Option<String>,String>{
     // opens an actual scoped connection only once the ID is known.
     let db_for_read=db.clone();
     let db_for_write=db.clone();
-    let outcome=ensure_managed_github_job(
+    let outcome=ensure_managed_local_job(
         &graph,&directory,repository,&project,options,&known,
         move |id|{
             SQLiteRelayStore::open_without_claim_reset(&db_for_read,Some(id))?

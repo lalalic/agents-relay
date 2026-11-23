@@ -21,9 +21,6 @@ const args=[
   ['--file',file],['--file',file,'--id','901'],['--file',file,'--id','different'],
   ['--file',file,'--id','901','--repo','local-api'],
   ['--file',file,'--id','901','--repo','wrong'],
-  ['--file',file,'--id','901','--pr','1'],
-  ['--file',file,'--id','901','--pr','0'],
-  ['--file',file,'--id','901','--pr','0x0'],
   ['--id','not-found','--store-dir',storeDirectory],
   ['--id','not-found','--store-dir',storeDirectory,'--repo','local-api'],
   ['--id','not-found','--store-dir',storeDirectory,'--repo','wrong']

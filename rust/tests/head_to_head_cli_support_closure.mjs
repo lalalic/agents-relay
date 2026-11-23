@@ -9,8 +9,8 @@ import {tmpdir} from 'node:os';
 import {
   SERVICE_DEFAULTS,arg,hasArg,priority,storySize,chatGptTabClosePolicy,
   jobTagFromArgs,continuation,rejectRemovedJobOptions,
-  rejectRemoteLifecycleOptions,integerArg,newLocalRepository,
-  repository,optionalLegacyPr,eventBusResolutionMessage,
+  integerArg,newLocalRepository,
+  repository,eventBusResolutionMessage,
 } from '../../dist/cli-support.js';
 
 const root=resolve(import.meta.dirname,'../..');
@@ -42,7 +42,6 @@ function add(method,args,options={}){
       jobTagFromArgs:()=>jobTagFromArgs(args),
       continuation:()=>continuation(args),
       rejectRemovedJobOptions:()=>rejectRemovedJobOptions(args),
-      rejectRemoteLifecycleOptions:()=>rejectRemoteLifecycleOptions(args),
       integerArg:()=>integerArg(args,flag,fallback??0),
       newLocalRepository:()=>newLocalRepository(args),
       repository:()=>repository(args),
@@ -61,26 +60,22 @@ add('defaults',[]);
 const flags=['--input','--repo','--mode','--priority','--story-size','--tag','--host','--port'];
 const values=['','P0','P1','P2','P3','p2','L','m','s','bad','🍀','../escape','owner/repo',
   'some-repo','2','3','-1','0','1.5',' 4 ','Infinity','0x10','--flag','0'];
-const unknownFlags=['--mode','--execution-mode','--schedule','--schedule-next-run',
-  '--schedule-timezone','--missed-run-policy','--schedule-concurrency','--cron','--schedule-cron',
-  '--github-repo','--pr','--no-github','--dependent-pr','--head','--base','--body','--github-app-id',
-  '--github-app-installation-id','--github-app-private-key-file','--github-webhook-secret',
-  '--github-webhook-secret-file','--github-token','--github-token-file','--projection-ms'];
+const obsoleteSchedulingFlags=['--mode','--execution-mode','--schedule',
+  '--schedule-next-run','--schedule-timezone','--missed-run-policy',
+  '--schedule-concurrency','--cron','--schedule-cron'];
 for(let i=0;i<560;i++){
   const args=i%4===0?[]:i%4===1?[pick(flags),pick(values)]:
     i%4===2?[pick(flags),pick(values),pick(flags),pick(values)]:
       [pick(flags),pick(values),pick(flags)];
   const method=pick(['arg','hasArg','priority','storySize','chatGptTabClosePolicy',
-    'jobTagFromArgs','continuation','rejectRemovedJobOptions','rejectRemoteLifecycleOptions',
+    'jobTagFromArgs','continuation','rejectRemovedJobOptions',
     'integerArg','newLocalRepository','repository']);
   const fallback=method==='integerArg'?pick([0,1,7,42]):pick(['','P2','P1','M','L','S','bad']);
   const env=pick([undefined,'','after-start','after-terminal','never','bad']);
   add(method,args,{flag:pick(flags),fallback,env});
 }
-for(const flag of unknownFlags) {
+for(const flag of obsoleteSchedulingFlags) {
   add('rejectRemovedJobOptions',[flag,'x']);
-  add('rejectRemoteLifecycleOptions',[flag+'=x']);
-  add('rejectRemoteLifecycleOptions',[flag,'x']);
 }
 for(const raw of ['', '{}','null','false','{"description":"ok","values":{"a":"A"}}',
   '{"description":"ok","values":{}}','{"description":"bad","values":{"xyz":"100"}}',

@@ -71,13 +71,11 @@ impl DashboardApiServices for FixtureServices {
         &mut self,
         id: &str,
         repo: Option<&str>,
-        pr: Option<u64>,
     ) -> Result<Option<Value>, String> {
-        self.log("exact", json!({"id":id,"repository":repo,"pr":pr}));
+        self.log("exact", json!({"id":id,"repository":repo}));
         Ok(jobs().into_iter().find(|job| {
             job["id"] == id
                 && repo.is_none_or(|r| job["repository"] == r)
-                && pr.is_none_or(|p| job["prNumber"] == p)
         }))
     }
     fn control(&mut self, body: &Value) -> Result<Value, String> {
@@ -156,7 +154,6 @@ fn fixture() -> (
         webhook_secret: Some("local-fixture-secret".into()),
         webhook_repositories: HashSet::from(["toy/repo".into()]),
         webhook_job_id: None,
-        webhook_pr_number: Some(17),
     };
     (
         Arc::new(NativeDashboardApi::new(options, services)),
@@ -203,7 +200,7 @@ fn dynamic_dashboard_routes_converge_on_service_backend() {
         data(call(
             &backend,
             "GET",
-            "/api/job?id=101&repo=toy%2Frepo&pr=17",
+            "/api/job?id=101&repo=toy%2Frepo",
             None
         ))["id"],
         "101"
@@ -414,7 +411,7 @@ fn mobile_http_cross_repo_collision_fails_closed_before_event_history_or_mutatio
         router_rules_path:std::env::temp_dir().join(format!(
             "rust2-mobile-collision-{}",std::process::id())),
         webhook_secret:None,webhook_repositories:HashSet::new(),
-        webhook_job_id:None,webhook_pr_number:None,
+        webhook_job_id:None,
     };
     let backend=NativeDashboardApi::new(options,service);
     let response=call(&backend,"GET",

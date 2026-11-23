@@ -55,7 +55,6 @@ fn creates_one_canonical_graph_binding_and_preserves_it_across_retry(){
  let first=fixture.job();
  assert_eq!(first["state"],"ACTIVE");
  assert_eq!(first["tasks"][0]["state"],"QUEUED");
- assert_eq!(first["graphStartContext"]["noGitHub"],true);
  assert_eq!(first["graphStartContext"]["projectRoot"],
   fs::canonicalize(&fixture.project).unwrap().to_string_lossy().as_ref());
  assert_eq!(first["graphStartContext"]["workspaceRoot"],

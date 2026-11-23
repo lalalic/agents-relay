@@ -36,15 +36,12 @@ fn only_six_top_level_obsolete_fields_are_removed_and_nested_job_metadata_is_unt
     assert_eq!(metadata["metadata"]["contentOnly"], "keep");
 }
 #[test]
-fn legacy_pr_title_task_and_plans_are_composed_without_rewriting_original_sqlite() {
-    let input = json!({"id":"9","repository":"repo","projectRoot":"/tmp/repo","prNumber":0,"externalPrNumber":7,
-  "state":"COMPLETED","tasks":[{"id":"a","agentName":"editor","input":"# Edit video","state":"BLOCKED","kind":"task"},
+fn task_and_plan_state_is_composed_without_rewriting_original_sqlite() {
+    let input = json!({"id":"9","repository":"repo","projectRoot":"/tmp/repo","state":"COMPLETED","tasks":[{"id":"a","agentName":"editor","input":"# Edit video","title":"Edit video","state":"BLOCKED","kind":"task"},
   {"id":"b","agentName":"troubleshooter","input":"Investigate","state":"UNBLOCKED","attempt":3}],
   "plans":[{"id":"p1","forceCleanHistory":true,"cleanHistoryTaskIds":["a"]},{"id":"p2","forceRestate":false,"forceCleanHistory":true,"restateTaskIds":["b"]}],
   "contentOnly":true,"metadata":{"keep":true}});
     let normalized = normalize_relay_job(&input.to_string()).unwrap();
-    assert_eq!(normalized["prNumber"], 7);
-    assert!(normalized.get("externalPrNumber").is_none());
     assert_eq!(normalized["tasks"][0]["state"], "FAILED");
     assert_eq!(normalized["tasks"][0]["title"], "Edit video");
     assert_eq!(normalized["tasks"][1]["state"], "QUEUED");
@@ -53,13 +50,12 @@ fn legacy_pr_title_task_and_plans_are_composed_without_rewriting_original_sqlite
     assert_eq!(normalized["plans"][1]["forceRestate"], false);
     assert!(normalized["plans"][0].get("forceCleanHistory").is_none());
     assert!(normalized.get("contentOnly").is_none());
-    assert_eq!(input["prNumber"], 0);
 }
 #[test]
 fn sqlite_scoped_and_global_reads_are_ordered_and_absent_job_is_null() {
     let db = db();
     for id in ["9", "10", "2"] {
-        let job = json!({"id":id,"repository":"repo","prNumber":0,"state":"COMPLETED","tasks":[],"schedule":"obsolete"});
+        let job = json!({"id":id,"repository":"repo","state":"COMPLETED","tasks":[],"schedule":"obsolete"});
         db.execute(
             "INSERT INTO job_snapshot VALUES(?,?,?)",
             params![id, job.to_string(), "before-read"],
@@ -92,19 +88,12 @@ fn sqlite_scoped_and_global_reads_are_ordered_and_absent_job_is_null() {
     );
 }
 #[test]
-fn surrogate_json_title_round_trips_through_load_and_list() {
-    let db = db();
-    let content = format!("{}🙂{}", "A".repeat(92), "more".repeat(8));
-    let raw = json!({"id":"1","prNumber":0,"externalPrNumber":7,
-   "tasks":[{"id":"x","agentName":"editor","input":content}]})
-    .to_string();
-    db.execute(
-        "INSERT INTO job_snapshot VALUES(?,?,?)",
-        params!["1", raw, "before-read"],
-    )
-    .unwrap();
-    let job = load_relay_job(&db, "1").unwrap().unwrap();
-    let encoded = agents_relay_rust2::observability::json_wire(&job);
-    assert!(encoded.contains("\\ud83d..."));
-    assert_eq!(list_relay_jobs(&db, None).unwrap()[0], job);
+fn surrogate_json_title_round_trips_through_load_and_list(){
+    let db=db();
+    let raw=r#"{"id":"1","tasks":[{"id":"x","title":"A\ud83d"}]}"#;
+    db.execute("INSERT INTO job_snapshot VALUES(?,?,?)",params!["1",raw,"before-read"]).unwrap();
+    let job=load_relay_job(&db,"1").unwrap().unwrap();
+    let encoded=agents_relay_rust2::observability::json_wire(&job);
+    assert!(encoded.contains("\\ud83d"));
+    assert_eq!(list_relay_jobs(&db,None).unwrap()[0],job);
 }

@@ -79,7 +79,7 @@ pub fn runtime(args:&[String],paths:RuntimePaths)->Result<RuntimeReconciler,Stri
         roots["globalRoot"]=json!(v);
     }
     let configured=json!({
-        "noGitHub":true,"owner":owner,
+        "owner":owner,
         "maxConcurrent":if count.is_nan(){Value::Null}else{json!(count)},
         "leaseMs":if lease.is_nan(){Value::Null}else{json!(lease)},
         "adapters":[

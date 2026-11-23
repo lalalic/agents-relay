@@ -13,15 +13,10 @@ pub fn invoke(request: &Value) -> Option<Result<String, String>> {
     Some((|| {
         match request["method"].as_str().unwrap_or("") {
             "open" => {
-                let result = open_local_managed_store(
+                let result=open_local_managed_store(
                     request["repository"].as_str().unwrap_or(""),
-                    request["prNumber"].as_i64().unwrap_or(-1),
-                    std::path::Path::new(
-                        request["directory"].as_str().unwrap_or(""),
-                    ),
-                    request["jobId"].as_str(),
-                    request["noGitHub"].as_bool().unwrap_or(false),
-                );
+                    std::path::Path::new(request["directory"].as_str().unwrap_or("")),
+                    request["jobId"].as_str().unwrap_or(""));
                 match result {
                     Ok(mut store) => {
                         // Prove the authority is usable over real SQLite:
