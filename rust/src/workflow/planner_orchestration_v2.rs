@@ -112,13 +112,22 @@ pub fn planner_orchestration_facts(job: &Value, recoverable_pending_plan: bool) 
             task["agentName"] == "troubleshooter" && task["recoveryPlanId"] == failed["id"]
         })
     };
+    // Recovery evidence is an execution artifact, not a Graph decision.
+    // Workers may supply either a single source string or an array of
+    // source strings; both must be nonempty and verifiable before the Graph
+    // can authorize another Plan round.
+    let has_evidence = |value: &Value| match value {
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Array(sources) => !sources.is_empty()
+            && sources.iter().all(|entry| entry.as_str()
+                .is_some_and(|text| !text.trim().is_empty())),
+        _ => false,
+    };
     let recovery_verified = recovery.is_some_and(|task| {
         task["state"] == "SUCCEEDED"
             && task.pointer("/result/data/verified") == Some(&Value::Bool(true))
-            && task
-                .pointer("/result/data/evidence")
-                .and_then(Value::as_str)
-                .is_some_and(|e| !e.trim().is_empty())
+            && task.pointer("/result/data/evidence")
+                .is_some_and(has_evidence)
     });
     let legacy = if plans.is_empty() {
         tasks
@@ -275,4 +284,60 @@ where
         |_, _| async { Ok(()) },
     )
     .await
+}
+
+#[cfg(test)]
+mod recovery_evidence_tests {
+    use super::*;
+
+    fn failed_plan_with_recovery(evidence: Value) -> Value {
+        json!({
+            "id":"720","state":"ACTIVE","reviewEnabled":true,
+            "review":{"taskId":"2244","outcome":"changes_required"},
+            "plans":[{"id":"plan-1","round":1,"status":"FAILED",
+                      "manualPlanning":false,"trigger":{"source":"review"}}],
+            "tasks":[
+                {"id":"2242","kind":"work","agentName":"implementation","state":"SUCCEEDED"},
+                {"id":"2244","kind":"work","agentName":"job-acceptance-reviewer","state":"SUCCEEDED"},
+                {"id":"2250","kind":"work","agentName":"troubleshooter",
+                 "state":"SUCCEEDED","recoveryPlanId":"plan-1",
+                 "result":{"data":{"verified":true,"evidence":evidence}}}
+            ]
+        })
+    }
+
+    #[test]
+    fn succeeded_plan_recovery_accepts_nonempty_evidence_array_and_graph_advances() {
+        let job = failed_plan_with_recovery(json!([
+            "CLI plan-1 status FAILED, 3/3 attempts",
+            "Task 2250 runtime diagnosis verified against authoritative events"
+        ]));
+        let facts = planner_orchestration_facts(&job, false);
+        assert_eq!(facts["planRecoveryVerified"], true);
+        let graph_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+        let decision = decide_planner_orchestration(&graph_dir, &facts).unwrap();
+        assert_eq!(decision["accepted"], true, "{decision}");
+        assert!(decision["actions"].as_array().is_some_and(|actions| actions.iter()
+            .any(|action| action["id"] == "planner.createRound")),
+            "verified recovery must create exactly one authoritative Plan round: {decision}");
+    }
+
+    #[test]
+    fn recovery_evidence_requires_verified_success_and_nonempty_sources() {
+        for valid in [json!("verified event history"), json!(["source A", "source B"])] {
+            let job=failed_plan_with_recovery(valid);
+            assert_eq!(planner_orchestration_facts(&job,false)["planRecoveryVerified"],true);
+        }
+        for invalid in [Value::Null,json!("  "),json!([]),json!(["source", " "]),
+                        json!(["source",null]),json!({"source":"text"})] {
+            let job=failed_plan_with_recovery(invalid);
+            assert_eq!(planner_orchestration_facts(&job,false)["planRecoveryVerified"],false);
+        }
+        let mut failed=failed_plan_with_recovery(json!(["verified diagnostic"]));
+        failed["tasks"][2]["state"]=json!("FAILED");
+        assert_eq!(planner_orchestration_facts(&failed,false)["planRecoveryVerified"],false);
+        failed["tasks"][2]["state"]=json!("SUCCEEDED");
+        failed["tasks"][2]["result"]["data"]["verified"]=json!(false);
+        assert_eq!(planner_orchestration_facts(&failed,false)["planRecoveryVerified"],false);
+    }
 }
