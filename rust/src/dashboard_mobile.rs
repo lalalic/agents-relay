@@ -179,15 +179,8 @@ fn mobile_activity_summary(entry:&Value,kind:&str)->Option<String>{
 }
 
 pub fn project_mobile_activity(rows:&Value)->Value{
-    // History is at-least-once: keep the newest occurrence of each event.
-    // Dedupe before limiting to avoid wasting the 100 visible slots.
-    let mut seen=std::collections::HashSet::new();
     let events=rows.as_array().into_iter().flatten()
-        .rev().filter(|entry|{
-            let Some(id)=entry.get("event_id").and_then(Value::as_str)
-                .filter(|id|!id.is_empty()&&id.len()<=100) else{return true};
-            seen.insert(id.to_string())
-        }).take(100).collect::<Vec<_>>();
+        .rev().take(100).collect::<Vec<_>>();
     let mut events=events.into_iter().rev()
         .filter_map(|entry|{
             if !entry.is_object(){return None}
@@ -282,29 +275,6 @@ mod tests{
         assert_eq!(nested[2]["content"],"Context loaded");
         assert!(!nested.to_string().contains("SECRET_PROMPT"));
         assert!(!nested.to_string().contains("/Users/"));
-    }
-    #[test]
-    fn mobile_history_deduplicates_by_event_id_not_event_type(){
-        let rows=json!([
-            {"event_id":"old-replay","type":"task.started",
-             "timestamp":"2026-11-22T19:40:00Z","task_id":"2242"},
-            {"event_id":"old-replay","type":"task.started",
-             "timestamp":"2026-11-22T19:40:03Z","task_id":"2242"},
-            {"event_id":"another-milestone","type":"task.progress",
-             "timestamp":"2026-11-22T19:41:00Z","task_id":"2242","data":{"phase":"validation"}},
-            {"event_id":"another-milestone","type":"task.progress",
-             "timestamp":"2026-11-22T19:41:02Z","task_id":"2242","data":{"phase":"validation"}},
-            {"event_id":"next-milestone","type":"task.progress",
-             "timestamp":"2026-11-22T19:41:04Z","task_id":"2242","data":{"phase":"verification"}}
-        ]);
-        let projected=project_mobile_activity(&rows);
-        assert_eq!(projected.as_array().unwrap().len(),3);
-        assert_eq!(projected[0]["timestamp"],"2026-11-22T19:40:03Z");
-        assert_eq!(projected[1]["timestamp"],"2026-11-22T19:41:02Z");
-        assert_eq!(projected[2]["timestamp"],"2026-11-22T19:41:04Z");
-        // Distinct events with identical types remain visible.
-        assert_eq!(projected[1]["type"],projected[2]["type"]);
-        assert!(!projected.to_string().contains("event_id"));
     }
     #[test]
     fn redact_activity_and_paginate(){
