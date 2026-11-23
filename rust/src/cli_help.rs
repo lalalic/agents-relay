@@ -61,7 +61,7 @@ Common options:
 
 Coordinator/DAG creation and activation (no initial Planner required):
   agents-relay job create --repo LOCAL_ROOT_NAME --project-root /absolute/git/root --objective-file job.md
-    --project-run-manifest /abs/project/project.run.json --coordinator-graph-file /abs/graph.mmd --coordinator-input-file /abs/input.md
+    --preflight=true --project-run-manifest /abs/project/project.run.json --coordinator-graph-file /abs/graph.mmd --coordinator-input-file /abs/input.md
     --coordinator-output-path /abs/result.json --coordinator-project-root /abs/project
     --coordinator-workspace-root /abs/workspace
   agents-relay job run --id JOB --task-id NUMERIC_TASK_ID
@@ -139,7 +139,7 @@ Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job r
         r##########"job create"##########,
         r##########"Create a SQLite-authoritative Job (objective-only).
 
-Required: --repo LOCAL_ROOT_NAME and a standalone Job objective. Job ID defaults to an auto-incrementing store-global number; --id may only reference an existing numeric Job.
+Required: --repo LOCAL_ROOT_NAME, standalone Job objective, and --preflight=true (exact spelling; all new Jobs). Missing/false/invalid preflight returns JOB_PREFLIGHT_REQUIRED, exit 2, and creates nothing. The flag attests the creator ran Spec Kit Specify/Clarify and independent Preflight Review; it is not stored in SQLite. Job ID defaults to an auto-incrementing store-global number; --id may only reference an existing numeric Job.
 Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-root ABSOLUTE_GIT_ROOT, --priority P0|P1|P2|P3, --initial-plan, --review|--no-review, --auto-merge|--no-auto-merge, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
 Optional local Git branch binding: --local-merge-source refs/heads/FEATURE --local-merge-target refs/heads/main (both required together). For ordinary code tasks Relay can also bind its isolated local source branch automatically; no remote service or PR is required.
 Creation enables auto-merge and Final Review by default. For plan-free DAG
@@ -154,7 +154,7 @@ The --no-review and --no-auto-merge policies are separate; creation is
 idempotent and does not rewrite an existing Job.
 
 Example:
-  agents-relay job create --repo vlog --project-root /absolute/path/to/vlog --title "Episode" --objective-file episode.md --initial-plan"##########,
+  agents-relay job create --repo vlog --project-root /absolute/path/to/vlog --title "Episode" --objective-file episode.md --preflight=true --initial-plan"##########,
     ),
     (
         r##########"job run"##########,

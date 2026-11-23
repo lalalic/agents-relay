@@ -4,7 +4,7 @@ use agents_relay_rust2::{
     relayd::{DaemonConfig,DaemonServices},
     relayd_sqlite_write::IsolatedSQLiteWriteHost,
     relay_store::SQLiteRelayStore,
-    relayd_control::workspace_control,
+    relayd_control::{workspace_control,WorkspaceControlBackend},
 };
 use serde_json::{json,Value};
 use std::{fs,path::{Path,PathBuf},time::{SystemTime,UNIX_EPOCH}};
@@ -696,10 +696,19 @@ fn native_control_job_create_is_real_git_graph_sqlite_and_idempotent_after_resta
     git(&project,&["init","-q","-b","main"]);
     let opts=json!({"projectRoot":project,"title":"Native initial Job",
         "objective":"Create through real daemon Control",
-        "idempotencyKey":"first-control","reviewEnabled":false});
+        "idempotencyKey":"first-control","reviewEnabled":false,
+        "preflight":true});
     let request=json!({"command":"job.create","repository":"fixture",
         "initialPlan":false,"options":opts});
     let mut host=IsolatedSQLiteWriteHost::new(config.clone());
+    // No assertion means no durable Job, and API callers cannot bypass CLI.
+    for attestation in [Value::Null,json!(false),json!("true"),json!(1)]{
+        let mut invalid=request.clone();
+        invalid["options"]["preflight"]=attestation;
+        let error=workspace_control(&mut host,&invalid).unwrap_err();
+        assert_eq!(error,agents_relay_rust2::cli_job_create::JOB_PREFLIGHT_REQUIRED);
+        assert!(host.known_jobs().unwrap().is_empty(),"rejected preflight mutated SQLite");
+    }
     let receipt=workspace_control(&mut host,&request).unwrap();
     let id=receipt["job"].as_str().expect("allocated Job ID").to_owned();
     assert!(id.parse::<u64>().is_ok());
@@ -707,6 +716,7 @@ fn native_control_job_create_is_real_git_graph_sqlite_and_idempotent_after_resta
     let saved=host.load(&id).unwrap();
     assert_eq!(saved["projectRoot"],json!(fs::canonicalize(&project).unwrap()));
     assert_eq!(saved["title"],"Native initial Job");
+    assert!(saved.get("preflight").is_none(),"preflight must never be persisted");
     assert!(saved["tasks"].as_array().is_some_and(Vec::is_empty));
     drop(host);
     let mut restarted=IsolatedSQLiteWriteHost::new(config.clone());

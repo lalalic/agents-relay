@@ -3,6 +3,7 @@
 //! Node. Unwired host actions explicitly fail rather than launching Node.
 use agents_relay_rust2::{
     cli::{run_cli,CliRuntimePort,agent_control_request},
+    cli_job_create::{require_preflight_cli,JOB_PREFLIGHT_REQUIRED},
     cli_artifact::{validate_artifact,result_json},
     cli_review::run_review_command,
     outcome_review::run_outcome_review,
@@ -71,6 +72,7 @@ impl CliRuntimePort for DaemonClient {
     fn execute(&mut self,group:&str,action:&str,args:&[String])->Result<Value,String>{
         match (group,action){
             ("init","")=>{
+                require_preflight_cli(args)?;
                 if !arg(args,"--file","").is_empty(){
                     return Err("Legacy --file Job initialization is not supported; use the canonical local SQLite daemon".into());
                 }
@@ -90,6 +92,7 @@ impl CliRuntimePort for DaemonClient {
                     "priority":cli_priority(args,"P2")?,
                     "reviewEnabled":!args.iter().any(|a|a=="--no-review"),
                     "continuation":Value::Null,
+                    "preflight":true, // transient; never included in Job snapshot
                 });
                 let continue_kind=arg(args,"--continue-kind","");
                 let continue_target=arg(args,"--continue-target","");
@@ -429,7 +432,7 @@ fn main(){
         },
         Err(error)=>{
             eprintln!("{error}");
-            std::process::exit(1);
+            std::process::exit(if error==JOB_PREFLIGHT_REQUIRED{2}else{1});
         },
     }
 }

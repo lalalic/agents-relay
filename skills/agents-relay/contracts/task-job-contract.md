@@ -21,7 +21,7 @@ Use `job create` with standalone objective Markdown. Existing PRs are not import
 
 ## Agent-created Job quality gate (before `job create`)
 
-An Agent creating a Job (including a user-facing orchestrator) owns the quality of the **proposed Markdown objective before persistence**. This applies to Planner-backed, create-only, P0/self and Coordinator Graph Jobs. It is an **Agent authoring contract**; existing direct CLI/API callers are not runtime-gated by this document.
+An Agent creating a Job (including a user-facing orchestrator) owns the quality of the **proposed Markdown objective before persistence**. This applies to Planner-backed, create-only, P0/self and Coordinator Graph Jobs. The **review quality steps** are an Agent authoring contract; CLI and JSON Control callers are runtime-gated only on their explicit non-persisted `--preflight=true`/`options.preflight: true` declaration, not on evidence that the steps actually ran.
 
 1. **Authorization and intent:** distinguish discussion/specification from authorization to create or execute a Job. Preserve the original request and settled user decisions; do not invent scope or silently override a required implementation choice.
 2. **Specify:** use the installed `speckit-specify` Skill and its requirements-quality checklist to form a standalone Markdown objective: goal, user-visible behavior, requirements, in/out-of-scope boundaries, known constraints, assumptions and measurable acceptance criteria. Include the original user request or faithful context so an independent reviewer can detect omissions.
@@ -33,7 +33,7 @@ The full file-producing Specify/Clarify workflows require a valid `.specify/` pr
 
 Use Markdown sections inside the existing `objective` field rather than adding one Relay field for every Spec Kit section. Preserve stable spec references when available, but include enough context and acceptance criteria to work and review independently of the original chat; `description` is not required by the current `job create` CLI. Material changes to accepted scope or criteria require renewed clarification and preflight, not an unreviewed rewrite.
 
-This preflight is creator-owned authoring evidence, **not** a new Relay lifecycle state or a replacement for Planner quality checks, worker self-review, or the independent immutable-head Final Review.
+This preflight is creator-owned authoring responsibility, **not** a new Relay lifecycle state or a replacement for Planner quality checks, worker self-review, or the independent immutable-head Final Review. **All** new Job creation entrypoints, including Coordinator/Project Run, must explicitly pass the exact `--preflight=true` CLI flag (JSON Control equivalent `options.preflight: true`). Missing, false or malformed assertions fail with `ERROR [JOB_PREFLIGHT_REQUIRED]`, CLI exit code 2, and no Job mutation. This is an attestation, **not cryptographic evidence**. Relay never persists the transient flag in Job JSON/SQLite, creates Preflight Tasks/receipts, or adds a new Graph state. Resuming or updating an already-existing Job does not create a new Job and does not require that flag.
 
 ## Agent definitions and advisory frontmatter
 

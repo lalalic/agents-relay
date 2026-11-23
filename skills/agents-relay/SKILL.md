@@ -59,13 +59,13 @@ New source Tasks (`gitDeliveryRequired: true`) must commit with `Relay-Task: ID`
 
 Use Relay for durable multi-Task work with explicit objectives and acceptance criteria.
 
-For every **Agent-created Job**, apply the `speckit-specify` and `speckit-clarify` requirements/clarification contracts, then obtain an independent future-Final-Reviewer preflight with `review run --prompt-file` **before** `job create`. Only `PASS` authorizes creation; revise `CHANGE_REQUIRED`, stop on `BLOCKED`/review failure. A conversation-only design is not authorization. Full Spec Kit file-producing workflows require an authorized `.specify/` checkout; see `contracts/task-job-contract.md` and `contracts/orchestrator-workflows.md`.
+For **every new Job**, apply the `speckit-specify` and `speckit-clarify` requirements/clarification contracts, then obtain an independent future-Final-Reviewer preflight with `review run --prompt-file` **before** `job create`. Only `PASS` authorizes creation; revise `CHANGE_REQUIRED`, stop on `BLOCKED`/review failure. A conversation-only design is not authorization. The creator explicitly declares completion using **`--preflight=true`** (only accepted spelling); missing, false, or any other value fails with `ERROR [JOB_PREFLIGHT_REQUIRED]` and exit 2 before creating a Job. This is a non-persisted responsibility assertion, not review evidence. No `job.preflight`, Preflight Task, Receipt, or new JEL state. Project Run callers must also declare it before creating new Coordinator Jobs. Full Spec Kit file-producing workflows require an authorized `.specify/` checkout; see `contracts/task-job-contract.md` and `contracts/orchestrator-workflows.md`.
 
 Consult CLI help; examples:
 
 ```sh
 agents-relay --help
-agents-relay job create --repo LOCAL_ROOT_NAME --project-root /absolute/path/to/git-root --title "Objective" --objective-file job.md --initial-plan
+agents-relay job create --repo LOCAL_ROOT_NAME --project-root /absolute/path/to/git-root --title "Objective" --objective-file job.md --preflight=true --initial-plan
 agents-relay job show --id JOB_ID
 agents-relay task list --repo LOCAL_ROOT_NAME --id JOB_ID
 ```

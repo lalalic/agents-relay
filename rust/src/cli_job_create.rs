@@ -11,6 +11,30 @@ use crate::{
 };
 use serde_json::{json,Value};
 use std::{collections::HashSet,path::{Path,PathBuf}};
+/// This is a caller attestation, not proof of reviewer execution. Never
+/// persist it in Job/Task/Plan/Review state; the creator owns the preflight.
+pub const JOB_PREFLIGHT_REQUIRED:&str="ERROR [JOB_PREFLIGHT_REQUIRED]\n\nJob creation requires --preflight=true.\n\nBefore creating a Job, the orchestrator must:\n1. Complete Spec Kit Specify and Clarify.\n2. Pass independent Preflight Review.\n3. Explicitly acknowledge completion with --preflight=true.\n\nNo Job was created.";
+
+/// CLI accepts exactly one spelling. Do not treat `--preflight false` or
+/// duplicate/unknown variants as a successful attestation.
+pub fn require_preflight_cli(args:&[String])->Result<(),String>{
+    let flags=args.iter().filter(|v|v.starts_with("--preflight")).collect::<Vec<_>>();
+    if flags.len()==1&&flags[0].as_str()=="--preflight=true"{
+        Ok(())
+    }else{
+        Err(JOB_PREFLIGHT_REQUIRED.into())
+    }
+}
+/// Direct JSON/daemon callers must also explicitly assert the boolean; a
+/// CLI-only check would allow an HTTP client to bypass the contract.
+pub fn require_preflight_options(options:&Value)->Result<(),String>{
+    if options.get("preflight")==Some(&Value::Bool(true)){
+        Ok(())
+    }else{
+        Err(JOB_PREFLIGHT_REQUIRED.into())
+    }
+}
+
 fn field<'a>(v:&'a Value,key:&str)->&'a str{
     v.get(key).and_then(Value::as_str).unwrap_or("")
 }
@@ -83,6 +107,7 @@ where
     Load:FnMut(&str)->Result<Option<Value>,String>,
     Persist:FnMut(&Value)->Result<Value,String>,
 {
+    require_preflight_options(options)?;
     let requested=optional(options,"id");
     if requested.is_some_and(|id|id.starts_with('0')
         || !id.bytes().all(|b|b.is_ascii_digit())){

@@ -17,9 +17,9 @@ Before **any Agent-issued** `job create`, including create-only and Coordinator 
    ```
 
    The prompt must ask whether a future Final Reviewer can verify success objectively. The generic Reviewer is implicit; add `--agents name,name` only for resolvable project/workspace professionals. This is not `review job`, is not SHA-bound, and does not approve implementation.
-4. Accept only `PASS` before `job create --objective-file`. On `CHANGE_REQUIRED`, the orchestrator corrects the Markdown and repeats preflight (bounded retries); on `BLOCKED`, missing reviewer execution or unresolved critical choice, stop and obtain the necessary information. Never label missing evidence as PASS.
+4. Accept only `PASS` before `job create --objective-file --preflight=true`. On `CHANGE_REQUIRED`, the orchestrator corrects the Markdown and repeats preflight (bounded retries); on `BLOCKED`, missing reviewer execution or unresolved critical choice, stop and obtain the necessary information. Never label missing evidence as PASS. The exact CLI flag `--preflight=true` is mandatory for all new Jobs (normal, create-only, self/P0, Project Run); absent/false/other values produce `JOB_PREFLIGHT_REQUIRED` (exit 2) without persistence. No Job preflight field or separate lifecycle; the creator is accountable for the assertion.
 
-The full file-producing Spec Kit Skills require a valid `.specify/` project in an authorized checkout. During earlier repository-independent dialogue, follow their requirements/clarification methods without pretending to have created files. This Agent contract is not enforced at the CLI/API boundary for arbitrary callers; it does not alter Relay's normal Planner, execution or immutable-head Final Review gates.
+The full file-producing Spec Kit Skills require a valid `.specify/` project in an authorized checkout. During earlier repository-independent dialogue, follow their requirements/clarification methods without pretending to have created files. The CLI/API enforces only the creator's exact preflight declaration; it does not independently verify Spec Kit quality or Outcome Review evidence and does not alter Relay's normal Planner, execution or immutable-head Final Review gates.
 
 This contract defines orchestrator-owned exception workflows that sit above normal Agents Relay task/job execution.
 

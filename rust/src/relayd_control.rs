@@ -6,7 +6,7 @@ use crate::{
     agent_graph::parse_agent_graph,
     cli_coordinator::bind_coordinator_start,
     blockers::register_blocker_dependency,
-    cli_job_create::ensure_managed_local_job,
+    cli_job_create::{ensure_managed_local_job,require_preflight_options},
     interactive_request::{begin_interactive_review,abort_interactive_review,interactive_waiting_event},
     job_pause::{pause_job,resume_job},
     local_merge_lock::iso8601_now,
@@ -108,6 +108,7 @@ fn control_create<B:WorkspaceControlBackend>(
     // before checking the repository and before any backend side effects.
     let opts=body.get("options").filter(|v|v.is_object())
         .cloned().unwrap_or(json!({}));
+    require_preflight_options(&opts)?;
     if opts.get("projectPath").is_some(){
         return Err("Job projectPath is removed; use an independent local Git root".into());
     }

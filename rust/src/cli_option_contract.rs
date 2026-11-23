@@ -27,7 +27,7 @@ pub fn validate_cli_options(args:&[String])->Result<(),String>{
         "--name", "--nats-url", "--no-auto-merge", "--no-content-only", "--no-review",
         "--objective", "--objective-file", "--on-needs-user", "--on-needs-user-file", "--order",
         "--origin", "--output", "--output-path", "--output-schema", "--owner",
-        "--parent", "--path", "--plan-id", "--planner-command", "--port",
+        "--parent", "--path", "--plan-id", "--planner-command", "--port", "--preflight",
         "--priority", "--profile", "--project", "--project-path", "--project-root",
         "--prompt", "--prompt-file", "--provider", "--queue", "--reason",
         "--reason-file", "--reasoning", "--recovery-task-id", "--regions", "--repo",

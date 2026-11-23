@@ -41,7 +41,7 @@ Binaries from this repository are `rust/target/debug/agents-relay-rust` and `rus
 ```sh
 # Local Git root is the Job identity; --repo is a local basename, not GitHub owner/repo.
 agents-relay job create --repo my-project --project-root /absolute/path/to/my-project \
-  --title "Implement objective" --objective-file objective.md --initial-plan
+  --title "Implement objective" --objective-file objective.md --preflight=true --initial-plan
 agents-relay job list
 agents-relay job show --id JOB_ID
 agents-relay task list --id JOB_ID --repo my-project

@@ -8,6 +8,7 @@ pub use crate::cli_service_public::{create_service,start_service,Service};
 use crate::{
     cli_core_support::{arg,has_arg,text_option,read_file_utf8},
     cli_help::help_text,
+    cli_job_create::require_preflight_cli,
     cli_project_run_mode::validate_project_run,
     cli_support::{
         relay_control_command,relay_control_job,relay_job_list,
@@ -78,6 +79,7 @@ pub trait CliRuntimePort{
 }
 pub fn job_create_request(args:&[String],stdin:Option<&str>)
     ->Result<Value,String>{
+    require_preflight_cli(args)?;
     let repository=new_local_repository(args)?;
     for removed in ["--project-path","--content-only",
         "--no-content-only","--shortcut-execution"]{
@@ -161,6 +163,7 @@ pub fn job_create_request(args:&[String],stdin:Option<&str>)
     let mut options=json!({
         "title":arg(args,"--title",""),"objective":objective,
         "projectRoot":project,"priority":priority,"tag":tag,
+        "preflight":true, // transient Control attestation; not persisted
         "reviewEnabled":!has_arg(args,"--no-review"),
         "autoMerge":!has_arg(args,"--no-auto-merge"),
         "reviewerThreadId":arg(args,"--reviewer-thread-id",""),
@@ -645,8 +648,32 @@ pub fn dashboard_job_action<P:crate::cli_runtime_public::DashboardJobActionPorts
 mod project_mode_cli_tests {
     use super::*;
     #[test]
+    fn job_creation_requires_exact_explicit_true_attestation(){
+        let base=["--repo","neox","--objective","Fix microphone"]
+            .map(str::to_owned).to_vec();
+        let expected=crate::cli_job_create::JOB_PREFLIGHT_REQUIRED;
+        assert_eq!(job_create_request(&base,None).unwrap_err(),expected);
+        for extra in [
+            vec!["--preflight=false"],vec!["--preflight=TRUE"],
+            vec!["--preflight"],vec!["--preflight","true"],
+            vec!["--preflight=1"],vec!["--preflight="],
+            vec!["--preflight=true","--preflight=false"],
+            vec!["--preflight=true","--preflight=true"],
+        ]{
+            let mut args=base.clone();args.extend(extra.iter().map(|v|v.to_string()));
+            assert_eq!(job_create_request(&args,None).unwrap_err(),expected,"{extra:?}");
+        }
+        let mut valid=base.clone();valid.push("--preflight=true".into());
+        for extra in [&[][..],&["--initial-plan"][..],&["--no-review"][..]]{
+            let mut args=valid.clone();args.extend(extra.iter().map(|v|v.to_string()));
+            let request=job_create_request(&args,None).unwrap();
+            assert_eq!(request["options"]["preflight"],true);
+            assert_eq!(request["command"],"job.create");
+        }
+    }
+    #[test]
     fn ordinary_job_does_not_require_a_coordinator_or_planner() {
-        let args = vec!["--repo", "neox", "--objective", "Fix microphone"]
+        let args = vec!["--repo", "neox", "--objective", "Fix microphone", "--preflight=true"]
             .into_iter().map(str::to_owned).collect::<Vec<_>>();
         let request = job_create_request(&args, None).unwrap();
         assert!(request["options"].get("coordinator").is_none());
@@ -654,7 +681,7 @@ mod project_mode_cli_tests {
     }
     #[test]
     fn ordinary_job_rejects_unmanaged_graph_and_inline_graph() {
-        let basic = ["--repo", "neox", "--objective", "Fix microphone"];
+        let basic = ["--repo", "neox", "--objective", "Fix microphone", "--preflight=true"];
         let mut args = basic.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         args.extend(["--coordinator-graph-file", "/tmp/arbitrary.mmd"].map(str::to_owned));
         assert!(job_create_request(&args,None).unwrap_err().contains("neo project run"));
