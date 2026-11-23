@@ -1713,3 +1713,13 @@ fn canonical_live_rust_owner_locks_sqlite_and_restarts_without_node() {
     drop(conn);
     let _=fs::remove_dir_all(root);
 }
+
+#[test]
+fn retired_codex_repository_allowlist_flag_is_rejected_not_silently_ignored(){
+    let output=Command::new(binary())
+        .args(["--live-codex-allow-repositories","fixture","--help"])
+        .output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("Unknown option --live-codex-allow-repositories"));
+}

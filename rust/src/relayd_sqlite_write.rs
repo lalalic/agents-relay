@@ -147,8 +147,6 @@ pub struct IsolatedSQLiteWriteHost {
     model_webhelm_canary:Option<IsolatedWebHelmConfig>,
     // Explicit non-browser Codex execution path. No PATH lookup/Node relay.
     model_codex_executable:Option<PathBuf>,
-    // Opt-in is restricted to only the explicit E2E repository names.
-    model_codex_allowed_repositories:HashSet<String>,
     model_event_cursor:HashMap<String,i64>,
     // NATS callback thread delivers only immutable JSON into a bounded
     // in-process queue. Graph/SQLite is always mutated on daemon thread.
@@ -176,7 +174,6 @@ impl IsolatedSQLiteWriteHost {
             escalation_notifier:None,event_history_api:None,
             model_event_ingress_enabled:false,model_webhelm_canary:None,
             model_codex_executable:None,
-            model_codex_allowed_repositories:HashSet::new(),
             model_event_cursor:HashMap::new(),
             model_nats_subscription:None,model_nats_publisher:None,
             model_nats_receiver:None,
@@ -325,7 +322,7 @@ impl IsolatedSQLiteWriteHost {
     /// canonical Rust-owned live store. Credentials belong to Codex itself;
     /// Relay never imports or places them in a Task/CLI argument.
     pub fn set_live_codex_executable(
-        &mut self,raw:&str,allowed_repositories:&str,
+        &mut self,raw:&str,
     )->Result<(),String>{
         if !self.live_store || !self.model_event_ingress_enabled{
             return Err("Live Codex requires native owner and trusted EventBus".into());
@@ -346,15 +343,6 @@ impl IsolatedSQLiteWriteHost {
                 return Err("Live Codex executable is not executable".into());
             }
         }
-        let allowed=allowed_repositories.split(',').map(str::trim)
-            .filter(|s|!s.is_empty()).collect::<Vec<_>>();
-        if allowed.is_empty()||allowed.iter().any(|name|
-            *name=="."||*name==".."||!name.bytes().all(|b|
-                b.is_ascii_alphanumeric()||matches!(b,b'-'|b'_'|b'.'))){
-            return Err("Live Codex requires a safe nonempty repository allowlist".into());
-        }
-        self.model_codex_allowed_repositories=
-            allowed.into_iter().map(str::to_owned).collect();
         self.model_codex_executable=Some(path);
         Ok(())
     }
@@ -828,14 +816,13 @@ impl IsolatedSQLiteWriteHost {
             Some(resolved)
         }else{None};
         // Model-only Jobs do not require a Planner Shortcut. Their Graph
-        // selected repair Plan must run through the explicitly configured,
-        // repository-scoped native Codex provider, never a Node fallback.
-        let codex=if self.live_store
-            &&self.model_codex_allowed_repositories.contains(field(&job,"repository")){
+        // selected repair Plan must run through the explicitly configured
+        // native Codex provider, never a Node fallback.
+        let codex=if self.live_store{
             self.model_codex_executable.clone()
         }else{None};
         if script.is_none()&&codex.is_none(){
-            return Err("Automatic Planner needs a trusted Script or allowlisted native Codex provider".into());
+            return Err("Automatic Planner needs a trusted Script or configured native Codex provider".into());
         }
         let interpreter=if script.is_some(){
             Some(PathBuf::from(configured_script_interpreter()?))
@@ -1573,10 +1560,6 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         }
         let project_root=self.isolated_project(&original)?;
         if adapter=="codex"{
-            if !self.model_codex_allowed_repositories.contains(
-                field(&original,"repository")){
-                return Err("Native Codex provider not authorized for this repository".into());
-            }
             let executable=self.model_codex_executable.clone()
                 .ok_or("Non-browser Codex adapter not explicitly configured")?;
             let candidates=json!([

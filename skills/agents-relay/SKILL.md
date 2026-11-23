@@ -21,7 +21,7 @@ Every Codex Task persists its `threadId` from verified Codex JSONL
 `thread.started` to SQLite, fenced by the exact current `executionId`. A
 new execution of the **same Task** resumes that ID with turn-scoped
 Profile, Model, Provider and reasoning instead of creating a new thread.
-The Model Router offers exactly one configured Model per Profile (including
+The live Codex adapter requires a configured native executable and a validated canonical Job Git root; no separate repository allowlist or environment setting is needed. The Model Router offers exactly one configured Model per Profile (including
 the implicit `default` Profile) and ranks eligible Profiles according to the
 configured routing policy and health. Quota/429 failures with proven zero
 tool-side-effects can exclude the failed Profile and reschedule the original

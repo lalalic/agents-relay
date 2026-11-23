@@ -36,7 +36,7 @@ All require separate real Job IDs, Graph Task/Review/event receipts, actual arti
 - rust/tests/native_codex_worker.rs (new): 2/2 targeted tests PASS.
 - rust/src/relayd_sqlite_write.rs: native Codex Worker allowlist and claim/route/recovery; durable external Script task outbox replay to authenticated NATS and fast scheduler wake.
 - rust/src/relayd.rs: live outbox flush in daemon tick.
-- rust/src/bin/agents-relayd-rust.rs: fail-closed explicit Model Worker executable/Repo allowlist CLI or PM2 env: AGENTS_RELAY_LIVE_CODEX_EXECUTABLE and AGENTS_RELAY_LIVE_CODEX_REPOSITORIES.
+- rust/src/bin/agents-relayd-rust.rs: the live Model Worker requires an explicitly configured Codex executable (`AGENTS_RELAY_LIVE_CODEX_EXECUTABLE` or `--live-codex-executable`) and trusted Events Bus. The former `AGENTS_RELAY_LIVE_CODEX_REPOSITORIES`/`--live-codex-allow-repositories` gate was removed on 2026-11-23; validated canonical Job project roots own repository scope.
 - rust/src/lib.rs: module registration; rust/tests/native_sqlite_write_host.rs: real NATS publication/dedup regression; docs/RUST2_FULL_E2E_CHECKLIST.md: four MVP criteria and evidence.
 - DO NOT commit source as production-ready until real test outcomes confirmed. Do not overwrite existing dirty changes.
 
