@@ -1,11 +1,31 @@
 // Direct port of src/task-transitions.ts: all policy decisions delegate to
 // the canonical Graph lifecycle; completion uses existing runtime-status selection.
 use crate::{
+    final_review_role::is_final_review_agent,
     runtime_status,
     workflow::{lifecycle, runtime, task_reconcile},
 };
 use serde_json::Value;
 use std::{future::Future, path::Path};
+/// A completed immutable-head Final Review is independent evidence that the
+/// current code passed acceptance. Historical failed Planner rounds must not
+/// block the merge after that independent review. Do not accept a loose
+/// review.outcome field without the matching successful Reviewer Task.
+pub fn latest_head_approved_by_final_review(job:&Value)->bool{
+    if job["reviewEnabled"]==false{return false;}
+    let review=&job["review"];
+    let head=review["headSha"].as_str().unwrap_or("");
+    let reviewer_id=review["taskId"].as_str().unwrap_or("");
+    if head.is_empty()||reviewer_id.is_empty()||review["outcome"]!="approved"
+        ||job["headSha"]!=head{return false;}
+    job["tasks"].as_array().into_iter().flatten().any(|task|
+        task["id"]==reviewer_id
+            &&is_final_review_agent(task["agentName"].as_str())
+            &&task["state"]=="SUCCEEDED"
+            &&task["reviewHeadSha"]==head
+            &&task.pointer("/result/data/verdict")==Some(&Value::String("approved".into()))
+            &&task.pointer("/result/data/head_sha")==Some(&Value::String(head.into())))
+}
 pub fn completion_gate_satisfied(job: &Value) -> bool {
     let plans = job["plans"].as_array();
     let latest = plans.and_then(|plans| {
@@ -40,7 +60,9 @@ pub fn completion_gate_satisfied(job: &Value) -> bool {
                 && task["state"] == "SUCCEEDED"
         });
     let implementation = runtime_status::implementation_tasks(job);
-    (plan_satisfied || legacy_satisfied || coordinator_satisfied)
+    let active_plan=plans.into_iter().flatten().any(|p|p["status"]=="PLANNING");
+    let final_review_satisfied=!active_plan&&latest_head_approved_by_final_review(job);
+    (plan_satisfied || legacy_satisfied || coordinator_satisfied || final_review_satisfied)
         && !implementation.is_empty()
         && implementation
             .iter()

@@ -77,7 +77,7 @@ state and hand subsequent execution to Relay.
 
 ## Merge completion vs deployment evidence
 
-For a managed Job, Relay owns Job completion. A satisfied Plan, successful implementation evidence, applicable SHA-bound review, and a verified local merge/delivery receipt are required. A GitHub merge alone is not proof of Job completion; verify the outcome with the Relay CLI. Deployment code must not invent another completion gate after durable Job completion.
+For a managed Job, Relay owns Job completion. Successful implementation evidence, an applicable SHA-bound approved Final Reviewer Task (or a satisfied Plan/Coordinator gate), and a verified local merge/delivery receipt when a merge is required are mandatory. A historical failed Planner *alone* must not override a later valid immutable-head Final Review. For older reviewed Jobs that lack `localMerge`, derive a pending merge request only from verified checked-out source ref and exact reviewed SHA and persist it through SQLite CAS; never mark completion simply because `autoMerge=true`. A GitHub merge alone is not proof of Job completion; verify the outcome with the Relay CLI. Deployment code must not invent another completion gate after durable Job completion.
 
 Post-merge publication and deployment activity is separate from Job lifecycle. Events or evidence such as `package.published`, published version metadata, service restart, and deployment verification may be attached after the Job is already `COMPLETED`; they must not hold the Job open, reopen it, or redefine completion. If post-merge deployment needs remediation, record that as separate deployment/recovery work rather than mutating the completed implementation Job lifecycle.
 

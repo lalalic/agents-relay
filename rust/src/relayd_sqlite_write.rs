@@ -7,7 +7,7 @@ use crate::{
     relayd_dashboard_actions::workspace_task_create_snapshot,
     git_delivery::source_commit_sha,
     local_merge_delivery::{native_merge_effect,reconcile_local_git_completion},
-    local_git_merge::{local_source_head,git as checked_local_git},
+    local_git_merge::{local_source_head,reviewed_checkout_merge_request,git as checked_local_git},
     local_merge_projection::reconcile_completed_local_delivery,
     agent_script_discovery::discover_script_agent,
     native_script_execution::run_claimed_script_task,
@@ -700,6 +700,21 @@ impl IsolatedSQLiteWriteHost {
             .ok_or_else(||format!("SQLite Job {id} not found"))?;
         if field(&job,"state")!="ACTIVE"{return Ok(false);}
         let project=self.isolated_project(&job)?;
+        // Jobs created without --local-merge-source could previously show
+        // MERGE_PENDING forever: no Graph-owned merge effect was eligible.
+        // Persist an exact approved Git branch receipt with a SQLite CAS
+        // BEFORE running the existing Job Lifecycle merge Graph. Never
+        // bypass Graph completion or fabricate historical Planner SUCCESS.
+        if let Some(request)=reviewed_checkout_merge_request(&project,&job)?{
+            let before=job.clone();
+            job=self.scoped(id)?.mutate_job(id,|current|{
+                if current!=before{return Err("Concurrent reviewed Git merge staging CAS conflict".into());}
+                let mut staged=current;
+                staged["localMerge"]=request.clone();
+                staged["updatedAt"]=json!(crate::local_merge_lock::iso8601_now());
+                Ok(staged)
+            })?;
+        }
         // Materialize the Project Runner's declared Coordinator receipt only
         // from committed Graph/SQLite SUCCEEDED child Tasks. This projection
         // never advances Job/Task/Review state or overwrites run files.

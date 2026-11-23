@@ -107,6 +107,43 @@ pub fn local_merge_facts(
         "mergeAttemptReady":ready
     })
 }
+/// For older Jobs created without --local-merge-source, derive a merge
+/// request ONLY from a physically checked-out Git branch whose tip is the
+/// exact independently approved immutable head. Never infer a ref from a
+/// title, branch guess, or stale SQLite status. A detached checkout or
+/// source already moved after review fails closed.
+pub fn reviewed_checkout_merge_request(repo:&Path,job:&Value)
+    ->Result<Option<Value>,String>{
+    if job["state"]!="ACTIVE"||job["autoMerge"]==false
+        ||job.get("localMerge").is_some_and(|v|!v.is_null())
+        ||!crate::task_transitions::latest_head_approved_by_final_review(job)
+        ||!crate::runtime_status::implementation_complete(job){return Ok(None);}
+    // Validate that main actually exists: a Job with an unavailable target
+    // must not be considered locally COMPLETED.
+    let main=git(repo,&["rev-parse","--verify","refs/heads/main"])?;
+    let reviewed=job["review"]["headSha"].as_str().unwrap_or("");
+    let current=git(repo,&["symbolic-ref","--quiet","HEAD"])
+        .map_err(|_|"Approved Job has no checked-out source branch; explicit reviewed source required")?;
+    let source=checked_ref(&current)?;
+    let head=git(repo,&["rev-parse","--verify",source])?;
+    if head!=reviewed{
+        return Err("Reviewed source branch HEAD changed after Final Review; refusing merge".into());
+    }
+    if source=="refs/heads/main"{
+        if head!=main{
+            return Err("Reviewed HEAD on main does not equal main ref".into());
+        }
+        return Ok(None); // Already delivered and physically checked out.
+    }
+    Ok(Some(json!({
+        "sourceRef":source,"targetRef":"refs/heads/main",
+        "sourceSha":reviewed,"status":"pending","attempts":0,
+        "reviewTaskId":job["review"]["taskId"],
+        "provenance":"reviewed_checked_out_git_head",
+        "createdAt":crate::local_merge_lock::iso8601_now()
+    })))
+}
+
 pub fn local_merge_commit_message(
     job_id: Option<&str>,
     display_pr: Option<i64>,
