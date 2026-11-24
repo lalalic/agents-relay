@@ -515,6 +515,15 @@ impl IsolatedSQLiteWriteHost {
         }
         Ok(applied)
     }
+    fn append_routing_audit(&self, record: Option<&Value>) {
+        if let Some(record)=record {
+            let store=crate::decision_audit::JsonlDecisionAuditStore::new(
+                crate::decision_audit::audit_path(&self.config.store_directory));
+            if let Err(error)=store.append(record) {
+                eprintln!("Decision audit append failed: {error}");
+            }
+        }
+    }
     fn path(&self)->PathBuf{relay_unified_store_path(&self.config.store_directory)}
     /// Isolated writes must be confined to the same disposable caller-owned
     /// workspace as SQLite. A copied Job snapshot pointing at a live source
@@ -619,9 +628,7 @@ impl IsolatedSQLiteWriteHost {
         if matches!(field(event,"type"),"task.completed"|"task.failed"){
             if let Some(task)=result["tasks"].as_array().into_iter().flatten()
                 .find(|task|field(task,"id")==task_id){
-                let audit_path=self.config.store_directory.parent()
-                    .ok_or("Native isolated store has no parent")?
-                    .join("decision-audit.jsonl");
+                let audit_path=crate::decision_audit::audit_path(&self.config.store_directory);
                 record_terminal_route_outcome_jsonl(
                     &audit_path,task,event,Some(execution_id));
             }
@@ -1474,7 +1481,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         Ok(())
     }
     fn router_test(&mut self,_:&str,_:&str)->Result<Value,String>{Err(denied("router_test"))}
-    fn decision_audit(&mut self)->Result<Vec<Value>,String>{Err(denied("decision_audit"))}
+    fn decision_audit(&mut self)->Result<Vec<Value>,String>{crate::decision_audit::dashboard_records(&self.config.store_directory)}
     fn account_usage(&mut self)->Result<Value,String>{Err(denied("provider account usage"))}
     fn github_usage(&mut self)->Result<Option<Value>,String>{Ok(None)}
     fn status(&mut self)->Value{
@@ -1649,10 +1656,11 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             let routed=crate::reconciler_review::route_task_for_execution(
                 &self.config.graph_directory,&self.config.profile_home,
                 &self.config.policy_path,&self.config.router_rules_path,
-                &original,current,&available,&[],None,&json!({"decisionMode":"off"}))?;
+                &original,current,&available,&[],None,&json!({"decisionMode":"off","recordDecisionAudit":true}))?;
             if routed.job!=original {
                 let previous=original.clone();
                 original=self.persist_exact(id,&previous,&routed.job)?;
+                self.append_routing_audit(routed.decision_audit.as_ref());
                 for event in &routed.events {
                     WorkspaceControlBackend::publish(self,event)?;
                 }
@@ -1686,7 +1694,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                     &self.config.graph_directory,&self.config.profile_home,
                     &self.config.policy_path,&self.config.router_rules_path,
                     &original,task,candidates.as_array().expect("static candidates"),
-                    &[],None,&json!({"decisionMode":"off"}))?;
+                    &[],None,&json!({"decisionMode":"off","recordDecisionAudit":true}))?;
                 if route.job==original{
                     return Err("Model Router did not select a real Codex route".into());
                 }
@@ -1697,6 +1705,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                     return Err("Native non-browser route selected an unsupported adapter".into());
                 }
                 ready=self.persist_exact(id,&original,&route.job)?;
+                self.append_routing_audit(route.decision_audit.as_ref());
                 // Route events only after the exact durable Graph CAS.
                 for event in &route.events{
                     WorkspaceControlBackend::publish(self,event)?;
@@ -1718,8 +1727,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             let graph=self.config.graph_directory.clone();
             let job_id=id.to_string();let task_id=task_id.to_string();
             let execution_id=field(&task,"executionId").to_string();
-            let audit_path=self.config.store_directory.parent()
-                .map(|parent|parent.join("decision-audit.jsonl"));
+            let audit_path=Some(crate::decision_audit::audit_path(&self.config.store_directory));
             let profile_home=Some(self.config.profile_home.clone());
             let codex_policy=self.config.policy_path.clone();
             let codex_rules=self.config.router_rules_path.clone();
@@ -1784,8 +1792,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             let execution_id=field(&task,"executionId").to_string();
             let graph=self.config.graph_directory.clone();
             let pool_path=Some(config.pool_db.clone());
-            let audit_path=self.config.store_directory.parent()
-                .map(|parent|parent.join("decision-audit.jsonl"));
+            let audit_path=Some(crate::decision_audit::audit_path(&self.config.store_directory));
             let profile_home=Some(self.config.profile_home.clone());
             let adapters=json!([
                 {"id":"codex","name":"codex","capabilities":["model","codex"]},

@@ -1723,3 +1723,31 @@ fn retired_codex_repository_allowlist_flag_is_rejected_not_silently_ignored(){
     assert!(String::from_utf8_lossy(&output.stderr)
         .contains("Unknown option --live-codex-allow-repositories"));
 }
+
+#[test]
+fn real_native_daemon_audit_returns_latest_thirty_in_both_modes() {
+    let root=root();
+    let path=root.join("decision-audit.jsonl");
+    let port=socket_port();
+    for mode in ["--isolated-write-store-dir", "--isolated-store-dir"] {
+        let daemon=start_mode(&root,port,mode);
+        let empty=request(port,"GET","/api/decision-audit","").unwrap();
+        assert!(empty.starts_with("HTTP/1.1 200"),"{empty}");
+        assert_eq!(body(&empty),json!([]));
+        let mut fixture=String::new();
+        for i in 0..45 {
+            fixture.push_str(&format!("{}\n",json!({"decision_id":i,"padding":"x".repeat(4096)})));
+        }
+        fixture.push_str("{partial");
+        fs::write(&path,&fixture).unwrap();
+        let reply=request(port,"GET","/api/decision-audit","").unwrap();
+        assert!(reply.starts_with("HTTP/1.1 200"),"{reply}");
+        let records=body(&reply);
+        let ids=records.as_array().unwrap().iter().map(|r|r["decision_id"].as_i64().unwrap()).collect::<Vec<_>>();
+        assert_eq!(ids,(15..45).rev().collect::<Vec<_>>());
+        assert_eq!(fs::read_to_string(&path).unwrap(),fixture);
+        fs::remove_file(&path).unwrap();
+        drop(daemon);
+    }
+    fs::remove_dir_all(root).unwrap();
+}

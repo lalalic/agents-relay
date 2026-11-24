@@ -163,13 +163,20 @@ fn job_preference_routes_unpinned_worker_and_respects_exact_runtime() {
     let unconfigured=Path::new("/path-that-does-not-exist/job-route-test");
     let routes=|job:&Value,task:&Value|route_task_for_execution(
         Path::new("workflow"),unconfigured,unconfigured,unconfigured,
-        job,task,adapters.as_array().unwrap(),&[],None,&json!({"decisionMode":"off"}));
+        job,task,adapters.as_array().unwrap(),&[],None,&json!({"decisionMode":"off","recordDecisionAudit":true}));
     let preferred=routes(&job,&task).unwrap();
     assert_eq!(preferred.job["tasks"][0]["adapter"],"chatgpt");
     assert_eq!(preferred.job["tasks"][0]["routing"]["model"],"account-defaults");
     assert_eq!(preferred.job["tasks"][0]["routing"]["decidedBy"],
         "execution-router:job-preference");
     assert_eq!(preferred.events.len(),2);
+    let audit=preferred.decision_audit.as_ref().unwrap();
+    assert_eq!(audit["record_type"],"decision");
+    assert_eq!(audit["correlation"]["job_id"],"21");
+    assert_eq!(audit["correlation"]["task_id"],"22");
+    assert_eq!(audit["selected"]["worker"]["adapter"],"chatgpt");
+    assert_eq!(audit["decision_id"],preferred.job["tasks"][0]["routing"]["decisionId"]);
+    assert!(audit["decision_id"].is_string());
     task["workerRequirements"]["runtime"]=json!("codex");
     job["tasks"]=json!([task.clone()]);
     let constrained=routes(&job,&task).unwrap();

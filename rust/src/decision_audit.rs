@@ -447,3 +447,18 @@ pub fn make_execution_decision_audit(
         })).collect::<Vec<_>>()));
     Value::Object(map)
 }
+
+/// The canonical audit file is adjacent to the stores directory.
+pub fn audit_path(store_directory: &std::path::Path) -> PathBuf {
+    let root = if store_directory.file_name().is_some_and(|name| name == "stores") {
+        store_directory.parent().unwrap_or(store_directory)
+    } else { store_directory };
+    root.join("decision-audit.jsonl")
+}
+
+/// Dashboard service contract expects chronological order; its API reverses it.
+pub fn dashboard_records(store_directory: &std::path::Path) -> Result<Vec<Value>, String> {
+    let mut records = crate::audit_tail::read_jsonl_latest(audit_path(store_directory), 30)?;
+    records.reverse();
+    Ok(records)
+}

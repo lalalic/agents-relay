@@ -379,11 +379,7 @@ impl Reconciler{
             .and_then(Value::as_str).filter(|path|!path.is_empty()){
             return PathBuf::from(path);
         }
-        let root=if self.store_directory.file_name()
-            .is_some_and(|name|name=="stores"){
-            self.store_directory.parent().unwrap_or(&self.store_directory)
-        }else{&self.store_directory};
-        root.join("decision-audit.jsonl")
+        crate::decision_audit::audit_path(&self.store_directory)
     }
     pub fn new(graph_directory:impl Into<PathBuf>,
         store_directory:impl Into<PathBuf>,profile_home:impl Into<PathBuf>,

@@ -65,7 +65,7 @@ impl DaemonServices for ReadOnlySQLiteHost {
         Self::rejected("router_test")
     }
     fn decision_audit(&mut self)->Result<Vec<Value>,String>{
-        Err("Read-only daemon decision audit unavailable".into())
+        crate::decision_audit::dashboard_records(&self.config.store_directory)
     }
     fn account_usage(&mut self)->Result<Value,String>{Self::rejected("account_usage")}
     fn github_usage(&mut self)->Result<Option<Value>,String>{Ok(None)}

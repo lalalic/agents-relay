@@ -502,6 +502,13 @@ pub fn route_execution_with_choice(
         .or_else(||selected["model"].get("reasoning")){
         routing["reasoning"]=reasoning.clone();
     }
+    let audit=if audit.is_none() && options.get("recordDecisionAudit")==Some(&Value::Bool(true)){
+        Some(crate::decision_audit::make_execution_decision_audit(
+            options.pointer("/taskFacts/task"),workers,requirements,
+            &discovery.evaluations,&discovery.worker_gate_evaluations,&selected,
+            &json!({"question":"worker-model-selection","choices":discovery.choices}),
+            &discovery.policy,&routing,&[]))
+    }else{audit};
     if let Some(audit)=&audit{
         routing["decisionId"]=audit.get("decision_id").cloned().unwrap_or(Value::Null);
     }

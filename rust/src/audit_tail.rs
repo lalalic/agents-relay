@@ -5,6 +5,11 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 pub fn read_jsonl_newest_first(path: impl AsRef<Path>) -> Result<Vec<Value>, String> {
+    read_jsonl_latest(path, usize::MAX)
+}
+
+pub fn read_jsonl_latest(path: impl AsRef<Path>, limit: usize) -> Result<Vec<Value>, String> {
+    if limit == 0 { return Ok(Vec::new()); }
     let mut file = match File::open(path) {
         Ok(f) => f,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -33,7 +38,8 @@ pub fn read_jsonl_newest_first(path: impl AsRef<Path>) -> Result<Vec<Value>, Str
                 continue;
             }
             if let Ok(v) = serde_json::from_slice(line) {
-                records.push(v)
+                records.push(v);
+                if records.len() == limit { return Ok(records); }
             }
         }
         prefix = chunk[..end].to_vec();

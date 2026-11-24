@@ -62,11 +62,12 @@ pub struct ReviewSnapshot {
     pub events:Vec<Value>,
     pub cancel_execution_ids:Vec<String>,
     pub wake:bool,
+    pub decision_audit:Option<Value>,
 }
 impl ReviewSnapshot{
     pub fn unchanged(job:&Value)->Self{
         Self{job:job.clone(),events:Vec::new(),
-            cancel_execution_ids:Vec::new(),wake:false}
+            cancel_execution_ids:Vec::new(),wake:false,decision_audit:None}
     }
 }
 pub fn review_head(job:&Value,verified_local_sha:Option<&str>)->Option<String>{
@@ -378,12 +379,14 @@ pub fn route_task_for_execution(
     let opts=json!({"registered":registered,"usage":usage,
         "taskFacts":task_facts,"excludedRoutes":excluded_routes,
         "decisionMode":options.get("decisionMode"),
+        "recordDecisionAudit":options.get("recordDecisionAudit"),
         "chatgptRunning":options.pointer("/runtimeSummary/chatgptRunning")});
     let discovery=discover_execution_routes(&workers,&requirements,
         &opts,profile_home,policy_path,rules_path,
         Utc::now().timestamp_millis())?;
     let route=route_execution_with_choice(&discovery,&requirements,
         &workers,&opts,None,None,&[],None)?;
+    result.decision_audit=route.get("audit").filter(|v|!v.is_null()).cloned();
     let index=tasks(&result.job).iter().position(|t|t.get("id")==task.get("id"))
         .ok_or("Task absent after routing")?;
     let updated=&mut result.job["tasks"][index];
