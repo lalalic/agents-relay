@@ -8,9 +8,10 @@ const script=readFileSync(fileURLToPath(new URL('./dashboard.js',import.meta.url
 const css=readFileSync(fileURLToPath(new URL('./dashboard.css',import.meta.url)),'utf8');
 const taskNodeSource=script.slice(script.indexOf('function taskNode('),script.indexOf('function buildTree('));
 assert.ok(taskNodeSource.startsWith('function taskNode('));
+const taskTitleSource=script.slice(script.indexOf('function taskElapsedMinutes('),script.indexOf('function taskNode('));
 
 class Element {
-  constructor(tag){this.tagName=tag;this.children=[];this.attributes={};this.listeners={};this.style={};this.hidden=false;}
+  constructor(tag){this.tagName=tag;this.children=[];this.attributes={};this.listeners={};this.style={};this.dataset={};this.hidden=false;}
   append(...children){this.children.push(...children);}
   setAttribute(name,value){this.attributes[name]=value;}
   addEventListener(name,callback){this.listeners[name]=callback;}
@@ -31,6 +32,7 @@ test('task branches and leaves share label indentation and retain selection/fold
     set selectedTaskId(value){state.selectedTaskId=value;},set eventTaskId(value){state.eventTaskId=value;},
     collapsedTasks:state.collapsedTasks,expandedTasks:state.expandedTasks,
   };
+  context.taskTitleLabel=vm.runInNewContext(`${taskTitleSource}; taskTitleLabel`,context);
   const taskNode=vm.runInNewContext(`${taskNodeSource}; taskNode`,context);
   const nested={id:'2256',title:'Troubleshooter',state:'QUEUED'};
   const branch={id:'2255',title:'Visioner',state:'RUNNING'};
@@ -69,4 +71,46 @@ test('task branches and leaves share label indentation and retain selection/fold
   assert.equal(state.remembered,1);
   assert.equal(state.rendered,1);
   assert.equal(taskNode(leaf,children,1).children[0].children[1].attributes['aria-current'],'true');
+});
+
+test('task markers require persisted Script adapter metadata and exclude coordinators',()=>{
+  const context={
+    document:{createElement:tag=>new Element(tag)},
+    element:(tag,className,content)=>{const item=new Element(tag);item.className=className;if(content!==undefined)item.textContent=content;return item;},
+    text:String,value:value=>String(value??''),selected:()=>({repository:'agents-relay'}),shortManagedId:id=>id,Date,
+  };
+  const taskTitleLabel=vm.runInNewContext(`${taskTitleSource}; taskTitleLabel`,context);
+  const script=taskTitleLabel({id:'1',title:'Script task',adapter:'script',state:'QUEUED'});
+  assert.equal(script.children[0].textContent,'1: Script task');
+  assert.equal(script.children[1].attributes['aria-label'],'Script worker');
+  assert.equal(script.children[1].title,'Script worker');
+  for(const task of [
+    {id:'2',title:'Model task',adapter:'codex'},
+    {id:'3',title:'Coordinator',adapter:'script',agentGraph:{}},
+    {id:'4',title:'Coordinator',adapter:'script',kind:'coordinator'},
+    {id:'5',title:'Unknown task'},
+  ])assert.equal(taskTitleLabel(task).children.some(child=>child.className==='script-worker-marker'),false);
+});
+
+test('elapsed titles cover running, terminal freeze, retries, queued and invalid timestamps',()=>{
+  const taskElapsedMinutes=vm.runInNewContext(`${taskTitleSource}; taskElapsedMinutes`,{Date});
+  const minute=60000,now=Date.parse('2026-11-24T12:10:00Z');
+  const timing=(startedAt,state='RUNNING',updatedAt='2026-11-24T12:05:00Z')=>({state,updatedAt,executionHistory:[{startedAt}]});
+  assert.equal(taskElapsedMinutes(timing('2026-11-24T12:09:30Z'),now),0);
+  assert.equal(taskElapsedMinutes(timing('2026-11-24T12:07:00Z'),now),3);
+  const terminal=timing('2026-11-24T12:00:00Z','SUCCEEDED','2026-11-24T12:04:59Z');
+  assert.equal(taskElapsedMinutes(terminal,now),4);
+  assert.equal(taskElapsedMinutes(terminal,now+60*minute),4,'terminal duration stays tied to terminal updatedAt');
+  for(const state of ['FAILED','CANCELLED'])assert.equal(taskElapsedMinutes(timing('2026-11-24T12:00:00Z',state,'2026-11-24T12:04:59Z'),now),4);
+  const retried={state:'RUNNING',executionId:'new',executionHistory:[{id:'old',startedAt:'2026-11-24T11:00:00Z'},{id:'new',startedAt:'2026-11-24T12:08:00Z'}]};
+  assert.equal(taskElapsedMinutes(retried,now),2);
+  assert.equal(taskElapsedMinutes({...retried,state:'QUEUED'},now),null);
+  assert.equal(taskElapsedMinutes({state:'RUNNING',executionHistory:[{}]},now),null);
+  assert.equal(taskElapsedMinutes({...retried,executionHistory:[{startedAt:'bad'}]},now),null);
+  assert.equal(taskElapsedMinutes({...retried,executionHistory:[{startedAt:12345}]},now),null);
+  assert.equal(taskElapsedMinutes({state:'FAILED',executionHistory:[{startedAt:'2026-11-24T12:00:00Z'}]},now),null);
+  assert.equal(taskElapsedMinutes({...terminal,updatedAt:'bad'},now),null);
+  assert.equal(taskElapsedMinutes({...terminal,updatedAt:12345},now),null);
+  assert.equal(taskElapsedMinutes(timing('2026-11-24T12:11:00Z'),now),null,'negative durations are omitted');
+  assert.equal(taskElapsedMinutes({state:'RUNNING',kind:'coordinator',agentGraph:{},startedAt:'2026-11-24T12:00:00Z',executionHistory:[{startedAt:'2026-11-24T12:08:00Z'}]},now),10,'Coordinator lifecycle start takes precedence over worker execution history');
 });
