@@ -123,7 +123,10 @@
     .task-row { width:100%; max-width:100%; overflow:hidden; flex:1 1 0; display:flex; align-items:center; gap:.4rem; min-width:0; padding:.32rem .38rem .32rem .25rem; border:0; border-radius:.35rem; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
     .task-row[aria-current="true"] { background:var(--accent2); }
     .task-row .badge { flex:0 0 auto; }
-    .task-id { min-width:0; max-width:100%; flex:1 1 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font: .77rem ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .task-id { min-width:0; max-width:100%; flex:1 1 0; display:flex; align-items:center; gap:.28rem; overflow:hidden; white-space:nowrap; font: .77rem ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .task-title-text { min-width:0; flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .script-worker-marker { flex:0 0 auto; color:var(--accent); font-size:.55rem; line-height:1; }
+    .task-elapsed { flex:0 0 auto; color:var(--muted); font-variant-numeric:tabular-nums; }
     .task-actions { display:flex; justify-content:flex-end; gap:.25rem; margin-bottom:.5rem; }
     .task-link { color:var(--accent); font-weight:700; }
     .agent-graph { display:grid; gap:.45rem; margin-top:.55rem; padding:.55rem; border:1px solid var(--border); border-radius:.4rem; background:var(--surface2); overflow:auto; }
