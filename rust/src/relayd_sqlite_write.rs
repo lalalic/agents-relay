@@ -28,6 +28,8 @@ use crate::{
     relay_store_discovery::relay_unified_store_path,
     relayd::{inventory_from_local,DaemonConfig,DaemonServices},
     relayd_control::{workspace_control,WorkspaceControlBackend},
+    workspace::{ensure_local_job_source_branch,
+        prepare_local_job_execution_worktree,task_requires_managed_worktree},
 };
 use serde_json::{json,Value};
 use std::{cell::{Ref,RefCell,RefMut},collections::{HashMap,HashSet},future::{ready,Future},path::{Path,PathBuf},pin::pin,sync::mpsc::{self,Receiver,Sender},task::{Context,Poll,Waker}};
@@ -779,6 +781,37 @@ impl IsolatedSQLiteWriteHost {
     /// One provider inventory for both Plan Apply forward-convergence and
     /// Planner route selection. Never advertise a transport that the daemon
     /// has not explicitly initialized and verified.
+    /// Source Tasks must have an owned local source branch/worktree before
+    /// their execution is leased. Otherwise task.started cannot bind the Git
+    /// baseline and the Worker can edit/commit main while SQLite stays QUEUED.
+    /// Persist sourceRef with exact SQLite CAS, then prepare the checkout.
+    fn prepare_model_execution_checkout(
+        &mut self,job_id:&str,job:&Value,task_id:&str,
+    )->Result<(Value,PathBuf),String>{
+        let task=job.get("tasks").and_then(Value::as_array)
+            .into_iter().flatten().find(|task|field(task,"id")==task_id)
+            .ok_or("Source checkout Task missing")?;
+        let requires_git=task["gitDeliveryRequired"]==true;
+        let managed=task_requires_managed_worktree(job,Some(task));
+        let project=self.isolated_project(job)?;
+        let mut current=job.clone();
+        if requires_git&&field(&current["localMerge"],"sourceRef").is_empty(){
+            // isolated_project() already confines tests to their independent
+            // caller-owned Git fixture; live mode confines to its Workspace.
+            let source=ensure_local_job_source_branch(&project,&current)?;
+            let mut configured=current.clone();
+            configured["localMerge"]=json!({"sourceRef":source,
+                "targetRef":"refs/heads/main","status":"pending"});
+            configured["updatedAt"]=json!(crate::local_merge_lock::iso8601_now());
+            current=self.persist_exact(job_id,&current,&configured)?;
+        }
+        if managed{
+            let checkout=prepare_local_job_execution_worktree(
+                &project,&current,&self.config.workspace_root)?;
+            return Ok((current,checkout));
+        }
+        Ok((current,project))
+    }
     fn available_model_workers(&self)->Vec<Value>{
         let mut workers=Vec::new();
         if self.model_codex_executable.is_some(){
@@ -1631,11 +1664,16 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         // Each adapter must have a real, explicitly isolated source and
         // transport before a Task generation can be reserved. No Node Relay
         // fallback, no implicit production WebHelm, no receipt-based success.
-        let adapter=field(task,"adapter");
+        let adapter=field(task,"adapter").to_owned();
         if adapter!="script"&&adapter!="chatgpt"&&adapter!="codex"{
             return Err(denied("unsupported model Worker adapter"));
         }
-        let project_root=self.isolated_project(&original)?;
+        let (prepared,execution_root)=self.prepare_model_execution_checkout(
+            id,&original,task_id)?;
+        original=prepared;
+        let task=original.get("tasks").and_then(Value::as_array)
+            .into_iter().flatten().find(|task|field(task,"id")==task_id)
+            .ok_or("Prepared Worker Task disappeared")?;
         if adapter=="codex"{
             let executable=self.model_codex_executable.clone()
                 .ok_or("Non-browser Codex adapter not explicitly configured")?;
@@ -1692,7 +1730,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             std::thread::Builder::new().name(format!("rust-codex-task-{task_id}"))
                 .spawn(move||{
                     let result=crate::native_codex_execution::execute_claimed_codex(
-                        &db,&claimed,&task,&executable,&project_root);
+                        &db,&claimed,&task,&executable,&execution_root);
                     if let Err(error)=result{
                         eprintln!("Native Codex Worker {job_id}/{task_id}: {error}");
                         let phase=classify_native_launch_phase(&error);
@@ -1947,5 +1985,88 @@ mod committed_worker_observation_tests{
             &mut live,&terminal,"2","exec-new","task.completed");
         assert!(live.get("2").is_none(),
             "committed terminal clears only its matching volatile live Worker");
+    }
+}
+
+#[cfg(test)]
+mod source_checkout_regression_tests {
+    use super::*;
+    use crate::{
+        events::event_for,execution_event_identity::execution_event_source,
+        native_worker_event_ingress::apply_verified_worker_event,
+    };
+    use std::{fs,process::Command};
+    #[test]
+    fn source_worker_gets_git_branch_before_graph_started_and_never_checks_out_main(){
+        let base=std::env::temp_dir().join(format!(
+            "relay-source-preflight-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(
+                std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let project=base.join("project");let stores=base.join("stores");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&stores).unwrap();
+        let git=|args:&[&str]|{
+            let output=Command::new("git").arg("-C").arg(&project)
+                .args(args).output().unwrap();
+            assert!(output.status.success(),"git {:?}: {}",
+                args,String::from_utf8_lossy(&output.stderr));
+            String::from_utf8_lossy(&output.stdout).trim().to_owned()
+        };
+        git(&["init","-q","-b","main"]);
+        git(&["config","user.name","Relay Test"]);
+        git(&["config","user.email","relay@example.invalid"]);
+        fs::write(project.join("readme.md"),"baseline").unwrap();
+        git(&["add","."]);git(&["commit","-qm","baseline"]);
+        let main=git(&["rev-parse","HEAD"]);
+        let config=DaemonConfig{
+            workspace_root:base.clone(),store_directory:stores.clone(),
+            graph_directory:Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
+            profile_home:base.join("profiles"),policy_path:base.join("policy.json"),
+            router_rules_path:base.join("rules.md"),
+            dashboard_asset:base.join("index.html"),repositories:vec!["project".into()],
+            port:0,concurrency:1,interval_ms:100,event_transport:json!({}),
+        };
+        let db=base.join("relay.sqlite");
+        let stamp="2026-11-23T00:00:00.000Z";
+        let job=json!({"id":"724","repository":"project","projectRoot":project,
+            "title":"Test managed source checkout","state":"ACTIVE",
+            "autoMerge":true,"reviewEnabled":true,"createdAt":stamp,
+            "updatedAt":stamp,"plans":[],
+            "tasks":[{"id":"2264","jobId":"724","kind":"work",
+                "agentName":"implementation","adapter":"codex",
+                "state":"QUEUED","attempt":1,"maxAttempts":2,
+                "executionId":"exec-724-1","gitDeliveryRequired":true,
+                "output":{"kind":"task_pr"},"dependencies":[],
+                "createdAt":stamp,"updatedAt":stamp}]});
+        let store=SQLiteRelayStore::open(&db,Some("724")).unwrap();
+        store.save_job(&job).unwrap();
+        assert!(crate::git_delivery::started_source_baseline(&job,"2264")
+            .unwrap_err().contains("source branch"));
+        let mut host=IsolatedSQLiteWriteHost::new(config.clone());
+        let (ready,worktree)=host.prepare_model_execution_checkout(
+            "724",&job,"2264").unwrap();
+        let source=ready.pointer("/localMerge/sourceRef").and_then(Value::as_str)
+            .unwrap();
+        assert!(source.starts_with("refs/heads/relay/job-724-"));
+        assert!(worktree.starts_with(base.join(".worktrees/agents-relay")));
+        assert_ne!(worktree,project);
+        assert_eq!(git(&["rev-parse","HEAD"]),main);
+        assert_eq!(git(&["symbolic-ref","HEAD"]),"refs/heads/main");
+        assert_eq!(crate::git_delivery::started_source_baseline(
+            &ready,"2264").unwrap(),Some(main.clone()));
+        // The exact external task.started event must now be accepted through
+        // the original Graph + SQLite ingress, not an invented worker receipt.
+        let event=event_for("724","2264",None,"task.started","running",
+            "started",Some("worker"),None,Some(json!({
+                "id":execution_event_source("724","2264","exec-724-1")
+            })));
+        let running=apply_verified_worker_event(&db,&config.graph_directory,
+            "724","2264","exec-724-1",&event).unwrap();
+        assert_eq!(running["tasks"][0]["state"],"RUNNING");
+        assert_eq!(running["tasks"][0]["gitDeliveryBaseline"]["sha"],
+            json!(main));
+        drop(host);drop(store);
+        fs::remove_dir_all(base).unwrap();
     }
 }
