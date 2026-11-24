@@ -370,6 +370,8 @@ pub fn route_task_for_execution(
         "job":{"id":job.get("id"),"title":job.get("title"),
             "objective":job.get("objective"),"description":job.get("description"),
             "repository":job.get("repository"),"state":job.get("state")},
+        "routingPreferences":if review_task(task){Value::Null}
+            else{job.get("routingPreferences").cloned().unwrap_or(Value::Null)},
         "task":task,"storySize":task.get("storySize"),
         "recovery":task.get("recoveryContext")
     });

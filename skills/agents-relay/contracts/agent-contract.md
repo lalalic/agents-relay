@@ -42,7 +42,8 @@ prompt**, not as an enforced bootstrap/contract requirement. The selected
 Agent's `model` and `reasoning` hints go to the Router **decision prompt**,
 not to the Worker prompt.
 
-User-authored Router `[routing-instruction]` guidance has priority over Agent
+Durable Job `routingPreferences` soft hints have priority over Agent frontmatter hints for still-unrouted normal Tasks.
+User-authored Router `[routing-instruction]` guidance has priority over Job preferences and Agent
 preferences, and authoritative hard constraints still apply before selection.
 Only configured/default or explicitly listed `[choices]` routes are eligible;
 the Agent hint does not widen that choice set. Existing Router selection,

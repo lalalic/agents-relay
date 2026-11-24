@@ -1565,7 +1565,41 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         }
         let id=field(action,"jobId");
         let task_id=field(action,"taskId");
-        let original=WorkspaceControlBackend::load_job(self,id)?;
+        let mut original=WorkspaceControlBackend::load_job(self,id)?;
+        let current=original.get("tasks").and_then(Value::as_array).into_iter().flatten()
+            .find(|task|field(task,"id")==task_id)
+            .ok_or("Unregistered Worker Task")?;
+        // Before committing to the placeholder Codex adapter, give an
+        // *unpinned* Task the Job's soft preference across configured real
+        // worker transports. Browser Tasks whose route was cleared must also
+        // be re-routed before launch. A user-selected runtime or exact Task
+        // route still wins, and an absent transport never becomes a choice.
+        let can_route=matches!(field(current,"adapter"),"codex"|"chatgpt")
+            &&current.get("routing").is_none_or(Value::is_null)
+            &&current.get("workerSelection").is_none_or(Value::is_null);
+        let should_route=can_route && self.model_webhelm_canary.is_some()
+            &&(field(current,"adapter")=="chatgpt" ||
+               original.get("routingPreferences").is_some_and(Value::is_object));
+        if should_route {
+            let mut available=Vec::new();
+            if self.model_codex_executable.is_some(){
+                available.push(json!({"id":"codex","name":"codex",
+                    "capabilities":["model","codex"]}));
+            }
+            available.push(json!({"id":"chatgpt/browser-worker","name":"chatgpt",
+                "capabilities":["model","chatgpt","webhelm"]}));
+            let routed=crate::reconciler_review::route_task_for_execution(
+                &self.config.graph_directory,&self.config.profile_home,
+                &self.config.policy_path,&self.config.router_rules_path,
+                &original,current,&available,&[],None,&json!({"decisionMode":"off"}))?;
+            if routed.job!=original {
+                let previous=original.clone();
+                original=self.persist_exact(id,&previous,&routed.job)?;
+                for event in &routed.events {
+                    WorkspaceControlBackend::publish(self,event)?;
+                }
+            }
+        }
         let task=original.get("tasks").and_then(Value::as_array).into_iter().flatten()
             .find(|task|field(task,"id")==task_id)
             .ok_or("Unregistered Worker Task")?;

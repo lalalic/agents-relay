@@ -141,6 +141,7 @@ Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job r
 
 Required: --repo LOCAL_ROOT_NAME, standalone Job objective, and --preflight=true (exact spelling; all new Jobs). Missing/false/invalid preflight returns JOB_PREFLIGHT_REQUIRED, exit 2, and creates nothing. The flag attests the creator ran Spec Kit Specify/Clarify and independent Preflight Review; it is not stored in SQLite. Job ID defaults to an auto-incrementing store-global number; --id may only reference an existing numeric Job.
 Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-root ABSOLUTE_GIT_ROOT, --priority P0|P1|P2|P3, --initial-plan, --review|--no-review, --auto-merge|--no-auto-merge, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
+Soft routing hints: --prefer-adapter codex|chatgpt|z, --prefer-provider NAME, --prefer-model EXACT_MODEL_ID, --prefer-profile NAME, --prefer-reasoning EFFORT. These rank only eligible worker/model routes for Job Tasks and do not pin routing or widen the model catalog.
 Optional local Git branch binding: --local-merge-source refs/heads/FEATURE --local-merge-target refs/heads/main (both required together). For ordinary code tasks Relay can also bind its isolated local source branch automatically; no remote service or PR is required.
 Creation enables auto-merge and Final Review by default. For plan-free DAG
 jobs, only neo project run may pass --project-run-manifest PROJECT/project.run.json,
@@ -177,7 +178,7 @@ There is no Shortcut execution mode."##########,
 
 Required: --id JOB_ID. Optional: --repo LOCAL_ROOT_NAME verifies the stored Job identity.
 Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --project-root ABSOLUTE_GIT_ROOT, --priority, --tag JSON, --auto-merge|--no-auto-merge, --review|--no-review, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID, and continuation options. The objective updates local SQLite.
-Unspecified fields are preserved. Local Job identity mismatch is rejected.
+Unspecified fields are preserved. Soft routing preferences: --prefer-adapter, --prefer-provider, --prefer-model, --prefer-profile, --prefer-reasoning. Use --clear-routing-preferences to reset all Job hints. They do not alter already selected Task routes. Local Job identity mismatch is rejected.
 
 Example:
   agents-relay job update --id 101 --priority P0 --no-auto-merge"##########,
@@ -289,7 +290,7 @@ Example:
 Required: --id JOB_ID --task-id ID. Optional --repo LOCAL_ROOT_NAME fences the Job identity.
 Mutable while not RUNNING/SUCCEEDED/CANCELLED: --title, --adapter, --priority, --story-size, --input-file PATH|- or --input MARKDOWN, --project, --agent, --parent, --deps, --dependency-validity JSON, --capabilities, --timeout (inactivity window), --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy, --draft, --queue.
 Accepted task.started and newer current-execution task.progress events reset --timeout.
-Use --clear-routing to remove routing metadata.
+Use --clear-routing to remove selected model routing; conflicts with explicit --provider, --model, --profile, --reasoning, --cwd or --chatgpt-project. Updating --adapter clears any route chosen for the previous adapter. These options are exact selections, NOT Job preferences; a route is not available until its provider/model/profile are configured.
 
 Example:
   agents-relay task update --repo LOCAL_ROOT_NAME --id 101 --task-id 202 --adapter chatgpt --provider chatgpt --model gpt-5.6-sol --reasoning high"##########,

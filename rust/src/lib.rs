@@ -25,6 +25,7 @@ pub mod force_restate;
 pub mod github_binding_order;
 pub mod github_branch_projection;
 pub mod job_execution_slot;
+pub mod job_routing_preferences;
 pub mod js_text;
 pub mod local_job_path;
 pub mod local_merge_lock;

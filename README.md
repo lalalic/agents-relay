@@ -47,6 +47,23 @@ agents-relay job show --id JOB_ID
 agents-relay task list --id JOB_ID --repo my-project
 ```
 
+Use optional **soft Job routing preferences** to rank eligible workers/models without pinning a Task:
+
+```sh
+agents-relay job create --repo my-project --project-root /absolute/path/to/my-project \
+  --objective-file objective.md --preflight=true --initial-plan \
+  --prefer-adapter chatgpt --prefer-model account-defaults
+agents-relay job update --id JOB_ID --prefer-model gpt-6
+agents-relay job update --id JOB_ID --clear-routing-preferences
+
+# Exact routing overrides belong to editable Tasks, not the Job:
+agents-relay task update --repo my-project --id JOB_ID --task-id TASK_ID \
+  --adapter codex --provider openai --model gpt-6 --reasoning high
+agents-relay task update --repo my-project --id JOB_ID --task-id TASK_ID --clear-routing
+```
+
+A Job hint is matched against the **actual configured model ID**, not a model-family alias, and falls back when ineligible. `task update` exact routing is supported only before a Task is running or terminal. See [Execution Router](docs/worker-model-routers.md).
+
 Create-only Jobs (without `--initial-plan`) remain DRAFT until activated. DAG Jobs can provide `--coordinator-graph-file` and activate via `job run --id JOB_ID --task-id TASK_ID`. Planner, Workers, Troubleshooter, Final Reviewer and local Merge use one durable task lifecycle. Use `agents-relay --help` and the [skill](skills/agents-relay/SKILL.md) for command contracts.
 
 PR/GitHub CLI switches and PR identity are removed, with no historical-compatibility shim. Local Git merges complete independently of network availability. Optional, verified fast-forward delivery to `origin/main` occurs only after the Job is completed and cannot reopen a Job.

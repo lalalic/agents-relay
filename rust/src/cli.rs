@@ -25,6 +25,7 @@ use crate::{
         worker_task_from_args,managed_worker_task_from_args,
     },
     events::random_uuid,
+    job_routing_preferences,
     local_merge_lock::iso8601_now,
     task_actions::{dispatch_task_action_snapshot,apply_task_hold_action,
         apply_task_queue_action},
@@ -200,6 +201,12 @@ pub fn job_create_request(args:&[String],stdin:Option<&str>)
             options.as_object_mut().expect("JSON object").remove(field);
         }
     }
+    if has_arg(args,"--clear-routing-preferences") {
+        return Err("--clear-routing-preferences is only valid for job update".into());
+    }
+    if let Some(preferences)=job_routing_preferences::from_cli(args,None)? {
+        options["routingPreferences"]=preferences;
+    }
     if !source.is_empty(){
         options["localMergeSource"]=json!(source);
         options["localMergeTarget"]=json!(target);
@@ -254,7 +261,10 @@ pub fn job_update_request(
         patch["localMerge"]=json!({"sourceRef":source,"targetRef":target,
             "status":"pending"});
     }
-    let _=existing;
+    if let Some(preferences)=job_routing_preferences::from_cli(
+        args,existing.get("routingPreferences"))? {
+        patch["routingPreferences"]=preferences;
+    }
     Ok(json!({"command":"job.update","jobId":arg(args,"--id",""),
         "patch":patch}))
 }
@@ -311,6 +321,7 @@ pub fn run_job_command<P:CliRuntimePort>(
 pub fn task_update_request(
     args:&[String],job:&Value,task:&Value,stdin:Option<&str>,
 )->Result<Value,String>{
+    job_routing_preferences::reject_task_flags(args)?;
     if has_arg(args,"--agent-graph") || has_arg(args,"--agent-graph-file") {
         return Err("Task graphs are reserved for neo project run Coordinator creation".into());
     }
@@ -332,6 +343,62 @@ pub fn task_update_request(
             return Err("--adapter must be codex, chatgpt, or z".into());
         }
         candidate["adapter"]=json!(adapter);
+        // An adapter switch cannot retain a route/selection bound to the previous worker.
+        if field(task,"adapter")!=adapter {
+            candidate.as_object_mut().unwrap().remove("routing");
+            candidate.as_object_mut().unwrap().remove("workerSelection");
+            let mut requirements=candidate.get("workerRequirements")
+                .filter(|v|v.is_object()).cloned()
+                .unwrap_or(json!({"capabilities":[]}));
+            requirements["runtime"]=json!(adapter);
+            candidate["workerRequirements"]=requirements;
+        }
+    }
+    let route_flags=["--provider","--model","--profile","--reasoning",
+        "--cwd","--chatgpt-project"];
+    let explicit_route=route_flags.iter().any(|flag|has_arg(args,flag));
+    if has_arg(args,"--clear-routing") && explicit_route {
+        return Err("--clear-routing cannot be combined with explicit routing flags".into());
+    }
+    if has_arg(args,"--clear-routing") {
+        candidate.as_object_mut().unwrap().remove("routing");
+        candidate.as_object_mut().unwrap().remove("workerSelection");
+    }else if explicit_route {
+        let mut routing=candidate.get("routing")
+            .filter(|v|v.is_object()).cloned().unwrap_or(json!({}));
+        // A new model/provider must not accidentally reuse an incompatible
+        // profile or reasoning effort from the previous exact route.
+        if (has_arg(args,"--model") &&
+            arg(args,"--model","")!=field(&routing,"model")) ||
+           (has_arg(args,"--provider") &&
+            arg(args,"--provider","")!=field(&routing,"provider")) {
+            if !has_arg(args,"--profile") {
+                routing.as_object_mut().unwrap().remove("profile");
+            }
+            if !has_arg(args,"--reasoning") {
+                routing.as_object_mut().unwrap().remove("reasoning");
+            }
+        }
+        for (flag,key) in [("--provider","provider"),("--model","model"),
+            ("--profile","profile"),("--reasoning","reasoning"),
+            ("--cwd","cwd"),("--chatgpt-project","projectId")] {
+            if has_arg(args,flag) {
+                let value=required(args,flag,"Task routing")?;
+                routing[key]=json!(value);
+            }
+        }
+        if field(&routing,"model").is_empty() {
+            return Err("task update explicit routing requires --model or an existing model".into());
+        }
+        if field(&routing,"provider").is_empty() {
+            routing["provider"]=json!("openai");
+        }
+        routing["decidedBy"]=json!("cli");
+        routing["decidedAt"]=json!(iso8601_now());
+        routing.as_object_mut().unwrap().remove("decisionEvidence");
+        routing.as_object_mut().unwrap().remove("decisionId");
+        candidate["routing"]=routing;
+        candidate.as_object_mut().unwrap().remove("workerSelection");
     }
     if has_arg(args,"--priority"){
         let value=arg(args,"--priority","");

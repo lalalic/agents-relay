@@ -64,6 +64,7 @@ fn task_from_args_inner(
     graph_directory:&Path,job:&Value,args:&[String],now:&str,
     store_directory:&Path,stdin:Option<&str>,allocate_id:bool,
 )->Result<Value,String> {
+    crate::job_routing_preferences::reject_task_flags(args)?;
     let model=arg(args,"--model","");
     let adapter_value=arg(args,"--adapter","");
     let adapter=if adapter_value.is_empty(){"codex"}else{adapter_value};

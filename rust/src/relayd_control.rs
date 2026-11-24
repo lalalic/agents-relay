@@ -320,11 +320,19 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
             }
             let allowed=["title","objective","priority","tag","autoMerge",
                 "reviewEnabled","reviewerThreadId","creatorThreadId",
-                "implementationThreadId","continuation","localMerge"];
+                "implementationThreadId","continuation","localMerge",
+                "routingPreferences"];
             let mut next=job.clone();
             for (key,value) in patch.as_object().into_iter().flatten(){
                 if allowed.contains(&key.as_str()){
-                    next[key]=value.clone();
+                    if key=="routingPreferences" {
+                        if !value.is_null() {
+                            crate::job_routing_preferences::validate(value)?;
+                            next[key]=value.clone();
+                        }else if let Some(fields)=next.as_object_mut(){
+                            fields.remove(key);
+                        }
+                    }else{ next[key]=value.clone(); }
                 }
             }
             next["updatedAt"]=json!(iso8601_now());

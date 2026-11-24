@@ -35,6 +35,10 @@ Use Markdown sections inside the existing `objective` field rather than adding o
 
 This preflight is creator-owned authoring responsibility, **not** a new Relay lifecycle state or a replacement for Planner quality checks, worker self-review, or the independent immutable-head Final Review. **All** new Job creation entrypoints, including Coordinator/Project Run, must explicitly pass the exact `--preflight=true` CLI flag (JSON Control equivalent `options.preflight: true`). Missing, false or malformed assertions fail with `ERROR [JOB_PREFLIGHT_REQUIRED]`, CLI exit code 2, and no Job mutation. This is an attestation, **not cryptographic evidence**. Relay never persists the transient flag in Job JSON/SQLite, creates Preflight Tasks/receipts, or adds a new Graph state. Resuming or updating an already-existing Job does not create a new Job and does not require that flag.
 
+## Job-level advisory route preferences
+
+A Job can carry optional, durable `routingPreferences` (`adapter`, `provider`, `model`, `profile`, `reasoning`), managed by `job create|update --prefer-*` and `job update --clear-routing-preferences`. They are **soft exact-identifier hints**, not a Task route, and do not enable models or remove availability/authorization gates. They influence only future unpinned normal Task selection; Final Review uses independent reviewer routing. `task update --adapter/--provider/--model/--profile/--reasoning` is an exact routing edit (and `--clear-routing` removes it), not an advisory hint. Do not silently convert Agent or Job preferences into Task hard constraints.
+
 ## Agent definitions and advisory frontmatter
 
 Agent frontmatter `skills`, `model`, and `reasoning` are optional **hints**, not Task requirements. See the canonical [Agent Definition Contract](agent-contract.md) for syntax, inheritance, the separate Worker/Router prompt consumers, and the unchanged hard-gate/Skill resolution semantics. Task producers must not turn those hints into durable Task routing constraints or required Skills.

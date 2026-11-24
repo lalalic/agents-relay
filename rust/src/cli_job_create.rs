@@ -5,6 +5,7 @@ use crate::{
     agent_graph::parse_agent_graph,
     job_task_id_sequence::{allocate_entity_id,is_generated_entity_id},
     local_git_merge::git,
+    job_routing_preferences,
     local_merge_lock::iso8601_now,
     reviewer_thread::normalize_thread_id,
     workflow::entity_creation::{create_job_entity,create_task_entity},
@@ -108,6 +109,9 @@ where
     Persist:FnMut(&Value)->Result<Value,String>,
 {
     require_preflight_options(options)?;
+    if let Some(prefs)=options.get("routingPreferences") {
+        job_routing_preferences::validate(prefs)?;
+    }
     let requested=optional(options,"id");
     if requested.is_some_and(|id|id.starts_with('0')
         || !id.bytes().all(|b|b.is_ascii_digit())){
@@ -147,6 +151,10 @@ where
                 || optional(options,"title").is_some_and(|v|v!=field(existing,"title"))){
             return Err("Job idempotency key reused for a different Job definition".into());
         }
+        if options.get("routingPreferences").is_some()
+            && options.get("routingPreferences")!=existing.get("routingPreferences") {
+            return Err("Job idempotency key reused with different routing preferences".into());
+        }
         if options.get("coordinator").is_some_and(|v|!v.is_null())
             && !same_coordinator(existing,&options["coordinator"]){
             return Err("Coordinator idempotency key reused for a different Graph or Run".into());
@@ -181,6 +189,9 @@ where
             "status":"pending"});
     }
     if let Some(tag)=options.get("tag"){job["tag"]=tag.clone();}
+    if let Some(prefs)=options.get("routingPreferences") {
+        job["routingPreferences"]=prefs.clone();
+    }
     for (field,label) in [
         ("reviewerThreadId","reviewer thread ID"),
         ("creatorThreadId","creator thread ID"),

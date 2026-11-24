@@ -3,6 +3,7 @@
 // all routes pass an authoritative hard-gate evaluation before selection.
 use crate::{
     local_merge_lock::iso8601_now,
+    job_routing_preferences,
     model_routing::{discover_model_candidates,codex_profile_candidates,deterministic_model},
     router_rules::{append_agent_model_preference,append_routing_instruction},
     routing_policy::{
@@ -436,7 +437,29 @@ pub fn route_execution_with_choice(
             .cloned().expect("ranked route must be eligible")
     }else{fallback_route(&discovery.routes).expect("routes checked non-empty")};
     let mode=options.get("decisionMode").and_then(Value::as_str).unwrap_or("off");
-    let mut selected=fallback.clone();
+    // Rank existing *eligible* routes only: no new model, runtime, or provider
+    // is enabled by a preference. An authenticated typed choice wins below.
+    let preferences=options.pointer("/taskFacts/routingPreferences")
+        .filter(|value|value.is_object());
+    let preferred=preferences.and_then(|prefs|{
+        // Keep the canonical deterministic fallback on ties; hints only
+        // change the selection when another route is a better match.
+        let fallback_score=job_routing_preferences::match_score(prefs,
+            field(&fallback["worker"],"adapter"),&fallback["model"]);
+        let mut best_score=fallback_score;
+        let mut best=None;
+        for route in &discovery.routes {
+            let score=job_routing_preferences::match_score(prefs,
+                field(&route["worker"],"adapter"),&route["model"]);
+            if score>best_score {
+                best_score=score;
+                best=Some(route.clone());
+            }
+        }
+        best
+    });
+    let preferred_used=preferred.is_some() && model_choice.is_none();
+    let mut selected=preferred.unwrap_or(fallback.clone());
     if let Some(choice)=model_choice {
         let choices:Vec<String>=discovery.routes.iter().enumerate()
             .map(|(index,route)|{
@@ -454,12 +477,17 @@ pub fn route_execution_with_choice(
             return Err("Decision engine selected a route outside the merged choice list".into());
         }
     }
-    let default_evidence=json!({"mode":mode,"fallback":true});
+    let default_evidence=if preferred_used{
+        json!({"mode":mode,"fallback":true,"reason":"job-routing-preference",
+            "routingPreferences":preferences})
+    }else{json!({"mode":mode,"fallback":true})};
     if evidence.is_none(){evidence=Some(default_evidence);}
     let evidence=evidence.expect("fallback evidence");
     let powered=evidence.get("engine").is_some_and(|v|!v.is_null())
         && evidence.get("fallback")==Some(&Value::Bool(false));
-    let by=if powered{"execution-router:laya"}else{"execution-router:fallback"};
+    let by=if powered{"execution-router:laya"}
+        else if preferred_used{"execution-router:job-preference"}
+        else{"execution-router:fallback"};
     let mut routing=json!({
         "provider":selected["model"].get("provider"),
         "model":selected["model"].get("model"),
