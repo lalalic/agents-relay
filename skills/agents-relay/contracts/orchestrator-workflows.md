@@ -10,13 +10,15 @@ Before **any Agent-issued** `job create`, including create-only and Coordinator 
 
 1. Confirm the user authorized the Job; a design discussion or Spec Kit exercise is not permission to execute.
 2. Apply `speckit-specify` then `speckit-clarify` to formulate and assess the Job's Markdown objective, retaining prior user decisions and acceptance requirements. Do not ask for information already settled.
-3. Independently review **the original request and proposed objective together**, plus any relevant checklist/spec evidence, using the existing read-only Outcome Reviewer:
+3. Invoke Relay's **built-in** `job-acceptance-reviewer` as an independent read-only Outcome Reviewer against the actual `spec.md`/Objective file, which must include the original user request and decisions. This Agent **extends `reviewer.agent.md`** (canonical Final Reviewer contract), not a copied role, and the generic Outcome Reviewer runs implicitly too:
 
    ```sh
-   agents-relay review run --prompt-file /path/to/job-preflight.md --project-path /path/to/project
+   agents-relay review run --agents job-acceptance-reviewer \
+     --project-path /absolute/project \
+     --prompt "Preflight-review /absolute/project/spec.md against the original user request recorded in it. Verify completeness, ambiguity, scope, testable acceptance and future Final Review feasibility. Return PASS, CHANGE_REQUIRED or BLOCKED."
    ```
 
-   The prompt must ask whether a future Final Reviewer can verify success objectively. The generic Reviewer is implicit; add `--agents name,name` only for resolvable project/workspace professionals. This is not `review job`, is not SHA-bound, and does not approve implementation.
+   Do not invent `job-preflight.md`. `--prompt` is a short instruction; the full specification is the actual `spec.md`/Objective Markdown, not an auxiliary prompt file. For standalone Jobs without `.specify/`, use the same Objective file that will become `--objective-file`. This uses the existing `review run` API, **not** a new mode or the immutable-head `review job` lifecycle.
 4. Accept only `PASS` before `job create --objective-file --preflight=true`. On `CHANGE_REQUIRED`, the orchestrator corrects the Markdown and repeats preflight (bounded retries); on `BLOCKED`, missing reviewer execution or unresolved critical choice, stop and obtain the necessary information. Never label missing evidence as PASS. The exact CLI flag `--preflight=true` is mandatory for all new Jobs (normal, create-only, self/P0, Project Run); absent/false/other values produce `JOB_PREFLIGHT_REQUIRED` (exit 2) without persistence. No Job preflight field or separate lifecycle; the creator is accountable for the assertion.
 
 The full file-producing Spec Kit Skills require a valid `.specify/` project in an authorized checkout. During earlier repository-independent dialogue, follow their requirements/clarification methods without pretending to have created files. The CLI/API enforces only the creator's exact preflight declaration; it does not independently verify Spec Kit quality or Outcome Review evidence and does not alter Relay's normal Planner, execution or immutable-head Final Review gates.

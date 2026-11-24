@@ -14,7 +14,7 @@ use serde_json::{json,Value};
 use std::{collections::HashSet,path::{Path,PathBuf}};
 /// This is a caller attestation, not proof of reviewer execution. Never
 /// persist it in Job/Task/Plan/Review state; the creator owns the preflight.
-pub const JOB_PREFLIGHT_REQUIRED:&str="ERROR [JOB_PREFLIGHT_REQUIRED]\n\nJob creation requires --preflight=true.\n\nBefore creating a Job, the orchestrator must:\n1. Complete Spec Kit Specify and Clarify.\n2. Pass independent Preflight Review.\n3. Explicitly acknowledge completion with --preflight=true.\n\nNo Job was created.";
+pub const JOB_PREFLIGHT_REQUIRED:&str="ERROR [JOB_PREFLIGHT_REQUIRED]\n\nJob creation requires --preflight=true.\nRead the Job Create Contract: skills/agents-relay/contracts/task-job-contract.md (Agent-created Job quality gate).\n\nNo Job was created.";
 
 /// CLI accepts exactly one spelling. Do not treat `--preflight false` or
 /// duplicate/unknown variants as a successful attestation.

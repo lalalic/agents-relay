@@ -126,6 +126,10 @@ Exit 0 on PASS, 1 on schema mismatch or invalid input. Returns JSON { valid, err
 
 Usage: agents-relay review run (--prompt TEXT | --prompt-file PATH) [--project-path DIR] [--agents role,role] [--output PATH]
 
+Job-create Preflight (see skills/agents-relay/contracts/task-job-contract.md):
+  agents-relay review run --agents job-acceptance-reviewer --project-path DIR --prompt "Preflight-review DIR/spec.md against the original request included in it; check requirements and acceptance criteria"
+The Relay builtin job-acceptance-reviewer inherits the canonical Final Reviewer contract. No extra job-preflight.md or review mode; PASS authorizes the creator to attest via job create --preflight=true.
+
 Return codes: 0 PASS, 10 CHANGE_REQUIRED, 20 BLOCKED; CLI/worker errors fail separately."##########,
     ),
     (

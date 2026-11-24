@@ -93,6 +93,9 @@ pub fn parse_outcome_review_args(args: &[String], cwd: &Path) -> Result<Value, S
     }
     Ok(result)
 }
+/// Use the same bundled Agent catalog and layered resolver as normal
+/// Relay Workers. The Final Reviewer is a Relay builtin, not a per-project
+/// professional role or a separately installed integration.
 pub fn reviewer_contract(
     name: &str,
     project: &Path,
@@ -102,13 +105,22 @@ pub fn reviewer_contract(
     if name == "reviewer" {
         return Ok(root.join("agents/outcome-reviewer.agent.md"));
     }
-    let mut candidates = vec![project.join("agents").join(format!("{name}.agent.md"))];
-    candidates.push(workspace.join("agents").join(format!("{name}.agent.md")));
-    candidates.push(root.join("agents").join(format!("{name}.agent.md")));
-    candidates
-        .into_iter()
-        .find(|p| p.exists())
-        .ok_or_else(|| format!("professional reviewer not found: {name}"))
+    let layers = crate::agent_content_resolver::agent_source_layers(
+        &project.to_string_lossy(),
+        &json!({"workspaceRoot":workspace.to_string_lossy(),
+               "globalRoot":root.to_string_lossy()}),
+    );
+    let resolved = crate::agent_content_resolver::resolve_agent_markdown(
+        name,
+        &crate::execution_context::bundled_agents_root(),
+        &project.to_string_lossy(),
+        Some(&layers),
+    ).map_err(|error| if error == format!("Unknown agent {name}") {
+        format!("professional reviewer not found: {name}")
+    }else{error})?;
+    resolved["sources"].as_array().and_then(|sources|sources.last())
+        .and_then(Value::as_str).map(PathBuf::from)
+        .ok_or_else(||format!("professional reviewer has no contract: {name}"))
 }
 pub fn combine_outcome_reviews(reviews: &[Value]) -> Value {
     let verdict = if reviews.iter().any(|r| r["verdict"] == "BLOCKED") {
@@ -173,11 +185,12 @@ pub fn evaluate_outcome(
             // first, then the project layer with the workspace context.
             let layers = crate::agent_content_resolver::agent_source_layers(
                 &project.to_string_lossy(),
-                &serde_json::json!({"workspaceRoot":workspace_root}),
+                &serde_json::json!({"workspaceRoot":workspace_root,
+                                    "globalRoot":relay_root}),
             );
             crate::agent_content_resolver::resolve_agent_markdown(
                 &reviewer,
-                relay_root.join("agents").to_str().unwrap_or("agents"),
+                &crate::execution_context::bundled_agents_root(),
                 &project.to_string_lossy(),
                 Some(&layers),
             )?

@@ -449,6 +449,28 @@ fn resolve_name(
     let mut effective = load_layer(Path::new(builtins_root), name)?;
     let mut sources = effective.as_ref().map(|a|vec![a.path.clone()]).unwrap_or_default();
     let mut metadata = effective.as_ref().map(|a|a.metadata.clone()).unwrap_or_default();
+    // Builtin Agents may also extend another builtin Agent. Previously
+    // extends was resolved only for project/workspace overlays, so a bundled
+    // `job-acceptance-reviewer extends: reviewer` silently lost its base.
+    if let Some(child) = effective.as_ref().filter(|a|a.extends_agent.is_some()).cloned() {
+        let parent = child.extends_agent.as_deref().unwrap_or_default();
+        let parent_resolved = if allowed.is_match(parent) {
+            resolve_name(parent,builtins_root,layers,stack)?
+        } else {
+            return Err(format!("Builtin Agent extends requires another named Agent: {parent}"));
+        };
+        let parent_content = read_string(&parent_resolved,"content");
+        let mut merged = child;
+        merged.body=merge_sections(&parent_content,&merged)?;
+        metadata = parent_resolved.get("metadata").and_then(Value::as_object)
+            .cloned().unwrap_or_default();
+        assigned_metadata(&mut metadata,&merged.metadata);
+        sources = parent_resolved.get("sources").and_then(Value::as_array)
+            .map(|a|a.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+            .unwrap_or_default();
+        sources.push(merged.path.clone());
+        effective=Some(merged);
+    }
     for layer in layers {
         let root = read_string(layer,"root");
         if root.is_empty() { continue; }
@@ -521,6 +543,22 @@ mod name_inheritance_tests {
         assert!(read_string(&result,"content").contains("Local guidance"));
         assert_eq!(result["sources"].as_array().unwrap().len(),2);
         assert_eq!(layers.as_array().unwrap()[0]["root"],string_path(&workspace));
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn builtin_job_reviewer_inherits_final_reviewer_contract_without_copying_it() {
+        let root=fixture();let builtin=root.join("builtin");let project=root.join("project");
+        write(&builtin.join("reviewer.agent.md"),"---\nname: reviewer\n---\n# Final Reviewer\nCanonical immutable-review rules");
+        write(&builtin.join("job-acceptance-reviewer.agent.md"),"---\nname: job-acceptance-reviewer\nextends: reviewer\n---\n# Job reviewer\nPreflight specializes the same reviewer");
+        let resolved=resolve_agent_markdown("job-acceptance-reviewer",
+            &string_path(&builtin),&string_path(&project),None).unwrap();
+        let body=read_string(&resolved,"content");
+        assert!(body.contains("Canonical immutable-review rules"));
+        assert!(body.contains("Preflight specializes"));
+        assert_eq!(resolved["sources"].as_array().unwrap().len(),2);
+        write(&builtin.join("reviewer.agent.md"),"---\nname: reviewer\nextends: job-acceptance-reviewer\n---\n# Broken\nCycle");
+        assert!(resolve_agent_markdown("job-acceptance-reviewer",
+            &string_path(&builtin),&string_path(&project),None).unwrap_err().contains("cycle"));
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
