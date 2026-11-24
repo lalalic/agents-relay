@@ -1,3 +1,4 @@
+use agents_relay_rust2::reconciler_context::WorkerContextRoots;
 // Disposable fake Codex provider: successful exit is not Graph success.
 use agents_relay_rust2::{
     native_codex_execution::{execute_claimed_codex,native_codex_managed_prompt},
@@ -40,7 +41,7 @@ fn codex_port_refuses_to_launch_without_authentic_leased_graph_generation(){
     let executable=PathBuf::from("/bin/sh");
     record["tasks"][0]["executionId"]=Value::Null;
     let error=execute_claimed_codex(&db,&record,&record["tasks"][0],
-        &executable,&root).unwrap_err();
+        &executable,&root,&WorkerContextRoots::isolated(&root)).unwrap_err();
     assert!(error.contains("committed Task lease"),"{error}");
     let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("9001")).unwrap();
     let saved=store.load_job("9001").unwrap().unwrap();
@@ -54,7 +55,7 @@ fn native_codex_uses_trusted_managed_prompt_and_correlated_event_contract(){
     let record=job(&root);
     let store=SQLiteRelayStore::open(&db,Some("9001")).unwrap();
     store.save_job(&record).unwrap();store.close().unwrap();
-    let prompt=native_codex_managed_prompt(&db,&record,&record["tasks"][0],&root)
+    let prompt=native_codex_managed_prompt(&db,&record,&record["tasks"][0],&root,&WorkerContextRoots::isolated(&root))
         .expect("managed prompt must resolve real Agent and task binding");
     assert!(prompt.contains("job/9001/task/9002/execution/test-source-generation-1"));
     assert!(prompt.contains("task.started"));
@@ -76,7 +77,7 @@ fn native_codex_worker_gets_unrestricted_access_without_approval_prompts(){
     let record=job(&root);
     let store=SQLiteRelayStore::open(&db,Some("9001")).unwrap();
     store.save_job(&record).unwrap();store.close().unwrap();
-    let failure=execute_claimed_codex(&db,&record,&record["tasks"][0],&executable,&root)
+    let failure=execute_claimed_codex(&db,&record,&record["tasks"][0],&executable,&root,&WorkerContextRoots::isolated(&root))
         .expect_err("provider exit without terminal Graph event is not success");
     assert!(failure.contains("without verified Task terminal event"),"{failure}");
     let args=fs::read_to_string(&capture).unwrap();
@@ -103,7 +104,7 @@ fn successful_codex_cli_exit_cannot_fabricate_graph_task_completion(){
     let store=SQLiteRelayStore::open(&db,Some("9001")).unwrap();
     store.save_job(&record).unwrap();store.close().unwrap();
     let failure=execute_claimed_codex(&db,&record,&record["tasks"][0],
-        &script,&root).unwrap_err();
+        &script,&root,&WorkerContextRoots::isolated(&root)).unwrap_err();
     assert!(failure.contains("without verified Task terminal event"),"{failure}");
     let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("9001")).unwrap();
     let persisted=store.load_job("9001").unwrap().unwrap();

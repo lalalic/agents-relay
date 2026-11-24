@@ -1,3 +1,4 @@
+use agents_relay_rust2::reconciler_context::WorkerContextRoots;
 use agents_relay_rust2::{
     native_codex_thread::{build_codex_turn_args,persist_task_thread,parse_thread_started,quota_failure_without_effects},
     model_routing::{codex_profile_candidates,deterministic_model,eligible_models},
@@ -92,7 +93,7 @@ fn a_real_owned_fake_codex_process_persists_thread_for_next_generation(){
     let file=root.join("fake-codex");let args=root.join("invocation-argv.txt");
     fs::write(&file,format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nprintf '%s\\n' '{{\"type\":\"thread.started\",\"thread_id\":\"{THREAD}\"}}'\nexit 1\n",args.display())).unwrap();
     fs::set_permissions(&file,fs::Permissions::from_mode(0o700)).unwrap();
-    let failed=execute_claimed_codex(&db,&job,&job["tasks"][0],&file,&root).unwrap_err();
+    let failed=execute_claimed_codex(&db,&job,&job["tasks"][0],&file,&root,&WorkerContextRoots::isolated(&root)).unwrap_err();
     assert!(!failed.contains("without verified Task terminal event"));
     let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("901")).unwrap();
     let saved=store.load_job("901").unwrap().unwrap();
@@ -101,7 +102,7 @@ fn a_real_owned_fake_codex_process_persists_thread_for_next_generation(){
     resume["tasks"][0]["executionId"]=json!("execution-2");
     resume["tasks"][0]["routing"]=json!({"provider":"openai","model":"gpt-6-luna"});
     store.save_job(&resume).unwrap();drop(store);
-    let _=execute_claimed_codex(&db,&resume,&resume["tasks"][0],&file,&root).unwrap_err();
+    let _=execute_claimed_codex(&db,&resume,&resume["tasks"][0],&file,&root,&WorkerContextRoots::isolated(&root)).unwrap_err();
     let command=fs::read_to_string(args).unwrap();
     assert!(command.lines().any(|l|l=="resume"),"{command}");
     assert!(command.lines().any(|l|l==THREAD),"{command}");

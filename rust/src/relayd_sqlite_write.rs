@@ -1735,6 +1735,14 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         let task=original.get("tasks").and_then(Value::as_array)
             .into_iter().flatten().find(|task|field(task,"id")==task_id)
             .ok_or("Prepared Worker Task disappeared")?;
+        // The daemon owns context roots, not the transport or its pool.
+        let worker_roots=if self.live_store{
+            crate::reconciler_context::WorkerContextRoots::live(&self.config.workspace_root)?
+        }else{
+            let fixture=self.config.store_directory.parent()
+                .ok_or("Isolated worker host requires explicit fixture root")?;
+            crate::reconciler_context::WorkerContextRoots::isolated(fixture)
+        };
         if adapter=="codex"{
             let executable=self.model_codex_executable.clone()
                 .ok_or("Non-browser Codex adapter not explicitly configured")?;
@@ -1800,7 +1808,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                         Err(error)=>{eprintln!("Native Codex Worker {job_id}/{task_id}: {error}");return;}
                     };
                     let result=crate::native_codex_execution::execute_claimed_codex(
-                        &db,&claimed,&task,&executable,&execution_root);
+                        &db,&claimed,&task,&executable,&execution_root,&worker_roots);
                     if let Err(error)=result{
                         eprintln!("Native Codex Worker {job_id}/{task_id}: {error}");
                         let phase=classify_native_launch_phase(&error);
@@ -1862,7 +1870,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                 .spawn(move||{
                     let cancelled=std::sync::atomic::AtomicBool::new(false);
                     let outcome=submit_claimed_chatgpt_worker(
-                        &db,&job_id,&task,&config,&cancelled);
+                        &db,&job_id,&task,&config,&execution_root,&worker_roots,&cancelled);
                     if let Err(error)=&outcome{
                         eprintln!("Native ChatGPT Worker {job_id}/{task_id}: {error}");
                     }

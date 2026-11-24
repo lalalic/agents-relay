@@ -46,6 +46,7 @@ code change and classify it afterward.
 - The shared execution-context resolver owns discovery of project instructions, skills, visible agents, and runtime capabilities.
 - Precedence is project-local > parent directories within the configured workspace > explicitly configured shared roots > global `~/.agents` > Relay built-ins. Script and Model Agent resolution use the same source layers; concrete paths are resolved at execution time, not persisted in task records. Relay never infers shared roots from a specific client or source checkout.
 - Agents Relay owns durable orchestration, lineage, leases/retries, lifecycle events, and review gates.
+- Native Model Workers share context and managed prompt assembly from the canonical Job project, daemon Workspace and configured global Agent root; the execution checkout is identified separately. Isolated hosts inject fixture roots, never derive context from a transport pool.
 - Workers consume the resolved context. Nested workers delegate only by creating durable Relay child tasks; they must not directly spawn arbitrary child agents.
 
 - Implementation quality instructions must be applied during shared worker prompt assembly, including unnamed normal workers, rather than relying only on a named implementation agent contract. Preserve independent reviewer and specialist-review isolation, and test the immutable prompt snapshots across adapters.

@@ -6,10 +6,7 @@ use crate::{
         quota_failure_without_effects},
     owned_process::{OwnedProcessManager,OwnedProcessOptions,TerminationReason},
     relay_store::SQLiteRelayStore,
-    execution_context::resolve_execution_context,
-    final_review_role::is_final_review_agent,
-    managed_worker_input::managed_worker_input_resolved,
-    reconciler_context::resolve_task_context,
+    reconciler_context::{worker_managed_prompt,WorkerContextRoots},
 };
 use serde_json::{json,Value};
 use std::{io::{Read,BufRead,BufReader},path::Path,thread,time::Duration};
@@ -19,47 +16,11 @@ fn field<'a>(v:&'a Value,k:&str)->&'a str{
 /// Reuse the same native execution-context and managed prompt contract as
 /// Browser Workers. The source Task input stays immutable in canonical SQLite.
 pub fn native_codex_managed_prompt(
-    db:&Path,job:&Value,task:&Value,project:&Path,
+    db:&Path,job:&Value,task:&Value,project:&Path,roots:&WorkerContextRoots,
 )->Result<String,String>{
-    let cwd=project.to_str().ok_or("Codex project path is not UTF-8")?;
-    let task_id=field(task,"id");
-    let name=field(task,"agentName");
-    let role=if is_final_review_agent(Some(name)){"reviewer"}
-        else if name=="troubleshooter"{"troubleshooter"}
-        else{"worker"};
-    let store=SQLiteRelayStore::open_without_claim_reset(db,Some(field(job,"id")))?;
-    let agents=store.load_agents()?.unwrap_or_default();
     let adapters=vec![json!({"name":"codex","id":"codex",
         "capabilities":["model","codex","local_repo","iterative_tools"]})];
-    let options=json!({"workspaceRoot":project.parent(),
-        "globalRoot":std::env::var("HOME").ok().map(|h|format!("{h}/.agents"))});
-    let future=resolve_task_context(cwd,role,&options,&agents,&adapters,
-        |project,role,options|std::future::ready(
-            resolve_execution_context(&project,&role,&options)));
-    let mut future=std::pin::pin!(future);
-    let mut context=std::task::Context::from_waker(std::task::Waker::noop());
-    let context=match std::future::Future::poll(future.as_mut(),&mut context){
-        std::task::Poll::Ready(result)=>result?,
-        std::task::Poll::Pending=>return Err(
-            "Native Codex context resolution unexpectedly suspended".into()),
-    };
-    let package_root=Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().ok_or("Native Rust package root missing")?;
-    let mut prompt=managed_worker_input_resolved(job,task,Some(&context),
-        "production",package_root,None)?;
-    // projectRoot identifies the canonical repository; a source Task edits
-    // only its independently checked-out managed branch/worktree.
-    if task["gitDeliveryRequired"]==true
-        &&job.get("projectRoot").and_then(Value::as_str)!=Some(cwd){
-        prompt.push_str(&format!(
-            "\n\nExecution checkout (required): {cwd}. Edit, test and commit only in this checkout. Job.projectRoot identifies the primary repository, not the working checkout. Never commit directly to main.\n"
-        ));
-    }
-    if !prompt.contains(&format!("job/{}/task/{task_id}/execution/{}",
-        field(job,"id"),field(task,"executionId"))){
-        return Err("Native Codex prompt lacks exact execution event binding".into());
-    }
-    Ok(prompt)
+    worker_managed_prompt(db,job,task,project,roots,&adapters)
 }
 /// A Codex Model can ask the independent Host for real human review and
 /// legitimately exit while the Graph persists the waiting invocation.
@@ -77,7 +38,7 @@ pub fn valid_codex_review_handoff(task:&Value,execution_id:&str)->bool{
 /// Exactly one leased generation and an explicitly configured absolute
 /// Codex binary. Never claim Task success merely from process exit code 0.
 pub fn execute_claimed_codex(
-    db:&Path,job:&Value,task:&Value,executable:&Path,project:&Path,
+    db:&Path,job:&Value,task:&Value,executable:&Path,project:&Path,roots:&WorkerContextRoots,
 )->Result<(),String>{
     let job_id=field(job,"id");let task_id=field(task,"id");
     let execution_id=field(task,"executionId");
@@ -100,7 +61,7 @@ pub fn execute_claimed_codex(
     // must be assembled BEFORE provider launch. Raw task.input alone loses
     // start/progress/terminal event instructions, making real Codex exit an
     // unverified lease even when the implementation is correct.
-    let prompt=native_codex_managed_prompt(db,job,task,project)?;
+    let prompt=native_codex_managed_prompt(db,job,task,project,roots)?;
     let cwd=project.to_str().ok_or("Codex project path is not UTF-8")?;
     // The operator explicitly authorizes native Codex Workers to run with
     // unrestricted filesystem/network access and without approval prompts.

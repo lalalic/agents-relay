@@ -1,14 +1,11 @@
-//! Rust-owned, isolated ChatGPT/WebHelm launch boundary. WebHelm handles the
+//! Rust-owned ChatGPT/WebHelm launch boundary. WebHelm handles the
 //! browser session; native Graph/SQLite own the Task. A submitted receipt
-//! cannot advance Task state or satisfy a human Review decision. Production
-//! WebHelm transports and sender authentication are NOT bound here.
+//! cannot advance Task state or satisfy a human Review decision.
 use crate::{
     adapters::{ChatGptAdapter,WorkerExecution},
     browser_worker_pool::{BrowserPoolOptions,BrowserWorkerPoolManager},
     browser_worker_runtime::relay_workspace_name,
-    execution_context::resolve_execution_context,
-    reconciler_context::resolve_task_context,
-    managed_worker_input::managed_worker_input_resolved,
+    reconciler_context::{worker_managed_prompt,WorkerContextRoots},
     relay_store::SQLiteRelayStore,
 };
 use serde_json::Value;
@@ -179,11 +176,21 @@ fn await_generation_barrier(
         thread::sleep(Duration::from_millis(25));
     }
 }
+/// Same prompt contract as the Codex Worker; only runtime metadata differs.
+pub fn native_browser_managed_prompt(
+    db:&Path,job:&Value,task:&Value,execution_root:&Path,roots:&WorkerContextRoots,
+)->Result<String,String>{
+    let adapters=vec![serde_json::json!({
+        "name":"chatgpt", "id":"chatgpt/browser-worker",
+        "capabilities":["model","chatgpt","webhelm"]
+    })];
+    worker_managed_prompt(db,job,task,execution_root,roots,&adapters)
+}
 /// The Task must already have been claimed and committed by the daemon.
 /// The return value is only delivery metadata. It never mutates Job/Task.
 pub fn submit_claimed_chatgpt_worker(
     db_path:&Path,job_id:&str,task:&Value,
-    config:&IsolatedWebHelmConfig,cancelled:&AtomicBool,
+    config:&IsolatedWebHelmConfig,execution_root:&Path,roots:&WorkerContextRoots,cancelled:&AtomicBool,
 )->Result<WorkerExecution,String>{
     let task_id=field(task,"id");let execution_id=field(task,"executionId");
     if field(task,"adapter")!="chatgpt"||task_id.is_empty()
@@ -203,34 +210,7 @@ pub fn submit_claimed_chatgpt_worker(
     // The same contract-based managed input used by Node Workers must be
     // resolved before the browser provider sees a prompt. The original Task
     // remains immutable in SQLite; the assembled prompt is transport-only.
-    let project=current.get("projectRoot").and_then(Value::as_str)
-        .ok_or("Native Worker Job missing immutable projectRoot")?;
-    let fixture_root=config.pool_db.parent().and_then(Path::parent)
-        .ok_or("Native WebHelm config missing isolated fixture root")?;
-    let options=serde_json::json!({
-        "workspaceRoot":fixture_root,
-        "globalRoot":fixture_root
-    });
-    let agents=store.load_agents()?.unwrap_or_default();
-    let adapters=vec![serde_json::json!({
-        "name":"chatgpt/browser-worker", "id":"chatgpt/browser-worker",
-        "capabilities":["model","chatgpt","webhelm"]
-    })];
-    let future=resolve_task_context(
-        project,"worker",&options,&agents,&adapters,
-        |project,role,options|std::future::ready(
-            resolve_execution_context(&project,&role,&options)));
-    let mut future=std::pin::pin!(future);
-    let mut context=std::task::Context::from_waker(std::task::Waker::noop());
-    let context=match std::future::Future::poll(future.as_mut(),&mut context){
-        std::task::Poll::Ready(result)=>result?,
-        std::task::Poll::Pending=>return Err(
-            "Native Worker context resolution unexpectedly suspended".into()),
-    };
-    let package_root=Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().ok_or("Rust package root missing")?;
-    let prompt=managed_worker_input_resolved(
-        &current,fresh,Some(&context),"production",package_root,None)?;
+    let prompt=native_browser_managed_prompt(db_path,&current,fresh,execution_root,roots)?;
     let mut submitted_task=fresh.clone();
     submitted_task["input"]=serde_json::json!(prompt);
     let mut pool=BrowserWorkerPoolManager::open(BrowserPoolOptions{
