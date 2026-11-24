@@ -184,3 +184,48 @@ fn daemon_worker_failure_claim_dedupes_and_stale_generation_is_fenced() {
     assert_eq!(third, second, "stale generation failure must be fenced");
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn quota_continuation_uses_daemon_ports_and_keeps_same_task_without_troubleshooter(){
+    use agents_relay_rust2::{
+        daemon_worker_failure::{DaemonFailureState,DaemonLiveWorkers,DaemonWorkerFailurePorts},
+        worker_failure_recovery::handle_worker_launch_failure,
+    };
+    use std::sync::{Arc,Mutex};
+    let root=root();
+    let path=seed_job(&root,&root.join("project"),"85","4");
+    let store=SQLiteRelayStore::open(&path,Some("85")).unwrap();
+    let mut job=store.load_job("85").unwrap().unwrap();
+    let task=&mut job["tasks"][0];
+    task["state"]=json!("RUNNING");
+    task["executionId"]=json!("exec-85-1");
+    task["leaseOwner"]=json!("daemon-owner");
+    task["leaseExpiresAt"]=json!("2099-01-01T00:00:00Z");
+    task["attempt"]=json!(1);
+    task["maxAttempts"]=json!(3);
+    task["threadId"]=json!("38f84f9e-410d-4e36-96e0-a420594a102d");
+    task["routing"]=json!({"provider":"zai","model":"glm-5.3-flash","profile":"zai"});
+    store.save_job(&job).unwrap();store.close().unwrap();
+    let home=root.join("profiles");fs::create_dir_all(&home).unwrap();
+    fs::write(home.join("config.toml"),"model = \"gpt-6-luna\"\n").unwrap();
+    fs::write(home.join("zai.config.toml"),"model_provider = \"zai\"\nmodel = \"glm-5.3-flash\"\n").unwrap();
+    let state=Arc::new(DaemonFailureState::new());
+    let live=Arc::new(Mutex::new(DaemonLiveWorkers::default()));
+    live.lock().unwrap().register("4","exec-85-1");
+    let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+    let mut ports=DaemonWorkerFailurePorts::new(path.clone(),graph,Some("85".into()),
+        None,Some(home),live,Arc::clone(&state)).with_routing_policy(root.join("policy.json"),root.join("rules.md"));
+    handle_worker_launch_failure(&mut ports,"85","4",Some("exec-85-1"),
+        &json!("codex_provider_continuation_quota_exhausted: rate limit exceeded"),"process").unwrap();
+    let after=SQLiteRelayStore::open_without_claim_reset(&path,Some("85")).unwrap().load_job("85").unwrap().unwrap();
+    assert_eq!(after["tasks"].as_array().unwrap().len(),1);
+    let task=&after["tasks"][0];
+    assert_eq!(task["state"],"QUEUED");
+    assert_eq!(task["threadId"],"38f84f9e-410d-4e36-96e0-a420594a102d");
+    assert_eq!(task["routingExclusions"][0]["profile"],"zai");
+    assert_eq!(task["platformFailure"]["classification"],"quota_exhausted");
+    assert!(task["routing"].is_null());
+    assert!(task["executionId"].is_null());
+    assert_eq!(state.wake_count(),1);
+    fs::remove_dir_all(root).unwrap();
+}

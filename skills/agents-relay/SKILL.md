@@ -23,10 +23,14 @@ new execution of the **same Task** resumes that ID with turn-scoped
 Profile, Model, Provider and reasoning instead of creating a new thread.
 The live Codex adapter requires a configured native executable and a validated canonical Job Git root; no separate repository allowlist or environment setting is needed. The Model Router offers exactly one configured Model per Profile (including
 the implicit `default` Profile) and ranks eligible Profiles according to the
-configured routing policy and health. Quota/429 failures with proven zero
-tool-side-effects can exclude the failed Profile and reschedule the original
-Task through the Graph in a *new* owned process generation. Never replay an
-ambiguous or side-effectful turn. If no eligible Profile remains, fail closed.
+configured routing policy and health. Confirmed quota/429 failures can exclude the failed Profile and reschedule the
+same Task through the Graph in a new owned process generation. Completed tool
+effects are preserved only when the terminal JSONL failure has a verified
+persisted Thread ID and no outstanding tool action. Resume that thread with
+the new execution identity and instructions not to repeat completed actions.
+A confirmed pre-tool incompatible-history rejection on resume excludes that
+route as well. Never silently start a fresh thread, replay an uncertain
+action, or exceed the attempt budget. If no eligible Profile remains, fail closed.
 
 Troubleshooter is a **one-execution specialist** (`maxAttempts=1`). It is
 never retried/reopened or used for routine provider quota fallback. On an

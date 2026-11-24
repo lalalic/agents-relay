@@ -63,21 +63,31 @@ pub fn classify_worker_launch_failure(
                 <task.get("maxAttempts").and_then(Value::as_i64).unwrap_or(0));
     let no_start_allowed=can_no_start && codex_no_start_route;
     let normalized_phase=if matches!(phase,"process"|"terminal"){"delivery"}else{phase};
-    let codex_quota=task.is_some_and(|task|
+    let codex_failure=task.filter(|task|
         field(task,"adapter")=="codex"
         &&field(task,"agentName")!="troubleshooter")
-        &&message.starts_with("codex_quota_no_side_effects:");
+        .and_then(|task|{
+            if message.starts_with("codex_quota_no_side_effects:"){
+                Some("quota_exhausted")
+            }else if crate::native_codex_thread::valid_thread_id(field(task,"threadId")){
+                if message.starts_with("codex_provider_continuation_quota_exhausted:"){Some("quota_exhausted")}
+                else if message.starts_with("codex_provider_continuation_resume_context_incompatible:"){Some("resume_context_incompatible")}
+                else{None}
+            }else{None}
+        });
+    let codex_can_retry=codex_failure.is_none() || task.is_some_and(|t|
+        t.get("attempt").and_then(Value::as_u64).unwrap_or(0)
+            <t.get("maxAttempts").and_then(Value::as_u64).unwrap_or(0));
     let platform_failure=if browser {Some(classify_chat_gpt_platform_failure(error,normalized_phase))}
-        else if codex_quota{Some(json!({"classification":"quota_exhausted",
-            "safeToReroute":true,"evidence":message}))}
-        else{None};
+        else {codex_failure.map(|classification|json!({"classification":classification,
+            "safeToReroute":true,"evidence":message}))};
     let classification=platform_failure.as_ref().map(|value|field(value,"classification")).unwrap_or("");
     let unknown=phase=="start-ack"
         || matches!(classification,"outcome_unknown"|"start_ack_timeout")
         || (phase=="launch" && active_execution_id==execution_id && active_execution_id.is_some())
         || (phase=="delivery" && active_execution_id==execution_id
             && active_execution_id.is_some() && active_worker_started);
-    let unknown=unknown && !codex_quota;
+    let unknown=unknown && codex_failure.is_none();
     let browser_failure=Regex::new(
         r"(?i)WEBHELM_UNAVAILABLE|webhelm runtime dependency unavailable|webhelm session start returned no session_id|no close frame received or sent"
     ).expect("static failure regex").is_match(&message);
@@ -89,7 +99,7 @@ pub fn classify_worker_launch_failure(
         else {"worker.delivery_failed"};
     let facts=json!({
         "platformFallbackSafe":platform_failure.as_ref().is_some_and(|p|
-            p.get("safeToReroute")==Some(&Value::Bool(true))) && safe_alternative,
+            p.get("safeToReroute")==Some(&Value::Bool(true))) && safe_alternative && codex_can_retry,
         "noStartFallbackAllowed":no_start_allowed && task.is_some_and(|t|
             t.get("noStartFallback").is_none_or(Value::is_null))
     });
@@ -111,14 +121,14 @@ pub fn apply_launch_failure_mutation(
                     let route=&prior["routing"];
                     let failure=json!({"provider":route.get("provider"),
                         "model":route.get("model"),"profile":route.get("profile"),
-                        "reason":"quota_exhausted","at":crate::local_merge_lock::iso8601_now()});
+                        "reason":platform.get("classification"),"at":crate::local_merge_lock::iso8601_now()});
                     if !excluded.iter().any(|v|v.get("provider")==route.get("provider")
                         &&v.get("profile")==route.get("profile")
                         &&v.get("model")==route.get("model")){
                         excluded.push(failure.clone());
                     }
                     updated["routingExclusions"]=json!(excluded);
-                    updated["platformFailure"]=json!({"classification":"quota_exhausted",
+                    updated["platformFailure"]=json!({"classification":platform.get("classification"),
                         "executionId":proposal.expected_execution_id,
                         "route":failure,"evidence":platform.get("evidence"),
                         "safeToReroute":true});

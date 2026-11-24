@@ -1,6 +1,6 @@
 use agents_relay_rust2::reconciler_context::WorkerContextRoots;
 use agents_relay_rust2::{
-    native_codex_thread::{build_codex_turn_args,persist_task_thread,parse_thread_started,quota_failure_without_effects},
+    native_codex_thread::{build_codex_turn_args,persist_task_thread,parse_thread_started,quota_failure_without_effects,resumable_provider_failure},
     model_routing::{codex_profile_candidates,deterministic_model,eligible_models},
     native_codex_execution::execute_claimed_codex,
     relay_store::SQLiteRelayStore,
@@ -165,4 +165,73 @@ fn troubleshooter_never_retries_and_escalates_after_one_failure(){
     let mut task=job["tasks"][1].clone();
     assert!(apply_task_retry_action(Path::new("/tmp"),&mut task,true,"now")
         .unwrap_err().contains("one-shot"));
+}
+
+#[test]
+fn quota_after_completed_tools_resumes_only_a_verified_terminal_thread(){
+    let head=format!("{{\"type\":\"thread.started\",\"thread_id\":\"{THREAD}\"}}\n{{\"type\":\"turn.started\"}}\n");
+    let started=r#"{"type":"item.started","item":{"id":"item_1","type":"command_execution","status":"in_progress"}}"#;
+    let completed=r#"{"type":"item.completed","item":{"id":"item_1","type":"command_execution","status":"completed","exit_code":0}}"#;
+    let quota=r#"{"type":"turn.failed","error":{"message":"rate limit exceeded: Weekly/Monthly Limit Exhausted."}}"#;
+    let transcript=format!("{head}{started}\n{completed}\n{quota}\n");
+    assert_eq!(resumable_provider_failure(&transcript,THREAD).unwrap().0,"quota_exhausted");
+    assert!(quota_failure_without_effects(&transcript,"").is_none());
+    assert!(resumable_provider_failure(&format!("{head}{started}\n{quota}"),THREAD).is_none());
+    assert!(resumable_provider_failure(&format!("{head}{completed}\n{{bad json}}\n{quota}"),THREAD).is_none());
+    assert!(resumable_provider_failure(&format!("{head}{completed}\n{{\"type\":\"error\",\"message\":\"rate limit exceeded\"}}"),THREAD).is_none());
+    assert!(resumable_provider_failure(&transcript,"38f84f9e-410d-4e36-96e0-a420594a102e").is_none());
+    let incompatible=json!({"type":"turn.failed","error":{"message":r#"{"type":"error","error":{"message":"Invalid 'input[3].content': array too long.","type":"invalid_request_error","param":"input[3].content","code":"array_above_max_length"},"status":400}"#}});
+    assert_eq!(resumable_provider_failure(&format!("{head}{incompatible}"),THREAD).unwrap().0,"resume_context_incompatible");
+    assert!(resumable_provider_failure(&format!("{head}{completed}\n{incompatible}"),THREAD).is_none());
+}
+
+#[test]
+fn actual_owned_worker_quota_fallback_preserves_artifact_thread_and_budget(){
+    use std::os::unix::fs::PermissionsExt;
+    let root=fixture();fs::create_dir_all(root.join("agents")).unwrap();
+    fs::write(root.join("agents/fixture.agent.md"),"---\nname: fixture\ncapabilities: [model, local_repo]\n---\n# Test Agent\n").unwrap();
+    let db=root.join("relay.sqlite");let job=base_job(&root);
+    let store=SQLiteRelayStore::open(&db,Some("901")).unwrap();
+    store.save_job(&job).unwrap();drop(store);
+    let file=root.join("fake-codex");
+    let artifact=root.join("partial.txt");
+    fs::write(&file,format!(r#"#!/bin/sh
+printf '%s\n' '{{"type":"thread.started","thread_id":"{THREAD}"}}' '{{"type":"turn.started"}}' '{{"type":"item.started","item":{{"id":"item_1","type":"command_execution","status":"in_progress"}}}}'
+printf partial > '{}'
+printf '%s\n' '{{"type":"item.completed","item":{{"id":"item_1","type":"command_execution","status":"completed","exit_code":0}}}}' '{{"type":"turn.failed","error":{{"message":"rate limit exceeded: Weekly/Monthly Limit Exhausted."}}}}'
+exit 1
+"#,artifact.display())).unwrap();
+    fs::set_permissions(&file,fs::Permissions::from_mode(0o700)).unwrap();
+    let error=execute_claimed_codex(&db,&job,&job["tasks"][0],&file,&root,&WorkerContextRoots::isolated(&root)).unwrap_err();
+    assert!(error.starts_with("codex_provider_continuation_quota_exhausted:"),"{error}");
+    assert_eq!(fs::read_to_string(&artifact).unwrap(),"partial");
+    let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("901")).unwrap();
+    let job=store.load_job("901").unwrap().unwrap();drop(store);
+    let original=&job["tasks"][0];
+    assert_eq!(original["threadId"],THREAD);
+    let failure=classify_worker_launch_failure(Some(original),&json!(error),"process",Some("execution-1"),Some("execution-1"),true,true,false);
+    assert_eq!(failure.event,"worker.platform_failure");
+    assert!(!failure.unknown_outcome);
+    assert_eq!(failure.facts["platformFallbackSafe"],true);
+    let graph_dir=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+    let decision=decide_task_lifecycle(&graph_dir,original,&failure.event,&failure.facts).unwrap();
+    assert_eq!(decision["target"],"QUEUED");
+    let mut next=original.clone();
+    apply_task_graph_target(&mut next,"QUEUED","2026-11-24T21:00:00Z",false).unwrap();
+    for action in decision["actions"].as_array().unwrap(){
+        if let Some(name)=action.as_str().filter(|s|s.starts_with("mutation.")){
+            apply_task_mutation(&mut next,name,"2026-11-24T21:00:00Z").unwrap();
+        }
+    }
+    apply_launch_failure_mutation(&mut next,Some(original),&failure,&decision);
+    assert_eq!(next["threadId"],THREAD);
+    assert_eq!(next["routingExclusions"][0]["profile"],"zai");
+    assert_eq!(next["platformFailure"]["classification"],"quota_exhausted");
+    assert!(next["routing"].is_null());
+    let mut exhausted=original.clone();exhausted["attempt"]=exhausted["maxAttempts"].clone();
+    let blocked=classify_worker_launch_failure(Some(&exhausted),&json!(failure.message),"process",Some("execution-1"),Some("execution-1"),true,true,false);
+    assert_eq!(blocked.facts["platformFallbackSafe"],false);
+    let no_thread=classify_worker_launch_failure(Some(&json!({"adapter":"codex","agentName":"fixture"})),&json!(failure.message),"process",Some("execution-1"),Some("execution-1"),true,true,false);
+    assert_eq!(no_thread.facts["platformFallbackSafe"],false);
+    fs::remove_dir_all(root).unwrap();
 }

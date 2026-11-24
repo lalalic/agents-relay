@@ -158,8 +158,8 @@ sourceDeliveryReady -->|true| completeClearError
 completeClearError --> completeClearReason
 completeClearReason --> succeeded
 running -->|on: task.failed| failed
-%% A confirmed side-effect-free provider rejection can retry the original
-%% Task on a new owned execution generation through the ranked Model Router.
+%% A confirmed provider rejection can continue the original Task when
+%% no tool outcome is uncertain, through a new owned execution generation.
 %% The previous Codex thread ID survives; failed profiles are excluded.
 running -->|on: worker.platform_failure| platformFallbackSafe
 running -->|on: planner.failed| plannerRetryAvailable

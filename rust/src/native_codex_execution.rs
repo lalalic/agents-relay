@@ -3,7 +3,7 @@
 use crate::{
     execution_process_tracker::monitor_execution_process,
     native_codex_thread::{build_codex_turn_args,parse_thread_started,persist_task_thread,
-        quota_failure_without_effects},
+        quota_failure_without_effects,resumable_provider_failure},
     owned_process::{OwnedProcessManager,OwnedProcessOptions,TerminationReason},
     relay_store::SQLiteRelayStore,
     reconciler_context::{worker_managed_prompt,WorkerContextRoots},
@@ -61,7 +61,7 @@ pub fn execute_claimed_codex(
     // must be assembled BEFORE provider launch. Raw task.input alone loses
     // start/progress/terminal event instructions, making real Codex exit an
     // unverified lease even when the implementation is correct.
-    let prompt=native_codex_managed_prompt(db,job,task,project,roots)?;
+    let mut prompt=native_codex_managed_prompt(db,job,task,project,roots)?;
     let cwd=project.to_str().ok_or("Codex project path is not UTF-8")?;
     // The operator explicitly authorizes native Codex Workers to run with
     // unrestricted filesystem/network access and without approval prompts.
@@ -71,6 +71,9 @@ pub fn execute_claimed_codex(
     // remain mandatory; unrestricted shell access is not Task success.
     let prior_thread=task.get("threadId").and_then(Value::as_str)
         .filter(|id|!id.is_empty());
+    if prior_thread.is_some() && task.pointer("/platformFailure/safeToReroute")==Some(&Value::Bool(true)){
+        prompt=format!("Continue the interrupted Task in this existing Codex thread, using its preserved conversation and existing artifacts. Do not repeat completed commands, file writes, publications or external actions. Verify current state before any further action; only complete unfinished work and emit lifecycle events for the NEW execution identity below. If continuation cannot be safely established, fail closed.\n\n{prompt}");
+    }
     let args=build_codex_turn_args(route,cwd,&prompt,prior_thread)?;
     let refs=args.iter().map(String::as_str).collect::<Vec<_>>();
     let mut manager=OwnedProcessManager::default();
@@ -163,6 +166,19 @@ pub fn execute_claimed_codex(
             .and_then(Value::as_str).unwrap_or("Codex turn failed").to_owned())
     }).last();
     if !status.success() || structured.is_some(){
+        // Check the persisted thread and current execution fence before
+        // permitting continuation after already completed tool effects.
+        let current=SQLiteRelayStore::open_without_claim_reset(db,Some(job_id))?
+            .load_job(job_id)?.and_then(|j|j["tasks"].as_array()?.iter()
+                .find(|t|field(t,"id")==task_id).cloned());
+        if let Some(thread)=current.as_ref().filter(|t|field(t,"executionId")==execution_id)
+            .map(|t|field(t,"threadId")).filter(|id|!id.is_empty()){
+            if let Some((kind,reason))=resumable_provider_failure(&stdout,thread){
+                if kind!="resume_context_incompatible" || prior_thread.is_some(){
+                    return Err(format!("codex_provider_continuation_{kind}: {reason}"));
+                }
+            }
+        }
         if let Some(reason)=quota_failure_without_effects(&stdout,&stderr){
             return Err(format!("codex_quota_no_side_effects: {reason}"));
         }

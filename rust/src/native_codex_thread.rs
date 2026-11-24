@@ -80,15 +80,16 @@ pub fn persist_task_thread(db:&Path,job_id:&str,task_id:&str,execution_id:&str,i
 pub fn quota_failure_without_effects(stdout:&str,stderr:&str)->Option<String>{
     let mut errors=Vec::<String>::new();
     for line in stdout.lines(){
-        let Ok(event)=serde_json::from_str::<Value>(line)else{continue};
+        if line.trim().is_empty(){continue;}
+        let Ok(event)=serde_json::from_str::<Value>(line)else{return None};
         let event_type=field(&event,"type");
-        if event_type=="item.started" || event_type=="item.completed"{
+        if matches!(event_type,"item.started"|"item.updated"|"item.completed"){
             // Covers command execution, file edits, MCP and other tool actions.
             if !matches!(field(&event["item"],"type"),"reasoning"|"message"|"agent_message"){
                 return None;
             }
         }
-        if matches!(event_type,"turn.failed"|"error"){
+        if event_type=="turn.failed"{
             let value=event.pointer("/error/message").and_then(Value::as_str)
                 .or_else(||event.get("message").and_then(Value::as_str));
             if let Some(msg)=value{errors.push(msg.to_owned());}
@@ -100,4 +101,59 @@ pub fn quota_failure_without_effects(stdout:&str,stderr:&str)->Option<String>{
     let quota=regex::Regex::new(r"(?i)(?:\b429\b|rate[_ -]?limit|quota|usage[_ -]?limit|credits? exhausted|insufficient credits|resource exhausted)").expect("static quota matcher");
     errors.into_iter().find(|message|quota.is_match(message))
         .map(|message|message.chars().take(250).collect())
+}
+
+/// A terminal provider rejection can continue a durable Codex thread even
+/// after completed tools. This is a continuation, never a fresh replay.
+/// Require a complete JSONL stream, a matching thread identity, no outstanding
+/// tool item, and a terminal turn.failed (not a transient error or tool text).
+pub fn resumable_provider_failure(stdout:&str,thread_id:&str)->Option<(&'static str,String)>{
+    if !valid_thread_id(thread_id){return None;}
+    let mut thread_seen=false;
+    let mut pending=std::collections::HashSet::<String>::new();
+    let mut tool_seen=false;
+    let mut terminal=None;
+    for line in stdout.lines().filter(|line|!line.trim().is_empty()){
+        let event:Value=serde_json::from_str(line).ok()?;
+        let kind=field(&event,"type");
+        if terminal.is_some(){return None;}
+        match kind{
+            "thread.started"=>{
+                if field(&event,"thread_id")!=thread_id{return None;}
+                thread_seen=true;
+            },
+            "item.started"|"item.updated"|"item.completed"=>{
+                let item=&event["item"];
+                let item_type=field(item,"type");
+                if matches!(item_type,"reasoning"|"message"|"agent_message"|"todo_list"){continue;}
+                tool_seen=true;
+                let id=field(item,"id");
+                if id.is_empty()||item_type.is_empty(){return None;}
+                if kind=="item.completed"{
+                    if matches!(field(item,"status"),"in_progress"|"pending"|"running"){return None;}
+                    pending.remove(id);
+                }else{
+                    pending.insert(id.to_owned());
+                }
+            },
+            "turn.failed"=>{
+                terminal=event.pointer("/error/message").and_then(Value::as_str)
+                    .map(str::to_owned);
+                if terminal.is_none(){return None;}
+            },
+            "turn.completed"=>return None,
+            "turn.started"|"error"=>{},
+            // Unknown records must not silently authorize replay of a tool.
+            _=>return None,
+        }
+    }
+    if !thread_seen||!pending.is_empty(){return None;}
+    let message=terminal?;
+    let quota=regex::Regex::new(r"(?i)(?:\b429\b|rate[_ -]?limit[_ -]?exceeded|quota[_ -]?exceeded|usage[_ -]?limit reached|weekly/monthly limit exhausted|insufficient[_ -]?quota|credits? exhausted|insufficient credits|resource exhausted)").expect("static provider quota matcher");
+    let incompatible=!tool_seen && message.contains("array_above_max_length")
+        && message.contains("input[") && message.contains(".content")
+        && message.contains("invalid_request_error");
+    let classification=if quota.is_match(&message){"quota_exhausted"}
+        else if incompatible{"resume_context_incompatible"}else{return None;};
+    Some((classification,message.chars().take(500).collect()))
 }
