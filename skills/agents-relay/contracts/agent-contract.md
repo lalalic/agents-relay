@@ -43,8 +43,9 @@ Agent's `model` and `reasoning` hints go to the Router **decision prompt**,
 not to the Worker prompt.
 
 Durable Job `routingPreferences` soft hints have priority over Agent frontmatter hints for still-unrouted normal Tasks.
-User-authored Router `[routing-instruction]` guidance has priority over Job preferences and Agent
-preferences, and authoritative hard constraints still apply before selection.
+Explicit Job routing preferences are appended to the Decision Engine's routing instructions
+and take precedence over conflicting global Router `[routing-instruction]` guidance and Agent
+preferences. Authoritative hard constraints still apply before selection.
 Only configured/default or explicitly listed `[choices]` routes are eligible;
 the Agent hint does not widen that choice set. Existing Router selection,
 fallback, review, and lifecycle behavior stays the same.

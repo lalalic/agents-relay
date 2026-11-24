@@ -275,13 +275,17 @@ fn merge_candidates(lists:&[Vec<Value>])->Vec<Value>{
     result
 }
 pub fn execution_choice_label(route:&Value,is_default:bool)->String{
-    format!("worker={} provider={} model={} reasoning={} default={}",
+    let label=format!("worker={} provider={} model={} reasoning={} default={}",
         route.pointer("/worker/workerId").and_then(Value::as_str).unwrap_or(""),
         route.pointer("/model/provider").and_then(Value::as_str).unwrap_or(""),
         route.pointer("/model/model").and_then(Value::as_str).unwrap_or(""),
         route.pointer("/model/reasoning").and_then(Value::as_str)
             .unwrap_or("provider-default"),
-        is_default)
+        is_default);
+    match route.pointer("/model/profile").and_then(Value::as_str).filter(|s|!s.is_empty()){
+        Some(profile)=>format!("{label} profile={profile}"),
+        None=>label,
+    }
 }
 #[derive(Clone,Debug)]
 pub struct ExecutionRouteDiscovery{
@@ -412,12 +416,22 @@ pub fn execution_routing_question(
     routing_instruction:&str,model_preference:Option<&Value>
 )->String{
     let question=format!(
-        "User routing instructions have highest priority over default preferences, task size, runtime and resource signals. Candidate order is arbitrary and conveys no priority, ranking or preference. Do not favor earlier choices. Select an offered route that obeys the user instructions.\nUser routing instructions:\n{routing_instruction}"
+        "Global routing instructions have priority over default preferences, task size, runtime and resource signals unless an explicit Job routing preference below conflicts. Candidate order is arbitrary and conveys no priority, ranking or preference. Do not favor earlier choices. Select an offered route that obeys the user instructions.\nGlobal routing instructions:\n{routing_instruction}"
     );
     let instructions="Use recent_route_results (up to the last 10 confirmed execution outcomes) to weigh route reliability, including success, failure and the recorded reason. Distinguish provider/runtime faults from task-specific failures and cancellations; historical failures are evidence, not automatic hard exclusions. For vision, image generation, visual review, and final review tasks, prefer ChatGPT Worker when available and within capacity; for coding, CLI and filesystem tasks, prefer Codex. These are soft preferences subordinate to user rules. Choose exactly one listed route; do not invent routes.";
     append_agent_model_preference(
         &append_routing_instruction(&question,instructions),
         model_preference)
+}
+/// Explicit Job hints outrank global routing guidance, not hard eligibility.
+fn append_job_routing_instruction(question:&str,preferences:Option<&Value>)->String{
+    let Some(prefs)=preferences.filter(|v|v.as_object().is_some_and(|m|!m.is_empty()))else{
+        return question.to_owned();
+    };
+    let instruction=format!(
+        "Job routing preferences (highest-priority advisory routing instructions for this Job; override conflicting global routing instructions and Agent/default preferences):\n{}\nPrefer an eligible offered route matching these exact identifiers. If no eligible route matches all preferences, choose the best available match; if none matches, follow the remaining routing instructions. Never invent a route or bypass explicit Task constraints, availability, authorization or other hard gates. The Decision Engine retains the final choice among eligible routes.",
+        prefs);
+    append_routing_instruction(question,&instruction)
 }
 fn route_choice_labels(discovery:&ExecutionRouteDiscovery)->Vec<String>{
     discovery.routes.iter().map(|route|{
@@ -448,9 +462,10 @@ pub fn route_execution_decide_with(
     if let Some(prefs)=options.pointer("/taskFacts/routingPreferences").filter(|v|v.is_object()){
         facts["job_routing_preferences"]=prefs.clone();
     }
-    let contract=json!({"type":"choice","question":execution_routing_question(
-        &discovery.routing_instruction,options.get("modelPreference")),
-        "choices":choices});
+    let question=append_job_routing_instruction(
+        &execution_routing_question(&discovery.routing_instruction,options.get("modelPreference")),
+        options.pointer("/taskFacts/routingPreferences"));
+    let contract=json!({"type":"choice","question":question,"choices":choices});
     let engine=crate::decision::JevDecisionEngine::NAME;
     let result=if choices.len()==1{
         Ok(json!({"type":"choice","choice":choices[0],"bypassed":true}))
@@ -516,7 +531,8 @@ pub fn route_execution_with_choice(
     // Rank existing *eligible* routes only: no new model, runtime, or provider
     // is enabled by a preference. An authenticated typed choice wins below.
     let preferences=options.pointer("/taskFacts/routingPreferences")
-        .filter(|value|value.is_object());
+        .filter(|value|value.as_object().is_some_and(|m|!m.is_empty()))
+        .or_else(||options.get("fallbackRoutingPreferences").filter(|v|v.is_object()));
     let preferred=preferences.and_then(|prefs|{
         // Keep the canonical deterministic fallback on ties; hints only
         // change the selection when another route is a better match.

@@ -226,3 +226,64 @@ fn production_decision_contract_accepts_only_eligible_choices_and_records_fallba
     let disabled=route_execution_decide_with(&discovery,&json!({}),&[],&off,&[],|_,_|panic!("off must not call engine")).unwrap();
     assert_eq!(disabled["routing"]["decisionEvidence"]["fallback"],true);
 }
+
+#[test]
+fn job_profile_instruction_overrides_global_rule_without_filtering_engine_choices() {
+    use agents_relay_rust2::execution_routing::route_execution_decide_with;
+    let mut zai=route("codex","zai","glm-5.3-flash");
+    zai["model"]["profile"]=json!("zai");
+    let mut neo=route("codex","neo-local","neo");
+    neo["model"]["profile"]=json!("neo");
+    let discovery=ExecutionRouteDiscovery{
+        routes:vec![zai.clone(),neo.clone()],evaluations:vec![],
+        worker_gate_evaluations:vec![],policy:json!({}),choices:vec![],
+        routing_instruction:"- codex::zai first".into(),configured_defaults:HashMap::new()};
+    let preferences=json!({"profile":"neo"});
+    let options=json!({"decisionMode":"active","recordDecisionAudit":true,
+        "taskFacts":{"task":{"id":"2306","jobId":"732"},"routingPreferences":preferences},
+        "modelPreference":{"model":"glm-5.3-flash","reasoning":"high"}});
+    let chosen=route_execution_decide_with(&discovery,&json!({}),&[],&options,&[],|request,contract|{
+        assert_eq!(request["facts"]["job_routing_preferences"],preferences);
+        let question=contract["question"].as_str().unwrap();
+        assert!(question.contains("- codex::zai first"));
+        assert!(question.contains("override conflicting global routing instructions"));
+        assert!(question.contains(r#"{"profile":"neo"}"#));
+        assert!(question.find("Job routing preferences").unwrap()>question.find("- codex::zai first").unwrap());
+        assert!(question.find("Job routing preferences").unwrap()>question.find("Agent model preference").unwrap());
+        assert_eq!(contract["choices"].as_array().unwrap().len(),2);
+        assert!(contract["choices"].as_array().unwrap().contains(&json!(execution_choice_label(&neo,false))));
+        assert!(execution_choice_label(&neo,false).contains("profile=neo"));
+        // Verify the actual JEV wire request, not just the Router's intermediate contract.
+        let wire=agents_relay_rust2::decision::JevDecisionEngine::request_body(request,contract,"test-jev").unwrap();
+        assert_eq!(wire["questions"]["decision"]["instructions"],contract["question"]);
+        assert_eq!(wire["state"]["job_routing_preferences"],preferences);
+        assert_eq!(wire["questions"]["decision"]["criteria"]["route_2"],execution_choice_label(&neo,false));
+        Ok(json!({"type":"choice","choice":execution_choice_label(&neo,false)}))
+    }).unwrap();
+    assert_eq!(chosen["routing"]["profile"],"neo");
+    assert_eq!(chosen["routing"]["decidedBy"],"execution-router:jev");
+    assert_eq!(chosen["audit"]["decision_input"]["stages"][0]["facts"]["job_routing_preferences"],preferences);
+    let engine_alternative=route_execution_decide_with(&discovery,&json!({}),&[],&options,&[],|_,_|{
+        Ok(json!({"type":"choice","choice":execution_choice_label(&zai,false)}))
+    }).unwrap();
+    assert_eq!(engine_alternative["routing"]["profile"],"zai","a Job preference remains advisory, not a hard route override");
+    let missing=ExecutionRouteDiscovery{routes:vec![zai.clone()],..discovery.clone()};
+    let result=route_execution_decide_with(&missing,&json!({}),&[],&options,&[],|_,_|panic!("single eligible route bypasses engine")).unwrap();
+    assert_eq!(result["routing"]["profile"],"zai");
+    let no_hint=json!({"decisionMode":"active","taskFacts":{"routingPreferences":null}});
+    let result=route_execution_decide_with(&discovery,&json!({}),&[],&no_hint,&[],|request,contract|{
+        assert!(request["facts"].get("job_routing_preferences").is_none());
+        assert!(!contract["question"].as_str().unwrap().contains("Job routing preferences ("));
+        Ok(json!({"type":"choice","choice":execution_choice_label(&zai,false)}))
+    }).unwrap();
+    assert_eq!(result["routing"]["profile"],"zai");
+}
+
+#[test]
+fn decision_choices_distinguish_profiles_with_identical_provider_model_and_reasoning() {
+    let mut first=route("codex","neo-local","neo");
+    first["model"]["profile"]=json!("neo");
+    let mut second=first.clone();
+    second["model"]["profile"]=json!("alternate");
+    assert_ne!(execution_choice_label(&first,true),execution_choice_label(&second,true));
+}

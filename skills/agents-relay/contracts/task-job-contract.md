@@ -46,7 +46,7 @@ This preflight is creator-owned authoring responsibility, **not** a new Relay li
 
 ## Job-level advisory route preferences
 
-A Job can carry optional, durable `routingPreferences` (`adapter`, `provider`, `model`, `profile`, `reasoning`), managed by `job create|update --prefer-*` and `job update --clear-routing-preferences`. They are **soft exact-identifier hints**, not a Task route, and do not enable models or remove availability/authorization gates. They influence only future unpinned normal Task selection; Final Review uses independent reviewer routing. `task update --adapter/--provider/--model/--profile/--reasoning` is an exact routing edit (and `--clear-routing` removes it), not an advisory hint. Do not silently convert Agent or Job preferences into Task hard constraints.
+A Job can carry optional, durable `routingPreferences` (`adapter`, `provider`, `model`, `profile`, `reasoning`), managed by `job create|update --prefer-*` and `job update --clear-routing-preferences`. They are **soft exact-identifier hints**, not a Task route, and do not enable models or remove availability/authorization gates. Their routing instructions take precedence over conflicting global Router guidance, while the Decision Engine selects among eligible routes. They influence only future unpinned normal Task selection; Final Review uses independent reviewer routing. `task update --adapter/--provider/--model/--profile/--reasoning` is an exact routing edit (and `--clear-routing` removes it), not an advisory hint. Do not silently convert Agent or Job preferences into Task hard constraints.
 
 ## Agent definitions and advisory frontmatter
 

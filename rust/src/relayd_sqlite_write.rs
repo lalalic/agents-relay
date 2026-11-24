@@ -924,7 +924,11 @@ impl IsolatedSQLiteWriteHost {
         let planner_route=if codex.is_some()&&script.is_none(){
             let usage=self.account_usage().ok();
             let mut options=self.decision_options();
-            options["taskFacts"]=json!({"task":{"kind":"planner","agentName":"planner","jobId":id,"id":plan_id},"routingPreferences":{"reasoning":"high"}});
+            options["taskFacts"]=json!({"task":{"kind":"planner","agentName":"planner","jobId":id,"id":plan_id},"routingPreferences":job.get("routingPreferences")});
+            // Planner's own default is not a user Job preference. Preserve its
+            // fallback ranking without elevating it over global user rules.
+            options["modelPreference"]=json!({"reasoning":"high"});
+            options["fallbackRoutingPreferences"]=json!({"reasoning":"high"});
             options["usage"]=json!(usage);
             let workers=self.available_model_workers().into_iter()
                 .filter(|worker|field(worker,"adapter")=="codex")
