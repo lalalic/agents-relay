@@ -205,3 +205,75 @@ fn native_script_dag_result_rejects_then_accepts_validated_completion(){
     assert!(done["tasks"][0]["result"]["data"]["dag_result_proof"]["resultSha256"].is_string());
     fs::remove_dir_all(root).unwrap();
 }
+
+/// Hold the real stage verifier open after the Shortcut child exits. A
+/// concurrent reconciliation probe must not reclaim this generation, and an
+/// unrelated durable Job write must survive the terminal event transaction.
+#[test]
+fn script_settlement_survives_child_exit_and_concurrent_job_update(){
+    use agents_relay_rust2::execution_process_tracker::reclaim_stale_execution_process;
+    use std::{future::Future,task::{Context,Poll,Waker},thread,time::{Duration,Instant}};
+    let (root,project,db)=fixture();
+    let run=project.join("runs/test");
+    let path=run.join(".dag-node-results/2.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::create_dir_all(project.join("scripts")).unwrap();
+    fs::write(project.join("project.run.json"),r#"{"stageValidation":{"script":"scripts/validate.mjs","agents":{"fixture":"fixture"}}}"#).unwrap();
+    fs::write(project.join("scripts/validate.mjs"),r#"
+import fs from 'node:fs';
+import path from 'node:path';
+const run=process.argv[3];
+fs.writeFileSync(path.join(run,'validating'),'yes');
+const deadline=Date.now()+10000;
+while(!fs.existsSync(path.join(run,'release'))){
+  if(Date.now()>deadline)throw Error('test synchronization deadline');
+  await new Promise(r=>setTimeout(r,20));
+}
+console.log(JSON.stringify({stage:'fixture',status:'PASS',errors:[]}));
+"#).unwrap();
+    let mut job=make_job(&project,&root);
+    job["tasks"][0]["dagNode"]=json!({"nodeId":"fixture","parentTaskId":"1","graphHash":"example","executor":"script"});
+    job["tasks"][0]["input"]=json!(r#"{"source":"relay-dag-task","nodeId":"fixture","taskId":"2"}"#);
+    job["tasks"][0]["output"]=json!({"kind":"file","path":path});
+    let store=SQLiteRelayStore::open(&db,Some("17")).unwrap();
+    store.save_job(&job).unwrap();
+    let mut reconciler=Reconciler::new(graph(),root.join("stores"),root.join("profiles"),
+        root.join("routing.json"),root.join("rules.md"),json!({"owner":"race-test"}));
+    let claimed=reconciler.claim_task_execution(&job,"2").unwrap().unwrap();
+    store.save_job(&claimed).unwrap();
+    let task=claimed["tasks"][0].clone();
+    let worker_db=db.clone();
+    let interpreter=PathBuf::from(env::var("AGENTS_RELAY_SCRIPT_NODE").unwrap());
+    let worker=thread::spawn(move||run_claimed_script_task(&worker_db,&graph(),&claimed,&task,&interpreter,6500));
+    let deadline=Instant::now()+Duration::from_secs(10);
+    while !run.join("validating").exists(){
+        assert!(Instant::now()<deadline,"Stage validator did not start");
+        thread::sleep(Duration::from_millis(20));
+    }
+    let current=store.load_job("17").unwrap().unwrap();
+    let active=&current["tasks"][0];
+    assert_eq!(active["state"],"RUNNING");
+    let execution=active["executionId"].as_str().unwrap();
+    let record=store.load_execution_process("17","2",execution).unwrap().unwrap();
+    assert!(record["endedAt"].is_string(),"Shortcut child already exited");
+    let future=reclaim_stale_execution_process(active,|j,t,e|
+        std::future::ready(store.load_execution_process(&j,&t,&e)));
+    let mut future=std::pin::pin!(future);
+    assert!(matches!(future.as_mut().poll(&mut Context::from_waker(Waker::noop())),Poll::Ready(Ok(false))),
+        "A live native Worker settling its terminal event is not an exited execution");
+    let mut changed=current.clone();
+    changed["description"]=json!("concurrent job update");
+    store.save_job(&changed).unwrap();
+    fs::write(run.join("release"),"yes").unwrap();
+    worker.join().unwrap().expect("validated terminal commit must survive concurrent write");
+    let final_job=store.load_job("17").unwrap().unwrap();
+    assert_eq!(final_job["description"],"concurrent job update");
+    assert_eq!(final_job["tasks"][0]["state"],"SUCCEEDED");
+    assert_eq!(final_job["tasks"][0]["result"]["data"]["validated_dag_result"],true);
+    // Once the native worker has returned, the same ended process is
+    // reclaimable if a Task were still active; no timeout or durable lock.
+    let future=reclaim_stale_execution_process(active,|_,_,_|std::future::ready(Ok(Some(record))));
+    let mut future=std::pin::pin!(future);
+    assert!(matches!(future.as_mut().poll(&mut Context::from_waker(Waker::noop())),Poll::Ready(Ok(true))));
+    fs::remove_dir_all(root).unwrap();
+}

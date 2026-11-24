@@ -10,7 +10,12 @@ Relay does not use time leases for Task ownership or deadline-based Worker evict
   host, PID, PGID, and process start token in the execution_process table.
   The process start token prevents mistaking PID reuse for a live Worker.
 - Verified Task terminal events alone authorize completion or failure.
-- If a registered local process is gone or reused while the same execution
+- The local daemon retains exact generation ownership through the native Worker
+  thread, including output validation and terminal settlement after child exit.
+  The process-local guard is released on thread exit/unwind; daemon death clears
+  it automatically. No time lease or extra durable state is introduced.
+- If no local Worker thread owns the execution and its registered process is
+  gone or reused while the same execution
   remains QUEUED/RUNNING, the Task Graph handles process.exited and marks
   unknown outcome / FAILED. Troubleshooter/retry uses the regular Graph.
 - A live process is never terminated or replayed on elapsed time or daemon

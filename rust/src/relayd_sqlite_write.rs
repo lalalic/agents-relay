@@ -1729,6 +1729,13 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                 .register(&task_id,&execution_id);
             std::thread::Builder::new().name(format!("rust-codex-task-{task_id}"))
                 .spawn(move||{
+                    // Keep the exact generation owned through stdout drain,
+                    // terminal inspection and graph-authorized failure settlement.
+                    let _execution=match crate::execution_process_tracker::ExecutionGuard::enter(
+                        &job_id,&task_id,&execution_id){
+                        Ok(guard)=>guard,
+                        Err(error)=>{eprintln!("Native Codex Worker {job_id}/{task_id}: {error}");return;}
+                    };
                     let result=crate::native_codex_execution::execute_claimed_codex(
                         &db,&claimed,&task,&executable,&execution_root);
                     if let Err(error)=result{

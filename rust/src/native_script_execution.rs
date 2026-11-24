@@ -4,7 +4,7 @@
 //! only the exact source-execution Event enters the canonical Graph.
 use crate::{
     native_script_worker::invoke_trusted_script_recorded,
-    execution_process_tracker::monitor_execution_process,
+    execution_process_tracker::{monitor_execution_process,ExecutionGuard},
     task_transitions::try_transition_task_event,
     worker_failure_recovery::{classify_worker_launch_failure,apply_launch_failure_mutation},
     local_merge_lock::iso8601_now,
@@ -52,54 +52,63 @@ pub fn persist_native_script_event(
         validated_event["data"]["dag_result_proof"]=proof.clone();
     }
     let event=&validated_event;
-    let candidate=if field(current,"state")=="QUEUED"
-        && field(event,"type")=="task.failed"{
-        // The original ScriptTaskAdapter reports an asynchronous failure
-        // even when the Shortcut is missing and task.started never happened.
-        // Task Graph intentionally rejects task.failed from QUEUED: map only
-        // this execution-verified pre-start observation to its canonical
-        // worker.delivery_failed edge, with the same durable Event receipt.
-        // Never fabricate task.started to make that failure look like an
-        // execution that ran. The Graph and SQLite CAS remain authoritative.
-        let admission=classify_worker_launch_failure(Some(current),
-            &event.get("message").cloned().unwrap_or(Value::Null),
-            "launch",Some(execution_id),None,false,false,false);
-        let mut candidate=before.clone();
-        let index=candidate["tasks"].as_array().ok_or("Script Job Tasks missing")?
-            .iter().position(|item|field(item,"id")==task_id)
-            .ok_or("Script Task missing from durable candidate")?;
-        let task=&mut candidate["tasks"][index];
-        let decision=try_transition_task_event(graph_directory,task,
-            &admission.event,&admission.facts,&iso8601_now())?;
-        if decision.get("accepted")!=Some(&Value::Bool(true)){
-            return Err(format!("Script Task Graph rejected canonical pre-start {}",
-                admission.event));
-        }
-        apply_launch_failure_mutation(task,Some(current),&admission,&decision);
-        candidate
-    }else{
-        let mut runtime=ReconcilerRuntime::new("native-script-worker");
-        let output=runtime.apply_event(graph_directory,&before,event,None)?;
-        if !output.applied{
-            return Err(format!("Script Task Graph rejected {}: {}",
-                field(event,"type"),output.reason));
-        }
-        output.job
-    };
-    let expected=before.clone();
     let durable_event=json!({
         "key":format!("script-event/{job_id}/{task_id}/{execution_id}/{}",field(event,"type")),
         "event":event,
     });
-    let recorded=scope.commit_workflow_mutation_and_events(job_id,move |fresh|{
-        if fresh!=expected{return Err("Script Task generation changed during SQLite CAS".into());}
-        if let Some(proof)=&dag_proof{
-            let original=expected["tasks"].as_array().into_iter().flatten()
-                .find(|task|field(task,"id")==task_id)
-                .ok_or("Script DAG Task vanished during pre-completion CAS")?;
-            crate::dag_precompletion::verify_dag_precompletion_receipt(
-                &expected,original,proof)?;
+    let recorded=scope.commit_workflow_mutation_and_events(job_id,|fresh|{
+        let latest=fresh.get("tasks").and_then(Value::as_array)
+            .into_iter().flatten().find(|task|field(task,"id")==task_id)
+            .ok_or("Script Task generation disappeared")?;
+        if field(latest,"executionId")!=execution_id {
+            return Err("Script Task event belongs to a stale execution".into());
         }
+        if let Some(proof)=&dag_proof{
+            // The validation contract must still identify the same stage and
+            // input/output, but unrelated Job writes do not invalidate it.
+            if fresh["projectRoot"]!=before["projectRoot"]
+                || ["dagNode","agentName","input","output"].iter()
+                    .any(|key| latest[*key]!=current[*key]){
+                return Err("Script DAG validation context changed".into());
+            }
+            crate::dag_precompletion::verify_dag_precompletion_receipt(
+                &fresh,latest,proof)?;
+        }
+        let current=latest;
+        let candidate=if field(current,"state")=="QUEUED"
+            && field(event,"type")=="task.failed"{
+            // The original ScriptTaskAdapter reports an asynchronous failure
+            // even when the Shortcut is missing and task.started never happened.
+            // Task Graph intentionally rejects task.failed from QUEUED: map only
+            // this execution-verified pre-start observation to its canonical
+            // worker.delivery_failed edge, with the same durable Event receipt.
+            // Never fabricate task.started to make that failure look like an
+            // execution that ran. The Graph and SQLite CAS remain authoritative.
+            let admission=classify_worker_launch_failure(Some(current),
+                &event.get("message").cloned().unwrap_or(Value::Null),
+                "launch",Some(execution_id),None,false,false,false);
+            let mut candidate=fresh.clone();
+            let index=candidate["tasks"].as_array().ok_or("Script Job Tasks missing")?
+                .iter().position(|item|field(item,"id")==task_id)
+                .ok_or("Script Task missing from durable candidate")?;
+            let task=&mut candidate["tasks"][index];
+            let decision=try_transition_task_event(graph_directory,task,
+                &admission.event,&admission.facts,&iso8601_now())?;
+            if decision.get("accepted")!=Some(&Value::Bool(true)){
+                return Err(format!("Script Task Graph rejected canonical pre-start {}",
+                    admission.event));
+            }
+            apply_launch_failure_mutation(task,Some(current),&admission,&decision);
+            candidate
+        }else{
+            let mut runtime=ReconcilerRuntime::new("native-script-worker");
+            let output=runtime.apply_event(graph_directory,&fresh,event,None)?;
+            if !output.applied{
+                return Err(format!("Script Task Graph rejected {}: {}",
+                    field(event,"type"),output.reason));
+            }
+            output.job
+        };
         Ok(candidate)
     },&[durable_event])?;
     Ok(recorded)
@@ -122,6 +131,7 @@ pub fn run_claimed_script_task(
     if !project.is_absolute()||!project.is_dir(){
         return Err("Native Script requires the Job's canonical projectRoot".into());
     }
+    let _execution=ExecutionGuard::enter(job_id,task_id,execution_id)?;
     let roots=json!({"workspaceRoot":project.parent().unwrap_or(project)});
     let context=json!({"executionContext":{"project":{"path":project,"gitRoot":project}}});
     let cancelled=AtomicBool::new(false);

@@ -4,7 +4,36 @@ use crate::process_identity::{
     capture_process_record, probe_process_record,
 };
 use serde_json::Value;
-use std::future::Future;
+use std::{collections::HashSet, future::Future, sync::{Mutex, OnceLock}};
+
+type Generation = (String, String, String);
+fn active_executions() -> &'static Mutex<HashSet<Generation>> {
+    static ACTIVE: OnceLock<Mutex<HashSet<Generation>>> = OnceLock::new();
+    ACTIVE.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// The exclusive local daemon owns native worker threads as well as child
+/// processes. The thread remains active through validation and durable
+/// terminal settlement, even when its child has already exited.
+pub struct ExecutionGuard(Generation);
+impl ExecutionGuard {
+    pub fn enter(job: &str, task: &str, execution: &str) -> Result<Self, String> {
+        let key = (job.into(), task.into(), execution.into());
+        if !active_executions().lock().unwrap_or_else(|e| e.into_inner()).insert(key.clone()) {
+            return Err("Local execution generation is already owned".into());
+        }
+        Ok(Self(key))
+    }
+}
+impl Drop for ExecutionGuard {
+    fn drop(&mut self) {
+        active_executions().lock().unwrap_or_else(|e| e.into_inner()).remove(&self.0);
+    }
+}
+fn locally_active(job: &str, task: &str, execution: &str) -> bool {
+    active_executions().lock().unwrap_or_else(|e| e.into_inner())
+        .contains(&(job.into(), task.into(), execution.into()))
+}
 
 /// Register a newly started execution only after a verified POSIX process
 /// identity has been captured. Caller owns the completion monitor.
@@ -44,6 +73,8 @@ where
     // Claim may be committed before the child has been spawned and recorded.
     // Missing proof must never mark a just-starting Worker as dead.
     let Some(record) = record else { return Ok(false); };
+    // Check after loading the process record: registration follows guard entry.
+    if locally_active(job_id, task_id, execution_id) { return Ok(false); }
     if record.get("endedAt").is_some_and(|value| !value.is_null()) { return Ok(true); }
     // Never kill a live process based on elapsed time or a vanished daemon.
     // A matching PID + PGID + process start token is the source of truth.
