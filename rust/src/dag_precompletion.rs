@@ -104,3 +104,23 @@ pub fn verify_dag_precompletion_receipt(job:&Value,task:&Value,receipt:&Value)->
     }
     Ok(())
 }
+
+/// A validation receipt is tied to the exact running Task and its stage
+/// contract, not to unrelated Job metadata or other Tasks. Invoke inside
+/// the terminal mutation transaction before applying the Graph transition.
+pub fn verify_dag_completion_context(
+    before_job:&Value,before_task:&Value,fresh_job:&Value,fresh_task:&Value,
+    execution_id:&str,receipt:&Value,
+)->Result<(),String>{
+    if execution_id.is_empty() || fresh_task["state"]!="RUNNING"
+        || before_task["executionId"]!=execution_id
+        || fresh_task["executionId"]!=execution_id{
+        return Err("DAG completion refused: stale or non-running execution".into());
+    }
+    if fresh_job["id"]!=before_job["id"] || fresh_job["projectRoot"]!=before_job["projectRoot"]
+        || ["id","dagNode","agentName","input","output"].iter()
+            .any(|key|fresh_task[*key]!=before_task[*key]){
+        return Err("DAG validation context changed".into());
+    }
+    verify_dag_precompletion_receipt(fresh_job,fresh_task,receipt)
+}

@@ -60,13 +60,15 @@ impl Drop for Fixture{fn drop(&mut self){let _=fs::remove_dir_all(&self.base);}}
 struct Backend{
     db:SQLiteRelayStore,graph:PathBuf,base:PathBuf,wakes:Vec<String>,events:Vec<Value>,
     inject_file_race:bool,
+    inject_job_race:bool,
+    inject_generation_race:bool,
 }
 impl Backend{
     fn new(f:&Fixture)->Self{
         let db=SQLiteRelayStore::open(&f.base.join("state.sqlite"),None).unwrap();
         db.save_job(&f.job()).unwrap();
         Self{db,graph:Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("workflow"),
-            base:f.base.clone(),wakes:vec![],events:vec![],inject_file_race:false}
+            base:f.base.clone(),wakes:vec![],events:vec![],inject_file_race:false,inject_job_race:false,inject_generation_race:false}
     }
 }
 impl WorkspaceControlBackend for Backend{
@@ -95,6 +97,13 @@ impl WorkspaceControlBackend for Backend{
             let path=Path::new(task.pointer("/output/path").unwrap().as_str().unwrap());
             fs::write(path,r#"{"status":"COMPLETED","output":{"raced":true},"artifacts":[]}"#)
                 .unwrap();
+        }
+        if self.inject_job_race || self.inject_generation_race{
+            self.db.mutate_job("1",|mut fresh|{
+                if self.inject_job_race{fresh["description"]=json!("concurrent model Job update");}
+                if self.inject_generation_race{fresh["tasks"][0]["executionId"]=json!("replacement");}
+                Ok(fresh)
+            })?;
         }
         Ok(proof)
     }
@@ -253,7 +262,19 @@ fn dag_cli_precompletion_rejects_and_repairs_same_execution(){
     fs::write(&result,serde_json::to_vec(&json!({
         "status":"COMPLETED","output":{},"artifacts":[media]
     })).unwrap()).unwrap();
+    backend.inject_generation_race=true;
+    let stale=workspace_control(&mut backend,&req).unwrap_err();
+    assert!(stale.contains("stale or non-running execution"),"{stale}");
+    assert_eq!(backend.db.load_job("1").unwrap().unwrap()["tasks"][0]["executionId"],"replacement");
+    assert!(backend.events.is_empty());
+    backend.inject_generation_race=false;
+    backend.db.mutate_job("1",|mut fresh|{
+        fresh["tasks"][0]["executionId"]=json!("ex-1");
+        Ok(fresh)
+    }).unwrap();
+    backend.inject_job_race=true;
     let completed=workspace_control(&mut backend,&req).unwrap();
+    assert_eq!(backend.db.load_job("1").unwrap().unwrap()["description"],"concurrent model Job update");
     assert_eq!(completed["task"]["state"],"SUCCEEDED");
     assert_eq!(completed["task"]["result"]["data"]["validated_dag_result"],true);
     assert_eq!(backend.events.len(),1);

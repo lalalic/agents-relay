@@ -64,15 +64,8 @@ pub fn persist_native_script_event(
             return Err("Script Task event belongs to a stale execution".into());
         }
         if let Some(proof)=&dag_proof{
-            // The validation contract must still identify the same stage and
-            // input/output, but unrelated Job writes do not invalidate it.
-            if fresh["projectRoot"]!=before["projectRoot"]
-                || ["dagNode","agentName","input","output"].iter()
-                    .any(|key| latest[*key]!=current[*key]){
-                return Err("Script DAG validation context changed".into());
-            }
-            crate::dag_precompletion::verify_dag_precompletion_receipt(
-                &fresh,latest,proof)?;
+            crate::dag_precompletion::verify_dag_completion_context(
+                &before,current,&fresh,latest,execution_id,proof)?;
         }
         let current=latest;
         let candidate=if field(current,"state")=="QUEUED"

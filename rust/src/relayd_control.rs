@@ -436,20 +436,16 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
                     Some(json!({"id":execution_event_source(&job_id,task_id,execution_id),
                         "agent":field(original,"agentName"),
                         "component":"agents-relay-cli"})));
-                let mut runtime=ReconcilerRuntime::new("control.task.complete");
-                let effect=runtime.apply_event(&graph,&job,&event,None)?;
-                if !effect.applied{
-                    return Err(format!("DAG task.complete rejected by Task Graph: {}",effect.reason));
-                }
-                let expected=job.clone();
-                let candidate=effect.job.clone();
                 let saved=backend.mutate_job(&job_id,&|fresh|{
-                    if fresh!=&expected{
-                        return Err("Concurrent Job mutation; recompute from SQLite snapshot".into());
+                    let latest=task(fresh,task_id).ok_or("DAG Task disappeared")?;
+                    crate::dag_precompletion::verify_dag_completion_context(
+                        &job,original,fresh,latest,execution_id,&proof)?;
+                    let mut runtime=ReconcilerRuntime::new("control.task.complete");
+                    let effect=runtime.apply_event(&graph,fresh,&event,None)?;
+                    if !effect.applied{
+                        return Err(format!("DAG task.complete rejected by Task Graph: {}",effect.reason));
                     }
-                    crate::dag_precompletion::verify_dag_precompletion_receipt(
-                        &expected,original,&proof)?;
-                    *fresh=candidate.clone();
+                    *fresh=effect.job;
                     Ok(())
                 })?;
                 // The SQLite+Graph receipt is authoritative even if Events
