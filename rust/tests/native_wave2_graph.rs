@@ -183,3 +183,35 @@ fn sqlite_verification_requires_correlated_ended_process_not_just_changed_execut
         "Verified"
     );
 }
+
+#[test]
+fn coordinator_is_plan_free_and_historical_failed_plan_does_not_block_completion() {
+    use agents_relay_rust2::{
+        manual_plan::prepare_manual_plan,
+        planner::create_plan_round,
+        runtime_status::derive_job_runtime_status,
+    };
+    let mut j=job(vec![task("coord","SUCCEEDED",&[]),task("child","SUCCEEDED",&[])]);
+    j["tasks"][0]["title"]=json!("Coordinator");
+    j["tasks"][0]["agentGraph"]=json!("flowchart TD\n a[agent:a]");
+    j["tasks"][1]["parentTaskId"]=json!("coord");
+    j["reviewEnabled"]=json!(false);
+    j["state"]=json!("ACTIVE");
+    j["plans"]=json!([{"id":"plan-1","round":1,"status":"FAILED",
+        "manualPlanning":true,"trigger":{"source":"manual"}}]);
+    assert!(completion_gate_satisfied(&j));
+    assert_eq!(derive_job_runtime_status(&j,""),"MERGE_PENDING");
+    assert!(create_plan_round(&canonical(),&j,None,true,None,None)
+        .unwrap_err().contains("plan-free"));
+    assert!(prepare_manual_plan(&canonical(),&j,None,1000,false,
+        |_,_,_|panic!("Coordinator must never create a Planner"))
+        .unwrap_err().contains("plan-free"));
+    let decision=decide_planner_orchestration(&canonical(),&planner_orchestration_facts(&j,false)).unwrap();
+    assert_eq!(decision["target"],"wait");
+    j["plans"][0]["status"]=json!("PLANNING");
+    assert!(!completion_gate_satisfied(&j));
+    j["plans"][0]["status"]=json!("FAILED");
+    j["tasks"][1]["state"]=json!("FAILED");
+    assert!(!completion_gate_satisfied(&j));
+    assert_eq!(derive_job_runtime_status(&j,""),"FAILED");
+}

@@ -103,13 +103,15 @@ pub fn planner_trigger(
     let review_required=job.pointer("/review/outcome").and_then(Value::as_str)
         ==Some("changes_required");
     let decided=decide_planner_trigger(graph_directory,
-        &json!({"manualPlan":manual&&!has_unblock,"hasUnblock":has_unblock,
+        &json!({"coordinatorJob":crate::runtime_status::coordinator_task(job).is_some(),
+            "manualPlan":manual&&!has_unblock,"hasUnblock":has_unblock,
             "initialPlan":initial,"reviewRequired":review_required}))?;
     if decided.get("accepted")!=Some(&Value::Bool(true)){
         return Err("Planner trigger graph rejected plan.requested".into());
     }
     let source=field(&decided,"target");
     match source{
+        "coordinator_rejected"=>Err("Coordinator Project Run is plan-free; use its declared DAG".into()),
         "manual"=>Ok(json!({"source":"manual"})),
         "initial"=>Ok(json!({"source":"initial"})),
         "review"=>Ok(json!({"source":"review",

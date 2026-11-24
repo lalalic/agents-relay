@@ -83,6 +83,15 @@ impl WorkspaceControlBackend for Backend{
     fn mutate_job(&mut self,id:&str,reduce:&dyn Fn(&mut Value)->Result<(),String>)->Result<Value,String>{
         self.db.mutate_job(id,|mut job|{reduce(&mut job)?;Ok(job)})
     }
+    fn mutate_job_with_terminal_event(&mut self,id:&str,event:&Value,
+        execution_id:&str,reduce:&dyn Fn(&mut Value)->Result<(),String>)->Result<Value,String>{
+        let key=format!("model-event/{id}/{}/{execution_id}/{}",
+            event["task_id"].as_str().unwrap(),event["event_id"].as_str().unwrap());
+        let saved=self.db.commit_workflow_mutation_and_events(id,|mut job|{
+            reduce(&mut job)?;Ok(job)
+        },&[json!({"key":key,"event":event})])?;
+        self.events.push(event.clone());Ok(saved)
+    }
     fn append_task(&mut self,_:&str,_:&Value)->Result<Value,String>{unimplemented!()}
     fn save_agent(&mut self,_:&str,_:&Value)->Result<(),String>{unimplemented!()}
     fn list_agents(&mut self,_:&str)->Result<Vec<Value>,String>{unimplemented!()}
@@ -281,6 +290,10 @@ fn dag_cli_precompletion_rejects_and_repairs_same_execution(){
     assert_eq!(backend.wakes,["control.task.complete"]);
     assert_eq!(workspace_control(&mut backend,&req).unwrap()["idempotent"],true);
     assert_eq!(backend.events.len(),1);
+    let pending:i64=backend.db.db.query_row(
+        "SELECT COUNT(*) FROM workflow_event_outbox WHERE state='pending' AND event_id='task.completed'",
+        [],|row|row.get(0)).unwrap();
+    assert_eq!(pending,1,"exactly one replayable terminal event survives broker outage");
     let mut stale=req.clone();stale["executionId"]=json!("other-execution");
     assert!(workspace_control(&mut backend,&stale).is_err());
     let mut mixed=req.clone();mixed["commitSha"]=json!("a".repeat(40));

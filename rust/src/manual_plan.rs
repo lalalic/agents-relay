@@ -37,6 +37,9 @@ pub fn prepare_manual_plan<Create>(
 where Create: FnMut(&Value,Option<&str>,u64)->Result<Value,String>,
 {
     validate_job(job)?;
+    // Apply the same trigger Graph even when an old pending round would
+    // otherwise bypass round creation.
+    crate::planner::planner_trigger(job,true,graph_directory)?;
     let mut current=job.clone();
     let previous=pending_plan(&current);
     if let Some(ref pending)=previous {

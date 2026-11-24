@@ -16,7 +16,7 @@ pub fn dispatch_planner_trigger(directory: &Path, facts: &Value) -> Result<Value
         "idle",
         "plan.requested",
         facts,
-        5,
+        6,
         |state| state.starts_with("check_"),
     )
 }

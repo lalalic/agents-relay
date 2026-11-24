@@ -64,6 +64,15 @@ pub fn is_superseded(task: &Value, by_id: &HashMap<String, Value>) -> bool {
         .is_some_and(|success| text(success, "state") == "SUCCEEDED")
 }
 
+/// Project Run identity is the durable root Coordinator, not an arbitrary
+/// child Agent Graph or an optional Planner record.
+pub fn coordinator_task(job: &Value) -> Option<&Value> {
+    task_rows(job).into_iter().find(|task|
+        text(task, "title") == "Coordinator"
+        && task.get("parentTaskId").is_none_or(Value::is_null)
+        && truthy(task.get("agentGraph")))
+}
+
 pub fn implementation_tasks(job: &Value) -> Vec<Value> {
     let tasks = task_rows(job);
     let mut by_id = HashMap::new();
@@ -114,7 +123,7 @@ pub fn derive_job_runtime_status(job: &Value, _pr_state: &str) -> &'static str {
         .get("plans")
         .and_then(Value::as_array)
         .and_then(|rows| rows.last());
-    let planner_failed = plan.is_some_and(|plan| text(plan, "status") == "FAILED")
+    let planner_failed = coordinator_task(job).is_none() && plan.is_some_and(|plan| text(plan, "status") == "FAILED")
         && !tasks
             .iter()
             .any(|task| matches!(text(task, "state"), "QUEUED" | "RUNNING"));

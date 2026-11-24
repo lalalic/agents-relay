@@ -5,6 +5,8 @@ description: Guards objective-driven planning rounds, interrupted plans, and pla
 flowchart LR
 %% relay: initial idle
 idle["state: idle"]
+checkCoordinator["state: check_coordinator"]
+coordinator["guard: coordinatorJob"]
 checkLegacy["state: check_legacy_pending"]
 checkRecover["state: check_recover"]
 checkPlanFailure["state: check_plan_failure"]
@@ -49,7 +51,10 @@ legacyPending -->|false| checkRecover
 checkRecover -->|on: planner.reconcile| recoverablePending
 recoverablePending -->|true| recoverAction
 recoverAction --> recovered
-recoverablePending -->|false| checkPlanFailure
+recoverablePending -->|false| checkCoordinator
+checkCoordinator -->|on: planner.reconcile| coordinator
+coordinator -->|true| wait
+coordinator -->|false| checkPlanFailure
 
 checkPlanFailure -->|on: planner.reconcile| terminalFailure
 terminalFailure -->|false| checkSeed

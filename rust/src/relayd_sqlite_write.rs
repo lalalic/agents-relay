@@ -68,7 +68,7 @@ fn verified_worker_outbox_event(key:&str,kind:&str,event:&Value)->bool{
     let task=field(event,"task_id");
     let event_type=field(event,"type");
     let event_id=field(event,"event_id");
-    if event.get("version")!=Some(&json!(1))||job.is_empty()
+    if event.get("version")!=Some(&json!(1))||crate::events::subject_token(job).is_err()
         ||task.is_empty()||event_id.is_empty()||kind!=event_type{
         return false;
     }
@@ -79,9 +79,10 @@ fn verified_worker_outbox_event(key:&str,kind:&str,event:&Value)->bool{
     // Require the exact internal Planner key, immutable event_id, Plan Task
     // namespace, canonical status and trusted optional source. Never admit
     // arbitrary event types or rewrite an unverified row as published.
-    if matches!(event_type,"planner.started"|"planner.completed"|"planner.failed"){
+    if matches!(event_type,"planner.started"|"planner.retry"|"planner.completed"|"planner.failed"){
         let expected_status=match event_type{
             "planner.started"=>"running",
+            "planner.retry"=>"queued",
             "planner.completed"=>"succeeded",
             _=>"failed",
         };
@@ -95,6 +96,21 @@ fn verified_worker_outbox_event(key:&str,kind:&str,event:&Value)->bool{
             &&event.get("parent_task_id").is_none_or(Value::is_null)
             &&source_ok
             &&key==format!("isolated-planner/{job}/{event_type}/{event_id}");
+    }
+    // Local merge outcomes have their own durable Graph-generated identity,
+    // not a Worker execution key. Validate the exact key, source and status.
+    if matches!(event_type,"job.merge.succeeded"|"job.merge.failed"){
+        let succeeded=event_type=="job.merge.succeeded";
+        let source=field(&event["source"],"id");
+        let prefix=format!("job/{job}/task/merge/execution/attempt-");
+        let attempt=source.strip_prefix(&prefix).and_then(|n|n.parse::<u64>().ok());
+        let digest=event_id.strip_prefix("workflow-local-merge-");
+        let valid_digest=digest.is_some_and(|s|s.len()==64
+            &&s.bytes().all(|b|b.is_ascii_digit()||(b'a'..=b'f').contains(&b)));
+        return task=="merge"&&key==event_id&&valid_digest
+            &&field(&event["source"],"agent")=="relay"&&attempt.is_some()
+            &&event.get("parent_task_id").is_none_or(Value::is_null)
+            &&field(event,"status")==if succeeded{"succeeded"}else{"failed"};
     }
     let (prefix,allowed)=if matches!(event_type,"task.started"|"task.completed"|"task.failed"){
         (format!("script-event/{job}/{task}/"),true)
@@ -118,6 +134,39 @@ fn verified_worker_outbox_event(key:&str,kind:&str,event:&Value)->bool{
         &&event.pointer("/source/id").and_then(Value::as_str)
             ==Some(crate::execution_event_identity::execution_event_source(
                 job,task,execution).as_str())
+}
+
+/// Select at most one publication batch of valid pending events. Invalid
+/// records stay pending for diagnosis/replay; they cannot head-of-line block
+/// later verified events, even when there are more than a full batch of them.
+fn pending_verified_workflow_events(db:&rusqlite::Connection,limit:usize,report_rejected:bool)
+    ->Result<Vec<(String,Value)>,String>{
+    let mut query=db.prepare(
+        "SELECT event_key,event_id,payload_json FROM workflow_event_outbox
+         WHERE state='pending' ORDER BY created_at,event_key"
+    ).map_err(|e|e.to_string())?;
+    let rows=query.query_map([],|r|Ok((r.get::<_,String>(0)?,
+        r.get::<_,String>(1)?,r.get::<_,String>(2)?)))
+        .map_err(|e|e.to_string())?;
+    let mut verified=Vec::new();
+    let mut rejected=0usize;
+    let mut first_rejected=None;
+    for row in rows{
+        let (key,kind,raw)=row.map_err(|e|e.to_string())?;
+        let event=serde_json::from_str::<Value>(&raw).ok()
+            .filter(|event|verified_worker_outbox_event(&key,&kind,event));
+        if let Some(event)=event{
+            verified.push((key,event));
+            if verified.len()>=limit{break;}
+        }else{
+            rejected+=1;
+            if first_rejected.is_none(){first_rejected=Some(key);}
+        }
+    }
+    if let Some(key)=first_rejected.filter(|_|report_rejected){
+        eprintln!("warning: skipped {rejected} invalid durable Workflow events (retained pending; first: {key})");
+    }
+    Ok(verified)
 }
 
 pub struct IsolatedSQLiteWriteHost {
@@ -980,6 +1029,23 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
         self.emit_job_snapshot(&saved);
         Ok(saved)
     }
+    fn mutate_job_with_terminal_event(&mut self,id:&str,event:&Value,
+        execution_id:&str,reduce:&dyn Fn(&mut Value)->Result<(),String>)
+        ->Result<Value,String>{
+        let task=field(event,"task_id");
+        let event_id=field(event,"event_id");
+        let key=format!("model-event/{id}/{task}/{execution_id}/{event_id}");
+        if field(event,"type")!="task.completed" || field(event,"job_id")!=id
+            || !verified_worker_outbox_event(&key,"task.completed",event){
+            return Err("Invalid terminal event publication identity".into());
+        }
+        let intent=json!({"key":key,"event":event});
+        let saved=self.scoped(id)?.commit_workflow_mutation_and_events(id,|mut job|{
+            reduce(&mut job)?;Ok(job)
+        },&[intent])?;
+        self.emit_job_snapshot(&saved);
+        Ok(saved)
+    }
     fn append_task(&mut self,id:&str,task:&Value)->Result<Value,String>{
         if field(task,"jobId")!=id||field(task,"id").is_empty(){
             return Err("Task create requires immutable Job/Task identity".into());
@@ -1525,24 +1591,10 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         // An event is already durably committed with its Task generation.
         // A failure leaves that exact event pending for safe replay.
         let db=Connection::open(self.path()).map_err(|e|e.to_string())?;
-        let mut query=db.prepare(
-            "SELECT event_key,event_id,payload_json FROM workflow_event_outbox
-             WHERE state='pending' ORDER BY created_at,event_key LIMIT 64"
-        ).map_err(|e|e.to_string())?;
-        let rows=query.query_map([],|r|Ok((r.get::<_,String>(0)?,
-            r.get::<_,String>(1)?,r.get::<_,String>(2)?)))
-            .map_err(|e|e.to_string())?
-            .collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
-        drop(query);
+        let rows=pending_verified_workflow_events(&db,64,true)?;
         let mut count=0;
         let mut emitted=Vec::new();
-        for (key,kind,raw) in rows{
-            let event:Value=serde_json::from_str(&raw)
-                .map_err(|e|format!("Durable Worker event JSON invalid: {e}"))?;
-            if !verified_worker_outbox_event(&key,&kind,&event){
-                return Err(format!(
-                    "Refusing invalid/out-of-scope durable Worker event {key}"));
-            }
+        for (key,event) in rows{
             publisher.publish(&event)?;
             // NATS accepts the earlier PUB before responding to this PING.
             // An uncertain disconnect does not acknowledge the SQLite row;
@@ -1580,7 +1632,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             false,std::sync::atomic::Ordering::AcqRel);
         if native_wake||provider_wake{return true;}
         // Out-of-process Worker commits have no in-process daemon wake.
-        // Probe one indexed outbox row at a bounded interval rather than
+        // Probe for a publishable outbox row at a bounded interval rather than
         // waiting for the five-minute Pool scan (or reparsing all Jobs).
         if self.live_store&&self.model_nats_publisher.is_some()
             &&self.workflow_outbox_last_poll.is_none_or(|instant|
@@ -1588,10 +1640,8 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             self.workflow_outbox_last_poll=Some(std::time::Instant::now());
             if let Ok(db)=rusqlite::Connection::open_with_flags(self.path(),
                 rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY){
-                if db.query_row(
-                    "SELECT 1 FROM workflow_event_outbox WHERE state='pending' LIMIT 1",
-                    [],|row|row.get::<_,i64>(0))
-                    .is_ok(){return true;}
+                if pending_verified_workflow_events(&db,1,false)
+                    .is_ok_and(|rows|!rows.is_empty()){return true;}
             }
         }
         false
@@ -1877,6 +1927,36 @@ mod verified_worker_outbox_tests {
     }
 
     #[test]
+    fn invalid_rows_cannot_starve_later_valid_merge_and_script_events(){
+        let db=rusqlite::Connection::open_in_memory().unwrap();
+        let publication=crate::workflow::durable_publication::DurableWorkflowPublication::new(&db).unwrap();
+        for index in 0..80 {
+            publication.enqueue(&format!("invalid-{index:03}"),"unknown",&json!({"type":"unknown"})).unwrap();
+        }
+        let id=format!("workflow-local-merge-{}","a".repeat(64));
+        for (ty,status) in [("job.merge.succeeded","succeeded"),("job.merge.failed","failed")]{
+            let event=json!({"version":1,"event_id":id,"job_id":"729",
+                "task_id":"merge","type":ty,"status":status,
+                "source":{"id":"job/729/task/merge/execution/attempt-1","agent":"relay"}});
+            assert!(verified_worker_outbox_event(&id,ty,&event));
+            assert!(!verified_worker_outbox_event("wrong",ty,&event));
+            let mut bad=event.clone();bad["source"]["id"]=json!("job/other/task/merge/execution/attempt-1");
+            assert!(!verified_worker_outbox_event(&id,ty,&bad));
+            if ty=="job.merge.succeeded"{publication.enqueue(&id,ty,&event).unwrap();}
+        }
+        let key="script-event/729/2291/exec/task.started";
+        let event=json!({"version":1,"event_id":"script-id","job_id":"729","task_id":"2291",
+            "type":"task.started","source":{"id":"job/729/task/2291/execution/exec"}});
+        publication.enqueue(key,"task.started",&event).unwrap();
+        db.execute("UPDATE workflow_event_outbox SET created_at='2000-01-01' WHERE event_key LIKE 'invalid-%'",[]).unwrap();
+        let rows=pending_verified_workflow_events(&db,64,true).unwrap();
+        assert_eq!(rows.len(),2);
+        assert!(rows.iter().any(|(k,_)|k==&id));
+        assert!(rows.iter().any(|(k,_)|k==key));
+        let pending:i64=db.query_row("SELECT count(*) FROM workflow_event_outbox WHERE state='pending'",[],|r|r.get(0)).unwrap();
+        assert_eq!(pending,82,"selection does not destroy or falsely acknowledge rejected records");
+    }
+    #[test]
     fn graph_owned_planner_event_is_published_without_unblocking_forged_events(){
         let started=crate::events::event_for("716","plan-1",None,
             "planner.started","running","Real Graph Planner started",
@@ -1902,7 +1982,7 @@ mod verified_worker_outbox_tests {
         let mut foreign_kind=started.clone();
         foreign_kind["type"]=json!("job.completed");
         assert!(!verified_worker_outbox_event(&key,"job.completed",&foreign_kind));
-        for (ty,status) in [("planner.completed","succeeded"),("planner.failed","failed")]{
+        for (ty,status) in [("planner.retry","queued"),("planner.completed","succeeded"),("planner.failed","failed")]{
             let mut terminal=started.clone();
             terminal["type"]=json!(ty);
             terminal["status"]=json!(status);

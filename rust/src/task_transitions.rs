@@ -51,19 +51,20 @@ pub fn completion_gate_satisfied(job: &Value) -> bool {
                     || task.pointer("/plannerResult/objective_status")
                         == Some(&Value::String("satisfied".into())))
         });
-    let coordinator_satisfied = no_plans
-        && tasks.into_iter().flatten().any(|task| {
-            task["title"] == "Coordinator"
-                && task
-                    .get("agentGraph")
-                    .is_some_and(|graph| !graph.is_null() && graph != false)
-                && task["state"] == "SUCCEEDED"
-        });
+    let coordinator = runtime_status::coordinator_task(job);
+    let coordinator_satisfied = coordinator.is_some_and(|task| task["state"] == "SUCCEEDED");
     let implementation = runtime_status::implementation_tasks(job);
     let active_plan=plans.into_iter().flatten().any(|p|p["status"]=="PLANNING");
     let final_review_satisfied=!active_plan&&latest_head_approved_by_final_review(job);
-    (plan_satisfied || legacy_satisfied || coordinator_satisfied || final_review_satisfied)
-        && !implementation.is_empty()
+    // A historical stray Plan cannot supersede the authoritative DAG. An
+    // actually active Plan still fences completion until it is terminal.
+    let acceptance = if coordinator.is_some() {
+        coordinator_satisfied && !active_plan
+            && (no_plans || !review || final_review_satisfied)
+    } else {
+        plan_satisfied || legacy_satisfied || final_review_satisfied
+    };
+    acceptance && !implementation.is_empty()
         && implementation
             .iter()
             .all(|task| task["state"] == "SUCCEEDED")

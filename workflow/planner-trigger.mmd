@@ -5,6 +5,9 @@ description: Classifies planning requests as manual, unblock, initial, or contin
 flowchart LR
 %% relay: initial idle
 idle["state: idle"]
+checkManual["state: check_manual"]
+rejected["state: coordinator_rejected"]
+coordinatorGuard["guard: coordinatorJob"]
 checkUnblock["state: check_unblock"]
 checkInitial["state: check_initial"]
 checkReview["state: check_review"]
@@ -19,7 +22,10 @@ unblockGuard["guard: hasUnblock"]
 initialGuard["guard: initialPlan"]
 reviewGuard["guard: reviewRequired"]
 
-idle -->|on: plan.requested| manualGuard
+idle -->|on: plan.requested| coordinatorGuard
+coordinatorGuard -->|true| rejected
+coordinatorGuard -->|false| checkManual
+checkManual -->|on: plan.requested| manualGuard
 manualGuard -->|true| manual
 manualGuard -->|false| checkUnblock
 

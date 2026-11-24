@@ -109,7 +109,10 @@ with feedback, not a fresh revision Task. The Task's new execution can use a
 Model executor for edits and return to Script for validation. A Task cannot
 claim success from a preview-delivery acknowledgement or a process exit.
 The normal Job Final Review and Git Merge are unchanged by Coordinator
-creation and run independently of whether a Planner was needed initially.
+creation. Coordinator Project Runs are plan-free: manual and newly reconciled
+Planner rounds are rejected by the Planner Graph. A historical terminal Plan
+does not override a successful Coordinator DAG; an active Plan still fences
+Job completion.
 
 ### Task input vs result
 

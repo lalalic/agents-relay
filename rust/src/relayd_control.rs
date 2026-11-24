@@ -62,6 +62,13 @@ pub trait WorkspaceControlBackend{
     fn create_job_if_absent(&mut self,job:&Value)->Result<Value,String>;
     fn mutate_job(&mut self,id:&str,
         reducer:&dyn Fn(&mut Value)->Result<(),String>)->Result<Value,String>;
+    /// Commit a terminal transition and the corresponding publication intent
+    /// in the same authoritative SQLite transaction.
+    fn mutate_job_with_terminal_event(&mut self,_id:&str,_event:&Value,
+        _execution_id:&str,_reducer:&dyn Fn(&mut Value)->Result<(),String>)
+        ->Result<Value,String>{
+        Err("Durable terminal event port is not connected".into())
+    }
     fn append_task(&mut self,job_id:&str,task:&Value)->Result<Value,String>;
     fn save_agent(&mut self,job_id:&str,agent:&Value)->Result<(),String>;
     fn list_agents(&mut self,job_id:&str)->Result<Vec<Value>,String>;
@@ -436,7 +443,7 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
                     Some(json!({"id":execution_event_source(&job_id,task_id,execution_id),
                         "agent":field(original,"agentName"),
                         "component":"agents-relay-cli"})));
-                let saved=backend.mutate_job(&job_id,&|fresh|{
+                let saved=backend.mutate_job_with_terminal_event(&job_id,&event,execution_id,&|fresh|{
                     let latest=task(fresh,task_id).ok_or("DAG Task disappeared")?;
                     crate::dag_precompletion::verify_dag_completion_context(
                         &job,original,fresh,latest,execution_id,&proof)?;
@@ -448,9 +455,8 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
                     *fresh=effect.job;
                     Ok(())
                 })?;
-                // The SQLite+Graph receipt is authoritative even if Events
-                // Bus temporarily cannot publish. Do not re-run the worker.
-                let _=backend.publish(&event);
+                // Graph completion and its outbox intent are atomic. A
+                // broker outage cannot lose the terminal event or rerun work.
                 backend.wake(&job_id,"control.task.complete")?;
                 return Ok(json!({"accepted":true,"task":task(&saved,task_id)}));
             }
@@ -493,9 +499,12 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
             if !effect.applied{
                 return Err(format!("task.complete rejected by Task Graph: {}",effect.reason));
             }
-            let saved=persist_candidate(backend,&job_id,&stored,&effect.job)?;
-            // An event bus failure cannot roll back verified SQLite success.
-            let _=backend.publish(&event);
+            let saved=backend.mutate_job_with_terminal_event(&job_id,&event,execution_id,&|fresh|{
+                if *fresh!=stored{
+                    return Err("Concurrent Job mutation; recompute from SQLite snapshot".into());
+                }
+                *fresh=effect.job.clone();Ok(())
+            })?;
             backend.wake(&job_id,"control.task.complete")?;
             Ok(json!({"accepted":true,"task":task(&saved,task_id)}))
         },

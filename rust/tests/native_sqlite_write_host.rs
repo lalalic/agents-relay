@@ -931,3 +931,61 @@ fn native_live_daemon_drains_planner_then_script_outbox_exactly_once_to_real_nat
     let _=broker.kill();let _=broker.wait();
     result
 }
+
+#[test]
+fn dag_cli_terminal_is_durable_and_idempotent_without_a_broker(){
+    let (root,config)=fixture();
+    let project=root.join("project");
+    let dir=project.join("runs/test/.dag-node-results");
+    fs::create_dir_all(&dir).unwrap();
+    git(&project,&["init","-q","-b","main"]);
+    let result=dir.join("child.json");
+    fs::write(&result,r#"{"status":"COMPLETED","output":{},"artifacts":[]}"#).unwrap();
+    let store=SQLiteRelayStore::open(&root.join("relay.sqlite"),Some("17")).unwrap();
+    let mut snapshot=completed_planned_job(&project,"file");
+    snapshot["tasks"][0]=json!({
+        "id":"2","jobId":"17","kind":"work","agentName":"editor","adapter":"codex",
+        "dagNode":{"nodeId":"editor","parentTaskId":"coordinator","graphHash":"example"},
+        "output":{"kind":"file","path":result},
+        "state":"RUNNING","executionId":"test-execution","attempt":1,"maxAttempts":3,
+        "executionHistory":[{"id":"test-execution","attempt":1}],
+        "createdAt":"2026-11-18T00:00:00.000Z","updatedAt":"2026-11-18T00:00:00.000Z"
+    });
+    store.save_job(&snapshot).unwrap();
+    let mut host=IsolatedSQLiteWriteHost::new(config);
+    let request=json!({"command":"task.complete","jobId":"17","taskId":"2",
+        "repository":"project","executionId":"test-execution","summary":"Validated output"});
+    assert_eq!(workspace_control(&mut host,&request).unwrap()["task"]["state"],"SUCCEEDED");
+    assert_eq!(workspace_control(&mut host,&request).unwrap()["idempotent"],true);
+    let persisted=store.load_job("17").unwrap().unwrap();
+    assert_eq!(persisted["tasks"][0]["state"],"SUCCEEDED");
+    let (count,kind,state):(i64,String,String)=store.db.query_row(
+        "SELECT count(*),event_id,state FROM workflow_event_outbox WHERE event_key LIKE 'model-event/17/2/test-execution/%'",
+        [],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
+    assert_eq!((count,kind.as_str(),state.as_str()),(1,"task.completed","pending"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn coordinator_with_historical_failed_plan_completes_through_live_graph_guard(){
+    let (root,config)=fixture();
+    let project=root.join("project");
+    fs::create_dir_all(&project).unwrap();
+    git(&project,&["init","-q","-b","main"]);
+    let store=SQLiteRelayStore::open(&root.join("relay.sqlite"),Some("17")).unwrap();
+    let mut snapshot=completed_planned_job(&project,"file");
+    snapshot["plans"]=json!([{"id":"plan-1","round":1,"status":"FAILED","manualPlanning":true}]);
+    snapshot["tasks"][0]["title"]=json!("Coordinator");
+    snapshot["tasks"][0]["agentGraph"]=json!("flowchart TD\n a[agent:a]");
+    snapshot["tasks"][0]["output"]=json!({"kind":"file","path":project.join("result.json")});
+    let mut host=IsolatedSQLiteWriteHost::new(config);
+    store.save_job(&snapshot).unwrap();
+    let error=workspace_control(&mut host,&json!({"command":"job.plan","jobId":"17"})).unwrap_err();
+    assert!(error.contains("plan-free"),"{error}");
+    assert_eq!(store.load_job("17").unwrap().unwrap(),snapshot);
+    assert!(host.reconcile_git_delivery("17").unwrap());
+    let completed=store.load_job("17").unwrap().unwrap();
+    assert_eq!(completed["state"],"COMPLETED");
+    assert_eq!(completed["plans"][0]["status"],"FAILED");
+    fs::remove_dir_all(root).unwrap();
+}

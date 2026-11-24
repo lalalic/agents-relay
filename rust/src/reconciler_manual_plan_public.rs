@@ -35,6 +35,7 @@ where
         return Err(format!("Cannot plan paused Job {}; resume it first",
             field(&initial,"id")));
     }
+    crate::planner::planner_trigger(&initial,true,graph)?;
     let pending=pending_plan(&initial);
     if let Some(active)=&pending {
         if active.get("executionId").and_then(Value::as_str)

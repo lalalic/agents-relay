@@ -16,6 +16,7 @@ pub fn planner_orchestration_v2(directory: &Path) -> Result<super::graph_v2::Gra
             "idle",
             "check_legacy_pending",
             "check_recover",
+            "check_coordinator",
             "check_plan_failure",
             "check_plan_recovery",
             "check_plan_recovery_exists",
@@ -181,6 +182,7 @@ pub fn planner_orchestration_facts(job: &Value, recoverable_pending_plan: bool) 
     });
     let review_replan = review_needs_replan(job);
     json!({
+        "coordinatorJob":crate::runtime_status::coordinator_task(job).is_some(),
         "legacyPlanningPending":job.pointer("/initialPlanning/status")==Some(&json!("pending")),
         "recoverablePendingPlan":recoverable_pending_plan,
         "terminalPlanFailure":!failed.is_null()&&(!truthy(&failed["manualPlanning"])||truthy(&failed["forceRestate"]))
@@ -228,7 +230,7 @@ pub fn decide_planner_orchestration(directory: &Path, facts: &Value) -> Result<V
         "idle",
         "planner.reconcile",
         facts,
-        14,
+        15,
         transient,
     )
 }
@@ -243,7 +245,7 @@ pub fn dispatch_planner_orchestration(
         "idle",
         "planner.reconcile",
         facts,
-        14,
+        15,
         transient,
         execute,
     )
@@ -260,7 +262,7 @@ where
     Fut: Future<Output = Result<Value, String>>,
 {
     let runtime = load_policy_graph(directory, "planner-orchestration")?;
-    let mut options = DispatchOptions::event("idle", "planner.reconcile", facts, 14);
+    let mut options = DispatchOptions::event("idle", "planner.reconcile", facts, 15);
     options.graph_name = Some("planner-orchestration".into());
     let mut effect = effect;
     dispatch_workflow_graph(
