@@ -45,8 +45,16 @@ pub fn native_codex_managed_prompt(
     };
     let package_root=Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent().ok_or("Native Rust package root missing")?;
-    let prompt=managed_worker_input_resolved(job,task,Some(&context),
+    let mut prompt=managed_worker_input_resolved(job,task,Some(&context),
         "production",package_root,None)?;
+    // projectRoot identifies the canonical repository; a source Task edits
+    // only its independently checked-out managed branch/worktree.
+    if task["gitDeliveryRequired"]==true
+        &&job.get("projectRoot").and_then(Value::as_str)!=Some(cwd){
+        prompt.push_str(&format!(
+            "\n\nExecution checkout (required): {cwd}. Edit, test and commit only in this checkout. Job.projectRoot identifies the primary repository, not the working checkout. Never commit directly to main.\n"
+        ));
+    }
     if !prompt.contains(&format!("job/{}/task/{task_id}/execution/{}",
         field(job,"id"),field(task,"executionId"))){
         return Err("Native Codex prompt lacks exact execution event binding".into());
