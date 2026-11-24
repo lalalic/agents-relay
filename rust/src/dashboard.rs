@@ -71,7 +71,13 @@ fn source_revision() -> Option<String> {
             return Some(value);
         }
     }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent()?;
+    let root = crate::runtime_resources::package_root().ok()?;
+    if let Ok(value) = std::fs::read_to_string(root.join("SOURCE_REVISION")) {
+        let value = value.trim();
+        if valid(value) {
+            return Some(value.to_owned());
+        }
+    }
     let output = Command::new("git")
         .args(["-C", root.to_str()?, "rev-parse", "HEAD"])
         .output()

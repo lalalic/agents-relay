@@ -224,11 +224,10 @@ impl PlannerLaunchPorts for PlannerPorts {
         }else{context};
         Ok(Box::new(move||{
             if let Some(executable)=model{
-                let repository_root=Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .parent().ok_or("Native Planner repository root missing")?;
+                let repository_root=crate::runtime_resources::package_root()?;
                 let command=executable.to_str().ok_or("Codex executable path is not UTF-8")?;
                 let adapter=AgentObjectivePlanner::new(Some(command),None);
-                return adapter.plan(&context,repository_root,&store_dir,None,
+                return adapter.plan(&context,&repository_root,&store_dir,None,
                     |program,args,cwd|{
                         let cwd=cwd.ok_or("Native Model Planner missing resolved project cwd")?;
                         let mut owner_process=OwnedProcessManager::default();

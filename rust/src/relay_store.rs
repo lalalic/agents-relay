@@ -326,8 +326,10 @@ impl SQLiteRelayStore {
     pub fn reserve_workflow_launch(&self,identity:&Value)
         ->Result<bool,String>{
         self.scope(field(identity,"jobId"))?;
-        let directory=std::env::var("AGENTS_RELAY_WORKFLOW_DIR")
-            .map(PathBuf::from).unwrap_or_else(|_|PathBuf::from("workflow"));
+        let directory=match std::env::var("AGENTS_RELAY_WORKFLOW_DIR") {
+            Ok(path)=>PathBuf::from(path),
+            Err(_)=>crate::runtime_resources::package_root()?.join("workflow"),
+        };
         self.workflow_operation(|op|op.reserve_workflow_launch(&directory,identity))
     }
     pub fn verify_workflow_launch(

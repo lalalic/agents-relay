@@ -335,6 +335,7 @@ pub mod troubleshooter;
 pub mod interactive_invocation;
 pub mod interactive_invocation_ports;
 pub mod execution_context;
+pub mod runtime_resources;
 pub mod cli_support;
 pub mod cli_option_contract;
 pub mod cli_support_events;

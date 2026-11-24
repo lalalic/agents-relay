@@ -26,7 +26,6 @@ use agents_relay_rust2::{
 };
 use serde_json::{json,Value};
 use std::{
-    path::Path,
     sync::atomic::{AtomicI32,Ordering},
     time::Duration,
 };
@@ -162,8 +161,7 @@ impl CliRuntimePort for DaemonClient {
             },
             ("status","") => relay_cli_runtime_summary(args),
             ("prompt","")=>{
-                let package_root=Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .parent().ok_or("Rust repo root missing")?;
+                let package_root=agents_relay_rust2::runtime_resources::package_root()?;
                 let graph=package_root.join("workflow");
                 let binding=arg(args,"--id","");
                 let job=if binding.is_empty(){None}
@@ -171,9 +169,9 @@ impl CliRuntimePort for DaemonClient {
                 let rendered=run_prompt_command(&graph,args,job.as_ref(),
                     |project,role|resolve_execution_context(project,role,&json!({})),
                     |job,task,context,mode|managed_worker_input_resolved(
-                        job,task,Some(context),mode,package_root,None),
+                        job,task,Some(context),mode,&package_root,None),
                     |context,_resolved,adapter|build_planner_execution_prompt(
-                        context,package_root,None,adapter,None))?;
+                        context,&package_root,None,adapter,None))?;
                 Ok(Value::String(rendered))
             },
             ("plan","apply")=>{
@@ -249,8 +247,7 @@ impl CliRuntimePort for DaemonClient {
                 // provider. The canonical escalation Graph owns the result
                 // and no Neo/default shell fallback is ever permitted.
                 let env=std::env::vars().collect::<std::collections::HashMap<_,_>>();
-                let graph=std::env::current_dir().map_err(|e|e.to_string())?
-                    .join("workflow");
+                let graph=agents_relay_rust2::runtime_resources::package_root()?.join("workflow");
                 run_escalation_command(args,&env,&graph)
             },
             ("job",action @ ("pause"|"resume")) => {
@@ -377,11 +374,12 @@ fn main(){
         let workspace=arg(flags,"--workspace-root","");
         let workspace=if workspace.is_empty(){cwd.clone()}
             else{std::path::PathBuf::from(workspace)};
-        let relay_root=std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent().unwrap_or(&cwd);
+        let relay_root=match agents_relay_rust2::runtime_resources::package_root(){
+            Ok(root)=>root, Err(error)=>{eprintln!("{error}");std::process::exit(1);}
+        };
         let model=std::env::var("AGENTS_RELAY_REVIEW_MODEL_BIN")
             .unwrap_or_else(|_|"codex".into());
-        match run_outcome_review(flags,&cwd,&workspace,relay_root,&model){
+        match run_outcome_review(flags,&cwd,&workspace,&relay_root,&model){
             Ok(exit)=>std::process::exit(exit),
             Err(error)=>{eprintln!("{error}");std::process::exit(1);}
         }

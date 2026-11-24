@@ -119,10 +119,9 @@ pub fn worker_managed_prompt(
     if task["gitDeliveryRequired"]==true {
         context["project"]["gitRoot"]=json!(cwd);
     }
-    let package_root=std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().ok_or("Native Rust package root missing")?;
+    let package_root=crate::runtime_resources::package_root()?;
     let mut prompt=crate::managed_worker_input::managed_worker_input_resolved(
-        job,task,Some(&context),"production",package_root,None)?;
+        job,task,Some(&context),"production",&package_root,None)?;
     if task["gitDeliveryRequired"]==true && job["projectRoot"].as_str()!=Some(cwd){
         prompt.push_str(&format!(
             "\n\nExecution checkout (required): {cwd}. Edit, test and commit only in this checkout. Job.projectRoot identifies the primary repository, not the working checkout. Never commit directly to main.\n"

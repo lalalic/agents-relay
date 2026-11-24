@@ -216,9 +216,10 @@ fn execute(args:&[String])->Result<(),String>{
         agents_relay_rust2::model_routing::default_codex_home()
     }else{cwd.join(".codex")};
     let router_home=if live_write{home}else{cwd.clone()};
+    let resources=if live_write {agents_relay_rust2::runtime_resources::package_root()?} else {cwd.clone()};
     let options=json!({
-        "storeDirectory":canonical,"graphDirectory":cwd.join("workflow"),
-        "dashboardAsset":cwd.join("dashboard/index.html"),
+        "storeDirectory":canonical,"graphDirectory":resources.join("workflow"),
+        "dashboardAsset":resources.join("dashboard/index.html"),
         "codexHome":config_home,
         "routingPolicyPath":router_home.join(".agents-relay/routing-policy.json"),
         "routerRulesPath":router_home.join(".agents-relay/execution-router-rules.md"),

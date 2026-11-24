@@ -112,7 +112,7 @@ pub fn reviewer_contract(
     );
     let resolved = crate::agent_content_resolver::resolve_agent_markdown(
         name,
-        &crate::execution_context::bundled_agents_root(),
+        &crate::execution_context::bundled_agents_root()?,
         &project.to_string_lossy(),
         Some(&layers),
     ).map_err(|error| if error == format!("Unknown agent {name}") {
@@ -190,7 +190,7 @@ pub fn evaluate_outcome(
             );
             crate::agent_content_resolver::resolve_agent_markdown(
                 &reviewer,
-                &crate::execution_context::bundled_agents_root(),
+                &crate::execution_context::bundled_agents_root()?,
                 &project.to_string_lossy(),
                 Some(&layers),
             )?

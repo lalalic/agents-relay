@@ -156,7 +156,7 @@ fn verify(
 pub fn workflow_cli_result(args: &[String]) -> Result<Value, String> {
     let verb = args.first().map(String::as_str).unwrap_or("");
     let options = if args.is_empty() { &[][..] } else { &args[1..] };
-    let graphs = executable_graphs(&default_workflow_directory())?;
+    let graphs = executable_graphs(&default_workflow_directory()?)?;
     let index = build_workflow_usage_index(&graphs);
     if verb == "discover" {
         let mut symbols = index

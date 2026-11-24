@@ -36,6 +36,21 @@ cargo test --locked --test native_dashboard_pwa
 
 Binaries from this repository are `rust/target/debug/agents-relay-rust` and `rust/target/debug/agents-relayd-rust`. Production launchers may expose them as `agents-relay` and `agents-relayd`; **do not install** a similarly named npm binary.
 
+### Runtime resource installation
+
+Install the CLI, daemon and `owned-process-supervisor` binaries under a stable package root (for example `bin/`),
+with the matching `skills/`, `agents/`, `workflow/` and `dashboard/` trees.
+Both binaries discover this package from their executable location, not the
+build directory or current working directory. An absolute
+`AGENTS_RELAY_RESOURCE_ROOT` may explicitly select the same installed package.
+Invalid overrides fail closed. For Cargo builds with an external target
+directory, set that variable to the source package when running tests.
+Package the committed resources and matching binaries with
+`scripts/package-rust-runtime.sh ABSOLUTE_BINARY_DIR ABSOLUTE_NEW_PACKAGE_DIR`.
+Use an immutable release directory and select it for both launchers; do not
+deploy binaries alone. Verify installed CLI context resolution after removing
+the build checkout.
+
 ## CLI and lifecycle
 
 ```sh

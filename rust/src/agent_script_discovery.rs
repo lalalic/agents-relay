@@ -19,14 +19,7 @@ fn global_root(explicit: Option<&str>) -> String {
         .map(|home| format!("{home}/.agents"))
         .unwrap_or("/.agents".into())
 }
-fn builtins_root() -> String {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("repository root")
-        .join("skills/agents-relay/agents")
-        .to_string_lossy()
-        .into_owned()
-}
+use crate::runtime_resources::bundled_agents_root;
 pub fn discover_script_agent(
     agent: &str,
     project_path: &str,
@@ -42,7 +35,7 @@ pub fn discover_script_agent(
     );
     let resolved = match resolve_agent_markdown(
         agent,
-        &builtins_root(),
+        &bundled_agents_root()?,
         project_path,
         Some(&layers),
     ) {

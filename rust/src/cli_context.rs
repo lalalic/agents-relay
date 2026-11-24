@@ -283,10 +283,7 @@ pub fn resolve_context(
     let mut skill_map = BTreeMap::<String, Value>::new();
     let mut skills_by_layer = BTreeMap::<String, Vec<Value>>::new();
     let mut names = HashSet::<String>::new();
-    let builtin = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("repo")
-        .join("skills/agents-relay/agents");
+    let builtin = crate::runtime_resources::package_root()?.join("skills/agents-relay/agents");
     for agent in agent_files(builtin.parent().expect("skills root"), "builtin", &[])? {
         if let Some(name) = agent["name"].as_str() {
             names.insert(name.to_string());

@@ -7,7 +7,7 @@ use crate::{
     cli_context::resolve_context,
 };
 use serde_json::{json,Value};
-use std::{collections::HashSet,path::Path};
+use std::collections::HashSet;
 
 fn field<'a>(v:&'a Value,key:&str)->&'a str {
     v.get(key).and_then(Value::as_str).unwrap_or("")
@@ -19,11 +19,7 @@ fn strings(v:&Value,key:&str)->Vec<String> {
     values(v,key).iter().filter_map(Value::as_str)
         .map(str::to_owned).collect()
 }
-pub fn bundled_agents_root()->String {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().expect("repo").join("skills/agents-relay/agents")
-        .to_string_lossy().to_string()
-}
+pub use crate::runtime_resources::bundled_agents_root;
 fn select_by_name(
     items:&[Value],names:&[String],kind:&str,
 )->Result<Vec<Value>,String>{
@@ -104,7 +100,7 @@ pub fn resolve_agent_model_preference(
     let layers=agent_source_layers(project_path,&json!({
         "workspaceRoot":workspace,"globalRoot":global
     }));
-    let agent=resolve_agent_markdown(agent_name,&bundled_agents_root(),
+    let agent=resolve_agent_markdown(agent_name,&bundled_agents_root()?,
         project_path,Some(&layers))?;
     let model=agent.pointer("/metadata/model").and_then(Value::as_str)
         .filter(|s|!s.is_empty());
@@ -128,7 +124,7 @@ pub fn resolve_agent_contract(
     }
     let project=field(&context["project"],"path");
     let layers=agent_source_layers(project,&context["project"]);
-    let resolved=resolve_agent_markdown(agent_name,&bundled_agents_root(),
+    let resolved=resolve_agent_markdown(agent_name,&bundled_agents_root()?,
         project,Some(&layers))?;
     if field(&resolved,"content").trim().is_empty(){
         return Err(format!("Agent {agent_name} Markdown contract is empty"));

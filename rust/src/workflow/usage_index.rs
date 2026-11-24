@@ -89,12 +89,6 @@ pub fn where_workflow_symbol(index: &[Value], id: &str, kind: Option<&str>) -> V
         .cloned()
         .collect()
 }
-pub fn default_workflow_directory() -> PathBuf {
-    // Node uses import.meta.url; Cargo's source-relative root is the equivalent
-    // when compiled in the source checkout. Production may explicitly provide
-    // an independent deployment workflow directory to executable_graphs.
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("Rust crate inside repository root")
-        .join("workflow")
+pub fn default_workflow_directory() -> Result<PathBuf, String> {
+    Ok(crate::runtime_resources::package_root()?.join("workflow"))
 }
