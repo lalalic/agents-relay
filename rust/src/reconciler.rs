@@ -89,18 +89,20 @@ pub struct ReconcileResult {
     pub effects:Vec<Value>,
     pub cancel_generations:Vec<String>,
     pub changed:bool,
+    pub decision_audits:Vec<Value>,
 }
 impl ReconcileResult{
     fn new(job:&Value)->Self{
         Self{job:job.clone(),events:Vec::new(),
             effects:Vec::new(),cancel_generations:Vec::new(),
-            changed:false}
+            changed:false,decision_audits:Vec::new()}
     }
     fn merge_review(&mut self,review:ReviewSnapshot){
         if self.job!=review.job{self.changed=true;}
         self.job=review.job;
         self.events.extend(review.events);
         self.cancel_generations.extend(review.cancel_execution_ids);
+        self.decision_audits.extend(review.decision_audit);
     }
 }
 pub struct Reconciler{
@@ -206,6 +208,12 @@ impl Reconciler{
         // Never publish before a successful SQLite commit. A transport
         // failure does not roll back the transaction, but remains visible to
         // the caller so the durable outbox can retry the observation.
+        for audit in &outcome.decision_audits{
+            if let Err(error)=crate::decision_audit::JsonlDecisionAuditStore::new(
+                self.decision_audit_path()).append(audit){
+                eprintln!("Decision audit append failed: {error}");
+            }
+        }
         for event in &outcome.events{host.broadcast(event)?;}
         // Original Node Reconciler escalates only AFTER a bounded alternate
         // model fallback has been applied. The Graph/SQLite host must own the
@@ -722,9 +730,18 @@ impl Reconciler{
                 .unwrap_or(json!({}));
             let need_review=crate::reconciler_review::review_facts(
                 &self.graph_directory,&result.job,head)?;
-            let review_route=if need_review.get("reviewWorkSettled")
-                ==Some(&Value::Bool(true))&&head.is_some(){
-                route_reviewer(&self.graph_directory,&result.job,&self.options,
+            let review_decision=crate::workflow::review_v2::decide_review_lifecycle(
+                &self.graph_directory,result.job.pointer("/review/outcome").and_then(Value::as_str),
+                "reconcile",&need_review)?;
+            let review_route=if review_decision["accepted"]==true
+                &&review_decision["actions"].as_array().is_some_and(|items|
+                    items.iter().any(|item|item["id"]=="review.create")){
+                let mut options=self.options.clone();
+                if options["useDecisionEngine"]==true{
+                    options["recentRouteResults"]=json!(crate::decision_audit::JsonlDecisionAuditStore::new(
+                        self.decision_audit_path()).read_recent_routes(10));
+                }
+                route_reviewer(&self.graph_directory,&result.job,&options,
                     adapters,registered,usage,&self.profile_home,
                     &self.policy_path,&self.rules_path).ok()
             }else{None};

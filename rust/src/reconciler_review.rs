@@ -5,7 +5,7 @@
 use crate::{
     events::event_for,
     execution_routing::{
-        discover_execution_routes,route_execution_with_choice,
+        discover_execution_routes,route_execution_with_choice,route_execution_decide,
     },
     final_review_role::{is_final_review_agent,FINAL_REVIEW_AGENT},
     job_task_id_sequence::allocate_entity_id,
@@ -203,12 +203,15 @@ pub fn route_reviewer(
         "routingConstraints":configured.get("routing"),
         "taskFacts":task_facts,
         "decisionMode":options.get("decisionMode"),
+        "recordDecisionAudit":options.get("recordDecisionAudit"),
         "chatgptRunning":options.pointer("/runtimeSummary/chatgptRunning")});
     let discovery=discover_execution_routes(&workers,&requirements,&opts,
         profile_home,policy_path,rules_path,
         Utc::now().timestamp_millis())?;
-    let routed=route_execution_with_choice(&discovery,&requirements,
-        &workers,&opts,None,None,&[],None)?;
+    let routed=if options["useDecisionEngine"]==true{
+        route_execution_decide(&discovery,&requirements,&workers,&opts,
+            options["recentRouteResults"].as_array().map(Vec::as_slice).unwrap_or(&[]))?
+    }else{route_execution_with_choice(&discovery,&requirements,&workers,&opts,None,None,&[],None)?};
     let _=graph_directory;
     Ok(routed)
 }
@@ -315,6 +318,11 @@ pub fn ensure_final_review(
                 "selectedBy":route.pointer("/selection/selectedBy")}
         })),None));
     result.wake=true;
+    if let Some(mut audit)=route.get("audit").filter(|v|v.is_object()).cloned(){
+        audit["correlation"]=json!({"job_id":job["id"],"task_id":id,"attempt":0});
+        audit["task"]=crate::decision_audit::task_audit_facts(Some(&review_task));
+        result.decision_audit=Some(audit);
+    }
     Ok(result)
 }
 pub fn route_task_for_execution(
@@ -384,8 +392,10 @@ pub fn route_task_for_execution(
     let discovery=discover_execution_routes(&workers,&requirements,
         &opts,profile_home,policy_path,rules_path,
         Utc::now().timestamp_millis())?;
-    let route=route_execution_with_choice(&discovery,&requirements,
-        &workers,&opts,None,None,&[],None)?;
+    let route=if options["useDecisionEngine"]==true{
+        route_execution_decide(&discovery,&requirements,&workers,&opts,
+            options["recentRouteResults"].as_array().map(Vec::as_slice).unwrap_or(&[]))?
+    }else{route_execution_with_choice(&discovery,&requirements,&workers,&opts,None,None,&[],None)?};
     result.decision_audit=route.get("audit").filter(|v|!v.is_null()).cloned();
     let index=tasks(&result.job).iter().position(|t|t.get("id")==task.get("id"))
         .ok_or("Task absent after routing")?;

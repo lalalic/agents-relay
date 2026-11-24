@@ -329,7 +329,9 @@ fn execute(args:&[String])->Result<(),String>{
                 json!({"owner":format!("{}-rust-daemon-{}",
                         if live_write{"live"}else{"isolated"},std::process::id()),
                     "maxConcurrent":runtime.concurrency,
-                    "noGitHub":true,"productionReady":false})
+                    "noGitHub":true,"productionReady":false,
+                    "decisionMode":if live_write{agents_relay_rust2::decision::decision_mode()}else{"off"},
+                    "useDecisionEngine":live_write,"recordDecisionAudit":live_write})
             ))
         })
     }else{

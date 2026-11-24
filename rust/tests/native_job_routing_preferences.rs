@@ -197,3 +197,37 @@ fn job_preference_routes_unpinned_worker_and_respects_exact_runtime() {
     assert_eq!(browser_reselected.job["tasks"][0]["adapter"],"chatgpt");
     assert!(browser_reselected.job["tasks"][0]["routing"].is_object());
 }
+
+#[test]
+fn production_decision_contract_accepts_only_eligible_choices_and_records_fallback(){
+    use agents_relay_rust2::execution_routing::route_execution_decide_with;
+    let codex=route("codex","openai","codex-default");
+    let zai=route("codex","zai","glm-5.3-flash");
+    let discovery=ExecutionRouteDiscovery{
+        routes:vec![codex.clone(),zai.clone()],evaluations:vec![],
+        worker_gate_evaluations:vec![],policy:json!({}),choices:vec![],
+        routing_instruction:"Prefer zai".into(),configured_defaults:HashMap::new()};
+    let opts=json!({"decisionMode":"active","recordDecisionAudit":true,
+        "taskFacts":{"task":{"id":"22","jobId":"21"}}});
+    let chosen=route_execution_decide_with(&discovery,&json!({}),&[],&opts,&[],|req,contract|{
+        assert!(req["facts"].is_object());
+        assert_eq!(contract["choices"].as_array().unwrap().len(),2);
+        assert!(contract["question"].as_str().unwrap().contains("Prefer zai"));
+        Ok(json!({"type":"choice","choice":execution_choice_label(&zai,false)}))
+    }).unwrap();
+    assert_eq!(chosen["routing"]["provider"],"zai");
+    assert_eq!(chosen["routing"]["decidedBy"],"execution-router:jev");
+    assert_eq!(chosen["audit"]["decision_id"],chosen["routing"]["decisionId"]);
+    assert_eq!(chosen["audit"]["decision_input"]["stages"][0]["contract"]["choices"].as_array().unwrap().len(),2);
+    let failed=route_execution_decide_with(&discovery,&json!({}),&[],&opts,&[],|_,_|{
+        Ok(json!({"type":"choice","choice":"invented"}))
+    }).unwrap();
+    assert_eq!(failed["routing"]["decisionEvidence"]["fallback"],true);
+    assert!(failed["routing"]["decisionEvidence"]["error"].is_string());
+    let single=ExecutionRouteDiscovery{routes:vec![codex],..discovery.clone()};
+    let bypass=route_execution_decide_with(&single,&json!({}),&[],&opts,&[],|_,_|panic!("single route must not call engine")).unwrap();
+    assert_eq!(bypass["routing"]["decidedBy"],"execution-router:single-choice");
+    let off=json!({"decisionMode":"off","recordDecisionAudit":true});
+    let disabled=route_execution_decide_with(&discovery,&json!({}),&[],&off,&[],|_,_|panic!("off must not call engine")).unwrap();
+    assert_eq!(disabled["routing"]["decisionEvidence"]["fallback"],true);
+}

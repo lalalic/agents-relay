@@ -126,6 +126,7 @@ pub struct IsolatedSQLiteWriteHost {
     // Explicitly selected production-owned canonical store. Isolated callers
     // still reject any project outside their disposable Git fixture.
     live_store:bool,
+    usage_cache:Option<(std::time::Instant,Value)>,
     subscriptions:Vec<Sender<String>>,
     wake_count:u64,
     wake_pending:bool,
@@ -170,7 +171,7 @@ pub struct IsolatedSQLiteWriteHost {
 }
 impl IsolatedSQLiteWriteHost {
     pub fn new(config:DaemonConfig)->Self{
-        Self{config,live_store:false,subscriptions:Vec::new(),wake_count:0,wake_pending:false,reconcile_attempts:0,connections:RefCell::new(HashMap::new()),
+        Self{config,live_store:false,usage_cache:None,subscriptions:Vec::new(),wake_count:0,wake_pending:false,reconcile_attempts:0,connections:RefCell::new(HashMap::new()),
             failure_state:std::sync::Arc::new(DaemonFailureState::new()),
             live_workers:std::sync::Arc::new(std::sync::Mutex::new(DaemonLiveWorkers::default())),
             escalation_notifier:None,event_history_api:None,
@@ -514,6 +515,14 @@ impl IsolatedSQLiteWriteHost {
             if rows.len()<60{break;}
         }
         Ok(applied)
+    }
+    fn decision_options(&self)->Value{
+        let recent=if self.live_store{
+            crate::decision_audit::JsonlDecisionAuditStore::new(
+                crate::decision_audit::audit_path(&self.config.store_directory)).read_recent_routes(10)
+        }else{Vec::new()};
+        json!({"decisionMode":if self.live_store{crate::decision::decision_mode()}else{"off"},
+            "useDecisionEngine":self.live_store,"recordDecisionAudit":true,"recentRouteResults":recent})
     }
     fn append_routing_audit(&self, record: Option<&Value>) {
         if let Some(record)=record {
@@ -901,16 +910,19 @@ impl IsolatedSQLiteWriteHost {
         // DecisionRouter selects the actual model/profile from configured
         // provider routes. No model or profile is invented by the Planner.
         let planner_route=if codex.is_some()&&script.is_none(){
+            let usage=self.account_usage().ok();
+            let mut options=self.decision_options();
+            options["taskFacts"]=json!({"task":{"kind":"planner","agentName":"planner","jobId":id,"id":plan_id},"routingPreferences":{"reasoning":"high"}});
+            options["usage"]=json!(usage);
             let workers=self.available_model_workers().into_iter()
                 .filter(|worker|field(worker,"adapter")=="codex")
                 .collect::<Vec<_>>();
             let routed=crate::execution_routing::route_execution(
                 &workers,&json!({"capabilities":["model"]}),
-                &json!({"taskFacts":{"task":{"kind":"planner","agentName":"planner"},
-                    "routingPreferences":{"reasoning":"high"}},"decisionMode":"off"}),
+                &options,
                 &self.config.profile_home,&self.config.policy_path,
                 &self.config.router_rules_path,
-                chrono::Utc::now().timestamp_millis(),None,None,&[],None)?;
+                chrono::Utc::now().timestamp_millis(),None,None,options["recentRouteResults"].as_array().map(Vec::as_slice).unwrap_or(&[]),None)?;
             Some(routed)
         }else{None};
         let graph=self.config.graph_directory.clone();
@@ -1336,6 +1348,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                 let config=self.config.clone();
                 let owner=format!("isolated-rust-daemon-{}",std::process::id());
                 let runtime_config=config.clone();
+                let live_store=self.live_store;
                 crate::relayd::reconcile_one_daemon_job(
                     &config,self,id,config.concurrency,move |_snapshot|{
                         let config=&runtime_config;
@@ -1346,7 +1359,8 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                             config.policy_path.clone(),
                             config.router_rules_path.clone(),
                             json!({"owner":owner,
-                                "maxConcurrent":config.concurrency,
+                                "maxConcurrent":config.concurrency,"decisionMode":if live_store{crate::decision::decision_mode()}else{"off"},
+                                "useDecisionEngine":live_store,"recordDecisionAudit":live_store,
                                 })))
                     })
             },
@@ -1480,9 +1494,46 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         self.emit_job_snapshot(&snapshot);
         Ok(())
     }
-    fn router_test(&mut self,_:&str,_:&str)->Result<Value,String>{Err(denied("router_test"))}
+    fn router_test(&mut self,id:&str,task_id:&str)->Result<Value,String>{
+        let job=WorkspaceControlBackend::load_job(self,id)?;
+        let mut task=job["tasks"].as_array().into_iter().flatten()
+            .find(|t|field(t,"id")==task_id).cloned().ok_or("Router test Task not found")?;
+        if !matches!(field(&task,"adapter"),"codex"|"chatgpt"){
+            return Err("Router test requires a Model Task".into());
+        }
+        task.as_object_mut().ok_or("Invalid Task")?.remove("routing");
+        task.as_object_mut().ok_or("Invalid Task")?.remove("workerSelection");
+        let adapters=self.available_model_workers();
+        let usage=self.account_usage().ok();
+        let options=self.decision_options();
+        let result=crate::reconciler_review::route_task_for_execution(
+            &self.config.graph_directory,&self.config.profile_home,
+            &self.config.policy_path,&self.config.router_rules_path,
+            &job,&task,&adapters,&[],usage.as_ref(),&options)?;
+        let audit=result.decision_audit.ok_or("Router test did not select a route")?;
+        let selected=&audit["selected"];
+        let evidence=&audit["decision_evidence"];
+        let stage=audit.pointer("/decision_input/stages/0").unwrap_or(&Value::Null);
+        Ok(json!({"selected":{"worker":selected.pointer("/worker/id").or_else(||selected.pointer("/worker/adapter")),
+            "model":selected.pointer("/model/model"),"route":selected["id"]},
+            "fallback":evidence["fallback"],"engine":evidence["engine"],"error":evidence["error"],
+            "probabilities":evidence["probabilities"],"effectiveChoices":audit["eligible_candidates"],
+            "mergedChoices":stage.pointer("/contract/choices"),"gates":audit["gate_results"],
+            "routingInstruction":stage.pointer("/contract/question"),"decisionInput":stage,
+            "proposedFields":{"worker":selected.pointer("/worker/adapter"),"provider":selected.pointer("/model/provider"),
+                "model":selected.pointer("/model/model"),"reasoning":selected.pointer("/model/reasoning")}}))
+    }
     fn decision_audit(&mut self)->Result<Vec<Value>,String>{crate::decision_audit::dashboard_records(&self.config.store_directory)}
-    fn account_usage(&mut self)->Result<Value,String>{Err(denied("provider account usage"))}
+    fn account_usage(&mut self)->Result<Value,String>{
+        if !self.live_store{return Err(denied("provider account usage"));}
+        if let Some((at,snapshot))=&self.usage_cache{
+            if at.elapsed()<std::time::Duration::from_secs(60){return Ok(snapshot.clone());}
+        }
+        let snapshot=crate::usage::codex_and_zai_usage_registry(None,None).snapshot()?;
+        self.usage_cache=Some((std::time::Instant::now(),snapshot.clone()));
+        Ok(snapshot)
+    }
+    fn routing_adapters(&self)->Vec<Value>{self.available_model_workers()}
     fn github_usage(&mut self)->Result<Option<Value>,String>{Ok(None)}
     fn status(&mut self)->Value{
         let mode=if self.live_store {"live-write"}else{"isolated-write"};
@@ -1643,9 +1694,11 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             &&current.get("routing").is_none_or(Value::is_null)
             &&current.get("workerSelection").is_none_or(Value::is_null);
         let should_route=can_route && self.model_webhelm_canary.is_some()
-            &&(field(current,"adapter")=="chatgpt" ||
+            &&(self.live_store || field(current,"adapter")=="chatgpt" ||
                original.get("routingPreferences").is_some_and(Value::is_object));
         if should_route {
+            let usage=self.account_usage().ok();
+            let options=self.decision_options();
             let mut available=Vec::new();
             if self.model_codex_executable.is_some(){
                 available.push(json!({"id":"codex","name":"codex",
@@ -1656,7 +1709,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             let routed=crate::reconciler_review::route_task_for_execution(
                 &self.config.graph_directory,&self.config.profile_home,
                 &self.config.policy_path,&self.config.router_rules_path,
-                &original,current,&available,&[],None,&json!({"decisionMode":"off","recordDecisionAudit":true}))?;
+                &original,current,&available,&[],usage.as_ref(),&options)?;
             if routed.job!=original {
                 let previous=original.clone();
                 original=self.persist_exact(id,&previous,&routed.job)?;
@@ -1690,11 +1743,13 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             ]);
             let mut ready=original.clone();
             if task.get("routing").is_none_or(Value::is_null){
+                let usage=self.account_usage().ok();
+                let options=self.decision_options();
                 let route=crate::reconciler_review::route_task_for_execution(
                     &self.config.graph_directory,&self.config.profile_home,
                     &self.config.policy_path,&self.config.router_rules_path,
                     &original,task,candidates.as_array().expect("static candidates"),
-                    &[],None,&json!({"decisionMode":"off","recordDecisionAudit":true}))?;
+                    &[],usage.as_ref(),&options)?;
                 if route.job==original{
                     return Err("Model Router did not select a real Codex route".into());
                 }

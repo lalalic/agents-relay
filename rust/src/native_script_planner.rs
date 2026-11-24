@@ -190,6 +190,14 @@ impl PlannerLaunchPorts for PlannerPorts {
             *existing=claimed.clone();
             Ok(current)
         })?;
+        if let Some(mut audit)=self.planner_route.as_ref().and_then(|route|route.get("audit")).filter(|v|v.is_object()).cloned(){
+            audit["correlation"]=json!({"job_id":job_id,"task_id":plan_id,
+                "execution_id":claimed["executionId"],"attempt":claimed["attempt"]});
+            if let Err(error)=crate::decision_audit::JsonlDecisionAuditStore::new(
+                crate::decision_audit::audit_path(&self.store_directory)).append(&audit){
+                eprintln!("Planner decision audit append failed: {error}");
+            }
+        }
         Ok(())
     }
     fn register_live(&mut self,_:&str,execution:&str,_:u64)->Result<(),String>{

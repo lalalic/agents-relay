@@ -419,6 +419,82 @@ pub fn execution_routing_question(
         &append_routing_instruction(&question,instructions),
         model_preference)
 }
+fn route_choice_labels(discovery:&ExecutionRouteDiscovery)->Vec<String>{
+    discovery.routes.iter().map(|route|{
+        let defaults=discovery.configured_defaults.get(field(&route["worker"],"workerId"))
+            .map(Vec::as_slice).unwrap_or(&[]);
+        execution_choice_label(route,defaults.iter().any(|c|same_model_key(c,&route["model"])))
+    }).collect()
+}
+
+/// Invoke the configured engine only at an explicitly authorized live boundary.
+/// The same hard-gated selector validates its response and provides fallback.
+pub fn route_execution_decide_with(
+    discovery:&ExecutionRouteDiscovery,requirements:&Value,workers:&[Value],
+    options:&Value,recent_outcomes:&[Value],
+    decide:impl FnOnce(&Value,&Value)->Result<Value,String>,
+)->Result<Value,String>{
+    let mode=options.get("decisionMode").and_then(Value::as_str).unwrap_or("off");
+    if mode=="off" || discovery.routes.is_empty(){
+        return route_execution_with_choice(discovery,requirements,workers,options,None,None,recent_outcomes,None);
+    }
+    let choices=route_choice_labels(discovery);
+    let mut facts=execution_routing_facts(discovery,workers,
+        options.get("taskFacts").unwrap_or(&Value::Null),
+        options.get("chatgptRunning").and_then(Value::as_u64).unwrap_or(0),
+        options.get("preferredChatgptConcurrency").and_then(Value::as_u64)
+            .unwrap_or(DEFAULT_CHATGPT_PREFERRED_CONCURRENCY),recent_outcomes);
+    // Only bounded capability facts and explicit routing hints are sent.
+    if let Some(prefs)=options.pointer("/taskFacts/routingPreferences").filter(|v|v.is_object()){
+        facts["job_routing_preferences"]=prefs.clone();
+    }
+    let contract=json!({"type":"choice","question":execution_routing_question(
+        &discovery.routing_instruction,options.get("modelPreference")),
+        "choices":choices});
+    let engine=crate::decision::JevDecisionEngine::NAME;
+    let result=if choices.len()==1{
+        Ok(json!({"type":"choice","choice":choices[0],"bypassed":true}))
+    }else{
+        crate::decision::validate_decision_request(&json!({"facts":facts}),&contract)
+            .and_then(|_|decide(&json!({"facts":facts}),&contract))
+            .and_then(|answer|{
+                crate::decision::parse_choice_decision(&answer,&contract)?;
+                Ok(answer)
+            })
+    };
+    let (choice,evidence,stage)=match result{
+        Ok(answer)=>{
+            let choice=answer["choice"].as_str().ok_or("Decision choice missing")?.to_owned();
+            let bypassed=answer["bypassed"]==true;
+            let mut evidence=json!({"mode":mode,"engine":engine,"proposed":choice,
+                "fallback":mode=="shadow","bypassed":bypassed});
+            for key in ["probabilities","usage","latencyMs","model"]{
+                if let Some(value)=answer.get(key){evidence[key]=value.clone();}
+            }
+            let stage=json!({"name":"route","facts":facts,"contract":contract,"result":answer});
+            (if mode=="shadow"{None}else{Some(choice)},evidence,stage)
+        }
+        Err(error)=>(None,json!({"mode":mode,"engine":engine,"fallback":true,
+            "error":crate::decision_audit::route_reason(&error)}),
+            json!({"name":"route","facts":facts,"contract":contract,
+                "result":{"error":crate::decision_audit::route_reason(&error)}}))
+    };
+    let mut routed=route_execution_with_choice(discovery,requirements,workers,options,
+        choice.as_deref(),Some(evidence),recent_outcomes,None)?;
+    if routed["audit"].is_object(){
+        routed["audit"]["decision_input"]["stages"]=json!([stage]);
+    }
+    Ok(routed)
+}
+
+pub fn route_execution_decide(
+    discovery:&ExecutionRouteDiscovery,requirements:&Value,workers:&[Value],
+    options:&Value,recent_outcomes:&[Value],
+)->Result<Value,String>{
+    route_execution_decide_with(discovery,requirements,workers,options,recent_outcomes,
+        |request,contract|crate::decision::execution_decision_engine().decide(request,contract))
+}
+
 pub fn route_execution_with_choice(
     discovery:&ExecutionRouteDiscovery,requirements:&Value,workers:&[Value],
     options:&Value,model_choice:Option<&str>,mut evidence:Option<Value>,
@@ -461,16 +537,7 @@ pub fn route_execution_with_choice(
     let preferred_used=preferred.is_some() && model_choice.is_none();
     let mut selected=preferred.unwrap_or(fallback.clone());
     if let Some(choice)=model_choice {
-        let choices:Vec<String>=discovery.routes.iter().enumerate()
-            .map(|(index,route)|{
-                let worker=field(&route["worker"],"workerId");
-                let defaults=discovery.configured_defaults.get(worker)
-                    .map(Vec::as_slice).unwrap_or(&[]);
-                let is_default=defaults.iter()
-                    .any(|candidate|same_model_key(candidate,&route["model"]));
-                let _=index;
-                execution_choice_label(route,is_default)
-            }).collect();
+        let choices=route_choice_labels(discovery);
         if let Some(index)=choices.iter().position(|label|label==choice){
             selected=discovery.routes[index].clone();
         }else{
@@ -485,7 +552,9 @@ pub fn route_execution_with_choice(
     let evidence=evidence.expect("fallback evidence");
     let powered=evidence.get("engine").is_some_and(|v|!v.is_null())
         && evidence.get("fallback")==Some(&Value::Bool(false));
-    let by=if powered{"execution-router:laya"}
+    let by=if powered && evidence.get("engine").and_then(Value::as_str)==Some(crate::decision::JevDecisionEngine::NAME){
+        if evidence["bypassed"]==true{"execution-router:single-choice"}else{"execution-router:jev"}
+    }else if powered{"execution-router:laya"}
         else if preferred_used{"execution-router:job-preference"}
         else{"execution-router:fallback"};
     let mut routing=json!({
@@ -537,8 +606,12 @@ pub fn route_execution(
 )->Result<Value,String>{
     let discovered=discover_execution_routes(workers,requirements,options,
         home,policy_path,rules_path,now_ms)?;
-    let mut result=route_execution_with_choice(&discovered,requirements,workers,options,
-        proposed_choice,evidence,recent_outcomes,audit)?;
+    let mut result=if options["useDecisionEngine"]==true && proposed_choice.is_none() && evidence.is_none() && audit.is_none(){
+        route_execution_decide(&discovered,requirements,workers,options,recent_outcomes)?
+    }else{
+        route_execution_with_choice(&discovered,requirements,workers,options,
+            proposed_choice,evidence,recent_outcomes,audit)?
+    };
     // Public Node routeExecution returns the chosen candidate, selection,
     // model, routing and audit. The extra eligibility facts stay internal.
     if let Some(map)=result.as_object_mut(){

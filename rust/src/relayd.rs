@@ -280,6 +280,11 @@ pub trait DaemonServices:Send{
     fn github_usage(&mut self)->Result<Option<Value>,String>;
     fn status(&mut self)->Value;
     fn registered_agents(&mut self)->Result<Vec<Value>,String>;
+    fn routing_adapters(&self)->Vec<Value>{
+        vec![json!({"id":"codex","name":"codex","capabilities":["model","codex"]}),
+             json!({"id":"chatgpt/browser-worker","name":"chatgpt","capabilities":["model","chatgpt","webhelm"]}),
+             json!({"id":"z","name":"z","capabilities":["model","z"]})]
+    }
     /// Only an authoritative SQLite owner can preallocate numeric child IDs
     /// and atomically schedule Graph-approved dependency revision Tasks.
     /// Read-only and unbound hosts never fabricate new revisions.
@@ -410,18 +415,14 @@ pub fn reconcile_one_daemon_job<S:DaemonServices>(
     let project=resolve_job_project_root(&snapshot)?;
     let usage=services.account_usage().ok();
     let registered=services.registered_agents()?;
-    let adapters=json!([
-        {"id":"codex","name":"codex","capabilities":["model","codex"]},
-        {"id":"chatgpt/browser-worker","name":"chatgpt","capabilities":["model","chatgpt","webhelm"]},
-        {"id":"z","name":"z","capabilities":["model","z"]}
-    ]);
+    let adapters=services.routing_adapters();
     let mut reconciler=make_reconciler(&snapshot)?;
     reconciler.options["maxConcurrent"]=json!(capacity);
     let roots=json!({"workspaceRoot":config.workspace_root});
     let head=crate::reconciler_git_head::verified_local_head(
         &snapshot,&project,true);
     reconciler.reconcile(job_id,head.as_deref(),&project,&roots,
-        adapters.as_array().ok_or("Adapters invalid")?,&registered,
+        &adapters,&registered,
         usage.as_ref(),&mut DaemonReconcileHost(services))
 }
 /// Runtime host explicit opt-in: one server, one Pool, SQLite inventory only.
