@@ -145,16 +145,21 @@ fn control_create<B:WorkspaceControlBackend>(
         |job|Ok(job.clone()))?;
     let mut job=response.get("job").cloned()
         .ok_or("Native Job create did not return a Job")?;
+    // The Planner loads and mutates the authoritative SQLite Job. Commit
+    // the new DRAFT first; a planning failure must leave it recoverable.
+    job=backend.create_job_if_absent(&job)?;
     if body.get("initialPlan")==Some(&Value::Bool(true)){
-        let planned=backend.manual_plan(field(&job,"id"),None,false)?;
-        job=backend.create_job_if_absent(&planned["job"])?;
+        // Idempotent create retries must not append a second initial round.
+        if job.pointer("/plans/0/id").is_none(){
+            let planned=backend.manual_plan(field(&job,"id"),None,false)?;
+            job=planned["job"].clone();
+        }
         backend.wake(field(&job,"id"),"control.job.create.initial-plan")?;
         backend.refresh_inventory()?;
         return Ok(json!({"repository":repository,"job":job.get("id"),
             "state":job.get("state"),
             "initialPlan":job.pointer("/plans/0/id")}));
     }
-    job=backend.create_job_if_absent(&job)?;
     backend.refresh_inventory()?;
     if let Some(coordinator)=job.get("tasks").and_then(Value::as_array)
         .into_iter().flatten().find(|task|

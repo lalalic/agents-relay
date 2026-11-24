@@ -742,6 +742,43 @@ fn native_control_job_create_is_real_git_graph_sqlite_and_idempotent_after_resta
 }
 
 #[test]
+fn initial_plan_create_persists_job_before_planner_and_is_idempotent(){
+    use std::{thread,time::{Duration,Instant}};
+    let (root,config)=fixture();
+    let project=root.join("fixture");
+    let scripts=project.join("agents/.shortcut");
+    fs::create_dir_all(&scripts).unwrap();
+    git(&project,&["init","-q","-b","main"]);
+    fs::write(scripts.join("planner.agent.mjs"),r#"export async function run() {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      throw Error('Intentional fixture Planner failure');
+    }"#).unwrap();
+    let request=json!({"command":"job.create","repository":"fixture","initialPlan":true,
+        "options":{"projectRoot":project,"title":"Initial Plan regression",
+        "objective":"Verify creation ordering","idempotencyKey":"initial-plan-test",
+        "preflight":true,"autoMerge":false,"reviewEnabled":false}});
+    let mut host=IsolatedSQLiteWriteHost::new(config.clone());
+    let receipt=workspace_control(&mut host,&request).unwrap();
+    let id=receipt["job"].as_str().unwrap();
+    assert_eq!(receipt["initialPlan"],"plan-1");
+    let started=Instant::now();
+    loop {
+        let job=host.load(id).unwrap();
+        if job["plans"][0]["status"]=="FAILED" {break;}
+        assert!(started.elapsed()<Duration::from_secs(20),"{job}");
+        thread::sleep(Duration::from_millis(50));
+    }
+    drop(host);
+    let mut host=IsolatedSQLiteWriteHost::new(config);
+    let replay=workspace_control(&mut host,&request).unwrap();
+    assert_eq!(replay["job"],id);
+    assert_eq!(replay["initialPlan"],"plan-1");
+    assert_eq!(host.load(id).unwrap()["plans"].as_array().unwrap().len(),1);
+    drop(host);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn live_committed_graph_event_reaches_actual_nats_activity_transport() {
     use agents_relay_rust2::events::{event_for,NatsEventBus};
     use std::{net::TcpListener,process::{Command,Stdio},sync::{Arc,mpsc},

@@ -1000,14 +1000,7 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
         ->Result<Value,String>{
         let current=self.scoped(id)?.load_job(id)?
             .ok_or_else(||format!("SQLite Job {id} not found"))?;
-        let project=self.isolated_project(&current)?;
-        let declared=project.join("agents/.shortcut/planner.agent.mjs");
-        let script=std::fs::canonicalize(&declared).map_err(|e|
-            format!("Isolated Planner has no declared Shortcut: {e}"))?;
-        if !script.starts_with(&project) || !script.is_file(){
-            return Err("Isolated Planner Shortcut escapes the Job project".into());
-        }
-        let interpreter=PathBuf::from(configured_script_interpreter()?);
+        self.isolated_project(&current)?;
         let timeout=60_000u64;
         let graph=self.config.graph_directory.clone();
         let mut scheduled_round=None;
@@ -1020,15 +1013,8 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
         })?;
         let round=scheduled_round.ok_or("Durable Planner did not create a round")?;
         let plan_id=field(&round,"id").to_owned();
-        let job_id=id.to_string();
-        let db=self.path();let store=self.config.store_directory.clone();
-        std::thread::Builder::new().name(format!("rust-planner-{plan_id}"))
-            .spawn(move||{
-                if let Err(error)=run_isolated_script_planner(&db,&store,&graph,
-                    &job_id,&plan_id,&script,&interpreter,timeout){
-                    eprintln!("Native Planner {job_id}/{plan_id}: {error}");
-                }
-            }).map_err(|e|format!("Cannot launch isolated Planner worker: {e}"))?;
+        // Use the same provider-aware launch effect as Graph reconciliation.
+        self.launch_graph_planner_effect(&json!({"jobId":id,"planId":plan_id}))?;
         Ok(json!({"job":committed,"round":round}))
     }
     fn task_update(&mut self,id:&str,task_id:&str,task:&Value,
