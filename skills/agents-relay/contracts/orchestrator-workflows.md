@@ -6,7 +6,7 @@ Before `job create`, the orchestrator converts the relevant discussion into a st
 
 ## Job creation quality gate
 
-Before **any Agent-issued** `job create`, including create-only and Coordinator Jobs, follow the [shared Job quality contract](task-job-contract.md#agent-created-job-quality-gate-before-job-create).
+Before an Agent-issued requirements-driven `job create`, including create-only and P0/self Jobs, follow the [shared Job quality contract](task-job-contract.md#agent-created-job-quality-gate-before-job-create).
 
 1. Confirm the user authorized the Job; a design discussion or Spec Kit exercise is not permission to execute.
 2. Apply `speckit-specify` then `speckit-clarify` to formulate and assess the Job's Markdown objective, retaining prior user decisions and acceptance requirements. Do not ask for information already settled.
@@ -19,7 +19,7 @@ Before **any Agent-issued** `job create`, including create-only and Coordinator 
    ```
 
    Do not invent `job-preflight.md`. `--prompt` is a short instruction; the full specification is the actual `spec.md`/Objective Markdown, not an auxiliary prompt file. For standalone Jobs without `.specify/`, use the same Objective file that will become `--objective-file`. This uses the existing `review run` API, **not** a new mode or the immutable-head `review job` lifecycle.
-4. Accept only `PASS` before `job create --objective-file --preflight=true`. On `CHANGE_REQUIRED`, the orchestrator corrects the Markdown and repeats preflight (bounded retries); on `BLOCKED`, missing reviewer execution or unresolved critical choice, stop and obtain the necessary information. Never label missing evidence as PASS. The exact CLI flag `--preflight=true` is mandatory for all new Jobs (normal, create-only, self/P0, Project Run); absent/false/other values produce `JOB_PREFLIGHT_REQUIRED` (exit 2) without persistence. No Job preflight field or separate lifecycle; the creator is accountable for the assertion.
+4. Accept only `PASS` before `job create --objective-file --preflight=true`. On `CHANGE_REQUIRED`, the orchestrator corrects the Markdown and repeats preflight (bounded retries); on `BLOCKED`, missing reviewer execution or unresolved critical choice, stop and obtain the necessary information. Never label missing evidence as PASS. The exact CLI flag `--preflight=true` is mandatory at the Relay creation boundary; absent/false/other values produce `JOB_PREFLIGHT_REQUIRED` (exit 2) without persistence. No Job preflight field or separate lifecycle; the creator is accountable for the assertion. For declared Project DAG Runs, invoke `neo project run` directly: its input/Graph validation and internal flag replace requirements preflight review.
 
 The full file-producing Spec Kit Skills require a valid `.specify/` project in an authorized checkout. During earlier repository-independent dialogue, follow their requirements/clarification methods without pretending to have created files. The CLI/API enforces only the creator's exact preflight declaration; it does not independently verify Spec Kit quality or Outcome Review evidence and does not alter Relay's normal Planner, execution or immutable-head Final Review gates.
 
