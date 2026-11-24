@@ -112,7 +112,6 @@ pub mod dashboard_workflow_inspection;
 pub mod task_title;
 pub mod terminal_event_recovery;
 pub mod troubleshooter_qa_api;
-pub mod webhelm_daemon_client;
 
 // Direct Node src/agent-prompt-builder.ts implementation.
 pub mod agent_prompt_builder;
@@ -218,10 +217,8 @@ pub mod cli_revision;
 pub mod cli_workflow;
 
 // Direct Node src/browser-worker-pool-graph.ts resource policy binding.
-pub mod browser_worker_pool_graph;
 
 // Direct Node src/browser-worker-pool.ts SQLite pool/lease operations.
-pub mod browser_worker_pool;
 
 // Direct Node src/task-inactivity-watchdog.ts source-bound timeouts.
 pub mod task_inactivity_watchdog;
@@ -274,7 +271,6 @@ pub mod continuation;
 pub mod managed_worker_input;
 
 // Serial phase-1 direct Node module ports; parity gates intentionally deferred.
-pub mod browser_worker_routing;
 pub mod cli_foreground;
 pub mod local_job_registry;
 pub mod model_redecision;
@@ -314,7 +310,6 @@ pub mod dashboard_actions;
 pub mod relayd_utilities;
 pub mod relayd_dashboard_actions;
 pub mod unblock;
-pub mod z_adapter;
 pub mod task_actions;
 pub mod blockers;
 pub mod local_merge_delivery;
@@ -333,7 +328,6 @@ pub mod native_codex_thread;
 pub mod codex_permissions;
 pub mod native_worker_event_ingress;
 pub mod native_host_review_ingress;
-pub mod native_browser_execution;
 pub mod native_script_planner;
 pub mod cli_prompt;
 pub mod dag_task_runtime;
@@ -350,7 +344,6 @@ pub mod usage;
 pub mod usage_registry;
 pub mod usage_readers;
 pub mod usage_codex_api;
-pub mod browser_worker_runtime;
 pub mod store;
 pub mod relay_store;
 pub mod local_authority_store;

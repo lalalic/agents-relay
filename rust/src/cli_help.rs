@@ -84,9 +84,9 @@ Example:
         r##########"prompt"##########,
         r##########"Read-only exact PromptBuilder output for a durable Plan or Task.
 
-  agents-relay prompt --id JOB --plan-id PLAN --adapter codex|chatgpt|z [--output FILE]
-  agents-relay prompt --id JOB --task-id TASK --adapter codex|chatgpt|z [--output FILE]
-  agents-relay prompt --eval-file CASE.json --adapter codex|chatgpt|z [--output FILE]
+  agents-relay prompt --id JOB --plan-id PLAN --adapter codex [--output FILE]
+  agents-relay prompt --id JOB --task-id TASK --adapter codex [--output FILE]
+  agents-relay prompt --eval-file CASE.json --adapter codex [--output FILE]
 
 A detached --eval-file returns JSON with productionPrompt and safe evaluationPrompt from the SAME managedWorkerInput Builder; it never creates or changes a Job.
 Raw durable worker-facing text on stdout, no profile wrapper. --repo selects local SQLite,
@@ -145,7 +145,7 @@ Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job r
 
 Required: --repo LOCAL_ROOT_NAME, standalone Job objective, and --preflight=true (exact spelling; all new Jobs). Missing/false/invalid preflight returns JOB_PREFLIGHT_REQUIRED, exit 2, and creates nothing. The flag attests the creator ran Spec Kit Specify/Clarify and independent Preflight Review; it is not stored in SQLite. Job ID defaults to an auto-incrementing store-global number; --id may only reference an existing numeric Job.
 Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-root ABSOLUTE_GIT_ROOT, --priority P0|P1|P2|P3, --initial-plan, --review|--no-review, --auto-merge|--no-auto-merge, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
-Soft routing hints: --prefer-adapter codex|chatgpt|z, --prefer-provider NAME, --prefer-model EXACT_MODEL_ID, --prefer-profile NAME, --prefer-reasoning EFFORT. These rank only eligible worker/model routes for Job Tasks and do not pin routing or widen the model catalog.
+Soft routing hints: --prefer-adapter codex, --prefer-provider NAME, --prefer-model EXACT_MODEL_ID, --prefer-profile NAME, --prefer-reasoning EFFORT. These rank only eligible worker/model routes for Job Tasks and do not pin routing or widen the model catalog.
 Optional local Git branch binding: --local-merge-source refs/heads/FEATURE --local-merge-target refs/heads/main (both required together). For ordinary code tasks Relay can also bind its isolated local source branch automatically; no remote service or PR is required.
 Creation enables auto-merge and Final Review by default. For plan-free DAG
 jobs, only neo project run may pass --project-run-manifest PROJECT/project.run.json,
@@ -292,12 +292,12 @@ Example:
         r##########"Update mutable durable Task fields in place.
 
 Required: --id JOB_ID --task-id ID. Optional --repo LOCAL_ROOT_NAME fences the Job identity.
-Mutable while not RUNNING/SUCCEEDED/CANCELLED: --title, --adapter, --priority, --story-size, --input-file PATH|- or --input MARKDOWN, --project, --agent, --parent, --deps, --dependency-validity JSON, --capabilities, --timeout (inactivity window), --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy, --draft, --queue.
+Mutable while not RUNNING/SUCCEEDED/CANCELLED: --title, --adapter, --priority, --story-size, --input-file PATH|- or --input MARKDOWN, --project, --agent, --parent, --deps, --dependency-validity JSON, --capabilities, --timeout (inactivity window), --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --draft, --queue.
 Accepted task.started and newer current-execution task.progress events reset --timeout.
-Use --clear-routing to remove selected model routing; conflicts with explicit --provider, --model, --profile, --reasoning, --cwd or --chatgpt-project. Updating --adapter clears any route chosen for the previous adapter. These options are exact selections, NOT Job preferences; a route is not available until its provider/model/profile are configured.
+Use --clear-routing to remove selected model routing; conflicts with explicit --provider, --model, --profile, --reasoning, --cwd. Updating --adapter clears any route chosen for the previous adapter. These options are exact selections, NOT Job preferences; a route is not available until its provider/model/profile are configured.
 
 Example:
-  agents-relay task update --repo LOCAL_ROOT_NAME --id 101 --task-id 202 --adapter chatgpt --provider chatgpt --model gpt-5.6-sol --reasoning high"##########,
+  agents-relay task update --repo LOCAL_ROOT_NAME --id 101 --task-id 202 --adapter codex --provider neo-local --model neo --profile neo"##########,
     ),
     (
         r##########"task revise"##########,
@@ -490,7 +490,7 @@ Example:
         r##########"Register an agent role and its execution endpoint.
 
 Required for durable service mode: --repo LOCAL_ROOT_NAME --id JOB_ID plus --name NAME --responsibility TEXT --role ROLE --endpoint TARGET. Use --file only for explicit demo mode.
-Common: --capabilities a,b, --runtime shell|codex|chatgpt, --provider NAME, --model NAME.
+Common: --capabilities a,b, --runtime shell|codex, --provider NAME, --model NAME.
 
 Example:
   agents-relay agent-register --file .agents-relay.json --name builder --responsibility "Build code" --role engineer --endpoint shell"##########,

@@ -52,7 +52,7 @@ Use optional **soft Job routing preferences** to rank eligible workers/models wi
 ```sh
 agents-relay job create --repo my-project --project-root /absolute/path/to/my-project \
   --objective-file objective.md --preflight=true --initial-plan \
-  --prefer-adapter chatgpt --prefer-model account-defaults
+  --prefer-profile neo
 agents-relay job update --id JOB_ID --prefer-model gpt-6
 agents-relay job update --id JOB_ID --clear-routing-preferences
 

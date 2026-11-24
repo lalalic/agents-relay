@@ -281,9 +281,7 @@ pub trait DaemonServices:Send{
     fn status(&mut self)->Value;
     fn registered_agents(&mut self)->Result<Vec<Value>,String>;
     fn routing_adapters(&self)->Vec<Value>{
-        vec![json!({"id":"codex","name":"codex","capabilities":["model","codex"]}),
-             json!({"id":"chatgpt/browser-worker","name":"chatgpt","capabilities":["model","chatgpt","webhelm"]}),
-             json!({"id":"z","name":"z","capabilities":["model","z"]})]
+        vec![json!({"id":"codex","name":"codex","capabilities":["model","codex"]})]
     }
     /// Only an authoritative SQLite owner can preallocate numeric child IDs
     /// and atomically schedule Graph-approved dependency revision Tasks.

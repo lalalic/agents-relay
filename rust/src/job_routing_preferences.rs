@@ -26,8 +26,8 @@ pub fn validate(value: &Value) -> Result<(), String> {
                 "Job routing preference {key} must be a nonempty exact identifier"
             ));
         };
-        if key == "adapter" && !matches!(s, "codex" | "chatgpt" | "z") {
-            return Err("--prefer-adapter must be codex, chatgpt, or z".into());
+        if key == "adapter" && !matches!(s, "codex") {
+            return Err("--prefer-adapter must be codex (use --profile neo for ChatGPT-backed execution)".into());
         }
     }
     Ok(())

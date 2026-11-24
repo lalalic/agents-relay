@@ -14,7 +14,7 @@ pub fn planning_spec(task:&Value)->Result<Value,String>{
     if task.get("output").is_none_or(Value::is_null){
         return Err(format!("Initial task {id} requires an output contract"));
     }
-    if !matches!(string(task,"adapter"),"codex"|"chatgpt"|"z"){
+    if !matches!(string(task,"adapter"),"codex"){
         return Err(format!("Initial task {id} requires a supported worker adapter"));
     }
     let mut result=Map::new();

@@ -95,7 +95,7 @@ pub fn job_create_request(args:&[String],stdin:Option<&str>)
         "--adapter","--provider","--model","--profile","--reasoning",
         "--story-size","--agent","--agent-graph","--agent-graph-file","--parent","--deps","--capabilities",
         "--attachments","--max-attempts","--timeout","--cwd",
-        "--chatgpt-project","--output","--draft","--queue"];
+        "--output","--draft","--queue"];
     if let Some(flag)=task_only.iter().find(|flag|has_arg(args,flag)){
         return Err(format!("job create does not accept Task option {flag}"));
     }
@@ -339,8 +339,8 @@ pub fn task_update_request(
     }
     if has_arg(args,"--adapter"){
         let adapter=arg(args,"--adapter","");
-        if !matches!(adapter,"codex"|"chatgpt"|"z"){
-            return Err("--adapter must be codex, chatgpt, or z".into());
+        if !matches!(adapter,"codex"){
+            return Err("--adapter must be codex (use --profile neo for ChatGPT-backed execution)".into());
         }
         candidate["adapter"]=json!(adapter);
         // An adapter switch cannot retain a route/selection bound to the previous worker.
@@ -355,7 +355,7 @@ pub fn task_update_request(
         }
     }
     let route_flags=["--provider","--model","--profile","--reasoning",
-        "--cwd","--chatgpt-project"];
+        "--cwd"];
     let explicit_route=route_flags.iter().any(|flag|has_arg(args,flag));
     if has_arg(args,"--clear-routing") && explicit_route {
         return Err("--clear-routing cannot be combined with explicit routing flags".into());
@@ -381,7 +381,7 @@ pub fn task_update_request(
         }
         for (flag,key) in [("--provider","provider"),("--model","model"),
             ("--profile","profile"),("--reasoning","reasoning"),
-            ("--cwd","cwd"),("--chatgpt-project","projectId")] {
+            ("--cwd","cwd")] {
             if has_arg(args,flag) {
                 let value=required(args,flag,"Task routing")?;
                 routing[key]=json!(value);

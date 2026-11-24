@@ -315,21 +315,6 @@ pub(super) fn invoke(request:&Value)->Result<Option<String>,String>{
                 Err(error)=>json!({"ok":false,"error":error}),
             }}).to_string())
         }
-        // Original Node adapters.ts WebHelm readiness: argv, late JSON,
-        // platform validation and daemon running truth are all observable.
-        "webhelmReadyParity"=>{
-            let mut calls=Vec::<String>::new();
-            let outcome=agents_relay_rust2::adapters::ensure_chatgpt_web_helm_ready(|argv|{
-                calls.push(argv.join(" "));
-                Ok(if argv.first()==Some(&"platform") {
-                    request["profileOutput"].as_str().unwrap_or("")
-                }else{request["statusOutput"].as_str().unwrap_or("")}.into())
-            });
-            Ok(json!({"calls":calls,"outcome":match outcome{
-                Ok(())=>json!({"ok":true}),
-                Err(error)=>json!({"ok":false,"error":error})
-            }}).to_string())
-        }
         // Node ProjectedDurableStore.comments: call actual GitHubStore
         // GraphQL pagination/cache/seed through injected offline API.
         "projectedGithubComments"=>{

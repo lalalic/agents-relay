@@ -51,14 +51,6 @@ impl RuntimePaths{
 pub fn runtime(args:&[String],paths:RuntimePaths)->Result<RuntimeReconciler,String>{
     let planner=runtime_planner(args)?;
     let model=arg(args,"--codex","codex").to_string();
-    let policy=arg(args,"--chatgpt-tab-close-policy","");
-    let policy=if policy.is_empty(){
-        std::env::var("AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY")
-            .unwrap_or_else(|_|"after-terminal".into())
-    }else{policy.into()};
-    if !matches!(policy.as_str(),"after-start"|"never"|"after-terminal"){
-        return Err("--chatgpt-tab-close-policy must be after-start, never, or after-terminal".into());
-    }
     let reviewer=runtime_reviewer(args)?;
     let owner=arg(args,"--owner","");
     let owner=if owner.is_empty(){format!("cli-{}",std::process::id())}else{owner.into()};
@@ -81,11 +73,6 @@ pub fn runtime(args:&[String],paths:RuntimePaths)->Result<RuntimeReconciler,Stri
         "maxConcurrent":if count.is_nan(){Value::Null}else{json!(count)},
         "adapters":[
             {"id":"codex","name":"codex","command":model,"capabilities":["model","codex"]},
-            {"id":"chatgpt/browser-worker","name":"chatgpt",
-                "capabilities":["model","chatgpt","webhelm"],"tabClosePolicy":policy},
-            {"id":"z/webhelm","name":"z",
-                "capabilities":["model","z","webhelm","coding","filesystem","mcp"],
-                "tabClosePolicy":"after-terminal"}
         ],
         "continuations":[
             {"kind":"codex-thread","command":model},
@@ -94,7 +81,7 @@ pub fn runtime(args:&[String],paths:RuntimePaths)->Result<RuntimeReconciler,Stri
             RuntimePlanner::Command(_)=>json!({"kind":"CommandObjectivePlanner",
                 "command":arg(args,"--planner-command","")}),
             RuntimePlanner::Agent(_)=>json!({"kind":"AgentObjectivePlanner","command":model})},
-        "reviewer":reviewer,"chatgptTabClosePolicy":policy,
+        "reviewer":reviewer,
         "executionContextRoots":roots,"decisionMode":decision_mode(),
         "decisionEngine":{"name":"openrouter-jev"},
     });

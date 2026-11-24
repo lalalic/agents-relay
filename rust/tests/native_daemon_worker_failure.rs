@@ -82,51 +82,6 @@ impl Drop for Guard {
 /// A fake isolated WebHelm service whose platform-run submission fails with
 /// a deterministic pre-submission rejection. The workspace/start handshake
 /// succeeds so the failure is observed exactly at delivery.
-fn spawn_failing_webhelm(socket: &Path, cli: &Path, rejection: &'static str) {
-    use std::os::unix::{fs::PermissionsExt, net::UnixListener};
-    fs::write(
-        cli,
-        format!("#!/bin/sh\nif [ \"$1\" = \"platform\" ]; then printf '{{\"platform\":\"chatgpt\"}}\\n'; else printf '{{\"ok\":true}}\\n'; fi\n"),
-    )
-    .unwrap();
-    fs::set_permissions(cli, fs::Permissions::from_mode(0o700)).unwrap();
-    let listener = UnixListener::bind(socket).unwrap();
-    listener.set_nonblocking(true).unwrap();
-    thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(90);
-        loop {
-            if Instant::now() > deadline {
-                break;
-            }
-            let (mut stream, _) = match listener.accept() {
-                Ok(value) => value,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(5));
-                    continue;
-                }
-                Err(_) => break,
-            };
-            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
-            let mut line = String::new();
-            BufReader::new(&stream).read_line(&mut line).unwrap();
-            let command: Value = serde_json::from_str(&line).unwrap();
-            let op = command["op"].as_str().unwrap_or("").to_string();
-            let response = match op.as_str() {
-                "workspace-create" => json!({"ok": true}),
-                "start" => json!({"ok": true, "workspace": "Relay",
-                    "workspace_supported": true, "session_id": "fail-session-1"}),
-                "platform-run" => json!({"ok": false, "error": rejection}),
-                "stop" => json!({"ok": true, "returned_to_idle": true}),
-                _ => json!({"ok": false, "error": "unexpected op"}),
-            };
-            let _ = stream.write_all(format!("{response}\n").as_bytes());
-            if op == "stop" {
-                break;
-            }
-        }
-    });
-}
-
 fn seed_job(root: &Path, project: &Path, job_id: &str, task_id: &str) -> PathBuf {
     fs::create_dir_all(project).unwrap();
     let initialized = Command::new("git").arg("-C").arg(project)
@@ -140,14 +95,14 @@ fn seed_job(root: &Path, project: &Path, job_id: &str, task_id: &str) -> PathBuf
         "prNumber": 0, "priority": "P2", "reviewEnabled": false,
         "createdAt": "2026-11-20T00:00:00.000Z", "updatedAt": "2026-11-20T00:00:00.000Z",
         "tasks": [{
-            "id": task_id, "jobId": job_id, "kind": "work", "adapter": "chatgpt",
-            "agentName": "implementation", "title": "Failing browser Task",
+            "id": task_id, "jobId": job_id, "kind": "work", "adapter": "codex",
+            "agentName": "implementation", "title": "Failing Codex Task",
             "state": "QUEUED", "executionId": null, "leaseOwner": null,
             "leaseExpiresAt": null, "attempt": 0, "maxAttempts": 1,
             "priority": "P2", "dependencies": [],
-            "routing": {"adapter": "chatgpt", "projectId": "isolated"},
-            "input": "[Relay agent: worker; adapter: chatgpt]\nDeliverable work",
-            "chatgptTabClosePolicy": "after-terminal", "timeoutMs": 6000,
+            "routing": {"provider": "openai", "model": "fixture"},
+            "input": "[Relay agent: worker; adapter: codex]\nDeliverable work",
+            "timeoutMs": 6000,
             "output": {"kind": "file", "path": root.join("out.json")},
             "createdAt": "2026-11-20T00:00:00.000Z",
             "updatedAt": "2026-11-20T00:00:00.000Z"
@@ -156,138 +111,6 @@ fn seed_job(root: &Path, project: &Path, job_id: &str, task_id: &str) -> PathBuf
     })).unwrap();
     store.close().unwrap();
     path
-}
-
-fn start_daemon(root: &Path, socket: &Path, cli: &Path, port: u16) -> Guard {
-    let child = Command::new(binary())
-        .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
-        .args([
-            "--isolated-write-store-dir",
-            root.join("stores").to_str().unwrap(),
-            "--port", &port.to_string(),
-            "--interval", "100",
-        ])
-        .env("AGENTS_RELAY_WEBHELM_SOCKET", socket)
-        .env("AGENTS_RELAY_WEBHELM_EXECUTABLE", cli)
-        .env("AGENTS_RELAY_WEBHELM_WORKSPACE", "Relay")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::from(
-            fs::File::create(root.join("native-daemon.log")).unwrap(),
-        ))
-        .spawn()
-        .unwrap();
-    let mut guard = Guard(child);
-    for _ in 0..300 {
-        if request(port, "GET", "/api/status", "")
-            .is_ok_and(|reply| reply.starts_with("HTTP/1.1 200"))
-        {
-            return guard;
-        }
-        if let Some(status) = guard.0.try_wait().unwrap() {
-            panic!("daemon exited before serving: {status}: {}",
-                fs::read_to_string(root.join("native-daemon.log")).unwrap_or_default());
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-    panic!("daemon never listened on isolated port");
-}
-
-fn wait_for_task_exit(root: &Path, port: u16, job_id: &str, _task_id: &str)
-    -> (Value, String) {
-    // Phase 1: the daemon must first CLAIM the Task (executionId set); the
-    // seeded state is QUEUED with a null execution, so without this phase a
-    // premature exit would race the reconciler and assert on the seed.
-    let mut last = Value::Null;
-    let claim_deadline = Instant::now() + Duration::from_secs(20);
-    while Instant::now() < claim_deadline {
-        if let Ok(reply) = request(port, "GET", &format!("/api/job?id={job_id}"), "") {
-            last = body(&reply);
-            if last["tasks"][0]["executionId"].is_string() {
-                break;
-            }
-        }
-        thread::sleep(Duration::from_millis(60));
-    }
-    assert!(
-        last["tasks"][0]["executionId"].is_string(),
-        "daemon never claimed the Task for launch; job={last}; log={}",
-        fs::read_to_string(root.join("native-daemon.log")).unwrap_or_default()
-    );
-    // Phase 2: the launch failure must move the Task out of the claimed
-    // QUEUED state: FAILED terminal, or QUEUED with the lease cleared.
-    let deadline = Instant::now() + Duration::from_secs(45);
-    while Instant::now() < deadline {
-        if let Ok(reply) = request(port, "GET", &format!("/api/job?id={job_id}"), "") {
-            last = body(&reply);
-            let state = last["tasks"][0]["state"].as_str().unwrap_or("");
-            let exec_null = last["tasks"][0]["executionId"].is_null();
-            if state == "FAILED" && exec_null {
-                break;
-            }
-            // no-start fallback keeps state QUEUED but clears lease/execution.
-            if state == "QUEUED" && exec_null {
-                break;
-            }
-        }
-        thread::sleep(Duration::from_millis(80));
-    }
-    let log = fs::read_to_string(root.join("native-daemon.log")).unwrap_or_default();
-    (last, log)
-}
-
-#[test]
-fn daemon_worker_launch_failure_reaches_graph_and_sqlite_not_stderr_only() {
-    let root = root();
-    let project = root.join("project");
-    let path = seed_job(&root, &project, "84", "3");
-    let cli = root.join("fake-webhelm");
-    let socket = root.join("webhelm.sock");
-    // A deterministic pre-submission rejection observed at delivery: the
-    // browser workspace itself is fine, so this is a LaunchFailure-class
-    // rejection (phase=delivery), not a WebHelm runtime outage.
-    spawn_failing_webhelm(&socket, &cli, "PreSubmissionRejection: prompt rejected");
-    let port = socket_port();
-    let daemon = start_daemon(&root, &socket, &cli, port);
-    let (final_job, log) = wait_for_task_exit(&root, port, "84", "3");
-    drop(daemon);
-    let task = &final_job["tasks"][0];
-    let state = task["state"].as_str().unwrap_or("");
-    assert!(
-        state == "FAILED" || state == "QUEUED",
-        "launch failure left the Task in {state}; the daemon must not strand a leased generation: {final_job}; log={log}"
-    );
-    assert!(
-        task["executionId"].is_null(),
-        "execution lease must be cleared by the Graph failure transition: {task}"
-    );
-    assert!(
-        task["leaseOwner"].is_null(),
-        "lease owner must be cleared by the Graph failure transition: {task}"
-    );
-    if state == "FAILED" {
-        // The canonical worker.delivery_failed edge sets a failureReason.
-        let reason = task["failureReason"].as_str().unwrap_or("");
-        assert!(
-            reason.contains("worker") || reason.contains("platform")
-                || reason.contains("pre_submission") || !reason.is_empty(),
-            "FAILED Task must carry a Graph-classified failure reason: {task}"
-        );
-        let error = task["error"].as_str().unwrap_or("");
-        assert!(error.contains("PreSubmissionRejection"),
-            "Task error must preserve the observed worker error: {task}");
-    }
-    // Durable SQLite verification through an independent store connection.
-    let verify = SQLiteRelayStore::open_without_claim_reset(&path, Some("84")).unwrap();
-    let durable = verify.load_job("84").unwrap().unwrap();
-    let durable_task = &durable["tasks"][0];
-    assert_eq!(durable_task["state"], json!(state),
-        "SQLite must hold the same terminal state as the daemon view");
-    assert!(durable_task["executionId"].is_null());
-    drop(verify);
-    // The daemon must survive the failed worker: status still serves.
-    // (daemon dropped after wait; the log must not contain a panic.)
-    assert!(!log.contains("panicked"), "daemon panicked during worker failure: {log}");
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -319,20 +142,11 @@ fn daemon_worker_failure_claim_dedupes_and_stale_generation_is_fenced() {
     let state = std::sync::Arc::new(DaemonFailureState::new());
     let live = std::sync::Arc::new(std::sync::Mutex::new(DaemonLiveWorkers::default()));
     live.lock().unwrap().register("4", "exec-85-1");
-    let adapters = json!([
-        {"id": "codex", "name": "codex", "capabilities": ["model", "codex"]},
-        {"id": "chatgpt/browser-worker", "name": "chatgpt",
-            "capabilities": ["model", "chatgpt", "webhelm"]},
-        {"id": "z", "name": "z", "capabilities": ["model", "z"]},
-    ])
-    .as_array()
-    .unwrap()
-    .clone();
     let make_ports = |live: std::sync::Arc<
         std::sync::Mutex<DaemonLiveWorkers>>| {
         DaemonWorkerFailurePorts::new(
             path.clone(), graph.clone(), Some("85".to_string()),
-            None, None, None, adapters.clone(),
+            None, None,
             live, std::sync::Arc::clone(&state),
         )
     };

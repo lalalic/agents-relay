@@ -129,16 +129,7 @@ impl PlannerFinishPorts for PlannerPorts {
     }
     fn registered_workers(&mut self)->Result<Vec<Value>,String>{
         if let Some(workers)=&self.available_workers{return Ok(workers.clone());}
-        // A Planner cannot promise a Codex/Z worker while those production
-        // adapters remain unconnected. Only an actual explicitly configured
-        // isolated WebHelm socket/executable advertises ChatGPT capacity.
         let mut workers=Vec::new();
-        if crate::native_browser_execution::IsolatedWebHelmConfig::from_test_store(
-            &self.store_directory).is_ok(){
-            workers.push(json!({"adapter":"chatgpt",
-                "name":"chatgpt/browser-worker","id":"chatgpt/browser-worker",
-                "capabilities":["model","chatgpt","webhelm"]}));
-        }
         if self.codex.is_some(){
             workers.push(json!({"adapter":"codex","name":"codex","id":"codex",
                 "capabilities":["model","codex","local_repo","iterative_tools"]}));

@@ -1,10 +1,6 @@
 // Differential fixture driver for the six direct process/browser Node ports.
 // Test-only request inputs select only sandboxed SQLite / test subprocesses.
 use crate::{
-    browser_worker_pool::{BrowserPoolOptions, BrowserSlot, BrowserWorkerPoolManager},
-    browser_worker_pool_graph::{
-        monitor_pool_decision, pool_decision, progress_pool_decision, require_pool_decision,
-    },
     owned_process::{OwnedProcessManager, OwnedProcessOptions, TerminationReason},
     reconciler_cancellation, task_inactivity_watchdog as watchdog,
     worker_start_ack::{create_worker_start_ack, WorkerEventBus},
@@ -21,148 +17,6 @@ fn string<'a>(row: &'a Value, key: &str) -> &'a str {
 }
 fn boolval(row: &Value, key: &str, default: bool) -> bool {
     row.get(key).and_then(Value::as_bool).unwrap_or(default)
-}
-fn normalized(decision: &Value) -> Value {
-    json!({"accepted":decision["accepted"],"target":decision["target"],"actions":decision["actions"].as_array().map(|a|a.iter().map(|x|x["id"].clone()).collect::<Vec<_>>()).unwrap_or_default(),"reason":decision["reason"]})
-}
-fn pool_graph(request: &Value) -> Result<Value, String> {
-    let state = string(request, "state");
-    let event = string(request, "event");
-    let healthy = boolval(request, "healthy", true);
-    match string(request, "mode") {
-        "raw" => pool_decision(
-            state,
-            event,
-            &json!({"providerHealthy":healthy,"recoveryDue":boolval(request,"recoveryDue",false),"freshOutput":boolval(request,"freshOutput",false)}),
-        ),
-        "require" => Ok(normalized(&require_pool_decision(
-            state,
-            event,
-            string(request, "expected"),
-            healthy,
-        )?)),
-        "monitor" => Ok(json!(monitor_pool_decision(boolval(
-            request,
-            "recoveryDue",
-            false
-        ))?)),
-        "progress" => Ok(json!(progress_pool_decision(boolval(
-            request,
-            "freshOutput",
-            false
-        ))?)),
-        _ => Ok(normalized(&pool_decision(
-            state,
-            event,
-            &json!({"providerHealthy":healthy,"recoveryDue":boolval(request,"recoveryDue",false),"freshOutput":boolval(request,"freshOutput",false)}),
-        )?)),
-    }
-}
-fn pool_sequence(request: &Value) -> Result<Value, String> {
-    let use_file = request["useFile"] == true;
-    let path = if use_file {
-        std::env::temp_dir().join(format!(
-            "rust2-diff-browser-{}-{}.sqlite",
-            std::process::id(),
-            watchdog::now_ms()
-        ))
-    } else {
-        PathBuf::from(":memory:")
-    };
-    let capacity = request["capacity"].as_i64().unwrap_or(1);
-    let wait = request["queueWaitMs"].as_i64().unwrap_or(30);
-    let make = || {
-        BrowserWorkerPoolManager::open(BrowserPoolOptions {
-            path: Some(path.clone()),
-            capacity,
-            queue_wait_ms: wait,
-            poll_ms: 2,
-            max_queue: request["maxQueue"].as_i64().unwrap_or(12),
-        })
-        .map_err(|e| e.message)
-    };
-    let mut pool = make()?;
-    let mut leases = HashMap::<String, BrowserSlot>::new();
-    let mut results = Vec::new();
-    for step in request["steps"].as_array().into_iter().flatten() {
-        let action = string(step, "action");
-        let id = string(step, "id");
-        let provider = string(step, "provider");
-        let result: Result<Value, crate::browser_worker_pool::BrowserPoolError> = match action {
-            "snapshot" => pool.to_value(provider),
-            "acquire" => pool.acquire(provider, id, None).map(|lease| {
-                leases.insert(id.into(), lease.clone());
-                json!(lease)
-            }),
-            "bindSession" => leases
-                .get_mut(id)
-                .ok_or_else(|| "unknown fixture lease".to_string())
-                .map_err(Into::into)
-                .and_then(|lease| {
-                    pool.bind_session(lease, string(step, "sessionId"))
-                        .map(|_| Value::Null)
-                }),
-            "bindThread" => leases
-                .get_mut(id)
-                .ok_or_else(|| "unknown fixture lease".to_string())
-                .map_err(Into::into)
-                .and_then(|lease| {
-                    pool.bind_thread(lease, string(step, "url"))
-                        .map(|_| Value::Null)
-                }),
-            "touch" => leases
-                .get(id)
-                .ok_or_else(|| "unknown fixture lease".to_string())
-                .map_err(Into::into)
-                .and_then(|lease| pool.touch(lease).map(|_| Value::Null)),
-            "release" => leases
-                .get(id)
-                .ok_or_else(|| "unknown fixture lease".to_string())
-                .map_err(Into::into)
-                .and_then(|lease| pool.release(lease).map(|_| Value::Null)),
-            "quarantine" => leases
-                .get(id)
-                .ok_or_else(|| "unknown fixture lease".to_string())
-                .map_err(Into::into)
-                .and_then(|lease| pool.quarantine(lease).map(|_| Value::Null)),
-            "releaseQuarantine" => leases
-                .get(id)
-                .ok_or_else(|| "unknown fixture lease".to_string())
-                .map_err(Into::into)
-                .and_then(|lease| {
-                    pool.release_quarantine(lease, boolval(step, "verified", false))
-                        .map(|_| Value::Null)
-                }),
-            "outage" => pool
-                .report_pre_submission_outage(
-                    provider,
-                    step["durationMs"].as_i64().unwrap_or(120000),
-                )
-                .map(|_| Value::Null),
-            "healthy" => pool.report_healthy(provider).map(|_| Value::Null),
-            "restart" => {
-                if use_file {
-                    drop(pool);
-                    pool = make()?;
-                    Ok(Value::Null)
-                } else {
-                    Err("restart requires a file-backed pool".to_string().into())
-                }
-            }
-            _ => Err(format!("unknown fixture action {action}").into()),
-        };
-        results.push(match result {
-            Ok(value) => json!({"ok":true,"value":value}),
-            Err(err) => json!({"ok":false,"error":err.message,"code":err.code}),
-        });
-    }
-    drop(pool);
-    if use_file {
-        for ext in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{}", path.display(), ext));
-        }
-    }
-    Ok(json!(results))
 }
 fn watchdog_fixture(request: &Value) -> Value {
     let task = &request["task"];
@@ -293,8 +147,6 @@ fn owned_fixture(request: &Value) -> Result<Value, String> {
 }
 pub fn scenario(request: &Value) -> Result<Value, String> {
     match string(request, "kind") {
-        "graph" => pool_graph(request),
-        "pool" => pool_sequence(request),
         "watchdog" => Ok(watchdog_fixture(request)),
         "cancel" => cancel_fixture(request),
         "ack" => ack_fixture(request),

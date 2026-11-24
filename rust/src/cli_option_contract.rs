@@ -4,8 +4,8 @@ pub fn validate_cli_options(args:&[String])->Result<(),String>{
         "--action", "--adapter", "--after", "--agent", "--agent-graph",
         "--agent-graph-file", "--agent-id", "--agents", "--args-file", "--artifact",
         "--attachments", "--attempt-key", "--authorized", "--auto-merge", "--availability",
-        "--blocked-on", "--blocked-on-file", "--boundaries", "--canary-webhelm-executable",
-        "--canary-webhelm-socket", "--canary-webhelm-workspace", "--capabilities", "--chatgpt-project", "--chatgpt-tab-close-policy",
+        "--blocked-on", "--blocked-on-file", "--boundaries",
+        "--capabilities",
         "--clear-routing-preferences", "--clear-routing", "--classification", "--codex", "--commit-sha", "--concurrency", "--condition",
         "--content-only", "--context", "--context-file", "--continue-input", "--continue-kind",
         "--continue-target", "--project-run-manifest", "--coordinator-graph", "--coordinator-graph-file", "--coordinator-input", "--coordinator-input-file",
@@ -21,7 +21,7 @@ pub fn validate_cli_options(args:&[String])->Result<(),String>{
         "--input", "--input-file", "--intent", "--intent-file", "--interval",
         "--isolated-nats-token-file", "--isolated-nats-url", "--isolated-store-dir", "--isolated-write-store-dir", "--job",
         "--labels", "--legacy-shortcut-runtime", "--limit",
-        "--live-codex-executable", "--live-store-dir", "--live-webhelm-executable", "--live-webhelm-socket", "--live-webhelm-workspace",
+        "--live-codex-executable", "--live-store-dir",
         "--local-merge-source", "--local-merge-target", "--max-attempts", "--message", "--message-file",
         "--missed-run-policy", "--mode", "--model", "--model-nats-token-file", "--model-nats-url",
         "--name", "--nats-url", "--no-auto-merge", "--no-content-only", "--no-review",
@@ -55,10 +55,10 @@ pub fn validate_cli_options(args:&[String])->Result<(),String>{
 // Current native CLI option contract. Unknown flags fail before any effects.
 pub fn validate_daemon_options(args:&[String])->Result<(),String>{
     const ALLOWED:&[&str]=&[
-        "--canary-webhelm-executable", "--canary-webhelm-socket", "--canary-webhelm-workspace", "--concurrency", "--event-history-api",
+        "--concurrency", "--event-history-api",
         "--execution-router-rules", "--help", "--interval", "--isolated-nats-token-file", "--isolated-nats-url",
         "--isolated-store-dir", "--isolated-write-store-dir", "--live-codex-executable",
-        "--live-store-dir", "--live-webhelm-executable", "--live-webhelm-socket", "--live-webhelm-workspace", "--model-nats-token-file",
+        "--live-store-dir", "--model-nats-token-file",
         "--model-nats-url", "--port", "--repo", "--shadow-live-store-dir", "--trust-isolated-model-events",
         "--trust-model-events", "--version", "--workspace", "--workspace-root",
     ];

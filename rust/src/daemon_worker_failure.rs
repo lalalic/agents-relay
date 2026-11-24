@@ -6,12 +6,7 @@
 //! execution facts, applies the selected durable transition atomically and
 //! cleans its own volatile state. A browser receipt never authors success.
 use crate::{
-    browser_worker_pool::{BrowserPoolOptions, BrowserWorkerPoolManager},
-    browser_worker_routing::has_safe_alternative_worker_with_pool,
-    chatgpt_platform_fallback::codex_no_start_fallback_route,
     events::event_for,
-    execution_routing::route_execution,
-    model_routing::configured_codex_default,
     relay_store::SQLiteRelayStore,
     route_outcome_recording::record_launch_route_outcome_jsonl,
     worker_failure_orchestration::{LiveWorkerState, WorkerFailurePorts},
@@ -139,8 +134,7 @@ impl DaemonFailureState {
 }
 
 /// Production WorkerFailurePorts over the daemon's real SQLite store and
-/// Browser Pool health snapshot. `pool_path` is the daemon browser pool
-/// database; `audit_path` is the decision-audit JSONL; `profile_home` is
+/// `audit_path` is the decision-audit JSONL; `profile_home` is
 /// CODEX_HOME for the configured Codex default no-start fallback route.
 pub struct DaemonWorkerFailurePorts {
     pub db_path: PathBuf,
@@ -149,12 +143,10 @@ pub struct DaemonWorkerFailurePorts {
     /// stores are scoped; opening without a scope would initialize the
     /// legacy schema against unified tables and fail.
     pub scope_job_id: Option<String>,
-    pub pool_path: Option<PathBuf>,
     pub audit_path: Option<PathBuf>,
     pub profile_home: Option<PathBuf>,
     pub policy_path: Option<PathBuf>,
     pub rules_path: Option<PathBuf>,
-    pub adapters: Vec<Value>,
     pub live: Arc<Mutex<DaemonLiveWorkers>>,
     pub state: Arc<DaemonFailureState>,
 }
@@ -164,10 +156,8 @@ impl DaemonWorkerFailurePorts {
         db_path: PathBuf,
         graph_directory: PathBuf,
         scope_job_id: Option<String>,
-        pool_path: Option<PathBuf>,
         audit_path: Option<PathBuf>,
         profile_home: Option<PathBuf>,
-        adapters: Vec<Value>,
         live: Arc<Mutex<DaemonLiveWorkers>>,
         state: Arc<DaemonFailureState>,
     ) -> Self {
@@ -175,12 +165,10 @@ impl DaemonWorkerFailurePorts {
             db_path,
             graph_directory,
             scope_job_id,
-            pool_path,
             audit_path,
             profile_home,
             policy_path:None,
             rules_path:None,
-            adapters,
             live,
             state,
         }
@@ -193,14 +181,6 @@ impl DaemonWorkerFailurePorts {
     fn store(&self) -> Result<SQLiteRelayStore, String> {
         SQLiteRelayStore::open_without_claim_reset(
             &self.db_path, self.scope_job_id.as_deref())
-    }
-    fn open_pool(&self) -> Option<BrowserWorkerPoolManager> {
-        let path = self.pool_path.as_ref()?;
-        BrowserWorkerPoolManager::open(BrowserPoolOptions {
-            path: Some(path.clone()),
-            ..Default::default()
-        })
-        .ok()
     }
 }
 
@@ -218,7 +198,7 @@ impl WorkerFailurePorts for DaemonWorkerFailurePorts {
         // leaves usageSnapshotProvider optional and undefined behaves alike.
         Ok(None)
     }
-    fn has_safe_alternative(&mut self, task: Option<&Value>, agents: &[Value],
+    fn has_safe_alternative(&mut self, task: Option<&Value>, _agents: &[Value],
         usage: Option<&Value>) -> Result<bool, String> {
         if let Some(task)=task.filter(|task|field(task,"adapter")=="codex") {
             let Some(home)=self.profile_home.as_ref()else{return Ok(false)};
@@ -234,44 +214,11 @@ impl WorkerFailurePorts for DaemonWorkerFailurePorts {
             return Ok(!crate::model_routing::eligible_models(
                 &profiles,None,&policy["policy"],&excluded).is_empty());
         }
-        let Some(pool) = self.open_pool() else { return Ok(false); };
-        Ok(has_safe_alternative_worker_with_pool(
-            task, &self.adapters, agents, usage, now_ms(), &pool,
-        ))
+        Ok(false)
     }
-    fn has_codex_no_start_fallback(&mut self, task: &Value, agents: &[Value],
-        usage: Option<&Value>) -> Result<bool, String> {
-        let Some(home) = self.profile_home.clone() else { return Ok(false); };
-        let Some(configured) = configured_codex_default(&home) else { return Ok(false); };
-        let home_for_route = home;
-        let task_id = field(task, "id").to_owned();
-        let agents_for_options = agents.to_vec();
-        let usage_for_options = usage.cloned();
-        let future = codex_no_start_fallback_route(
-            task, &self.adapters, agents, usage, now_ms(), Some(&configured),
-            move |candidates, excluded_routes, requirements, constraints| async move {
-                let mut options = json!({
-                    "registered": agents_for_options,
-                    "decisionMode": "off",
-                    "taskFacts": {"task": {"id": task_id, "fallback": "no-start"}},
-                    "excludedRoutes": excluded_routes,
-                    "routingConstraints": constraints,
-                });
-                if let Some(snapshot) = usage_for_options {
-                    options["usage"] = snapshot;
-                }
-                let missing = PathBuf::from("__agents_relay_missing_rules__");
-                route_execution(&candidates, &requirements, &options,
-                    &home_for_route, &missing, &missing, now_ms(), None, None,
-                    &[], None)
-            },
-        );
-        let mut pinned = std::pin::pin!(future);
-        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
-        Ok(matches!(
-            std::future::Future::poll(pinned.as_mut(), &mut context),
-            std::task::Poll::Ready(Some(_))
-        ))
+    fn has_codex_no_start_fallback(&mut self, _task: &Value, _agents: &[Value],
+        _usage: Option<&Value>) -> Result<bool, String> {
+        Ok(false)
     }
     fn live_worker(&mut self, task_id: &str) -> Option<LiveWorkerState> {
         self.live

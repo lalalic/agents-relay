@@ -99,20 +99,11 @@ On mobile Jobs screens, keep Search, Status, Repository, and Refresh in one row 
 
 P0/self-job behavior is defined by `skills/agents-relay/contracts/orchestrator-workflows.md`. Task/job semantics are defined by `skills/agents-relay/contracts/task-job-contract.md`. These are Agents Relay orchestration contracts, not global agent policy.
 
-## Browser Worker Pool safety (ChatGPT / Z.ai)
+## Model Worker boundary
 
-- Relay Graph/SQLite owns Task transitions. The Browser Worker Pool owns only capacity, FIFO admission, provider health, session leases and recovery effects; it never authors Task success from an HTTP or browser receipt.
-- Treat a platform submission as **uncertain** after the browser send may have happened. Never automatically resend or release the occupied Slot until the original execution is reconciled. A verified pre-submission rejection may route to another eligible worker.
-- Retain each browser Slot until a correlated terminal event; keep a durable original Thread URL for the dashboard and test any recovery Turn in the same thread and execution. Bound automated recovery attempts.
-- WebHelm owns browser groups and stale-tab reclaim. Pool-owned browser activation is only a keepalive and never a Task progress signal. Only independently observed new assistant output or correlated worker events may extend inactivity deadlines.
-- Use an isolated SQLite store and caller-owned WebHelm Session in tests. Always stop test-owned Sessions; never stop all Sessions or modify the public WebHelm runtime/extension for Pool policy.
-
-## Browser Worker Pool Graph and live tests
-
-- `workflow/browser-worker-pool.mmd` owns Browser Pool resource decisions, separate from the Relay Task Graph. Keep production bindings in `src/browser-worker-pool-graph.ts` through the shared dispatcher facade; do not make direct graph-evaluate calls in production.
-- Pool timeout renewal requires new assistant output and a correlated Relay `task.progress`; a page spinner, lease keepalive, or a submitted recovery Turn can never renew the Task deadline.
-- Browser Pool regressions require deterministic negative/healing cases and, for releases that alter WebHelm lifecycle, opt-in real ChatGPT/Z.ai browser tests as described in `docs/BROWSER_WORKER_POOL.md`. Do not count fake CLI tests as real site E2E or interrupt unrelated Sessions.
-
+- Relay executes Model Tasks through Codex profiles and Script Tasks through declared Shortcuts. ChatGPT-backed inference uses a configured Codex model provider such as neo-local; Relay has no browser worker, WebHelm workspace or browser pool.
+- Provider-specific browser sessions, capacity and recovery belong to the configured model gateway. Relay retains Graph-owned execution and exact-generation event fencing.
+- Historical Job and routing audit records remain readable without restoring retired adapters.
 
 ## Prompt delivery boundary
 

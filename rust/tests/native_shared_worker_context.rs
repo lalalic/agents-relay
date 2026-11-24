@@ -1,8 +1,7 @@
-//! Regression for real Vlog-style parent Agent inheritance on both Model
-//! transports. All discovery paths and the SQLite store are test-owned.
+//! Regression for real Vlog-style parent Agent inheritance with different Codex
+//! model profiles. All discovery paths and the SQLite store are test-owned.
 use agents_relay_rust2::{
     execution_context::resolve_agent_contract,
-    native_browser_execution::native_browser_managed_prompt,
     native_codex_execution::native_codex_managed_prompt,
     reconciler_context::{resolve_worker_context,WorkerContextRoots},
     relay_store::SQLiteRelayStore,
@@ -10,7 +9,7 @@ use agents_relay_rust2::{
 use serde_json::json;
 use std::{fs,time::{SystemTime,UNIX_EPOCH}};
 #[test]
-fn both_workers_resolve_same_inherited_contract_and_checkout(){
+fn codex_profiles_resolve_same_inherited_contract_and_checkout(){
     let root=std::env::temp_dir().join(format!("relay-context-{}-{}",std::process::id(),
         SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
     let workspace=root.join("workspace");
@@ -40,10 +39,10 @@ fn both_workers_resolve_same_inherited_contract_and_checkout(){
     let store=SQLiteRelayStore::open(&db,Some("91")).unwrap();
     store.save_job(&job).unwrap();drop(store);
     let codex=json!([{"name":"codex","id":"codex","capabilities":["model"]}]);
-    let browser=json!([{"name":"chatgpt","id":"chatgpt/browser-worker","capabilities":["model"]}]);
     let context=|adapter:&serde_json::Value| resolve_worker_context(&job,&job["tasks"][0],
         &roots,&[],adapter.as_array().unwrap()).unwrap();
-    let a=context(&codex);let b=context(&browser);
+    let a=context(&codex);
+    let b=context(&codex);
     assert_eq!(a["project"],b["project"]);
     for name in ["editor","publisher","global-only"]{
         let left=resolve_agent_contract(&a,name).unwrap();
@@ -54,11 +53,11 @@ fn both_workers_resolve_same_inherited_contract_and_checkout(){
     // The old pool-derived fixture root is not an ancestor of the actual
     // project. It must fail to find the same-name inherited definitions.
     let wrong=WorkerContextRoots::isolated(&global);
-    assert!(resolve_worker_context(&job,&job["tasks"][0],&wrong,&[],browser.as_array().unwrap())
+    assert!(resolve_worker_context(&job,&job["tasks"][0],&wrong,&[],codex.as_array().unwrap())
         .unwrap_err().contains("Missing base for agent"));
     let cp=native_codex_managed_prompt(&db,&job,&job["tasks"][0],&checkout,&roots).unwrap();
-    job["tasks"][0]["adapter"]=json!("chatgpt");
-    let bp=native_browser_managed_prompt(&db,&job,&job["tasks"][0],&checkout,&roots).unwrap();
+    job["tasks"][0]["routing"]=json!({"provider":"neo-local","profile":"neo","model":"neo"});
+    let bp=native_codex_managed_prompt(&db,&job,&job["tasks"][0],&checkout,&roots).unwrap();
     for prompt in [&cp,&bp]{
         let reference=prompt.lines().find_map(|line|
             line.strip_prefix("You are editor with responsibility at ")

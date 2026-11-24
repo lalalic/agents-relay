@@ -19,11 +19,6 @@ use crate::{
     review_revision_policy::review_finding_fingerprint,
     review_revision_stale::stale_review_revisions,
     review_revision_settlement::settle_review_revision_round,
-    reviewer_thread::{
-        resolve_reviewer_thread_destination,
-        resolve_implementation_task_thread_destination,
-        prepare_reviewer_thread_delivery,chatgpt_thread_requirements,
-    },
     task_transitions::{
         refresh_task_dependencies,try_transition_task_event,
     },
@@ -170,17 +165,11 @@ pub fn route_reviewer(
     profile_home:&Path,policy_path:&Path,rules_path:&Path,
 )->Result<Value,String>{
     let configured=options.get("reviewer").unwrap_or(&Value::Null);
-    let reviewer_thread=resolve_reviewer_thread_destination(
-        job,configured.get("threadId"))?;
-    let requirements=if reviewer_thread.is_null(){
-        configured.get("requirements").cloned()
-            .unwrap_or(json!({"capabilities":["model"]}))
-    }else{
-        chatgpt_thread_requirements(
-            configured.get("requirements").unwrap_or(&json!({})))
-    };
+    let requirements=configured.get("requirements").cloned()
+        .unwrap_or(json!({"capabilities":["model"]}));
     let workers=worker_candidates(adapters,registered,usage,
         Utc::now().timestamp_millis()).into_iter()
+        .filter(|candidate|field(candidate,"adapter")=="codex")
         .filter(|candidate|
             (field(configured,"workerId").is_empty()
                 ||field(candidate,"workerId")==field(configured,"workerId"))
@@ -249,9 +238,6 @@ pub fn create_final_review_task(
                 story_size_timeout_ms(crate::types::StorySize::M)),
         "createdAt":now,"updatedAt":now
     });
-    let thread=prepare_reviewer_thread_delivery(job,&fields,
-        reviewer_options.get("threadId"))?;
-    if !thread.is_null(){fields["chatgptThreadDelivery"]=thread;}
     // Preserve role conversation continuity between independent immutable
     // SHA-bound Review Tasks. The previous PASS/CHANGES_REQUIRED verdict is
     // NOT reused; it is merely prior conversation context.
@@ -332,14 +318,7 @@ pub fn route_task_for_execution(
     options:&Value,
 )->Result<ReviewSnapshot,String>{
     let mut result=ReviewSnapshot::unchanged(job);
-    let impl_thread=resolve_implementation_task_thread_destination(job,task)?;
-    let reviewer_thread=if review_task(task){
-        resolve_reviewer_thread_destination(job,
-            options.pointer("/reviewer/threadId"))?
-    }else{Value::Null};
-    let must_chatgpt=!impl_thread.is_null()||!reviewer_thread.is_null();
-    if task.get("routing").is_some_and(|v|!v.is_null())
-        &&(!must_chatgpt||field(task,"adapter")=="chatgpt"){
+    if task.get("routing").is_some_and(|v|!v.is_null()) {
         return Ok(result);
     }
     if task.get("output").is_none_or(Value::is_null)
@@ -352,13 +331,10 @@ pub fn route_task_for_execution(
             x.get("workerId")==worker.get("workerId")
                 ||x.get("adapter")==worker.get("adapter")
         }))
-        .filter(|worker|!must_chatgpt ||field(worker,"adapter")=="chatgpt")
+        .filter(|worker|field(worker,"adapter")=="codex")
         .collect::<Vec<_>>();
-    let requirements=if must_chatgpt{
-        chatgpt_thread_requirements(
-            task.get("workerRequirements").unwrap_or(&json!({})))
-    }else{task.get("workerRequirements").cloned()
-        .unwrap_or(json!({"capabilities":[]}))};
+    let requirements=task.get("workerRequirements").cloned()
+        .unwrap_or(json!({"capabilities":[]}));
     let mut excluded_routes=excluded;
     if field(task,"agentName")=="troubleshooter"
         &&!field(task,"parentTaskId").is_empty(){

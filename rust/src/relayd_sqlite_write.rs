@@ -17,7 +17,6 @@ use crate::{
     daemon_worker_failure::{
         classify_native_launch_phase, DaemonFailureState, DaemonLiveWorkers,
         DaemonWorkerFailurePorts},
-    native_browser_execution::{IsolatedWebHelmConfig,submit_claimed_chatgpt_worker},
     native_script_planner::run_isolated_script_planner,
     manual_plan::prepare_manual_plan,
     planner::create_plan_round,
@@ -147,7 +146,6 @@ pub struct IsolatedSQLiteWriteHost {
     // read-only UI history. Cursor is only a cache; durable SQLite event
     // keys fence replay on process recreation.
     model_event_ingress_enabled:bool,
-    model_webhelm_canary:Option<IsolatedWebHelmConfig>,
     // Explicit non-browser Codex execution path. No PATH lookup/Node relay.
     model_codex_executable:Option<PathBuf>,
     model_event_cursor:HashMap<String,i64>,
@@ -175,7 +173,7 @@ impl IsolatedSQLiteWriteHost {
             failure_state:std::sync::Arc::new(DaemonFailureState::new()),
             live_workers:std::sync::Arc::new(std::sync::Mutex::new(DaemonLiveWorkers::default())),
             escalation_notifier:None,event_history_api:None,
-            model_event_ingress_enabled:false,model_webhelm_canary:None,
+            model_event_ingress_enabled:false,
             model_codex_executable:None,
             model_event_cursor:HashMap::new(),
             model_nats_subscription:None,model_nats_publisher:None,
@@ -294,33 +292,6 @@ impl IsolatedSQLiteWriteHost {
         self.escalation_notifier=Some(config);
         Ok(())
     }
-    /// An actual external ChatGPT/WebHelm provider is permitted only on
-    /// explicit canary config, with the isolated SQLite/Graph owner unchanged.
-    /// Submission metadata alone never certifies a Task started/terminal.
-    pub fn set_model_webhelm_canary(
-        &mut self,config:IsolatedWebHelmConfig,
-    )->Result<(),String>{
-        if !self.model_event_ingress_enabled{
-            return Err("Canary Worker requires an explicitly trusted Events Bus ingress".into());
-        }
-        self.model_webhelm_canary=Some(config);
-        Ok(())
-    }
-    /// A live browser adapter uses the same Graph/SQLite receipt fence as
-    /// disposable canaries. Its Session, WebHelm profile and durable Pool
-    /// remain separate from the authoritative Task terminal event.
-    pub fn set_model_webhelm_live(
-        &mut self,config:IsolatedWebHelmConfig,
-    )->Result<(),String>{
-        if !self.live_store{
-            return Err("Live WebHelm provider is unavailable in isolated mode".into());
-        }
-        if !self.model_event_ingress_enabled{
-            return Err("Live WebHelm Worker requires explicit Events Bus ingress".into());
-        }
-        self.model_webhelm_canary=Some(config);
-        Ok(())
-    }
     /// The native Codex provider is non-browser and executes only inside the
     /// canonical Rust-owned live store. Credentials belong to Codex itself;
     /// Relay never imports or places them in a Task/CLI argument.
@@ -385,7 +356,7 @@ impl IsolatedSQLiteWriteHost {
         let Some(task)=current["tasks"].as_array().into_iter().flatten()
             .find(|task|field(task,"id")==task_id)else{return Ok(false);};
         let execution=field(task,"executionId").to_string();
-        let trusted=matches!(field(task,"adapter"),"chatgpt"|"z"|"codex")
+        let trusted=field(task,"adapter")=="codex"
             &&!execution.is_empty()
             &&event.pointer("/source/id").and_then(Value::as_str)
                 ==Some(crate::execution_event_identity::execution_event_source(
@@ -456,7 +427,7 @@ impl IsolatedSQLiteWriteHost {
             .ok_or("Model EventBus ingress Job is absent")?;
         self.isolated_project(&job)?;
         let has_model_lease=job["tasks"].as_array().into_iter().flatten().any(|task|
-            matches!(field(task,"adapter"),"chatgpt"|"z"|"codex")
+            field(task,"adapter")=="codex"
             &&!field(task,"executionId").is_empty()
 
             &&matches!(field(task,"state"),"QUEUED"|"RUNNING"));
@@ -834,14 +805,6 @@ impl IsolatedSQLiteWriteHost {
             workers.push(json!({"workerId":"codex","id":"codex","name":"codex",
                 "adapter":"codex","runtime":"codex",
                 "capabilities":["model","codex","local_repo","iterative_tools"]}));
-        }
-        if self.model_webhelm_canary.is_some() ||
-            (!self.live_store && IsolatedWebHelmConfig::from_test_store(
-                &self.config.store_directory).is_ok()){
-            workers.push(json!({"workerId":"chatgpt/browser-worker",
-                "id":"chatgpt/browser-worker","name":"chatgpt/browser-worker",
-                "adapter":"chatgpt","runtime":"chatgpt",
-                "capabilities":["model","chatgpt","webhelm"]}));
         }
         workers
     }
@@ -1498,7 +1461,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         let job=WorkspaceControlBackend::load_job(self,id)?;
         let mut task=job["tasks"].as_array().into_iter().flatten()
             .find(|t|field(t,"id")==task_id).cloned().ok_or("Router test Task not found")?;
-        if !matches!(field(&task,"adapter"),"codex"|"chatgpt"){
+        if field(&task,"adapter")!="codex"{
             return Err("Router test requires a Model Task".into());
         }
         task.as_object_mut().ok_or("Invalid Task")?.remove("routing");
@@ -1690,13 +1653,10 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         // worker transports. Browser Tasks whose route was cleared must also
         // be re-routed before launch. A user-selected runtime or exact Task
         // route still wins, and an absent transport never becomes a choice.
-        let can_route=matches!(field(current,"adapter"),"codex"|"chatgpt")
+        let can_route=field(current,"adapter")=="codex"
             &&current.get("routing").is_none_or(Value::is_null)
             &&current.get("workerSelection").is_none_or(Value::is_null);
-        let should_route=can_route && self.model_webhelm_canary.is_some()
-            &&(self.live_store || field(current,"adapter")=="chatgpt" ||
-               original.get("routingPreferences").is_some_and(Value::is_object));
-        if should_route {
+        if can_route && self.model_codex_executable.is_some(){
             let usage=self.account_usage().ok();
             let options=self.decision_options();
             let mut available=Vec::new();
@@ -1704,8 +1664,6 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                 available.push(json!({"id":"codex","name":"codex",
                     "capabilities":["model","codex"]}));
             }
-            available.push(json!({"id":"chatgpt/browser-worker","name":"chatgpt",
-                "capabilities":["model","chatgpt","webhelm"]}));
             let routed=crate::reconciler_review::route_task_for_execution(
                 &self.config.graph_directory,&self.config.profile_home,
                 &self.config.policy_path,&self.config.router_rules_path,
@@ -1726,7 +1684,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         // transport before a Task generation can be reserved. No Node Relay
         // fallback, no implicit production WebHelm, no receipt-based success.
         let adapter=field(task,"adapter").to_owned();
-        if adapter!="script"&&adapter!="chatgpt"&&adapter!="codex"{
+        if adapter!="script"&&adapter!="codex"{
             return Err(denied("unsupported model Worker adapter"));
         }
         let (prepared,execution_root)=self.prepare_model_execution_checkout(
@@ -1814,8 +1772,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                         let phase=classify_native_launch_phase(&error);
                         let mut ports=DaemonWorkerFailurePorts::new(
                             db.clone(),graph.clone(),Some(job_id.clone()),
-                            None,audit_path.clone(),profile_home.clone(),
-                            candidates.as_array().cloned().unwrap_or_default(),
+                            audit_path.clone(),profile_home.clone(),
                             std::sync::Arc::clone(&live_workers),
                             std::sync::Arc::clone(&failure_state))
                             .with_routing_policy(codex_policy.clone(),codex_rules.clone());
@@ -1829,76 +1786,6 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                             .remove(&task_id);
                     }
                 }).map_err(|e|format!("Cannot launch Rust Codex Worker: {e}"))?;
-            return Ok(());
-        }
-        if adapter=="chatgpt"{
-            let config=match &self.model_webhelm_canary{
-                Some(canary)=>canary.clone(),
-                None=>IsolatedWebHelmConfig::from_test_store(&self.config.store_directory)?,
-            };
-            if task.get("routing").is_none_or(Value::is_null){
-                return Err("Native ChatGPT Worker requires verified routing metadata".into());
-            }
-            let mut reconciler=Reconciler::new(
-                self.config.graph_directory.clone(),self.config.store_directory.clone(),
-                self.config.profile_home.clone(),self.config.policy_path.clone(),
-                self.config.router_rules_path.clone(),
-                json!({"owner":format!("isolated-rust-daemon-{}",std::process::id()),
-                    "maxConcurrent":self.config.concurrency}),
-            );
-            let claimed=reconciler.claim_task_execution(&original,task_id)?.ok_or("ChatGPT Task no longer eligible for launch")?;
-            self.persist_exact(id,&original,&claimed)?;
-            let task=claimed.get("tasks").and_then(Value::as_array).into_iter().flatten()
-                .find(|task|field(task,"id")==task_id).cloned()
-                .ok_or("ChatGPT Task vanished during lease claim")?;
-            let db=self.path();let job_id=id.to_string();let task_id=task_id.to_string();
-            let execution_id=field(&task,"executionId").to_string();
-            let graph=self.config.graph_directory.clone();
-            let pool_path=Some(config.pool_db.clone());
-            let audit_path=Some(crate::decision_audit::audit_path(&self.config.store_directory));
-            let profile_home=Some(self.config.profile_home.clone());
-            let adapters=json!([
-                {"id":"codex","name":"codex","capabilities":["model","codex"]},
-                {"id":"chatgpt/browser-worker","name":"chatgpt","capabilities":["model","chatgpt","webhelm"]},
-                {"id":"z","name":"z","capabilities":["model","z"]}
-            ]).as_array().cloned().ok_or("Daemon adapter inventory invalid")?;
-            let failure_state=std::sync::Arc::clone(&self.failure_state);
-            let live_workers=std::sync::Arc::clone(&self.live_workers);
-            live_workers.lock().expect("daemon live workers lock poisoned")
-                .register(&task_id,&execution_id);
-            std::thread::Builder::new().name(format!("rust-chatgpt-task-{task_id}"))
-                .spawn(move||{
-                    let cancelled=std::sync::atomic::AtomicBool::new(false);
-                    let outcome=submit_claimed_chatgpt_worker(
-                        &db,&job_id,&task,&config,&execution_root,&worker_roots,&cancelled);
-                    if let Err(error)=&outcome{
-                        eprintln!("Native ChatGPT Worker {job_id}/{task_id}: {error}");
-                    }
-                    if outcome.is_ok(){
-                        // A successful WebHelm HTTP submission alone does
-                        // NOT prove task.started. The accepted EventBus
-                        // ingress above owns mark_started after durable
-                        // Graph/SQLite confirmation of this exact generation.
-                        return;
-                    }
-                    let error=outcome.expect_err("outcome is Err");
-                    // Node reconciler.ts failLaunch: a Worker launch failure
-                    // must reach handleWorkerLaunchFailure so the Graph alone
-                    // decides retry, quarantine or terminal; a stderr print
-                    // would strand the leased generation forever.
-                    let phase=classify_native_launch_phase(&error);
-                    let mut ports=DaemonWorkerFailurePorts::new(
-                        db.clone(),graph.clone(),Some(job_id.clone()),
-                        pool_path.clone(),audit_path.clone(),
-                        profile_home.clone(),adapters.clone(),
-                        std::sync::Arc::clone(&live_workers),
-                        std::sync::Arc::clone(&failure_state));
-                    if let Err(port_error)=crate::worker_failure_recovery::
-                        handle_worker_launch_failure(&mut ports,&job_id,&task_id,
-                            Some(&execution_id),&json!(error),phase){
-                        eprintln!("Native ChatGPT Worker failure transition {job_id}/{task_id} failed: {port_error}");
-                    }
-                }).map_err(|e|format!("Cannot launch isolated WebHelm Worker executor: {e}"))?;
             return Ok(());
         }
         let script=discover_script_agent(field(task,"agentName"),

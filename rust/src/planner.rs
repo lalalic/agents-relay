@@ -283,8 +283,8 @@ pub fn parse_planner_result(value:&Value)->Result<Value,String>{
             task.get("dependencyValidity").unwrap_or(&Value::Null),
             &format!("next_tasks[{i}].dependencyValidity"))?;
         let adapter=task.get("adapter").and_then(Value::as_str);
-        if adapter.is_some_and(|s|!matches!(s,"codex"|"chatgpt"|"z")){
-            return Err(format!("Planner next_tasks[{i}].adapter must be codex, chatgpt, or z when provided"));
+        if adapter.is_some_and(|s|!matches!(s,"codex")){
+            return Err(format!("Planner next_tasks[{i}].adapter must be codex (use --profile neo for ChatGPT-backed execution) when provided"));
         }
         let output=task.get("output")
             .filter(|v|v.is_object()&&matches!(field(v,"kind"),"file"|"task_pr"))

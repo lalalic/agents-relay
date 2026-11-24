@@ -25,13 +25,13 @@ fn queued_task() -> Value {
 #[test]
 fn preferences_create_update_merge_clear_and_validate() {
     let create=args(&["--repo","demo","--objective","Build artifact",
-        "--preflight=true","--prefer-adapter","chatgpt",
+        "--preflight=true","--prefer-adapter","codex",
         "--prefer-provider","openai","--prefer-model","gpt-6",
         "--prefer-reasoning","high"]);
     validate_cli_options(&create).unwrap();
     let request=job_create_request(&create,None).unwrap();
     let prefs=&request["options"]["routingPreferences"];
-    assert_eq!(prefs,&json!({"adapter":"chatgpt","provider":"openai",
+    assert_eq!(prefs,&json!({"adapter":"codex","provider":"openai",
         "model":"gpt-6","reasoning":"high"}));
     let equals=job_create_request(&args(&["--repo","demo","--objective","Build artifact",
         "--preflight=true","--prefer-model=gpt-6"]),None).unwrap();
@@ -39,7 +39,7 @@ fn preferences_create_update_merge_clear_and_validate() {
     let existing=json!({"id":"21","routingPreferences":prefs});
     let update=job_update_request(&args(&["--id","21","--prefer-model","gpt-6-sol"]),
         &existing,None).unwrap();
-    assert_eq!(update["patch"]["routingPreferences"]["adapter"],"chatgpt");
+    assert_eq!(update["patch"]["routingPreferences"]["adapter"],"codex");
     assert_eq!(update["patch"]["routingPreferences"]["model"],"gpt-6-sol");
     let clear=job_update_request(&args(&["--id","21","--clear-routing-preferences"]),
         &existing,None).unwrap();
@@ -56,37 +56,42 @@ fn preferences_create_update_merge_clear_and_validate() {
     assert!(job_routing_preferences::validate(&json!({"adapter":"codex",
         "model":"gpt-6"})).is_ok());
     assert!(job_routing_preferences::validate(&json!({"unrecognized":1})).is_err());
+    assert!(job_routing_preferences::validate(&json!({"adapter":"chatgpt"})).is_err());
+    assert!(job_routing_preferences::validate(&json!({"adapter":"z"})).is_err());
+    assert!(job_routing_preferences::validate(&json!({"adapter":"chatgpt"})).is_err());
+    assert!(job_routing_preferences::validate(&json!({"adapter":"z"})).is_err());
     assert!(job_routing_preferences::reject_task_flags(&args(&[
         "--prefer-model=gpt-6"])).is_err());
 }
 
 #[test]
 fn task_update_replaces_routing_and_clears_stale_worker_selection() {
-    let old=queued_task();
+    let mut old=queued_task();
+    old["adapter"]=json!("chatgpt");
     assert!(task_update_request(&args(&["--prefer-model","gpt-6"]),
         &json!({"id":"21"}),&old,None).unwrap_err().contains("Job-only"));
 
     let job=json!({"id":"21","tasks":[old.clone()]});
     let request=task_update_request(&args(&["--id","21","--task-id","22",
-        "--adapter","chatgpt","--provider","chatgpt","--model","gpt-6-sol",
-        "--profile","main","--reasoning","high"]),&job,&old,None).unwrap();
+        "--adapter","codex","--provider","neo-local","--model","neo",
+        "--profile","neo","--reasoning","high"]),&job,&old,None).unwrap();
     let proposed=&request["task"];
-    assert_eq!(proposed["adapter"],"chatgpt");
-    assert_eq!(proposed["routing"]["provider"],"chatgpt");
-    assert_eq!(proposed["routing"]["model"],"gpt-6-sol");
-    assert_eq!(proposed["routing"]["profile"],"main");
+    assert_eq!(proposed["adapter"],"codex");
+    assert_eq!(proposed["routing"]["provider"],"neo-local");
+    assert_eq!(proposed["routing"]["model"],"neo");
+    assert_eq!(proposed["routing"]["profile"],"neo");
     assert_eq!(proposed["routing"]["reasoning"],"high");
     assert_eq!(proposed["routing"]["decidedBy"],"cli");
-    assert_eq!(proposed["workerRequirements"]["runtime"],"chatgpt");
+    assert_eq!(proposed["workerRequirements"]["runtime"],"codex");
     let updated=apply_managed_task_update_snapshot(&job,"21","22",proposed,"before",
         |_task,_action|true).unwrap();
-    assert_eq!(updated["tasks"][0]["routing"]["model"],"gpt-6-sol");
+    assert_eq!(updated["tasks"][0]["routing"]["model"],"neo");
     assert!(updated["tasks"][0].get("workerSelection").is_none());
 
-    let change_only=task_update_request(&args(&["--adapter","z"]),&job,&old,None)
+    let change_only=task_update_request(&args(&["--adapter","codex"]),&job,&old,None)
         .unwrap();
     assert!(change_only["task"].get("routing").is_none());
-    assert_eq!(change_only["task"]["workerRequirements"]["runtime"],"z");
+    assert_eq!(change_only["task"]["workerRequirements"]["runtime"],"codex");
     let new_model=task_update_request(&args(&["--model","new-model"]),
         &job,&old,None).unwrap();
     assert_eq!(new_model["task"]["routing"]["model"],"new-model");
@@ -116,17 +121,18 @@ fn route(adapter:&str, provider:&str, model:&str) -> Value {
 #[test]
 fn soft_preference_ranks_only_eligible_routes_and_missing_choice_falls_back() {
     let codex=route("codex","openai","codex-default");
-    let chatgpt=route("chatgpt","openai","gpt-6");
+    let mut neo=route("codex","neo-local","neo");
+    neo["model"]["profile"]=json!("neo");
     let discovery=ExecutionRouteDiscovery{
-        routes:vec![codex.clone(),chatgpt.clone()],evaluations:vec![],
+        routes:vec![codex.clone(),neo.clone()],evaluations:vec![],
         worker_gate_evaluations:vec![],policy:json!({}),choices:vec![],
         routing_instruction:String::new(),configured_defaults:HashMap::new()};
     let options=json!({"taskFacts":{"routingPreferences":{
-        "adapter":"chatgpt","provider":"openai","model":"gpt-6"}},
+        "profile":"neo"}},
         "decisionMode":"off"});
     let chosen=route_execution_with_choice(&discovery,&json!({}),&[],&options,
         None,None,&[],None).unwrap();
-    assert_eq!(chosen["candidate"]["adapter"],"chatgpt");
+    assert_eq!(chosen["routing"]["profile"],"neo");
     assert_eq!(chosen["routing"]["decidedBy"],"execution-router:job-preference");
     // An explicit decision still wins over the advisory Job preference.
     let explicit=execution_choice_label(&codex,false);
@@ -144,7 +150,7 @@ fn soft_preference_ranks_only_eligible_routes_and_missing_choice_falls_back() {
         None,None,&[],None).unwrap();
     assert_eq!(tied["candidate"]["adapter"],"codex");
     // A hint never introduces a route outside the eligible list.
-    assert_ne!(fallback["routing"]["model"],"gpt-6");
+    assert_ne!(fallback["routing"]["model"],"neo");
 }
 
 #[test]
@@ -154,48 +160,37 @@ fn job_preference_routes_unpinned_worker_and_respects_exact_runtime() {
         "output":{"kind":"file","path":"artifact.txt"},
         "workerRequirements":{"capabilities":[]}});
     let mut job=json!({"id":"21","repository":"test-project",
-        "routingPreferences":{"adapter":"chatgpt"},"tasks":[task.clone()]});
+        "routingPreferences":{"profile":"neo"},"tasks":[task.clone()]});
     let adapters=json!([
-        {"id":"codex","name":"codex","capabilities":["model","codex"]},
-        {"id":"chatgpt/browser-worker","name":"chatgpt",
-         "capabilities":["model","chatgpt","webhelm"]}
+        {"id":"codex","name":"codex","capabilities":["model","codex"]}
     ]);
-    let unconfigured=Path::new("/path-that-does-not-exist/job-route-test");
+    let root=std::env::temp_dir().join(format!("relay-profile-routing-{}-{}",std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("config.toml"),"model = \"gpt-6-luna\"\n").unwrap();
+    std::fs::write(root.join("neo.config.toml"),"model_provider = \"neo-local\"\nmodel = \"neo\"\n").unwrap();
+    let missing=root.join("missing");
     let routes=|job:&Value,task:&Value|route_task_for_execution(
-        Path::new("workflow"),unconfigured,unconfigured,unconfigured,
+        Path::new("workflow"),&root,&missing,&missing,
         job,task,adapters.as_array().unwrap(),&[],None,&json!({"decisionMode":"off","recordDecisionAudit":true}));
     let preferred=routes(&job,&task).unwrap();
-    assert_eq!(preferred.job["tasks"][0]["adapter"],"chatgpt");
-    assert_eq!(preferred.job["tasks"][0]["routing"]["model"],"account-defaults");
-    assert_eq!(preferred.job["tasks"][0]["routing"]["decidedBy"],
-        "execution-router:job-preference");
+    assert_eq!(preferred.job["tasks"][0]["adapter"],"codex");
+    assert_eq!(preferred.job["tasks"][0]["routing"]["profile"],"neo");
+    assert_eq!(preferred.job["tasks"][0]["routing"]["decidedBy"],"execution-router:job-preference");
     assert_eq!(preferred.events.len(),2);
     let audit=preferred.decision_audit.as_ref().unwrap();
     assert_eq!(audit["record_type"],"decision");
     assert_eq!(audit["correlation"]["job_id"],"21");
     assert_eq!(audit["correlation"]["task_id"],"22");
-    assert_eq!(audit["selected"]["worker"]["adapter"],"chatgpt");
+    assert_eq!(audit["selected"]["worker"]["adapter"],"codex");
     assert_eq!(audit["decision_id"],preferred.job["tasks"][0]["routing"]["decisionId"]);
-    assert!(audit["decision_id"].is_string());
     task["workerRequirements"]["runtime"]=json!("codex");
     job["tasks"]=json!([task.clone()]);
-    let constrained=routes(&job,&task).unwrap();
-    assert_eq!(constrained.job["tasks"][0]["adapter"],"codex");
+    assert_eq!(routes(&job,&task).unwrap().job["tasks"][0]["routing"]["profile"],"neo");
     task["agentName"]=json!("job-acceptance-reviewer");
     job["tasks"]=json!([task.clone()]);
-    let independent=routes(&job,&task).unwrap();
-    assert_eq!(independent.job["tasks"][0]["adapter"],"codex");
-    task["workerRequirements"].as_object_mut().unwrap().remove("runtime");
-    job["tasks"]=json!([task.clone()]);
-    let independent_unpinned=routes(&job,&task).unwrap();
-    assert_eq!(independent_unpinned.job["tasks"][0]["adapter"],"codex");
-    task["agentName"]=json!("implementation");
-    task["adapter"]=json!("chatgpt");
-    task["workerRequirements"]["runtime"]=json!("chatgpt");
-    job["tasks"]=json!([task.clone()]);
-    let browser_reselected=routes(&job,&task).unwrap();
-    assert_eq!(browser_reselected.job["tasks"][0]["adapter"],"chatgpt");
-    assert!(browser_reselected.job["tasks"][0]["routing"].is_object());
+    assert_eq!(routes(&job,&task).unwrap().job["tasks"][0]["adapter"],"codex");
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

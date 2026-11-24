@@ -96,8 +96,8 @@ where
     BuildPlanner:FnMut(&Value,&Value,&str)->Result<String,String>,
 {
     let adapter=arg(args,"--adapter","codex");
-    if !matches!(adapter,"codex"|"chatgpt"|"z"){
-        return Err("prompt --adapter must be codex|chatgpt|z".into());
+    if !matches!(adapter,"codex"){
+        return Err("prompt --adapter must be codex".into());
     }
     let eval_file=arg(args,"--eval-file","");
     if !eval_file.is_empty(){

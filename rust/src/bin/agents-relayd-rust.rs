@@ -8,7 +8,6 @@ use agents_relay_rust2::{
     relayd_sqlite_write::IsolatedSQLiteWriteHost,
     reconciler::Reconciler,
     relayd_main::run_relayd_main,
-    native_browser_execution::IsolatedWebHelmConfig,
 };
 use serde_json::json;
 use std::{path::Path,sync::atomic::{AtomicBool,Ordering}};
@@ -22,7 +21,7 @@ fn main(){
         std::process::exit(1);
     }
     if args.iter().any(|arg|matches!(arg.as_str(),"--help"|"-h")){
-        println!("agents-relayd-rust (native Relay daemon)\n  --live-store-dir /absolute/canonical/live/stores (exclusive writable production owner)\n  --isolated-store-dir /absolute/path/to/stores (read-only)\n  --shadow-live-store-dir /absolute/path/to/live/stores (strictly read-only, explicit opt-in)\n  --isolated-write-store-dir /absolute/path/to/stores (SQLite/Graph isolated mutations)\n  --event-history-api http://127.0.0.1:PORT/ (explicit read-only loopback Events Bus history, write mode only)\n  --trust-isolated-model-events (opt-in caller-owned loopback events as Graph-verified Worker ingress)\n  --isolated-nats-url nats://127.0.0.1:PORT/ (optional caller-owned isolated NATS subscriber, requires trust flag)\n  --isolated-nats-token-file /absolute/path/to/store/token (0600 isolated loopback authentication only)\n  --canary-webhelm-socket /absolute/path/to/real-webhelm.sock (explicit real provider, disposable Job store only)\n  --canary-webhelm-executable /absolute/path/to/webhelm\n  --canary-webhelm-workspace Rust2CanaryID\n  --model-nats-url nats://127.0.0.1:PORT/ (explicit live NATS)\n  --model-nats-token-file /absolute/path/to/store/token\n  --trust-model-events (explicit Graph-fenced ingress)\n  --live-webhelm-socket /absolute/path/to/webhelm.sock\n  --live-webhelm-executable /absolute/path/to/webhelm\n  --live-webhelm-workspace Relay\n  --port N\n  --interval MS\nLive mode requires Node stopped and exclusive SQLite ownership. No Node fallback.");
+        println!("agents-relayd-rust (native Relay daemon)\n  --live-store-dir /absolute/canonical/live/stores (exclusive writable production owner)\n  --isolated-store-dir /absolute/path/to/stores (read-only)\n  --shadow-live-store-dir /absolute/path/to/live/stores (strictly read-only, explicit opt-in)\n  --isolated-write-store-dir /absolute/path/to/stores (SQLite/Graph isolated mutations)\n  --event-history-api http://127.0.0.1:PORT/ (explicit read-only loopback Events Bus history, write mode only)\n  --trust-isolated-model-events (opt-in caller-owned loopback events as Graph-verified Worker ingress)\n  --isolated-nats-url nats://127.0.0.1:PORT/ (optional caller-owned isolated NATS subscriber, requires trust flag)\n  --isolated-nats-token-file /absolute/path/to/store/token (0600 isolated loopback authentication only)\n  --model-nats-url nats://127.0.0.1:PORT/ (explicit live NATS)\n  --model-nats-token-file /absolute/path/to/store/token\n  --trust-model-events (explicit Graph-fenced ingress)\n  --port N\n  --interval MS\nLive mode requires Node stopped and exclusive SQLite ownership. No Node fallback.");
         return;
     }
     if args.first().is_some_and(|a|a=="--version"){
@@ -52,12 +51,6 @@ fn execute(args:&[String])->Result<(),String>{
     let live_write=!arg("--live-store-dir").is_empty();
     let writable=isolated_write||live_write;
     let shadow_live=args.iter().any(|flag|flag=="--shadow-live-store-dir");
-    let canary= args.iter().any(|flag|matches!(flag.as_str(),
-        "--canary-webhelm-socket"|"--canary-webhelm-executable"
-        |"--canary-webhelm-workspace"));
-    let live_webhelm=args.iter().any(|flag|matches!(flag.as_str(),
-        "--live-webhelm-socket"|"--live-webhelm-executable"
-        |"--live-webhelm-workspace"));
     // The operator configures the native Codex executable; the verified
     // Job project root, not a parallel repository allowlist, scopes execution.
     let codex_exec_env=std::env::var("AGENTS_RELAY_LIVE_CODEX_EXECUTABLE")
@@ -83,30 +76,12 @@ fn execute(args:&[String])->Result<(),String>{
     }
     if !live_write&&args.iter().any(|flag|matches!(flag.as_str(),
         "--trust-model-events"|"--model-nats-url"|"--model-nats-token-file"
-        |"--live-webhelm-socket"|"--live-webhelm-executable"
-        |"--live-webhelm-workspace"|"--live-codex-executable")){
+        |"--live-codex-executable")){
         return Err("Live Model/EventBus options require --live-store-dir".into());
     }
     if live_codex&&(!live_write||codex_exec.is_empty()
         ||!trust_events||nats.is_empty()){
         return Err("Live non-browser Codex Worker requires --live-store-dir, an explicit absolute executable, and trusted NATS Events Bus".into());
-    }
-    if live_webhelm&&(!live_write
-        ||arg("--live-webhelm-socket").is_empty()
-        ||arg("--live-webhelm-executable").is_empty()
-        ||arg("--live-webhelm-workspace").is_empty()
-        ||!trust_events
-        ||(nats.is_empty()&&arg("--event-history-api").is_empty())){
-        return Err("Live WebHelm requires explicit provider and trusted Events Bus".into());
-    }
-    if canary&&(!isolated_write
-        ||arg("--canary-webhelm-socket").is_empty()
-        ||arg("--canary-webhelm-executable").is_empty()
-        ||arg("--canary-webhelm-workspace").is_empty()
-        ||!args.iter().any(|flag|flag=="--trust-isolated-model-events")
-        ||(arg("--isolated-nats-url").is_empty()
-           &&arg("--event-history-api").is_empty())){
-        return Err("Real WebHelm canary requires isolated write store, all three explicit provider fields, and trusted Events Bus".into());
     }
     let store_mode_count=(isolated_write as u8)
         +(live_write as u8)
@@ -122,8 +97,7 @@ fn execute(args:&[String])->Result<(),String>{
         || args.iter().any(|flag|matches!(flag.as_str(),
             "--trust-isolated-model-events"|"--isolated-nats-token-file"
             |"--isolated-nats-url"|"--event-history-api"
-            |"--canary-webhelm-socket"|"--canary-webhelm-executable"
-            |"--canary-webhelm-workspace"|"--live-codex-executable"))){
+            |"--live-codex-executable"))){
         return Err("Production shadow is read-only and cannot attach EventBus or Worker inputs".into());
     }
     if args.iter().any(|value|value=="--event-history-api")
@@ -304,22 +278,8 @@ fn execute(args:&[String])->Result<(),String>{
         if trust_events{
             host.enable_isolated_model_event_ingress()?;
         }
-        if canary{
-            let config=IsolatedWebHelmConfig::from_explicit_canary(
-                &canonical,arg("--canary-webhelm-socket"),
-                arg("--canary-webhelm-executable"),
-                arg("--canary-webhelm-workspace"))?;
-            host.set_model_webhelm_canary(config)?;
-        }
         if live_codex{
             host.set_live_codex_executable(codex_exec)?;
-        }
-        if live_webhelm{
-            let config=IsolatedWebHelmConfig::from_explicit_live(
-                &canonical,arg("--live-webhelm-socket"),
-                arg("--live-webhelm-executable"),
-                arg("--live-webhelm-workspace"))?;
-            host.set_model_webhelm_live(config)?;
         }
         run_daemon(config.clone(),host,&STOP,move |_|{
             Ok(Reconciler::new(

@@ -111,49 +111,6 @@ fn future_and_missing_progress_are_rejected_without_writes() {
     assert_eq!(snapshot(&db), before);
 }
 #[test]
-fn browser_admission_error_is_distinguishable_from_operational_failure() {
-    use agents_relay_rust2::browser_worker_pool::{
-        BrowserPoolFailure, BrowserPoolOptions, BrowserWorkerPoolManager,
-    };
-    let mut pool = BrowserWorkerPoolManager::with_clock(
-        BrowserPoolOptions {
-            path: Some(":memory:".into()),
-            capacity: 1,
-            max_queue: 0,
-            queue_wait_ms: 1,
-            poll_ms: 1,
-        },
-        || 1000,
-    )
-    .unwrap();
-    pool.report_pre_submission_outage("chatgpt", 5000).unwrap();
-    match pool
-        .acquire_typed("chatgpt", "not-submitted", None)
-        .unwrap_err()
-    {
-        BrowserPoolFailure::Admission(error) => {
-            assert_eq!(error.code, "PROVIDER_UNAVAILABLE");
-            assert!(!error.submitted);
-        }
-        error => panic!("provider outage should be a typed admission failure: {error}"),
-    }
-    pool.report_healthy("chatgpt").unwrap();
-    let _occupied = pool.acquire_typed("chatgpt", "first", None).unwrap();
-    match pool.acquire_typed("chatgpt", "second", None).unwrap_err() {
-        BrowserPoolFailure::Admission(error) => {
-            assert_eq!(error.code, "POOL_CAPACITY_FULL");
-            assert!(!error.submitted);
-        }
-        error => panic!("full queue should be typed admission failure: {error}"),
-    }
-    match pool.acquire_typed("unknown", "third", None).unwrap_err() {
-        BrowserPoolFailure::Operational(error) => {
-            assert!(error.message.contains("Unknown browser pool provider"));
-        }
-        error => panic!("invalid provider must not be admission: {error}"),
-    }
-}
-#[test]
 fn planner_facts_mutable_public_entrypoint_sorts_plans_as_node_does() {
     use agents_relay_rust2::workflow::planner_orchestration_v2::{
         planner_orchestration_facts, planner_orchestration_facts_in_place,

@@ -60,10 +60,6 @@ mod reconciler_context_public;
 mod script_task_adapter_public;
 #[path = "relay-rust2-parity/dependency_revision_execution_public.rs"]
 mod dependency_revision_execution_public;
-#[path = "relay-rust2-parity/browser_worker_routing_public.rs"]
-mod browser_worker_routing_public;
-#[path = "relay-rust2-parity/browser_worker_runtime_public.rs"]
-mod browser_worker_runtime_public;
 #[path = "relay-rust2-parity/planner_agent_public.rs"]
 mod planner_agent_public;
 #[path = "relay-rust2-parity/relay_store_atomic_public.rs"]
@@ -92,8 +88,6 @@ mod single_job_task_control_public;
 mod interactive_resume_public;
 #[path = "relay-rust2-parity/adapters_public.rs"]
 mod adapters_public;
-#[path = "relay-rust2-parity/z_public.rs"]
-mod z_public;
 #[path = "relay-rust2-parity/escalation_notifier_public.rs"]
 mod escalation_notifier_public;
 #[path = "relay-rust2-parity/chatgpt_platform_fallback_public.rs"]
@@ -455,8 +449,6 @@ fn workflow_effects_scenario(request: &Value) -> Result<Value, String> {
 fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=execution_context_public::invoke(request){return output;}
     if let Some(output)=dependency_revision_execution_public::invoke(request){return output;}
-    if let Some(output)=browser_worker_routing_public::invoke(request){return output;}
-    if let Some(output)=browser_worker_runtime_public::invoke(request){return output;}
     if let Some(output)=planner_agent_public::invoke(request){return output;}
     if let Some(output)=relay_store_atomic_public::invoke(request){return output;}
     if let Some(output)=store_github_public::invoke(request){return output;}
@@ -471,7 +463,6 @@ fn invoke(request: &Value) -> Result<String, String> {
     if let Some(output)=single_job_task_control_public::invoke(request){return output;}
     if let Some(output)=interactive_resume_public::invoke(request){return output;}
     if let Some(output)=adapters_public::invoke(request){return output;}
-    if let Some(output)=z_public::invoke(request){return output;}
     if let Some(output)=escalation_notifier_public::invoke(request){return output;}
     if let Some(output)=chatgpt_platform_fallback_public::invoke(request){return output;}
     if let Some(output)=types_public::invoke(request){return output;}
@@ -1032,10 +1023,6 @@ fn invoke(request: &Value) -> Result<String, String> {
         // Node src/adapters.ts: exact public worker argument and submitted receipt contracts.
         "stage2BuildCodexArgs" => Ok(json!(agents_relay_rust2::adapters::build_codex_args(
             &request["route"],request["input"].as_str().unwrap_or(""))).to_string()),
-        "stage2TabClosePolicy" => Ok(json!(agents_relay_rust2::adapters::chatgpt_tab_close_policy_value(
-            request.get("value"),request["fallback"].as_str().unwrap_or("after-start"))?).to_string()),
-        "stage2ParseDriverJson" => Ok(agents_relay_rust2::adapters::parse_driver_json(
-            request["output"].as_str().unwrap_or(""))?.to_string()),
         // Node src/pool.ts: pure Job ordering, admission and Graph restart checks.
         "stage2CompareJobPriority" => {
             use std::cmp::Ordering;
@@ -4380,36 +4367,6 @@ fn invoke(request: &Value) -> Result<String, String> {
                 .into_iter()
                 .collect::<std::collections::BTreeMap<_, _>>();
             Ok(json!({"status":response.status,"headers":headers,"body":String::from_utf8_lossy(&response.body)}).to_string())
-        }
-        "webHelmRequest" => {
-            let req = agents_relay_rust2::webhelm_daemon_client::DaemonRequest {
-                op: request["payload"]["op"].as_str().unwrap_or("").into(),
-                fields: request["payload"].as_object().cloned().unwrap_or_default(),
-            };
-            let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
-                request["aborted"] == true,
-            ));
-            let abort_timer = request["abortAfterMs"].as_u64().map(|delay| {
-                let flag = std::sync::Arc::clone(&cancelled);
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(delay));
-                    flag.store(true, std::sync::atomic::Ordering::Release);
-                })
-            });
-            let outcome = agents_relay_rust2::webhelm_daemon_client::request_with_cancel(
-                request["socket"].as_str().ok_or("socket required")?,
-                &req,
-                std::time::Duration::from_millis(request["timeoutMs"].as_u64().unwrap_or(45000)),
-                if request.get("aborted").is_some() || abort_timer.is_some() {
-                    Some(&cancelled)
-                } else {
-                    None
-                },
-            );
-            if let Some(timer) = abort_timer {
-                let _ = timer.join();
-            }
-            Ok(outcome?.to_string())
         }
         "discoverAgents" => Ok(json!(agents_relay_rust2::registry::discover_agents(
             request["agents"]

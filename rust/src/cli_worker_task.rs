@@ -77,8 +77,8 @@ fn task_from_args_inner(
     if input.trim().is_empty(){
         return Err("task create requires --input-file PATH|- or --input MARKDOWN".into());
     }
-    if !matches!(adapter,"codex"|"chatgpt"|"z"){
-        return Err("task create --adapter must be codex, chatgpt, or z; orchestrator is reserved for legacy recovery only".into());
+    if !matches!(adapter,"codex"){
+        return Err("task create --adapter must be codex (use --profile neo for ChatGPT-backed execution); orchestrator is reserved for legacy recovery only".into());
     }
     if !matches!(output_kind,"local-git"|"file"){
         return Err("task create requires --output local-git|file".into());
@@ -86,7 +86,7 @@ fn task_from_args_inner(
     if output_kind=="file" && output_path.is_empty() {
         return Err("--output file requires --output-path".into());
     }
-    if ["--provider","--profile","--reasoning","--cwd","--chatgpt-project"]
+    if ["--provider","--profile","--reasoning","--cwd"]
         .iter().any(|flag|has_arg(args,flag)) && model.is_empty() {
         return Err("task create explicit routing requires --model".into());
     }
@@ -97,7 +97,7 @@ fn task_from_args_inner(
     if !model.is_empty(){
         for (flag,field) in [
             ("--profile","profile"),("--reasoning","reasoning"),
-            ("--cwd","cwd"),("--chatgpt-project","projectId")
+            ("--cwd","cwd")
         ] {
             if let Some(value)=nonempty(arg(args,flag,"")){routing[field]=json!(value);}
         }
@@ -107,13 +107,6 @@ fn task_from_args_inner(
     if requirements.is_object() && !adapter_value.is_empty(){
         requirements["runtime"]=json!(adapter);
     }
-    let tab_close_policy=if has_arg(args,"--chatgpt-tab-close-policy"){
-        let policy=arg(args,"--chatgpt-tab-close-policy","");
-        if !matches!(policy,"after-start"|"never"|"after-terminal"){
-            return Err("--chatgpt-tab-close-policy must be after-start, never, or after-terminal".into());
-        }
-        Some(policy)
-    }else{None};
     let size=arg(args,"--story-size","M").to_ascii_uppercase();
     if !matches!(size.as_str(),"S"|"M"|"L"){
         return Err("--story-size must be S, M, or L".into());
@@ -176,7 +169,6 @@ fn task_from_args_inner(
     // it as null changes the public Task API and future routing facts.
     if routing.is_null(){fields.as_object_mut().expect("Task fields").remove("routing");}
     if requirements.is_null(){fields.as_object_mut().expect("Task fields").remove("workerRequirements");}
-    if let Some(policy)=tab_close_policy{fields["chatgptTabClosePolicy"]=json!(policy);}
     if let Some(validity)=validity{fields["dependencyValidity"]=validity;}
     for (flag,key) in [("--title","title"),("--project","projectName"),
         ("--agent","agentName"),("--parent","parentTaskId")] {

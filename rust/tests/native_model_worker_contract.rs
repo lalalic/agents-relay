@@ -2,8 +2,7 @@
 //! disposable executable is used instead of invoking real Codex credentials,
 //! external ChatGPT/Z accounts, or a live WebHelm Session.
 use agents_relay_rust2::{
-    adapters::{CodexAdapter,parse_browser_worker_response,parse_driver_json},
-    z_adapter::z_worker_launch_request,
+    adapters::CodexAdapter,
 };
 use serde_json::json;
 use std::{fs,path::PathBuf,sync::atomic::AtomicBool,time::{SystemTime,UNIX_EPOCH}};
@@ -45,29 +44,4 @@ fn non_codex_test_executable_failure_is_technical_not_false_success(){
     let error=adapter.launch(&task,&context,&AtomicBool::new(false)).unwrap_err();
     assert!(error.contains("denied test token"),"{error}");
     fs::remove_dir_all(root).unwrap();
-}
-#[test]
-fn browser_receipts_reject_uncertain_and_temporary_submissions(){
-    assert!(parse_driver_json("{\"status\":\"submitted\"}\n").is_err());
-    assert!(parse_browser_worker_response(
-        "{\"status\":\"submitted\",\"verified\":false}","chatgpt").is_err());
-    let temp=json!({"status":"submitted","verified_by":"fixture",
-        "mode":"new-thread","thread_id":"fixture-12345678",
-        "thread_url":"https://chatgpt.com/c/fixture-12345678","temporary":true});
-    assert!(parse_browser_worker_response(&temp.to_string(),"chatgpt").is_err());
-    let receipt=json!({"status":"submitted","verified_by":"fixture",
-        "mode":"new-thread","thread_id":"fixture-12345678",
-        "thread_url":"https://chatgpt.com/c/fixture-12345678","temporary":false});
-    assert_eq!(parse_browser_worker_response(&receipt.to_string(),"chatgpt").unwrap(),receipt);
-}
-#[test]
-fn z_worker_transport_requires_generation_scoped_original_execution_source(){
-    let prompt="Execution source: job/17/task/22/execution/00000000-0000-0000-0000-000000000012\n";
-    let request=z_worker_launch_request(prompt,&[],"test-only-token",None,
-        "00000000-0000-0000-0000-000000000012",300000).unwrap();
-    assert_eq!(request["provider"],"z");
-    assert_eq!(request["action"],"new-thread");
-    assert_eq!(request["config"]["wait"],false);
-    assert!(z_worker_launch_request("invalid source",&[],"test-only-token",None,
-        "00000000-0000-0000-0000-000000000012",300000).is_err());
 }

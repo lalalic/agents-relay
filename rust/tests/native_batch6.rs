@@ -1,6 +1,6 @@
 // Node provenance: src/cli-artifact.ts, src/troubleshooter-qa-api.ts, src/webhelm-daemon-client.ts, src/dashboard-workflow-inspection.ts; deterministic native contract checks.
 use agents_relay_rust2::{
-    cli_artifact, dashboard_workflow_inspection, troubleshooter_qa_api as qa, webhelm_daemon_client,
+    cli_artifact, dashboard_workflow_inspection, troubleshooter_qa_api as qa,
 };
 use std::{fs, path::Path};
 #[test]
@@ -70,25 +70,4 @@ fn inspection_rejects_path_traversal() {
         "x"
     )
     .is_none());
-}
-
-#[test]
-fn webhelm_json_frame_contract_errors_and_timeout() {
-    assert_eq!(
-        webhelm_daemon_client::parse_response(br#"{"ok":true,"id":3}"#, "capacity").unwrap()["id"],
-        3
-    );
-    assert_eq!(
-        webhelm_daemon_client::parse_response(br#"{"error":"denied"}"#, "capacity").unwrap_err(),
-        "denied"
-    );
-    assert_eq!(
-        webhelm_daemon_client::parse_response(br#"{"ok":false}"#, "capacity").unwrap_err(),
-        "WebHelm daemon rejected request"
-    );
-    assert!(webhelm_daemon_client::parse_response(b"{bad", "capacity").is_err());
-    assert_eq!(
-        webhelm_daemon_client::timeout_error("capacity"),
-        "WebHelm daemon capacity timed out"
-    );
 }
