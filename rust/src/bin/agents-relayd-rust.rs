@@ -232,9 +232,22 @@ fn execute(args:&[String])->Result<(),String>{
         // and the process-wide owner lock are both established.
     }
     let cwd=std::env::current_dir().map_err(|e|e.to_string())?;
+    // In production, resolve the operator's actual Codex profiles and Relay
+    // routing policy. Relative .codex/.agents-relay paths under the daemon
+    // checkout silently fall back to an invented default model.
+    // Disposable isolated daemons retain fixture-scoped relative defaults.
+    let home=std::env::var_os("HOME").map(std::path::PathBuf::from)
+        .unwrap_or_else(||cwd.clone());
+    let config_home=if live_write{
+        agents_relay_rust2::model_routing::default_codex_home()
+    }else{cwd.join(".codex")};
+    let router_home=if live_write{home}else{cwd.clone()};
     let options=json!({
         "storeDirectory":canonical,"graphDirectory":cwd.join("workflow"),
         "dashboardAsset":cwd.join("dashboard/index.html"),
+        "codexHome":config_home,
+        "routingPolicyPath":router_home.join(".agents-relay/routing-policy.json"),
+        "routerRulesPath":router_home.join(".agents-relay/execution-router-rules.md"),
     });
     let config=DaemonConfig::from_argv(args,&options)?;
     unsafe{
