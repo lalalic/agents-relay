@@ -100,6 +100,45 @@ fn invalid_isolated_planner_output_fails_graph_round_without_creating_tasks(){
 }
 
 #[test]
+fn plan_apply_uses_provider_inventory_and_retries_without_skipping_graph_validation(){
+    use agents_relay_rust2::native_script_planner::apply_isolated_planner_proposal;
+    let (root,project,db,_script)=fixture("export async function run(){return null;}");
+    let sqlite=SQLiteRelayStore::open(&db,Some("17")).unwrap();
+    sqlite.save_job(&job(&project)).unwrap();
+    seeded_plan(&sqlite);
+    let generation="test-planner-exec-a";
+    sqlite.mutate_job("17",|mut job|{
+        job["plans"][0]["executionId"]=json!(generation);
+        Ok(job)
+    }).unwrap();
+    let proposal=json!({"objective_status":"in_progress",
+        "assessment":"Create verified implementation work",
+        "next_tasks":[{"id":"draft-ui-fix","title":"Fix task tree",
+            "agentName":"implementation","adapter":"codex","storySize":"S",
+            "priority":"P2","input":"Fix the hierarchy layout",
+            "routing":{"provider":"openai","model":"fixture-model",
+                "decidedBy":"planner","decidedAt":"2026-11-18T00:00:00Z"},
+            "output":{"kind":"file","path":project.join("proof.json")},
+            "dependencies":["2"]}],"unblocks":[]});
+    let missing=apply_isolated_planner_proposal(&db,&root.join("stores"),&graph(),
+        "17","plan-1",generation,&proposal,&[]).unwrap_err();
+    assert!(missing.contains("PLAN_APPLY_VALIDATION_FAILED"),"{missing}");
+    assert_eq!(sqlite.load_job("17").unwrap().unwrap()["tasks"].as_array().unwrap().len(),1);
+    let available=[json!({"workerId":"codex","id":"codex","adapter":"codex",
+        "runtime":"codex","capabilities":["model","codex","local_repo","iterative_tools"]})];
+    let committed=apply_isolated_planner_proposal(&db,&root.join("stores"),&graph(),
+        "17","plan-1",generation,&proposal,&available).unwrap();
+    assert_eq!(committed["status"],"SUCCEEDED");
+    let saved=sqlite.load_job("17").unwrap().unwrap();
+    assert_eq!(saved["tasks"].as_array().unwrap().len(),2);
+    assert_eq!(saved["tasks"][1]["state"],"QUEUED");
+    assert_eq!(saved["tasks"][1]["adapter"],"codex");
+    assert_eq!(saved["plans"][0]["appliedExecutionId"],generation);
+    drop(sqlite);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn planner_cannot_commit_new_model_task_without_an_installed_worker_transport(){
     let script=r#"export async function run({input}){
         return {objective_status:'in_progress',assessment:'Need isolated model validation',

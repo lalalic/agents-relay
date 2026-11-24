@@ -83,6 +83,8 @@ struct PlannerPorts {
     script:PathBuf,interpreter:PathBuf,codex:Option<PathBuf>,
     owner:String,timeout_ms:u64,
     live:Option<String>,
+    // Provider inventory comes from the daemon, not the Planner process.
+    available_workers:Option<Vec<Value>>,planner_route:Option<Value>,
 }
 impl PlannerFinishPorts for PlannerPorts {
     fn load(&mut self,id:&str)->Result<Value,String>{
@@ -126,6 +128,7 @@ impl PlannerFinishPorts for PlannerPorts {
             &self.db,&self.store_directory,&self.graph,job_id,request)
     }
     fn registered_workers(&mut self)->Result<Vec<Value>,String>{
+        if let Some(workers)=&self.available_workers{return Ok(workers.clone());}
         // A Planner cannot promise a Codex/Z worker while those production
         // adapters remain unconnected. Only an actual explicitly configured
         // isolated WebHelm socket/executable advertises ChatGPT capacity.
@@ -204,6 +207,7 @@ impl PlannerLaunchPorts for PlannerPorts {
         let db=self.db.clone();let script=self.script.clone();
         let interpreter=self.interpreter.clone();let owner=self.owner.clone();
         let model=self.codex.clone();let store_dir=self.store_directory.clone();
+        let planner_route=self.planner_route.clone();
         let context=if model.is_some(){
             let mut current=context;
             let host=std::env::current_exe().map_err(|e|e.to_string())?;
@@ -216,6 +220,7 @@ impl PlannerLaunchPorts for PlannerPorts {
             let native=std::fs::canonicalize(native)
                 .map_err(|e|format!("Native Planner CLI unavailable: {e}"))?;
             current["nativeRustCli"]=json!(native.to_string_lossy().to_string());
+            if let Some(route)=planner_route{current["plannerRoute"]=route;}
             current
         }else{context};
         Ok(Box::new(move||{
@@ -345,6 +350,7 @@ impl PlannerLaunchPorts for PlannerPorts {
 pub fn apply_isolated_planner_proposal(
     db:&Path,store_directory:&Path,graph:&Path,
     job_id:&str,plan_id:&str,execution_id:&str,proposal:&Value,
+    available_workers:&[Value],
 )->Result<Value,String>{
     if job_id.is_empty()||plan_id.is_empty()||execution_id.is_empty(){
         return Err("Planner apply requires exact Job/Plan/execution identities".into());
@@ -371,6 +377,7 @@ pub fn apply_isolated_planner_proposal(
         script:PathBuf::new(),interpreter:PathBuf::new(),codex:None,
         owner:"isolated-cli-plan-apply".into(),timeout_ms:0,
         live:Some(execution_id.to_string()),
+        available_workers:Some(available_workers.to_vec()),planner_route:None,
     };
     let root=store_directory.parent()
         .ok_or("Planner apply isolated store has no parent")?;
@@ -401,7 +408,7 @@ pub fn run_isolated_script_planner(
         graph:graph.to_path_buf(),
         script:script.to_path_buf(),interpreter:interpreter.to_path_buf(),codex:None,
         owner:format!("isolated-rust-planner-{}",std::process::id()),
-        timeout_ms,live:None,
+        timeout_ms,live:None,available_workers:None,planner_route:None,
     }));
     launch_plan_execution(ports,graph,&initial,&plan,true)?;
     store(db,job_id)?.load_job(job_id)?.ok_or("Planner result Job missing".into())
@@ -413,6 +420,16 @@ pub fn run_isolated_script_planner(
 pub fn run_native_codex_planner(
     db:&Path,store_directory:&Path,graph:&Path,
     job_id:&str,plan_id:&str,executable:&Path,timeout_ms:u64,
+)->Result<Value,String>{
+    run_native_codex_planner_with_route(db,store_directory,graph,job_id,plan_id,
+        executable,timeout_ms,None)
+}
+/// Provider/model/profile selection is done by the canonical execution router
+/// in the daemon before launching this Planner; this function only executes it.
+pub fn run_native_codex_planner_with_route(
+    db:&Path,store_directory:&Path,graph:&Path,
+    job_id:&str,plan_id:&str,executable:&Path,timeout_ms:u64,
+    planner_route:Option<Value>,
 )->Result<Value,String>{
     if !executable.is_absolute()||!executable.is_file(){
         return Err("Native Model Planner requires an explicit absolute Codex executable".into());
@@ -427,7 +444,7 @@ pub fn run_native_codex_planner(
         graph:graph.to_path_buf(),script:PathBuf::new(),interpreter:PathBuf::new(),
         codex:Some(executable.to_path_buf()),
         owner:format!("live-rust-model-planner-{}",std::process::id()),
-        timeout_ms,live:None,
+        timeout_ms,live:None,available_workers:None,planner_route,
     }));
     launch_plan_execution(ports,graph,&initial,&plan,true)?;
     store(db,job_id)?.load_job(job_id)?.ok_or("Native Model Planner result Job missing".into())

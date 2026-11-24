@@ -776,6 +776,26 @@ impl IsolatedSQLiteWriteHost {
     /// PlannerLaunchPorts/finishPlanner Script runner as manual job.plan.
     /// The Plan is already Graph-authorized and durably CAS-committed before
     /// this volatile effect. Never create a second Plan or launch Codex.
+    /// One provider inventory for both Plan Apply forward-convergence and
+    /// Planner route selection. Never advertise a transport that the daemon
+    /// has not explicitly initialized and verified.
+    fn available_model_workers(&self)->Vec<Value>{
+        let mut workers=Vec::new();
+        if self.model_codex_executable.is_some(){
+            workers.push(json!({"workerId":"codex","id":"codex","name":"codex",
+                "adapter":"codex","runtime":"codex",
+                "capabilities":["model","codex","local_repo","iterative_tools"]}));
+        }
+        if self.model_webhelm_canary.is_some() ||
+            (!self.live_store && IsolatedWebHelmConfig::from_test_store(
+                &self.config.store_directory).is_ok()){
+            workers.push(json!({"workerId":"chatgpt/browser-worker",
+                "id":"chatgpt/browser-worker","name":"chatgpt/browser-worker",
+                "adapter":"chatgpt","runtime":"chatgpt",
+                "capabilities":["model","chatgpt","webhelm"]}));
+        }
+        workers
+    }
     fn launch_graph_planner_effect(&mut self,action:&Value)->Result<(),String>{
         let id=field(action,"jobId");
         let plan_id=field(action,"planId");
@@ -837,6 +857,22 @@ impl IsolatedSQLiteWriteHost {
         }else{None};
         let timeout=plan.get("timeoutMs").and_then(Value::as_u64)
             .unwrap_or(60_000).clamp(100,86_400_000);
+        // A soft high-reasoning preference ranks *eligible* profiles; the
+        // DecisionRouter selects the actual model/profile from configured
+        // provider routes. No model or profile is invented by the Planner.
+        let planner_route=if codex.is_some()&&script.is_none(){
+            let workers=self.available_model_workers().into_iter()
+                .filter(|worker|field(worker,"adapter")=="codex")
+                .collect::<Vec<_>>();
+            let routed=crate::execution_routing::route_execution(
+                &workers,&json!({"capabilities":["model"]}),
+                &json!({"taskFacts":{"task":{"kind":"planner","agentName":"planner"},
+                    "routingPreferences":{"reasoning":"high"}},"decisionMode":"off"}),
+                &self.config.profile_home,&self.config.policy_path,
+                &self.config.router_rules_path,
+                chrono::Utc::now().timestamp_millis(),None,None,&[],None)?;
+            Some(routed)
+        }else{None};
         let graph=self.config.graph_directory.clone();
         let store_directory=self.config.store_directory.clone();
         let db=self.path();
@@ -848,8 +884,9 @@ impl IsolatedSQLiteWriteHost {
                     run_isolated_script_planner(&db,&store_directory,&graph,
                         &job_id,&plan_id,&script,&interpreter,timeout)
                 }else if let Some(executable)=codex{
-                    crate::native_script_planner::run_native_codex_planner(
-                        &db,&store_directory,&graph,&job_id,&plan_id,&executable,timeout)
+                    crate::native_script_planner::run_native_codex_planner_with_route(
+                        &db,&store_directory,&graph,&job_id,&plan_id,&executable,
+                        timeout,planner_route)
                 }else{Err("Automatic Planner provider lost before launch".into())};
                 if let Err(error)=result{
                     eprintln!("Native automatic Planner {job_id}/{plan_id}: {error}");
@@ -1129,9 +1166,11 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             let current=self.scoped(job_id)?.load_job(job_id)?
                 .ok_or("Planner apply Job not found")?;
             self.isolated_project(&current)?;
+            let available=self.available_model_workers();
             let committed=crate::native_script_planner::apply_isolated_planner_proposal(
                 &self.path(),&self.config.store_directory,
-                &self.config.graph_directory,job_id,plan_id,execution_id,proposal)?;
+                &self.config.graph_directory,job_id,plan_id,execution_id,proposal,
+                &available)?;
             let persisted={self.scoped(job_id)?.load_job(job_id)?};
             if let Some(job)=persisted{
                 self.emit_job_snapshot(&job);

@@ -31,3 +31,27 @@ fn exact_route_label_preserves_worker_provider_model_reasoning_and_default(){
     assert_eq!(execution_choice_label(&route,true),
         "worker=codex provider=openai model=gpt-6 reasoning=high default=true");
 }
+
+#[test]
+fn planner_prefers_strong_reasoning_via_canonical_router_without_pinning_model(){
+    use agents_relay_rust2::execution_routing::route_execution;
+    let root=std::env::temp_dir().join(format!("r2-planner-route-{}",
+        std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("config.toml"),
+        "model = \"baseline\"\nmodel_reasoning_effort = \"low\"\n").unwrap();
+    fs::write(root.join("quality.config.toml"),
+        "model = \"stronger\"\nmodel_reasoning_effort = \"high\"\n").unwrap();
+    let workers=[json!({"workerId":"codex","adapter":"codex",
+        "runtime":"codex","capabilities":["model","codex"]})];
+    let result=route_execution(&workers,&json!({"capabilities":["model"]}),
+        &json!({"taskFacts":{"task":{"kind":"planner"},
+            "routingPreferences":{"reasoning":"high"}},"decisionMode":"off"}),
+        &root,&root.join("policy.json"),&root.join("rules.md"),
+        1795000000000,None,None,&[],None).unwrap();
+    assert_eq!(result["model"]["model"],"stronger");
+    assert_eq!(result["model"]["profile"],"quality");
+    assert_eq!(result["model"]["reasoning"],"high");
+    assert_eq!(result["selection"]["adapter"],"codex");
+    fs::remove_dir_all(root).unwrap();
+}

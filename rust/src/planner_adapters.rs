@@ -171,7 +171,36 @@ impl AgentObjectivePlanner{
             .into_iter().flatten().find(|p|string(p,"id")==plan_id)
             .and_then(|p|p.get("threadId")).and_then(Value::as_str)
             .filter(|id|crate::native_codex_thread::valid_thread_id(id));
-        let argv=build_planner_codex_resume_args(store_directory,&prompt,previous);
+        let mut argv=build_planner_codex_resume_args(store_directory,&prompt,previous);
+        // Apply the route selected by DecisionRouter to the actual Codex CLI,
+        // not just to a prompt. Resume does not accept --profile, so use
+        // explicit model/provider configuration there.
+        if let Some(model)=context.pointer("/plannerRoute/model")
+            .filter(|value|value.is_object()){
+            let resume=previous.is_some();
+            let position=if resume{3}else{2};
+            let mut flags=Vec::new();
+            if let Some(profile)=model.get("profile").and_then(Value::as_str)
+                .filter(|value|!value.is_empty()){
+                if !resume{flags.extend(["--profile".into(),profile.into()]);}
+            }
+            if let Some(provider)=model.get("provider").and_then(Value::as_str)
+                .filter(|value|!value.is_empty()){
+                flags.extend(["--config".into(),
+                    format!("model_provider={}",serde_json::to_string(provider)
+                        .map_err(|error|error.to_string())?)]);
+            }
+            if let Some(name)=model.get("model").and_then(Value::as_str)
+                .filter(|value|!value.is_empty()){
+                flags.extend(["--model".into(),name.into()]);
+            }
+            if let Some(effort)=model.get("reasoning").and_then(Value::as_str)
+                .filter(|value|matches!(*value,"minimal"|"low"|"medium"|"high"|"xhigh")){
+                flags.extend(["--config".into(),
+                    format!("model_reasoning_effort=\"{effort}\"")]);
+            }
+            argv.splice(position..position,flags);
+        }
         let cwd=context.pointer("/executionContext/project/gitRoot")
             .or_else(||context.pointer("/executionContext/project/path"))
             .and_then(Value::as_str).map(Path::new);

@@ -57,6 +57,31 @@ fn unverified_codex_receipt_never_marks_plan_succeeded(){
     fs::remove_dir_all(root).unwrap();
 }
 #[test]
+#[cfg(unix)]
+fn native_planner_honors_router_selected_model_profile_and_reasoning(){
+    use std::os::unix::fs::PermissionsExt;
+    use agents_relay_rust2::native_script_planner::run_native_codex_planner_with_route;
+    let (root,_project,db)=fixture();
+    let fake=root.join("fake-codex");
+    let captured=root.join("captured-args.txt");
+    let script=format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > {}\nexit 7\n",captured.display());
+    fs::write(&fake,script).unwrap();
+    fs::set_permissions(&fake,fs::Permissions::from_mode(0o700)).unwrap();
+    let route=json!({"model":{"provider":"openai","model":"gpt-6-luna",
+        "reasoning":"high","profile":"quality"},
+        "selection":{"adapter":"codex","workerId":"codex"}});
+    let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+    let _=run_native_codex_planner_with_route(&db,&root.join("stores"),&graph,
+        "903","plan-1",&fake,4000,Some(route));
+    let args=fs::read_to_string(&captured).expect("Routed Codex must launch");
+    assert!(args.contains("--profile\nquality\n"),"{args}");
+    assert!(args.contains("--model\ngpt-6-luna\n"),"{args}");
+    assert!(args.contains("model_reasoning_effort=\"high\""),"{args}");
+    assert!(args.contains("model_provider=\"openai\""),"{args}");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn native_planner_requires_explicit_executable(){
     let (root,_project,db)=fixture();
     let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
