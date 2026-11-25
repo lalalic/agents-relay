@@ -74,86 +74,113 @@ pub fn persist_task_thread(db:&Path,job_id:&str,task_id:&str,execution_id:&str,i
     if !committed{return Err("Codex Thread ID was not committed".into());}
     Ok(())
 }
-/// Automatic provider fallback is allowed only for a *confirmed* quota
-/// rejection without any tool/action start in this turn. A malformed or
-/// ambiguous failure never authorizes replay of possible side effects.
-pub fn quota_failure_without_effects(stdout:&str,stderr:&str)->Option<String>{
-    let mut errors=Vec::<String>::new();
-    for line in stdout.lines(){
-        if line.trim().is_empty(){continue;}
-        let Ok(event)=serde_json::from_str::<Value>(line)else{return None};
-        let event_type=field(&event,"type");
-        if matches!(event_type,"item.started"|"item.updated"|"item.completed"){
-            // Covers command execution, file edits, MCP and other tool actions.
-            if !matches!(field(&event["item"],"type"),"reasoning"|"message"|"agent_message"){
-                return None;
-            }
-        }
-        if event_type=="turn.failed"{
-            let value=event.pointer("/error/message").and_then(Value::as_str)
-                .or_else(||event.get("message").and_then(Value::as_str));
-            if let Some(msg)=value{errors.push(msg.to_owned());}
-        }
-    }
-    // Arbitrary stderr without a recognized turn failure is not sufficient
-    // evidence to relaunch a possibly already-mutating Agent.
-    let _=stderr;
-    let quota=regex::Regex::new(r"(?i)(?:\b429\b|rate[_ -]?limit|quota|usage[_ -]?limit|credits? exhausted|insufficient credits|resource exhausted)").expect("static quota matcher");
-    errors.into_iter().find(|message|quota.is_match(message))
-        .map(|message|message.chars().take(250).collect())
+/// Incremental facts from the owned Codex stdout stream. Never retain
+/// conversation history or tool output. The Graph still owns retry policy.
+#[derive(Default)]
+pub struct CodexTurnFacts {
+    thread_id:Option<String>,
+    quota_valid:bool,
+    resume_valid:bool,
+    tool_seen:bool,
+    pending:std::collections::HashSet<String>,
+    terminal_seen:bool,
+    terminal_failure:Option<String>,
+    quota_without_effects:Option<String>,
+    continuation:Option<(&'static str,String)>,
 }
-
-/// A terminal provider rejection can continue a durable Codex thread even
-/// after completed tools. This is a continuation, never a fresh replay.
-/// Require a complete JSONL stream, a matching thread identity, no outstanding
-/// tool item, and a terminal turn.failed (not a transient error or tool text).
-pub fn resumable_provider_failure(stdout:&str,thread_id:&str)->Option<(&'static str,String)>{
-    if !valid_thread_id(thread_id){return None;}
-    let mut thread_seen=false;
-    let mut pending=std::collections::HashSet::<String>::new();
-    let mut tool_seen=false;
-    let mut terminal=None;
-    for line in stdout.lines().filter(|line|!line.trim().is_empty()){
-        let event:Value=serde_json::from_str(line).ok()?;
+impl CodexTurnFacts {
+    pub fn new()->Self{
+        Self{quota_valid:true,resume_valid:true,..Self::default()}
+    }
+    pub fn observe(&mut self,line:&str)->Option<String>{
+        if line.trim().is_empty(){return None;}
+        let Ok(event)=serde_json::from_str::<Value>(line)else{
+            self.quota_valid=false;
+            self.resume_valid=false;
+            self.pending.clear();
+            return None;
+        };
         let kind=field(&event,"type");
-        if terminal.is_some(){return None;}
+        if self.terminal_seen{self.resume_valid=false;}
         match kind{
             "thread.started"=>{
-                if field(&event,"thread_id")!=thread_id{return None;}
-                thread_seen=true;
+                let id=field(&event,"thread_id");
+                if !valid_thread_id(id)||self.thread_id.as_deref().is_some_and(|prior|prior!=id){
+                    self.resume_valid=false;
+                }else{self.thread_id=Some(id.to_owned());}
             },
             "item.started"|"item.updated"|"item.completed"=>{
                 let item=&event["item"];
                 let item_type=field(item,"type");
-                if matches!(item_type,"reasoning"|"message"|"agent_message"|"todo_list"){continue;}
-                tool_seen=true;
-                let id=field(item,"id");
-                if id.is_empty()||item_type.is_empty(){return None;}
-                if kind=="item.completed"{
-                    if matches!(field(item,"status"),"in_progress"|"pending"|"running"){return None;}
-                    pending.remove(id);
-                }else{
-                    pending.insert(id.to_owned());
+                if !matches!(item_type,"reasoning"|"message"|"agent_message"){
+                    self.quota_valid=false;
+                }
+                if !matches!(item_type,"reasoning"|"message"|"agent_message"|"todo_list"){
+                    self.tool_seen=true;
+                    if self.resume_valid{
+                        let id=field(item,"id");
+                        if id.is_empty()||item_type.is_empty(){
+                            self.resume_valid=false;
+                        }else if kind=="item.completed"{
+                            if matches!(field(item,"status"),"in_progress"|"pending"|"running"){
+                                self.resume_valid=false;
+                            }else{self.pending.remove(id);}
+                        }else{
+                            self.pending.insert(id.to_owned());
+                        }
+                    }
                 }
             },
             "turn.failed"=>{
-                terminal=event.pointer("/error/message").and_then(Value::as_str)
-                    .map(str::to_owned);
-                if terminal.is_none(){return None;}
+                self.terminal_seen=true;
+                let message=event.pointer("/error/message").and_then(Value::as_str);
+                self.terminal_failure=Some(message.unwrap_or("Codex turn failed").chars().take(1500).collect());
+                if self.quota_valid&&self.quota_without_effects.is_none(){
+                    if let Some(msg)=message.or_else(||event.get("message").and_then(Value::as_str)){
+                        let quota=regex::Regex::new(r"(?i)(?:\b429\b|rate[_ -]?limit|quota|usage[_ -]?limit|credits? exhausted|insufficient credits|resource exhausted)").expect("static quota matcher");
+                        if quota.is_match(msg){self.quota_without_effects=Some(msg.chars().take(250).collect());}
+                    }
+                }
+                if let Some(msg)=message{
+                    let quota=regex::Regex::new(r"(?i)(?:\b429\b|rate[_ -]?limit[_ -]?exceeded|quota[_ -]?exceeded|usage[_ -]?limit reached|weekly/monthly limit exhausted|insufficient[_ -]?quota|credits? exhausted|insufficient credits|resource exhausted)").expect("static provider quota matcher");
+                    let incompatible=!self.tool_seen&&msg.contains("array_above_max_length")
+                        &&msg.contains("input[")&&msg.contains(".content")
+                        &&msg.contains("invalid_request_error");
+                    let classification=if quota.is_match(msg){Some("quota_exhausted")}
+                        else if incompatible{Some("resume_context_incompatible")}else{None};
+                    self.continuation=classification.map(|kind|(kind,msg.chars().take(500).collect()));
+                }else{self.resume_valid=false;}
             },
-            "turn.completed"=>return None,
+            "turn.completed"=>self.resume_valid=false,
             "turn.started"|"error"=>{},
-            // Unknown records must not silently authorize replay of a tool.
-            _=>return None,
+            _=>self.resume_valid=false,
         }
+        if !self.resume_valid{self.pending.clear();}
+        if kind=="thread.started"{
+            let id=field(&event,"thread_id");
+            if valid_thread_id(id){return Some(id.to_owned());}
+        }
+        None
     }
-    if !thread_seen||!pending.is_empty(){return None;}
-    let message=terminal?;
-    let quota=regex::Regex::new(r"(?i)(?:\b429\b|rate[_ -]?limit[_ -]?exceeded|quota[_ -]?exceeded|usage[_ -]?limit reached|weekly/monthly limit exhausted|insufficient[_ -]?quota|credits? exhausted|insufficient credits|resource exhausted)").expect("static provider quota matcher");
-    let incompatible=!tool_seen && message.contains("array_above_max_length")
-        && message.contains("input[") && message.contains(".content")
-        && message.contains("invalid_request_error");
-    let classification=if quota.is_match(&message){"quota_exhausted"}
-        else if incompatible{"resume_context_incompatible"}else{return None;};
-    Some((classification,message.chars().take(500).collect()))
+    pub fn terminal_failure(&self)->Option<&str>{self.terminal_failure.as_deref()}
+    pub fn quota_failure_without_effects(&self)->Option<String>{
+        if self.quota_valid{self.quota_without_effects.clone()}else{None}
+    }
+    pub fn resumable_provider_failure(&self,thread_id:&str)->Option<(&'static str,String)>{
+        if self.resume_valid&&self.thread_id.as_deref()==Some(thread_id)
+            &&self.pending.is_empty(){self.continuation.clone()}else{None}
+    }
+}
+
+/// Compatibility helpers for callers with a complete in-memory test transcript.
+/// The native Worker feeds the same parser incrementally from its owned pipe.
+pub fn quota_failure_without_effects(stdout:&str,_stderr:&str)->Option<String>{
+    let mut facts=CodexTurnFacts::new();
+    for line in stdout.lines(){facts.observe(line);}
+    facts.quota_failure_without_effects()
+}
+pub fn resumable_provider_failure(stdout:&str,thread_id:&str)->Option<(&'static str,String)>{
+    let mut facts=CodexTurnFacts::new();
+    for line in stdout.lines(){facts.observe(line);}
+    facts.resumable_provider_failure(thread_id)
 }

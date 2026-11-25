@@ -2,8 +2,8 @@
 //! Provider process exit is NOT a Graph task.started/completed receipt.
 use crate::{
     execution_process_tracker::monitor_execution_process,
-    native_codex_thread::{build_codex_turn_args,parse_thread_started,persist_task_thread,
-        quota_failure_without_effects,resumable_provider_failure},
+    native_codex_thread::{build_codex_turn_args,persist_task_thread,
+        CodexTurnFacts},
     owned_process::{OwnedProcessManager,OwnedProcessOptions,TerminationReason},
     relay_store::SQLiteRelayStore,
     reconciler_context::{worker_managed_prompt,WorkerContextRoots},
@@ -114,41 +114,55 @@ pub fn execute_claimed_codex(
     let xid=execution_id.to_owned();
     let prior=prior_thread.map(str::to_owned);
     let output_thread=thread::spawn(move||{
-        let mut data=Vec::new();
-        let mut recorded=prior.is_some();
+        let mut facts=CodexTurnFacts::new();
+        let mut recorded=prior;
         let mut read_error:Option<String>=None;
-        // Always drain the entire owned stdout pipe even after an invalid
-        // thread/oversized output. Exiting the reader early could block the
-        // child on a full pipe and strand the process monitor indefinitely.
-        for line in BufReader::new(stdout).lines(){
-            let line=line.map_err(|e|e.to_string())?;
+        // Drain stdout for the entire owned process. Keep only parsed facts
+        // and one event at a time, never an accumulated transcript.
+        let mut reader=BufReader::new(stdout);
+        let mut bytes=Vec::new();
+        loop{
+            bytes.clear();
+            if reader.read_until(b'\n',&mut bytes).map_err(|e|e.to_string())?==0{break;}
             if read_error.is_some(){continue;}
-            if !recorded {
-                if let Some(id)=parse_thread_started(&line){
-                    match persist_task_thread(&db_for_thread,&jid,&tid,&xid,&id){
-                        Ok(())=>recorded=true,
+            let line=match std::str::from_utf8(&bytes){
+                Ok(line)=>line,
+                Err(error)=>{read_error=Some(error.to_string());continue;}
+            };
+            if let Some(id)=facts.observe(line){
+                match recorded.as_deref(){
+                    None=>match persist_task_thread(&db_for_thread,&jid,&tid,&xid,&id){
+                        Ok(())=>recorded=Some(id),
                         Err(error)=>{read_error=Some(error);continue;}
-                    }
-                }
-            }else if let Some(id)=parse_thread_started(&line){
-                if prior.as_ref().is_some_and(|previous|previous!=&id){
-                    read_error=Some("Codex resumed a different thread".into());
-                    continue;
+                    },
+                    Some(previous) if previous!=id=>{
+                        read_error=Some("Codex resumed a different thread".into());
+                        continue;
+                    },
+                    _=>{},
                 }
             }
-            if data.len()+line.len()+1>2*1024*1024{
-                read_error=Some("Codex JSONL output exceeded 2MiB cap".into());
-                continue;
-            }
-            data.extend_from_slice(line.as_bytes());data.push(b'\n');
+            // Release an unusually large event allocation rather than
+            // retaining its tool output capacity for the rest of the turn.
+            if bytes.capacity()>64*1024{bytes=Vec::new();}
         }
         if let Some(error)=read_error{return Err(error);}
-        Ok::<Vec<u8>,String>(data)
+        Ok::<CodexTurnFacts,String>(facts)
     });
     let error_thread=thread::spawn(move||{
-        let mut data=Vec::new();
-        stderr.take(64*1024+1).read_to_end(&mut data)
-            .map(|_|data).map_err(|e|e.to_string())
+        // Keep a bounded diagnostic tail but always drain stderr to EOF.
+        let mut stderr=stderr;
+        let mut chunk=[0u8;8192];
+        let mut tail=Vec::new();
+        loop{
+            let n=stderr.read(&mut chunk).map_err(|e|e.to_string())?;
+            if n==0{break;}
+            tail.extend_from_slice(&chunk[..n]);
+            if tail.len()>64*1024{
+                tail.drain(..tail.len()-64*1024);
+            }
+        }
+        Ok::<Vec<u8>,String>(tail)
     });
     let status=loop{
         if let Some(status)=child.exit_status()?{break status;}
@@ -158,13 +172,8 @@ pub fn execute_claimed_codex(
         .and_then(|store|store.finish_execution_process(job_id,task_id,execution_id,None));
     let output=output_thread.join().map_err(|_|"Codex stdout reader panicked")??;
     let errors=error_thread.join().map_err(|_|"Codex stderr reader panicked")??;
-    let stdout=String::from_utf8_lossy(&output);
     let stderr=String::from_utf8_lossy(&errors);
-    let structured=stdout.lines().filter_map(|line|{
-        let event=serde_json::from_str::<Value>(line).ok()?;
-        (field(&event,"type")=="turn.failed").then(||event.pointer("/error/message")
-            .and_then(Value::as_str).unwrap_or("Codex turn failed").to_owned())
-    }).last();
+    let structured=output.terminal_failure().map(str::to_owned);
     if !status.success() || structured.is_some(){
         // Check the persisted thread and current execution fence before
         // permitting continuation after already completed tool effects.
@@ -173,13 +182,13 @@ pub fn execute_claimed_codex(
                 .find(|t|field(t,"id")==task_id).cloned());
         if let Some(thread)=current.as_ref().filter(|t|field(t,"executionId")==execution_id)
             .map(|t|field(t,"threadId")).filter(|id|!id.is_empty()){
-            if let Some((kind,reason))=resumable_provider_failure(&stdout,thread){
+            if let Some((kind,reason))=output.resumable_provider_failure(thread){
                 if kind!="resume_context_incompatible" || prior_thread.is_some(){
                     return Err(format!("codex_provider_continuation_{kind}: {reason}"));
                 }
             }
         }
-        if let Some(reason)=quota_failure_without_effects(&stdout,&stderr){
+        if let Some(reason)=output.quota_failure_without_effects(){
             return Err(format!("codex_quota_no_side_effects: {reason}"));
         }
         return Err(structured.unwrap_or_else(||{

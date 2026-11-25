@@ -133,3 +133,59 @@ fn codex_review_handoff_requires_exact_live_host_binding_not_completion(){
         assert!(!valid_codex_review_handoff(&changed,run));
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn long_stdout_preserves_real_graph_completion_and_thread_identity(){
+    use agents_relay_rust2::{
+        events::event_for,execution_event_identity::execution_event_source,
+        native_worker_event_ingress::apply_verified_worker_event,
+    };
+    use std::{os::unix::fs::PermissionsExt,path::Path,time::{Duration,Instant}};
+    let root=fixture();let db=root.join("relay.sqlite");
+    let script=root.join("fake-native-codex");
+    let thread_id="38f84f9e-410d-4e36-96e0-a420594a102d";
+    let execution="test-source-generation-1";
+    fs::write(&script,format!(r#"#!/bin/sh
+set -e
+printf '%s\n' '{{"type":"thread.started","thread_id":"{thread_id}"}}'
+awk 'BEGIN {{printf "{{\"type\":\"item.completed\",\"item\":{{\"type\":\"agent_message\",\"text\":\""; for(i=0;i<3100000;i++)printf "x"; print "\"}}}}"}}'
+touch ready
+i=0
+while [ ! -f done ] && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i+1)); done
+[ -f done ]
+printf '%s\n' '{{"type":"turn.completed"}}'
+"#)).unwrap();
+    fs::set_permissions(&script,fs::Permissions::from_mode(0o700)).unwrap();
+    let record=job(&root);
+    let store=SQLiteRelayStore::open(&db,Some("9001")).unwrap();
+    store.save_job(&record).unwrap();store.close().unwrap();
+    std::thread::scope(|scope|{
+        let worker=scope.spawn(||execute_claimed_codex(&db,&record,&record["tasks"][0],
+            &script,&root,&WorkerContextRoots::isolated(&root)));
+        let deadline=Instant::now()+Duration::from_secs(10);
+        loop{
+            let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("9001")).unwrap();
+            let saved=store.load_job("9001").unwrap().unwrap();
+            if root.join("ready").exists()&&saved["tasks"][0]["threadId"]==thread_id{break;}
+            assert!(Instant::now()<deadline,"Worker did not drain long stdout");
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        let source=json!({"id":execution_event_source("9001","9002",execution),
+            "agent":"fixture","component":"agents-relay"});
+        let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+        let started=event_for("9001","9002",None,"task.started","started",
+            "fixture Graph start",None,None,Some(source.clone()));
+        let completed=event_for("9001","9002",None,"task.completed","completed",
+            "fixture Graph completion",None,None,Some(source));
+        apply_verified_worker_event(&db,&graph,"9001","9002",execution,&started).unwrap();
+        apply_verified_worker_event(&db,&graph,"9001","9002",execution,&completed).unwrap();
+        fs::write(root.join("done"),"done").unwrap();
+        worker.join().unwrap().expect("long stdout must not override durable completion");
+    });
+    let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("9001")).unwrap();
+    let saved=store.load_job("9001").unwrap().unwrap();
+    assert_eq!(saved["tasks"][0]["state"],"SUCCEEDED");
+    assert_eq!(saved["tasks"][0]["threadId"],thread_id);
+    drop(store);fs::remove_dir_all(root).unwrap();
+}

@@ -198,6 +198,9 @@ fn actual_owned_worker_quota_fallback_preserves_artifact_thread_and_budget(){
     fs::write(&file,format!(r#"#!/bin/sh
 printf '%s\n' '{{"type":"thread.started","thread_id":"{THREAD}"}}' '{{"type":"turn.started"}}' '{{"type":"item.started","item":{{"id":"item_1","type":"command_execution","status":"in_progress"}}}}'
 printf partial > '{}'
+awk 'BEGIN {{printf "{{\"type\":\"item.updated\",\"item\":{{\"id\":\"item_1\",\"type\":\"command_execution\",\"aggregated_output\":\""; for(i=0;i<3100000;i++)printf "x"; print "\"}}}}"}}'
+awk 'BEGIN {{for(i=0;i<3000;i++){{printf "{{\"type\":\"item.updated\",\"item\":{{\"id\":\"item_1\",\"type\":\"command_execution\",\"aggregated_output\":\""; for(j=0;j<1024;j++)printf "y"; print "\"}}}}"}}}}'
+awk 'BEGIN {{for(i=0;i<150000;i++)printf "e"}}' >&2
 printf '%s\n' '{{"type":"item.completed","item":{{"id":"item_1","type":"command_execution","status":"completed","exit_code":0}}}}' '{{"type":"turn.failed","error":{{"message":"rate limit exceeded: Weekly/Monthly Limit Exhausted."}}}}'
 exit 1
 "#,artifact.display())).unwrap();
@@ -234,4 +237,31 @@ exit 1
     let no_thread=classify_worker_launch_failure(Some(&json!({"adapter":"codex","agentName":"fixture"})),&json!(failure.message),"process",Some("execution-1"),Some("execution-1"),true,true,false);
     assert_eq!(no_thread.facts["platformFallbackSafe"],false);
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn incremental_facts_keep_failure_guards_after_long_output(){
+    use agents_relay_rust2::native_codex_thread::CodexTurnFacts;
+    let head=json!({"type":"thread.started","thread_id":THREAD}).to_string();
+    let started=r#"{"type":"item.started","item":{"id":"item_1","type":"command_execution","status":"in_progress"}}"#;
+    let completed=r#"{"type":"item.completed","item":{"id":"item_1","type":"command_execution","status":"completed"}}"#;
+    let quota=r#"{"type":"turn.failed","error":{"message":"429 quota exceeded"}}"#;
+    let long=json!({"type":"item.completed","item":{"type":"agent_message","text":"x".repeat(3*1024*1024)}}).to_string();
+    for (suffix,eligible) in [(vec![completed,quota],true),(vec![quota],false),
+        (vec![completed,"{bad json}",quota],false),(vec![completed,quota,r#"{"type":"turn.completed"}"#],false)]{
+        let mut facts=CodexTurnFacts::new();
+        assert_eq!(facts.observe(&head).as_deref(),Some(THREAD));
+        facts.observe(started);
+        facts.observe(&long);
+        for line in suffix{facts.observe(line);}
+        assert_eq!(facts.resumable_provider_failure(THREAD).is_some(),eligible);
+        assert!(facts.quota_failure_without_effects().is_none());
+    }
+    let mut facts=CodexTurnFacts::new();
+    facts.observe(&head);
+    facts.observe(&long);
+    facts.observe(quota);
+    assert!(facts.quota_failure_without_effects().is_some());
+    assert!(facts.resumable_provider_failure(THREAD).is_some());
+    assert!(facts.resumable_provider_failure("38f84f9e-410d-4e36-96e0-a420594a102e").is_none());
 }
