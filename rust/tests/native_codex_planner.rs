@@ -128,3 +128,43 @@ fn planner_new_round_resumes_previous_codex_thread_but_not_plan_verdict(){
     assert!(!args.contains(&"--last".to_string()));
     drop(store);fs::remove_dir_all(root).unwrap();
 }
+
+
+#[test]
+#[cfg(unix)]
+fn routed_planner_resumes_only_compatible_bound_thread(){
+    use std::os::unix::fs::PermissionsExt;
+    use agents_relay_rust2::native_script_planner::run_native_codex_planner_with_route;
+    const OLD:&str="38f84f9e-410d-4e36-96e0-a420594a102d";
+    const NEW:&str="38f84f9e-410d-4e36-96e0-a420594a102e";
+    for same in [true,false]{
+        let (root,_project,db)=fixture();
+        let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("903")).unwrap();
+        let mut job=store.load_job("903").unwrap().unwrap();
+        let old=json!({"provider":"zai","model":"glm-5.3-flash","profile":"zai"});
+        job["plans"][0]["threadId"]=json!(OLD);
+        job["plans"][0]["threadRoute"]=old.clone();
+        store.save_job(&job).unwrap();drop(store);
+        let selected=if same{old}else{json!({"provider":"openai","model":"gpt-6-luna"})};
+        let fake=root.join("fake-codex");
+        let captured=root.join("captured-args.txt");
+        let observed=if same{OLD}else{NEW};
+        fs::write(&fake,format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nprintf '%s\\n' '{{\"type\":\"thread.started\",\"thread_id\":\"{observed}\"}}'\nexit 7\n",captured.display())).unwrap();
+        fs::set_permissions(&fake,fs::Permissions::from_mode(0o700)).unwrap();
+        let route=json!({"model":selected,"selection":{"adapter":"codex","workerId":"codex"}});
+        let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+        let _=run_native_codex_planner_with_route(&db,&root.join("stores"),&graph,
+            "903","plan-1",&fake,4000,Some(route));
+        let args=fs::read_to_string(&captured).unwrap();
+        assert_eq!(args.lines().any(|l|l=="resume"),same,"{args}");
+        if !same{assert!(args.contains("previousThreadId")&&args.contains(OLD));}
+        let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("903")).unwrap();
+        let after=store.load_job("903").unwrap().unwrap();
+        assert_eq!(after["plans"][0]["threadId"],observed);
+        if !same{
+            assert_eq!(after["plans"][0]["threadHistory"][0]["threadId"],OLD);
+            assert_eq!(after["plans"][0]["threadRoute"]["provider"],"openai");
+        }
+        drop(store);fs::remove_dir_all(root).unwrap();
+    }
+}

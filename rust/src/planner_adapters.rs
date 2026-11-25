@@ -167,22 +167,26 @@ impl AgentObjectivePlanner{
         let (plan_id,execution_id)=plan_identity(context)?;
         let prompt=build_planner_execution_prompt(context,repository_root,
             self.agent_file.as_deref(),"codex",prompt_snapshot_dir)?;
-        let previous=context.pointer("/job/plans").and_then(Value::as_array)
-            .into_iter().flatten().find(|p|string(p,"id")==plan_id)
-            .and_then(|p|p.get("threadId")).and_then(Value::as_str)
-            .filter(|id|crate::native_codex_thread::valid_thread_id(id));
-        let mut argv=build_planner_codex_resume_args(store_directory,&prompt,previous);
+        let plan=context.pointer("/job/plans").and_then(Value::as_array)
+            .into_iter().flatten().find(|p|string(p,"id")==plan_id);
+        let route=context.pointer("/plannerRoute/model").unwrap_or(&Value::Null);
+        let previous=plan.and_then(|p|crate::native_codex_thread::compatible_thread(p,route));
+        let prompt=plan.map(|p|crate::native_codex_thread::recovery_prompt(
+            p,route,&crate::model_routing::default_codex_home(),&prompt)).unwrap_or(prompt);
+        let mut argv=if let Some(id)=previous{
+            crate::native_codex_thread::build_codex_turn_args(route,"",&prompt,Some(id))?
+        }else{
+            build_planner_codex_resume_args(store_directory,&prompt,None)
+        };
         // Apply the route selected by DecisionRouter to the actual Codex CLI,
-        // not just to a prompt. Resume does not accept --profile, so use
-        // explicit model/provider configuration there.
+        // not just to a prompt. The shared resume builder already applied it.
         if let Some(model)=context.pointer("/plannerRoute/model")
-            .filter(|value|value.is_object()){
-            let resume=previous.is_some();
-            let position=if resume{3}else{2};
+            .filter(|value|value.is_object()&&previous.is_none()){
+            let position=2;
             let mut flags=Vec::new();
             if let Some(profile)=model.get("profile").and_then(Value::as_str)
                 .filter(|value|!value.is_empty()){
-                if !resume{flags.extend(["--profile".into(),profile.into()]);}
+                flags.extend(["--profile".into(),profile.into()]);
             }
             if let Some(provider)=model.get("provider").and_then(Value::as_str)
                 .filter(|value|!value.is_empty()){

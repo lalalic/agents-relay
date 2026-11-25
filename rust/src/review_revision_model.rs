@@ -247,6 +247,7 @@ fn record_revision_request_inner(
             let id=field(&owner,"threadId");
             if crate::native_codex_thread::valid_thread_id(id){
                 value["threadId"]=json!(id);
+                if let Some(binding)=owner.get("threadRoute"){value["threadRoute"]=binding.clone();}
             }
         }
         let child = create_task_entity(graph_dir, job, &value, true, &now)?;

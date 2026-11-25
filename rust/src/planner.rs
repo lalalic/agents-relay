@@ -205,6 +205,7 @@ pub fn create_plan_round(
     if let Some(previous)=plans.iter().rev().find(|p|
         crate::native_codex_thread::valid_thread_id(field(p,"threadId"))){
         result["threadId"]=previous["threadId"].clone();
+        if let Some(binding)=previous.get("threadRoute"){result["threadRoute"]=binding.clone();}
     }
     if let Some(guidance)=guidance{result["guidance"]=json!(guidance);}
     // JSON.stringify omits undefined Node Plan fields rather than storing

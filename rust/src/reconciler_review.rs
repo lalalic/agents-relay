@@ -248,6 +248,7 @@ pub fn create_final_review_task(
                 &&field(task,"state")=="SUCCEEDED"
                 &&crate::native_codex_thread::valid_thread_id(field(task,"threadId"))){
             fields["threadId"]=previous["threadId"].clone();
+            if let Some(binding)=previous.get("threadRoute"){fields["threadRoute"]=binding.clone();}
         }
     }
     create_task_entity(graph_directory,job,&fields,false,&now)

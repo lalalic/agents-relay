@@ -2,7 +2,7 @@
 //! Provider process exit is NOT a Graph task.started/completed receipt.
 use crate::{
     execution_process_tracker::monitor_execution_process,
-    native_codex_thread::{build_codex_turn_args,persist_task_thread,
+    native_codex_thread::{build_codex_turn_args,persist_task_thread,compatible_thread,recovery_prompt,
         CodexTurnFacts},
     owned_process::{OwnedProcessManager,OwnedProcessOptions,TerminationReason},
     relay_store::SQLiteRelayStore,
@@ -71,10 +71,9 @@ pub fn execute_claimed_codex(
     // remain mandatory; unrestricted shell access is not Task success.
     let prior_thread=task.get("threadId").and_then(Value::as_str)
         .filter(|id|!id.is_empty());
-    if prior_thread.is_some() && task.pointer("/platformFailure/safeToReroute")==Some(&Value::Bool(true)){
-        prompt=format!("Continue the interrupted Task in this existing Codex thread, using its preserved conversation and existing artifacts. Do not repeat completed commands, file writes, publications or external actions. Verify current state before any further action; only complete unfinished work and emit lifecycle events for the NEW execution identity below. If continuation cannot be safely established, fail closed.\n\n{prompt}");
-    }
-    let args=build_codex_turn_args(route,cwd,&prompt,prior_thread)?;
+    let resume_thread=compatible_thread(task,route);
+    prompt=recovery_prompt(task,route,&crate::model_routing::default_codex_home(),&prompt);
+    let args=build_codex_turn_args(route,cwd,&prompt,resume_thread)?;
     let refs=args.iter().map(String::as_str).collect::<Vec<_>>();
     let mut manager=OwnedProcessManager::default();
     let child=manager.spawn_owned_process_piped(
@@ -113,9 +112,11 @@ pub fn execute_claimed_codex(
     let jid=job_id.to_owned();let tid=task_id.to_owned();
     let xid=execution_id.to_owned();
     let prior=prior_thread.map(str::to_owned);
+    let resume=resume_thread.map(str::to_owned);
+    let launched_route=route.clone();
     let output_thread=thread::spawn(move||{
         let mut facts=CodexTurnFacts::new();
-        let mut recorded=prior;
+        let mut recorded=resume;
         let mut read_error:Option<String>=None;
         // Drain stdout for the entire owned process. Keep only parsed facts
         // and one event at a time, never an accumulated transcript.
@@ -131,7 +132,7 @@ pub fn execute_claimed_codex(
             };
             if let Some(id)=facts.observe(line){
                 match recorded.as_deref(){
-                    None=>match persist_task_thread(&db_for_thread,&jid,&tid,&xid,&id){
+                    None=>match persist_task_thread(&db_for_thread,&jid,&tid,&xid,&id,prior.as_deref(),&launched_route){
                         Ok(())=>recorded=Some(id),
                         Err(error)=>{read_error=Some(error);continue;}
                     },
@@ -183,7 +184,7 @@ pub fn execute_claimed_codex(
         if let Some(thread)=current.as_ref().filter(|t|field(t,"executionId")==execution_id)
             .map(|t|field(t,"threadId")).filter(|id|!id.is_empty()){
             if let Some((kind,reason))=output.resumable_provider_failure(thread){
-                if kind!="resume_context_incompatible" || prior_thread.is_some(){
+                if kind!="resume_context_incompatible" || resume_thread.is_some(){
                     return Err(format!("codex_provider_continuation_{kind}: {reason}"));
                 }
             }

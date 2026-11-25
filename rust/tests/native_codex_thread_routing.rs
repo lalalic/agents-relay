@@ -1,6 +1,6 @@
 use agents_relay_rust2::reconciler_context::WorkerContextRoots;
 use agents_relay_rust2::{
-    native_codex_thread::{build_codex_turn_args,persist_task_thread,parse_thread_started,quota_failure_without_effects,resumable_provider_failure},
+    native_codex_thread::{build_codex_turn_args,persist_task_thread,parse_thread_started,quota_failure_without_effects,resumable_provider_failure,compatible_thread,thread_route,find_session_file,recovery_prompt,attach_thread},
     model_routing::{codex_profile_candidates,deterministic_model,eligible_models},
     native_codex_execution::execute_claimed_codex,
     relay_store::SQLiteRelayStore,
@@ -13,6 +13,7 @@ use agents_relay_rust2::{
 use serde_json::{json,Value};
 use std::{fs,path::{Path,PathBuf},time::{SystemTime,UNIX_EPOCH}};
 const THREAD:&str="38f84f9e-410d-4e36-96e0-a420594a102d";
+const NEW_THREAD:&str="38f84f9e-410d-4e36-96e0-a420594a102e";
 fn fixture()->PathBuf{
     let dir=std::env::temp_dir().join(format!("codex-thread-router-{}-{}",
         std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
@@ -51,18 +52,18 @@ fn one_model_per_profile_and_catalog_not_fallback(){
     fs::remove_dir_all(home).unwrap();
 }
 #[test]
-fn resume_switches_provider_profile_model_without_losing_thread(){
+fn resume_args_use_compatible_provider_profile_and_model(){
     let new=build_codex_turn_args(&json!({"provider":"zai","model":"glm-5.3-flash","profile":"zai"}),
         "/tmp","first turn",None).unwrap();
     assert!(new.contains(&"zai".to_owned()));
     assert!(!new.contains(&"resume".to_owned()));
-    let resume=build_codex_turn_args(&json!({"provider":"openai","model":"gpt-6-luna","reasoning":"high"}),
+    let resume=build_codex_turn_args(&json!({"provider":"zai","model":"glm-5.3-flash","profile":"zai","reasoning":"high"}),
         "/tmp","continue in context",Some(THREAD)).unwrap();
     assert!(resume.contains(&"resume".to_owned()));
     assert!(resume.contains(&THREAD.to_owned()));
-    assert!(resume.contains(&"gpt-6-luna".to_owned()));
-    assert!(resume.contains(&"model_provider=\"openai\"".to_owned()));
-    assert!(!resume.contains(&"zai".to_owned()));
+    assert!(resume.contains(&"glm-5.3-flash".to_owned()));
+    assert!(resume.contains(&"model_provider=\"zai\"".to_owned()));
+    assert!(resume.contains(&"zai".to_owned()));
     assert!(!resume.contains(&"-C".to_owned()));
     assert_eq!(resume.iter().filter(|v|v.as_str()=="--dangerously-bypass-approvals-and-sandbox").count(),1);
     assert_eq!(parse_thread_started(&format!(r#"{{"type":"thread.started","thread_id":"{THREAD}"}}"#)).as_deref(),Some(THREAD));
@@ -74,16 +75,17 @@ fn thread_id_is_durable_and_fenced_to_current_execution(){
     let root=fixture();let db=root.join("relay.sqlite");
     let store=SQLiteRelayStore::open(&db,Some("901")).unwrap();
     store.save_job(&base_job(&root)).unwrap();drop(store);
-    persist_task_thread(&db,"901","902","execution-1",THREAD).unwrap();
-    persist_task_thread(&db,"901","902","execution-1",THREAD).unwrap();
-    assert!(persist_task_thread(&db,"901","902","old",THREAD).is_err());
-    assert!(persist_task_thread(&db,"901","902","execution-1","38f84f9e-410d-4e36-96e0-a420594a102e").is_err());
+    let route=base_job(&root)["tasks"][0]["routing"].clone();
+    persist_task_thread(&db,"901","902","execution-1",THREAD,None,&route).unwrap();
+    persist_task_thread(&db,"901","902","execution-1",THREAD,Some(THREAD),&route).unwrap();
+    assert!(persist_task_thread(&db,"901","902","old",THREAD,Some(THREAD),&route).is_err());
+    assert!(persist_task_thread(&db,"901","902","execution-1",NEW_THREAD,Some(THREAD),&route).is_err());
     let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("901")).unwrap();
     assert_eq!(store.load_job("901").unwrap().unwrap()["tasks"][0]["threadId"],THREAD);
     drop(store);fs::remove_dir_all(root).unwrap();
 }
 #[test]
-fn a_real_owned_fake_codex_process_persists_thread_for_next_generation(){
+fn owned_codex_retries_resume_only_the_bound_route_and_rotate_on_switch(){
     use std::os::unix::fs::PermissionsExt;
     let root=fixture();fs::create_dir_all(root.join("agents")).unwrap();
     fs::write(root.join("agents/fixture.agent.md"),"---\nname: fixture\ncapabilities: [model, local_repo]\n---\n# Test Agent\n").unwrap();
@@ -98,15 +100,33 @@ fn a_real_owned_fake_codex_process_persists_thread_for_next_generation(){
     let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("901")).unwrap();
     let saved=store.load_job("901").unwrap().unwrap();
     assert_eq!(saved["tasks"][0]["threadId"],THREAD);
+    assert_eq!(saved["tasks"][0]["threadRoute"],thread_route(&saved["tasks"][0]["routing"]));
     let mut resume=saved.clone();
     resume["tasks"][0]["executionId"]=json!("execution-2");
-    resume["tasks"][0]["routing"]=json!({"provider":"openai","model":"gpt-6-luna"});
+    resume["tasks"][0]["routing"]["reasoning"]=json!("medium");
     store.save_job(&resume).unwrap();drop(store);
     let _=execute_claimed_codex(&db,&resume,&resume["tasks"][0],&file,&root,&WorkerContextRoots::isolated(&root)).unwrap_err();
-    let command=fs::read_to_string(args).unwrap();
+    let command=fs::read_to_string(&args).unwrap();
     assert!(command.lines().any(|l|l=="resume"),"{command}");
     assert!(command.lines().any(|l|l==THREAD),"{command}");
+    let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("901")).unwrap();
+    let mut switched=store.load_job("901").unwrap().unwrap();
+    switched["tasks"][0]["executionId"]=json!("execution-3");
+    switched["tasks"][0]["routing"]=json!({"provider":"openai","model":"gpt-6-luna"});
+    store.save_job(&switched).unwrap();drop(store);
+    fs::write(&file,format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nprintf '%s\\n' '{{\"type\":\"thread.started\",\"thread_id\":\"{NEW_THREAD}\"}}'\nexit 1\n",args.display())).unwrap();
+    let _=execute_claimed_codex(&db,&switched,&switched["tasks"][0],&file,&root,&WorkerContextRoots::isolated(&root)).unwrap_err();
+    let command=fs::read_to_string(&args).unwrap();
+    assert!(!command.lines().any(|l|l=="resume"),"{command}");
+    assert!(command.contains("previousThreadId"));
+    assert!(command.contains(THREAD));
     assert!(command.lines().any(|l|l=="gpt-6-luna"),"{command}");
+    let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("901")).unwrap();
+    let after=store.load_job("901").unwrap().unwrap();
+    assert_eq!(after["tasks"][0]["threadId"],NEW_THREAD);
+    assert_eq!(after["tasks"][0]["threadHistory"][0]["threadId"],THREAD);
+    assert_eq!(after["tasks"][0]["threadRoute"]["provider"],"openai");
+    drop(store);
     fs::remove_dir_all(root).unwrap();
 }
 #[test]
@@ -264,4 +284,44 @@ fn incremental_facts_keep_failure_guards_after_long_output(){
     assert!(facts.quota_failure_without_effects().is_some());
     assert!(facts.resumable_provider_failure(THREAD).is_some());
     assert!(facts.resumable_provider_failure("38f84f9e-410d-4e36-96e0-a420594a102e").is_none());
+}
+
+
+#[test]
+fn unknown_or_incompatible_thread_is_never_resumed_and_session_path_is_only_a_hint(){
+    let home=fixture();
+    let route=json!({"provider":"zai","model":"glm","profile":"zai"});
+    let mut record=json!({"threadId":THREAD});
+    assert_eq!(compatible_thread(&record,&route),None);
+    record["threadRoute"]=thread_route(&route);
+    assert_eq!(compatible_thread(&record,&json!({"provider":"zai","model":"glm","profile":"zai","reasoning":"high"})),Some(THREAD));
+    for different in [
+        json!({"provider":"openai","model":"glm","profile":"zai"}),
+        json!({"provider":"zai","model":"different","profile":"zai"}),
+        json!({"provider":"zai","model":"glm","profile":"other"}),
+    ]{
+        assert_eq!(compatible_thread(&record,&different),None);
+    }
+    let dir=home.join("sessions/2026/11/25");
+    fs::create_dir_all(&dir).unwrap();
+    let path=dir.join(format!("rollout-2026-11-25T00-00-00-{THREAD}.jsonl"));
+    fs::write(&path,"NOT EVEN JSON: do not inject this payload").unwrap();
+    let canonical=fs::canonicalize(&path).unwrap();
+    assert_eq!(find_session_file(&home,THREAD),Some(canonical.clone()));
+    assert_eq!(find_session_file(&home,"--last"),None);
+    let selected=json!({"provider":"openai","model":"gpt"});
+    let prompt=recovery_prompt(&record,&selected,&home,"original");
+    assert!(prompt.contains(canonical.to_str().unwrap()));
+    assert!(!prompt.contains("NOT EVEN JSON"));
+    assert!(prompt.contains("original"));
+    let archived=home.join("archived_sessions");fs::create_dir_all(&archived).unwrap();
+    fs::copy(&path,archived.join(path.file_name().unwrap())).unwrap();
+    assert_eq!(find_session_file(&home,THREAD),None);
+    assert!(recovery_prompt(&record,&selected,&home,"original").contains("\"previousSessionFile\":null"));
+    assert!(attach_thread(&mut record,&selected,Some(THREAD),THREAD).is_err());
+    assert!(attach_thread(&mut record,&selected,None,NEW_THREAD).is_err());
+    attach_thread(&mut record,&selected,Some(THREAD),NEW_THREAD).unwrap();
+    assert_eq!(compatible_thread(&record,&selected),Some(NEW_THREAD));
+    assert_eq!(record["threadHistory"][0]["route"]["provider"],"zai");
+    fs::remove_dir_all(home).unwrap();
 }

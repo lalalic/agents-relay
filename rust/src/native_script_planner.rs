@@ -292,11 +292,12 @@ impl PlannerLaunchPorts for PlannerPorts {
                                     ||(field(current,"status")=="SUCCEEDED"
                                         &&field(current,"appliedExecutionId")==execution);
                                 if !authorized{return Err("Stale Planner execution cannot attach Codex Thread".into());}
-                                let previous=field(current,"threadId");
-                                if !previous.is_empty()&&previous!=thread_id{
-                                    return Err("Codex Planner resumed a different Thread ID".into());
-                                }
-                                current["threadId"]=json!(thread_id);
+                                let prior=context.pointer("/job/plans").and_then(Value::as_array)
+                                    .into_iter().flatten().find(|p|field(p,"id")==plan_id)
+                                    .and_then(|p|p.get("threadId")).and_then(Value::as_str)
+                                    .filter(|id|!id.is_empty());
+                                let route=context.pointer("/plannerRoute/model").unwrap_or(&Value::Null);
+                                crate::native_codex_thread::attach_thread(current,route,prior,&thread_id)?;
                                 Ok(latest)
                             })?;
                         }

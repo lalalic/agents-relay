@@ -142,6 +142,26 @@ context; Troubleshooters independently verify a response against evidence from
 the original failing execution. Repeating an identical escalation with unchanged
 evidence is idempotent.
 
+## Codex Thread isolation
+
+Provider fallback retains the durable Task or Plan identity, not its provider
+conversation. The Codex adapter resumes a Thread only if the persisted
+`threadRoute` (Provider, Model, Profile) exactly matches the selected route.
+Reasoning effort alone does not change compatibility. Unbound legacy Thread
+IDs and changed routes always start a fresh Thread; never infer historical
+ownership from the latest mutable routing decision.
+
+For a fresh recovery turn, Relay provides the original managed prompt, prior
+Thread identity and, if uniquely located under the configured Codex home, the
+previous session's JSONL **path only**. Relay never reads, rewrites, converts,
+or injects that transcript. The Agent first checks the current authoritative
+Task/Plan context and artifacts, selectively reads historical evidence if
+needed, verifies uncertain effects before repeating them, and fails closed
+if it cannot recover safely. Missing or ambiguous files do not prevent
+context/artifact-based recovery. Only the fenced execution's observed
+`thread.started` binds the new ID and route; old bindings stay in
+`threadHistory`. Graph-owned retry and escalation rules remain unchanged.
+
 ## One-shot Troubleshooter policy
 
 Each Troubleshooter has **one execution** (`maxAttempts=1`). A failed
