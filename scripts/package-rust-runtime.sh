@@ -18,7 +18,7 @@ stage=$(mktemp -d "$(dirname "$out")/.relay-package.XXXXXX")
 trap 'rm -rf "$stage"' EXIT HUP INT TERM
 revision=$(git -C "$root" rev-parse HEAD)
 # Archive committed resources, not ignored local files, and check extraction independently.
-git -C "$root" archive --format=tar "$revision" skills agents workflow dashboard > "$stage/resources.tar"
+git -C "$root" archive --format=tar "$revision" skills agents workflow dashboard scripts/report-publication.mjs > "$stage/resources.tar"
 tar -xf "$stage/resources.tar" -C "$stage"
 rm "$stage/resources.tar"
 mkdir "$stage/bin"

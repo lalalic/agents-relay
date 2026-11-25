@@ -60,6 +60,49 @@ fn real_chrome_dashboard_regressions() {
             ],
         );
     }
+    let fixture_root = root.0.join("fixture");
+    let sha_at_head = || {
+        String::from_utf8(
+            Command::new("git")
+                .current_dir(&fixture_root)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_owned()
+    };
+    let base_sha = sha_at_head();
+    git(
+        &fixture_root,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "merged work",
+        ],
+    );
+    let fixture_sha = sha_at_head();
+    git(
+        &fixture_root,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "later release",
+        ],
+    );
+    let later_sha = sha_at_head();
     let at = "2026-11-25T10:00:00.000Z";
     for (id, name, title, state, task_state) in [
         ("91", "fixture", "Published completed job", "COMPLETED", ""),
@@ -68,10 +111,15 @@ fn real_chrome_dashboard_regressions() {
         ("94", "fixture", "Retry fixture", "ACTIVE", "FAILED"),
         ("95", "other", "Cancelled job", "CANCELLED", ""),
         ("96", "other", "Draft fixture", "DRAFT", ""),
+        ("97", "fixture", "Second published job", "COMPLETED", ""),
     ] {
         let mut job = json!({"id":id,"repository":name,"projectRoot":root.0.join(name),
             "title":title,"state":state,"prNumber":0,"createdAt":at,"updatedAt":at,
             "reviewEnabled":false,"autoMerge":false,"tasks":[],"plans":[]});
+        if matches!(id, "91" | "97") {
+            job["localMerge"] =
+                json!({"status":"succeeded","mergedCommitSha":fixture_sha,"updatedAt":at});
+        }
         if state == "ACTIVE" {
             // Keep the scheduler from launching any fixture task. Control
             // endpoints still exercise canonical graph/SQLite actions.
@@ -94,6 +142,9 @@ fn real_chrome_dashboard_regressions() {
         .args(["--test", "dashboard.test.mjs"])
         .env("RELAY_UI_FIXTURE", &root.0)
         .env("RELAY_UI_REPO", repo)
+        .env("RELAY_UI_MERGED_SHA", &fixture_sha)
+        .env("RELAY_UI_BASE_SHA", &base_sha)
+        .env("RELAY_UI_LATER_SHA", &later_sha)
         .env("RELAY_UI_DAEMON", env!("CARGO_BIN_EXE_agents-relayd-rust"))
         .env("AGENTS_RELAY_STORE_DIR", root.0.join("forbidden/stores"))
         .status()

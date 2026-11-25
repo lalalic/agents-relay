@@ -98,18 +98,18 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       const apiStart=Date.now(),initial=await jobs();
       assert(Date.now()-apiStart<2000,'SQLite list blocked behind release history');
       assert(initial.some(j=>j.id==='91'));
-      assert.equal(await page.locator('.job-row').count(),5);
+      assert.equal(await page.locator('.job-row').count(),6);
       await page.locator('#repo-filter').selectOption('fixture');
-      await eventually(async()=>await page.locator('.job-row').count()===3);
+      await eventually(async()=>await page.locator('.job-row').count()===4);
       await page.locator('#status-filter').selectOption('COMPLETED');
-      await eventually(async()=>await page.locator('.job-row').count()===1);
+      await eventually(async()=>await page.locator('.job-row').count()===2);
       await page.locator('#status-filter').selectOption('');
       await page.locator('#repo-filter').selectOption('');
       await page.locator('#job-search').fill('Draft fixture');
       await eventually(async()=>await page.locator('.job-row').count()===1);
       await jobRow('96').waitFor();
       await page.locator('#job-search').fill('');
-      await eventually(async()=>await page.locator('.job-row').count()===5);
+      await eventually(async()=>await page.locator('.job-row').count()===6);
       console.log('initial UI '+elapsed+'ms during slow Events Bus');
     });
     await t.test('2 mixed running, queued, completed status survives live snapshots',async()=>{
@@ -117,14 +117,18 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       await page.locator('#jobs-refresh').click();
       await badge('92','RUNNING');await badge('91','COMPLETED');
     });
-    await t.test('3 correlated publication via actual backend SSE; reject jobless/stale',async()=>{
-      const good=release('2.8.1','1'.repeat(40),'2026-11-25T10:01:00Z','91');
-      rows=[good,good,release('2.8.0','2'.repeat(40),'2026-11-25T09:59:00Z','91'),
-        release('9.9.9','3'.repeat(40),'2026-11-25T10:02:00Z')];
+    await t.test('3 jobless publication derives Git ancestry; reject unrelated/stale',async()=>{
+      const good=release('2.8.1',process.env.RELAY_UI_MERGED_SHA,'2026-11-25T10:01:00Z');
+      rows=[release('2.8.2',process.env.RELAY_UI_LATER_SHA,'2026-11-25T10:02:00Z'),good,good,
+        release('9.9.9',process.env.RELAY_UI_BASE_SHA,'2026-11-25T10:00:30Z'),
+        release('2.8.0','2'.repeat(40),'2026-11-25T09:59:00Z')];
       delay=0;
-      await badge('91','v2.8.1');
+      await badge('91','v2.8.1');await badge('97','v2.8.1');
+      assert.equal((await dbPublication('97')).latest.version,'2.8.1');
       assert(!((await jobRow('92').innerText()).includes('v2.8.1')));
-      assert(!((await jobRow('91').innerText()).includes('1'.repeat(40))));
+      assert(!((await jobRow('91').innerText()).includes(process.env.RELAY_UI_MERGED_SHA)));
+      assert.equal((await dbPublication('91')).latest.correlation.kind,'first-observed-ancestor');
+      assert.equal((await dbPublication('91')).latest.correlation.mergedCommitSha,process.env.RELAY_UI_MERGED_SHA);
       assert.equal((await dbPublication('91')).latest.version,'2.8.1');
       // A genuine historical Job event, including a package name distinct
       // from the repository, must recover its badge when history is read.

@@ -1,0 +1,47 @@
+name: Report verified package publication
+description: Publish a verified registry or native release fact using the shared local reporter
+inputs:
+  artifact:
+    description: Verified artifact name
+    required: true
+  version:
+    description: Exact verified published version
+    required: true
+  registry:
+    description: native or npm
+    required: false
+    default: npm
+  sha:
+    description: Verified released source SHA
+    required: true
+  repository:
+    description: Source repository owner/name
+    required: true
+  events-api:
+    description: Authorized release-only HTTPS ingress or loopback on a trusted self-hosted runner
+    required: true
+  events-token:
+    description: Bearer token scoped to the release-only ingress (required off loopback)
+    required: false
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - name: Report verified publication
+      shell: bash
+      env:
+        ARTIFACT: ${{ inputs.artifact }}
+        VERSION: ${{ inputs.version }}
+        REGISTRY: ${{ inputs.registry }}
+        SOURCE_SHA: ${{ inputs.sha }}
+        REPOSITORY: ${{ inputs.repository }}
+        PUBLICATION_EVENTS_API: ${{ inputs.events-api }}
+        PUBLICATION_EVENTS_TOKEN: ${{ inputs.events-token }}
+      run: |
+        set -euo pipefail
+        test -n "$PUBLICATION_EVENTS_API"
+        node "$GITHUB_ACTION_PATH/../../../scripts/report-publication.mjs" \
+          --package "${REPOSITORY##*/}" --repository "$REPOSITORY" --artifact "$ARTIFACT" \
+          --version "$VERSION" --sha "$SOURCE_SHA" --registry "$REGISTRY"

@@ -1,7 +1,7 @@
 # Canonical Rust runtime crate for Agents Relay (CLI, daemon and native tests).
 [package]
 name = "agents-relay-rust2"
-version = "2.0.266"
+version = "2.0.267"
 edition = "2021"
 
 [dependencies]

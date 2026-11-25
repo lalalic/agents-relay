@@ -1,7 +1,10 @@
 //! Observe verified release facts outside the Dashboard HTTP request path.
 //! SQLite publication_state is a projection, not a second Job authority.
 use crate::{
-    publication_store::{load_publication_from_database, record_publication_in_database},
+    publication_store::{
+        load_publication_from_database, record_first_publication_in_database,
+        record_publication_in_database,
+    },
     relay_store_discovery::relay_unified_store_path,
     relayd::DaemonConfig,
 };
@@ -9,7 +12,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde_json::{json, Value};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap, HashSet},
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
@@ -54,25 +57,14 @@ fn verified(event: &Value, repository: &str) -> Option<(String, String, Value, b
     let payload = event["data"].clone();
     let package = field(&payload, "package");
     let explicit_repository = field(&payload, "repository");
-    if !explicit_repository.is_empty() && explicit_repository != repository {
-        return None;
-    }
     if field(event, "kind") == "release" {
-        let sha = field(&payload, "sha");
-        if !success
-            || package != repository
-            || field(&payload, "registry") != "native"
-            || sha.len() != 40
-            || !sha.bytes().all(|c| c.is_ascii_hexdigit())
-            || event.pointer("/source/id")?.as_str()? != format!("release/{package}/{sha}")
-            || receipt != format!("release:{package}:{sha}:package.published")
-        {
+        if !verified_release(event, repository) {
             return None;
         }
     } else {
-        // A Job event must actually carry the immutable outer scope.
-        // Explicit repository metadata permits scoped npm package names.
-        if field(event, "job_id") != id || (explicit_repository.is_empty() && package != repository)
+        if (!explicit_repository.is_empty() && explicit_repository != repository)
+            || field(event, "job_id") != id
+            || (explicit_repository.is_empty() && package != repository)
         {
             return None;
         }
@@ -93,7 +85,229 @@ fn verified(event: &Value, repository: &str) -> Option<(String, String, Value, b
     Some((receipt.to_owned(), at, payload, success))
 }
 
+fn hex_sha(sha: &str) -> bool {
+    sha.len() == 40
+        && sha
+            .bytes()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+}
+fn verified_release(event: &Value, repository: &str) -> bool {
+    let data = &event["data"];
+    let outer = field(event, "job_id");
+    let inner = field(data, "jobId");
+    if !outer.is_empty() && !inner.is_empty() && outer != inner {
+        return false;
+    }
+
+    let sha = field(data, "sha");
+    let package = field(data, "package");
+    let kind = field(event, "type");
+    let status = field(event, "status");
+    let remote = field(data, "repository");
+    let registry = field(data, "registry");
+    let ver = field(data, "version");
+    static SEMVER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let valid_version = SEMVER
+        .get_or_init(|| regex::Regex::new(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$").unwrap())
+        .is_match(ver);
+    field(event, "kind") == "release"
+        && event["version"].as_u64() == Some(1)
+        && package == repository
+        && hex_sha(sha)
+        && matches!(registry, "native" | "npm")
+        && (remote.is_empty()
+            || remote
+                .split_once('/')
+                .is_some_and(|(owner, name)| !owner.is_empty() && name == repository))
+        && (registry != "npm" || (!remote.is_empty() && !field(data, "artifact").is_empty()))
+        && event.pointer("/source/id").and_then(Value::as_str)
+            == Some(format!("release/{package}/{sha}").as_str())
+        && field(event, "event_id") == format!("release:{package}:{sha}:{kind}")
+        && DateTime::parse_from_rfc3339(field(event, "timestamp")).is_ok()
+        && match (kind, status) {
+            ("package.published", "succeeded") => valid_version,
+            ("package.publish_failed", "failed") => !field(data, "stage").is_empty(),
+            _ => false,
+        }
+}
+
+fn repository_identity(root: &Path) -> Option<String> {
+    let url = crate::local_git_merge::git(root, &["remote", "get-url", "origin"]).ok()?;
+    let url = url.trim_end_matches('/').trim_end_matches(".git");
+    let path = url
+        .strip_prefix("https://github.com/")
+        .or_else(|| url.strip_prefix("git@github.com:"))
+        .or_else(|| url.strip_prefix("ssh://git@github.com/"))?;
+    let (owner, name) = path.split_once('/')?;
+    (!owner.is_empty() && !name.is_empty() && !name.contains('/')).then(|| path.to_owned())
+}
+
+/// Earliest durable receipt whose timestamp follows the actual successful
+/// merge and whose commit contains it. Never use chronological proximity
+/// alone or bind an unmerged/unknown Job. Only repository-scoped observations.
+fn correlate_releases(
+    database: &Path,
+    package: &str,
+    rows: &[Value],
+    stop: &AtomicBool,
+    mut notify: impl FnMut(&Value),
+) -> Result<(), String> {
+    let mut releases: Vec<_> = rows
+        .iter()
+        .map(|r| &r["event"])
+        .filter(|e| verified_release(e, package) && field(e, "type") == "package.published")
+        .collect();
+    releases.sort_by_key(|e| DateTime::parse_from_rfc3339(field(e, "timestamp")).ok());
+    if releases.is_empty() {
+        return Ok(());
+    }
+    let db = Connection::open_with_flags(database, OpenFlags::SQLITE_OPEN_READ_WRITE)
+        .map_err(|e| e.to_string())?;
+    db.busy_timeout(Duration::from_millis(500))
+        .map_err(|e| e.to_string())?;
+    // Relay repository identity is a unique immutable local root. Refuse
+    // ambiguous historical bindings rather than assigning a release by name.
+    let distinct_roots:i64=db.query_row(
+        "SELECT count(DISTINCT json_extract(json,'$.projectRoot')) FROM job_snapshot WHERE json_extract(json,'$.repository')=?",
+        [package],|r|r.get(0)).map_err(|e|e.to_string())?;
+    if distinct_roots != 1 {
+        return Ok(());
+    }
+    // Only unpublished completed Jobs are candidates; explicit publications
+    // are processed first. The query doesn't hold a lock across Git I/O.
+    let mut q = db
+        .prepare(
+            "SELECT j.json FROM job_snapshot j LEFT JOIN publication_state p ON p.job_id=j.job_id
+        WHERE json_extract(j.json,'$.repository')=? AND json_extract(j.json,'$.state')='COMPLETED'
+        AND json_extract(j.json,'$.localMerge.status')='succeeded'
+        AND (p.json IS NULL OR json_extract(p.json,'$.latest') IS NULL)",
+        )
+        .map_err(|e| e.to_string())?;
+    let jobs = q
+        .query_map([package], |r| r.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(q);
+    drop(db);
+    // Compute actual ancestor sets once per repository/release per sweep.
+    // The shared owned Git helper has bounded time and output.
+    let mut ancestry: HashMap<(std::path::PathBuf, String), Option<HashSet<String>>> =
+        HashMap::new();
+    let mut roots: HashMap<std::path::PathBuf, Option<String>> = HashMap::new();
+    for raw in jobs {
+        if stop.load(Ordering::Acquire) {
+            break;
+        }
+        let job: Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+        let id = field(&job, "id");
+        let merge = &job["localMerge"];
+        let merged = field(merge, "mergedCommitSha");
+        let Ok(merged_at) = DateTime::parse_from_rfc3339(field(merge, "updatedAt")) else {
+            continue;
+        };
+        if id.is_empty() || !id.bytes().all(|c| c.is_ascii_digit()) || !hex_sha(merged) {
+            continue;
+        }
+        let supplied = Path::new(field(&job, "projectRoot"));
+        if !supplied.is_absolute() {
+            continue;
+        }
+        let Ok(root) = supplied.canonicalize() else {
+            continue;
+        };
+        if root.file_name().and_then(|n| n.to_str()) != Some(package) {
+            continue;
+        }
+        if !roots.contains_key(&root) {
+            let valid = crate::local_git_merge::git(&root, &["rev-parse", "--show-toplevel"])
+                .ok()
+                .and_then(|r| Path::new(&r).canonicalize().ok())
+                .is_some_and(|r| r == root);
+            if !valid {
+                continue;
+            }
+            roots.insert(root.clone(), repository_identity(&root));
+        }
+        for event in &releases {
+            if stop.load(Ordering::Acquire) {
+                return Ok(());
+            }
+            let published_at = DateTime::parse_from_rfc3339(field(event, "timestamp")).unwrap();
+            if published_at < merged_at {
+                continue;
+            }
+            // Explicit legacy associations remain authoritative; a receipt
+            // for one Job does not preclude other Jobs in the same release.
+            let remote = field(&event["data"], "repository");
+            if !remote.is_empty()
+                && !roots
+                    .get(&root)
+                    .and_then(Option::as_deref)
+                    .is_some_and(|v| v.eq_ignore_ascii_case(remote))
+            {
+                continue;
+            }
+            let sha = field(&event["data"], "sha");
+            let key = (root.clone(), sha.to_owned());
+            let ancestors = ancestry.entry(key).or_insert_with(|| {
+                crate::local_git_merge::git(&root, &["rev-list", sha])
+                    .ok()
+                    .map(|lines| {
+                        lines
+                            .lines()
+                            .filter(|s| hex_sha(s))
+                            .map(str::to_owned)
+                            .collect()
+                    })
+            });
+            // An unknown/too-large ancestry result is not evidence. Don't
+            // skip an earlier uncertain receipt and claim a later one.
+            let Some(ancestors) = ancestors else {
+                break;
+            };
+            if !ancestors.contains(merged) {
+                continue;
+            }
+            let mut payload = event["data"].clone();
+            payload["jobId"] = json!(id);
+            let at = published_at
+                .with_timezone(&Utc)
+                .to_rfc3339_opts(SecondsFormat::Millis, true);
+            payload["publishedAt"] = json!(at);
+            payload["correlation"] = json!({"kind":"first-observed-ancestor","mergedCommitSha":merged,
+                "releaseEventId":event["event_id"]});
+            let mut db = Connection::open_with_flags(database, OpenFlags::SQLITE_OPEN_READ_WRITE)
+                .map_err(|e| e.to_string())?;
+            db.busy_timeout(Duration::from_millis(500))
+                .map_err(|e| e.to_string())?;
+            // A display-only notification, not a new bus publication fact.
+            if record_first_publication_in_database(
+                &mut db,
+                id,
+                field(event, "event_id"),
+                &payload,
+                &at,
+            )? {
+                let mut observation = (*event).clone();
+                observation["job_id"] = json!(id);
+                observation["data"] = payload;
+                notify(&observation);
+            }
+            break;
+        }
+    }
+    Ok(())
+}
+
 pub fn record_observed_event(database: &Path, event: &Value) -> Result<bool, String> {
+    record_observed_event_inner(database, event, false)
+}
+fn record_observed_event_inner(
+    database: &Path,
+    event: &Value,
+    background: bool,
+) -> Result<bool, String> {
     let Some(id) = identity(event) else {
         return Ok(false);
     };
@@ -102,17 +316,34 @@ pub fn record_observed_event(database: &Path, event: &Value) -> Result<bool, Str
         .map_err(|e| e.to_string())?;
     db.busy_timeout(Duration::from_millis(500))
         .map_err(|e| e.to_string())?;
-    let repository: Option<String> = db
+    let repository: Option<(String,Option<String>)> = db
         .query_row(
-            "SELECT json_extract(json,'$.repository') FROM job_snapshot WHERE job_id=?",
+            "SELECT json_extract(json,'$.repository'),json_extract(json,'$.projectRoot') FROM job_snapshot WHERE job_id=?",
             [id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?,row.get(1)?)),
         )
         .optional()
         .map_err(|e| e.to_string())?;
-    let Some(repository) = repository else {
+    let Some((repository, project_root)) = repository else {
         return Ok(false);
     };
+    let remote = field(&event["data"], "repository");
+    if field(event, "kind") == "release" && !remote.is_empty() {
+        // Repository-origin Git I/O is only allowed in the independent
+        // release observer, never in the scheduler's NATS drain or an API.
+        if !background {
+            return Ok(false);
+        }
+
+        let Some(root) = project_root.as_deref().map(Path::new) else {
+            return Ok(false);
+        };
+        if !root.is_absolute()
+            || !repository_identity(root).is_some_and(|v| v.eq_ignore_ascii_case(remote))
+        {
+            return Ok(false);
+        }
+    }
     let Some((receipt, at, payload, success)) = verified(event, &repository) else {
         return Ok(false);
     };
@@ -173,7 +404,7 @@ pub fn observe_releases(
             if let Ok(rows) = crate::events_bus_runtime::events_bus_release_history_with_timeout(
                 &package, 500, runtime, 2000,
             ) {
-                for row in rows {
+                for row in &rows {
                     if stop.load(Ordering::Acquire) {
                         return;
                     }
@@ -181,13 +412,18 @@ pub fn observe_releases(
                     if field(&event["data"], "package") != package {
                         continue;
                     }
-                    match record_observed_event(&database, event) {
+                    match record_observed_event_inner(&database, event, true) {
                         Ok(true) => publish(event),
                         Ok(false) => {}
                         Err(error) => {
                             eprintln!("warning: Dashboard publication projection: {error}")
                         }
                     }
+                }
+                if let Err(error) =
+                    correlate_releases(&database, &package, &rows, stop, |event| publish(event))
+                {
+                    eprintln!("warning: Release ancestry projection: {error}");
                 }
             }
         }

@@ -103,7 +103,7 @@ Commit to `main` only after native checks. Deployment of a source commit into th
 ### Native release (Neo Master)
 
 Commit the Cargo version and lockfile bump with the reviewed change, merge to
-clean main, then run `python3 scripts/release-native.py [--job-id ID]`.
+clean main, then run `node scripts/release-native.mjs [--job-id ID]`.
 The operator command requires the installed PM2 launcher, local Events Bus
 release-history API, and no active Jobs before restart. It verifies a non-force
 origin/main push, builds and installs an immutable SHA package, switches the
@@ -112,3 +112,31 @@ then records `package.published` on the native release channel. A Job ID is
 optional observational correlation, never required for a hotfix. Publication
 failure after a healthy deployment is retriable with the same command and
 association; a failed runtime switch rolls back to the previous package.
+
+### Shared publication reporter
+
+After a verified installation or registry release, call the shared Node ESM
+reporter (shipped in the native Relay package under `scripts/`):
+
+```sh
+node scripts/report-publication.mjs --package agents-relay --version 2.0.267 --sha VERIFIED_SHA
+```
+
+For npm, pass `--registry npm --repository OWNER/REPO --artifact PACKAGE`.
+For a failed publication, use `--stage FAILED_STAGE` (intended version optional).
+The reporter confirms a durable receipt; retry identical metadata, not the
+release itself. The same script is called by the shared GitHub composite
+Actions in this repository. Pin an approved new revision; the historical
+`publication-v1` tag remains unchanged for existing npm workflows. A
+GitHub-hosted runner requires a configured release-only HTTPS ingress and
+scoped `events-token` secret; do not expose the general Events Bus API or NATS.
+A trusted self-hosted runner can use the loopback endpoint. Do not claim remote
+reporting is operational until the ingress and actual workflow run are verified.
+
+Relay automatically associates the earliest observed valid release receipt
+that follows a successful local merge and contains its exact commit in Git
+ancestry. Only completed, unambiguously bound Jobs with no established version
+are eligible. Existing explicit publications are preserved, no lifecycle state
+is changed, and missing Git objects or ambiguous repository identity fail
+closed. Incomplete retained release history means the recorded version is
+the first **observed** verified release, not a claim about unrecorded releases.

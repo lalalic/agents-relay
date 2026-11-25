@@ -45,6 +45,45 @@ pub fn record_publication_in_database(
     failure: Option<&Value>,
     observed_at: Option<&str>,
 ) -> Result<bool, String> {
+    record_publication(
+        db,
+        job_id,
+        delivery_id,
+        publication,
+        failure,
+        observed_at,
+        false,
+    )
+}
+
+/// Inferred ancestry must not overwrite any already-established successful
+/// Job publication, even if an explicit delivery races the observer.
+pub fn record_first_publication_in_database(
+    db: &mut Connection,
+    job_id: &str,
+    delivery_id: &str,
+    publication: &Value,
+    observed_at: &str,
+) -> Result<bool, String> {
+    record_publication(
+        db,
+        job_id,
+        delivery_id,
+        Some(publication),
+        None,
+        Some(observed_at),
+        true,
+    )
+}
+fn record_publication(
+    db: &mut Connection,
+    job_id: &str,
+    delivery_id: &str,
+    publication: Option<&Value>,
+    failure: Option<&Value>,
+    observed_at: Option<&str>,
+    first_only: bool,
+) -> Result<bool, String> {
     if publication.is_none() && failure.is_none() {
         return Ok(false);
     }
@@ -54,6 +93,15 @@ pub fn record_publication_in_database(
     let tx = db
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| error.to_string())?;
+    let previous = load_publication_from_database(&tx, job_id)?;
+    if first_only
+        && previous
+            .as_ref()
+            .is_some_and(|p| p.get("latest").is_some_and(|v| !v.is_null()))
+    {
+        tx.commit().map_err(|error| error.to_string())?;
+        return Ok(false);
+    }
     let payload = publication
         .or(failure)
         .ok_or("publication or failure required")?;
@@ -68,18 +116,24 @@ pub fn record_publication_in_database(
         tx.commit().map_err(|error| error.to_string())?;
         return Ok(false);
     }
-    let previous = load_publication_from_database(&tx, job_id)?;
     let is_newer = previous.as_ref().is_none_or(|prior| {
-        let old=prior.get("updatedAt").and_then(Value::as_str).unwrap_or("");
-        match (DateTime::parse_from_rfc3339(&now),DateTime::parse_from_rfc3339(old)){
-            (Ok(next),Ok(previous))=>next>=previous,
-            _=>now.as_str()>=old,
+        let old = prior.get("updatedAt").and_then(Value::as_str).unwrap_or("");
+        match (
+            DateTime::parse_from_rfc3339(&now),
+            DateTime::parse_from_rfc3339(old),
+        ) {
+            (Ok(next), Ok(previous)) => next >= previous,
+            _ => now.as_str() >= old,
         }
     });
     let next = if is_newer {
         json!({"latest":publication.cloned().or_else(||previous.as_ref().and_then(|previous|previous.get("latest")).cloned()).unwrap_or(Value::Null),
             "failure":failure.cloned().or_else(||if publication.is_some(){None}else{previous.as_ref().and_then(|previous|previous.get("failure")).cloned()}).unwrap_or(Value::Null),
             "updatedAt":now})
+    } else if first_only {
+        let mut prior = previous.unwrap_or_else(|| json!({}));
+        prior["latest"] = publication.cloned().unwrap_or(Value::Null);
+        prior
     } else {
         previous.unwrap_or(Value::Null)
     };

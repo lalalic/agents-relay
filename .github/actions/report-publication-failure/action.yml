@@ -1,0 +1,50 @@
+name: Report failed package publication
+description: Report the actual failed publication stage without asserting success
+inputs:
+  artifact:
+    description: Target artifact name
+    required: true
+  version:
+    description: Intended version (if known)
+    required: false
+  registry:
+    description: native or npm
+    required: false
+    default: npm
+  stage:
+    description: Actual failed stage
+    required: true
+  sha:
+    description: Source SHA
+    required: true
+  repository:
+    description: Source repository owner/name
+    required: true
+  events-api:
+    description: Authorized release-only HTTPS ingress or trusted local loopback
+    required: true
+  events-token:
+    description: Scoped ingress bearer token
+    required: false
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - shell: bash
+      env:
+        ARTIFACT: ${{ inputs.artifact }}
+        VERSION: ${{ inputs.version }}
+        REGISTRY: ${{ inputs.registry }}
+        STAGE: ${{ inputs.stage }}
+        SOURCE_SHA: ${{ inputs.sha }}
+        REPOSITORY: ${{ inputs.repository }}
+        PUBLICATION_EVENTS_API: ${{ inputs.events-api }}
+        PUBLICATION_EVENTS_TOKEN: ${{ inputs.events-token }}
+      run: |
+        set -euo pipefail
+        test -n "$PUBLICATION_EVENTS_API"
+        args=(--package "${REPOSITORY##*/}" --repository "$REPOSITORY" --artifact "$ARTIFACT" --sha "$SOURCE_SHA" --registry "$REGISTRY" --stage "$STAGE")
+        if [[ -n "$VERSION" ]]; then args+=(--version "$VERSION"); fi
+        node "$GITHUB_ACTION_PATH/../../../scripts/report-publication.mjs" "${args[@]}"

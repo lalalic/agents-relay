@@ -13,6 +13,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Publication and local release guard regressions
+        run: node --test scripts/report-publication.test.mjs scripts/test-release-native.mjs
       - name: Verify Rust is the only tracked Relay backend
         shell: bash
         run: |

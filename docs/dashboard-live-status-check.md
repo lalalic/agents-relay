@@ -31,7 +31,7 @@ After deployment is explicitly authorized, and only from a clean `main`
 checkout when no active Jobs can be disrupted:
 
 ```sh
-python3 scripts/release-native.py --job-id <this Job ID>
+node scripts/release-native.mjs --job-id <this Job ID>
 curl -fsS http://127.0.0.1:8787/api/version
 curl -fsS 'http://127.0.0.1:4223/releases?package=agents-relay&limit=500'
 ```
