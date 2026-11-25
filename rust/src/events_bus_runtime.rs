@@ -320,3 +320,58 @@ pub fn events_bus_history(
             .clone(),
     )
 }
+
+/// Read verified native release receipts from the Events Bus history service.
+/// This is observational projection data; it never changes Job lifecycle.
+pub fn events_bus_release_history(
+    package: &str,
+    limit: usize,
+    runtime: &Value,
+) -> Result<Vec<Value>, String> {
+    if package.is_empty() || package.len() > 64
+        || !package.as_bytes()[0].is_ascii_lowercase()
+        || !package.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    {
+        return Err("Invalid release package".into());
+    }
+    let api = runtime.get("apiUrl").and_then(Value::as_str)
+        .filter(|value| !value.is_empty()).ok_or("Events Bus API URL is missing")?;
+    let mut target = Url::parse(api).map_err(|_| "Invalid Events Bus API URL")?
+        .join("/releases").map_err(|_| "Invalid Events Bus API URL")?;
+    target.query_pairs_mut().append_pair("package", package)
+        .append_pair("limit", &limit.clamp(1, 500).to_string());
+    let body = request_body(target, 12_000)?;
+    let rows = body.get("events").and_then(Value::as_array)
+        .ok_or("Events Bus release history returned an invalid payload")?;
+    if body.get("package").and_then(Value::as_str) != Some(package) || rows.len() > 500 {
+        return Err("Events Bus release history returned a mismatched package".into());
+    }
+    Ok(rows.clone())
+}
+
+#[cfg(test)]
+mod release_history_tests {
+    use super::*;
+    use std::{io::{Read,Write},net::TcpListener,thread};
+    #[test]
+    fn release_history_uses_bounded_read_only_package_endpoint(){
+        let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+        let address=listener.local_addr().unwrap();
+        let body=json!({"package":"fixture","events":[{"cursor":4,"event":{
+            "kind":"release","type":"package.published","data":{"jobId":"42"}}}]})
+            .to_string();
+        let response=body.clone();
+        let server=thread::spawn(move||{
+            let (mut stream,_)=listener.accept().unwrap();
+            let mut request=[0u8;2048];let n=stream.read(&mut request).unwrap();
+            let line=String::from_utf8_lossy(&request[..n]);
+            assert!(line.starts_with("GET /releases?package=fixture&limit=500 HTTP/1.1"),"{line}");
+            write!(stream,"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",response.len(),response).unwrap();
+        });
+        let rows=events_bus_release_history("fixture",usize::MAX,
+            &json!({"apiUrl":format!("http://{address}")})).unwrap();
+        server.join().unwrap();
+        assert_eq!(rows.len(),1);
+        assert_eq!(rows[0]["event"]["data"]["jobId"],"42");
+    }
+}
