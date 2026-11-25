@@ -41,6 +41,25 @@ test('publication and merge metadata clear only with a newer authoritative obser
   assert.equal(api.jobs[0].publicationFailure,null);
 });
 
+test('older publication observation cannot replace metadata during a newer Job refresh',()=>{
+  const api=harness([{id:'18',repository:'relay',state:'COMPLETED',runtimeStatus:'COMPLETED',updatedAt:'2026-11-25T10:00:00Z',publication:{version:'2.0.260',sha:'b'.repeat(40)},publicationFailure:null,publicationObservedAt:'2026-11-25T11:00:00Z'}]);
+  api.upsertFreshJob({id:'18',repository:'relay',state:'COMPLETED',runtimeStatus:'COMPLETED',updatedAt:'2026-11-25T12:00:00Z',publication:{version:'2.0.259',sha:'a'.repeat(40)},publicationFailure:{stage:'old-push'},publicationObservedAt:'2026-11-25T10:30:00Z'});
+  assert.equal(api.jobs[0].updatedAt,'2026-11-25T10:00:00Z');
+  assert.equal(api.jobs[0].publication.version,'2.0.260');
+  assert.equal(api.jobs[0].publicationFailure,null);
+  assert.equal(api.jobs[0].publicationObservedAt,'2026-11-25T11:00:00Z');
+  api.upsertFreshJob({id:'18',repository:'relay',state:'COMPLETED',updatedAt:'2026-11-25T13:00:00Z',publication:{version:'2.0.261',sha:'c'.repeat(40)},publicationFailure:null,publicationObservedAt:'2026-11-25T12:30:00Z'});
+  assert.equal(api.jobs[0].publication.version,'2.0.261');
+});
+
+test('publication without an observation timestamp cannot overwrite verified metadata',()=>{
+  const api=harness([{id:'19',repository:'relay',state:'COMPLETED',updatedAt:'2026-11-25T10:00:00Z',publication:{version:'2.0.260'},publicationFailure:null,publicationObservedAt:'2026-11-25T11:00:00Z'}]);
+  api.upsertFreshJob({id:'19',repository:'relay',state:'COMPLETED',updatedAt:'2026-11-25T12:00:00Z',publication:{version:'2.0.259'},publicationFailure:{stage:'push'}});
+  assert.equal(api.jobs[0].publication.version,'2.0.260');
+  assert.equal(api.jobs[0].publicationFailure,null);
+  assert.equal(api.jobs[0].publicationObservedAt,'2026-11-25T11:00:00Z');
+});
+
 test('terminal snapshots normalize transient and absent runtime status; meaningful failure remains',()=>{
   const api=harness();
   for(const runtimeStatus of [undefined,'IDLE','RUNNING','QUEUED','WAITING','REVIEWING','BLOCKED']){
