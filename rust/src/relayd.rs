@@ -154,8 +154,10 @@ fn verified_release<'a>(row:&'a Value,package:&str)->Option<(&'a Value,&'a str)>
     let version=data.get("version")?.as_str()?;
     let source=event.pointer("/source/id")?.as_str()?;
     let timestamp=event.get("timestamp")?.as_str()?;
-    let version_ok=regex::Regex::new(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
-        .is_ok_and(|pattern|pattern.is_match(version));
+    static VERSION_PATTERN:std::sync::OnceLock<regex::Regex>=std::sync::OnceLock::new();
+    let version_ok=VERSION_PATTERN.get_or_init(||regex::Regex::new(
+        r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$").expect("static version pattern"))
+        .is_match(version);
     if event.get("kind")?.as_str()?!="release"
         || event.get("type")?.as_str()?!="package.published"
         || event.get("status")?.as_str()?!="succeeded"
@@ -171,20 +173,22 @@ fn verified_release<'a>(row:&'a Value,package:&str)->Option<(&'a Value,&'a str)>
     {return None;}
     Some((event,job_id))
 }
-fn overlay_native_publications(jobs:&mut [Value],package:&str,rows:&[Value]){
-    let mut latest=HashMap::<String,(&Value,&str)>::new();
+fn latest_native_publications(package:&str,rows:&[Value])->HashMap<String,Value>{
+    let mut latest=HashMap::<String,Value>::new();
     let mut seen=HashSet::new();
     for row in rows{
         let Some((event,job_id))=verified_release(row,package) else{continue;};
         let receipt=field(event,"event_id");
-        if receipt.is_empty()||!seen.insert(receipt.to_owned()){continue;}
-        let time=field(event,"timestamp");
-        let replace=latest.get(job_id).is_none_or(|(prior,_)|time>field(prior,"timestamp"));
-        if replace{latest.insert(job_id.into(),(event,time));}
+        if receipt.is_empty()||!seen.insert(receipt){continue;}
+        let replace=latest.get(job_id).is_none_or(|prior|field(event,"timestamp")>field(prior,"timestamp"));
+        if replace{latest.insert(job_id.into(),event.clone());}
     }
+    latest
+}
+fn overlay_publication_index(jobs:&mut [Value],package:&str,latest:&HashMap<String,Value>){
     for job in jobs.iter_mut().filter(|job|field(job,"repository")==package){
-        let id=field(job,"id");
-        let Some((event,timestamp))=latest.get(id).copied() else{continue;};
+        let Some(event)=latest.get(field(job,"id")) else{continue;};
+        let timestamp=field(event,"timestamp");
         if !field(job,"publicationObservedAt").is_empty()
             &&field(job,"publicationObservedAt")>=timestamp{continue;}
         job["publication"]=event["data"].clone();
@@ -193,35 +197,85 @@ fn overlay_native_publications(jobs:&mut [Value],package:&str,rows:&[Value]){
         job["publicationObservedAt"]=json!(timestamp);
     }
 }
-fn dashboard_inventory(config:&DaemonConfig)->Result<Vec<Value>,String>{
-    let mut jobs=inventory_from_local(config,false)?;
-    let packages=jobs.iter().map(|job|field(job,"repository").to_owned())
-        .filter(|package|!package.is_empty()).collect::<HashSet<_>>();
-    for package in packages{
-        if let Ok(rows)=crate::events_bus_runtime::events_bus_release_history(
-            &package,500,&config.event_transport){
-            overlay_native_publications(&mut jobs,&package,&rows);
+#[cfg(test)]
+fn overlay_native_publications(jobs:&mut [Value],package:&str,rows:&[Value]){
+    overlay_publication_index(jobs,package,&latest_native_publications(package,rows));
+}
+// Release receipts enrich the dashboard; they are never a prerequisite
+// for a lifecycle read or write. One bounded worker per dashboard owns all
+// HTTP calls, with no API/daemon/cache lock held during network I/O.
+struct PublicationEntry {
+    rows: Arc<HashMap<String,Value>>,
+    pending: bool,
+    next_refresh: Instant,
+}
+struct PublicationCache {
+    entries: Arc<Mutex<HashMap<String,PublicationEntry>>>,
+    queue: std::sync::mpsc::SyncSender<String>,
+}
+impl PublicationCache {
+    fn new(runtime:Value)->Self {
+        let entries=Arc::new(Mutex::new(HashMap::<String,PublicationEntry>::new()));
+        let weak=Arc::downgrade(&entries);
+        let (queue,receive)=std::sync::mpsc::sync_channel::<String>(32);
+        std::thread::spawn(move || {
+            while let Ok(package)=receive.recv(){
+                if weak.strong_count()==0{break;}
+                let result=crate::events_bus_runtime::events_bus_release_history(
+                    &package,500,&runtime).map(|rows|latest_native_publications(&package,&rows));
+                let Some(entries)=weak.upgrade() else{break;};
+                let Ok(mut cache)=entries.lock() else{break;};
+                if let Some(entry)=cache.get_mut(&package){
+                    entry.pending=false;
+                    entry.next_refresh=Instant::now()+Duration::from_secs(
+                        if result.is_ok(){30}else{10});
+                    // A transient failure never erases a previously verified
+                    // receipt. SQLite's newer observation still wins.
+                    if let Ok(rows)=result{entry.rows=Arc::new(rows);}
+                }
+            }
+        });
+        Self{entries,queue}
+    }
+    fn rows(&self,package:&str)->Arc<HashMap<String,Value>>{
+        let Ok(mut entries)=self.entries.lock() else{return Arc::new(HashMap::new());};
+        let entry=entries.entry(package.to_owned()).or_insert_with(||PublicationEntry{
+            rows:Arc::new(HashMap::new()),pending:false,next_refresh:Instant::now(),
+        });
+        if !entry.pending&&Instant::now()>=entry.next_refresh{
+            // Never block an API thread on a full refresh queue.
+            if self.queue.try_send(package.to_owned()).is_ok(){entry.pending=true;}
+            else{entry.next_refresh=Instant::now()+Duration::from_secs(1);}
+        }
+        Arc::clone(&entry.rows)
+    }
+    fn overlay(&self,jobs:&mut [Value]){
+        let packages=jobs.iter().map(|job|field(job,"repository").to_owned())
+            .filter(|package|!package.is_empty()).collect::<HashSet<_>>();
+        for package in packages{
+            let rows=self.rows(&package);
+            overlay_publication_index(jobs,&package,&rows);
         }
     }
+}
+fn dashboard_inventory(config:&DaemonConfig,cache:&PublicationCache)->Result<Vec<Value>,String>{
+    let mut jobs=inventory_from_local(config,false)?;
+    cache.overlay(&mut jobs);
     Ok(jobs)
 }
-fn dashboard_job_by_id(config:&DaemonConfig,id:&str,repo:Option<&str>)
+fn dashboard_job_by_id(config:&DaemonConfig,cache:&PublicationCache,id:&str,repo:Option<&str>)
     ->Result<Option<Value>,String>{
     let snapshot=crate::relay_store_discovery::discover_unified_job_by_id(
         &config.store_directory,id)?;
     let Some(snapshot)=snapshot else{return Ok(None);};
     let Some(source)=snapshot.jobs.first() else{return Ok(None);};
     let mut job=managed_view(&snapshot,source);
-    if field(&job,"id")!=id||repo.is_some_and(|repo|field(&job,"repository")!=repo){
+    let package=field(&job,"repository");
+    if field(&job,"id")!=id||repo.is_some_and(|repo|package!=repo)
+        ||(!config.repositories.is_empty()&&!config.repositories.iter().any(|r|r==package)){
         return Ok(None);
     }
-    let package=field(&job,"repository").to_owned();
-    if !package.is_empty(){
-        if let Ok(rows)=crate::events_bus_runtime::events_bus_release_history(
-            &package,500,&config.event_transport){
-            overlay_native_publications(std::slice::from_mut(&mut job),&package,&rows);
-        }
-    }
+    cache.overlay(std::slice::from_mut(&mut job));
     Ok(Some(job))
 }
 pub fn repository_bindings(inventory:&[Value])->Result<HashMap<String,String>,String>{
@@ -375,27 +429,27 @@ pub trait DaemonServices:Send{
 }
 pub struct DaemonDashboardBackend<S:DaemonServices>{
     pub config:DaemonConfig,pub services:Arc<Mutex<S>>,
+    publication_cache:PublicationCache,
+    read_only:bool,
+}
+impl<S:DaemonServices+'static> DaemonDashboardBackend<S>{
+    pub fn new(config:DaemonConfig,services:Arc<Mutex<S>>,read_only:bool)->Self{
+        let publication_cache=PublicationCache::new(config.event_transport.clone());
+        Self{config,services,publication_cache,read_only}
+    }
 }
 impl<S:DaemonServices+'static> DashboardApiServices for DaemonDashboardBackend<S>{
-    fn supports_indexed_readonly_job(&self)->bool{
-        self.services.lock().map(|host|host.is_read_only_shadow())
-            .unwrap_or(false)
-    }
+    fn supports_indexed_readonly_job(&self)->bool{self.read_only}
+    fn supports_indexed_job(&self)->bool{true}
     fn discovered_jobs(&mut self,force:bool)->Result<Vec<Value>,String>{
-        let _=force;dashboard_inventory(&self.config)
+        let _=force;dashboard_inventory(&self.config,&self.publication_cache)
+    }
+    fn runtime_jobs(&mut self)->Result<Vec<Value>,String>{
+        inventory_from_local(&self.config,false)
     }
     fn exact_job(&mut self,id:&str,repo:Option<&str>)
         ->Result<Option<Value>,String>{
-        let mut host=self.services.lock()
-            .map_err(|_|"Daemon service lock poisoned")?;
-        if host.is_read_only_shadow(){
-            // One indexed, READ_ONLY SQLite lookup; the old full inventory
-            // parsed hundreds of large Jobs for *every* /api/job request.
-            // Preserve the same immutable ID/repo/PR admission contract.
-            return dashboard_job_by_id(&self.config,id,repo);
-        }
-        drop(host);
-        exact_job(&dashboard_inventory(&self.config)?,id,repo)
+        dashboard_job_by_id(&self.config,&self.publication_cache,id,repo)
     }
     fn control(&mut self,body:&Value)->Result<Value,String>{
         self.services.lock().map_err(|_|"Daemon service lock poisoned")?.control(body)
@@ -509,9 +563,8 @@ pub fn run_daemon<S:DaemonServices+'static>(
     };
     let read_only_shadow=services.is_read_only_shadow();
     let services=Arc::new(Mutex::new(services));
-    let dashboard=Arc::new(NativeDashboardApi::new(opts,DaemonDashboardBackend{
-        config:config.clone(),services:Arc::clone(&services),
-    }));
+    let dashboard=Arc::new(NativeDashboardApi::new(opts,DaemonDashboardBackend::new(
+        config.clone(),Arc::clone(&services),read_only_shadow)));
     // The bound loopback socket is owned by this daemon, never the production
     // Node Relay. It serves the immutable shared PWA resources and delegates
     // business requests to the single Graph/SQLite-backed daemon service.
@@ -651,6 +704,84 @@ mod dashboard_projection_tests {
             "job_id":job,"timestamp":timestamp,"source":{"id":format!("release/agents-relay/{sha}")},
             "data":{"package":"agents-relay","jobId":job,"sha":sha,
                 "version":version,"registry":"native"}}})
+    }
+    #[test]
+    fn stalled_release_history_never_blocks_indexed_reads_or_job_cancel(){
+        use crate::{dashboard::{DashboardBackend,DashboardRequest},
+            relayd_sqlite_write::IsolatedSQLiteWriteHost};
+        use std::{io::{Read,Write},sync::mpsc};
+        let root=std::env::temp_dir().join(format!("relay-pub-nonblocking-{}-{}",
+            std::process::id(),Utc::now().timestamp_nanos_opt().unwrap()));
+        std::fs::create_dir_all(root.join("stores")).unwrap();
+        let mut config=DaemonConfig::from_argv(&[],&json!({})).unwrap();
+        config.store_directory=root.join("stores");
+        config.graph_directory=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+        config.repositories=vec!["agents-relay".into()];
+        let db=relay_unified_store_path(&config.store_directory);
+        let store=SQLiteRelayStore::open(&db,Some("42")).unwrap();
+        store.save_job(&json!({"id":"42","title":"fixture","repository":"agents-relay",
+            "projectRoot":root,"state":"ACTIVE","tasks":[],"plans":[],
+            "createdAt":"2026-11-25T09:00:00Z","updatedAt":"2026-11-25T09:00:00Z"})).unwrap();
+        store.close().unwrap();
+        let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+        config.event_transport=json!({"apiUrl":format!("http://{}",listener.local_addr().unwrap())});
+        let (started,seen)=mpsc::channel();
+        let (release,gate)=mpsc::channel();
+        let response=json!({"package":"agents-relay","events":[
+            receipt("42",&"a".repeat(40),"2.0.263","2026-11-25T10:00:00Z")]}).to_string();
+        let server=std::thread::spawn(move ||{
+            let (mut stream,_)=listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            let mut buf=[0;2048];let n=stream.read(&mut buf).unwrap();
+            assert!(String::from_utf8_lossy(&buf[..n]).starts_with("GET /releases?package=agents-relay&limit=500 "));
+            started.send(()).unwrap();
+            if gate.recv_timeout(Duration::from_secs(8)).is_ok(){
+                let _=write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",response.len(),response);
+            }
+        });
+        let opts=DashboardApiOptions{graph_directory:config.graph_directory.clone(),
+            router_rules_path:config.router_rules_path.clone(),webhook_secret:None,
+            webhook_repositories:HashSet::new(),webhook_job_id:None};
+        let host=Arc::new(Mutex::new(IsolatedSQLiteWriteHost::new(config.clone())));
+        let api=Arc::new(NativeDashboardApi::new(opts,DaemonDashboardBackend::new(config,host,false)));
+        let query=|api:&NativeDashboardApi<DaemonDashboardBackend<IsolatedSQLiteWriteHost>>,method:&str,target:&str|{
+            api.api(DashboardRequest{method,target,body:b"",headers:&HashMap::new()})
+        };
+        let (first_tx,first_rx)=mpsc::channel();
+        let initial=Arc::clone(&api);
+        std::thread::spawn(move||{let _=first_tx.send(query(&initial,"GET","/api/jobs"));});
+        seen.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(first_rx.recv_timeout(Duration::from_secs(2)).expect("inventory blocked by history").status,200);
+        let (done,wait)=mpsc::channel();
+        let concurrent=Arc::clone(&api);
+        std::thread::spawn(move ||{
+            let summary=query(&concurrent,"GET","/api/runtime-summary");
+            let read=query(&concurrent,"GET","/api/job?id=42&repo=agents-relay");
+            let wrong=query(&concurrent,"GET","/api/job?id=42&repo=other");
+            let write=query(&concurrent,"POST","/api/job-action?id=42&action=cancel");
+            let _=done.send((summary,read,wrong,write));
+        });
+        let (summary,read,wrong,write)=wait.recv_timeout(Duration::from_secs(2))
+            .expect("control blocked by history");
+        assert_eq!(summary.status,200);
+        assert_eq!(read.status,200);
+        assert_ne!(wrong.status,200);
+        assert_eq!(write.status,200,"{}",String::from_utf8_lossy(&write.body));
+        let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("42")).unwrap();
+        assert_eq!(store.load_job("42").unwrap().unwrap()["state"],"CANCELLED");
+        store.close().unwrap();
+        release.send(()).unwrap();
+        server.join().unwrap();
+        let deadline=Instant::now()+Duration::from_secs(2);
+        loop{
+            let read=query(&api,"GET","/api/job?id=42");
+            let snapshot:Value=serde_json::from_slice(&read.body).unwrap();
+            assert_eq!(snapshot["state"],"CANCELLED");
+            if snapshot["publication"]["version"]=="2.0.263"{break;}
+            assert!(Instant::now()<deadline,"verified receipt not visible after refresh");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        drop(api);std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn native_release_projection_requires_explicit_exact_job_and_repository_correlation(){

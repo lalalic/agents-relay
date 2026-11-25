@@ -89,7 +89,11 @@ pub trait DashboardApiServices: Send + 'static {
     /// inventory discovery for an immutable /api/job?id= lookup. This never
     /// changes admission for mutable/legacy production APIs or id-less GET.
     fn supports_indexed_readonly_job(&self)->bool{false}
+    /// Immutable indexed identity lookup is independent of write admission.
+    fn supports_indexed_job(&self)->bool{self.supports_indexed_readonly_job()}
     fn discovered_jobs(&mut self, force: bool) -> Result<Vec<Value>, String>;
+    /// Runtime counts do not need optional publication enrichment.
+    fn runtime_jobs(&mut self)->Result<Vec<Value>,String>{self.discovered_jobs(false)}
     fn exact_job(
         &mut self,
         job_id: &str,
@@ -369,8 +373,8 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                 "/api/job" => {
                     let supplied_id=query(&parsed,"id");
                     let jobs=if supplied_id.is_some()
-                        &&services.supports_indexed_readonly_job(){
-                        // The shadow's exact scoped SQLite load is indexed;
+                        &&services.supports_indexed_job(){
+                        // Exact scoped SQLite load is indexed;
                         // avoid parsing every live Job merely to resolve one
                         // immutable, explicitly supplied ID.
                         Vec::new()
@@ -417,7 +421,7 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                 "/api/status" => json_response(200, &services.runtime_status()),
                 "/api/runtime-summary" => json_response(
                     200,
-                    &summarize_runtime(&self.discovered(services, false)?, timestamp_millis()),
+                    &summarize_runtime(&services.runtime_jobs()?, timestamp_millis()),
                 ),
                 "/api/usage" => {
                     let mut account = services.account_usage()?;

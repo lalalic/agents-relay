@@ -139,6 +139,7 @@ pub fn create_service<S:DaemonServices+'static>(
     if !same_store{
         return Err("CLI Reconciler and service must use the same SQLite Store directory".into());
     }
+    let read_only=services.is_read_only_shadow();
     let services=Arc::new(Mutex::new(services));
     let job=services.lock().map_err(|_|"Service Store poisoned")?.load(job_id)?;
     if job["id"].as_str()!=Some(job_id){
@@ -159,7 +160,7 @@ pub fn create_service<S:DaemonServices+'static>(
         router_rules_path:config.router_rules_path.clone(),
         webhook_secret:None,webhook_repositories:HashSet::new(),
         webhook_job_id:None,
-    },DaemonDashboardBackend{config:config.clone(),services:Arc::clone(&services)}));
+    },DaemonDashboardBackend::new(config.clone(),Arc::clone(&services),read_only)));
     let server_stop=Arc::clone(&stop);
     let dashboard=thread::spawn(move||serve_dashboard(listener,api,server_stop)
         .map_err(|error|format!("Dashboard server: {error}")));

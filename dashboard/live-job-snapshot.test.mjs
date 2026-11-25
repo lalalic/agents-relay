@@ -10,7 +10,7 @@ const helpers=source.slice(start,end);
 
 function harness(initial=[]){
   const context={jobs:initial.map(job=>({...job})),jobSelectionKey:job=>String(job.repository||'')+'|'+String(job.id||''),dedupeJobs:entries=>entries};
-  vm.runInNewContext(helpers+';globalThis.api={jobs,isFreshEnough,normalizeJobSnapshot,mergeJobSnapshots,mergeJobList,applyStatePatch,upsertFreshJob};',context);
+  vm.runInNewContext(helpers+';globalThis.api={jobs,isFreshEnough,normalizeJobSnapshot,mergeJobSnapshots,mergeJobList,applyStatePatch,upsertFreshJob,applyPublicationObservations};',context);
   return context.api;
 }
 
@@ -93,4 +93,14 @@ test('SSE state patches retain repository and cannot mutate another Job',()=>{
   assert.equal(api.jobs[0].runtimeStatus,'COMPLETED');
   api.applyStatePatch({jobId:'12',repository:'relay',jobState:'ACTIVE',jobUpdatedAt:'2026-11-25T10:02:00Z'});
   assert.equal(api.jobs[0].state,'COMPLETED');
+});
+
+test('asynchronous publication refresh never rolls back lifecycle or task facts',()=>{
+  const api=harness([{id:'42',repository:'relay',state:'COMPLETED',updatedAt:'2026-11-25T10:02:00Z',tasks:[{id:'1',state:'SUCCEEDED'}],publication:{version:'2.0.262'},publicationObservedAt:'2026-11-25T10:01:00Z'}]);
+  assert.equal(api.applyPublicationObservations([{id:'42',repository:'relay',state:'ACTIVE',tasks:[{id:'1',state:'RUNNING'}],publication:{version:'2.0.263'},publicationFailure:null,publicationObservedAt:'2026-11-25T10:03:00Z'}]),true);
+  assert.equal(api.jobs[0].publication.version,'2.0.263');
+  assert.equal(api.jobs[0].state,'COMPLETED');
+  assert.equal(api.jobs[0].tasks[0].state,'SUCCEEDED');
+  assert.equal(api.applyPublicationObservations([{id:'42',repository:'relay',publication:null,publicationObservedAt:null},{id:'42',repository:'other',publication:{version:'9.0.0'},publicationObservedAt:'2026-11-25T10:04:00Z'},{id:'42',repository:'relay',publication:{version:'2.0.261'},publicationObservedAt:'2026-11-25T10:00:00Z'}]),false);
+  assert.equal(api.jobs[0].publication.version,'2.0.263');
 });
