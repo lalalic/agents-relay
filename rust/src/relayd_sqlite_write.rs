@@ -845,6 +845,16 @@ impl IsolatedSQLiteWriteHost {
         if managed{
             let checkout=prepare_local_job_execution_worktree(
                 &project,&current,&self.config.workspace_root)?;
+            // Optional host-local tooling; never affect the Task Graph or
+            // resync an existing checkout index on each Worker invocation.
+            if self.live_store && field(task,"adapter")=="codex" && checkout!=project {
+                if let Some(executable)=crate::codegraph_index::installed_codegraph(){
+                    if let Err(error)=crate::codegraph_index::prepare_worktree_index(
+                        &executable,&project,&checkout){
+                        eprintln!("warning: CodeGraph index preparation Job {job_id}: {error}");
+                    }
+                }
+            }
             return Ok((current,checkout));
         }
         Ok((current,project))
