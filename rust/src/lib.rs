@@ -241,6 +241,7 @@ pub mod projection_outbox;
 // Direct Node src/dashboard-data.ts readonly projections.
 pub mod dashboard;
 pub mod dashboard_api;
+pub mod dashboard_publication;
 pub mod dashboard_data;
 pub mod events; // Direct Node src/events.ts memory and NATS event transports.
 

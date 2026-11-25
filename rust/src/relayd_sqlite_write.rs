@@ -445,12 +445,9 @@ impl IsolatedSQLiteWriteHost {
         self.accept_model_worker_event(id,task_id,&execution,event)?;
         Ok(true)
     }
-    pub fn poll_isolated_model_worker_events(&mut self,id:&str)->Result<usize,String>{
-        if !self.model_event_ingress_enabled{return Ok(0);}
-        // Recover a dead NATS subscription independently of Pool admission.
-        // HTTP history, if configured, remains a separate durable fallback.
+    fn drain_nats_dashboard_events(&mut self)->Result<(),String>{
         if let Err(error)=self.reconnect_isolated_model_nats_if_needed(){
-            eprintln!("warning: Isolated model NATS resubscribe: {error}");
+            eprintln!("warning: NATS dashboard resubscribe: {error}");
         }
         // Drain a bounded number of NATS callback rows before inspecting
         // this Job. Multi-Job events are cached for their OWN daemon turn,
@@ -465,6 +462,14 @@ impl IsolatedSQLiteWriteHost {
             }
         }
         for event in received{
+            if matches!(field(&event,"type"),"package.published"|"package.publish_failed"){
+                match crate::dashboard_publication::record_observed_event(&self.path(),&event){
+                    Ok(true)=>self.emit(event),
+                    Ok(false)=>{},
+                    Err(error)=>eprintln!("warning: Dashboard publication ingress: {error}"),
+                }
+                continue;
+            }
             let event_job=field(&event,"job_id");
             if event_job.is_empty(){continue;}
             let total:usize=self.model_nats_pending.values().map(Vec::len).sum();
@@ -472,6 +477,11 @@ impl IsolatedSQLiteWriteHost {
             self.model_nats_pending.entry(event_job.to_string())
                 .or_default().push(event);
         }
+        Ok(())
+    }
+    pub fn poll_isolated_model_worker_events(&mut self,id:&str)->Result<usize,String>{
+        if !self.model_event_ingress_enabled{return Ok(0);}
+        self.drain_nats_dashboard_events()?;
         let job=self.scoped(id)?.load_job(id)?
             .ok_or("Model EventBus ingress Job is absent")?;
         self.isolated_project(&job)?;
@@ -719,7 +729,17 @@ impl IsolatedSQLiteWriteHost {
     fn emit_job_snapshot(&mut self,job:&Value){
         let id=field(job,"id");
         if id.is_empty(){return;}
-        let payload=json!({"job":job}).to_string();
+        // Preserve the exact committed Job envelope for existing SSE clients.
+        // Dashboard-only projection is carried separately from durable facts.
+        let mut view=json!({"runtimeStatus":crate::runtime_status::derive_job_runtime_status(job,"UNKNOWN")});
+        if let Ok(Some(snapshot))=crate::relay_store_discovery::discover_unified_job_by_id(
+            &self.config.store_directory,id){
+            let display=crate::relayd::managed_view(&snapshot,job);
+            for key in ["runtimeStatus","publication","publicationFailure","publicationObservedAt"]{
+                view[key]=display[key].clone();
+            }
+        }
+        let payload=json!({"job":job,"jobView":view}).to_string();
         if self.last_sse_snapshot.get(id).is_some_and(|prior|prior==&payload){
             return;
         }
@@ -1242,6 +1262,14 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
     }
 }
 impl DaemonServices for IsolatedSQLiteWriteHost {
+    fn publication_history_runtime(&self)->Option<Value>{
+        if let Some(api)=&self.event_history_api{return Some(json!({"apiUrl":api.as_str()}));}
+        if self.live_store{return Some(self.config.event_transport.clone());}
+        None
+    }
+    fn drain_dashboard_events(&mut self)->Result<(),String>{
+        self.drain_nats_dashboard_events()
+    }
     fn control(&mut self,body:&Value)->Result<Value,String>{
         if field(body,"command")=="job.reconcile"{
             let id=field(body,"jobId");
@@ -1518,8 +1546,20 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         let fetched=crate::events_bus_runtime::events_bus_history_page(
             id,task,&json!(limit.max(1)),&json!({"timeoutMs":5000}),&env)
             .map_err(|error|format!("Dashboard event history unavailable: {error}"))?;
-        fetched["events"].as_array().cloned()
-            .ok_or("Dashboard event history returned invalid events".into())
+        let rows=fetched["events"].as_array().cloned()
+            .ok_or("Dashboard event history returned invalid events")?;
+        // Older Job-scoped publications may predate the native observer.
+        // The verified Job history is already loaded; project its receipts
+        // idempotently, without making another request or changing Job state.
+        for event in &rows{
+            if !matches!(field(event,"type"),"package.published"|"package.publish_failed"){continue;}
+            match crate::dashboard_publication::record_observed_event(&self.path(),event){
+                Ok(true)=>self.emit(event.clone()),
+                Ok(false)=>{},
+                Err(error)=>eprintln!("warning: Dashboard publication history projection: {error}"),
+            }
+        }
+        Ok(rows)
     }
     fn publish_event(&mut self,event:&Value)->Result<(),String>{
         WorkspaceControlBackend::publish(self,event)

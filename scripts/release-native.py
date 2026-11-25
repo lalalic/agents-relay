@@ -140,6 +140,20 @@ def release(args):
     package = args.root / "versions" / sha
     link = args.root / "live"
     old = link.resolve(strict=True)
+    # A change to any browser-facing projection must pass the real Chrome
+    # suite before delivery. Ordinary backend-only releases do not pay this cost.
+    dashboard_paths = ("dashboard", "rust/src/dashboard.rs", "rust/src/dashboard_api.rs",
+                       "rust/src/dashboard_data.rs", "rust/src/dashboard_publication.rs",
+                       "rust/src/relayd.rs", "rust/src/relayd_sqlite_write.rs",
+                       "rust/src/publication_store.rs", "rust/src/events_bus_runtime.rs",
+                       "rust/src/runtime_status.rs", "rust/src/runtime_summary.rs",
+                       "rust/tests/native_dashboard_browser.rs", "scripts/test-dashboard-browser.sh")
+    previous_sha = (old / "SOURCE_REVISION").read_text().strip()
+    changes = git("diff", "--name-only", previous_sha, sha, "--", *dashboard_paths)
+    if changes:
+        run(str(ROOT / "scripts/test-dashboard-browser.sh"))
+        if git("rev-parse", "HEAD") != sha or git("status", "--porcelain"):
+            raise RuntimeError("Checkout changed during Dashboard tests")
     if args.job_id:
         job = json.loads(run("agents-relay", "job", "show", "--id", args.job_id, capture=True))
         if job["state"] != "COMPLETED" or job.get("repository") != PACKAGE:

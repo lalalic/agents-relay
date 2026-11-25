@@ -89,6 +89,7 @@ pub trait DashboardApiServices: Send + 'static {
     /// inventory discovery for an immutable /api/job?id= lookup. This never
     /// changes admission for mutable/legacy production APIs or id-less GET.
     fn supports_indexed_readonly_job(&self)->bool{false}
+    fn supports_indexed_job(&self)->bool{self.supports_indexed_readonly_job()}
     fn discovered_jobs(&mut self, force: bool) -> Result<Vec<Value>, String>;
     fn exact_job(
         &mut self,
@@ -369,7 +370,7 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                 "/api/job" => {
                     let supplied_id=query(&parsed,"id");
                     let jobs=if supplied_id.is_some()
-                        &&services.supports_indexed_readonly_job(){
+                        &&services.supports_indexed_job(){
                         // The shadow's exact scoped SQLite load is indexed;
                         // avoid parsing every live Job merely to resolve one
                         // immutable, explicitly supplied ID.

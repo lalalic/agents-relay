@@ -328,6 +328,11 @@ pub fn events_bus_release_history(
     limit: usize,
     runtime: &Value,
 ) -> Result<Vec<Value>, String> {
+    events_bus_release_history_with_timeout(package,limit,runtime,12_000)
+}
+pub fn events_bus_release_history_with_timeout(
+    package:&str,limit:usize,runtime:&Value,timeout_ms:u64
+)->Result<Vec<Value>,String>{
     if package.is_empty() || package.len() > 64
         || !package.as_bytes()[0].is_ascii_lowercase()
         || !package.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
@@ -340,7 +345,7 @@ pub fn events_bus_release_history(
         .join("/releases").map_err(|_| "Invalid Events Bus API URL")?;
     target.query_pairs_mut().append_pair("package", package)
         .append_pair("limit", &limit.clamp(1, 500).to_string());
-    let body = request_body(target, 12_000)?;
+    let body = request_body(target, timeout_ms)?;
     let rows = body.get("events").and_then(Value::as_array)
         .ok_or("Events Bus release history returned an invalid payload")?;
     if body.get("package").and_then(Value::as_str) != Some(package) || rows.len() > 500 {

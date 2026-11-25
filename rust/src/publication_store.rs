@@ -70,7 +70,11 @@ pub fn record_publication_in_database(
     }
     let previous = load_publication_from_database(&tx, job_id)?;
     let is_newer = previous.as_ref().is_none_or(|prior| {
-        now.as_str() >= prior.get("updatedAt").and_then(Value::as_str).unwrap_or("")
+        let old=prior.get("updatedAt").and_then(Value::as_str).unwrap_or("");
+        match (DateTime::parse_from_rfc3339(&now),DateTime::parse_from_rfc3339(old)){
+            (Ok(next),Ok(previous))=>next>=previous,
+            _=>now.as_str()>=old,
+        }
     });
     let next = if is_newer {
         json!({"latest":publication.cloned().or_else(||previous.as_ref().and_then(|previous|previous.get("latest")).cloned()).unwrap_or(Value::Null),
