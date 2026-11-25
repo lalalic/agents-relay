@@ -142,6 +142,16 @@ context; Troubleshooters independently verify a response against evidence from
 the original failing execution. Repeating an identical escalation with unchanged
 evidence is idempotent.
 
+## Explicit operator retry
+
+An explicit `task retry` starts a fresh routing cycle: clear the previous
+selected route, worker selection and prior cycle's route exclusions.
+Preserve the last retry's routing and failure evidence as audit metadata.
+The Router still applies current health, quota and policy gates. The
+automatic Troubleshooter and platform-failure paths retain their existing
+exclusion semantics. The Thread binding is not reset by retry; the Codex
+adapter independently decides compatible resume versus fresh Thread.
+
 ## Codex Thread isolation
 
 Provider fallback retains the durable Task or Plan identity, not its provider

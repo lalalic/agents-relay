@@ -258,8 +258,18 @@ pub fn dispatch_task_action_snapshot(
         TASK_RETRY_ACTION=>{
             let task=find_task_mut(&mut updated,task_id).expect("task from original");
             apply_task_retry_action(directory,task,true,&current)?;
+            // An explicit operator retry starts a fresh routing cycle.
+            // Automatic recovery still honors its current route exclusions.
             if let Some(map)=task.as_object_mut(){
-                map.remove("routing");map.remove("workerSelection");
+                map.insert("lastManualRetry".into(),json!({
+                    "at":current,"attempt":original.get("attempt"),
+                    "previousRouting":original.get("routing"),
+                    "previousExclusions":original.get("routingExclusions"),
+                    "error":original.get("error")
+                }));
+                for key in ["routing","workerSelection","routingExclusions"]{
+                    map.remove(key);
+                }
             }
         },
         TASK_RECOVER_ACTION=>{

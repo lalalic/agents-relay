@@ -42,12 +42,29 @@ impl Fixture{
 impl Drop for Fixture{fn drop(&mut self){let _=fs::remove_dir_all(&self.root);}}
 #[test]
 fn dashboard_retry_and_cancel_are_graph_sqlite_commits_and_survive_restart(){
- let f=Fixture::new();let mut host=IsolatedSQLiteWriteHost::new(f.config.clone());
+ let f=Fixture::new();
+ let store=SQLiteRelayStore::open_without_claim_reset(
+  &relay_unified_store_path(&f.config.store_directory),Some("15")).unwrap();
+ let mut initial=f.job();
+ let task=&mut initial["tasks"][0];
+ task["routingExclusions"]=json!([{"provider":"openai","model":"gpt","reason":"old incompatible thread"}]);
+ task["threadId"]=json!("38f84f9e-410d-4e36-96e0-a420594a102d");
+ task["threadRoute"]=json!({"provider":"old","model":"old","profile":"old"});
+ task["threadHistory"]=json!([{"threadId":"38f84f9e-410d-4e36-96e0-a420594a102e"}]);
+ task["error"]=json!("worker failed");
+ store.save_job(&initial).unwrap();store.close().unwrap();
+ let mut host=IsolatedSQLiteWriteHost::new(f.config.clone());
  let retry=DaemonServices::task_action(&mut host,"15","7","retry").unwrap();
  assert_eq!(retry["tasks"][0]["state"],"QUEUED");
  assert_eq!(retry["tasks"][0]["maxAttempts"],3);
  assert!(retry["tasks"][0].get("routing").is_none());
  assert!(retry["tasks"][0].get("workerSelection").is_none());
+ assert!(retry["tasks"][0].get("routingExclusions").is_none());
+ assert_eq!(retry["tasks"][0]["lastManualRetry"]["previousExclusions"][0]["provider"],"openai");
+ assert_eq!(retry["tasks"][0]["lastManualRetry"]["error"],"worker failed");
+ assert_eq!(retry["tasks"][0]["threadId"],"38f84f9e-410d-4e36-96e0-a420594a102d");
+ assert_eq!(retry["tasks"][0]["threadRoute"]["provider"],"old");
+ assert_eq!(retry["tasks"][0]["threadHistory"][0]["threadId"],"38f84f9e-410d-4e36-96e0-a420594a102e");
  assert_eq!(retry,f.job());
  drop(host);
  let mut restarted=IsolatedSQLiteWriteHost::new(f.config.clone());
