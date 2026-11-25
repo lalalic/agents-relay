@@ -59,13 +59,14 @@ def paused_and_quiescent(job):
         for p in job["plans"])
 
 
-def check_idle(allow_paused_job=None):
+def check_idle(allow_paused_jobs=()):
+    allowed = set(allow_paused_jobs)
     jobs = json.loads(run("agents-relay", "job", "list", capture=True))
     busy = []
     for job in jobs:
         if job["state"] in ("COMPLETED", "FAILED", "CANCELLED"):
             continue
-        if job["id"] == allow_paused_job:
+        if job["id"] in allowed:
             detail = json.loads(run("agents-relay", "job", "show", "--id",
                                     job["id"], capture=True))
             if detail["id"] == job["id"] and paused_and_quiescent(detail):
@@ -207,12 +208,13 @@ def main():
     p.add_argument("--api", type=local_url, default="http://127.0.0.1:8787")
     p.add_argument("--events-api", type=local_url, default="http://127.0.0.1:4223")
     p.add_argument("--job-id", help="Optional completed Job association")
-    p.add_argument("--allow-paused-job", help="Explicitly paused Job with no claimed or pending generations")
+    p.add_argument("--allow-paused-job", action="append", default=[],
+                   help="Explicitly paused Job with no claimed or pending generations (repeatable)")
     args = p.parse_args()
     args.root = args.root.resolve(strict=True)
     if args.job_id is not None and not re.fullmatch(r"[1-9][0-9]*", args.job_id):
         p.error("--job-id must be a positive decimal ID")
-    if args.allow_paused_job is not None and not re.fullmatch(r"[1-9][0-9]*", args.allow_paused_job):
+    if any(not re.fullmatch(r"[1-9][0-9]*", job_id) for job_id in args.allow_paused_job):
         p.error("--allow-paused-job must be a positive decimal ID")
     os.umask(0o077)
     with (args.root / ".release.lock").open("a") as lock:

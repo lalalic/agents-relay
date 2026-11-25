@@ -30,13 +30,24 @@ class MaintenanceGuard(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 release.check_idle()
         with patch.object(release, "run", side_effect=[json.dumps(listed), json.dumps(detail)]):
-            release.check_idle("738")
+            release.check_idle(["738"])
         with patch.object(release, "run", side_effect=[json.dumps(listed + [{"id":"739","state":"ACTIVE"}]), json.dumps(detail)]):
             with self.assertRaises(RuntimeError):
-                release.check_idle("738")
+                release.check_idle(["738"])
         with patch.object(release, "run", side_effect=[json.dumps(listed), json.dumps(dict(detail,pause=None))]):
             with self.assertRaises(RuntimeError):
-                release.check_idle("738")
+                release.check_idle(["738"])
+
+    def test_multiple_jobs_require_explicit_pause_and_quiescence(self):
+        listed = [{"id": job_id, "state": "ACTIVE"} for job_id in ("738", "739")]
+        details = [dict(job, pause=dict(requestedAt="now"), tasks=[], plans=[])
+                   for job in listed]
+        with patch.object(release, "run", side_effect=[json.dumps(v) for v in [listed, *details]]):
+            release.check_idle(["738", "739"])
+        busy = dict(details[1], tasks=[dict(executionId="active")])
+        with patch.object(release, "run", side_effect=[json.dumps(v) for v in [listed, details[0], busy]]):
+            with self.assertRaises(RuntimeError):
+                release.check_idle(["738", "739"])
 
 if __name__ == "__main__":
     unittest.main()
