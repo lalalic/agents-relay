@@ -99,3 +99,16 @@ Use deployment-specific EventBus/worker options as needed. The Rust daemon serve
 [`.github/workflows/rust.yml`](.github/workflows/rust.yml) checks the Rust-only tracked layout, Cargo build and selected native Rust regressions on GitHub. Local tests must use disposable stores; **never** target the canonical `~/.agents-relay/stores` for acceptance tests. Native L1/L3 success does not imply physical iPhone, WebHelm or external provider E2E; record those separately.
 
 Commit to `main` only after native checks. Deployment of a source commit into the live PM2 service is **separate** from making the Git commit; it requires an explicit executable rollout with backups and verification. Do not restart an active production daemon merely to test a source-only change.
+
+### Native release (Neo Master)
+
+Commit the Cargo version and lockfile bump with the reviewed change, merge to
+clean main, then run `python3 scripts/release-native.py [--job-id ID]`.
+The operator command requires the installed PM2 launcher, local Events Bus
+release-history API, and no active Jobs before restart. It verifies a non-force
+origin/main push, builds and installs an immutable SHA package, switches the
+live launcher, checks the actual HTTP version/SHA and served assets, and only
+then records `package.published` on the native release channel. A Job ID is
+optional observational correlation, never required for a hotfix. Publication
+failure after a healthy deployment is retriable with the same command and
+association; a failed runtime switch rolls back to the previous package.

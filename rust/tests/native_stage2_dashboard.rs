@@ -85,7 +85,7 @@ fn server_uses_exact_original_pwa_assets_with_no_second_frontend() {
     assert_eq!(response.content_type,"text/html; charset=utf-8");
     let html=String::from_utf8(response.body).unwrap();
     for asset in ["dashboard.css","dashboard.js","vendor/markdown-it.min.js"]{
-        assert!(html.contains(&format!("/{asset}?v={}",dashboard_version())));
+        assert!(html.contains(&format!("/{asset}?v={}",agents_relay_rust2::dashboard::dashboard_asset_version())));
     }
     assert!(static_response("POST","/").is_none());
     assert!(static_response("GET","/../../secret").is_none());
@@ -114,7 +114,7 @@ fn readonly_endpoints_are_fresh_and_webhook_fails_closed(){
     let version=static_response("GET","/api/version").unwrap();
     assert_eq!(version.status,200);
     assert_eq!(version.cache_control,"no-store");
-    assert_eq!(data(version),json!({"version":dashboard_version()}));
+    assert_eq!(data(version),json!({"version":dashboard_version(),"sourceRef":agents_relay_rust2::dashboard::source_revision()}));
     assert_eq!(data(handle(&server,"GET","/api/job?id=101",None)),
         json!({"id":"101","state":"ACTIVE","title":"Alpha"}));
     assert_eq!(data(handle(&server,"GET","/api/events?job=101&task=2&limit=7",None)),

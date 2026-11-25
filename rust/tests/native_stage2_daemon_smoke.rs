@@ -103,7 +103,7 @@ fn native_daemon_serves_original_ui_and_sqlite_first_status_then_stops_cleanly()
     let html=agents_relay_rust2::dashboard::static_response("GET","/").unwrap();
     let expected=String::from_utf8(html.body).unwrap();
     assert!(response.ends_with(&expected),"native daemon serves Node-owned versioned PWA");
-    let version=agents_relay_rust2::dashboard::dashboard_version();
+    let version=agents_relay_rust2::dashboard::dashboard_asset_version();
     for asset in ["dashboard.css","dashboard.js","vendor/markdown-it.min.js"]{
         assert!(response.contains(&format!("/{asset}?v={version}")));
     }

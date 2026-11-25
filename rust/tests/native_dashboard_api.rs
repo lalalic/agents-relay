@@ -525,7 +525,7 @@ fn actual_pwa_http_transport_preserves_bytes_and_authenticates_webhooks() {
     );
     let html=String::from_utf8(body).unwrap();
     for asset in ["dashboard.css","dashboard.js","vendor/markdown-it.min.js"]{
-        assert!(html.contains(&format!("/{asset}?v={}",agents_relay_rust2::dashboard::dashboard_version())));
+        assert!(html.contains(&format!("/{asset}?v={}",agents_relay_rust2::dashboard::dashboard_asset_version())));
     }
     let (status, body) = tcp(
         &url,

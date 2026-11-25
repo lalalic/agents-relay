@@ -64,29 +64,42 @@ pub trait DashboardBackend: Send + Sync + 'static {
 pub fn dashboard_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
-fn source_revision() -> Option<String> {
+pub fn source_revision() -> Option<String> {
     let valid = |value: &str| value.len() == 40 && value.bytes().all(|b| b.is_ascii_hexdigit());
+    // A running installed executable must retain its own immutable identity
+    // even during a live symlink switch before the service restarts.
+    if let Ok(exe) = std::env::current_exe().and_then(|path| path.canonicalize()) {
+        if let Some(root) = exe.parent().and_then(|bin| bin.parent()) {
+            if let Ok(value) = std::fs::read_to_string(root.join("SOURCE_REVISION")) {
+                let value = value.trim();
+                if valid(value) { return Some(value.to_owned()); }
+            }
+        }
+    }
+    let root = crate::runtime_resources::package_root().ok();
+    // Immutable package identity wins over a stale launcher override.
+    if let Some(root) = &root {
+        if let Ok(value) = std::fs::read_to_string(root.join("SOURCE_REVISION")) {
+            let value = value.trim();
+            if valid(value) { return Some(value.to_owned()); }
+        }
+    }
     if let Ok(value) = std::env::var("AGENTS_RELAY_WORKFLOW_SOURCE_REF") {
-        if valid(&value) {
-            return Some(value);
-        }
+        if valid(&value) { return Some(value); }
     }
-    let root = crate::runtime_resources::package_root().ok()?;
-    if let Ok(value) = std::fs::read_to_string(root.join("SOURCE_REVISION")) {
-        let value = value.trim();
-        if valid(value) {
-            return Some(value.to_owned());
-        }
-    }
+    let root = root?;
     let output = Command::new("git")
         .args(["-C", root.to_str()?, "rev-parse", "HEAD"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
+        .output().ok()?;
+    if !output.status.success() { return None; }
     let revision = String::from_utf8(output.stdout).ok()?.trim().to_owned();
     valid(&revision).then_some(revision)
+}
+pub fn dashboard_asset_version() -> String {
+    match source_revision() {
+        Some(sha) => format!("{}-{sha}", dashboard_version()),
+        None => dashboard_version().to_owned(),
+    }
 }
 pub fn dashboard_config_script() -> String {
     let version = serde_json::to_string(dashboard_version()).expect("version JSON");
@@ -95,7 +108,7 @@ pub fn dashboard_config_script() -> String {
     let jel = include_str!("../../dashboard/jel-function.js").trim_end();
     format!(
         "window.__RELAY_DASHBOARD_CONFIG=Object.assign({{\"version\":{version},\"sourceRef\":{source_ref},\"statuses\":{statuses}}},{{buildJelDiagram:{jel}}});\n\
-document.querySelector('.version').textContent='v'+window.__RELAY_DASHBOARD_CONFIG.version;\n"
+document.querySelector('.version').textContent='v'+window.__RELAY_DASHBOARD_CONFIG.version+(window.__RELAY_DASHBOARD_CONFIG.sourceRef?' · '+window.__RELAY_DASHBOARD_CONFIG.sourceRef.slice(0,7):'');\n"
     )
 }
 /// Exact public path allowlist. No HTTP-supplied path is used in filesystem I/O.
@@ -110,7 +123,7 @@ pub fn static_response(method: &str, target: &str) -> Option<DashboardResponse> 
     if target=="/api/version"{
         return Some(DashboardResponse::new(
             200,"application/json","no-store",
-            serde_json::json!({"version":dashboard_version()})
+            serde_json::json!({"version":dashboard_version(),"sourceRef":source_revision()})
                 .to_string().into_bytes()));
     }
     if method != "GET" {
@@ -125,7 +138,7 @@ pub fn static_response(method: &str, target: &str) -> Option<DashboardResponse> 
     let query=normalized.query().unwrap_or("");
     if !query.is_empty() {
         let mut pairs = url::form_urlencoded::parse(query.as_bytes());
-        if !pairs.next().is_some_and(|(key, value)| key == "v" && value == dashboard_version())
+        if !pairs.next().is_some_and(|(key, value)| key == "v" && value == dashboard_asset_version())
             || pairs.next().is_some()
         {
             return None;
@@ -136,7 +149,7 @@ pub fn static_response(method: &str, target: &str) -> Option<DashboardResponse> 
     };
     match path {
         "/" if target == "/" => {
-            let version=dashboard_version();
+            let version=dashboard_asset_version();
             let html=include_str!("../../dashboard/index.html")
                 .replace(r#"href="./dashboard.css""#, &format!(r#"href="./dashboard.css?v={version}""#))
                 .replace(r#"src="./vendor/markdown-it.min.js""#, &format!(r#"src="./vendor/markdown-it.min.js?v={version}""#))

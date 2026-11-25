@@ -407,6 +407,38 @@ fn isolated_daemon_refuses_pushing_to_an_external_git_origin(){
 }
 
 #[test]
+fn live_daemon_allows_verified_remote_outside_fixture_root(){
+    let (root,config)=fixture();
+    let project=config.workspace_root.join("project");
+    fs::create_dir_all(&project).unwrap();
+    git(&project,&["init","-q","-b","main"]);
+    git(&project,&["config","user.name","Fixture"]);
+    git(&project,&["config","user.email","fixture@example.invalid"]);
+    fs::write(project.join("base.txt"),"base\n").unwrap();
+    git(&project,&["add","base.txt"]);git(&project,&["commit","-qm","baseline"]);
+    git(&project,&["checkout","-qb","relay/job-17"]);
+    fs::write(project.join("feature.txt"),"code\n").unwrap();
+    git(&project,&["add","feature.txt"]);git(&project,&["commit","-qm","feature"]);
+    git(&project,&["checkout","-q","main"]);
+    let external=std::env::temp_dir().join(format!("rust2-forbidden-origin-{}-{}",
+        std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    fs::create_dir_all(&external).unwrap();
+    git(&external,&["init","--bare","-q"]);
+    git(&project,&["remote","add","origin",external.to_str().unwrap()]);
+    git(&project,&["push","-q","origin","main:refs/heads/main"]);
+    let db=root.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&db,Some("17")).unwrap();
+    store.save_job(&completed_planned_job(&project,"task_pr")).unwrap();
+    let host=IsolatedSQLiteWriteHost::new_live(config);
+    assert!(host.reconcile_git_delivery("17").unwrap());
+    let merged=git(&project,&["rev-parse","main"]);
+    host.reconcile_remote_delivery("17",&merged).unwrap();
+    assert_eq!(store.load_job("17").unwrap().unwrap()["remoteDelivery"]["status"],"succeeded");
+    assert_eq!(git(&external,&["rev-parse","refs/heads/main"]),merged);
+    fs::remove_dir_all(root).unwrap();fs::remove_dir_all(external).unwrap();
+}
+
+#[test]
 fn correlated_model_worker_event_stream_is_graph_sqlite_durable_and_replay_fenced(){
     use agents_relay_rust2::{events::event_for,
         execution_event_identity::execution_event_source};

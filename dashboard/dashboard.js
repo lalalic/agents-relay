@@ -455,7 +455,7 @@ function reviewStatus(job){const review=job?.review;if(!review)return 'Not start
 function isCompleteUnmerged(job){return job.runtimeStatus==='MERGE_PENDING';}
 function compareJobs(a,b){const lifecycleGroup=job=>job.state==='COMPLETED'||job.state==='CANCELLED'?1:0;const timestamp=job=>{const updated=Date.parse(job.updatedAt||'');if(Number.isFinite(updated))return updated;const created=Date.parse(job.createdAt||'');return Number.isFinite(created)?created:0;};return lifecycleGroup(a)-lifecycleGroup(b)||timestamp(b)-timestamp(a)||String(a.repository||'').localeCompare(String(b.repository||''))||String(a.id||'').localeCompare(String(b.id||''));}
 async function loadJSON(url){const response=await fetch(url);if(!response.ok)throw new Error(response.status+' '+response.statusText);return response.json();}
-async function refreshVersion(){try{const live=await loadJSON(RELAY_PREFIX+'/api/version');if(live?.version&&live.version!==DASHBOARD_VERSION)location.reload();}catch{}}
+async function refreshVersion(){try{const live=await loadJSON(RELAY_PREFIX+'/api/version');if(live?.version&&(live.version!==DASHBOARD_VERSION||(live.sourceRef&&live.sourceRef!==WORKFLOW_SOURCE_REF)))location.reload();}catch{}}
 function renderRateLimitStatus(status){
   if(!status?.limited){rateLimitWarning.hidden=true;rateLimitWarning.textContent='';return;}
   const until=status.cooldownUntil?new Date(status.cooldownUntil):null;

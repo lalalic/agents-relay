@@ -143,17 +143,17 @@ fn pwa_static_assets_have_exact_shared_bytes_and_no_stale_runtime_state() {
         assert!(static_response("POST", path).is_none());
     }
     let page=String::from_utf8(static_response("GET","/").unwrap().body).unwrap();
-    assert_eq!(page.replace(&format!("?v={}",dashboard_version()),""),
+    assert_eq!(page.replace(&format!("?v={}",agents_relay_rust2::dashboard::dashboard_asset_version()),""),
         include_str!("../../dashboard/index.html"),
         "native versioned HTML must be the same Node-owned template");
     for asset in ["/dashboard.css","/dashboard.js","/vendor/markdown-it.min.js"]{
-        let url=format!("{asset}?v={}",dashboard_version());
+        let url=format!("{asset}?v={}",agents_relay_rust2::dashboard::dashboard_asset_version());
         assert!(page.contains(&url),"{asset} requires immutable versioned URL");
         assert_eq!(static_response("GET",&url),static_response("GET",asset));
         for bad in [
             format!("{asset}?v=old"),
-            format!("{asset}?v={}&v=old",dashboard_version()),
-            format!("{asset}?v={}&extra=1",dashboard_version()),
+            format!("{asset}?v={}&v=old",agents_relay_rust2::dashboard::dashboard_asset_version()),
+            format!("{asset}?v={}&extra=1",agents_relay_rust2::dashboard::dashboard_asset_version()),
         ]{
             assert!(static_response("GET",&bad).is_none(),
                 "non-versioned or ambiguous asset query must be rejected: {bad}");

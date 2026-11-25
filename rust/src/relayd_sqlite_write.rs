@@ -680,7 +680,8 @@ impl IsolatedSQLiteWriteHost {
             return Err("Remote delivery expected SHA no longer matches SQLite completion".into());
         }
         let project=self.isolated_project(&job)?;
-        self.isolated_origin(&project)?;
+        // The fixture-only origin fence must never reject a canonical live repository.
+        if !self.live_store { self.isolated_origin(&project)?; }
         let graph=self.config.graph_directory.clone();
         reconcile_completed_local_delivery(&graph,id,&project,
             |job_id|self.scoped(job_id)?.load_job(job_id)?
