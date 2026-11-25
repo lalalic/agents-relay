@@ -46,9 +46,31 @@ def local_url(value):
     return value.rstrip("/")
 
 
-def check_idle():
+def paused_and_quiescent(job):
+    # Only an explicitly paused, fully fenced Job may survive a maintenance
+    # restart. A pending pause/cancellation or claimed generation is not idle.
+    if not isinstance(job.get("pause"), dict) or not job["pause"].get("requestedAt"):
+        return False
+    if not isinstance(job.get("tasks"), list) or not isinstance(job.get("plans"), list):
+        return False
+    return all(not t.get("executionId") and not t.get("pausedExecution")
+               for t in job["tasks"]) and all(
+        not p.get("executionId") and not p.get("pausedExecutionId")
+        for p in job["plans"])
+
+
+def check_idle(allow_paused_job=None):
     jobs = json.loads(run("agents-relay", "job", "list", capture=True))
-    busy = [j["id"] for j in jobs if j["state"] not in ("COMPLETED", "FAILED", "CANCELLED")]
+    busy = []
+    for job in jobs:
+        if job["state"] in ("COMPLETED", "FAILED", "CANCELLED"):
+            continue
+        if job["id"] == allow_paused_job:
+            detail = json.loads(run("agents-relay", "job", "show", "--id",
+                                    job["id"], capture=True))
+            if detail["id"] == job["id"] and paused_and_quiescent(detail):
+                continue
+        busy.append(job["id"])
     if busy:
         raise RuntimeError("Refusing deployment while nonterminal Jobs exist: " + ", ".join(busy))
 
@@ -146,13 +168,14 @@ def release(args):
     if cli_version.split()[1] != version:
         raise RuntimeError("Packaged CLI version mismatch")
     if old != package:
-        check_idle()
+        check_idle(args.allow_paused_job)
         # Existing PM2 definition must use the stable packaged launcher.
         services = json.loads(run("npx", "pm2", "jlist", capture=True))
         service = next(x for x in services if x["name"] == SERVICE)
         launcher = Path(service["pm2_env"]["pm_exec_path"])
         if launcher.name != "agents-relayd" or launcher.is_relative_to(ROOT):
             raise RuntimeError("PM2 must use the installed agents-relayd launcher")
+        check_idle(args.allow_paused_job)
         switch_link(link, package)
         try:
             run("serviceman", "restart", "--skill", PACKAGE, "--service", "daemon", "--apply")
@@ -184,10 +207,13 @@ def main():
     p.add_argument("--api", type=local_url, default="http://127.0.0.1:8787")
     p.add_argument("--events-api", type=local_url, default="http://127.0.0.1:4223")
     p.add_argument("--job-id", help="Optional completed Job association")
+    p.add_argument("--allow-paused-job", help="Explicitly paused Job with no claimed or pending generations")
     args = p.parse_args()
     args.root = args.root.resolve(strict=True)
     if args.job_id is not None and not re.fullmatch(r"[1-9][0-9]*", args.job_id):
         p.error("--job-id must be a positive decimal ID")
+    if args.allow_paused_job is not None and not re.fullmatch(r"[1-9][0-9]*", args.allow_paused_job):
+        p.error("--allow-paused-job must be a positive decimal ID")
     os.umask(0o077)
     with (args.root / ".release.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
