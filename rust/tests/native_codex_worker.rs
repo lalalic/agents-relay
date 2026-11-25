@@ -189,3 +189,192 @@ printf '%s\n' '{{"type":"turn.completed"}}'
     assert_eq!(saved["tasks"][0]["threadId"],thread_id);
     drop(store);fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+#[cfg(unix)]
+fn missing_terminal_resumes_same_thread_and_original_execution_then_accepts_graph_completion(){
+    use agents_relay_rust2::{
+        events::event_for,execution_event_identity::execution_event_source,
+        native_worker_event_ingress::apply_verified_worker_event,
+    };
+    use std::{os::unix::fs::PermissionsExt,path::Path,time::{Duration,Instant}};
+    let root=fixture();let db=root.join("relay.sqlite");
+    let script=root.join("fake-native-codex");
+    let thread_id="38f84f9e-410d-4e36-96e0-a420594a102d";
+    let execution="test-source-generation-1";
+    fs::write(&script,format!(r#"#!/bin/sh
+set -e
+printf '%s\n' '{{"type":"thread.started","thread_id":"{thread_id}"}}'
+if [ ! -f first ]; then
+  touch first
+else
+  printf '%s\n' "$@" > resume-argv
+  touch resumed
+  i=0
+  while [ ! -f done ] && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i+1)); done
+  [ -f done ]
+fi
+printf '%s\n' '{{"type":"turn.completed"}}'
+"#)).unwrap();
+    fs::set_permissions(&script,fs::Permissions::from_mode(0o700)).unwrap();
+    let record=job(&root);
+    let store=SQLiteRelayStore::open(&db,Some("9001")).unwrap();
+    store.save_job(&record).unwrap();store.close().unwrap();
+    std::thread::scope(|scope|{
+        let worker=scope.spawn(||execute_claimed_codex(&db,&record,&record["tasks"][0],
+            &script,&root,&WorkerContextRoots::isolated(&root)));
+        let deadline=Instant::now()+Duration::from_secs(15);
+        loop{
+            let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("9001")).unwrap();
+            let saved=store.load_job("9001").unwrap().unwrap();
+            let process=store.load_execution_process("9001","9002",execution).unwrap();
+            if root.join("resumed").exists()&&saved["tasks"][0]["threadId"]==thread_id
+                &&process.is_some_and(|p|p["endedAt"].is_null()){break;}
+            assert!(Instant::now()<deadline,"Worker did not resume original thread");
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        let args=fs::read_to_string(root.join("resume-argv")).unwrap();
+        assert!(args.lines().any(|a|a=="resume"));
+        assert!(args.lines().any(|a|a==thread_id));
+        assert!(args.contains("ORIGINAL execution identity"));
+        assert!(args.contains("agents-relay task complete"));
+        assert!(args.contains(execution));
+        let source=json!({"id":execution_event_source("9001","9002",execution),
+            "agent":"fixture","component":"agents-relay"});
+        let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+        for (kind,stage) in [("task.started","started"),("task.completed","completed")]{
+            let event=event_for("9001","9002",None,kind,stage,
+                "fixture Graph event",None,None,Some(source.clone()));
+            apply_verified_worker_event(&db,&graph,"9001","9002",execution,&event).unwrap();
+        }
+        fs::write(root.join("done"),"done").unwrap();
+        worker.join().unwrap().expect("corrective turn should accept verified Graph result");
+    });
+    let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("9001")).unwrap();
+    let saved=store.load_job("9001").unwrap().unwrap();
+    assert_eq!(saved["tasks"][0]["state"],"SUCCEEDED");
+    assert_eq!(saved["tasks"][0]["attempt"],1);
+    assert_eq!(saved["tasks"][0]["threadId"],thread_id);
+    assert!(store.load_execution_process("9001","9002",execution).unwrap().unwrap()["endedAt"].is_string());
+    drop(store);fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn terminal_recovery_is_bounded_and_never_fabricates_completion(){
+    use std::os::unix::fs::PermissionsExt;
+    let root=fixture();let db=root.join("relay.sqlite");
+    let script=root.join("fake-native-codex");
+    fs::write(&script,r#"#!/bin/sh
+set -e
+echo run >> launches
+printf '%s\n' '{"type":"thread.started","thread_id":"38f84f9e-410d-4e36-96e0-a420594a102d"}'
+printf '%s\n' '{"type":"turn.completed"}'
+"#).unwrap();
+    fs::set_permissions(&script,fs::Permissions::from_mode(0o700)).unwrap();
+    let record=job(&root);
+    let store=SQLiteRelayStore::open(&db,Some("9001")).unwrap();
+    store.save_job(&record).unwrap();store.close().unwrap();
+    let failure=execute_claimed_codex(&db,&record,&record["tasks"][0],
+        &script,&root,&WorkerContextRoots::isolated(&root)).unwrap_err();
+    assert!(failure.contains("without verified Task terminal event"),"{failure}");
+    assert_eq!(fs::read_to_string(root.join("launches")).unwrap().lines().count(),3);
+    let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("9001")).unwrap();
+    let saved=store.load_job("9001").unwrap().unwrap();
+    assert_eq!(saved["tasks"][0]["state"],"QUEUED");
+    assert_eq!(saved["tasks"][0]["attempt"],1);
+    drop(store);fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn corrective_turn_requires_clean_thread_bound_normal_completion(){
+    use agents_relay_rust2::native_codex_thread::CodexTurnFacts;
+    let thread="38f84f9e-410d-4e36-96e0-a420594a102d";
+    for (events,eligible) in [
+        (vec![json!({"type":"turn.completed"})],true),
+        (vec![json!({"type":"item.started","item":{"id":"tool","type":"command_execution"}}),json!({"type":"turn.completed"})],false),
+        (vec![json!({"type":"turn.failed","error":{"message":"failed"}})],false),
+        (vec![],false),
+        (vec![json!({"type":"turn.completed"}),json!({"type":"turn.completed"})],false),
+    ]{
+        let mut facts=CodexTurnFacts::new();
+        facts.observe(&json!({"type":"thread.started","thread_id":thread}).to_string());
+        for event in events{facts.observe(&event.to_string());}
+        assert_eq!(facts.safe_terminal_continuation(thread),eligible);
+        assert!(!facts.safe_terminal_continuation("wrong-thread"));
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn terminal_arriving_after_process_exit_prevents_corrective_turn(){
+    use agents_relay_rust2::{
+        events::event_for,execution_event_identity::execution_event_source,
+        native_worker_event_ingress::apply_verified_worker_event,
+    };
+    use std::{os::unix::fs::PermissionsExt,path::Path,time::{Duration,Instant}};
+    let root=fixture();let db=root.join("relay.sqlite");
+    let script=root.join("fake-native-codex");
+    let execution="test-source-generation-1";
+    fs::write(&script,r#"#!/bin/sh
+set -e
+echo run >> launches
+printf '%s\n' '{"type":"thread.started","thread_id":"38f84f9e-410d-4e36-96e0-a420594a102d"}'
+printf '%s\n' '{"type":"turn.completed"}'
+"#).unwrap();
+    fs::set_permissions(&script,fs::Permissions::from_mode(0o700)).unwrap();
+    let record=job(&root);
+    let store=SQLiteRelayStore::open(&db,Some("9001")).unwrap();
+    store.save_job(&record).unwrap();store.close().unwrap();
+    std::thread::scope(|scope|{
+        let worker=scope.spawn(||execute_claimed_codex(&db,&record,&record["tasks"][0],
+            &script,&root,&WorkerContextRoots::isolated(&root)));
+        let deadline=Instant::now()+Duration::from_secs(10);
+        loop{
+            let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("9001")).unwrap();
+            if store.load_execution_process("9001","9002",execution).unwrap()
+                .is_some_and(|p|p["endedAt"].is_string()){break;}
+            assert!(Instant::now()<deadline,"original process never ended");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let source=json!({"id":execution_event_source("9001","9002",execution),
+            "agent":"fixture","component":"agents-relay"});
+        let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+        for (kind,stage) in [("task.started","started"),("task.completed","completed")]{
+            let event=event_for("9001","9002",None,kind,stage,
+                "delayed Graph event",None,None,Some(source.clone()));
+            apply_verified_worker_event(&db,&graph,"9001","9002",execution,&event).unwrap();
+        }
+        worker.join().unwrap().expect("late correlated terminal should settle normally");
+    });
+    assert_eq!(fs::read_to_string(root.join("launches")).unwrap().lines().count(),1);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn corrective_quota_without_thread_cannot_claim_execution_had_no_effects(){
+    use std::os::unix::fs::PermissionsExt;
+    let root=fixture();let db=root.join("relay.sqlite");
+    let script=root.join("fake-native-codex");
+    fs::write(&script,r#"#!/bin/sh
+set -e
+if [ ! -f first ]; then
+  touch first
+  printf '%s\n' '{"type":"thread.started","thread_id":"38f84f9e-410d-4e36-96e0-a420594a102d"}'
+  printf '%s\n' '{"type":"item.completed","item":{"id":"a","type":"command_execution","status":"completed"}}'
+  printf '%s\n' '{"type":"turn.completed"}'
+else
+  printf '%s\n' '{"type":"turn.failed","error":{"message":"rate limit exceeded"}}'
+  exit 1
+fi
+"#).unwrap();
+    fs::set_permissions(&script,fs::Permissions::from_mode(0o700)).unwrap();
+    let record=job(&root);
+    let store=SQLiteRelayStore::open(&db,Some("9001")).unwrap();
+    store.save_job(&record).unwrap();store.close().unwrap();
+    let failure=execute_claimed_codex(&db,&record,&record["tasks"][0],
+        &script,&root,&WorkerContextRoots::isolated(&root)).unwrap_err();
+    assert_eq!(failure,"rate limit exceeded");
+    fs::remove_dir_all(root).unwrap();
+}

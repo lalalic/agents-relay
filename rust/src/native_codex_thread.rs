@@ -172,6 +172,7 @@ pub struct CodexTurnFacts {
     tool_seen:bool,
     pending:std::collections::HashSet<String>,
     terminal_seen:bool,
+    turn_completed:bool,
     terminal_failure:Option<String>,
     quota_without_effects:Option<String>,
     continuation:Option<(&'static str,String)>,
@@ -239,7 +240,7 @@ impl CodexTurnFacts {
                     self.continuation=classification.map(|kind|(kind,msg.chars().take(500).collect()));
                 }else{self.resume_valid=false;}
             },
-            "turn.completed"=>self.resume_valid=false,
+            "turn.completed"=>{self.terminal_seen=true;self.turn_completed=true;},
             "turn.started"|"error"=>{},
             _=>self.resume_valid=false,
         }
@@ -249,6 +250,12 @@ impl CodexTurnFacts {
             if valid_thread_id(id){return Some(id.to_owned());}
         }
         None
+    }
+    /// Only an observed clean terminal turn with a verified thread and no
+    /// outstanding tool operation permits a corrective turn.
+    pub fn safe_terminal_continuation(&self,thread_id:&str)->bool{
+        self.turn_completed&&self.resume_valid&&self.terminal_failure.is_none()
+            &&self.thread_id.as_deref()==Some(thread_id)&&self.pending.is_empty()
     }
     pub fn terminal_failure(&self)->Option<&str>{self.terminal_failure.as_deref()}
     pub fn quota_failure_without_effects(&self)->Option<String>{

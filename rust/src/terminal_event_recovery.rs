@@ -1,5 +1,5 @@
-// Direct port of Node src/terminal-event-recovery.ts: a recovery reminder never counts as Task completion.
-pub const MAX_TERMINAL_RECOVERY_TURNS: f64 = 1.0;
+// Adapter-level corrective turns within one owned execution; a reminder never counts as Task completion.
+pub const MAX_TERMINAL_RECOVERY_TURNS: f64 = 2.0;
 
 pub struct TerminalRecoveryFacts {
     pub has_session: bool,
@@ -20,5 +20,5 @@ pub fn terminal_recovery_eligible(facts: &TerminalRecoveryFacts) -> bool {
 }
 
 pub fn terminal_recovery_prompt(execution_id: &str) -> String {
-    format!("[Relay terminal-event recovery: {execution_id}]\nThis is ONE reminder for the ORIGINAL Task execution, not a new task or authorization to restart work. Inspect the authoritative Task context, Neo event history, and actual output. If a correlated terminal event already exists, do not publish a duplicate. If work is complete with verified evidence, publish task.completed with the ORIGINAL execution identity. If unfinished or unverified, publish task.failed with the real reason; do not claim success. Follow the canonical event contract. Do not emit task.progress merely because this reminder arrived.")
+    format!("[Relay terminal-event recovery: {execution_id}]\nContinue the ORIGINAL Task execution. The preceding Codex turn exited normally without a verified Relay terminal outcome. Read the authoritative execution-bound Task context and inspect existing artifacts, Git status and evidence before acting. This continuation instruction takes precedence over the initial START instruction: if task.started is already recorded, do not emit it again; otherwise start the original execution per its contract. Do not repeat completed operations or emit duplicate terminal events. Finish only remaining work, then follow the canonical completion contract above using the ORIGINAL execution identity. For source or DAG tasks use the existing validated agents-relay task complete CLI, never publish task.completed directly. If the task cannot be verified, report its real failure through the applicable contract. Do not merely summarize and exit.")
 }

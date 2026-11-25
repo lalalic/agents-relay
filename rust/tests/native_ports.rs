@@ -65,7 +65,7 @@ fn dependency_policy_validates_declared_edges_and_node_proto_setter() {
 }
 
 #[test]
-fn terminal_recovery_is_single_reminder_with_original_identity() {
+fn terminal_recovery_is_bounded_with_original_identity() {
     let ready = TerminalRecoveryFacts {
         has_session: true,
         has_thread: true,
@@ -76,7 +76,7 @@ fn terminal_recovery_is_single_reminder_with_original_identity() {
     };
     assert!(terminal_recovery_eligible(&ready));
     assert!(!terminal_recovery_eligible(&TerminalRecoveryFacts {
-        recovery_attempts: 1.0,
+        recovery_attempts: 2.0,
         ..ready
     }));
     assert!(terminal_recovery_prompt("execution-123").contains("ORIGINAL execution identity"));

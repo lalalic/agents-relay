@@ -6,6 +6,7 @@ use crate::{
         CodexTurnFacts},
     owned_process::{OwnedProcessManager,OwnedProcessOptions,TerminationReason},
     relay_store::SQLiteRelayStore,
+    terminal_event_recovery::{terminal_recovery_eligible,terminal_recovery_prompt,TerminalRecoveryFacts},
     reconciler_context::{worker_managed_prompt,WorkerContextRoots},
 };
 use serde_json::{json,Value};
@@ -61,7 +62,7 @@ pub fn execute_claimed_codex(
     // must be assembled BEFORE provider launch. Raw task.input alone loses
     // start/progress/terminal event instructions, making real Codex exit an
     // unverified lease even when the implementation is correct.
-    let mut prompt=native_codex_managed_prompt(db,job,task,project,roots)?;
+    let prompt=native_codex_managed_prompt(db,job,task,project,roots)?;
     let cwd=project.to_str().ok_or("Codex project path is not UTF-8")?;
     // The operator explicitly authorizes native Codex Workers to run with
     // unrestricted filesystem/network access and without approval prompts.
@@ -72,8 +73,113 @@ pub fn execute_claimed_codex(
     let prior_thread=task.get("threadId").and_then(Value::as_str)
         .filter(|id|!id.is_empty());
     let resume_thread=compatible_thread(task,route);
-    prompt=recovery_prompt(task,route,&crate::model_routing::default_codex_home(),&prompt);
-    let args=build_codex_turn_args(route,cwd,&prompt,resume_thread)?;
+    let mut turn_prompt=recovery_prompt(task,route,&crate::model_routing::default_codex_home(),&prompt);
+    let mut recovery_attempts=0.0;
+    let mut resume=resume_thread.map(str::to_owned);
+    let mut prior=prior_thread.map(str::to_owned);
+    let original_prompt=prompt;
+    loop{
+        let (status,output,errors)=match run_codex_turn(db,job_id,task_id,execution_id,
+            executable,project,cwd,route,&turn_prompt,prior.as_deref(),resume.as_deref(),
+            recovery_attempts>0.0){
+            Ok(result)=>result,
+            Err(error)=>{
+                // A terminal event can settle during the gap before a
+                // corrective launch. Do not convert that receipt to failure.
+                if recovery_attempts>0.0 && current_task(db,job_id,task_id)
+                    .is_ok_and(|task|verified_outcome(&task,execution_id)){
+                    return Ok(());
+                }
+                return Err(error);
+            },
+        };
+        let stderr=String::from_utf8_lossy(&errors);
+        let structured=output.terminal_failure().map(str::to_owned);
+        if !status.success() || structured.is_some(){
+            // Check the persisted thread and current execution fence before
+            // permitting continuation after already completed tool effects.
+            let current=SQLiteRelayStore::open_without_claim_reset(db,Some(job_id))?
+                .load_job(job_id)?.and_then(|j|j["tasks"].as_array()?.iter()
+                    .find(|t|field(t,"id")==task_id).cloned());
+            if let Some(thread)=current.as_ref().filter(|t|field(t,"executionId")==execution_id)
+                .map(|t|field(t,"threadId")).filter(|id|!id.is_empty()){
+                if let Some((kind,reason))=output.resumable_provider_failure(thread){
+                    if kind!="resume_context_incompatible" || resume.is_some(){
+                        return Err(format!("codex_provider_continuation_{kind}: {reason}"));
+                    }
+                }
+            }
+            // A corrective turn may follow real effects from the first
+            // turn. Its local no-effects proof is not execution-wide proof.
+            if recovery_attempts==0.0{
+                if let Some(reason)=output.quota_failure_without_effects(){
+                    return Err(format!("codex_quota_no_side_effects: {reason}"));
+                }
+            }
+            return Err(structured.unwrap_or_else(||{
+                if stderr.trim().is_empty(){format!("Codex exited {status}")}
+                else{stderr.chars().rev().take(1500).collect::<String>()
+                    .chars().rev().collect()}
+            }));
+        }
+
+        // Allow bounded ingestion time for asynchronous worker events. SQLite,
+        // not provider output or a bus receipt alone, is authoritative.
+        let mut durable=current_task(db,job_id,task_id)?;
+        for _ in 0..10{
+            if !active_execution(&durable,execution_id){break;}
+            thread::sleep(Duration::from_millis(100));
+            durable=current_task(db,job_id,task_id)?;
+        }
+        if verified_outcome(&durable,execution_id){return Ok(());}
+        if matches!(field(&durable,"state"),"FAILED"|"CANCELLED"){
+            return Err("Codex Task canonical Graph outcome is not successful".into());
+        }
+        let compatible=compatible_thread(&durable,route);
+        let safe=compatible.is_some_and(|id|output.safe_terminal_continuation(id));
+        if !active_execution(&durable,execution_id)||!terminal_recovery_eligible(&TerminalRecoveryFacts{
+            has_session:safe,has_thread:compatible.is_some(),terminal_observed:false,
+            recovery_attempts,outcome_uncertain:!safe,cancelled:false,
+        }){
+            return Err("Codex process exited without verified Task terminal event".into());
+        }
+        recovery_attempts+=1.0;
+        resume=compatible.map(str::to_owned);
+        prior=resume.clone();
+        turn_prompt=format!("{}\n\n{}",original_prompt,terminal_recovery_prompt(execution_id));
+        eprintln!("Native Codex Worker {job_id}/{task_id}: corrective terminal turn {recovery_attempts}");
+    }
+}
+
+fn current_task(db:&Path,job_id:&str,task_id:&str)->Result<Value,String>{
+    SQLiteRelayStore::open_without_claim_reset(db,Some(job_id))?.load_job(job_id)?
+        .and_then(|j|j["tasks"].as_array()?.iter().find(|t|field(t,"id")==task_id).cloned())
+        .ok_or_else(||"Codex Task disappeared".into())
+}
+fn verified_outcome(task:&Value,execution_id:&str)->bool{
+    (field(task,"state")=="SUCCEEDED"
+        &&task.get("executionHistory").and_then(Value::as_array)
+            .and_then(|history|history.last()).is_some_and(|v|field(v,"id")==execution_id))
+        ||valid_codex_review_handoff(task,execution_id)
+}
+fn active_execution(task:&Value,execution_id:&str)->bool{
+    field(task,"executionId")==execution_id&&matches!(field(task,"state"),"QUEUED"|"RUNNING")
+}
+
+/// One owned subprocess, including exact-generation process and thread registration.
+/// Corrective turns are sequential within the existing daemon ExecutionGuard.
+#[allow(clippy::too_many_arguments)]
+fn run_codex_turn(db:&Path,job_id:&str,task_id:&str,execution_id:&str,
+    executable:&Path,project:&Path,cwd:&str,route:&Value,prompt:&str,
+    prior_thread:Option<&str>,resume_thread:Option<&str>,corrective:bool,
+)->Result<(std::process::ExitStatus,CodexTurnFacts,Vec<u8>),String>{
+    if corrective{
+        let task=current_task(db,job_id,task_id)?;
+        if !active_execution(&task,execution_id)||compatible_thread(&task,route)!=resume_thread{
+            return Err("Corrective Codex turn lost its execution or thread fence".into());
+        }
+    }
+    let args=build_codex_turn_args(route,cwd,prompt,resume_thread)?;
     let refs=args.iter().map(String::as_str).collect::<Vec<_>>();
     let mut manager=OwnedProcessManager::default();
     let child=manager.spawn_owned_process_piped(
@@ -87,7 +193,9 @@ pub fn execute_claimed_codex(
     let store=SQLiteRelayStore::open_without_claim_reset(db,Some(job_id))?;
     let monitor=monitor_execution_process(
         job_id,task_id,execution_id,Some(i64::from(child.pid())),
-        |record|std::future::ready(store.record_execution_process(&record)));
+        |record|std::future::ready(if corrective{
+            store.replace_ended_execution_process(&record)
+        }else{store.record_execution_process(&record)}));
     let mut monitor=std::pin::pin!(monitor);
     let mut cx=std::task::Context::from_waker(std::task::Waker::noop());
     match std::future::Future::poll(monitor.as_mut(),&mut cx){
@@ -105,6 +213,12 @@ pub fn execute_claimed_codex(
             return Err("Codex process registration unexpectedly suspended".into());
         }
     }
+    }
+    if corrective && !current_task(db,job_id,task_id).is_ok_and(|t|active_execution(&t,execution_id)){
+        child.terminate(TerminationReason::Abort,Some(100));
+        let _=SQLiteRelayStore::open_without_claim_reset(db,Some(job_id))
+            .and_then(|store|store.finish_execution_process(job_id,task_id,execution_id,None));
+        return Err("Corrective Codex turn lost its execution fence".into());
     }
     let stdout=child.take_stdout().ok_or("Codex JSONL stdout not owned")?;
     let stderr=child.take_stderr().ok_or("Codex stderr not owned")?;
@@ -169,51 +283,9 @@ pub fn execute_claimed_codex(
         if let Some(status)=child.exit_status()?{break status;}
         thread::sleep(Duration::from_millis(70));
     };
-    let _=SQLiteRelayStore::open_without_claim_reset(db,Some(job_id))
-        .and_then(|store|store.finish_execution_process(job_id,task_id,execution_id,None));
+    SQLiteRelayStore::open_without_claim_reset(db,Some(job_id))?
+        .finish_execution_process(job_id,task_id,execution_id,None)?;
     let output=output_thread.join().map_err(|_|"Codex stdout reader panicked")??;
     let errors=error_thread.join().map_err(|_|"Codex stderr reader panicked")??;
-    let stderr=String::from_utf8_lossy(&errors);
-    let structured=output.terminal_failure().map(str::to_owned);
-    if !status.success() || structured.is_some(){
-        // Check the persisted thread and current execution fence before
-        // permitting continuation after already completed tool effects.
-        let current=SQLiteRelayStore::open_without_claim_reset(db,Some(job_id))?
-            .load_job(job_id)?.and_then(|j|j["tasks"].as_array()?.iter()
-                .find(|t|field(t,"id")==task_id).cloned());
-        if let Some(thread)=current.as_ref().filter(|t|field(t,"executionId")==execution_id)
-            .map(|t|field(t,"threadId")).filter(|id|!id.is_empty()){
-            if let Some((kind,reason))=output.resumable_provider_failure(thread){
-                if kind!="resume_context_incompatible" || resume_thread.is_some(){
-                    return Err(format!("codex_provider_continuation_{kind}: {reason}"));
-                }
-            }
-        }
-        if let Some(reason)=output.quota_failure_without_effects(){
-            return Err(format!("codex_quota_no_side_effects: {reason}"));
-        }
-        return Err(structured.unwrap_or_else(||{
-            if stderr.trim().is_empty(){format!("Codex exited {status}")}
-            else{stderr.chars().rev().take(1500).collect::<String>()
-                .chars().rev().collect()}
-        }));
-    }
-    // Only the execution-correlated Graph result is successful. A process
-    // exiting without a terminal event is recovered by the daemon process
-    // monitor, not by a countdown or guessed success.
-    let store=SQLiteRelayStore::open_without_claim_reset(db,Some(job_id))?;
-    let latest=store.load_job(job_id)?.ok_or("Codex Job disappeared")?;
-    let durable=latest.get("tasks").and_then(Value::as_array)
-        .into_iter().flatten().find(|v|field(v,"id")==task_id)
-        .ok_or("Codex Task disappeared")?;
-    if field(durable,"state")=="SUCCEEDED"
-        &&durable.get("executionHistory").and_then(Value::as_array)
-            .into_iter().flatten().any(|v|field(v,"id")==execution_id){
-        return Ok(());
-    }
-    if valid_codex_review_handoff(durable,execution_id){return Ok(());}
-    if matches!(field(durable,"state"),"FAILED"|"CANCELLED"){
-        return Err("Codex Task canonical Graph outcome is not successful".into());
-    }
-    Err("Codex process exited without verified Task terminal event".into())
+    Ok((status,output,errors))
 }

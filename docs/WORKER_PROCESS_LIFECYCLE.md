@@ -14,6 +14,15 @@ Relay does not use time leases for Task ownership or deadline-based Worker evict
   thread, including output validation and terminal settlement after child exit.
   The process-local guard is released on thread exit/unwind; daemon death clears
   it automatically. No time lease or extra durable state is introduced.
+- Native Codex Task Workers use up to two corrective turns after a normal
+  provider exit without a verified SQLite terminal outcome. A completed
+  JSONL turn, exact persisted thread/route and current execution fence, and
+  no outstanding tool operation are required. After a bounded event-ingestion
+  check the adapter resumes the same Codex thread with the original managed
+  completion contract; it does not create a new Task attempt, commit code,
+  or synthesize completion. Each successive subprocess replaces only its
+  already-ended process record. No lifecycle transition occurs within those
+  turns; exhausted/unsafe recovery goes through the existing Task Graph.
 - If no local Worker thread owns the execution and its registered process is
   gone or reused while the same execution
   remains QUEUED/RUNNING, the Task Graph handles process.exited and marks

@@ -577,6 +577,22 @@ impl SQLiteRelayStore {
         ).map_err(sql)?;
         Ok(())
     }
+    /// A corrective Codex turn keeps its execution fence but replaces only
+    /// an already-ended child identity. Never overwrite a live process.
+    pub fn replace_ended_execution_process(&self,record:&Value)->Result<(),String>{
+        let id=(field(record,"jobId"),field(record,"taskId"),field(record,"executionId"));
+        let changed=self.db.execute(
+            "UPDATE execution_process SET host=?,pid=?,pgid=?,start_token=?,observed_at=?,ended_at=NULL
+             WHERE job_id=? AND task_id=? AND execution_id=? AND ended_at IS NOT NULL",
+            params![record.get("host").and_then(Value::as_str),
+                record.get("pid").and_then(Value::as_i64),
+                record.get("pgid").and_then(Value::as_i64),
+                record.get("startToken").and_then(Value::as_str),
+                record.get("observedAt").and_then(Value::as_str),id.0,id.1,id.2]
+        ).map_err(sql)?;
+        if changed!=1{return Err("Corrective Codex turn requires an ended process record".into());}
+        Ok(())
+    }
     pub fn load_execution_process(
         &self,job_id:&str,task_id:&str,execution_id:&str,
     )->Result<Option<Value>,String>{
