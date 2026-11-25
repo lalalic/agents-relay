@@ -167,6 +167,9 @@ fn pwa_static_assets_have_exact_shared_bytes_and_no_stale_runtime_state() {
     assert_eq!(version["version"], dashboard_version());
     assert!(dashboard_config_script().contains("buildJelDiagram:function jobJelDiagram("));
     assert!(dashboard_config_script().contains("\"statuses\":[\"DRAFT\",\"ACTIVE\",\"COMPLETED\"]"));
+    assert!(dashboard_config_script().contains("textContent='v'+window.__RELAY_DASHBOARD_CONFIG.version;"));
+    assert!(!dashboard_config_script().contains("sourceRef.slice(0,7)"));
+    assert!(dashboard_config_script().contains("\"sourceRef\":"),"SHA remains available for identity and refresh checks");
 }
 
 #[test]

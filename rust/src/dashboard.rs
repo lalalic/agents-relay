@@ -108,7 +108,7 @@ pub fn dashboard_config_script() -> String {
     let jel = include_str!("../../dashboard/jel-function.js").trim_end();
     format!(
         "window.__RELAY_DASHBOARD_CONFIG=Object.assign({{\"version\":{version},\"sourceRef\":{source_ref},\"statuses\":{statuses}}},{{buildJelDiagram:{jel}}});\n\
-document.querySelector('.version').textContent='v'+window.__RELAY_DASHBOARD_CONFIG.version+(window.__RELAY_DASHBOARD_CONFIG.sourceRef?' · '+window.__RELAY_DASHBOARD_CONFIG.sourceRef.slice(0,7):'');\n"
+document.querySelector('.version').textContent='v'+window.__RELAY_DASHBOARD_CONFIG.version;\n"
     )
 }
 /// Exact public path allowlist. No HTTP-supplied path is used in filesystem I/O.

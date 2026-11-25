@@ -106,6 +106,8 @@ pub(crate) fn managed_view(snapshot:&LocalRelayStoreSnapshot,job:&Value)->Value{
         .cloned().unwrap_or(Value::Null);
     display["publicationFailure"]=publication.and_then(|p|p.get("failure"))
         .cloned().unwrap_or(Value::Null);
+    display["publicationObservedAt"]=publication.and_then(|p|p.get("updatedAt"))
+        .cloned().unwrap_or(Value::Null);
     display
 }
 /// Exactly the Node inventory rules: all sqlite-scoped active Jobs are
@@ -143,6 +145,84 @@ pub fn inventory_from_local(
             ||live.get(field(job,"id")).copied()!=Some(1));
     if limit_history{Ok(dashboard_managed_jobs(&entries))}
     else{Ok(entries)}
+}
+fn verified_release<'a>(row:&'a Value,package:&str)->Option<(&'a Value,&'a str)> {
+    let event=row.get("event")?;
+    let data=event.get("data")?;
+    let job_id=data.get("jobId")?.as_str()?;
+    let sha=data.get("sha")?.as_str()?;
+    let version=data.get("version")?.as_str()?;
+    let source=event.pointer("/source/id")?.as_str()?;
+    let timestamp=event.get("timestamp")?.as_str()?;
+    let version_ok=regex::Regex::new(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
+        .is_ok_and(|pattern|pattern.is_match(version));
+    if event.get("kind")?.as_str()?!="release"
+        || event.get("type")?.as_str()?!="package.published"
+        || event.get("status")?.as_str()?!="succeeded"
+        || data.get("registry")?.as_str()?!="native"
+        || data.get("package")?.as_str()?!=package
+        || event.get("job_id")?.as_str()?!=job_id
+        || job_id.is_empty()
+        || event.get("event_id")?.as_str()?!=format!(
+            "release:{package}:{sha}:package.published")
+        || sha.len()!=40 || !sha.bytes().all(|byte|byte.is_ascii_hexdigit())
+        || source!=format!("release/{package}/{sha}")
+        || !version_ok || chrono::DateTime::parse_from_rfc3339(timestamp).is_err()
+    {return None;}
+    Some((event,job_id))
+}
+fn overlay_native_publications(jobs:&mut [Value],package:&str,rows:&[Value]){
+    let mut latest=HashMap::<String,(&Value,&str)>::new();
+    let mut seen=HashSet::new();
+    for row in rows{
+        let Some((event,job_id))=verified_release(row,package) else{continue;};
+        let receipt=field(event,"event_id");
+        if receipt.is_empty()||!seen.insert(receipt.to_owned()){continue;}
+        let time=field(event,"timestamp");
+        let replace=latest.get(job_id).is_none_or(|(prior,_)|time>field(prior,"timestamp"));
+        if replace{latest.insert(job_id.into(),(event,time));}
+    }
+    for job in jobs.iter_mut().filter(|job|field(job,"repository")==package){
+        let id=field(job,"id");
+        let Some((event,timestamp))=latest.get(id).copied() else{continue;};
+        if !field(job,"publicationObservedAt").is_empty()
+            &&field(job,"publicationObservedAt")>=timestamp{continue;}
+        job["publication"]=event["data"].clone();
+        job["publication"]["publishedAt"]=json!(timestamp);
+        job["publicationFailure"]=Value::Null;
+        job["publicationObservedAt"]=json!(timestamp);
+    }
+}
+fn dashboard_inventory(config:&DaemonConfig)->Result<Vec<Value>,String>{
+    let mut jobs=inventory_from_local(config,false)?;
+    let packages=jobs.iter().map(|job|field(job,"repository").to_owned())
+        .filter(|package|!package.is_empty()).collect::<HashSet<_>>();
+    for package in packages{
+        if let Ok(rows)=crate::events_bus_runtime::events_bus_release_history(
+            &package,500,&config.event_transport){
+            overlay_native_publications(&mut jobs,&package,&rows);
+        }
+    }
+    Ok(jobs)
+}
+fn dashboard_job_by_id(config:&DaemonConfig,id:&str,repo:Option<&str>)
+    ->Result<Option<Value>,String>{
+    let snapshot=crate::relay_store_discovery::discover_unified_job_by_id(
+        &config.store_directory,id)?;
+    let Some(snapshot)=snapshot else{return Ok(None);};
+    let Some(source)=snapshot.jobs.first() else{return Ok(None);};
+    let mut job=managed_view(&snapshot,source);
+    if field(&job,"id")!=id||repo.is_some_and(|repo|field(&job,"repository")!=repo){
+        return Ok(None);
+    }
+    let package=field(&job,"repository").to_owned();
+    if !package.is_empty(){
+        if let Ok(rows)=crate::events_bus_runtime::events_bus_release_history(
+            &package,500,&config.event_transport){
+            overlay_native_publications(std::slice::from_mut(&mut job),&package,&rows);
+        }
+    }
+    Ok(Some(job))
 }
 pub fn repository_bindings(inventory:&[Value])->Result<HashMap<String,String>,String>{
     let mut bound=HashMap::new();
@@ -302,7 +382,7 @@ impl<S:DaemonServices+'static> DashboardApiServices for DaemonDashboardBackend<S
             .unwrap_or(false)
     }
     fn discovered_jobs(&mut self,force:bool)->Result<Vec<Value>,String>{
-        let _=force;inventory_from_local(&self.config,false)
+        let _=force;dashboard_inventory(&self.config)
     }
     fn exact_job(&mut self,id:&str,repo:Option<&str>)
         ->Result<Option<Value>,String>{
@@ -312,18 +392,10 @@ impl<S:DaemonServices+'static> DashboardApiServices for DaemonDashboardBackend<S
             // One indexed, READ_ONLY SQLite lookup; the old full inventory
             // parsed hundreds of large Jobs for *every* /api/job request.
             // Preserve the same immutable ID/repo/PR admission contract.
-            let selected=match host.load(id){
-                Ok(job)=>Some(job),
-                Err(error) if error==format!("SQLite Job {id} not found")=>None,
-                Err(error)=>return Err(error),
-            };
-            return Ok(selected.filter(|job|
-                field(job,"id")==id
-                    &&repo.is_none_or(|repo|field(job,"repository")==repo)
-));
+            return dashboard_job_by_id(&self.config,id,repo);
         }
         drop(host);
-        exact_job(&inventory_from_local(&self.config,false)?,id,repo)
+        exact_job(&dashboard_inventory(&self.config)?,id,repo)
     }
     fn control(&mut self,body:&Value)->Result<Value,String>{
         self.services.lock().map_err(|_|"Daemon service lock poisoned")?.control(body)
@@ -568,4 +640,73 @@ pub fn run_daemon<S:DaemonServices+'static>(
         dashboard_shutdown.store(true,Ordering::Release);
         dash.join().map_err(|_|"Dashboard server thread panicked".to_owned())?
     })
+}
+
+#[cfg(test)]
+mod dashboard_projection_tests {
+    use super::*;
+    fn receipt(job:&str,sha:&str,version:&str,timestamp:&str)->Value{
+        json!({"event":{"kind":"release","type":"package.published",
+            "status":"succeeded","event_id":format!("release:agents-relay:{sha}:package.published"),
+            "job_id":job,"timestamp":timestamp,"source":{"id":format!("release/agents-relay/{sha}")},
+            "data":{"package":"agents-relay","jobId":job,"sha":sha,
+                "version":version,"registry":"native"}}})
+    }
+    #[test]
+    fn native_release_projection_requires_explicit_exact_job_and_repository_correlation(){
+        let sha="a".repeat(40);
+        let mut jobs=vec![json!({"id":"42","repository":"agents-relay","state":"COMPLETED",
+            "publication":null,"publicationFailure":null,"publicationObservedAt":null}),
+            json!({"id":"42","repository":"another-project","state":"COMPLETED",
+            "publication":null,"publicationFailure":null,"publicationObservedAt":null})];
+        let associated=receipt("42",&sha,"2.0.260","2026-11-25T10:00:00Z");
+        let mut unassociated=receipt("42",&"b".repeat(40),"2.0.259","2026-11-25T10:01:00Z");
+        unassociated["event"]["data"].as_object_mut().unwrap().remove("jobId");
+        let unrelated=receipt("43",&"c".repeat(40),"2.0.258","2026-11-25T10:02:00Z");
+        overlay_native_publications(&mut jobs,"agents-relay",&[
+            associated.clone(),associated,unassociated,unrelated]);
+        assert_eq!(jobs[0]["publication"]["version"],"2.0.260");
+        assert_eq!(jobs[0]["publicationFailure"],Value::Null);
+        assert!(jobs[1]["publication"].is_null());
+    }
+    #[test]
+    fn newest_verified_receipt_wins_and_new_publication_clears_older_failure(){
+        let old="a".repeat(40);let new="b".repeat(40);
+        let mut jobs=vec![json!({"id":"42","repository":"agents-relay","state":"COMPLETED",
+            "publication":null,"publicationFailure":{"stage":"push"},
+            "publicationObservedAt":"2026-11-25T09:00:00Z"})];
+        let rows=vec![receipt("42",&new,"2.0.260","2026-11-25T10:00:00Z"),
+            receipt("42",&old,"2.0.259","2026-11-25T08:00:00Z")];
+        overlay_native_publications(&mut jobs,"agents-relay",&rows);
+        assert_eq!(jobs[0]["publication"]["version"],"2.0.260");
+        assert_eq!(jobs[0]["publicationFailure"],Value::Null);
+        assert_eq!(jobs[0]["state"],"COMPLETED");
+    }
+    #[test]
+    fn invalid_release_payloads_and_older_receipts_do_not_replace_metadata(){
+        let older="a".repeat(40);let bad="b".repeat(40);
+        let mut job=json!({"id":"42","repository":"agents-relay","state":"COMPLETED",
+            "publication":{"version":"2.0.260"},"publicationFailure":null,
+            "publicationObservedAt":"2026-11-25T10:00:00Z"});
+        let mut invalid=receipt("42",&bad,"2.0.261","2026-11-25T11:00:00Z");
+        invalid["event"]["status"]=json!("failed");
+        overlay_native_publications(std::slice::from_mut(&mut job),"agents-relay",
+            &[receipt("42",&older,"2.0.259","2026-11-25T09:00:00Z"),invalid]);
+        assert_eq!(job["publication"]["version"],"2.0.260");
+    }
+    #[test]
+    fn local_legacy_publication_and_failure_metadata_remain_in_the_managed_projection(){
+        let job=json!({"id":"42","repository":"agents-relay","state":"COMPLETED",
+            "updatedAt":"2026-11-25T10:00:00Z","tasks":[]});
+        let mut publications=serde_json::Map::new();
+        publications.insert("42".into(),json!({"latest":{"version":"2.0.259"},
+            "failure":{"stage":"push"},"updatedAt":"2026-11-25T10:01:00Z"}));
+        let snapshot=LocalRelayStoreSnapshot{path:PathBuf::from("fixture"),
+            jobs:vec![job.clone()],facts:None,publications};
+        let projected=managed_view(&snapshot,&job);
+        assert_eq!(projected["runtimeStatus"],"COMPLETED");
+        assert_eq!(projected["publication"]["version"],"2.0.259");
+        assert_eq!(projected["publicationFailure"]["stage"],"push");
+        assert_eq!(projected["publicationObservedAt"],"2026-11-25T10:01:00Z");
+    }
 }
