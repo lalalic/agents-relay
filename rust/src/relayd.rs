@@ -318,12 +318,15 @@ pub trait DaemonServices:Send{
 }
 pub struct DaemonDashboardBackend<S:DaemonServices>{
     pub config:DaemonConfig,pub services:Arc<Mutex<S>>,
+    read_only:bool,
+}
+impl<S:DaemonServices+'static> DaemonDashboardBackend<S>{
+    pub fn new(config:DaemonConfig,services:Arc<Mutex<S>>,read_only:bool)->Self{
+        Self{config,services,read_only}
+    }
 }
 impl<S:DaemonServices+'static> DashboardApiServices for DaemonDashboardBackend<S>{
-    fn supports_indexed_readonly_job(&self)->bool{
-        self.services.lock().map(|host|host.is_read_only_shadow())
-            .unwrap_or(false)
-    }
+    fn supports_indexed_readonly_job(&self)->bool{self.read_only}
     fn supports_indexed_job(&self)->bool{true}
     fn discovered_jobs(&mut self,force:bool)->Result<Vec<Value>,String>{
         let _=force;dashboard_inventory(&self.config)
@@ -445,9 +448,8 @@ pub fn run_daemon<S:DaemonServices+'static>(
     let read_only_shadow=services.is_read_only_shadow();
     let publication_runtime=services.publication_history_runtime();
     let services=Arc::new(Mutex::new(services));
-    let dashboard=Arc::new(NativeDashboardApi::new(opts,DaemonDashboardBackend{
-        config:config.clone(),services:Arc::clone(&services),
-    }));
+    let dashboard=Arc::new(NativeDashboardApi::new(opts,DaemonDashboardBackend::new(
+        config.clone(),Arc::clone(&services),read_only_shadow)));
     // The bound loopback socket is owned by this daemon, never the production
     // Node Relay. It serves the immutable shared PWA resources and delegates
     // business requests to the single Graph/SQLite-backed daemon service.

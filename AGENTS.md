@@ -24,6 +24,7 @@ architecture-sensitive work.
 - Rust is the only Relay backend implementation. Keep Graph policy in `workflow/*.mmd` and native Rust code in `rust/src/`; do not reintroduce Node/TypeScript server or a mirrored test suite.
 - UI must remain usable without a frontend framework unless a framework becomes necessary.
 - Tests must cover state transitions, parser/serialization, reconciliation, and recovery-sensitive logic.
+- Dashboard UI, HTTP/SSE projection, runtime status, or publication changes MUST pass `scripts/test-dashboard-browser.sh` before Final Review, merge, or release. Use pinned playwright-core, installed Chrome, real native HTTP/SSE and isolated SQLite/Events Bus fixtures; never mutate production Jobs. Record the actual browser results. Keep the suite current for changed user-visible behavior; do not replace browser assertions with mocked UI-only tests.
 - Repository test commands must isolate `AGENTS_RELAY_STORE_DIR`; tests and child CLIs must never use the canonical user store under `~/.agents-relay/stores`.
 - Every disposable subprocess launched by Relay must use the shared owned-process lifecycle so direct exit, cancellation, timeout, retry, and parent death clean the exact process group without process-name matching.
 
