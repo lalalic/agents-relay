@@ -169,12 +169,102 @@ fn pending_verified_workflow_events(db:&rusqlite::Connection,limit:usize,report_
     Ok(verified)
 }
 
+// Read-only indexed Job scope, independent of the daemon's writable Store
+// connection cache. A missing or unrelated Job/Task cannot query the bus.
+fn observation_job(config:&DaemonConfig,id:&str)->Result<Value,String>{
+    let snapshot=crate::relay_store_discovery::discover_unified_job_by_id(&config.store_directory,id)?
+        .ok_or_else(||format!("SQLite Job {id} not found"))?;
+    let job=snapshot.jobs.into_iter().next().ok_or("Indexed Job snapshot is empty")?;
+    // Preserve the dashboard's configured repository admission.
+    if !config.repositories.is_empty()&&!config.repositories.iter().any(|r|r==field(&job,"repository")){
+        return Err(format!("SQLite Job {id} not found"));
+    }
+    Ok(job)
+}
+fn read_dashboard_history(config:&DaemonConfig,api:Option<&url::Url>,id:&str,task:Option<&str>,limit:i64)
+        ->Result<Vec<Value>,String>{
+        // The scoped durable Job must be known before any external query.
+        // A supplied Task is also checked against this exact Job.
+        let job=observation_job(config,id)?;
+        if task.is_some_and(|task_id|!job["tasks"].as_array().into_iter().flatten()
+            .any(|row|field(row,"id")==task_id)){
+            return Err("Events Bus history requested an unrelated Task".into());
+        }
+        let api=api
+            .ok_or("Dashboard event history is not configured")?;
+        // Reuse the production Node-compatible /events reader, including
+        // cursor ordering, exact Job/Task checks and bounded response rows.
+        // Missing/unavailable external history is *observational only* and
+        // never affects Graph/SQLite Task progress or CLI reconciliation.
+        let env=json!({
+            "EVENTS_BUS_API_URL":api.as_str(),
+            "EVENTS_BUS_CONFIG":config.store_directory.join(
+                ".eventsbus-history-no-global-config.json").to_string_lossy(),
+        });
+        // EventBus history frequently exceeds 1.2s under live render load.
+        // A timeout is an unavailable read, not proof that zero events exist.
+        // Keep the dashboard feed intact on HTTP failure; the SSE channel
+        // remains independent and continues delivering real-time events.
+        let fetched=crate::events_bus_runtime::events_bus_history_page(
+            id,task,&json!(limit.max(1)),&json!({"timeoutMs":5000}),&env)
+            .map_err(|error|format!("Dashboard event history unavailable: {error}"))?;
+        let rows=fetched["events"].as_array().cloned()
+            .ok_or("Dashboard event history returned invalid events")?;
+        for event in &rows{
+            if !matches!(field(event,"type"),"package.published"|"package.publish_failed"){continue;}
+            if let Err(error)=crate::dashboard_publication::record_observed_event(
+                &relay_unified_store_path(&config.store_directory),event){
+                eprintln!("warning: Dashboard publication history projection: {error}");
+            }
+        }
+        Ok(rows)
+    }
+
+fn read_dashboard_router(config:&DaemonConfig,live:bool,adapters:&[Value],
+    usage:impl FnOnce()->Result<Value,String>,id:&str,task_id:&str)->Result<Value,String>{
+        let job=observation_job(config,id)?;
+        let mut task=job["tasks"].as_array().into_iter().flatten()
+            .find(|t|field(t,"id")==task_id).cloned().ok_or("Router test Task not found")?;
+        if field(&task,"adapter")!="codex"{
+            return Err("Router test requires a Model Task".into());
+        }
+        task.as_object_mut().ok_or("Invalid Task")?.remove("routing");
+        task.as_object_mut().ok_or("Invalid Task")?.remove("workerSelection");
+        let usage=usage().ok();
+        let options=decision_options_for(config,live);
+        let result=crate::reconciler_review::route_task_for_execution(
+            &config.graph_directory,&config.profile_home,
+            &config.policy_path,&config.router_rules_path,
+            &job,&task,adapters,&[],usage.as_ref(),&options)?;
+        let audit=result.decision_audit.ok_or("Router test did not select a route")?;
+        let selected=&audit["selected"];
+        let evidence=&audit["decision_evidence"];
+        let stage=audit.pointer("/decision_input/stages/0").unwrap_or(&Value::Null);
+        Ok(json!({"selected":{"worker":selected.pointer("/worker/id").or_else(||selected.pointer("/worker/adapter")),
+            "model":selected.pointer("/model/model"),"route":selected["id"]},
+            "fallback":evidence["fallback"],"engine":evidence["engine"],"error":evidence["error"],
+            "probabilities":evidence["probabilities"],"effectiveChoices":audit["eligible_candidates"],
+            "mergedChoices":stage.pointer("/contract/choices"),"gates":audit["gate_results"],
+            "routingInstruction":stage.pointer("/contract/question"),"decisionInput":stage,
+            "proposedFields":{"worker":selected.pointer("/worker/adapter"),"provider":selected.pointer("/model/provider"),
+                "model":selected.pointer("/model/model"),"reasoning":selected.pointer("/model/reasoning")}}))
+    }
+
+fn decision_options_for(config:&DaemonConfig,live:bool)->Value{
+        let recent=if live{
+            crate::decision_audit::JsonlDecisionAuditStore::new(
+                crate::decision_audit::audit_path(&config.store_directory)).read_recent_routes(10)
+        }else{Vec::new()};
+        json!({"decisionMode":if live{crate::decision::decision_mode()}else{"off"},
+            "useDecisionEngine":live,"recordDecisionAudit":true,"recentRouteResults":recent})
+    }
+
 pub struct IsolatedSQLiteWriteHost {
     config:DaemonConfig,
     // Explicitly selected production-owned canonical store. Isolated callers
     // still reject any project outside their disposable Git fixture.
     live_store:bool,
-    usage_cache:Option<(std::time::Instant,Value)>,
+    usage_cache:crate::usage_registry::SharedUsageCache,
     subscriptions:Vec<Sender<String>>,
     wake_count:u64,
     wake_pending:bool,
@@ -218,7 +308,7 @@ pub struct IsolatedSQLiteWriteHost {
 }
 impl IsolatedSQLiteWriteHost {
     pub fn new(config:DaemonConfig)->Self{
-        Self{config,live_store:false,usage_cache:None,subscriptions:Vec::new(),wake_count:0,wake_pending:false,reconcile_attempts:0,connections:RefCell::new(HashMap::new()),
+        Self{config,live_store:false,usage_cache:crate::usage_registry::SharedUsageCache::new(||crate::usage::codex_and_zai_usage_registry(None,None).snapshot()),subscriptions:Vec::new(),wake_count:0,wake_pending:false,reconcile_attempts:0,connections:RefCell::new(HashMap::new()),
             failure_state:std::sync::Arc::new(DaemonFailureState::new()),
             live_workers:std::sync::Arc::new(std::sync::Mutex::new(DaemonLiveWorkers::default())),
             escalation_notifier:None,event_history_api:None,
@@ -547,12 +637,7 @@ impl IsolatedSQLiteWriteHost {
         Ok(applied)
     }
     fn decision_options(&self)->Value{
-        let recent=if self.live_store{
-            crate::decision_audit::JsonlDecisionAuditStore::new(
-                crate::decision_audit::audit_path(&self.config.store_directory)).read_recent_routes(10)
-        }else{Vec::new()};
-        json!({"decisionMode":if self.live_store{crate::decision::decision_mode()}else{"off"},
-            "useDecisionEngine":self.live_store,"recordDecisionAudit":true,"recentRouteResults":recent})
+        decision_options_for(&self.config,self.live_store)
     }
     fn append_routing_audit(&self, record: Option<&Value>) {
         if let Some(record)=record {
@@ -1270,6 +1355,23 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
     fn drain_dashboard_events(&mut self)->Result<(),String>{
         self.drain_nats_dashboard_events()
     }
+    fn dashboard_observation_ports(&self)->Option<crate::relayd::DashboardObservationPorts>{
+        use std::sync::Arc;
+        let config=self.config.clone();
+        let history=self.event_history_api.clone();
+        let live=self.live_store;
+        let usage=self.usage_cache.clone();
+        let router_usage=usage.clone();
+        let adapters=self.available_model_workers();
+        let router_config=config.clone();
+        Some(crate::relayd::DashboardObservationPorts{
+            history:Arc::new(move |id,task,limit|read_dashboard_history(&config,history.as_ref(),id,task,limit)),
+            usage:Arc::new(move ||if live{usage.wait()}else{Err(denied("provider account usage"))}),
+            router:Arc::new(move |id,task|read_dashboard_router(&router_config,live,&adapters,
+                ||if live{router_usage.wait()}else{Err(denied("provider account usage"))},id,task)),
+        })
+    }
+
     fn control(&mut self,body:&Value)->Result<Value,String>{
         if field(body,"command")=="job.reconcile"{
             let id=field(body,"jobId");
@@ -1520,46 +1622,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
     }
     fn event_history(&mut self,id:&str,task:Option<&str>,limit:i64)
         ->Result<Vec<Value>,String>{
-        // The scoped durable Job must be known before any external query.
-        // A supplied Task is also checked against this exact Job.
-        let job=self.scoped(id)?.load_job(id)?
-            .ok_or_else(||format!("SQLite Job {id} not found"))?;
-        if task.is_some_and(|task_id|!job["tasks"].as_array().into_iter().flatten()
-            .any(|row|field(row,"id")==task_id)){
-            return Err("Events Bus history requested an unrelated Task".into());
-        }
-        let api=self.event_history_api.as_ref()
-            .ok_or("Dashboard event history is not configured")?;
-        // Reuse the production Node-compatible /events reader, including
-        // cursor ordering, exact Job/Task checks and bounded response rows.
-        // Missing/unavailable external history is *observational only* and
-        // never affects Graph/SQLite Task progress or CLI reconciliation.
-        let env=json!({
-            "EVENTS_BUS_API_URL":api.as_str(),
-            "EVENTS_BUS_CONFIG":self.config.store_directory.join(
-                ".eventsbus-history-no-global-config.json").to_string_lossy(),
-        });
-        // EventBus history frequently exceeds 1.2s under live render load.
-        // A timeout is an unavailable read, not proof that zero events exist.
-        // Keep the dashboard feed intact on HTTP failure; the SSE channel
-        // remains independent and continues delivering real-time events.
-        let fetched=crate::events_bus_runtime::events_bus_history_page(
-            id,task,&json!(limit.max(1)),&json!({"timeoutMs":5000}),&env)
-            .map_err(|error|format!("Dashboard event history unavailable: {error}"))?;
-        let rows=fetched["events"].as_array().cloned()
-            .ok_or("Dashboard event history returned invalid events")?;
-        // Older Job-scoped publications may predate the native observer.
-        // The verified Job history is already loaded; project its receipts
-        // idempotently, without making another request or changing Job state.
-        for event in &rows{
-            if !matches!(field(event,"type"),"package.published"|"package.publish_failed"){continue;}
-            match crate::dashboard_publication::record_observed_event(&self.path(),event){
-                Ok(true)=>self.emit(event.clone()),
-                Ok(false)=>{},
-                Err(error)=>eprintln!("warning: Dashboard publication history projection: {error}"),
-            }
-        }
-        Ok(rows)
+        read_dashboard_history(&self.config,self.event_history_api.as_ref(),id,task,limit)
     }
     fn publish_event(&mut self,event:&Value)->Result<(),String>{
         WorkspaceControlBackend::publish(self,event)
@@ -1579,43 +1642,15 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         Ok(())
     }
     fn router_test(&mut self,id:&str,task_id:&str)->Result<Value,String>{
-        let job=WorkspaceControlBackend::load_job(self,id)?;
-        let mut task=job["tasks"].as_array().into_iter().flatten()
-            .find(|t|field(t,"id")==task_id).cloned().ok_or("Router test Task not found")?;
-        if field(&task,"adapter")!="codex"{
-            return Err("Router test requires a Model Task".into());
-        }
-        task.as_object_mut().ok_or("Invalid Task")?.remove("routing");
-        task.as_object_mut().ok_or("Invalid Task")?.remove("workerSelection");
+        let config=self.config.clone();
         let adapters=self.available_model_workers();
-        let usage=self.account_usage().ok();
-        let options=self.decision_options();
-        let result=crate::reconciler_review::route_task_for_execution(
-            &self.config.graph_directory,&self.config.profile_home,
-            &self.config.policy_path,&self.config.router_rules_path,
-            &job,&task,&adapters,&[],usage.as_ref(),&options)?;
-        let audit=result.decision_audit.ok_or("Router test did not select a route")?;
-        let selected=&audit["selected"];
-        let evidence=&audit["decision_evidence"];
-        let stage=audit.pointer("/decision_input/stages/0").unwrap_or(&Value::Null);
-        Ok(json!({"selected":{"worker":selected.pointer("/worker/id").or_else(||selected.pointer("/worker/adapter")),
-            "model":selected.pointer("/model/model"),"route":selected["id"]},
-            "fallback":evidence["fallback"],"engine":evidence["engine"],"error":evidence["error"],
-            "probabilities":evidence["probabilities"],"effectiveChoices":audit["eligible_candidates"],
-            "mergedChoices":stage.pointer("/contract/choices"),"gates":audit["gate_results"],
-            "routingInstruction":stage.pointer("/contract/question"),"decisionInput":stage,
-            "proposedFields":{"worker":selected.pointer("/worker/adapter"),"provider":selected.pointer("/model/provider"),
-                "model":selected.pointer("/model/model"),"reasoning":selected.pointer("/model/reasoning")}}))
+        let live=self.live_store;
+        read_dashboard_router(&config,live,&adapters,||self.account_usage(),id,task_id)
     }
     fn decision_audit(&mut self)->Result<Vec<Value>,String>{crate::decision_audit::dashboard_records(&self.config.store_directory)}
     fn account_usage(&mut self)->Result<Value,String>{
         if !self.live_store{return Err(denied("provider account usage"));}
-        if let Some((at,snapshot))=&self.usage_cache{
-            if at.elapsed()<std::time::Duration::from_secs(60){return Ok(snapshot.clone());}
-        }
-        let snapshot=crate::usage::codex_and_zai_usage_registry(None,None).snapshot()?;
-        self.usage_cache=Some((std::time::Instant::now(),snapshot.clone()));
-        Ok(snapshot)
+        self.usage_cache.cached()
     }
     fn routing_adapters(&self)->Vec<Value>{self.available_model_workers()}
     fn github_usage(&mut self)->Result<Option<Value>,String>{Ok(None)}

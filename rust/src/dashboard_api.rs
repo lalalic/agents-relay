@@ -85,6 +85,9 @@ fn allowed_method(req: &DashboardRequest<'_>, method: &str) -> bool {
 /// Implementations MUST use the existing Graph actions, canonical SQLite
 /// transactions and event bus; returning an HTTP receipt is not a Task ACK.
 pub trait DashboardApiServices: Send + 'static {
+    /// A clone with read-only observation ports, not a second lifecycle owner.
+    /// The original route still enforces identity, methods and redaction.
+    fn detached_observations(&self)->Option<Self> where Self:Sized{None}
     /// Only an explicitly read-only, indexed store may bypass whole-store
     /// inventory discovery for an immutable /api/job?id= lookup. This never
     /// changes admission for mutable/legacy production APIs or id-less GET.
@@ -143,14 +146,17 @@ pub struct DashboardApiOptions {
 }
 pub struct NativeDashboardApi<S: DashboardApiServices> {
     services: Mutex<S>,
+    observations: Mutex<Option<S>>,
     options: DashboardApiOptions,
     last_known_jobs: Mutex<Option<Vec<Value>>>,
     webhook_deliveries: Mutex<DeliveryDeduper>,
 }
 impl<S: DashboardApiServices> NativeDashboardApi<S> {
     pub fn new(options: DashboardApiOptions, services: S) -> Self {
+        let observations=services.detached_observations();
         Self {
             options,
+            observations:Mutex::new(observations),
             services: Mutex::new(services),
             last_known_jobs: Mutex::new(None),
             webhook_deliveries: Mutex::new(DeliveryDeduper::new(
@@ -356,6 +362,7 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                     &json!(dashboard_workflow_graphs(&self.options.graph_directory)?),
                 ),
                 "/api/jobs" => {
+                    if !allowed_method(req,"GET"){return Ok(text_response(405,"Method not allowed"));}
                     let force = query(&parsed, "refresh").as_deref() == Some("1");
                     let jobs = self.discovered(services, force)?;
                     let body = if query(&parsed, "inventory").as_deref() == Some("1") {
@@ -369,6 +376,7 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                     json_response(200, &body)
                 }
                 "/api/job" => {
+                    if !allowed_method(req,"GET"){return Ok(text_response(405,"Method not allowed"));}
                     let supplied_id=query(&parsed,"id");
                     let jobs=if supplied_id.is_some()
                         &&services.supports_indexed_job(){
@@ -404,6 +412,7 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                     json_response(200, &chosen)
                 }
                 "/api/events" => {
+                    if !allowed_method(req,"GET"){return Ok(text_response(405,"Method not allowed"));}
                     let id = query(&parsed, "job").unwrap_or_default();
                     if !allowed_job_id(&id) {
                         return Ok(text_response(400, "Invalid job id"));
@@ -417,11 +426,12 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                     )
                 }
                 "/api/status" => json_response(200, &services.runtime_status()),
-                "/api/runtime-summary" => json_response(
-                    200,
-                    &summarize_runtime(&services.runtime_jobs()?, timestamp_millis()),
-                ),
+                "/api/runtime-summary" => {
+                    if !allowed_method(req,"GET"){return Ok(text_response(405,"Method not allowed"));}
+                    json_response(200,&summarize_runtime(&services.runtime_jobs()?,timestamp_millis()))
+                },
                 "/api/usage" => {
+                    if !allowed_method(req,"GET"){return Ok(text_response(405,"Method not allowed"));}
                     let mut account = services.account_usage()?;
                     let status = services.runtime_status();
                     let github = services.github_usage().ok().flatten();
@@ -613,6 +623,19 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
 }
 impl<S: DashboardApiServices> DashboardBackend for NativeDashboardApi<S> {
     fn api(&self, req: DashboardRequest<'_>) -> DashboardResponse {
+        // Only observation endpoints may bypass the lifecycle serialization
+        // lock. Clone the independent ports, then drop the template lock
+        // BEFORE executing the same validated route.
+        let parsed=Url::parse(&format!("http://127.0.0.1{}",req.target)).ok();
+        let path=parsed.as_ref().map(Url::path).unwrap_or("");
+        if matches!((req.method,path),
+            ("GET","/api/events"|"/api/usage"|"/api/decision-audit"|"/api/jobs"|"/api/job"|
+                "/api/runtime-summary"|"/api/mobile/jobs"|"/api/mobile/job-tasks"|"/api/mobile/job-activity")
+            |("POST","/api/router-test")){
+            let detached=self.observations.lock().ok().and_then(|template|
+                template.as_ref().and_then(DashboardApiServices::detached_observations));
+            if let Some(mut reader)=detached{return self.route(&mut reader,&req);}
+        }
         match self.services.lock() {
             Ok(mut services) => self.route(&mut services, &req),
             Err(_) => text_response(503, "Dashboard API backend unavailable"),

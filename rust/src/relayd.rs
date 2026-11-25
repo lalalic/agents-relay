@@ -244,7 +244,35 @@ pub fn remote_delivery_candidates(config:&DaemonConfig)
 }
 /// DaemonServices are supplied by the executable host. No production ports
 /// are initialized, and NO daemon is started, merely by importing this file.
+/// Independent observation callbacks can never commit Graph state or launch
+/// a worker. Concurrency budgets are per external service, not per API call.
+pub type HistoryRead=Arc<dyn Fn(&str,Option<&str>,i64)->Result<Vec<Value>,String>+Send+Sync>;
+pub type UsageRead=Arc<dyn Fn()->Result<Value,String>+Send+Sync>;
+pub type RouterRead=Arc<dyn Fn(&str,&str)->Result<Value,String>+Send+Sync>;
+#[derive(Clone)]
+pub struct DashboardObservationPorts{
+    pub history:HistoryRead,
+    pub usage:UsageRead,
+    pub router:RouterRead,
+}
+struct ObservationBudget{
+    in_flight:std::sync::atomic::AtomicUsize,
+    maximum:usize,
+}
+impl ObservationBudget{
+    fn new(maximum:usize)->Self{Self{in_flight:std::sync::atomic::AtomicUsize::new(0),maximum}}
+    fn run<T>(&self,read:impl FnOnce()->Result<T,String>)->Result<T,String>{
+        self.in_flight.fetch_update(Ordering::AcqRel,Ordering::Acquire,|n|
+            (n<self.maximum).then_some(n+1)).map_err(|_|"Observation busy; retry later".to_owned())?;
+        struct Permit<'a>(&'a std::sync::atomic::AtomicUsize);
+        impl Drop for Permit<'_>{fn drop(&mut self){self.0.fetch_sub(1,Ordering::Release);}}
+        let _permit=Permit(&self.in_flight);
+        read()
+    }
+}
 pub trait DaemonServices:Send{
+    fn dashboard_observation_ports(&self)->Option<DashboardObservationPorts>{None}
+
     /// A live-store shadow must not run Pool scheduling, Graph reconcile,
     /// remote delivery or SSE emit loops. It only serves on-demand SQLite
     /// read-only HTTP observations; it never owns the production lease.
@@ -318,14 +346,32 @@ pub trait DaemonServices:Send{
 }
 pub struct DaemonDashboardBackend<S:DaemonServices>{
     pub config:DaemonConfig,pub services:Arc<Mutex<S>>,
+    observation_ports:Option<DashboardObservationPorts>,
+    history_budget:Arc<ObservationBudget>,
+    router_budget:Arc<ObservationBudget>,
+    usage_budget:Arc<ObservationBudget>,
     read_only:bool,
 }
 impl<S:DaemonServices+'static> DaemonDashboardBackend<S>{
     pub fn new(config:DaemonConfig,services:Arc<Mutex<S>>,read_only:bool)->Self{
-        Self{config,services,read_only}
+        let observation_ports=services.lock().ok().and_then(|host|host.dashboard_observation_ports());
+        Self{config,services,observation_ports,
+            history_budget:Arc::new(ObservationBudget::new(4)),
+            router_budget:Arc::new(ObservationBudget::new(1)),
+            usage_budget:Arc::new(ObservationBudget::new(4)),read_only}
     }
 }
 impl<S:DaemonServices+'static> DashboardApiServices for DaemonDashboardBackend<S>{
+    fn detached_observations(&self)->Option<Self>{
+        // Legacy fixture/observer hosts without a real independent port
+        // retain the original behavior; never bypass authorization.
+        self.observation_ports.as_ref()?;
+        Some(Self{config:self.config.clone(),services:Arc::clone(&self.services),
+            observation_ports:self.observation_ports.clone(),
+            history_budget:Arc::clone(&self.history_budget),
+            router_budget:Arc::clone(&self.router_budget),usage_budget:Arc::clone(&self.usage_budget),
+            read_only:self.read_only})
+    }
     fn supports_indexed_readonly_job(&self)->bool{self.read_only}
     fn supports_indexed_job(&self)->bool{true}
     fn discovered_jobs(&mut self,force:bool)->Result<Vec<Value>,String>{
@@ -357,15 +403,24 @@ impl<S:DaemonServices+'static> DashboardApiServices for DaemonDashboardBackend<S
     }
     fn events(&mut self,id:&str,task_id:Option<&str>,limit:i64)
         ->Result<Vec<Value>,String>{
+        if let Some(ports)=&self.observation_ports{
+            return self.history_budget.run(||(ports.history)(id,task_id,limit));
+        }
         self.services.lock().map_err(|_|"Daemon service lock poisoned")?.event_history(id,task_id,limit)
     }
     fn github_webhook(&mut self,event:&Value)->Result<(),String>{
         self.services.lock().map_err(|_|"Daemon service lock poisoned")?.publish_event(event)
     }
     fn router_test(&mut self,id:&str,task_id:&str)->Result<Value,String>{
+        if let Some(ports)=&self.observation_ports{
+            return self.router_budget.run(||(ports.router)(id,task_id));
+        }
         self.services.lock().map_err(|_|"Daemon service lock poisoned")?.router_test(id,task_id)
     }
     fn decision_audit(&mut self)->Result<Vec<Value>,String>{
+        if self.observation_ports.is_some(){
+            return crate::decision_audit::dashboard_records(&self.config.store_directory);
+        }
         self.services.lock().map_err(|_|"Daemon service lock poisoned")?.decision_audit()
     }
     fn runtime_status(&mut self)->Value{
@@ -373,6 +428,9 @@ impl<S:DaemonServices+'static> DashboardApiServices for DaemonDashboardBackend<S
             .unwrap_or_else(|_|json!({"error":"Daemon service lock poisoned"}))
     }
     fn account_usage(&mut self)->Result<Value,String>{
+        if let Some(ports)=&self.observation_ports{
+            return self.usage_budget.run(||(ports.usage)());
+        }
         self.services.lock().map_err(|_|"Daemon service lock poisoned")?.account_usage()
     }
     fn github_usage(&mut self)->Result<Option<Value>,String>{
@@ -599,6 +657,107 @@ pub fn run_daemon<S:DaemonServices+'static>(
 #[cfg(test)]
 mod dashboard_projection_tests {
     use super::*;
+    #[test]
+    fn detached_history_and_router_usage_do_not_serialize_lifecycle_requests(){
+        use crate::{dashboard::{DashboardBackend,DashboardRequest},
+            relayd_sqlite_write::IsolatedSQLiteWriteHost};
+        use std::{io::Read,sync::mpsc};
+        let root=std::env::temp_dir().join(format!("relay-detached-{}-{}",
+            std::process::id(),Utc::now().timestamp_nanos_opt().unwrap()));
+        std::fs::create_dir_all(root.join("stores")).unwrap();
+        let mut config=DaemonConfig::from_argv(&[],&json!({})).unwrap();
+        config.store_directory=root.join("stores");
+        config.graph_directory=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+        config.repositories=vec!["fixture".into()];
+        // Never touch real provider/Events Bus services in this test.
+        config.event_transport=json!({});
+        let db=relay_unified_store_path(&config.store_directory);
+        let store=SQLiteRelayStore::open(&db,Some("42")).unwrap();
+        store.save_job(&json!({"id":"42","title":"fixture","repository":"fixture",
+            "projectRoot":root,"state":"ACTIVE","tasks":[],"plans":[],
+            "createdAt":"2026-11-25T09:00:00Z","updatedAt":"2026-11-25T09:00:00Z"})).unwrap();
+        store.close().unwrap();
+        let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+        let address=listener.local_addr().unwrap();
+        let (started,seen)=mpsc::channel();
+        let (release,gate)=mpsc::channel();
+        let server=std::thread::spawn(move||{
+            let (mut stream,_)=listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            let mut buf=[0;2048];let n=stream.read(&mut buf).unwrap();
+            assert!(String::from_utf8_lossy(&buf[..n]).starts_with("GET /events?job=42&"));
+            started.send(()).unwrap();
+            let _=gate.recv_timeout(Duration::from_secs(8));
+            // Disconnect simulates an unavailable history, not empty success.
+        });
+        let mut host=IsolatedSQLiteWriteHost::new(config.clone());
+        host.set_loopback_event_history_api(&format!("http://{address}/")).unwrap();
+        let opts=DashboardApiOptions{graph_directory:config.graph_directory.clone(),
+            router_rules_path:config.router_rules_path.clone(),webhook_secret:None,
+            webhook_repositories:HashSet::new(),webhook_job_id:None};
+        let host=Arc::new(Mutex::new(host));
+        let mut backend=DaemonDashboardBackend::new(config,Arc::clone(&host),false);
+        // Preserve the actual history reader; inject deliberately stalled
+        // provider/Decision Engine reads rather than calling real accounts.
+        let (signals,signals_rx)=mpsc::channel();
+        let gate=Arc::new((Mutex::new(false),std::sync::Condvar::new()));
+        let ports=backend.observation_ports.as_mut().unwrap();
+        let usage_gate=Arc::clone(&gate);let usage_signal=signals.clone();
+        ports.usage=Arc::new(move||{
+            usage_signal.send("usage").unwrap();
+            let (lock,ready)=&*usage_gate;
+            let _state=ready.wait_timeout_while(lock.lock().unwrap(),Duration::from_secs(8),|v|!*v).unwrap();
+            Ok(json!({"providers":[]}))
+        });
+        let router_gate=Arc::clone(&gate);
+        ports.router=Arc::new(move|_,_|{
+            signals.send("router").unwrap();
+            let (lock,ready)=&*router_gate;
+            let _state=ready.wait_timeout_while(lock.lock().unwrap(),Duration::from_secs(8),|v|!*v).unwrap();
+            Ok(json!({"diagnostic":true}))
+        });
+        let api=Arc::new(NativeDashboardApi::new(opts,backend));
+        let query=|api:&NativeDashboardApi<DaemonDashboardBackend<IsolatedSQLiteWriteHost>>,method:&str,target:&str,body:&[u8]|{
+            api.api(DashboardRequest{method,target,body,headers:&HashMap::new()})
+        };
+        // Cross-task validation is still performed before network access.
+        assert_ne!(query(&api,"GET","/api/events?job=42&task=unrelated",b"").status,200);
+        assert_eq!(query(&api,"POST","/api/events?job=42",b"").status,405);
+        let history=Arc::clone(&api);
+        let history_thread=std::thread::spawn(move||query(&history,"GET","/api/mobile/job-activity?id=42&repo=fixture",b""));
+        seen.recv_timeout(Duration::from_secs(2)).unwrap();
+        let usage=Arc::clone(&api);
+        let usage_thread=std::thread::spawn(move||query(&usage,"GET","/api/usage",b""));
+        let router=Arc::clone(&api);
+        let router_thread=std::thread::spawn(move||query(&router,"POST","/api/router-test",br#"{"jobId":"42","taskId":"1"}"#));
+        let mut observed=vec![signals_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            signals_rx.recv_timeout(Duration::from_secs(2)).unwrap()];
+        observed.sort();assert_eq!(observed,vec!["router","usage"]);
+        let (done,wait)=mpsc::channel();
+        let concurrent=Arc::clone(&api);
+        std::thread::spawn(move||{
+            let busy=query(&concurrent,"POST","/api/router-test",br#"{"jobId":"42","taskId":"1"}"#);
+            let read=query(&concurrent,"GET","/api/job?id=42",b"");
+            let write=query(&concurrent,"POST","/api/job-action?id=42&action=cancel",b"");
+            done.send((busy,read,write)).unwrap();
+        });
+        let (busy,read,write)=wait.recv_timeout(Duration::from_secs(2))
+            .expect("independent observations blocked lifecycle");
+        assert_ne!(busy.status,200);
+        assert!(String::from_utf8_lossy(&busy.body).contains("Observation busy"));
+        assert_eq!(read.status,200);
+        assert_eq!(write.status,200,"{}",String::from_utf8_lossy(&write.body));
+        let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("42")).unwrap();
+        assert_eq!(store.load_job("42").unwrap().unwrap()["state"],"CANCELLED");
+        store.close().unwrap();
+        release.send(()).unwrap();
+        {let (lock,ready)=&*gate;*lock.lock().unwrap()=true;ready.notify_all();}
+        assert_ne!(history_thread.join().unwrap().status,200);
+        assert_eq!(router_thread.join().unwrap().status,200);
+        assert_eq!(usage_thread.join().unwrap().status,200);
+        server.join().unwrap();
+        drop(api);drop(host);std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn local_legacy_publication_and_failure_metadata_remain_in_the_managed_projection(){
         let job=json!({"id":"42","repository":"agents-relay","state":"COMPLETED",
