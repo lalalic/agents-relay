@@ -254,6 +254,7 @@ pub struct DashboardObservationPorts{
     pub history:HistoryRead,
     pub usage:UsageRead,
     pub router:RouterRead,
+    pub status:Arc<dyn Fn()->Value+Send+Sync>,
 }
 struct ObservationBudget{
     in_flight:std::sync::atomic::AtomicUsize,
@@ -424,6 +425,7 @@ impl<S:DaemonServices+'static> DashboardApiServices for DaemonDashboardBackend<S
         self.services.lock().map_err(|_|"Daemon service lock poisoned")?.decision_audit()
     }
     fn runtime_status(&mut self)->Value{
+        if let Some(ports)=&self.observation_ports{return (ports.status)();}
         self.services.lock().map(|mut services|services.status())
             .unwrap_or_else(|_|json!({"error":"Daemon service lock poisoned"}))
     }
@@ -434,6 +436,8 @@ impl<S:DaemonServices+'static> DashboardApiServices for DaemonDashboardBackend<S
         self.services.lock().map_err(|_|"Daemon service lock poisoned")?.account_usage()
     }
     fn github_usage(&mut self)->Result<Option<Value>,String>{
+        // The native observation host does not expose a GitHub provider.
+        if self.observation_ports.is_some(){return Ok(None);}
         self.services.lock().map_err(|_|"Daemon service lock poisoned")?.github_usage()
     }
     fn subscribe_events(&mut self)->Receiver<String>{
@@ -733,6 +737,14 @@ mod dashboard_projection_tests {
         let mut observed=vec![signals_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
             signals_rx.recv_timeout(Duration::from_secs(2)).unwrap()];
         observed.sort();assert_eq!(observed,vec!["router","usage"]);
+        {
+            let _owner=host.lock().unwrap();
+            let (done,wait)=mpsc::channel();
+            let api=Arc::clone(&api);
+            std::thread::spawn(move||{done.send(query(&api,"GET","/api/status",b"")).unwrap();});
+            assert_eq!(wait.recv_timeout(Duration::from_secs(2))
+                .expect("status waited on scheduler lock").status,200);
+        }
         let (done,wait)=mpsc::channel();
         let concurrent=Arc::clone(&api);
         std::thread::spawn(move||{

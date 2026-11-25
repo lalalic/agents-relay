@@ -259,6 +259,18 @@ fn decision_options_for(config:&DaemonConfig,live:bool)->Value{
             "useDecisionEngine":live,"recordDecisionAudit":true,"recentRouteResults":recent})
     }
 
+fn dashboard_status(config:&DaemonConfig,live:bool,wake_count:u64,reconcile_attempts:u64)->Value{
+        let mode=if live {"live-write"}else{"isolated-write"};
+        match inventory_from_local(config,false){
+            Ok(jobs)=>json!({"runtime":"native-rust","mode":mode,
+                "productionReady":false,"jobCount":jobs.len(),"wakeCount":wake_count,
+                "reconcileAttempts":reconcile_attempts,
+                "reason":"Canonical Rust service ownership active; full external Model/EventBus E2E not yet certified"}),
+            Err(error)=>json!({"runtime":"native-rust","mode":mode,
+                "productionReady":false,"error":error}),
+        }
+    }
+
 pub struct IsolatedSQLiteWriteHost {
     config:DaemonConfig,
     // Explicitly selected production-owned canonical store. Isolated callers
@@ -266,9 +278,9 @@ pub struct IsolatedSQLiteWriteHost {
     live_store:bool,
     usage_cache:crate::usage_registry::SharedUsageCache,
     subscriptions:Vec<Sender<String>>,
-    wake_count:u64,
+    wake_count:std::sync::Arc<std::sync::atomic::AtomicU64>,
     wake_pending:bool,
-    reconcile_attempts:u64,
+    reconcile_attempts:std::sync::Arc<std::sync::atomic::AtomicU64>,
     connections:RefCell<HashMap<String,SQLiteRelayStore>>,
     // Node provenance: src/reconciler-runtime.ts failLaunch binding state.
     // Shared with worker threads so launch failures reach the same
@@ -308,7 +320,7 @@ pub struct IsolatedSQLiteWriteHost {
 }
 impl IsolatedSQLiteWriteHost {
     pub fn new(config:DaemonConfig)->Self{
-        Self{config,live_store:false,usage_cache:crate::usage_registry::SharedUsageCache::new(||crate::usage::codex_and_zai_usage_registry(None,None).snapshot()),subscriptions:Vec::new(),wake_count:0,wake_pending:false,reconcile_attempts:0,connections:RefCell::new(HashMap::new()),
+        Self{config,live_store:false,usage_cache:crate::usage_registry::SharedUsageCache::new(||crate::usage::codex_and_zai_usage_registry(None,None).snapshot()),subscriptions:Vec::new(),wake_count:Default::default(),wake_pending:false,reconcile_attempts:Default::default(),connections:RefCell::new(HashMap::new()),
             failure_state:std::sync::Arc::new(DaemonFailureState::new()),
             live_workers:std::sync::Arc::new(std::sync::Mutex::new(DaemonLiveWorkers::default())),
             escalation_notifier:None,event_history_api:None,
@@ -1188,7 +1200,7 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
         Ok(self.scoped(id)?.load_agents()?.unwrap_or_default())
     }
     fn wake(&mut self,id:&str,reason:&str)->Result<(),String>{
-        self.wake_count+=1;
+        self.wake_count.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
         // Node pool.reconcileLocalJob schedules canonical work immediately.
         // Preserve this local wake until the single daemon Reconciler consumes
         // it; emitting SSE alone cannot wake the five-minute scan.
@@ -1364,7 +1376,13 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         let router_usage=usage.clone();
         let adapters=self.available_model_workers();
         let router_config=config.clone();
+        let status_config=config.clone();
+        let wakes=Arc::clone(&self.wake_count);
+        let attempts=Arc::clone(&self.reconcile_attempts);
         Some(crate::relayd::DashboardObservationPorts{
+            status:Arc::new(move||dashboard_status(&status_config,live,
+                wakes.load(std::sync::atomic::Ordering::Relaxed),
+                attempts.load(std::sync::atomic::Ordering::Relaxed))),
             history:Arc::new(move |id,task,limit|read_dashboard_history(&config,history.as_ref(),id,task,limit)),
             usage:Arc::new(move ||if live{usage.wait()}else{Err(denied("provider account usage"))}),
             router:Arc::new(move |id,task|read_dashboard_router(&router_config,live,&adapters,
@@ -1655,15 +1673,9 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
     fn routing_adapters(&self)->Vec<Value>{self.available_model_workers()}
     fn github_usage(&mut self)->Result<Option<Value>,String>{Ok(None)}
     fn status(&mut self)->Value{
-        let mode=if self.live_store {"live-write"}else{"isolated-write"};
-        match self.all(){
-            Ok(jobs)=>json!({"runtime":"native-rust","mode":mode,
-                "productionReady":false,"jobCount":jobs.len(),"wakeCount":self.wake_count,
-                "reconcileAttempts":self.reconcile_attempts,
-                "reason":"Canonical Rust service ownership active; full external Model/EventBus E2E not yet certified"}),
-            Err(error)=>json!({"runtime":"native-rust","mode":mode,
-                "productionReady":false,"error":error}),
-        }
+        dashboard_status(&self.config,self.live_store,
+            self.wake_count.load(std::sync::atomic::Ordering::Relaxed),
+            self.reconcile_attempts.load(std::sync::atomic::Ordering::Relaxed))
     }
     fn reconcile_local_completion(&mut self,id:&str)->Result<bool,String>{
         self.reconcile_git_delivery(id)
@@ -1758,7 +1770,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         Ok(())
     }
     fn registered_agents(&mut self)->Result<Vec<Value>,String>{
-        self.reconcile_attempts+=1;
+        self.reconcile_attempts.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
         let mut seen=HashSet::new();let mut agents=Vec::new();
         for job in self.all()?{
             for agent in WorkspaceControlBackend::list_agents(self,field(&job,"id"))?{

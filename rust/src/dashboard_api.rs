@@ -425,7 +425,10 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                         &json!(services.events(&id, query(&parsed, "task").as_deref(), limit)?),
                     )
                 }
-                "/api/status" => json_response(200, &services.runtime_status()),
+                "/api/status" => {
+                    if !allowed_method(req,"GET"){return Ok(text_response(405,"Method not allowed"));}
+                    json_response(200,&services.runtime_status())
+                },
                 "/api/runtime-summary" => {
                     if !allowed_method(req,"GET"){return Ok(text_response(405,"Method not allowed"));}
                     json_response(200,&summarize_runtime(&services.runtime_jobs()?,timestamp_millis()))
@@ -630,7 +633,7 @@ impl<S: DashboardApiServices> DashboardBackend for NativeDashboardApi<S> {
         let path=parsed.as_ref().map(Url::path).unwrap_or("");
         if matches!((req.method,path),
             ("GET","/api/events"|"/api/usage"|"/api/decision-audit"|"/api/jobs"|"/api/job"|
-                "/api/runtime-summary"|"/api/mobile/jobs"|"/api/mobile/job-tasks"|"/api/mobile/job-activity")
+                "/api/runtime-summary"|"/api/status"|"/api/mobile/jobs"|"/api/mobile/job-tasks"|"/api/mobile/job-activity")
             |("POST","/api/router-test")){
             let detached=self.observations.lock().ok().and_then(|template|
                 template.as_ref().and_then(DashboardApiServices::detached_observations));
