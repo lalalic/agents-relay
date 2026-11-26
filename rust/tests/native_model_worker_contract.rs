@@ -22,7 +22,7 @@ fn non_codex_test_executable_exit_never_forges_graph_completion(){
     let (root,exe)=script("#!/bin/sh\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"fixture-thread-12\"}' '{\"type\":\"turn.completed\"}'\nexit 0\n");
     let adapter=CodexAdapter{command:exe.to_string_lossy().to_string()};
     let task=json!({"id":"22","adapter":"codex","input":"isolated test payload",
-        "routing":{"profile":"fixture","cwd":root},"timeoutMs":6000});
+        "routing":{"provider":"openai","model":"gpt-6-luna","profile":"fixture","cwd":root},"timeoutMs":6000});
     let context=json!({"executionContext":{"project":{"path":root}}});
     let result=adapter.launch(&task,&context,&AtomicBool::new(false)).unwrap();
     assert_eq!(result.thread_id.as_deref(),Some("fixture-thread-12"));
@@ -39,7 +39,7 @@ fn non_codex_test_executable_failure_is_technical_not_false_success(){
     let (root,exe)=script("#!/bin/sh\nprintf '%s\\n' '{\"type\":\"turn.failed\",\"error\":{\"message\":\"denied test token\"}}'\nexit 13\n");
     let adapter=CodexAdapter{command:exe.to_string_lossy().to_string()};
     let task=json!({"id":"22","adapter":"codex","input":"fixture",
-        "routing":{"cwd":root},"timeoutMs":6000});
+        "routing":{"provider":"openai","model":"gpt-6-luna","cwd":root},"timeoutMs":6000});
     let context=json!({"executionContext":{"project":{"path":root}}});
     let error=adapter.launch(&task,&context,&AtomicBool::new(false)).unwrap_err();
     assert!(error.contains("denied test token"),"{error}");
