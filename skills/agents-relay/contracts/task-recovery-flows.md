@@ -1,5 +1,7 @@
 # Task Failure Recovery and Human Escalation — Current Contract
 
+Use the `agents-relay` Skill for Task recovery, durable comments and escalation; use the `events-bus` Skill for generic event publication/history. Recovery decisions remain Graph-owned.
+
 **Status:** Current recovery contract. Query Task state, recovery status, and comments through the matching Relay CLI.
 
 The direct Escalation CLI has an **operator-selected executor**, configured

@@ -1,20 +1,6 @@
 # Managed Task Execution Contract
 
-## Authoritative assignment
-
-Read the complete authoritative Task input, declared output and acceptance
-criteria with the version-matched Relay CLI, including the durable Job
-objective. Use the supplied exact Job, Task, repository and Execution
-identities, not old attempt IDs. A summary is not the full Task contract.
-
-## Validate and report
-
-Perform assigned work under declared dependencies, Worktree paths and review
-ownership. Validate actual durable result and declared artifacts against
-the Task acceptance criteria. Artifact-changing Tasks must complete their
-separate declared Worker Self-Review Contract before reporting success.
-
-The durable Task result states root cause (or why it is inapplicable), the
-implemented solution or concrete findings, and verification evidence.
-Follow the selected terminal Contract; a file or message alone does not
-prove that the Graph accepted completion.
+- Use the `agents-relay` Skill and the exact execution-bound CLI for authoritative Task input, output, Job objective, acceptance criteria and execution identity.
+- Preserve declared dependencies, assigned scope, workspace boundaries and review ownership.
+- Verify durable results and artifacts against the Task acceptance criteria before success; artifact-changing Tasks require the separate Worker Self-Review Contract.
+- The Task result must contain the outcome, root cause when applicable, and concrete validation evidence. Neither a message nor a file alone establishes accepted completion.

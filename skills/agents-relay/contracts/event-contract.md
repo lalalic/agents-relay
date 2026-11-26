@@ -1,5 +1,7 @@
 # Agents Relay Unified Task Event Contract
 
+Use the `events-bus` Skill for generic event publication/observation and the `agents-relay` Skill for execution-bound Task acceptance, review, recovery and state transitions. The Event Bus transport receipt is not a Relay lifecycle receipt.
+
 **Scope:** Relay-specific event meaning and validation. This does **not** define Events Bus transport. The bus only handles generic event identity, type, timestamp, routing as needed, and opaque `data`. No Events Bus change is required when Relay adds agent roles or payload fields.
 
 ## Execution event source

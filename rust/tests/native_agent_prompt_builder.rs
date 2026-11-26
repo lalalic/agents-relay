@@ -101,12 +101,14 @@ fn runtime_policy_is_supplied_by_native_caller_not_hardcoded_in_builder() {
     declared["startupContracts"] = json!(policy.provenance);
     let layers = build_relay_work_prompt(&declared, None).unwrap();
     assert!(layers.system.contains("Publish `task.started` immediately when execution begins."));
+    assert!(layers.system.contains("Use the `events-bus` Skill"));
+    assert!(layers.system.contains("Use the `agents-relay` Skill"));
     assert!(!layers.system.contains("minimal required preflight"));
     assert!(layers.system.contains("Use the `events-bus` Skill to publish lifecycle events"));
     assert!(layers.system.contains("DAG Task Completion Contract"));
-    assert!(layers.system.contains(
-        "agents-relay task complete --repo vlog --id 721 --task-id 2259 --execution-id exec-1"
-    ));
+    assert!(layers.system.contains("`task complete` CLI"));
+    assert!(layers.system.contains("Use the `agents-relay` Skill"));
+    assert!(layers.user.contains("EVENT SOURCE (exact): job/721/task/2259/execution/exec-1"));
     assert!(!layers.system.contains("{{"));
     assert!(!layers
         .system
@@ -187,9 +189,9 @@ fn required_completion_contract_is_trusted_not_user_task_text() {
         "trustedRuntimePolicy":policy.system,"startupContracts":policy.provenance});
     let layers = build_relay_work_prompt(&input, None).unwrap();
     assert!(layers.system.contains("DAG Task Completion Contract"));
-    assert!(layers.system.contains(
-        "agents-relay task complete --repo vlog --id 9 --task-id 8 --execution-id run-7"
-    ));
+    assert!(layers.system.contains("`task complete` CLI"));
+    assert!(layers.system.contains("Use the `agents-relay` Skill"));
+    assert!(layers.user.contains("EVENT SOURCE (exact): job/9/task/8/execution/run-7"));
     assert!(!layers.user.contains("DAG Task Completion Contract"));
     assert!(!layers.user.contains("task complete"));
     assert!(layers.references.iter().all(|v| v.get("sha256").is_none()));
@@ -227,4 +229,41 @@ fn prompt_fingerprint_does_not_depend_on_provider_or_model() {
             .fingerprint(),
         hashes[0]
     );
+}
+
+#[test]
+fn contract_tool_owners_are_declared_by_exact_skill_name() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent().unwrap().join("skills/agents-relay/contracts");
+    // Only tool/service-bearing contracts are included. evaluation-safety.md
+    // forbids every tool, and job-create-preflight.md is a CLI error template.
+    let expected: &[(&str, &[&str])] = &[
+        ("agent-contract.md", &["agents-relay"]),
+        ("architect-design-handoff.md", &["agents-relay", "agency-agents", "speckit-specify", "speckit-clarify"]),
+        ("blocker-job-recovery.md", &["agents-relay"]),
+        ("dag-task-completion.md", &["agents-relay", "events-bus"]),
+        ("event-contract.md", &["events-bus", "agents-relay"]),
+        ("event-task-completion.md", &["events-bus", "agents-relay"]),
+        ("execution-boundary.md", &["agents-relay"]),
+        ("orchestrator-workflows.md", &["agents-relay", "speckit-specify", "speckit-clarify"]),
+        ("plan-execution.md", &["agents-relay"]),
+        ("source-task-completion.md", &["agents-relay", "events-bus"]),
+        ("task-execution.md", &["agents-relay"]),
+        ("task-job-contract.md", &["agents-relay", "speckit-specify", "speckit-clarify", "events-bus", "neo-project"]),
+        ("task-recovery-flows.md", &["agents-relay", "events-bus"]),
+        ("worker-lifecycle.md", &["events-bus"]),
+        ("worker-self-review.md", &["agents-relay", "events-bus"]),
+    ];
+    for (file, skills) in expected {
+        let text = fs::read_to_string(dir.join(file)).unwrap();
+        for skill in *skills {
+            assert!(text.contains(&format!("`{skill}` Skill")),
+                "{file} must name owning skill `{skill}`");
+        }
+    }
+    let startup = fs::read_to_string(dir.join("worker-lifecycle.md")).unwrap();
+    assert!(!startup.to_ascii_lowercase().contains("preflight"));
+    assert!(!startup.contains("```"));
+    let completion = fs::read_to_string(dir.join("dag-task-completion.md")).unwrap();
+    assert!(!completion.contains("```sh"));
 }

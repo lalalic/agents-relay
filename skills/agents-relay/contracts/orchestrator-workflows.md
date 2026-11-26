@@ -1,12 +1,14 @@
 # Agents Relay Orchestrator Workflows
 
+Use the `agents-relay` Skill for Job/Task/Review/Recovery CLI operations; requirements authoring uses `speckit-specify` Skill and `speckit-clarify` Skill. These workflows are on-demand procedures, not mandatory Agent startup principles.
+
 ## Job context capture
 
 Before `job create`, the orchestrator converts the relevant discussion into a standalone Markdown objective. Prefer `--objective-file`; if a diagram materially clarifies workflow/state/architecture/dependencies, put Mermaid first. The objective must be sufficient for a fresh orchestrator/agent to complete the Job without access to the original conversation. Creating the Job is the context-compaction boundary: important decisions must be copied into durable Job context before work is delegated.
 
 ## Job creation quality gate
 
-Before an Agent-issued requirements-driven `job create`, including create-only and P0/self Jobs, follow the [shared Job quality contract](task-job-contract.md#agent-created-job-quality-gate-before-job-create).
+Before an Agent-issued requirements-driven `job create`, including create-only and P0/self Jobs, follow the [shared Job quality contract](task-job-contract.md#agent-created-job-quality-gate).
 
 1. Confirm the user authorized the Job; a design discussion or Spec Kit exercise is not permission to execute.
 2. Apply `speckit-specify` then `speckit-clarify` to formulate and assess the Job's Markdown objective, retaining prior user decisions and acceptance requirements. Do not ask for information already settled.

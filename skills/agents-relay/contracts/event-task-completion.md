@@ -1,21 +1,7 @@
 # Event Task Completion Contract
 
-## Validate the durable result first
-
-Fulfill the exact assigned responsibility and validate Task output,
-artifacts and acceptance **before** publishing a terminal. A Worker
-process exit or generic transport acknowledgment does not prove success.
-Preserve the supplied current execution source and do not fabricate IDs.
-
-## Publish the correct terminal
-
-After validated success, publish exactly one `task.completed` with any
-mandatory role-specific typed data. Reviewer requires immutable
-`head_sha`, `verdict` and actionable findings; Troubleshooter includes
-evidence of verified recovery. A Reviewer reporting defects is a
-successful review with a changes-required verdict, not `task.failed`.
-
-If the responsibility cannot be fulfilled, publish `task.failed` with
-phase, reason and evidence. Verify that the Relay Graph accepted the
-terminal for the current execution, not merely that an Events Bus
-transport accepted its envelope.
+- The assigned responsibility, outputs and acceptance evidence must be durable before a terminal success event.
+- Use the `events-bus` Skill to publish Worker-owned terminal events and the `agents-relay` Skill to verify Relay accepted the exact execution outcome.
+- Publish exactly one terminal outcome, `task.completed` on verified success or `task.failed` on failure with phase, reason and evidence.
+- `task.completed` must meet the role-specific result schema: Reviewer needs immutable `head_sha`, `verdict` and actionable findings; Troubleshooter needs durable recovery evidence. Review defects are a successful `changes-required` verdict, not Worker failure.
+- Process exit or generic transport acknowledgement alone does not establish Relay completion; never invent execution IDs or claim an unverified terminal state.

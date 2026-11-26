@@ -5,6 +5,8 @@ global_startup_contracts: [relay:skills/agents-relay/contracts/execution-boundar
 
 # Agents Relay Agent Definition Contract
 
+The `agents-relay` Skill owns Agent/Contract resolution and prompt assembly; resolve any referenced `required_skills` by exact `skill name` through the Harness catalog.
+
 This is the canonical contract for optional Agent frontmatter hints and their
 effect on execution. It applies to project, shared, and Relay-built-in Agents,
 including merged Agents. Agent role instructions, Task content, and Graph-owned

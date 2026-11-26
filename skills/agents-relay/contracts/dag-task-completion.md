@@ -1,20 +1,6 @@
 # DAG Task Completion Contract
 
-## Validate declared output
-
-Write the complete DAG result to the Task's declared output. Verify
-its structured `status`, `output` and `artifacts` fields, referenced
-artifact file paths and the project-declared Stage schema. A nonempty
-file alone does not satisfy the Task. Preserve exact execution identity.
-
-## Complete through the authorized CLI
-
-Call the matching Relay CLI:
-
-```sh
-agents-relay task complete --repo {{repository}} --id {{jobId}} --task-id {{taskId}} --execution-id {{executionId}} --summary 'Validated DAG result'
-```
-
-Never pass `--commit-sha` or directly publish `task.completed`.
-The daemon validates result/artifacts, commits Graph/SQLite state and
-publishes completion. Repair validator rejection in the same execution.
+- A DAG child must write a valid structured result to its declared output, including `status`, `output`, `artifacts`, existing artifact paths and the owning Project's Stage schema.
+- Use the `agents-relay` Skill's execution-fenced `task complete` CLI for success; pass the exact Job, Task and Execution identity, without a commit SHA.
+- Only Relay may publish this Task's `task.completed` after validating the result and committing Graph/SQLite state. The Worker must not publish successful completion directly using the `events-bus` Skill.
+- A rejected completion is not success. Correct repairable output or validation problems in the same execution.

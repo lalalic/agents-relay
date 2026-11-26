@@ -1,5 +1,7 @@
 # Agents Relay Task / Job Contract
 
+Use the `agents-relay` Skill for the version-matched Job/Task/Review CLI; requirements authoring and clarification use `speckit-specify` Skill and `speckit-clarify` Skill. Use the `events-bus` Skill for Worker-owned event publication. Schema and Graph invariants below remain authoritative.
+
 This contract is the shared protocol for every component that creates, schedules, reviews, or executes Agents Relay jobs and tasks.
 
 ## Job and Task authoring format
@@ -19,30 +21,16 @@ When creating a new Job from an active discussion, the orchestrator must consoli
 
 Use `job create` with standalone objective Markdown. Existing PRs are not imported as Jobs. Use Relay CLI for subsequent Job reads and updates; do not infer Job state or objective from GitHub.
 
-## Agent-created Job quality gate (before `job create`)
+## Agent-created Job quality gate
 
-An Agent creating a Job (including a user-facing orchestrator) owns the quality of the **proposed Markdown objective before persistence**. This applies to Planner-backed, create-only and P0/self requirements-driven Jobs. Declared Project DAG Runs are exempt: their project-owned Graph and input contract are already defined; the Neo Project Runner validates the Run and supplies the Relay flag internally without Spec Kit or independent requirements review. The **review quality steps** are an Agent authoring contract; CLI and JSON Control callers are runtime-gated only on their explicit non-persisted `--preflight=true`/`options.preflight: true` declaration, not on evidence that the steps actually ran.
+- Job creation requires explicit user authority and a standalone, complete, testable objective preserving original requirements and settled decisions. A design discussion alone does not authorize creating a Job.
+- For requirements-driven Jobs, the creator is accountable for requirements quality through the `speckit-specify` Skill and `speckit-clarify` Skill, and for independent pre-creation `PASS` from the `agents-relay` Skill's built-in `job-acceptance-reviewer`. Missing or failed review is never PASS.
+- The reviewed Markdown must be the same Objective/specification provided at Job creation, including the original user request, constraints and acceptance criteria. No parallel preflight artifact, Job state or Reviewer Task is authorized.
+- Creation requires the exact non-persisted `--preflight=true` (`options.preflight: true` via JSON Control). Missing, false or malformed assertion rejects the Job with `JOB_PREFLIGHT_REQUIRED` and no mutation; the assertion is creator responsibility, not cryptographic review evidence.
+- Declared Project DAG Runs use the `neo-project` Skill's validated runner and Graph/input contract instead of a new requirements review. The runner supplies the creation assertion internally.
+- The authoring review does not replace Planner quality, Worker self-review or SHA-bound Final Review. Material changes to the accepted objective require renewed quality review.
 
-1. **Authorization and intent:** distinguish discussion/specification from authorization to create or execute a Job. Preserve the original request and settled user decisions; do not invent scope or silently override a required implementation choice.
-2. **Specify:** use the installed `speckit-specify` Skill and its requirements-quality checklist to form a standalone Markdown objective: goal, user-visible behavior, requirements, in/out-of-scope boundaries, known constraints, assumptions and measurable acceptance criteria. Include the original user request or faithful context so an independent reviewer can detect omissions.
-3. **Clarify:** use the installed `speckit-clarify` Skill to discover material ambiguities. Resolve from reliable prior decisions and project context when possible; ask the user only when a consequential scope, risk, experience or acceptance choice cannot be safely resolved. Zero questions is valid when the intent is already clear.
-4. **Independent preflight — use the Relay built-in Final Reviewer:** submit `spec.md` (or the actual standalone Objective Markdown) for read-only review via the existing `agents-relay review run --agents job-acceptance-reviewer` interface. The `job-acceptance-reviewer` builtin **extends the canonical `reviewer.agent.md` Final Review contract**; this is not an external professional Agent. The implicit generic Outcome Reviewer also runs and combines verdicts. The specification itself must faithfully include the **original user request/decisions**, relevant Spec Kit quality evidence, constraints, and acceptance criteria. The Reviewer must judge faithfulness, feasibility, ambiguity, scope and whether a future Final Reviewer can independently verify success. Do **not** create a separate `job-preflight.md` prompt artifact, invent a Preflight Task, or invoke the SHA-bound `review job` lifecycle before the Job exists.
-
-   ```sh
-   agents-relay review run \
-     --agents job-acceptance-reviewer \
-     --project-path /absolute/project \
-     --prompt "Preflight-review /absolute/project/spec.md as the proposed Job objective against the original user request included in it. Check completeness, ambiguities and testable acceptance; return PASS, CHANGE_REQUIRED or BLOCKED."
-   ```
-
-   `--prompt` is the *review instruction*, not a separate spec or stored artifact. If the objective is not literally `spec.md`, point the Reviewer to the same actual Markdown passed to `--objective-file`. The command returns exit 0=PASS, 10=CHANGE_REQUIRED, 20=BLOCKED (other failures are errors). Only create the Job after independent PASS; an unchecked/failed run cannot be attested as PASS.
-5. **Decision:** on `PASS`, the authorized creator may call `job create`; on `CHANGE_REQUIRED`, revise the objective and re-review within a bounded correction loop; on `BLOCKED` or review execution failure, resolve missing evidence or user decisions before proceeding. A missing/failed review is never PASS. Do not create a Job to bypass this gate.
-
-The full file-producing Specify/Clarify workflows require a valid `.specify/` project and authorized checkout. Before a repository is selected, apply their analysis and quality **contracts** during conversation without claiming that `spec.md` was written or creating unauthorized files. If required quality guidance or independent review is unavailable, report the blocker rather than certifying the Job.
-
-Use Markdown sections inside the existing `objective` field rather than adding one Relay field for every Spec Kit section. Preserve stable spec references when available, but include enough context and acceptance criteria to work and review independently of the original chat; `description` is not required by the current `job create` CLI. Material changes to accepted scope or criteria require renewed clarification and preflight, not an unreviewed rewrite.
-
-This preflight is creator-owned authoring responsibility, **not** a new Relay lifecycle state or a replacement for Planner quality checks, worker self-review, or the independent immutable-head Final Review. **All** Relay Job creation entrypoints, including Coordinator creation by the Project Runner, must pass the exact `--preflight=true` CLI flag (JSON Control equivalent `options.preflight: true`). Missing, false or malformed assertions fail with `ERROR [JOB_PREFLIGHT_REQUIRED]`, CLI exit code 2, and no Job mutation. For normal Jobs this is a creator attestation, **not cryptographic evidence**; for declared DAG Runs it is supplied by the validated Runner, not a reviewer verdict. Relay never persists the transient flag in Job JSON/SQLite, creates Preflight Tasks/receipts, or adds a new Graph state. Resuming or updating an already-existing Job does not create a new Job and does not require that flag.
+The **procedural** authoring, reviewer invocation and disposition of verdicts live in [Orchestrator Workflows](orchestrator-workflows.md#job-creation-quality-gate), under the `agents-relay` Skill. This Contract owns the invariants, not the steps.
 
 ## Job-level advisory route preferences
 
