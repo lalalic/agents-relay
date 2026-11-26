@@ -80,7 +80,7 @@ A component that already owns its eligible routes can use the same typed Jev
 decision primitive without creating a Relay Job or accessing the daemon/store:
 
 ```sh
-agents-relay decide --input-file request.json
+agents-relay route --input-file request.json
 ```
 
 ```json

@@ -9,10 +9,10 @@ const MAX_INPUT_BYTES: u64 = 1024 * 1024;
 
 fn read_request(args: &[String], stdin: Option<&str>) -> Result<Value, String> {
     let [flag, path] = args else {
-        return Err("Usage: agents-relay decide --input-file REQUEST.json|-".into());
+        return Err("Usage: agents-relay route --input-file REQUEST.json|-".into());
     };
     if flag != "--input-file" || path.is_empty() {
-        return Err("Usage: agents-relay decide --input-file REQUEST.json|-".into());
+        return Err("Usage: agents-relay route --input-file REQUEST.json|-".into());
     }
     let mut bytes = Vec::new();
     if path == "-" {

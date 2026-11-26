@@ -6,7 +6,7 @@ use std::{
 
 fn invoke(input: &Value) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
-        .args(["decide", "--input-file", "-"])
+        .args(["route", "--input-file", "-"])
         .env_remove("OPENROUTER_API_KEY")
         .env("AGENTS_RELAY_STORE_DIR", "/dev/null/not-a-relay-store")
         .stdin(Stdio::piped())
@@ -66,7 +66,7 @@ fn rejects_ineligible_fallback_and_duplicate_choices() {
 #[test]
 fn native_help_mentions_detached_contract() {
     let out = Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
-        .args(["decide", "--help"])
+        .args(["route", "--help"])
         .output()
         .unwrap();
     assert!(out.status.success());

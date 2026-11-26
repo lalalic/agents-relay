@@ -16,7 +16,7 @@ pub mod cli_shutdown;
 pub mod cli_workflow_action;
 pub mod dag_stage_contract;
 pub mod decision;
-pub mod cli_decide;
+pub mod cli_route;
 pub mod dependency_validity;
 pub mod execution_boundary;
 pub mod final_review_role;
