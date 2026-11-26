@@ -102,6 +102,7 @@ fn runtime_policy_is_supplied_by_native_caller_not_hardcoded_in_builder() {
     let layers = build_relay_work_prompt(&declared, None).unwrap();
     assert!(layers.system.contains("Publish `task.started` immediately when execution begins."));
     assert!(!layers.system.contains("minimal required preflight"));
+    assert!(layers.system.contains("Use the `events-bus` Skill to publish lifecycle events"));
     assert!(layers.system.contains("DAG Task Completion Contract"));
     assert!(layers.system.contains(
         "agents-relay task complete --repo vlog --id 721 --task-id 2259 --execution-id exec-1"
