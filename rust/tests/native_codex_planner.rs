@@ -108,8 +108,8 @@ fn native_planner_honors_router_selected_model_profile_and_reasoning() {
         Some(route),
     );
     let args = fs::read_to_string(&captured).expect("Routed Codex must launch");
-    assert!(args.contains("--profile\nquality\n"), "{args}");
-    assert!(args.contains("--model\ngpt-6-luna\n"), "{args}");
+    assert!(args.contains("-p\nquality\n"), "{args}");
+    assert!(args.contains("-m\ngpt-6-luna\n"), "{args}");
     assert!(args.contains("model_reasoning_effort=\"high\""), "{args}");
     assert!(args.contains("model_provider=\"openai\""), "{args}");
     fs::remove_dir_all(root).unwrap();

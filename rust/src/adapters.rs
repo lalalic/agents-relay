@@ -58,24 +58,14 @@ pub fn append_tail(current:&str,chunk:&str,max_bytes:usize)->String{
     let bytes=combined.into_bytes();
     String::from_utf8_lossy(&bytes[bytes.len()-max_bytes..]).into_owned()
 }
-pub fn build_codex_args(route:&Value,input:&str)->Vec<String>{
+pub fn build_codex_args(route:&Value,input:&str)->Result<Vec<String>,String>{
     let mut args=crate::codex_permissions::exec_args(true);
-    let profile=field(route,"profile");
-    let provider=field(route,"provider");
-    if !profile.is_empty(){args.extend(["-p".into(),profile.into()]);}
-    else if !provider.is_empty(){args.extend(["-p".into(),provider.into()]);}
-    if !field(route,"model").is_empty(){
-        args.extend(["-m".into(),field(route,"model").into()]);
-    }
-    if !field(route,"reasoning").is_empty(){
-        args.extend(["-c".into(),format!(
-            "model_reasoning_effort={}",field(route,"reasoning"))]);
-    }
+    args.extend(crate::native_codex_thread::codex_route_arguments(route)?);
     if !field(route,"cwd").is_empty(){
         args.extend(["-C".into(),field(route,"cwd").into()]);
     }
     args.extend(["--".into(),input.into()]);
-    args
+    Ok(args)
 }
 pub fn parse_thread_started(line:&str)->Option<String>{
     let parsed:Value=serde_json::from_str(line).ok()?;
@@ -123,7 +113,7 @@ impl CodexAdapter{
                 .and_then(Value::as_str));
         let mut copied=route.clone();
         if let Some(cwd)=cwd{copied["cwd"]=json!(cwd);}
-        let args=build_codex_args(&copied,field(task,"input"));
+        let args=build_codex_args(&copied,field(task,"input"))?;
         let references=args.iter().map(String::as_str).collect::<Vec<_>>();
         let mut manager=OwnedProcessManager::default();
         let execution=run_delivery_owned_process(

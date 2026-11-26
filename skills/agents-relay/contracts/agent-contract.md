@@ -209,7 +209,15 @@ resolution and `extends` merge rules; a more specific override wins.
 The selected Agent's `skills` hint appears in the Worker/Planner **user
 prompt**, not as an enforced bootstrap/contract requirement. The selected
 Agent's `model` and `reasoning` hints go to the Router **decision prompt**,
-not to the Worker prompt.
+not to the Worker prompt. All Model Agents (Job Workers, Planner, Final Reviewer,
+Troubleshooter, DAG stages, and detached Outcome/Preflight Review) use the same
+native Execution Router to select one eligible route. Detached agents use the
+shared read-only preference resolver and detached Router entry point; they
+must not silently use Codex defaults or implement a separate selector.
+The selected Provider/Profile/Model/Reasoning is passed to the common Codex
+route argument encoder, including fresh and resumed executions; role-specific
+prompt and completion contracts remain independent. Do not copy route
+selection or Codex route flag construction into each Agent launcher.
 
 Durable Job `routingPreferences` soft hints have priority over Agent frontmatter hints for still-unrouted normal Tasks.
 Explicit Job routing preferences are appended to the Decision Engine's routing instructions

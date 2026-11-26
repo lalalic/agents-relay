@@ -1022,7 +1022,7 @@ fn invoke(request: &Value) -> Result<String, String> {
         // Newly closed API surfaces live in an isolated parity fixture module.
         // Node src/adapters.ts: exact public worker argument and submitted receipt contracts.
         "stage2BuildCodexArgs" => Ok(json!(agents_relay_rust2::adapters::build_codex_args(
-            &request["route"],request["input"].as_str().unwrap_or(""))).to_string()),
+            &request["route"],request["input"].as_str().unwrap_or(""))?).to_string()),
         // Node src/pool.ts: pure Job ordering, admission and Graph restart checks.
         "stage2CompareJobPriority" => {
             use std::cmp::Ordering;

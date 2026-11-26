@@ -13,42 +13,61 @@ use std::{
 fn field<'a>(v: &'a Value, key: &str) -> &'a str {
     v.get(key).and_then(Value::as_str).unwrap_or("")
 }
+/// Every Codex-backed Model Agent uses this single selected-route encoder.
+/// Resume parses exec-scoped flags separately from turn-scoped flags.
+#[derive(Clone, Debug)]
+pub struct CodexRouteFlags {
+    pub exec:Vec<String>,
+    pub turn:Vec<String>,
+}
+pub fn codex_route_flags(route:&Value)->Result<CodexRouteFlags,String>{
+    let provider=field(route,"provider");
+    let model=field(route,"model");
+    if provider.is_empty()||model.is_empty(){
+        return Err("Codex route must include provider and model".into());
+    }
+    let mut exec=Vec::new();
+    if !field(route,"profile").is_empty(){
+        exec.extend(["-p".into(),field(route,"profile").into()]);
+    }
+    exec.extend(["-c".into(),format!("model_provider={}",
+        serde_json::to_string(provider).map_err(|error|error.to_string())?)]);
+    let mut turn=vec!["-m".into(),model.into()];
+    let reasoning=field(route,"reasoning");
+    if !reasoning.is_empty(){
+        if !matches!(reasoning,"minimal"|"low"|"medium"|"high"|"xhigh"){
+            return Err("Unsupported Codex route reasoning level".into());
+        }
+        turn.extend(["-c".into(),format!("model_reasoning_effort=\"{reasoning}\"")]);
+    }
+    Ok(CodexRouteFlags{exec,turn})
+}
+/// Fresh invocations accept all route flags on the exec command.
+pub fn codex_route_arguments(route:&Value)->Result<Vec<String>,String>{
+    let parts=codex_route_flags(route)?;
+    Ok(parts.exec.into_iter().chain(parts.turn).collect())
+}
+
 pub fn build_codex_turn_args(
     route: &Value,
     cwd: &str,
     thread_id: Option<&str>,
     layers: &crate::agent_prompt_builder::PromptLayers,
 ) -> Result<Vec<String>, String> {
-    let model = field(route, "model");
-    let provider = field(route, "provider");
-    if model.is_empty() || provider.is_empty() {
-        return Err("Codex route must include provider and model".into());
-    }
+    let route_flags=codex_route_flags(route)?;
     let mut args = if thread_id.is_some() {
-        // Resume has its own option parser; the max-access flag and model go
-        // AFTER `resume`, while JSONL and profile remain on `exec`.
-        let mut args = vec!["exec".into(), "--json".into()];
-        if !field(route, "profile").is_empty() {
-            args.extend(["-p".into(), field(route, "profile").into()]);
-        }
-        args.extend(["-c".into(), format!("model_provider=\"{provider}\"")]);
-        args.extend(["resume".into(), FULL_ACCESS_NO_APPROVALS.into()]);
+        // Resume parses exec-scoped profile/provider flags before `resume`
+        // and turn-scoped model/reasoning after it.
+        let mut args=vec!["exec".into(),"--json".into()];
+        args.extend(route_flags.exec);
+        args.extend(["resume".into(),FULL_ACCESS_NO_APPROVALS.into()]);
         args
     } else {
-        let mut args = exec_args(true);
-        if !field(route, "profile").is_empty() {
-            args.extend(["-p".into(), field(route, "profile").into()]);
-        }
-        args.extend(["-c".into(), format!("model_provider=\"{provider}\"")]);
+        let mut args=exec_args(true);
+        args.extend(route_flags.exec);
         args
     };
-    args.extend(["-m".into(), model.into()]);
-    if !field(route, "reasoning").is_empty() {
-        args.extend([
-            "-c".into(),
-            format!("model_reasoning_effort={}", field(route, "reasoning")),
-        ]);
-    }
+    args.extend(route_flags.turn);
     if let Some(thread_id) = thread_id {
         if !valid_thread_id(thread_id) {
             return Err("Invalid persisted Codex thread ID".into());

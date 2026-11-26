@@ -20,10 +20,12 @@ fn planner_and_adapter_and_reviewer_share_unrestricted_permissions(){
     let planner=build_planner_codex_args(Path::new("/tmp/relay"),"plan safely");
     confirm(&planner);
     assert!(planner.ends_with(&["--".into(),"plan safely".into()]));
-    let adapter=build_codex_args(&json!({"profile":"neo","model":"gpt-6","cwd":"/tmp/repo"}),"implement");
+    let adapter=build_codex_args(&json!({"profile":"neo","provider":"neo-local","model":"gpt-6","cwd":"/tmp/repo"}),"implement").unwrap();
     confirm(&adapter);
     assert!(adapter.iter().any(|a|a=="neo"));
-    let reviewer=outcome_review_codex_args(Path::new("/tmp/relay-review"));
+    let reviewer=outcome_review_codex_args(Path::new("/tmp/relay-review"),
+        &json!({"routing":{"provider":"openai","model":"gpt-6","reasoning":"high"}}))
+        .expect("routed reviewer");
     confirm(&reviewer);
     assert!(reviewer.iter().any(|a|a=="--output-schema"));
     assert!(reviewer.iter().any(|a|a=="--ephemeral"));

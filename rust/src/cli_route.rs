@@ -94,6 +94,7 @@ fn options(input: &Value) -> Result<(Value, Value, Vec<Value>), String> {
                 | "workerRequirements"
                 | "routingConstraints"
                 | "routingPreferences"
+                | "modelPreference"
                 | "routingInstruction"
                 | "eligibleProfiles"
                 | "excludedRoutes"
@@ -118,7 +119,15 @@ fn options(input: &Value) -> Result<(Value, Value, Vec<Value>), String> {
         job_routing_preferences::validate(preferences)?;
         facts["routingPreferences"] = preferences.clone();
     }
+    let model_preference = match input.get("modelPreference") {
+        None => Value::Null,
+        Some(value) => {
+            identifiers(value, &["model", "reasoning"], "modelPreference")?;
+            value.clone()
+        }
+    };
     let mut opts = json!({"taskFacts":facts,"routingConstraints":constraints,
+        "modelPreference":model_preference,
         "decisionMode":decision_mode(),"recordDecisionAudit":false});
     if let Some(v) = input.get("routingInstruction") {
         if !v.is_string() {
@@ -171,7 +180,7 @@ fn options(input: &Value) -> Result<(Value, Value, Vec<Value>), String> {
     Ok((requirements, opts, recent))
 }
 
-fn route_with(
+pub(crate) fn route_with(
     input: &Value,
     workers: &[Value],
     profile_home: &Path,
@@ -228,6 +237,35 @@ pub fn run(args: &[String], stdin: Option<&str>) -> Result<Value, String> {
     )
 }
 
+/// Detached agents use the exact same Router service and Agent preference
+/// resolver as managed Model Tasks; no reviewer-specific route selector.
+pub fn detached_model_agent_request(
+    project:&Path,workspace:&Path,agent:&str,role:&str,
+    builtin_agents_root:Option<&Path>,
+)->Value{
+    let mut request=json!({
+        "taskFacts":{"role":role,"task":{
+            "agentName":agent,"taskCapabilities":["model"],"storySize":"M"
+        }},
+        "workerRequirements":{"capabilities":["model"]}
+    });
+    if let Some(preference)=crate::execution_context::optional_agent_model_preference(
+        &project.to_string_lossy(),agent,
+        Some(&workspace.to_string_lossy()),None,
+        builtin_agents_root.as_ref().map(|p|p.to_str().unwrap_or(""))){
+        request["modelPreference"]=preference;
+    }
+    request
+}
+pub fn route_detached_model_agent(
+    project:&Path,workspace:&Path,agent:&str,role:&str,
+    builtin_agents_root:Option<&Path>,
+)->Result<Value,String>{
+    let request=detached_model_agent_request(project,workspace,agent,role,builtin_agents_root);
+    run(&["--input-file".into(),"-".into()],Some(&request.to_string()))
+        .map_err(|error|format!("{agent} routing failed: {error}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,6 +316,53 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+    #[test]
+    fn detached_model_agent_reads_effective_inherited_hints_into_one_router_request(){
+        let root=std::env::temp_dir().join(format!(
+            "relay-detached-agent-{}",crate::events::random_uuid()));
+        let project=root.join("project");
+        std::fs::create_dir_all(project.join("agents")).unwrap();
+        std::fs::write(project.join("agents/parentprobe.agent.md"),
+            "---\nname: parentprobe\nmodel: zai/glm-5.3-flash\nreasoning: medium\n---\n# Parent\n").unwrap();
+        std::fs::write(project.join("agents/childprobe.agent.md"),
+            "---\nname: childprobe\nextends: parentprobe\nreasoning: high\n---\n# Child\n").unwrap();
+        let request=detached_model_agent_request(&project,&root,"childprobe","reviewer",None);
+        assert_eq!(request["modelPreference"],json!({
+            "model":"zai/glm-5.3-flash","reasoning":"high"}));
+        assert_eq!(request["workerRequirements"]["capabilities"],json!(["model"]));
+        assert_eq!(request["taskFacts"]["task"]["agentName"],"childprobe");
+        assert_eq!(request["taskFacts"]["role"],"reviewer");
+        let builtins=root.join("isolated-builtins");
+        std::fs::create_dir_all(&builtins).unwrap();
+        std::fs::write(builtins.join("outcome-reviewer.agent.md"),
+            "---\nname: outcome-reviewer\nmodel: openai/gpt-6-luna\nreasoning: xhigh\n---\n# Implicit reviewer\n").unwrap();
+        let implicit=detached_model_agent_request(&project,&root,
+            "outcome-reviewer","reviewer",Some(&builtins));
+        assert_eq!(implicit["modelPreference"],json!({
+            "model":"openai/gpt-6-luna","reasoning":"xhigh"}));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn model_agent_hint_reaches_router_but_does_not_pin_model_or_thinking() {
+        let f=Fixture::new();
+        let request=json!({"taskFacts":{"role":"reviewer"},
+            "modelPreference":{"model":"openai/base","reasoning":"low"}});
+        let out=f.route(&request,|_,contract|{
+            let question=contract["question"].as_str().unwrap();
+            assert!(question.contains("Prefer model: openai/base"));
+            assert!(question.contains("Prefer reasoning: low"));
+            assert!(question.contains("advisory only"));
+            // The Engine may still choose a different eligible model.
+            let choice=contract["choices"].as_array().unwrap().iter()
+                .find(|v|v.as_str().unwrap().contains("profile=quality"))
+                .unwrap();
+            Ok(json!({"type":"choice","choice":choice}))
+        }).unwrap();
+        assert_eq!(out["routing"]["profile"],"quality");
+        assert_eq!(out["routing"]["model"],"stronger");
+        assert!(options(&json!({"modelPreference":{"model":42}})).is_err());
+        assert!(options(&json!({"modelPreference":{"reasoning":""}})).is_err());
     }
     #[test]
     fn same_worker_router_applies_global_job_and_caller_instructions() {

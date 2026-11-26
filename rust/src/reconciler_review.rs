@@ -45,6 +45,17 @@ fn candidate_task<'a>(job:&'a Value,id:&str)->Option<&'a Value>{
 fn review_task(task:&Value)->bool {
     is_final_review_agent(task.get("agentName").and_then(Value::as_str))
 }
+/// Resolve optional effective Agent hints read-only, before choosing a route.
+/// They rank existing eligible choices; they never pin or widen them.
+pub fn agent_model_preference_for_job(
+    job:&Value,agent:&str,options:&Value,
+)->Option<Value>{
+    let project=job.get("projectRoot").and_then(Value::as_str)?;
+    crate::execution_context::optional_agent_model_preference(
+        project,agent,
+        options.get("workspaceRoot").and_then(Value::as_str),
+        options.get("globalRoot").and_then(Value::as_str),None)
+}
 fn graph_actions(decision:&Value,action:&str)->bool {
     decision.get("accepted")==Some(&Value::Bool(true))
         &&decision.get("actions").and_then(Value::as_array)
@@ -190,6 +201,8 @@ pub fn route_reviewer(
         }});
     let opts=json!({"registered":registered,"usage":usage,
         "routingConstraints":configured.get("routing"),
+        "modelPreference":agent_model_preference_for_job(
+            job,FINAL_REVIEW_AGENT,options),
         "taskFacts":task_facts,
         "decisionMode":options.get("decisionMode"),
         "recordDecisionAudit":options.get("recordDecisionAudit"),
@@ -362,6 +375,9 @@ pub fn route_task_for_execution(
         "recovery":task.get("recoveryContext")
     });
     let opts=json!({"registered":registered,"usage":usage,
+        "modelPreference":agent_model_preference_for_job(
+            job,task.get("agentName").and_then(Value::as_str)
+                .filter(|agent|!agent.is_empty()).unwrap_or("implementation"),options),
         "taskFacts":task_facts,"excludedRoutes":excluded_routes,
         "decisionMode":options.get("decisionMode"),
         "recordDecisionAudit":options.get("recordDecisionAudit"),
@@ -528,3 +544,26 @@ pub fn apply_review_event(
 
 // Node ReconcilerReviewBase's owned runtime host adapter, extracted for SRP.
 pub use crate::reconciler_review_base::{ReconcilerReviewBase,ReviewBaseHost};
+
+#[cfg(test)]
+mod model_agent_routing_preference_tests {
+    use super::*;
+    #[test]
+    fn inherited_project_agent_hints_are_optional_and_read_only() {
+        let root=std::env::temp_dir().join(format!(
+            "relay-model-agent-pref-{}",crate::events::random_uuid()));
+        let project=root.join("project");
+        std::fs::create_dir_all(project.join("agents")).unwrap();
+        std::fs::write(project.join("agents/parentpref.agent.md"),
+            "---\nname: parentpref\nmodel: zai/glm-5.3-flash\nreasoning: medium\n---\n# Parent\n").unwrap();
+        std::fs::write(project.join("agents/childpref.agent.md"),
+            "---\nname: childpref\nextends: parentpref\nreasoning: high\n---\n# Child\n").unwrap();
+        let job=json!({"projectRoot":project});
+        let options=json!({"workspaceRoot":root,"globalRoot":root});
+        assert_eq!(agent_model_preference_for_job(&job,"childpref",&options),
+            Some(json!({"model":"zai/glm-5.3-flash","reasoning":"high"})));
+        assert_eq!(agent_model_preference_for_job(&job,"missingpref",&options),None);
+        assert_eq!(agent_model_preference_for_job(&json!({}),"childpref",&options),None);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+}

@@ -113,6 +113,25 @@ pub fn resolve_execution_context(
     context["runtimes"] = json!(runtimes);
     Ok(context)
 }
+/// Shared, read-only resolution of effective Agent model/thinking hints.
+/// Missing optional hints never create routes or prevent execution.
+pub fn optional_agent_model_preference(
+    project_path:&str,agent_name:&str,
+    workspace_root:Option<&str>,global_root:Option<&str>,
+    builtin_agents_root:Option<&str>,
+)->Option<Value>{
+    if agent_name.is_empty()||!std::path::Path::new(project_path).is_absolute(){
+        return None;
+    }
+    let global=global_root.map(str::to_owned)
+        .or_else(||std::env::var("AGENTS_HOME").ok())
+        .or_else(||std::env::var("HOME").ok()
+            .map(|home|format!("{home}/.agents")));
+    resolve_agent_model_preference(project_path,agent_name,
+        &json!({"workspaceRoot":workspace_root.unwrap_or(project_path),
+            "globalRoot":global,"bundledAgentsRoot":builtin_agents_root})).ok().flatten()
+}
+
 pub fn resolve_agent_model_preference(
     project_path: &str,
     agent_name: &str,
@@ -132,9 +151,12 @@ pub fn resolve_agent_model_preference(
             "workspaceRoot":workspace,"globalRoot":global
         }),
     );
+    let bundled=options.get("bundledAgentsRoot")
+        .and_then(Value::as_str).filter(|value|!value.is_empty())
+        .map(str::to_owned).map_or_else(bundled_agents_root,Ok)?;
     let agent = resolve_agent_markdown(
         agent_name,
-        &bundled_agents_root()?,
+        &bundled,
         project_path,
         Some(&layers),
     )?;

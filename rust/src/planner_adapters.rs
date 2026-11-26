@@ -311,46 +311,7 @@ impl AgentObjectivePlanner {
             .pointer("/plannerRoute/model")
             .filter(|value| value.is_object() && previous.is_none())
         {
-            let position = 2;
-            let mut flags = Vec::new();
-            if let Some(profile) = model
-                .get("profile")
-                .and_then(Value::as_str)
-                .filter(|value| !value.is_empty())
-            {
-                flags.extend(["--profile".into(), profile.into()]);
-            }
-            if let Some(provider) = model
-                .get("provider")
-                .and_then(Value::as_str)
-                .filter(|value| !value.is_empty())
-            {
-                flags.extend([
-                    "--config".into(),
-                    format!(
-                        "model_provider={}",
-                        serde_json::to_string(provider).map_err(|error| error.to_string())?
-                    ),
-                ]);
-            }
-            if let Some(name) = model
-                .get("model")
-                .and_then(Value::as_str)
-                .filter(|value| !value.is_empty())
-            {
-                flags.extend(["--model".into(), name.into()]);
-            }
-            if let Some(effort) = model
-                .get("reasoning")
-                .and_then(Value::as_str)
-                .filter(|value| matches!(*value, "minimal" | "low" | "medium" | "high" | "xhigh"))
-            {
-                flags.extend([
-                    "--config".into(),
-                    format!("model_reasoning_effort=\"{effort}\""),
-                ]);
-            }
-            argv.splice(position..position, flags);
+            argv.splice(2..2,crate::native_codex_thread::codex_route_arguments(model)?);
         }
         if previous.is_none() {
             crate::codex_context_builder::apply_prompt_layers(&mut argv, &current)?;

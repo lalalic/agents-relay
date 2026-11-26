@@ -255,8 +255,23 @@ fn decision_options_for(config:&DaemonConfig,live:bool)->Value{
             crate::decision_audit::JsonlDecisionAuditStore::new(
                 crate::decision_audit::audit_path(&config.store_directory)).read_recent_routes(10)
         }else{Vec::new()};
+        let global_root=if live {
+            std::env::var("AGENTS_HOME").ok()
+                .or_else(||std::env::var("HOME").ok()
+                    .map(|home|format!("{home}/.agents")))
+        } else {
+            config.store_directory.parent()
+                .map(|path|path.to_string_lossy().to_string())
+        };
+        let workspace_root=if live {
+            config.workspace_root.clone()
+        } else {
+            config.store_directory.parent().unwrap_or(&config.store_directory)
+                .to_path_buf()
+        };
         json!({"decisionMode":if live{crate::decision::decision_mode()}else{"off"},
-            "useDecisionEngine":live,"recordDecisionAudit":true,"recentRouteResults":recent})
+            "useDecisionEngine":live,"recordDecisionAudit":true,"recentRouteResults":recent,
+            "workspaceRoot":workspace_root,"globalRoot":global_root})
     }
 
 fn dashboard_status(config:&DaemonConfig,live:bool,wake_count:u64,reconcile_attempts:u64)->Value{
@@ -1041,9 +1056,12 @@ impl IsolatedSQLiteWriteHost {
             let usage=self.account_usage().ok();
             let mut options=self.decision_options();
             options["taskFacts"]=json!({"task":{"kind":"planner","agentName":"planner","jobId":id,"id":plan_id},"routingPreferences":job.get("routingPreferences")});
-            // Planner's own default is not a user Job preference. Preserve its
-            // fallback ranking without elevating it over global user rules.
-            options["modelPreference"]=json!({"reasoning":"high"});
+            // Agent hints are advisory; preserve the default high-thinking
+            // preference only when the effective Planner declares no hint.
+            options["modelPreference"]=
+                crate::reconciler_review::agent_model_preference_for_job(
+                    &job,"planner",&options)
+                    .unwrap_or_else(||json!({"reasoning":"high"}));
             options["fallbackRoutingPreferences"]=json!({"reasoning":"high"});
             options["usage"]=json!(usage);
             let workers=self.available_model_workers().into_iter()
@@ -1532,6 +1550,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                 crate::relayd::reconcile_one_daemon_job(
                     &config,self,id,config.concurrency,move |_snapshot|{
                         let config=&runtime_config;
+                        let router_roots=decision_options_for(config,live_store);
                         Ok(Reconciler::new(
                             config.graph_directory.clone(),
                             config.store_directory.clone(),
@@ -1541,6 +1560,8 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                             json!({"owner":owner,
                                 "maxConcurrent":config.concurrency,"decisionMode":if live_store{crate::decision::decision_mode()}else{"off"},
                                 "useDecisionEngine":live_store,"recordDecisionAudit":live_store,
+                                "workspaceRoot":router_roots["workspaceRoot"],
+                                "globalRoot":router_roots["globalRoot"],
                                 })))
                     })
             },

@@ -16,7 +16,7 @@ pub fn invoke(request:&Value)->Option<Result<String,String>>{
         match request["method"].as_str().unwrap_or(""){
             "buildCodexArgs"=>Ok(json!({"ok":true,
                 "args":build_codex_args(&request["route"],
-                    request["input"].as_str().unwrap_or(""))}).to_string()),
+                    request["input"].as_str().unwrap_or(""))?}).to_string()),
             "codexLaunch"=>{
                 // User-owned synthetic executable only; never Codex CLI/provider.
                 let path=request["command"].as_str()
