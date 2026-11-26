@@ -342,7 +342,6 @@ pub mod cli_support;
 pub mod cli_option_contract;
 pub mod cli_support_events;
 pub mod workspace;
-pub mod codegraph_index;
 pub mod github_client;
 pub mod usage;
 pub mod usage_registry;

@@ -16,7 +16,3 @@ e2e/runs/
 
 # Local MVP acceptance artifacts; preserve private per-device evidence outside Git
 mvp/runs/
-
-# Local CodeGraph indexes and transient snapshot staging
-.codegraph/
-.codegraph-relay-seed-*/
