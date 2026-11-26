@@ -1,19 +1,9 @@
 # Managed Worker Lifecycle Contract
 
-Every managed Worker Task has an exact Relay Job, Task and Execution
-identity. Relay Graph owns durable state; a provider process exit or transport
-acknowledgement alone does not mean the Task succeeded.
-
-## Preflight and progress
-
-Perform minimal required preflight before task.started. Publish meaningful
-task.progress when work advances; preserve the exact current execution source.
-Verify accepted event receipts and continue checking Task acceptance.
-
-## Failure, review, terminal boundary
-
-Publish task.failed with phase, reason and evidence on failure. Repair
-feasible validation problems in this same execution. Only use an authorized
-interactive-review action; never fabricate approval or publish task.blocked
-or task.unblocked, which Relay owns. A process exit is not completion.
-Follow the selected declared DAG/Git/Event Task Completion Contract.
+- Publish `task.started` immediately when execution begins.
+- Publish `task.progress` for meaningful progress.
+- Report exactly one terminal outcome through the declared Task Completion Contract: `task.completed` or `task.failed`.
+- Use the exact assigned Job, Task and Execution source for every event.
+- Report only verified outcomes and evidence; failure includes phase, reason and evidence.
+- Verify Relay acceptance of lifecycle events. Process exit and transport acknowledgement alone do not establish success.
+- Relay owns durable state and blocked/unblocked transitions; never publish Relay-owned lifecycle events or fabricate approval.

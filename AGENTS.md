@@ -41,8 +41,9 @@ workflows; this file governs development of Relay itself.
   Worker Contracts, not implicit Worker inheritance. Project Context is
   explicitly Agent-owned; Implementation and Planner declare it.
   Do not assume generic Workers, Reviewers or DAG Stages receive AGENTS.md.
-- Keep role-specific behavior in Agent definitions, execution requirements
-  in the owning Contracts, and project-wide engineering policy here.
+- Keep role-specific behavior in Agent definitions, mandatory principles
+  and invariants in Contracts, operational procedures in Skills, and
+  project-wide engineering policy here. Workflow decisions remain Graph-owned.
   Preserve independent review isolation. Resolve concrete paths at execution
   time from configured roots, not from a client or transport pool.
 - Use the execution-bound native CLI for Task/Plan facts and lifecycle

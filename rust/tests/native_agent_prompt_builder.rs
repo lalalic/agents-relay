@@ -100,7 +100,8 @@ fn runtime_policy_is_supplied_by_native_caller_not_hardcoded_in_builder() {
     declared["trustedRuntimePolicy"] = json!(policy.system);
     declared["startupContracts"] = json!(policy.provenance);
     let layers = build_relay_work_prompt(&declared, None).unwrap();
-    assert!(layers.system.contains("task.started"));
+    assert!(layers.system.contains("Publish `task.started` immediately when execution begins."));
+    assert!(!layers.system.contains("minimal required preflight"));
     assert!(layers.system.contains("DAG Task Completion Contract"));
     assert!(layers.system.contains(
         "agents-relay task complete --repo vlog --id 721 --task-id 2259 --execution-id exec-1"
