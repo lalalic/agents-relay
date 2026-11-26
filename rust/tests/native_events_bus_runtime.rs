@@ -96,7 +96,7 @@ fn real_http_ascending_page_enforces_request_query_and_cursor_watermark() {
     assert_eq!(page["rows"][1]["cursor"], 8);
     let request = worker.join().unwrap();
     assert!(
-        request.contains("GET /events?job=j&task=t&limit=30&order=asc&after=6 HTTP/1.1"),
+        request.contains("GET /events?filter=") && request.contains("&limit=30&order=asc&after=6 HTTP/1.1"),
         "{request}"
     );
     fs::remove_dir_all(dir).unwrap();
@@ -141,5 +141,22 @@ fn invalid_page_limit_and_descending_cursor_reject_without_network() {
         events_bus_history_page("j", None, &json!(10), &json!({"timeoutMs":0}), &env).unwrap_err(),
         "Invalid event history timeout"
     );
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn malformed_same_scope_event_does_not_block_later_valid_history(){
+    let dir=temp();
+    let (api,worker)=server(json!({"order":"asc","next_cursor":8,"events":[
+        {"cursor":7,"event":{"source":{"id":"job/j/task/t"},"type":"task.started","data":{}}},
+        {"cursor":8,"event":{"source":{"id":"job/j/task/t/execution/lease"},"type":"task.started","data":{}}}
+    ]}).to_string());
+    let page=events_bus_history_page("j",None,&json!(60),&json!({"order":"asc","after":6}),
+        &json!({"EVENTS_BUS_CONFIG":dir.join("absent"),"EVENTS_BUS_API_URL":api})).unwrap();
+    assert!(page["rows"][0]["event"].is_null());
+    assert_eq!(page["events"].as_array().unwrap().len(),1);
+    assert_eq!(page["events"][0]["task_id"],"t");
+    assert_eq!(page["nextCursor"],8);
+    worker.join().unwrap();
     fs::remove_dir_all(dir).unwrap();
 }

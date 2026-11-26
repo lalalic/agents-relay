@@ -282,7 +282,7 @@ where History:FnMut(&str,&str,usize,&str,u64)->Result<Value,String>,
     });
     if order=="asc"{
         result["nextCursor"]=page.get("nextCursor").cloned().unwrap_or(Value::Null);
-        result["morePossible"]=json!(events.len()==limit);
+        result["morePossible"]=json!(page["rows"].as_array().map_or(events.len(),|rows|rows.len())==limit);
     }
     serde_json::to_string_pretty(&result).map_err(|e|e.to_string())
 }

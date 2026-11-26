@@ -689,7 +689,7 @@ mod dashboard_projection_tests {
             let (mut stream,_)=listener.accept().unwrap();
             stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
             let mut buf=[0;2048];let n=stream.read(&mut buf).unwrap();
-            assert!(String::from_utf8_lossy(&buf[..n]).starts_with("GET /events?job=42&"));
+            assert!(String::from_utf8_lossy(&buf[..n]).starts_with("GET /events?filter="));
             started.send(()).unwrap();
             let _=gate.recv_timeout(Duration::from_secs(8));
             // Disconnect simulates an unavailable history, not empty success.

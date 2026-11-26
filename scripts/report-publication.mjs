@@ -11,7 +11,9 @@ const semver=/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 const artifactPattern=/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
 export function releaseEvent({packageName,version,sha,registry='native',repository,artifact,jobId,stage}){
   const type=stage===undefined?'package.published':'package.publish_failed';
-  if(!packagePattern.test(packageName??'')||!shaPattern.test(sha??'')||!['native','npm'].includes(registry)
+  if(typeof packageName!=='string'||typeof sha!=='string'||
+    [version,repository,artifact,jobId,stage].some(v=>v!==undefined&&typeof v!=='string')||
+    !packagePattern.test(packageName??'')||!shaPattern.test(sha??'')||!['native','npm'].includes(registry)
     ||(stage===undefined&&!semver.test(version??''))
     ||(version!==undefined&&!semver.test(version))
     ||(stage!==undefined&&(typeof stage!=='string'||!stage.trim()||stage.length>128))
@@ -41,6 +43,10 @@ export async function requestJSON(api,path,{token,payload,timeout=10000}={}){
   if(!response.ok)throw Error('Publication endpoint HTTP '+response.status);
   return await response.json();
 }
+export function releaseHistoryPath(packageName){
+  if(!packagePattern.test(packageName??''))throw Error('Invalid release package');
+  return '/events?'+new URLSearchParams({sourcePrefix:'release/'+packageName+'/',order:'desc',limit:'500'});
+}
 export async function publishVerified(api,event,{token,request=requestJSON,sleep=ms=>new Promise(r=>setTimeout(r,ms))}={}){
   // Validate caller-supplied event again, including the exact three-field source.
   const {package:packageName,...rest}=event.data??{};
@@ -48,19 +54,19 @@ export async function publishVerified(api,event,{token,request=requestJSON,sleep
   if(!isDeepStrictEqual(event,checked))throw Error('Invalid publication envelope');
   endpoint(api,token);
   const expected='release:'+packageName+':'+event.data.sha+':'+event.type;
-  const history='/releases?package='+encodeURIComponent(packageName)+'&limit=500';
+  const history='/events?'+new URLSearchParams({source:event.source,type:event.type,order:'desc',limit:'500'});
   const recorded=async()=>{
     const body=await request(api,history,{token});
-    if(body.package!==packageName||!Array.isArray(body.events))throw Error('Invalid release history');
+    if(body.order!=='desc'||!Array.isArray(body.events)||body.events.some(row=>row?.event?.source?.id!==event.source||row?.event?.type!==event.type))throw Error('Invalid release history');
     for(const row of body.events){
       if(row?.event?.event_id!==expected)continue;
-      if(!isDeepStrictEqual(row.event.data,event.data))throw Error('Existing publication receipt has different metadata; do not overwrite');
+      if(row.event.type!==event.type||row.event.source?.id!==event.source||!isDeepStrictEqual(row.event.data,event.data))throw Error('Existing publication receipt has different metadata; do not overwrite');
       return row;
     }
   };
   const old=await recorded();if(old)return old;
-  const receipt=await request(api,'/events',{token,payload:event});
-  if(!receipt?.published||receipt.event?.event_id!==expected||!isDeepStrictEqual(receipt.event.data,event.data))
+  const receipt=await request(api,'/events',{token,payload:{...event,event_id:expected}});
+  if(!receipt?.published||receipt.event?.event_id!==expected||receipt.event?.type!==event.type||receipt.event?.source?.id!==event.source||!isDeepStrictEqual(receipt.event.data,event.data))
     throw Error('Events Bus did not acknowledge the exact publication');
   for(let i=0;i<20;i++){
     const row=await recorded();if(row)return row;

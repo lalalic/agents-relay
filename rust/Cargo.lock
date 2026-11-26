@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "agents-relay-rust2"
-version = "2.0.268"
+version = "2.0.269"
 dependencies = [
  "chrono",
  "libc",

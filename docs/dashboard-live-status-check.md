@@ -33,7 +33,7 @@ checkout when no active Jobs can be disrupted:
 ```sh
 node scripts/release-native.mjs --job-id <this Job ID>
 curl -fsS http://127.0.0.1:8787/api/version
-curl -fsS 'http://127.0.0.1:4223/releases?package=agents-relay&limit=500'
+curl -fsS 'http://127.0.0.1:4223/events?sourcePrefix=release%2Fagents-relay%2F&order=desc&limit=500'
 ```
 
 Verify `/api/version` reports the release version and actual source SHA, and

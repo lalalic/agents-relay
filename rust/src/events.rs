@@ -68,6 +68,41 @@ fn event_kind_subject(value: &str) -> Result<&str, String> {
         Err("Unsafe event type for NATS subject".into())
     }
 }
+/// Project the generic transport envelope into Relay's lifecycle view.
+/// The exact execution source remains the authority. Rich historical events
+/// are already produced by Relay and keep their original metadata.
+pub fn normalize_incoming_event(event: &Value) -> Option<Value> {
+    if !event.is_object() { return None; }
+    if event.get("job_id").is_some() {
+        if let Some(source)=event.pointer("/source/id").and_then(Value::as_str).filter(|s|s.starts_with("job/")&&s.contains("/execution/")){
+            let (job,tail)=source.strip_prefix("job/")?.split_once("/task/")?;
+            let (task,execution)=tail.rsplit_once("/execution/")?;
+            if event["job_id"]!=job||event["task_id"]!=task||execution.is_empty()||execution.contains('/') {return None;}
+        }
+        return Some(event.clone());
+    }
+    let source=event.pointer("/source/id")?.as_str()?;
+    let (job, tail)=source.strip_prefix("job/")?.split_once("/task/")?;
+    let (task, execution)=tail.rsplit_once("/execution/")?;
+    if subject_token(job).is_err() || task.trim().is_empty() || execution.is_empty()
+        || execution.contains('/') || event.get("task_id").is_some() { return None; }
+    let kind=event.get("type")?.as_str()?;
+    if event_kind_subject(kind).is_err() || !event["data"].is_object() { return None; }
+    let status=if kind.ends_with(".completed")||kind.ends_with(".approved") {"succeeded"}
+        else if kind.ends_with(".failed") {"failed"}
+        else if kind.ends_with(".blocked") {"blocked"}
+        else if kind.ends_with(".cancelled") {"cancelled"}
+        else {"running"};
+    let mut normalized=event.clone();
+    normalized["job_id"]=json!(job);
+    normalized["task_id"]=json!(task);
+    normalized["status"]=json!(status);
+    normalized["visibility"]=json!("orchestrator");
+    normalized["level"]=json!("info");
+    normalized["message"]=json!(event["data"]["message"].as_str().filter(|v|!v.is_empty()).unwrap_or(kind));
+    Some(normalized)
+}
+
 // Node eventFor has nine positional arguments.
 // Preserve all Node eventFor arguments including optional data and source.
 #[allow(clippy::too_many_arguments)]
@@ -416,7 +451,8 @@ impl NatsEventBus {
                 if reader.read_exact(&mut buf).is_err() {
                     break;
                 }
-                if let Ok(event) = serde_json::from_slice::<Value>(&buf[..len]) {
+                if let Ok(raw) = serde_json::from_slice::<Value>(&buf[..len]) {
+                    let Some(event)=normalize_incoming_event(&raw) else {continue;};
                     // Verify the *wire subject* before passing the payload to
                     // a Job-scoped Graph/SQLite consumer. Broker subject ACLs
                     // are meaningless if job_id can retarget a decoded body.
@@ -461,6 +497,20 @@ impl NatsEventBus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn relay_owns_generic_lifecycle_projection() {
+        let raw=json!({"version":1,"event_id":"id-123","type":"task.completed",
+            "source":{"id":"job/42/task/a/execution/part/execution/lease"},
+            "data":{"verdict":"approved","head_sha":"abc"}});
+        let e=normalize_incoming_event(&raw).unwrap();
+        assert_eq!(e["job_id"],"42");
+        assert_eq!(e["task_id"],"a/execution/part");
+        assert_eq!(e["status"],"succeeded");
+        assert_eq!(e["data"],raw["data"]);
+        assert_eq!(e["source"],raw["source"]);
+        assert!(normalize_incoming_event(&json!({"type":"task.started","source":{"id":"job/42/task/a/execution/"},"data":{}})).is_none());
+        assert!(normalize_incoming_event(&json!({"type":"task.started","source":{"id":"other/42"},"data":{}})).is_none());
+    }
     #[test]
     fn subject_validation() {
         assert_eq!(subject_token("job_3-X"), Ok("job_3-X"));

@@ -26,15 +26,15 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
   const bus=createServer((req,res)=>{
     const u=new URL(req.url,'http://localhost');
     const send=data=>{if(res.destroyed)return;res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(data));};
-    if(u.pathname==='/releases'){
-      releaseRequests++;const packageName=u.searchParams.get('package');
-      const timer=setTimeout(()=>send({package:packageName,events:packageName==='fixture'?rows:[]}),delay);
+    if(u.pathname==='/events'&&u.searchParams.has('sourcePrefix')){
+      releaseRequests++;const sourcePrefix=u.searchParams.get('sourcePrefix');
+      const timer=setTimeout(()=>send({order:'desc',events:rows.filter(row=>row.event.source?.id?.startsWith(sourcePrefix))}),delay);
       res.on('close',()=>clearTimeout(timer));return;
     }
     if(u.pathname==='/events'){
-      const id=u.searchParams.get('job'),order=u.searchParams.get('order'),after=Number(u.searchParams.get('after')||0);
-      const events=history.filter(row=>row.event.job_id===id&&(!u.searchParams.get('task')||row.event.task_id===u.searchParams.get('task'))&&(order!=='asc'||row.cursor>after)).sort((a,b)=>order==='asc'?a.cursor-b.cursor:b.cursor-a.cursor);
-      return send({job_id:id,order,events,next_cursor:events.length?(order==='asc'?events.at(-1).cursor:events[0].cursor):after});
+      const filter=JSON.parse(u.searchParams.get('filter')),order=u.searchParams.get('order'),after=Number(u.searchParams.get('after')||0);
+      const events=history.filter(row=>filter.some(group=>group.every(({path,op,value})=>{const v=path.split('.').reduce((x,k)=>x?.[k],row);return op==='eq'?v===value:typeof v==='string'&&v.startsWith(value)&&(op==='prefix'||!v.slice(value.length).includes('/'));}))&&row.cursor>after).sort((a,b)=>order==='asc'?a.cursor-b.cursor:b.cursor-a.cursor).slice(0,Number(u.searchParams.get('limit')||60));
+      return send({order,events,next_cursor:events.length?(order==='asc'?events.at(-1).cursor:events[0].cursor):after});
     }
     res.writeHead(404);res.end();
   });
@@ -119,6 +119,7 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
     });
     await t.test('3 jobless publication derives Git ancestry; reject unrelated/stale',async()=>{
       const good=release('2.8.1',process.env.RELAY_UI_MERGED_SHA,'2026-11-25T10:01:00Z');
+      delete good.event.kind; delete good.event.status;
       rows=[release('2.8.2',process.env.RELAY_UI_LATER_SHA,'2026-11-25T10:02:00Z'),good,good,
         release('9.9.9',process.env.RELAY_UI_BASE_SHA,'2026-11-25T10:00:30Z'),
         release('2.8.0','2'.repeat(40),'2026-11-25T09:59:00Z')];

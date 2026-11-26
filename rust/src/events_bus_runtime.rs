@@ -202,6 +202,39 @@ fn cursor_error() -> String {
     "events-bus history returned an invalid or non-advancing cursor".into()
 }
 
+fn condition(path:&str,op:&str,value:&str)->Value { json!({"path":path,"op":op,"value":value}) }
+pub fn job_history_filter(job:&str,task:Option<&str>)->Value {
+    let mut old=vec![condition("event.job_id","eq",job)];
+    if let Some(task)=task { old.push(condition("event.task_id","eq",task)); }
+    let prefix=match task {
+        Some(task)=>format!("job/{job}/task/{task}/execution/"),
+        None=>format!("job/{job}/task/"),
+    };
+    let canonical=vec![condition("event.source.id",if task.is_some(){"prefixSegment"}else{"prefix"},&prefix)];
+    let mut groups=vec![old,canonical];
+    if task.is_none(){groups.push(vec![condition("event.data.jobId","eq",job),condition("event.source.id","prefix","release/")]);}
+    json!(groups)
+}
+
+/// Publication-specific view, owned by Relay. Preserve rich historical
+/// receipts. New producer envelopes are verified by dashboard_publication.
+pub fn normalize_release_receipt(event:&Value)->Option<Value>{
+    let source=event.pointer("/source/id")?.as_str()?;
+    if !source.starts_with("release/"){return None;}
+    let status=match event["type"].as_str()?{
+        "package.published"=>"succeeded",
+        "package.publish_failed"=>"failed",
+        _=>return None,
+    };
+    if event.get("kind").is_some_and(|k|k!="release") ||
+       event.get("status").is_some_and(|s|s!=status) {return None;}
+    let mut normalized=event.clone();
+    normalized["kind"]=json!("release"); normalized["status"]=json!(status);
+    if normalized.get("job_id").is_none(){
+        if let Some(id)=event["data"]["jobId"].as_str(){normalized["job_id"]=json!(id);}
+    }
+    Some(normalized)
+}
 pub fn events_bus_history_page(
     job_id: &str,
     task_id: Option<&str>,
@@ -238,10 +271,7 @@ pub fn events_bus_history_page(
     let bounded = limit.clamp(1, 60);
     {
         let mut query = target.query_pairs_mut();
-        query.append_pair("job", job_id);
-        if let Some(id) = task_id.filter(|id| !id.is_empty()) {
-            query.append_pair("task", id);
-        }
+        query.append_pair("filter",&job_history_filter(job_id,task_id.filter(|id|!id.is_empty())).to_string());
         query.append_pair("limit", &bounded.to_string());
         query.append_pair("order", order);
         if order == "asc" {
@@ -254,7 +284,7 @@ pub fn events_bus_history_page(
         .and_then(Value::as_array)
         .ok_or_else(payload_error)?;
     if !body.is_object()
-        || body["job_id"] != job_id
+        || body.get("job_id").is_some_and(|id|id!=job_id)
         || body["order"] != order
         || records.len() > bounded as usize
     {
@@ -269,21 +299,30 @@ pub fn events_bus_history_page(
             .and_then(safe_integer)
             .filter(|value| *value > 0)
             .ok_or_else(row_error)?;
-        let event = row.get("event").ok_or_else(row_error)?;
-        let valid = event.is_object()
-            && event["job_id"] == job_id
-            && task_id.is_none_or(|id| event["task_id"] == id)
-            && (if order == "asc" {
-                cursor > previous
-            } else {
-                cursor < previous
-            });
-        if !valid {
-            return Err(row_error());
-        }
-        previous = cursor;
+        if (order=="asc" && cursor<=previous)||(order=="desc"&&cursor>=previous){return Err(row_error());}
+        previous=cursor;
+        let raw=row.get("event").filter(|v|v.is_object()).ok_or_else(row_error)?;
+        let source=raw.pointer("/source/id").and_then(Value::as_str).unwrap_or("");
+        let job_prefix=format!("job/{job_id}/task/");
+        let in_scope=raw["job_id"]==job_id&&task_id.is_none_or(|t|raw["task_id"]==t)
+            || source.starts_with(&job_prefix)&&task_id.is_none_or(|t|{
+                let prefix=format!("{job_prefix}{t}/execution/");
+                source.strip_prefix(&prefix).is_some_and(|tail|!tail.is_empty()&&!tail.contains('/'))
+            })
+            || task_id.is_none()&&source.starts_with("release/")&&raw["data"]["jobId"]==job_id;
+        if !in_scope{return Err(row_error());}
+        let normalized=if source.starts_with("release/"){
+            normalize_release_receipt(raw)
+        }else{crate::events::normalize_incoming_event(raw)};
+        let Some(event)=normalized else{
+            // Opaque events in our queried namespace can be malformed for
+            // Relay. Preserve the cursor but do not apply them to Graph.
+            rows.push(json!({"cursor":cursor,"event":null}));
+            continue;
+        };
+        if event["job_id"]!=job_id||task_id.is_some_and(|t|event["task_id"]!=t){return Err(row_error());}
         rows.push(json!({"cursor":cursor,"event":event}));
-        events.push(event.clone());
+        events.push(event);
     }
     let next = body
         .get("next_cursor")
@@ -304,7 +343,7 @@ pub fn events_bus_history_page(
             .and_then(safe_integer)
             .ok_or_else(cursor_error)?
     };
-    if next != expected || (order == "asc" && !events.is_empty() && next <= after) {
+    if next != expected || (order == "asc" && !records.is_empty() && next <= after) {
         return Err(cursor_error());
     }
     Ok(json!({"events":events,"rows":rows,"nextCursor":next}))
@@ -342,16 +381,26 @@ pub fn events_bus_release_history_with_timeout(
     let api = runtime.get("apiUrl").and_then(Value::as_str)
         .filter(|value| !value.is_empty()).ok_or("Events Bus API URL is missing")?;
     let mut target = Url::parse(api).map_err(|_| "Invalid Events Bus API URL")?
-        .join("/releases").map_err(|_| "Invalid Events Bus API URL")?;
-    target.query_pairs_mut().append_pair("package", package)
-        .append_pair("limit", &limit.clamp(1, 500).to_string());
+        .join("/events").map_err(|_| "Invalid Events Bus API URL")?;
+    let bounded=limit.clamp(1,500);
+    let prefix=format!("release/{package}/");
+    target.query_pairs_mut().append_pair("sourcePrefix",&prefix)
+        .append_pair("order","desc").append_pair("limit",&bounded.to_string());
     let body = request_body(target, timeout_ms)?;
     let rows = body.get("events").and_then(Value::as_array)
         .ok_or("Events Bus release history returned an invalid payload")?;
-    if body.get("package").and_then(Value::as_str) != Some(package) || rows.len() > 500 {
+    if body["order"]!="desc" || rows.len()>bounded {
         return Err("Events Bus release history returned a mismatched package".into());
     }
-    Ok(rows.clone())
+    let mut output=Vec::new();
+    for row in rows {
+        let event=&row["event"];
+        if !event.pointer("/source/id").and_then(Value::as_str).is_some_and(|s|s.starts_with(&prefix)){return Err("Events Bus release history returned a mismatched package".into());}
+        if let Some(event)=normalize_release_receipt(event){
+            let mut normalized=row.clone(); normalized["event"]=event; output.push(normalized);
+        }
+    }
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -359,18 +408,18 @@ mod release_history_tests {
     use super::*;
     use std::{io::{Read,Write},net::TcpListener,thread};
     #[test]
-    fn release_history_uses_bounded_read_only_package_endpoint(){
+    fn release_history_uses_generic_read_only_source_query(){
         let listener=TcpListener::bind("127.0.0.1:0").unwrap();
         let address=listener.local_addr().unwrap();
-        let body=json!({"package":"fixture","events":[{"cursor":4,"event":{
-            "kind":"release","type":"package.published","data":{"jobId":"42"}}}]})
+        let body=json!({"order":"desc","events":[{"cursor":4,"event":{
+            "source":{"id":"release/fixture/abc"},"type":"package.published","data":{"jobId":"42"}}}]})
             .to_string();
         let response=body.clone();
         let server=thread::spawn(move||{
             let (mut stream,_)=listener.accept().unwrap();
             let mut request=[0u8;2048];let n=stream.read(&mut request).unwrap();
             let line=String::from_utf8_lossy(&request[..n]);
-            assert!(line.starts_with("GET /releases?package=fixture&limit=500 HTTP/1.1"),"{line}");
+            assert!(line.starts_with("GET /events?sourcePrefix=release%2Ffixture%2F&order=desc&limit=500 HTTP/1.1"),"{line}");
             write!(stream,"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",response.len(),response).unwrap();
         });
         let rows=events_bus_release_history("fixture",usize::MAX,

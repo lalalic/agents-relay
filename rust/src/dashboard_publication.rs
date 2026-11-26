@@ -110,6 +110,25 @@ fn verified_release(event: &Value, repository: &str) -> bool {
     let valid_version = SEMVER
         .get_or_init(|| regex::Regex::new(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$").unwrap())
         .is_match(ver);
+    // The bus no longer validates publication business data. Fail closed
+    // on every field previously checked by the transport-side contract.
+    let Some(fields)=data.as_object() else{return false;};
+    if fields.keys().any(|k|!matches!(k.as_str(),"package"|"sha"|"registry"|"version"|"stage"|"jobId"|"repository"|"artifact")){
+        return false;
+    }
+    static PACKAGE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static REPOSITORY: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static ARTIFACT: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    if !PACKAGE.get_or_init(||regex::Regex::new(r"^[a-z][a-z0-9-]{0,63}$").unwrap()).is_match(package)
+        || data.get("version").is_some_and(|_|!valid_version)
+        || data.get("jobId").is_some_and(|v|v.as_str().is_none_or(|id|id.is_empty()||!id.bytes().all(|b|b.is_ascii_digit())))
+        || data.get("repository").is_some_and(|_|!REPOSITORY.get_or_init(||regex::Regex::new(r"^[A-Za-z0-9_.-]+/[a-z][a-z0-9-]{0,63}$").unwrap()).is_match(remote))
+        || data.get("artifact").is_some_and(|_|{
+            let artifact=field(data,"artifact");
+            artifact.len()>214||!ARTIFACT.get_or_init(||regex::Regex::new(r"^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$").unwrap()).is_match(artifact)
+        })
+    {return false;}
+
     field(event, "kind") == "release"
         && event["version"].as_u64() == Some(1)
         && package == repository
@@ -125,8 +144,8 @@ fn verified_release(event: &Value, repository: &str) -> bool {
         && field(event, "event_id") == format!("release:{package}:{sha}:{kind}")
         && DateTime::parse_from_rfc3339(field(event, "timestamp")).is_ok()
         && match (kind, status) {
-            ("package.published", "succeeded") => valid_version,
-            ("package.publish_failed", "failed") => !field(data, "stage").is_empty(),
+            ("package.published", "succeeded") => valid_version && data.get("stage").is_none(),
+            ("package.publish_failed", "failed") => data["stage"].as_str().is_some_and(|s|!s.trim().is_empty() && s.encode_utf16().count()<=128),
             _ => false,
         }
 }
@@ -462,6 +481,25 @@ mod tests {
         assert!(verified(&native(Some("42"), "2.0.1", &sha, at), "another").is_none());
         e.as_object_mut().unwrap().remove("job_id");
         assert!(verified(&e, "fixture").is_some());
+    }
+    #[test]
+    fn generic_release_consumer_rejects_malformed_metadata() {
+        let mut raw=native(None,"2.0.1",&"a".repeat(40),"2026-11-25T10:00:00Z");
+        raw.as_object_mut().unwrap().remove("kind");
+        raw.as_object_mut().unwrap().remove("status");
+        raw["data"]["registry"]=json!("npm");
+        raw["data"]["repository"]=json!("owner/fixture");
+        raw["data"]["artifact"]=json!("@owner/fixture");
+        let valid=crate::events_bus_runtime::normalize_release_receipt(&raw).unwrap();
+        assert!(verified_release(&valid,"fixture"));
+        for (field,value) in [
+            ("artifact",json!("bad artifact")),("registry",json!("unknown")),
+            ("repository",json!("owner/other")),("jobId",json!(42)),
+            ("stage",json!("unexpected stage")),("extra",json!(true)),
+        ] {
+            let mut invalid=raw.clone();invalid["data"][field]=value;
+            assert!(!verified_release(&crate::events_bus_runtime::normalize_release_receipt(&invalid).unwrap(),"fixture"),"{field}");
+        }
     }
     #[test]
     fn persists_only_known_job_and_rejects_stale_duplicate() {

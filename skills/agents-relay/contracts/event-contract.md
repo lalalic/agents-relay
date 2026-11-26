@@ -141,3 +141,18 @@ Relay owns merge and delivery. Workers must not emit `job.merge.*` or mark
 the Job complete. Inspect delivery status and its failure reason/receipt through
 the version-matched Relay CLI. A prior failed attempt or successful browser
 submission is not proof of final delivery.
+
+## Ownership and generic transport
+
+Relay derives its lifecycle view from the exact source identity. Events Bus
+passes through the opaque payload, not task status or review decisions.
+Relay normalizes canonical source envelopes and accepts historical rich
+envelopes. Job history uses generic /events field filters; the public Relay
+Dashboard API remains unchanged.
+
+Publication is owned by Relay: the shared `scripts/report-publication.mjs`
+validates actual release metadata, assigns the deterministic receipt ID,
+publishes the generic envelope and verifies durable readback. Relay reads
+release receipts by source prefix and independently verifies package, SHA,
+registry, repository identity, timestamp and ancestry before projecting a
+version. Never publish a successful receipt before verified deployment.

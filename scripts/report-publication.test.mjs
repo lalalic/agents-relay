@@ -22,10 +22,11 @@ test('actual HTTP publication and durable readback, duplicates and conflicting m
   const rows=[];let posts=0;
   const server=createServer(async(req,res)=>{
     const u=new URL(req.url,'http://localhost');res.setHeader('content-type','application/json');
-    if(req.method==='GET'&&u.pathname==='/releases'){res.end(JSON.stringify({package:u.searchParams.get('package'),events:rows}));return;}
+    if(req.method==='GET'&&u.pathname==='/events'){assert.equal(u.searchParams.get('source'),'release/fixture/'+sha);res.end(JSON.stringify({order:'desc',events:rows.filter(row=>row.event.source.id===u.searchParams.get('source')&&row.event.type===u.searchParams.get('type'))}));return;}
     let raw='';for await(const chunk of req)raw+=chunk;
     const input=JSON.parse(raw);posts++;
-    const event={...input,event_id:'release:'+input.data.package+':'+input.data.sha+':'+input.type};
+    assert.equal(input.event_id,'release:'+input.data.package+':'+input.data.sha+':'+input.type);
+    const event={...input,source:{id:input.source}};
     rows.push({cursor:posts,event});
     res.end(JSON.stringify({published:true,event}));
   });

@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
-import { endpoint, requestJSON, releaseEvent, publishVerified } from './report-publication.mjs';
+import { endpoint, requestJSON, releaseEvent,releaseHistoryPath, publishVerified } from './report-publication.mjs';
 
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const PACKAGE='agents-relay',SERVICE='agents-relay/daemon';
@@ -117,7 +117,7 @@ async function release(args){
       run('git',['merge-base','--is-ancestor',job.localMerge.mergedCommitSha,sha]);
     }finally{db.close();}
   }
-  await requestJSON(args['events-api'],'/releases?package='+PACKAGE);
+  await requestJSON(args['events-api'],releaseHistoryPath(PACKAGE));
   if(git('remote','get-url','origin')!==git('remote','get-url','--push','--all','origin'))throw Error('Origin fetch/push destinations differ');
   run('git',['fetch','origin','main']);run('git',['merge-base','--is-ancestor','origin/main',sha]);
   run('git',['push','origin',sha+':refs/heads/main']);

@@ -1197,7 +1197,7 @@ fn native_task_events_cli_reads_real_event_history_and_rejects_stale_ids(){
     let observed_requests=query_rx.try_iter().collect::<Vec<_>>();
     assert_eq!(observed_requests.len(),2);
     for query in &observed_requests{
-        assert!(query.contains("/events?job=17&task=2&limit=2&order="),"{query}");
+        assert!(query.contains("/events?filter=") && query.contains("&limit=2&order="),"{query}");
     }
     // Preflight rejects stale/unbound Task without touching Events Bus.
     let missing=Command::new(env!("CARGO_BIN_EXE_agents-relay-rust"))
