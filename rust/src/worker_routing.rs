@@ -82,6 +82,13 @@ pub fn usage_for_provider(
     }
     json!({})
 }
+/// Canonical local native Model Worker descriptor, used by both the daemon
+/// and the detached route CLI once a Codex executable is available.
+pub fn native_codex_worker()->Value{
+    json!({"workerId":"codex","id":"codex","name":"codex",
+        "adapter":"codex","runtime":"codex",
+        "capabilities":["model","codex","local_repo","iterative_tools"]})
+}
 pub fn worker_candidates(adapters:&[Value],registered:&[Value],
     usage:Option<&Value>,now_ms:i64)->Vec<Value>{
     let mut result=Vec::new();

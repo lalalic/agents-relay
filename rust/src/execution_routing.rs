@@ -334,6 +334,14 @@ pub fn discover_execution_routes(
             let mut rejections=reasons.clone();
             rejections.extend(model_gate_reasons(&model,constraints,exclusions,
                 &policy["policy"]));
+            // A detached caller may further restrict execution to its verified
+            // profiles (e.g. visual capability). This cannot add a route.
+            if let Some(profiles)=options.get("eligibleProfiles").and_then(Value::as_array){
+                let profile=model.get("profile").and_then(Value::as_str).unwrap_or("default");
+                if !profiles.iter().any(|value|value.as_str()==Some(profile)){
+                    rejections.push("caller_profile_constraint".into());
+                }
+            }
             let route=json!({"id":route_id(worker,&model),
                 "worker":worker,"model":model});
             evaluations.push(json!({"route":route,"eligible":rejections.is_empty(),
@@ -462,9 +470,16 @@ pub fn route_execution_decide_with(
     if let Some(prefs)=options.pointer("/taskFacts/routingPreferences").filter(|v|v.is_object()){
         facts["job_routing_preferences"]=prefs.clone();
     }
-    let question=append_job_routing_instruction(
+    let mut question=append_job_routing_instruction(
         &execution_routing_question(&discovery.routing_instruction,options.get("modelPreference")),
         options.pointer("/taskFacts/routingPreferences"));
+    if let Some(instruction)=options.get("routingInstruction").and_then(Value::as_str)
+        .filter(|s|!s.trim().is_empty()){
+        facts["caller_routing_instruction"]=json!(instruction);
+        facts["routing_instruction"]=json!(discovery.routing_instruction);
+        question=append_routing_instruction(&question,&format!(
+            "Caller routing instructions (highest-priority advisory routing instructions for this call; override conflicting global routing instructions, structured routing preferences and default preferences):\n{instruction}\nChoose only among offered eligible routes. Never invent or enable a route or bypass availability, authorization or hard constraints."));
+    }
     let contract=json!({"type":"choice","question":question,"choices":choices});
     let engine=crate::decision::JevDecisionEngine::NAME;
     let result=crate::decision::decide_choice_with(&json!({"facts":facts}),&contract,decide);

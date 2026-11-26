@@ -22,7 +22,7 @@ Commands:
   plan apply               Submit a validated Task Tree within one active Plan
   plan context             Read execution-bound Planner context from SQLite
   prompt                   Print raw Planner/Worker prompt from the production Builder
-  route                    Stateless typed choice using the configured decision engine
+  route                    Select a configured worker/model with the shared Execution Router
   blocker add|resolve|show  Manage cross-Job blocker dependencies
   escalation               Run the canonical escalation graph with a configured external executor
   context resolve          Resolve shared project instructions, skills, agents, and runtimes
@@ -40,21 +40,29 @@ The installed command and local Rust build use the same native implementation."#
     ),
     (
         r##########"route"##########,
-        r##########"Make a standalone typed choice without a Job, daemon or SQLite.
+        r##########"Select a configured worker/model route without creating a Job.
 
 Usage:
-  agents-relay route --input-file REQUEST.json
+  agents-relay route --input-file REQUEST.json [--execution-router-rules PATH]
   agents-relay route --input-file - < REQUEST.json
 
-Input: {"facts":{},"contract":{"type":"choice","question":"Select a route","choices":["a","b"]},"fallback":"a"}
-facts is a JSON object of caller-approved routing facts. contract defines the
-complete eligible choices and question. Optional fallback must be one of them.
-The configured Jev engine sends facts, question and choices to OpenRouter;
-do not include private payloads, credentials or unauthorized data.
-One choice bypasses the provider. Output is one JSON object with type, choice
-and evidence (engine, bypassed, fallback, optional probabilities/usage).
-Without an explicit fallback, provider or validation failure exits nonzero.
-This command only decides; the caller owns eligibility, execution and retries."##########,
+Input: {"taskFacts":{"task":{"taskCapabilities":["vision"]}},"routingPreferences":{"profile":"neo"},"routingInstruction":"Prefer visual quality over speed."}
+All request fields are optional. The CLI uses the same native Execution Router,
+configured Codex profiles, global routing rules and policy as Model Workers.
+routingPreferences uses the same exact advisory fields as Job preferences
+(adapter, provider, model, profile, reasoning). routingInstruction is per-call
+advisory guidance overriding conflicting global rules and soft preferences.
+Hard constraints always win: routingConstraints (provider, model, profile,
+reasoning), workerRequirements, eligibleProfiles and excludedRoutes may
+restrict routes. No route is invented to satisfy a preference.
+Optional usage and recentRouteResults supply observed resource/outcome facts.
+Without them, quota and recent history are unknown to the detached caller.
+Output: JSON with selection, model and routing, including decisionEvidence.
+The shared router handles single-choice bypass and deterministic fallback.
+No Job, daemon or SQLite access; no model execution. Only routing facts and
+guidance are sent to the configured Jev engine; do not supply private payloads.
+Global rules path: explicit flag, AGENTS_RELAY_EXECUTION_ROUTER_RULES, then
+~/.agents-relay/execution-router-rules.md. Policy: ~/.agents-relay/routing-policy.json."##########,
     ),
     (
         r##########"job"##########,

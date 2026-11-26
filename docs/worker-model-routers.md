@@ -74,10 +74,11 @@ Normal task launch uses Execution Router. Existing model re-decision support rem
 
 Legacy `routeWorker` / `routeModel` helpers remain compatibility/recovery utilities; they are not the normal reconciler routing pipeline.
 
-## Detached decision CLI
+## Detached routing CLI
 
-A component that already owns its eligible routes can use the same typed Jev
-decision primitive without creating a Relay Job or accessing the daemon/store:
+Any component can select a local Model Worker and its configured model using
+the **same Execution Router as Relay Workers**, without creating a Job or
+connecting to the daemon:
 
 ```sh
 agents-relay route --input-file request.json
@@ -85,25 +86,38 @@ agents-relay route --input-file request.json
 
 ```json
 {
-  "facts": {"capability": "image understanding"},
-  "contract": {
-    "type": "choice",
-    "question": "Choose the best eligible vision profile",
-    "choices": ["profile-a", "profile-b"]
-  },
-  "fallback": "profile-a"
+  "taskFacts": {"task": {"taskCapabilities": ["vision"], "storySize": "S"}},
+  "routingPreferences": {"profile": "neo"},
+  "routingInstruction": "For this request prefer visual quality over latency."
 }
 ```
 
-The CLI returns one JSON object with `type: "choice"`, `choice`, and
-`evidence` (engine, fallback, bypassed, optional scores, usage and latency).
-A single choice skips the provider. The optional fallback must be offered
-and is used only on engine failure or invalid output; without one the CLI
-fails nonzero. `--input-file -` reads JSON on stdin, up to 1 MiB. It uses the
-configured `OPENROUTER_API_KEY` and the same native Jev engine as the
-Execution Router. Facts, question and choices are sent to OpenRouter;
-callers must supply only authorized routing metadata, not private task
-payloads or secrets. The caller owns eligibility, local authorization,
-execution, retry and any application policy. This generic decision does
-not discover workers, read Router Rules, persist audit records or launch
-a model; the full Relay Task router retains those responsibilities.
+The CLI calls canonical profile discovery, hard-gate evaluation, Jev selection,
+and deterministic fallback. The local Codex executable must be on PATH. It uses
+`CODEX_HOME` (default `~/.codex`), the same configured profile discovery,
+`~/.agents-relay/routing-policy.json`, and global router rules (explicit
+`--execution-router-rules PATH`, `AGENTS_RELAY_EXECUTION_ROUTER_RULES`, then
+`~/.agents-relay/execution-router-rules.md`).
+
+All fields are optional. `routingPreferences` uses the same advisory fields
+and fallback matching as Job preferences. `routingInstruction` is higher
+priority than conflicting global guidance, structured preferences and defaults,
+but does not override hard eligibility or interpret free text on fallback.
+`routingConstraints` accepts exact provider/model/profile/reasoning constraints;
+`eligibleProfiles` further limits candidates to verified profile identifiers
+(use `default` for the implicit base profile). `excludedRoutes` removes known
+failed provider/model/profile combinations. `workerRequirements` uses the
+same Worker constraints as Relay. Optional `usage` and `recentRouteResults`
+(at most ten) supply observed runtime facts; absent these, detached callers
+do not have live quota or recent outcome context. These are facts, not
+additional profiles or choices.
+
+The output contains the canonical `selection`, `model` and `routing` objects,
+including `routing.decisionEvidence`. Single eligible routes bypass Jev;
+engine failures use the same eligible-route fallback and structured preference
+ranking as Workers. No eligible route is an error. `--input-file -` accepts
+JSON on stdin, up to 1 MiB. Routing facts, instructions and eligible choices
+are sent to the configured Jev engine; provide authorized routing metadata
+only, not secrets or private inference payloads. The command makes a route
+decision, not a model invocation; the caller owns execution, retries and
+any audit persistence. The CLI does not access Job state or create Job events.

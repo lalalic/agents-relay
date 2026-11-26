@@ -979,9 +979,7 @@ impl IsolatedSQLiteWriteHost {
     fn available_model_workers(&self)->Vec<Value>{
         let mut workers=Vec::new();
         if self.model_codex_executable.is_some(){
-            workers.push(json!({"workerId":"codex","id":"codex","name":"codex",
-                "adapter":"codex","runtime":"codex",
-                "capabilities":["model","codex","local_repo","iterative_tools"]}));
+            workers.push(crate::worker_routing::native_codex_worker());
         }
         workers
     }
