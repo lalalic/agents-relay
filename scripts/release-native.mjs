@@ -26,9 +26,12 @@ function loopback(value){
   return endpoint(value);
 }
 export function pausedAndQuiescent(job){
+  // Pause preserves interrupted execution identity for an eventual resume.
+  // Only a CURRENT execution binding means an unfinished running generation;
+  // the SQLite execution_process/OS PID gate below still rejects live workers.
   return Boolean(job?.pause?.requestedAt&&Array.isArray(job.tasks)&&Array.isArray(job.plans)
-    &&job.tasks.every(t=>!t.executionId&&!t.pausedExecution)
-    &&job.plans.every(p=>!p.executionId&&!p.pausedExecutionId));
+    &&job.tasks.every(t=>!t.executionId)
+    &&job.plans.every(p=>!p.executionId));
 }
 export function assertIdleDatabase(database,allowed=[],alive=(pid)=>{
   try{process.kill(pid,0);return true;}catch(e){if(e.code==='ESRCH')return false;throw e;}

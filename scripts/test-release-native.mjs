@@ -8,9 +8,12 @@ import {pausedAndQuiescent,assertIdleDatabase} from './release-native.mjs';
 test('pause requires explicit fencing',()=>{
   const job={id:'738',state:'ACTIVE',pause:{requestedAt:'now'},tasks:[{state:'QUEUED'}],plans:[]};
   assert(pausedAndQuiescent(job));
-  for(const change of [{pause:null},{tasks:null},{plans:null},{tasks:[{executionId:'live'}]},
-    {tasks:[{pausedExecution:{id:'pending'}}]},{plans:[{executionId:'live'}]},{plans:[{pausedExecutionId:'pending'}]}])
+  for(const change of [{pause:null},{tasks:null},{plans:null},
+    {tasks:[{executionId:'live'}]}, {plans:[{executionId:'live'}]}])
     assert(!pausedAndQuiescent({...job,...change}));
+  // Durable pause snapshots are not active worker generations.
+  assert(pausedAndQuiescent({...job,tasks:[{executionId:null,pausedExecution:{id:'pending',state:'QUEUED'}}]}));
+  assert(pausedAndQuiescent({...job,plans:[{executionId:null,pausedExecutionId:'pending'}]}));
 });
 test('actual isolated SQLite release gate refuses active Jobs and process groups',t=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'relay-release-guard-'));
@@ -24,6 +27,12 @@ test('actual isolated SQLite release gate refuses active Jobs and process groups
   put(job);
   assert.throws(()=>assertIdleDatabase(file,[],()=>false),/nonterminal Jobs/);
   assert.equal(assertIdleDatabase(file,['738'],()=>false),1);
+  put({...job,tasks:[{executionId:null,pausedExecution:{id:'old-task'}}],
+    plans:[{executionId:null,pausedExecutionId:'old-plan'}]});
+  assert.equal(assertIdleDatabase(file,['738'],()=>false),1);
+  put({...job,tasks:[{executionId:'still-running',pausedExecution:{id:'old-task'}}]});
+  assert.throws(()=>assertIdleDatabase(file,['738'],()=>false),/738/);
+  put(job);
   put({...job,id:'739'});
   assert.throws(()=>assertIdleDatabase(file,['738'],()=>false),/739/);
   put({...job,id:'739',state:'COMPLETED'});
