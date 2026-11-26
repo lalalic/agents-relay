@@ -1,152 +1,104 @@
-# Graph-owned Prompt Action
+# Relay Agent-Driven Prompt Builder (native Rust)
 
-Relay uses a single effective Agent resolver and a single prompt Action for
-Planner, Reviewer, Troubleshooter and Implementation Workers. No additional
-Role Skill or second Prompt registry exists.
+This document describes the current native Rust Prompt assembly model.
+The authoritative **Agent frontmatter schema** lives only in
+[Agent Definition Contract](../skills/agents-relay/contracts/agent-contract.md).
+The [Agents Relay Skill](../skills/agents-relay/SKILL.md) is the operator
+entry point; Neo Project Skills link to the same schema and do not copy it.
 
-## Graph → Action → Adapter
+## Source selection and execution layer
 
-- The existing `planner-orchestration.mmd` selects a Planner launch. The
-  Planner runtime calls `buildPlannerExecutionPrompt()`, which calls the
-  shared `buildRelayWorkPrompt()` Action in `agent-prompt-builder.ts`.
-- `task-lifecycle.mmd` selects `effect.launchTask`. Its Reconciler effect calls
-  `managedWorkerInput()`, which calls the **same** `buildRelayWorkPrompt()`.
-- `node <matching-absolute-dist/cli.js> prompt --id JOB --plan-id PLAN --adapter ...` and
-  `--task-id TASK` call those **same entry points**, with no separate mock
-  assembly, no alternative business Prompt, and no lifecycle changes.
+1. Resolve the selected Agent's normal `extends` chain, `mode`,
+   `sections` and merged metadata. The project Agent retains its own parent.
+2. Load the Global shared Contract declared in `agent-contract.md`
+   (`global_startup_contracts`).
+3. For a **Job Task**, compose only the mandatory Contract declarations
+   from `worker.agent.md` as an execution layer. Do **not** implicitly
+   inherit the Worker Agent's role text or change its parent chain.
+   Explicit `extends: worker` remains ordinary inheritance; deduplicate
+   overlapping Contract files.
+4. For **Plan execution**, load the effective Planner's declared
+   `plan-execution.md` Contract; Plan Apply is not Task completion.
+5. Add the matching Agent-declared startup and conditional mandatory
+   DAG/Git/Event completion and artifact self-review Contracts. All
+   required files must exist and be readable. No SHA content checks.
 
-The worker-facing Prompt has five short sections; Bootstrap differs by adapter:
+## Prompt structure
 
-```text
-# Role
-You are <agent> with responsibility at <cached merged agent absolute path>.
-
-## Bootstrap
-<adapter-specific initialization, no duplicated global instructions>
-
-## Contracts
-<independent, ordered contract file paths>
-
-## Contexts
-<only additional project-specific AGENTS.md when the adapter cannot auto-load it>
-
-## Task
-Use the agents-relay skill to read Job/Task/Plan.
-Job: <job-id>
-Task: <task-or-plan-id>
-Execution: <execution-id>
-```
-
-Planner reads the Task/Job/Plan Contract, but not Task lifecycle event contracts: a Plan is not a Task and does not emit `task.started`/`task.progress`/`task.completed`. Planner starts with **no Context files**. Its merged project Agent selects `graph.mmd`, stage contracts, and downstream Agent definitions as needed. For normal Tasks, Codex loads project rules through cwd, while ChatGPT/Z receive only the active project `AGENTS.md` because their Web harness does not automatically load local project instructions. This is deliberate per-adapter/context selection, not a directory dump.
-
-Project and Neo Agent frontmatter may use `extends` with an absolute Markdown path (including a standalone external `SKILL.md`). The selected local Agent keeps its own name; the referenced base can have a different name. Existing `mode`/`sections` merge rules apply, and both canonical source paths contribute to the merged contract. Source paths must be explicitly trusted by the Project author; Relay does not discover or register the external roster. Missing or malformed bases fail before Worker launch. Specialist `review run` uses the same resolver.
-
-The authoritative [Agent Definition Contract](../skills/agents-relay/contracts/agent-contract.md) defines these optional, non-enforcing fields. Optional Agent frontmatter hints use inline YAML values:
-```yaml
-skills: [shotcraft, markcut]
-model: openai/gpt-6
-reasoning: high
-```
-`skills` is displayed only as **Suggested skills** in the Worker's User
-Assignment (including the Planner when its Agent is selected). The names do
-not auto-install, select, validate or require a Skill. `model` and
-`reasoning` are sent only to the unified Execution Router decision prompt as
-a **soft Agent preference**, below user routing instructions and all hard
-constraints. They do not add candidates, override explicit Task routing, or
-alter Router fallback. Missing fields leave both Prompts unchanged. Agent advice
-is resolved through a read-only project locator; it never prepares a Task worktree.
-If no safe locator or Agent is available, Relay skips the advice.
-
-Only the Agent is inherited/merged by the **existing** Agent resolver and
-content-addressed to a private 0600 file. Contracts and Contexts are NOT
-merged, copied into the Agent, or expanded into launch Prompt text. Source
-references include exact SHA-256 digests. Global rules belong to Bootstrap.
-`README.md` is human documentation and is never included as Agent Context.
-
-`agents-relay` is the actual existing skill name (not a new `agents-skill`).
-It now documents two read-only, execution-bound SQLite commands:
-
-```sh
-node <matching-absolute-dist/cli.js> plan context --id JOB --plan-id PLAN --execution-id EXECUTION
-node <matching-absolute-dist/cli.js> task context --id JOB --task-id TASK --execution-id EXECUTION
-```
-
-Both reject stale execution bindings. The Worker does not discover Task
-content in GitHub/PRs or trust a bare Task ID as authorization. For Plan work,
-`plan apply` and its exact durable receipt remain the completion authority;
-for Task work, the existing events-bus protocol and Graph own started and
-terminal state. `prompt` inspection never launches a model or alters state.
-
-## Adapter Bootstrap boundary
-
-| Adapter | Runtime bootstrap | Task Prompt transport |
+| Surface | Contents | Authority |
 | --- | --- | --- |
-| Codex | Execution cwd is resolved project; Codex's local instructions plus explicit Context files | Exact Action output as CLI initial prompt |
-| ChatGPT Web | Caller-configured harness initializes instructions; Relay does not prescribe a bootstrap | Exact Action output as a regular User turn, readable through configured file tools |
-| Z Web | Transport issues a short-lived OAuth token and uses the canonical interactive Z bootstrap URL, then configured MCP tools. A real `task.started` must be accepted before the Task | Exact Action output appended *unaltered* after runtime bootstrap, via Z WebHelm |
+| Harness Global | Native Codex Global AGENTS or XChat bootstrap | Harness-owned |
+| Trusted System/Developer | Effective Agent body; Global shared Contract; mandatory execution, Task/Plan, terminal and applicable self-review Contracts; name-only required Skill instructions | Authoritative for this managed execution |
+| User Task/Plan Assignment | Exact Job/Task/Plan/Execution binding, event source, project, CLI path, task facts, lower-priority selected project Context | Current execution data |
+| On-demand references | Explicit non-mandatory `contracts` and other authorized documents | Read only when needed |
+| Harness Skills List | Available Skill names, descriptions and paths | The Agent resolves named Skills using this catalog; Relay does not pre-read SKILL.md |
 
-Each worker uses the **same CLI version as the Skill pinned by its Prompt**:
-resolve `../../dist/cli.js` from `skills/agents-relay/SKILL.md` and invoke
-`node <matching-absolute-dist/cli.js>`. Do not invoke a stale global
-`agents-relay` CLI. The `plan context` result's `apply_cli` is also bound to
-that exact `dist/cli.js`. Task body and review/evidence attachments remain
-in SQLite; ChatGPT `new-thread`/`new-turn` transports the Graph Action Prompt
-unaltered and keeps idempotency/attachment metadata outside user-message
-prose. This byte-for-byte transport check is part of regression tests.
+### Project directory Context
 
-Z's dynamic OAuth credential is a **separate runtime-only secret**, not part
-of the reusable Task Prompt. The print-only CLI does not disclose it. The Z adapter uses a caller-configured OAuth origin and harness bootstrap;
-Relay never supplies a fixed service endpoint or master credential path.
+The project `AGENTS.md` is **not** automatically read from every Job Task.
+Only the effective Agent's `contexts` declaration selects a
+harness-compatible file within the active independent project Git root.
+`contexts` uses plain relative paths only, such as `AGENTS.md` or
+`src/AGENTS.md`; prefixes (`project:` / `relay:`) are not supported. Built-in `implementation.agent.md` and
+`planner.agent.md` declare `contexts: [AGENTS.md]`; project
+descendants inherit that declaration through normal `extends`.
+A replacement Agent with no inherited parent must declare its own
+mandatory dependencies. Generic Worker, Reviewer, Troubleshooter and
+Neo Project DAG Stage Agents declare no project Context by default.
 
-Planner dispatch is currently Codex-only; `prompt --plan-id ... --adapter
-chatgpt|z` produces a corresponding **Task Prompt preview**, not a working
-non-Codex Planner delivery. Completed historical Plan Prompt bytes were not
-persisted: CLI reconstruction uses the recorded execution ID and excludes
-Tasks created after the Plan began, but should not be mistaken for the exact
-historical bytes or current runnable authority.
+The selected project `AGENTS.md` is actually read into a lower-priority
+User reference section. A missing or unreadable **declared** file fails
+closed; unrelated files and project README are not bulk-loaded.
+An absent execution Context may not silently bypass Planner's declared
+AGENTS.md requirement.
 
-## L4 Prompt Evals
+### Skill names, not files
 
-`npm run test:verification:l4` evaluates **18 role/adapter pairs**: 6 Agent
-roles × 3 adapters. It generates 14 real Prompts and verifies four hard
-runtime rejections before dispatch (Troubleshooter and interactive Vlog
-Producer on unsupported adapters). For each generated Prompt it compares the CLI's bytes against the Graph
-Action Builder, reads and SHA-verifies the actual cached
-Agent and all Contracts, verifies role identity and domain-specific
-instructions, rejects duplicate Bootstrap/README/Neo-root contexts, checks
-minimal per-adapter Context counts, validates mandatory event obligations,
-and proves Task/Plan Context retrieval from isolated **real SQLite** with stale
-execution rejection. It also records runtime feasibility separately: Planner
-is currently Codex-only; a Final QA on Codex/Z requires additional real
-playback/audio capability evidence before it can be accepted. This is a local code/contract evaluation, not an
-external model completion.
+The effective Agent may declare `required_skills: [markcut, ponytail]`.
+Relay conveys the **names only** and does not compute Skill paths, read
+SKILL.md, install Skills or infer alternatives. The executing Agent
+uses the available native Harness Skills List (for Codex, the
+`neo skill list` command) to select the exact name and read its SKILL.md
+before performing dependent work. If a mandatory Skill is missing or
+unreadable, the Agent must report failure rather than simulate use.
 
-`npm run test:verification:l4:live` tests the installed Codex CLI/project cwd,
-ChatGPT's WebHelm readiness, and a newly issued temporary Z OAuth credential
-against the real remote Neo MCP `tools/list`, **pinned Agent snapshot** `fs`
-read, and `shell` `neo bootstrap`. Results are saved as a private JSON
-report (`/tmp/relay-prompt-l4-live.json` by default), without secrets. Set
-`RELAY_L4_CODEX_MODEL_EVIDENCE_FILE` and
-`RELAY_L4_CHATGPT_TOOL_PROBE_FILE` to authenticated, independently observed
-model-tool probe evidence when available. A submitted Web turn is never proof
-that the model used tools. Provider terminal events and real Job outcome are
-not exercised by the L4 bootstrap smoke checks: those remain separate E2E
-requirements.
+`skills` remains a separate advisory name list; `model` and
+`reasoning` are advisory Router hints. No file-content SHA is used for
+acceptance. Internal fingerprints are diagnostic/report identifiers only.
 
-The L4 project suite targets the actual Neo Master `neo/vlog` project, not a
-fabricated Vlog Agent; override `RELAY_L4_VLOG_PROJECT` for a valid project.
-L4 requires access to that project, so it is a **separate verification gate**
-from portable unit tests and does not run on generic GitHub runners without
-the configured Relay browser workspace.
+## Harness delivery
 
-## Validation
+**Codex:** The native Global AGENTS is Harness-owned. Relay sends trusted
+instructions via Codex's supported developer-instruction configuration,
+sends current assignment as the CLI User prompt, and disables implicit
+directory AGENTS.md discovery with `project_doc_max_bytes=0`.
+Explicitly declared Context still loads through the shared Builder.
+The Codex Harness documents `neo skill list` as a Skill discovery entry.
 
-- Unit/integration: `test/prompt-action-parity.test.js`,
-  `test/prompt-cli.test.js`, `test/managed-prompt-assembly.test.js`,
-  `test/adapters.test.js`, `test/z-bootstrap.test.js`.
-- Graph and lifecycle: `npm run test:verification:l1`, then the relevant L3
-  integration tests. Model-only checks do not prove event completion.
-- The no-GitHub local Job path and stale execution rejections are verified
-  independently. A browser submit receipt is *not* a Task completion receipt.
+**XChat / WebChat:** The Neo XChat Bootstrap provides Global rules,
+Harness instructions and a discoverable Skills List. Relay and XChat
+reuse canonical Agent/Contract selection, but a WebChat ordinary message
+does **not** become a privileged System instruction merely because the
+Builder labels it trusted. The delivery layer must report the actual
+available authority. Successful bootstrap or a submitted message does
+not by itself prove that an Agent followed Skill and Contract rules.
 
-References remain validated internally; generated worker-facing prompts never display SHA256 digests. Z.ai receives its short-lived OAuth token inside the existing Bootstrap section, without a second role or lifecycle prompt.
+The Native CLI is the version-matched `agents-relay-rust` implementation;
+never use legacy Node `dist/cli.js` paths as an execution authority.
+
+## Verification boundaries
+
+- Unit/integration: Agent inheritance, Contract ownership and completion
+  selection, Planner/Implementation Context selection, required Skill
+  names, missing-file fail-closed behavior and Prompt provenance.
+- Native CLI dry-run: verify actual generated Codex Prompt layers, per-Agent
+  Contract selection, Planner isolated evaluation policy and Context.
+- Provider E2E: validate native Codex JSONL, actual Skill discovery/read,
+  final event/Plan Apply receipts and durable Job/Task state.
+- WebChat E2E: verify bootstrap catalog and platform-level instruction
+  delivery; never infer actual privilege or Task completion from UI submission.
+- Dashboard/JEL evidence: read accepted receipts and Task/Plan state,
+  not process exit codes or optimistic text summaries.
+
+Do not claim a live deployment, merge, real model execution or approval
+unless the corresponding verified evidence exists.

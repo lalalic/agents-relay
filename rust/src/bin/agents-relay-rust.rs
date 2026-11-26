@@ -2,73 +2,90 @@
 //! the CLI only parses arguments and invokes the same control/HTTP routes as
 //! Node. Unwired host actions explicitly fail rather than launching Node.
 use agents_relay_rust2::{
-    cli::{run_cli,CliRuntimePort,agent_control_request},
-    cli_job_create::{require_preflight_cli,JOB_PREFLIGHT_REQUIRED},
-    cli_artifact::{validate_artifact,result_json},
-    cli_review::run_review_command,
-    outcome_review::run_outcome_review,
-    cli_core_support::{arg,has_arg,text_option},
-    cli_coordinator::validate_coordinator_args,
-    cli_context::run_context_command,
+    cli::{agent_control_request, run_cli, CliRuntimePort},
+    cli_artifact::{result_json, validate_artifact},
     cli_blocker::run_blocker_command,
-    cli_workflow_action::workflow_operation,
-    cli_foreground::attach_foreground_daemon,
+    cli_context::run_context_command,
+    cli_coordinator::validate_coordinator_args,
+    cli_core_support::{arg, has_arg, text_option},
     cli_escalation::run_escalation_command,
-    cli_prompt::{run_prompt_command,run_plan_context_command,
-        run_task_context_command,run_task_events_command,run_task_read_command},
-    planner::planner_input,
+    cli_foreground::attach_foreground_daemon,
+    cli_job_create::{require_preflight_cli, JOB_PREFLIGHT_REQUIRED},
+    cli_prompt::{
+        run_plan_context_command, run_prompt_command, run_task_context_command,
+        run_task_events_command, run_task_read_command,
+    },
+    cli_review::run_review_command,
+    cli_support::{
+        priority as cli_priority, relay_cli_runtime_summary, relay_control_command,
+        relay_control_job, relay_job_events,
+    },
+    cli_workflow_action::workflow_operation,
     events_bus_runtime::events_bus_history_page,
     execution_context::resolve_execution_context,
     managed_worker_input::managed_worker_input_resolved,
+    outcome_review::run_outcome_review,
+    planner::planner_input,
     planner_adapters::build_planner_execution_prompt,
-    cli_support::{relay_control_command,relay_control_job,relay_cli_runtime_summary,
-        priority as cli_priority,relay_job_events},
 };
-use serde_json::{json,Value};
+use serde_json::{json, Value};
 use std::{
-    sync::atomic::{AtomicI32,Ordering},
+    sync::atomic::{AtomicI32, Ordering},
     time::Duration,
 };
 
-static FOREGROUND_SIGNAL:AtomicI32=AtomicI32::new(0);
-extern "C" fn foreground_interrupt_signal(signal:libc::c_int){
-    FOREGROUND_SIGNAL.store(signal,Ordering::SeqCst);
+static FOREGROUND_SIGNAL: AtomicI32 = AtomicI32::new(0);
+extern "C" fn foreground_interrupt_signal(signal: libc::c_int) {
+    FOREGROUND_SIGNAL.store(signal, Ordering::SeqCst);
 }
-struct ForegroundSignalGuard{
-    sigint:libc::sighandler_t,
-    sigterm:libc::sighandler_t,
+struct ForegroundSignalGuard {
+    sigint: libc::sighandler_t,
+    sigterm: libc::sighandler_t,
 }
-impl ForegroundSignalGuard{
-    fn install()->Result<Self,String>{
-        FOREGROUND_SIGNAL.store(0,Ordering::SeqCst);
+impl ForegroundSignalGuard {
+    fn install() -> Result<Self, String> {
+        FOREGROUND_SIGNAL.store(0, Ordering::SeqCst);
         // Signal handlers only update one atomic. No allocations, locks,
         // subprocess kills or async HTTP requests execute in signal context.
-        let old_int=unsafe{
-            libc::signal(libc::SIGINT,foreground_interrupt_signal as *const () as libc::sighandler_t)
+        let old_int = unsafe {
+            libc::signal(
+                libc::SIGINT,
+                foreground_interrupt_signal as *const () as libc::sighandler_t,
+            )
         };
-        if old_int==libc::SIG_ERR{return Err("Cannot install foreground SIGINT handler".into());}
-        let old_term=unsafe{
-            libc::signal(libc::SIGTERM,foreground_interrupt_signal as *const () as libc::sighandler_t)
+        if old_int == libc::SIG_ERR {
+            return Err("Cannot install foreground SIGINT handler".into());
+        }
+        let old_term = unsafe {
+            libc::signal(
+                libc::SIGTERM,
+                foreground_interrupt_signal as *const () as libc::sighandler_t,
+            )
         };
-        if old_term==libc::SIG_ERR{
-            unsafe{libc::signal(libc::SIGINT,old_int);}
+        if old_term == libc::SIG_ERR {
+            unsafe {
+                libc::signal(libc::SIGINT, old_int);
+            }
             return Err("Cannot install foreground SIGTERM handler".into());
         }
-        Ok(Self{sigint:old_int,sigterm:old_term})
+        Ok(Self {
+            sigint: old_int,
+            sigterm: old_term,
+        })
     }
 }
-impl Drop for ForegroundSignalGuard{
-    fn drop(&mut self){
-        unsafe{
-            libc::signal(libc::SIGINT,self.sigint);
-            libc::signal(libc::SIGTERM,self.sigterm);
+impl Drop for ForegroundSignalGuard {
+    fn drop(&mut self) {
+        unsafe {
+            libc::signal(libc::SIGINT, self.sigint);
+            libc::signal(libc::SIGTERM, self.sigterm);
         }
     }
 }
 
 struct DaemonClient;
 impl CliRuntimePort for DaemonClient {
-    fn execute(&mut self,group:&str,action:&str,args:&[String])->Result<Value,String>{
+    fn execute(&mut self, group: &str, action: &str, args: &[String]) -> Result<Value, String> {
         match (group,action){
             ("init","")=>{
                 require_preflight_cli(args)?;
@@ -322,31 +339,53 @@ impl CliRuntimePort for DaemonClient {
 /// fork a second in-process Scheduler or silently fallback to Node Relay.
 /// The daemon itself requires explicit isolated-store options for mutation.
 #[cfg(unix)]
-fn native_serve(arguments:&[String])->Result<(),String>{
+fn native_serve(arguments: &[String]) -> Result<(), String> {
     use std::os::unix::process::CommandExt;
-    let executable=std::env::current_exe()
-        .map_err(|e|format!("Native CLI binary path unavailable: {e}"))?;
-    let owned=executable.with_file_name("agents-relayd-rust");
-    if !owned.is_file(){
-        return Err(format!("Installed native Relay daemon binary not found: {}",owned.display()));
+    let executable =
+        std::env::current_exe().map_err(|e| format!("Native CLI binary path unavailable: {e}"))?;
+    let owned = executable.with_file_name("agents-relayd-rust");
+    if !owned.is_file() {
+        return Err(format!(
+            "Installed native Relay daemon binary not found: {}",
+            owned.display()
+        ));
     }
     // CommandExt::exec replaces the current process and retains its PID,
     // stdin/stdout/stderr and inherited signal semantics. No child/process
     // monitor or untracked launch is left behind.
-    let error=std::process::Command::new(&owned).args(&arguments[1..]).exec();
+    let error = std::process::Command::new(&owned)
+        .args(&arguments[1..])
+        .exec();
     Err(format!("Native Relay daemon exec failed: {error}"))
 }
-fn main(){
-    let arguments=std::env::args().skip(1).collect::<Vec<_>>();
-    if let Err(error)=agents_relay_rust2::cli_option_contract::validate_cli_options(&arguments){
+fn main() {
+    let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    // Local, read-only prompt-part builder. No Relay daemon, Job ID or
+    // project source checkout required; Neo owns the platform assembly.
+    if arguments == ["prompt", "--parts-stdin"] {
+        match agents_relay_rust2::prompt_bootstrap::read_stdin() {
+            Ok(parts) => {
+                println!("{}", serde_json::to_string_pretty(&parts).unwrap());
+                return;
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+    }
+    if let Err(error) = agents_relay_rust2::cli_option_contract::validate_cli_options(&arguments) {
         eprintln!("{error}");
         std::process::exit(1);
     }
-    if arguments.first().is_some_and(|arg|arg=="serve")
-        && !arguments.iter().any(|arg|matches!(arg.as_str(),"--help"|"-h")){
+    if arguments.first().is_some_and(|arg| arg == "serve")
+        && !arguments
+            .iter()
+            .any(|arg| matches!(arg.as_str(), "--help" | "-h"))
+    {
         #[cfg(unix)]
         {
-            if let Err(error)=native_serve(&arguments){
+            if let Err(error) = native_serve(&arguments) {
                 eprintln!("{error}");
                 std::process::exit(1);
             }
@@ -358,79 +397,116 @@ fn main(){
         }
         return;
     }
-    if arguments.get(0).is_some_and(|arg|arg=="review")
-        && arguments.get(1).is_some_and(|arg|arg=="run"){
+    if arguments.get(0).is_some_and(|arg| arg == "review")
+        && arguments.get(1).is_some_and(|arg| arg == "run")
+    {
         // Node runOutcomeReview publishes its verdict and has distinct
         // completed/changes-needed/blocked POSIX exit statuses. Preserve
         // that contract instead of serializing a generic {"ok":true}
         // around the already-published review output. This owned runner
         // executes ONLY on an explicitly requested review run, never while
         // starting a daemon or processing a Worker receipt.
-        let flags=&arguments[2..];
-        let cwd=match std::env::current_dir(){
-            Ok(value)=>value,
-            Err(error)=>{eprintln!("{error}");std::process::exit(1);}
+        let flags = &arguments[2..];
+        let cwd = match std::env::current_dir() {
+            Ok(value) => value,
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
         };
-        let workspace=arg(flags,"--workspace-root","");
-        let workspace=if workspace.is_empty(){cwd.clone()}
-            else{std::path::PathBuf::from(workspace)};
-        let relay_root=match agents_relay_rust2::runtime_resources::package_root(){
-            Ok(root)=>root, Err(error)=>{eprintln!("{error}");std::process::exit(1);}
+        let workspace = arg(flags, "--workspace-root", "");
+        let workspace = if workspace.is_empty() {
+            cwd.clone()
+        } else {
+            std::path::PathBuf::from(workspace)
         };
-        let model=std::env::var("AGENTS_RELAY_REVIEW_MODEL_BIN")
-            .unwrap_or_else(|_|"codex".into());
-        match run_outcome_review(flags,&cwd,&workspace,&relay_root,&model){
-            Ok(exit)=>std::process::exit(exit),
-            Err(error)=>{eprintln!("{error}");std::process::exit(1);}
+        let relay_root = match agents_relay_rust2::runtime_resources::package_root() {
+            Ok(root) => root,
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        };
+        let model =
+            std::env::var("AGENTS_RELAY_REVIEW_MODEL_BIN").unwrap_or_else(|_| "codex".into());
+        match run_outcome_review(flags, &cwd, &workspace, &relay_root, &model) {
+            Ok(exit) => std::process::exit(exit),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
         }
     }
-    if arguments.first().is_some_and(|arg|arg=="--version"){
-        println!("agents-relay-rust {} (native preview)",env!("CARGO_PKG_VERSION"));
+    if arguments.first().is_some_and(|arg| arg == "--version") {
+        println!(
+            "agents-relay-rust {} (native preview)",
+            env!("CARGO_PKG_VERSION")
+        );
         return;
     }
-    let mut port=DaemonClient;
-    match run_cli(&mut port,&arguments,None){
-        Ok(Value::String(help)) if arguments.is_empty()
-            || arguments.first().is_some_and(|a|matches!(a.as_str(),"--help"|"-h"))
-            || arguments.iter().any(|a|matches!(a.as_str(),"--help"|"-h"))=>{
+    let mut port = DaemonClient;
+    match run_cli(&mut port, &arguments, None) {
+        Ok(Value::String(help))
+            if arguments.is_empty()
+                || arguments
+                    .first()
+                    .is_some_and(|a| matches!(a.as_str(), "--help" | "-h"))
+                || arguments
+                    .iter()
+                    .any(|a| matches!(a.as_str(), "--help" | "-h")) =>
+        {
             println!("{help}");
-        },
-        Ok(result)=>{
-            let raw=arguments.first().is_some_and(|command|command=="prompt")
-                ||matches!(arguments.first().map(String::as_str),Some("plan"|"task"))
-                    &&arguments.get(1).is_some_and(|action|
-                        matches!(action.as_str(),"context"|"events"));
+        }
+        Ok(result) => {
+            let raw = arguments.first().is_some_and(|command| command == "prompt")
+                || matches!(arguments.first().map(String::as_str), Some("plan" | "task"))
+                    && arguments
+                        .get(1)
+                        .is_some_and(|action| matches!(action.as_str(), "context" | "events"));
             if raw {
-                if let Some(message)=result.as_str().filter(|message|!message.is_empty()){
+                if let Some(message) = result.as_str().filter(|message| !message.is_empty()) {
                     println!("{message}");
                 }
-            }else{
-                println!("{}",serde_json::to_string_pretty(&result)
-                    .unwrap_or_else(|_|"null".to_string()));
+            } else {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result).unwrap_or_else(|_| "null".to_string())
+                );
             }
-            let foreground_signal=FOREGROUND_SIGNAL.load(Ordering::SeqCst);
-            if foreground_signal==libc::SIGINT{std::process::exit(130);}
-            if foreground_signal==libc::SIGTERM{std::process::exit(143);}
-            if arguments.first().is_some_and(|cmd|cmd=="artifact")
-                &&arguments.get(1).is_some_and(|action|action=="validate")
-                &&result.get("valid").and_then(Value::as_bool)==Some(false){
+            let foreground_signal = FOREGROUND_SIGNAL.load(Ordering::SeqCst);
+            if foreground_signal == libc::SIGINT {
+                std::process::exit(130);
+            }
+            if foreground_signal == libc::SIGTERM {
+                std::process::exit(143);
+            }
+            if arguments.first().is_some_and(|cmd| cmd == "artifact")
+                && arguments.get(1).is_some_and(|action| action == "validate")
+                && result.get("valid").and_then(Value::as_bool) == Some(false)
+            {
                 eprintln!("Artifact validation failed");
                 std::process::exit(1);
             }
-            if arguments.first().is_some_and(|cmd|cmd=="job")
-                &&arguments.get(1).is_some_and(|action|action=="run")
-                &&arguments.iter().any(|argument|argument=="--foreground")
-                &&result.get("state").and_then(Value::as_str)==Some("CANCELLED"){
+            if arguments.first().is_some_and(|cmd| cmd == "job")
+                && arguments.get(1).is_some_and(|action| action == "run")
+                && arguments.iter().any(|argument| argument == "--foreground")
+                && result.get("state").and_then(Value::as_str) == Some("CANCELLED")
+            {
                 std::process::exit(1);
             }
-            if arguments.first().is_some_and(|cmd|cmd=="escalation")
-                &&result.get("state").and_then(Value::as_str)==Some("technical_failure"){
+            if arguments.first().is_some_and(|cmd| cmd == "escalation")
+                && result.get("state").and_then(Value::as_str) == Some("technical_failure")
+            {
                 std::process::exit(2);
             }
-        },
-        Err(error)=>{
+        }
+        Err(error) => {
             eprintln!("{error}");
-            std::process::exit(if error==JOB_PREFLIGHT_REQUIRED{2}else{1});
-        },
+            std::process::exit(if error == JOB_PREFLIGHT_REQUIRED {
+                2
+            } else {
+                1
+            });
+        }
     }
 }

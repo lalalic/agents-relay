@@ -2581,28 +2581,6 @@ fn invoke(request: &Value) -> Result<String, String> {
             )?;
             Ok("null".into())
         }
-        "agentGraphPrompt" => {
-            use std::collections::HashSet;
-            let visible = request["visible"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect::<HashSet<_>>();
-            let prompt = agents_relay_rust2::agent_graph::agent_graph_prompt(
-                &visible,
-                request["source"].as_str().unwrap_or(""),
-                |name| {
-                    request["contracts"][name]
-                        .as_str()
-                        .map(str::to_owned)
-                        .ok_or_else(|| format!("Agent {name} contract not found"))
-                },
-            )?;
-            Ok(json!(prompt).to_string())
-        }
-
         "workflowUsageIndex" => {
             use agents_relay_rust2::workflow::{
                 graph_v2::parse_graph_v2,
@@ -3850,44 +3828,6 @@ fn invoke(request: &Value) -> Result<String, String> {
             .to_string(),
         ),
 
-        "buildAgentPrompt" => Ok(
-            agents_relay_rust2::agent_prompt_builder::build_agent_prompt(&request["input"])?
-                .to_string(),
-        ),
-        "renderAgentPrompt" => Ok(json!(
-            agents_relay_rust2::agent_prompt_builder::render_agent_prompt(
-                &request["bundle"],
-                request["adapter"].as_str().unwrap_or("")
-            )
-        )
-        .to_string()),
-        "isPromptReferenceAccessible" => Ok(json!(
-            agents_relay_rust2::agent_prompt_builder::is_prompt_reference_accessible(
-                std::path::Path::new(request["path"].as_str().unwrap_or(""))
-            )
-        )
-        .to_string()),
-        "promptFileReference" => Ok(
-            agents_relay_rust2::agent_prompt_builder::prompt_file_reference(
-                request["path"].as_str().unwrap_or(""),
-                request["role"].as_str().unwrap_or("context"),
-            )?
-            .to_string(),
-        ),
-        "snapshotAgentInstructions" => Ok(
-            agents_relay_rust2::agent_prompt_builder::snapshot_agent_instructions(
-                request["content"].as_str().unwrap_or(""),
-                request["directory"].as_str().unwrap_or(""),
-            )?
-            .to_string(),
-        ),
-        "buildReferenceFirstPrompt" => Ok(
-            agents_relay_rust2::agent_prompt_builder::build_reference_first_prompt(
-                &request["input"],
-                request["envDirectory"].as_str(),
-            )?
-            .to_string(),
-        ),
         "buildRelayWorkPrompt" => Ok(json!(
             agents_relay_rust2::agent_prompt_builder::build_relay_work_prompt(
                 &request["input"],

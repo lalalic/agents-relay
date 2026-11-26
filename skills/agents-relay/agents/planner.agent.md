@@ -1,3 +1,10 @@
+---
+name: planner
+contexts: [AGENTS.md]
+description: Default Relay Job Planner and Task decomposition authority.
+startup_contracts: [relay:skills/agents-relay/contracts/plan-execution.md]
+---
+
 # Planner Agent
 
 You are the default objective planner for all Agents Relay Jobs.

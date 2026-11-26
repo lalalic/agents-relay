@@ -97,11 +97,10 @@ pub fn inspect_workflow_symbol(root: &Path, graph: &str, kind: &str, name: &str)
     };
     let matcher = regex::Regex::new(&pattern).ok()?;
     let line = source.lines().position(|l| matcher.is_match(l))? + 1;
-    let contracts = [
-        "skills/agents-relay/contracts/event-contract.md",
-        "skills/agents-relay/contracts/task-recovery-flows.md",
-        "skills/agents-relay/contracts/blocker-job-recovery.md",
-    ];
+    let contracts = include_str!("../../docs/workflow-symbol-index.md")
+        .lines()
+        .filter_map(|line| line.strip_prefix("- "))
+        .collect::<Vec<_>>();
     let mut cr = Vec::new();
     for p in contracts {
         if let Some(f) = safe(root, p) {

@@ -128,16 +128,15 @@ pub fn delivery_wave2(request: &Value) -> Result<Value, String> {
             let package_root = request["packageRoot"]
                 .as_str()
                 .ok_or("packageRoot required")?;
-            Ok(Value::String(
-                crate::managed_worker_input::managed_worker_input_resolved(
-                    &request["job"],
-                    &request["task"],
-                    request.get("context").filter(|v| !v.is_null()),
-                    request["mode"].as_str().unwrap_or("production"),
-                    Path::new(package_root),
-                    request["referenceDirectory"].as_str(),
-                )?,
-            ))
+            serde_json::to_value(crate::managed_worker_input::managed_worker_input_resolved(
+                &request["job"],
+                &request["task"],
+                request.get("context").filter(|v| !v.is_null()),
+                request["mode"].as_str().unwrap_or("production"),
+                Path::new(package_root),
+                request["referenceDirectory"].as_str(),
+            )?)
+            .map_err(|e| e.to_string())
         }
         "managedWorkerInput" => {
             let context = request.get("context").filter(|v| !v.is_null());
@@ -154,7 +153,7 @@ pub fn delivery_wave2(request: &Value) -> Result<Value, String> {
                 |_, _| Ok(selected.clone()),
                 request["referenceDirectory"].as_str(),
             )?;
-            Ok(Value::String(prompt))
+            serde_json::to_value(prompt).map_err(|e| e.to_string())
         }
         "continuationScenario" => continuation_scenario(request),
         "projectionFailureScenario" => projection_failure_scenario(request),

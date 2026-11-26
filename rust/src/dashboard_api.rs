@@ -341,6 +341,25 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
         }
         let response = (|| -> Result<DashboardResponse, String> {
             Ok(match path {
+                "/api/execution-report" => {
+                    if !crate::dashboard_report::private_request(req) {
+                        return Ok(text_response(403,"Detailed reports require the local JEL Viewer"));
+                    }
+                    if !matches!(req.method,"GET"|"POST") {
+                        return Ok(text_response(405,"Method not allowed"));
+                    }
+                    let id=query(&parsed,"job").ok_or("Job ID required")?;
+                    let repo=target(&parsed).ok_or("Repository required")?;
+                    if !allowed_job_id(&id){return Ok(text_response(400,"Invalid Job ID"));}
+                    let task=query(&parsed,"task");
+                    let Some(job)=services.exact_job(&id,Some(&repo))? else {
+                        return Ok(text_response(404,"Job not found"));
+                    };
+                    if field(&job,"id")!=id||field(&job,"repository")!=repo{
+                        return Ok(text_response(404,"Job identity mismatch"));
+                    }
+                    crate::dashboard_report::handle(req,&job,task.as_deref())
+                }
                 "/api/graph-symbol" => {
                     if !allowed_method(req, "GET") {
                         return Ok(text_response(405, "Method not allowed"));
@@ -634,6 +653,7 @@ impl<S: DashboardApiServices> DashboardBackend for NativeDashboardApi<S> {
         if matches!((req.method,path),
             ("GET","/api/events"|"/api/usage"|"/api/decision-audit"|"/api/jobs"|"/api/job"|
                 "/api/runtime-summary"|"/api/status"|"/api/mobile/jobs"|"/api/mobile/job-tasks"|"/api/mobile/job-activity")
+            |("GET"|"POST","/api/execution-report")
             |("POST","/api/router-test")){
             let detached=self.observations.lock().ok().and_then(|template|
                 template.as_ref().and_then(DashboardApiServices::detached_observations));

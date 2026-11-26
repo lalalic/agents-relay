@@ -1,10 +1,7 @@
 // Direct port of src/managed-worker-input.ts: provider-neutral work-prompt
 // assembly. The selected Agent Contract and Execution Context come from the
 // caller's canonical resolver. No Relay state or GitHub discovery is performed.
-use crate::{
-    agent_prompt_builder::{build_agent_prompt, build_relay_work_prompt, render_agent_prompt},
-    final_review_role::is_final_review_agent,
-};
+use crate::agent_prompt_builder::{build_relay_work_prompt, PromptLayers};
 use regex::Regex;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -28,13 +25,16 @@ pub fn managed_worker_input<F>(
     package_root: &Path,
     mut resolve_agent: F,
     reference_directory: Option<&str>,
-) -> Result<String, String>
+) -> Result<PromptLayers, String>
 where
     F: FnMut(&Value, &str) -> Result<Value, String>,
 {
     let adapter = text(task, "adapter");
-    if !matches!(adapter, "codex" | "chatgpt" | "z") || !truthy(&job["repository"]) {
-        return Ok(text(task, "input").into());
+    if adapter != "codex" {
+        return Err(format!("Unsupported managed Worker harness: {adapter}"));
+    }
+    if !truthy(&job["repository"]) {
+        return Err("Managed Worker requires a Job repository".into());
     }
     let task_id = text(task, "id");
     if !truthy(&task["output"]) {
@@ -72,90 +72,78 @@ where
         }
     }
     let agent = text(&selected, "definition");
-    let role = if is_final_review_agent(Some(name)) {
-        "reviewer"
-    } else if matches!(name, "planner" | "troubleshooter") {
-        name
-    } else {
-        "worker"
-    };
     if mode == "evaluation" {
         // Remove event-emission instructions from evaluation-only prompts.
         let regex=Regex::new(r"(?m)^.*(?:task\.started|task\.completed|task\.failed|events__publish|EVENTS_BUS_EMIT).*\n?")
             .map_err(|e|e.to_string())?;
         let safe = regex.replace_all(agent, "");
-        let system=format!("{safe}\n\n[Read-only evaluation safety boundary]\nDo not use tools, files, events or external services. Evaluate the role instructions as criteria only.");
+        let policy = crate::declared_contract_loader::load(
+            &selected["metadata"],
+            package_root,
+            "eval",
+            None,
+            false,
+        )?;
+        if !policy.provenance.iter().any(|r| {
+            r["kind"] == "startup-contract"
+                && r["path"]
+                    .as_str()
+                    .is_some_and(|p| p.ends_with("/evaluation-safety.md"))
+        }) {
+            return Err("Eval requires explicit evaluation-safety Contract declaration".into());
+        }
+        let system = format!("{safe}\n\n{}", policy.system);
         let user = format!(
             "[Isolated prompt evaluation mode]\nTask: {task_id}\n{}",
             text(task, "input")
         );
-        let prompt = build_agent_prompt(&json!({"role":role,"system":system,"user":user}))?;
-        return Ok(render_agent_prompt(&prompt, adapter));
+        return PromptLayers::new(system, user, vec![]);
     }
-    let skills = context["skills"].as_array().cloned().unwrap_or_default();
-    let event = skills.iter().find(|v| text(v, "name") == "events-bus");
-    let ponytail = skills.iter().find(|v| text(v, "name") == "ponytail");
-    let mut contracts = Vec::<String>::new();
-    if let Some(event) = event {
-        let path = Path::new(text(event, "path"));
-        let protocol = path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("references/protocol.md");
-        if protocol.exists() {
-            contracts.push(protocol.to_string_lossy().into_owned());
-        }
-    }
-    let contract = |name: &str| {
-        package_root
-            .join("skills/agents-relay/contracts")
-            .join(name)
-            .to_string_lossy()
-            .into_owned()
-    };
-    contracts.extend(
-        ["task-job-contract.md", "event-contract.md"]
-            .into_iter()
-            .map(contract),
-    );
-    if role == "troubleshooter" {
-        contracts.extend(
-            ["task-recovery-flows.md", "blocker-job-recovery.md"]
-                .into_iter()
-                .map(contract),
-        );
-    }
-    if role == "worker" {
-        if let Some(ponytail) = ponytail {
-            contracts.push(text(ponytail, "path").into());
-        }
-        if !truthy(&task["review"]) && name != "review-chair" {
-            contracts.push(contract("worker-self-review.md"));
-        }
-    }
-    let contexts = context["instructions"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|item| text(item, "path").ends_with("/AGENTS.md"))
-        .collect::<Vec<_>>();
+    let selected_refs = crate::agent_context::selected_references(
+        &selected["metadata"],
+        context,
+        package_root,
+        adapter,
+    )?;
     let project_root = context
         .pointer("/project/gitRoot")
         .and_then(Value::as_str)
         .or_else(|| context.pointer("/project/path").and_then(Value::as_str))
         .unwrap_or("");
-    let provider = context
-        .pointer(&format!("/providerInstructions/{adapter}"))
-        .cloned()
-        .unwrap_or(Value::Null);
+    let terminal = if task.get("dagNode").is_some_and(Value::is_object) {
+        "dag"
+    } else if task["gitDeliveryRequired"] == true {
+        "source"
+    } else {
+        "event"
+    };
+    let output_kind = task
+        .pointer("/output/kind")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let artifact = task["artifactChanging"] == true
+        || task["gitDeliveryRequired"] == true
+        || task.get("dagNode").is_some_and(Value::is_object)
+        || matches!(
+            output_kind,
+            "file" | "artifact" | "media" | "video" | "image"
+        );
+    let policy = crate::declared_contract_loader::load(
+        &selected["metadata"],
+        package_root,
+        "worker",
+        Some(terminal),
+        artifact,
+    )?;
     let input = json!({
         "agentName":name,"suggestedSkills":selected["agent"]["suggestedSkills"],
         "agentContent":agent,"adapter":adapter,
-        "contracts":contracts,"contexts":contexts,"projectPath":project_root,
-        "providerInstructions":provider,
-        "skillPath":package_root.join("skills/agents-relay/SKILL.md").to_string_lossy().to_string(),
-        "taskTitle":task["title"],"workerSelfReview":role=="worker",
+        "references":selected_refs,
+        "requiredSkillNames":crate::agent_context::required_skill_names(&selected["metadata"])?,
+        "projectPath":project_root,
+        "trustedRuntimePolicy":policy.system,
+        "startupContracts":policy.provenance,
+        "taskTitle":task["title"],
         "dagNode":task.get("dagNode"),"gitDeliveryRequired":task["gitDeliveryRequired"],
         "repository":job["repository"],
         "jobId":job["id"],"taskId":task["id"],"executionId":task["executionId"]
@@ -168,7 +156,7 @@ mod tests {
     #[test]
     fn rejects_missing_execution_binding_before_resolution() {
         let job = json!({"repository":"local"});
-        let task = json!({"id":"23","adapter":"chatgpt","input":"task"});
+        let task = json!({"id":"23","adapter":"codex","input":"task"});
         let root = Path::new("/tmp/none");
         assert_eq!(
             managed_worker_input(
@@ -183,7 +171,7 @@ mod tests {
             .unwrap_err(),
             "Task 23 requires an explicit output contract"
         );
-        let task = json!({"id":"23","adapter":"chatgpt","input":"task","output":{"kind":"file"}});
+        let task = json!({"id":"23","adapter":"codex","input":"task","output":{"kind":"file"}});
         assert_eq!(
             managed_worker_input(
                 &job,
@@ -197,39 +185,40 @@ mod tests {
             .unwrap_err(),
             "Task 23 requires an executionId before worker input is built"
         );
-        assert_eq!(
-            managed_worker_input(
-                &job,
-                &json!({"adapter":"shell","input":"plain"}),
-                None,
-                "production",
-                root,
-                |_, _| panic!("not reached"),
-                None
-            )
-            .unwrap(),
-            "plain"
-        );
+        assert!(managed_worker_input(
+            &job,
+            &json!({"adapter":"script","input":"plain"}),
+            None,
+            "production",
+            root,
+            |_, _| panic!("not reached"),
+            None
+        )
+        .unwrap_err()
+        .contains("Unsupported managed Worker harness"));
     }
     #[test]
     fn evaluation_cannot_emit_events_or_use_tools() {
         let context = json!({"project":{"path":"/tmp"}});
         let selected = json!({"definition":"You are a worker.\ntask.completed should publish\nDo test.\n",
-            "agent":{"runtime":"chatgpt"}});
-        let task = json!({"id":"23","adapter":"chatgpt","input":"task",
+            "agent":{"runtime":"codex"},
+            "metadata":{"eval_contracts":"[relay:skills/agents-relay/contracts/evaluation-safety.md]"}});
+        let task = json!({"id":"23","adapter":"codex","input":"task",
             "output":{"kind":"file"},"executionId":"one"});
         let prompt = managed_worker_input(
             &json!({"repository":"local"}),
             &task,
             Some(&context),
             "evaluation",
-            Path::new("/tmp"),
+            Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap(),
             |_, _| Ok(selected.clone()),
             None,
         )
         .unwrap();
-        assert!(!prompt.contains("task.completed"));
-        assert!(prompt.contains("Read-only evaluation safety boundary"));
+        assert!(!prompt.system.contains("task.completed"));
+        assert!(prompt
+            .system
+            .contains("Isolated Evaluation Safety Contract"));
     }
 }
 
@@ -265,6 +254,7 @@ pub fn resolve_agent_contract_native(
         return Err(format!("Agent {name} Markdown contract is empty"));
     }
     Ok(json!({"agent":agent,"definition":definition,
+        "metadata":resolved["metadata"],
         "hash":resolved["hash"],"sources":resolved["sources"]}))
 }
 
@@ -275,7 +265,7 @@ pub fn managed_worker_input_resolved(
     mode: &str,
     package_root: &Path,
     reference_directory: Option<&str>,
-) -> Result<String, String> {
+) -> Result<PromptLayers, String> {
     managed_worker_input(
         job,
         task,
@@ -299,35 +289,36 @@ mod native_resolver_tests {
         fs::create_dir_all(root.join("agents")).unwrap();
         fs::write(
             root.join("agents/implementation.agent.md"),
-            "---\nname: implementation\n---\nYou are the fixture implementation agent.\n",
+             "---\nname: implementation\nextends: worker\n---\nYou are the fixture implementation agent.\n",
         )
         .unwrap();
         let context = json!({"project":{"path":root},"agents":[
-            {"name":"implementation","path":root.join("agents/implementation.agent.md"),"runtime":"chatgpt"}
+            {"name":"implementation","path":root.join("agents/implementation.agent.md"),"runtime":"codex"}
         ]});
-        let resolved = resolve_agent_contract_native(&context, "implementation", &root).unwrap();
+        let package = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let resolved = resolve_agent_contract_native(&context, "implementation", package).unwrap();
         assert!(resolved["definition"]
             .as_str()
             .unwrap()
             .contains("fixture implementation"));
         assert!(resolved["hash"].as_str().unwrap().len() >= 32);
         assert_eq!(
-            resolve_agent_contract_native(&context, "missing", &root).unwrap_err(),
+            resolve_agent_contract_native(&context, "missing", package).unwrap_err(),
             "Agent missing is not visible in the resolved execution context"
         );
-        let task = json!({"id":"51","adapter":"chatgpt","executionId":"e51","input":"evaluate locally",
+        let task = json!({"id":"51","adapter":"codex","executionId":"e51","input":"evaluate locally",
             "output":{"kind":"file"}});
         let prompt = managed_worker_input_resolved(
             &json!({"repository":"myrepo"}),
             &task,
             Some(&context),
             "evaluation",
-            &root,
+            package,
             None,
         )
         .unwrap();
-        assert!(prompt.contains("fixture implementation"));
-        assert!(prompt.contains("Do not use tools"));
+        assert!(prompt.system.contains("fixture implementation"));
+        assert!(prompt.system.contains("Do not use tools"));
         let _ = fs::remove_dir_all(root);
     }
 }

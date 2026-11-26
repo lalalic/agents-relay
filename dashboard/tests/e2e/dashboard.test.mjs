@@ -88,7 +88,17 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
     page=await context.newPage();
     page.setDefaultTimeout(8000);
     await page.clock.install();
-    page.on('pageerror',e=>errors.push(e.message));
+    page.on('pageerror',e=>{
+      // Playwright clock.install injects a bootstrap into the dashboard's
+      // intentionally opaque-origin report iframe. Chrome denies access to
+      // navigator.serviceWorker from that sandbox, and the injected clock
+      // bootstrap raises a SecurityError before any product code runs.
+      // Keep all actual Dashboard and report application errors fatal.
+      const clockSandboxError=e.message.startsWith(
+        "Failed to read the 'serviceWorker' property from 'Navigator': Service worker is disabled because the context is sandboxed")
+        && e.stack?.includes('at <anonymous>:3:15');
+      if(!clockSandboxError)errors.push(e.stack||e.message);
+    });
     await t.test('1 Job list, repository/status/search filters; 6 slow Events Bus',async()=>{
       const begin=Date.now();
       await page.goto(base,{waitUntil:'domcontentloaded'});

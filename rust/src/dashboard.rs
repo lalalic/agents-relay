@@ -217,7 +217,8 @@ pub fn is_backend_route(method: &str, target: &str) -> bool {
         || path.starts_with("/api/mobile/")
         || matches!(
             path,
-            "/api/graph-symbol"
+            "/api/execution-report"
+                | "/api/graph-symbol"
                 | "/api/troubleshooter-qa"
                 | "/api/graphs"
                 | "/api/jobs"

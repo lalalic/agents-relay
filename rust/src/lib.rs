@@ -116,6 +116,9 @@ pub mod troubleshooter_qa_api;
 
 // Direct Node src/agent-prompt-builder.ts implementation.
 pub mod agent_prompt_builder;
+pub mod declared_contract_loader;
+pub mod prompt_bootstrap;
+pub mod agent_context;
 
 // Direct Node src/agent-content-resolver.ts implementation.
 pub mod agent_content_resolver;
@@ -242,6 +245,7 @@ pub mod projection_outbox;
 // Direct Node src/dashboard-data.ts readonly projections.
 pub mod dashboard;
 pub mod dashboard_api;
+pub mod dashboard_report;
 pub mod dashboard_publication;
 pub mod dashboard_data;
 pub mod events; // Direct Node src/events.ts memory and NATS event transports.
@@ -328,6 +332,7 @@ pub mod native_script_execution;
 pub mod native_codex_execution;
 pub mod native_codex_thread;
 pub mod codex_permissions;
+pub mod codex_context_builder;
 pub mod native_worker_event_ingress;
 pub mod native_host_review_ingress;
 pub mod native_script_planner;

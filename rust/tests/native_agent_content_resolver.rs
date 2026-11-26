@@ -152,7 +152,10 @@ fn shared_base_from_differently_named_agent_and_unknown_agent() {
         "special",
         builtin.to_str().unwrap(),
         project.to_str().unwrap(),
-        Some(&agent_source_layers(project.to_str().unwrap(),&json!({"workspaceRoot":shared.to_str().unwrap()}))),
+        Some(&agent_source_layers(
+            project.to_str().unwrap(),
+            &json!({"workspaceRoot":shared.to_str().unwrap()}),
+        )),
     )
     .unwrap();
     assert!(result["content"]
@@ -174,5 +177,222 @@ fn shared_base_from_differently_named_agent_and_unknown_agent() {
         .unwrap_err(),
         "Unknown agent does-not-exist"
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn agent_context_metadata_is_inherited_replaced_and_cleared_without_duplication() {
+    use agents_relay_rust2::agent_context::selected_references;
+    let root = temp();
+    let builtin = root.join("builtin");
+    let project = root.join("project");
+    let bundle = root.join("bundle");
+    put(&builtin,"base.agent.md","---\nname: base\ncontexts: [base-rules/AGENTS.md]\ncontracts: [relay:contracts/review.md]\nrequired_skills: [markcut]\n---\n# Base\nShared editorial behavior");
+    put(&project, "base-rules/AGENTS.md", "base input");
+    put(&project, "editor-rules/AGENTS.md", "editor input");
+    put(&bundle, "contracts/review.md", "review contract");
+    let skill = put(&root, "skills/markcut/SKILL.md", "how to edit");
+    put(&project,"agents/editor.agent.md","---\nname: editor\nextends: base\ncontexts: [editor-rules/AGENTS.md]\n---\n# Editor\nSpecific instructions");
+    let context = json!({"project":{"path":project,"gitRoot":project},"skills":[{"name":"markcut","path":skill}]});
+    let resolve = || {
+        resolve_agent_markdown(
+            "editor",
+            builtin.to_str().unwrap(),
+            project.to_str().unwrap(),
+            None,
+        )
+        .unwrap()
+    };
+    let merged = resolve();
+    assert_eq!(merged["sources"].as_array().unwrap().len(), 2);
+    assert_eq!(merged["metadata"]["contexts"], "[editor-rules/AGENTS.md]");
+    assert_eq!(
+        merged["metadata"]["contracts"],
+        "[relay:contracts/review.md]"
+    );
+    assert_eq!(merged["metadata"]["required_skills"], "[markcut]");
+    let selected = selected_references(&merged["metadata"], &context, &bundle, "codex").unwrap();
+    assert_eq!(selected.as_array().unwrap().len(), 2);
+    assert_eq!(
+        selected[0]["path"],
+        project
+            .join("editor-rules/AGENTS.md")
+            .canonicalize()
+            .unwrap()
+            .to_str()
+            .unwrap()
+    );
+    assert_eq!(selected[1]["kind"], "contract");
+    assert_eq!(
+        agents_relay_rust2::agent_context::required_skill_names(&merged["metadata"]).unwrap(),
+        vec!["markcut"]
+    );
+    assert!(
+        !selected.to_string().contains("base-rules"),
+        "Overridden parent Context cannot leak"
+    );
+
+    put(&project,"agents/editor.agent.md","---\nname: editor\nextends: base\ncontexts: []\ncontracts: []\nrequired_skills: []\n---\n# Editor\nClear inherited dependencies");
+    let cleared = resolve();
+    assert_eq!(cleared["metadata"]["contexts"], "[]");
+    assert_eq!(cleared["metadata"]["contracts"], "[]");
+    assert_eq!(cleared["metadata"]["required_skills"], "[]");
+    assert_eq!(
+        selected_references(&cleared["metadata"], &context, &bundle, "codex").unwrap(),
+        json!([])
+    );
+    assert!(cleared["content"]
+        .as_str()
+        .unwrap()
+        .contains("Shared editorial behavior"));
+    put(
+        &project,
+        "agents/editor.agent.md",
+        "---\nname: editor\nextends: base\ncontexts:\n---\n# Editor\nEmpty declared Context",
+    );
+    let empty = resolve();
+    assert_eq!(empty["metadata"]["contexts"], "");
+    let selected = selected_references(&empty["metadata"], &context, &bundle, "codex").unwrap();
+    assert_eq!(
+        selected
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["kind"] == "context")
+            .count(),
+        0
+    );
+    assert_eq!(
+        selected.as_array().unwrap().len(),
+        1,
+        "Parent on-demand Contract still inherited; Skill remains a name"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn bundled_implementation_and_planner_only_load_declared_project_agents_md() {
+    use agents_relay_rust2::{
+        agent_context::selected_references, agent_prompt_builder::build_relay_work_prompt,
+    };
+    let bundle = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let builtin = bundle.join("skills/agents-relay/agents");
+    let project = temp().join("project");
+    put(
+        &project,
+        "AGENTS.md",
+        "PROJECT_CONTEXT_SENTINEL: obey repository build checks",
+    );
+    let context = json!({"project":{"gitRoot":project}});
+    for role in ["implementation", "planner"] {
+        let resolved = resolve_agent_markdown(
+            role,
+            builtin.to_str().unwrap(),
+            project.to_str().unwrap(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(resolved["metadata"]["contexts"], "[AGENTS.md]");
+        let references =
+            selected_references(&resolved["metadata"], &context, bundle, "codex").unwrap();
+        assert_eq!(references.as_array().unwrap().len(), 1);
+        assert_eq!(references[0]["kind"], "context");
+        assert_eq!(
+            references[0]["path"],
+            project
+                .join("AGENTS.md")
+                .canonicalize()
+                .unwrap()
+                .to_str()
+                .unwrap()
+        );
+        let prompt = build_relay_work_prompt(
+            &json!({
+                "agentName":role,"agentContent":resolved["content"],
+                "jobId":"1","taskId":"2","executionId":"3",
+                "projectPath":project,"references":references
+            }),
+            None,
+        )
+        .unwrap();
+        assert!(prompt.user.contains("PROJECT_CONTEXT_SENTINEL"));
+        assert!(
+            !prompt.system.contains("PROJECT_CONTEXT_SENTINEL"),
+            "project instructions are lower priority than role and Contracts"
+        );
+    }
+    for role in ["reviewer", "troubleshooter", "review-chair"] {
+        let resolved = resolve_agent_markdown(
+            role,
+            builtin.to_str().unwrap(),
+            project.to_str().unwrap(),
+            None,
+        )
+        .unwrap();
+        assert!(
+            resolved["metadata"].get("contexts").is_none(),
+            "{role} must not inherit project AGENTS.md from Worker"
+        );
+        let refs = selected_references(&resolved["metadata"], &context, bundle, "codex").unwrap();
+        assert_eq!(refs, json!([]));
+    }
+    fs::remove_file(project.join("AGENTS.md")).unwrap();
+    for role in ["implementation", "planner"] {
+        let resolved = resolve_agent_markdown(
+            role,
+            builtin.to_str().unwrap(),
+            project.to_str().unwrap(),
+            None,
+        )
+        .unwrap();
+        let error =
+            selected_references(&resolved["metadata"], &context, bundle, "codex").unwrap_err();
+        assert!(
+            error.contains("Missing required project Context"),
+            "{error}"
+        );
+    }
+    fs::remove_dir_all(project.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn absolute_external_base_inherits_only_declared_references() {
+    use agents_relay_rust2::agent_context::selected_references;
+    let root = temp();
+    let builtin = root.join("builtin");
+    let project = root.join("project");
+    let external=put(&root,"external/editor-base.md","---\nname: editor-base\ncontexts: [director/AGENTS.md]\nrequired_skills: []\n---\n# Shared\nExternal approved role");
+    put(&project, "director/AGENTS.md", "directory instructions");
+    put(
+        &project,
+        "agents/editor.agent.md",
+        &format!(
+            "---\nname: editor\nextends: {}\n---\n# Editor\nLocal guidance",
+            external.display()
+        ),
+    );
+    fs::create_dir_all(&builtin).unwrap();
+    let merged = resolve_agent_markdown(
+        "editor",
+        builtin.to_str().unwrap(),
+        project.to_str().unwrap(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(merged["metadata"]["contexts"], "[director/AGENTS.md]");
+    let ctx = json!({"project":{"path":project,"gitRoot":project},"skills":[]});
+    let refs = selected_references(&merged["metadata"], &ctx, &root, "codex").unwrap();
+    assert_eq!(refs.as_array().unwrap().len(), 1);
+    assert_eq!(
+        refs[0]["path"],
+        project
+            .join("director/AGENTS.md")
+            .canonicalize()
+            .unwrap()
+            .to_str()
+            .unwrap()
+    );
+    assert_eq!(merged["sources"].as_array().unwrap().len(), 2);
     fs::remove_dir_all(root).unwrap();
 }

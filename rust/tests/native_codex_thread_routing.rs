@@ -17,7 +17,11 @@ const NEW_THREAD:&str="38f84f9e-410d-4e36-96e0-a420594a102e";
 fn fixture()->PathBuf{
     let dir=std::env::temp_dir().join(format!("codex-thread-router-{}-{}",
         std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
-    fs::create_dir_all(&dir).unwrap();dir
+    fs::create_dir_all(&dir).unwrap();
+    fs::create_dir_all(dir.join(".codex")).unwrap();
+    fs::write(dir.join("AGENTS.md"),"Fixture GLOBAL AGENTS").unwrap();
+    #[cfg(unix)] std::os::unix::fs::symlink(dir.join("AGENTS.md"),dir.join(".codex/AGENTS.md")).unwrap();
+    dir
 }
 fn base_job(root:&Path)->Value{
     json!({"id":"901","repository":"unit","projectRoot":root,
@@ -54,12 +58,20 @@ fn one_model_per_profile_and_catalog_not_fallback(){
 #[test]
 fn resume_args_use_compatible_provider_profile_and_model(){
     let new=build_codex_turn_args(&json!({"provider":"zai","model":"glm-5.3-flash","profile":"zai"}),
-        "/tmp","first turn",None).unwrap();
+        "/tmp",None,&agents_relay_rust2::agent_prompt_builder::PromptLayers::new(
+            "You are worker".into(),"first turn".into(),vec![]).unwrap()).unwrap();
     assert!(new.contains(&"zai".to_owned()));
+    assert_eq!(new.iter().filter(|arg|arg.starts_with("developer_instructions=")).count(),1);
+    assert!(new.contains(&"project_doc_max_bytes=0".to_owned()));
+
     assert!(!new.contains(&"resume".to_owned()));
     let resume=build_codex_turn_args(&json!({"provider":"zai","model":"glm-5.3-flash","profile":"zai","reasoning":"high"}),
-        "/tmp","continue in context",Some(THREAD)).unwrap();
+        "/tmp",Some(THREAD),&agents_relay_rust2::agent_prompt_builder::PromptLayers::new(
+            "You are worker".into(),"continue in context".into(),vec![]).unwrap()).unwrap();
     assert!(resume.contains(&"resume".to_owned()));
+    assert_eq!(resume.iter().filter(|arg|arg.starts_with("developer_instructions=")).count(),1);
+    assert!(resume.contains(&"project_doc_max_bytes=0".to_owned()));
+
     assert!(resume.contains(&THREAD.to_owned()));
     assert!(resume.contains(&"glm-5.3-flash".to_owned()));
     assert!(resume.contains(&"model_provider=\"zai\"".to_owned()));
@@ -68,7 +80,8 @@ fn resume_args_use_compatible_provider_profile_and_model(){
     assert_eq!(resume.iter().filter(|v|v.as_str()=="--dangerously-bypass-approvals-and-sandbox").count(),1);
     assert_eq!(parse_thread_started(&format!(r#"{{"type":"thread.started","thread_id":"{THREAD}"}}"#)).as_deref(),Some(THREAD));
     assert!(build_codex_turn_args(&json!({"provider":"openai","model":"gpt-6-luna"}),
-        "/tmp","unsafe",Some("--last")).is_err());
+        "/tmp",Some("--last"),&agents_relay_rust2::agent_prompt_builder::PromptLayers::new(
+            "You are worker".into(),"unsafe".into(),vec![]).unwrap()).is_err());
 }
 #[test]
 fn thread_id_is_durable_and_fenced_to_current_execution(){

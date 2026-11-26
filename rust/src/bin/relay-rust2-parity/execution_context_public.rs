@@ -2,7 +2,7 @@
 // layered filesystem/Agent Markdown. No mock resolver, no nonlocal services.
 use agents_relay_rust2::execution_context::{
     resolve_execution_context,resolve_agent_model_preference,
-    resolve_agent_contract,agent_contract_prompt,execution_context_prompt,
+    resolve_agent_contract,
 };
 use serde_json::{json,Value};
 pub fn invoke(request:&Value)->Option<Result<String,String>>{
@@ -17,14 +17,9 @@ pub fn invoke(request:&Value)->Option<Result<String,String>>{
             "resolve"=>resolve_execution_context(project,role,&options)?,
             "preference"=>resolve_agent_model_preference(project,agent,&options)?
                 .unwrap_or(Value::Null),
-            "contract"|"agentPrompt"|"contextPrompt"=>{
+            "contract"=>{
                 let context=resolve_execution_context(project,role,&options)?;
-                match method{
-                    "contract"=>resolve_agent_contract(&context,agent)?,
-                    "agentPrompt"=>json!(agent_contract_prompt(&context,agent)?),
-                    "contextPrompt"=>json!(execution_context_prompt(&context)),
-                    _=>unreachable!()
-                }
+                resolve_agent_contract(&context,agent)?
             },
             other=>return Err(format!("Unknown Execution Context public method {other}")),
         };

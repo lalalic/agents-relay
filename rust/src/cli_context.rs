@@ -211,35 +211,6 @@ fn named_filter(list: Vec<Value>, names: &[String], kind: &str) -> Result<Vec<Va
         })
         .collect()
 }
-fn instructions(
-    project: &Path,
-    workspace: &Path,
-    global: &Path,
-) -> Vec<Value> {
-    let mut found = Vec::<Value>::new();
-    let mut seen = HashSet::new();
-    let mut add = |path: PathBuf, source: &str| {
-        if let Ok(actual) = fs::canonicalize(path) {
-            let key = as_str(&actual);
-            if seen.insert(key.clone()) {
-                found.push(json!({"path":key,"source":source}));
-            }
-        }
-    };
-    add(global.join("AGENTS.md"), "global");
-    if let Ok(relative) = project.strip_prefix(workspace) {
-        let mut cursor = workspace.to_path_buf();
-        add(cursor.join("AGENTS.md"),if cursor==project{"project"}else{"parent"});
-        for part in relative.components() {
-            cursor.push(part.as_os_str());
-            add(cursor.join("AGENTS.md"),if cursor==project{"project"}else{"parent"});
-        }
-    } else {
-        add(project.join("AGENTS.md"), "project");
-    }
-    add(project.join("README.md"), "project");
-    found
-}
 pub fn resolve_context(
     project_path: &str,
     role: &str,
@@ -270,7 +241,6 @@ pub fn resolve_context(
     let workspace = workspace(workspace_root)?;
     let global = absolute(&env_or(global_root, "AGENTS_HOME", home_agents()));
     let global = fs::canonicalize(&global).unwrap_or(global);
-    let workspace_path = PathBuf::from(workspace.clone());
     let layer_roots = agent_source_layers(
         &project_string,
         &json!({
@@ -361,7 +331,6 @@ pub fn resolve_context(
           "path":project_string,"gitRoot":as_str(&git_root),"workspaceRoot":workspace,
           "globalRoot":as_str(&global)},
         "role":role,
-        "instructions":instructions(&project,&workspace_path,&global),
         "skills":skills,"agents":agents,"runtimes":[],
         "delegation":{"mode":"relay-child-task","parentTaskIdRequired":role=="nested-worker"}
     }))

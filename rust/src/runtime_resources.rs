@@ -2,8 +2,8 @@
 use std::path::{Path, PathBuf};
 
 fn valid(root: &Path) -> bool {
-    root.join("skills/agents-relay/agents/planner.agent.md").is_file()
-        && root.join("skills/agents-relay/contracts/task-job-contract.md").is_file()
+    root.join("skills/agents-relay/agents").is_dir()
+        && root.join("skills/agents-relay/contracts").is_dir()
         && root.join("workflow").is_dir()
 }
 
@@ -11,7 +11,10 @@ pub fn package_root() -> Result<PathBuf, String> {
     if let Some(root) = std::env::var_os("AGENTS_RELAY_RESOURCE_ROOT") {
         let root = PathBuf::from(root);
         if !root.is_absolute() || !valid(&root) {
-            return Err(format!("Invalid AGENTS_RELAY_RESOURCE_ROOT: {}", root.display()));
+            return Err(format!(
+                "Invalid AGENTS_RELAY_RESOURCE_ROOT: {}",
+                root.display()
+            ));
         }
         return root.canonicalize().map_err(|e| e.to_string());
     }
@@ -22,5 +25,8 @@ pub fn package_root() -> Result<PathBuf, String> {
 }
 
 pub fn bundled_agents_root() -> Result<String, String> {
-    Ok(package_root()?.join("skills/agents-relay/agents").to_string_lossy().into_owned())
+    Ok(package_root()?
+        .join("skills/agents-relay/agents")
+        .to_string_lossy()
+        .into_owned())
 }

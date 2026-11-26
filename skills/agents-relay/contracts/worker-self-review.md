@@ -1,4 +1,6 @@
-# Implementation Worker Self-Review Loop
+# Artifact-changing Worker Self-Review Contract
+
+## Relay Self-Review Loop
 
 For every Task that implements or changes code, configuration, documentation, media, or another artifact, complete this cycle **inside the same worker Task** before reporting success:
 

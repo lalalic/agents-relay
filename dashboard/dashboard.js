@@ -149,6 +149,53 @@ function syncFilters(){
 function repoName(repository){if(typeof repository!=='string'||!repository)return 'unknown-repo';const parts=repository.split('/').filter(Boolean);return parts.at(-1)||repository;}
 const buildJelDiagram=window.__RELAY_DASHBOARD_CONFIG.buildJelDiagram;
 const jelChart=document.querySelector('#jel-chart');
+const jelReportActions=document.querySelector('#jel-report-actions');
+const reportDialog=document.querySelector('#execution-report-dialog');
+const reportFrame=document.querySelector('#execution-report-frame');
+const reportStatus=document.querySelector('#execution-report-status');
+let reportSequence=0;
+function closeExecutionReport(){
+  reportSequence++;reportFrame.removeAttribute('srcdoc');
+  if(reportDialog.open)reportDialog.close();
+}
+document.querySelector('#execution-report-close').addEventListener('click',closeExecutionReport);
+reportDialog.addEventListener('cancel',event=>{event.preventDefault();closeExecutionReport();});
+async function openExecutionReport(job,task,generate){
+  if(!job?.id||!job.repository)return;
+  const sequence=++reportSequence;
+  const params=new URLSearchParams({job:job.id,repo:job.repository});
+  if(task?.id)params.set('task',task.id);
+  document.querySelector('#execution-report-title').textContent='Execution report · '+job.repository+'/'+job.id+(task?.id?' / Task '+task.id:'');
+  reportStatus.textContent=generate?'Generating from recorded execution…':'Opening saved report…';
+  reportFrame.removeAttribute('srcdoc');
+  if(!reportDialog.open)reportDialog.showModal();
+  try{
+    const response=await fetch('./api/execution-report?'+params,{method:generate?'POST':'GET',headers:{'X-Relay-Report':'1'},cache:'no-store',credentials:'same-origin'});
+    const raw=await response.text();
+    let data;
+    try{data=JSON.parse(raw);}catch{throw new Error(raw||'Report unavailable');}
+    if(!response.ok)throw new Error(data.error||'Report unavailable');
+    if(sequence!==reportSequence||!reportDialog.open)return;
+    if(data.jobId!==job.id||data.taskId!==(task?.id||null)||typeof data.html!=='string')throw new Error('Report scope mismatch');
+    // A sandboxed opaque-origin document, with no network or parent DOM
+    // access. Only the local report's own filter/download scripts may run.
+    reportFrame.srcdoc=`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">`+data.html;
+    reportStatus.textContent='Captured '+(data.capturedAt||'unknown');
+  }catch(error){
+    if(sequence===reportSequence&&reportDialog.open)reportStatus.textContent=String(error.message||error);
+  }
+}
+function executionReportControls(job,task){
+  const group=element('span','graph-navigation');
+  for(const [label,generate] of [['Generate report',true],['Open report',false]]){
+    const button=element('button','refresh-button',text(label));
+    button.type='button';
+    button.addEventListener('click',()=>void openExecutionReport(job,task,generate));
+    group.append(button);
+  }
+  return group;
+}
+
 function inspectJelTask(id){
   if(!selected()?.tasks?.some(task=>task.id===id))return;
   selectedTaskId=id;eventTaskId=id;rememberSelection();clearEvents();
@@ -160,6 +207,9 @@ async function openJelChart(job){
   const renderId=++jelRenderSequence;
   jelChart.replaceChildren(element('p','subtle',text('Rendering job lifecycle…')));
   showGraphViewer(jelChart,'JEL · '+value(job.repository)+'/'+value(job.id));
+  jelReportActions.replaceChildren(executionReportControls(job,null));
+  jelReportActions.hidden=false;
+
   const source=buildJelDiagram(job);
   try{
     if(!window.mermaid)throw new Error('Mermaid unavailable');
@@ -450,7 +500,7 @@ function openTaskDetails(task){
   const inputs=uniqueInputs(candidates,objective);
   showDetailsDialog('Task',task.id,task.title,objective,inputs,readerReviewComments(job,task));
 }
-document.querySelector('#job-content-open').addEventListener('click',openJobDetails);function renderTaskDetail(task){taskDetailRoot.replaceChildren();if(!task){taskDetailRoot.append(element('p','empty',text('Select a task to inspect execution details.')));return;}const routing=task.routing||{};const groups=element('div','detail-groups');groups.append(field('Title',task.title||'—'),field('Task ID',task.id),field('Kind',task.kind||'work'),taskStateField(task),...(task.state==='FAILED'&&task.resolution?.state?[field('Resolution state',task.resolution.state),field('Resolution path',task.resolution.path||'—'),field('Resolution target',task.resolution.targetTaskId||'—')]:[]),manualOverrideField(task),field('Planning decision',task.planningDecisionId||'—'),field('Planning source',task.planningSource||'—'),field('Planning round',task.planningRound===undefined?'—':String(task.planningRound)),field('Project / agent',value(task.projectName)+' / '+value(task.agentName)),field('Parent task',task.parentTaskId||'root'),...(task.resolutionClassification?[field('Resolution classification',task.resolutionClassification.kind),field('Resolution target',task.resolutionClassification.targetTaskId),field('Resolution evidence',task.resolutionClassification.evidence),field('Resolution reason',task.resolutionClassification.reason)]:[]),field('Adapter',task.adapter),field('Provider / model',value(routing.provider)+' / '+value(routing.model)),field('Reasoning / profile',value(routing.reasoning||routing.profile)),field('Attempt',attemptBudget(task)),field('Dependencies',Array.isArray(task.dependencies)&&task.dependencies.length?task.dependencies.join(', '):'none'),taskCommentField(task),chatField(task));const job=selected();if(task.reviewHeadSha&&job)groups.append(commitField('HEAD commit',job,task.reviewHeadSha));const graph=agentGraphField(task);if(graph)groups.append(graph);if(task.plannerResult)groups.append(field('Objective status',task.plannerResult.objective_status),markdownField('Assessment',task.plannerResult.assessment));if(task.error)groups.append(field('Error',task.error));const result=task.result?.data??task.result;if(result){groups.append(field('Conclusion',result.verdict||result.outcome?.verdict||task.result?.summary||'Available'));}taskDetailRoot.append(groups);const details=element('button','icon-button');details.append(iconSvg('detail'));details.type='button';details.setAttribute('aria-label','Task details and conclusion');details.title='Task details and conclusion';details.addEventListener('click',()=>openTaskDetails(task));taskDetailRoot.append(details);}
+document.querySelector('#job-content-open').addEventListener('click',openJobDetails);function renderTaskDetail(task){taskDetailRoot.replaceChildren();if(!task){taskDetailRoot.append(element('p','empty',text('Select a task to inspect execution details.')));return;}const jobForReport=selected();if(jobForReport)taskDetailRoot.append(executionReportControls(jobForReport,task));const routing=task.routing||{};const groups=element('div','detail-groups');groups.append(field('Title',task.title||'—'),field('Task ID',task.id),field('Kind',task.kind||'work'),taskStateField(task),...(task.state==='FAILED'&&task.resolution?.state?[field('Resolution state',task.resolution.state),field('Resolution path',task.resolution.path||'—'),field('Resolution target',task.resolution.targetTaskId||'—')]:[]),manualOverrideField(task),field('Planning decision',task.planningDecisionId||'—'),field('Planning source',task.planningSource||'—'),field('Planning round',task.planningRound===undefined?'—':String(task.planningRound)),field('Project / agent',value(task.projectName)+' / '+value(task.agentName)),field('Parent task',task.parentTaskId||'root'),...(task.resolutionClassification?[field('Resolution classification',task.resolutionClassification.kind),field('Resolution target',task.resolutionClassification.targetTaskId),field('Resolution evidence',task.resolutionClassification.evidence),field('Resolution reason',task.resolutionClassification.reason)]:[]),field('Adapter',task.adapter),field('Provider / model',value(routing.provider)+' / '+value(routing.model)),field('Reasoning / profile',value(routing.reasoning||routing.profile)),field('Attempt',attemptBudget(task)),field('Dependencies',Array.isArray(task.dependencies)&&task.dependencies.length?task.dependencies.join(', '):'none'),taskCommentField(task),chatField(task));const job=selected();if(task.reviewHeadSha&&job)groups.append(commitField('HEAD commit',job,task.reviewHeadSha));const graph=agentGraphField(task);if(graph)groups.append(graph);if(task.plannerResult)groups.append(field('Objective status',task.plannerResult.objective_status),markdownField('Assessment',task.plannerResult.assessment));if(task.error)groups.append(field('Error',task.error));const result=task.result?.data??task.result;if(result){groups.append(field('Conclusion',result.verdict||result.outcome?.verdict||task.result?.summary||'Available'));}taskDetailRoot.append(groups);const details=element('button','icon-button');details.append(iconSvg('detail'));details.type='button';details.setAttribute('aria-label','Task details and conclusion');details.title='Task details and conclusion';details.addEventListener('click',()=>openTaskDetails(task));taskDetailRoot.append(details);}
 function reviewStatus(job){const review=job?.review;if(!review)return 'Not started';if(review.outcome==='approved'&&review.headSha===job.headSha)return 'MERGE READY · approved';const stale=Array.isArray(job?.tasks)&&job.tasks.some(task=>['reviewer','job-acceptance-reviewer'].includes(task.agentName)&&task.reviewHeadSha&&job.headSha&&task.reviewHeadSha!==job.headSha);if(stale)return 'STALE · awaiting review';return String(review.outcome||'pending').replace('_',' ').toUpperCase();}function renderSelectedJob(){jobDetail.replaceChildren();const job=selected();if(!job){selectedJobTitle.textContent='';jobContentButton.disabled=true;jobContentButton.dataset.state='IDLE';jobDetail.append(element('div','empty',text('No durable jobs discovered.')));buildTree([]);renderTaskDetail(null);return;}selectedJobTitle.textContent=value(job.title||job.id);jobContentButton.disabled=false;jobContentButton.dataset.state=JOB_STATES.includes(job.state)?job.state:'IDLE';jobContentButton.setAttribute('aria-label','Job details · '+value(job.state));jobContentButton.title='Job details · '+value(job.state);if(jobSelectionKey(job)!==selectedJob){selectedJob=jobSelectionKey(job);selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}const summary=element('div','job-summary');summary.append(jobStateField(job),field('Runtime status',job.runtimeStatus||'IDLE'),field('Review',job.reviewEnabled===false?'Not required':reviewStatus(job)),field('Creator thread',job.creatorThreadId||'—'),threadField('Implementation thread',job.implementationThreadId),threadField('Reviewer thread',job.reviewerThreadId),commitField('Review head SHA',job,job.review?.headSha||job.headSha||''),field('Repository',job.repository||'—'),field('Project root',job.projectRoot||'—'),field('Last activity',relativeTime(job.updatedAt)),field('Task states',compactCounts(job.tasks)),jelField(job));jobDetail.append(summary);const selectedTask=(job.tasks||[]).find(task=>task.id===selectedTaskId)||null;if(selectedTaskId&&!selectedTask){selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}buildTree(job.tasks||[]);renderTaskDetail(selectedTask);renderEventScope();}function renderAll(){jobs.sort(compareJobs);syncFilters();renderJobList();renderSelectedJob();syncMobileJobsView();}
 function isCompleteUnmerged(job){return job.runtimeStatus==='MERGE_PENDING';}
 function compareJobs(a,b){const lifecycleGroup=job=>job.state==='COMPLETED'||job.state==='CANCELLED'?1:0;const timestamp=job=>{const updated=Date.parse(job.updatedAt||'');if(Number.isFinite(updated))return updated;const created=Date.parse(job.createdAt||'');return Number.isFinite(created)?created:0;};return lifecycleGroup(a)-lifecycleGroup(b)||timestamp(b)-timestamp(a)||String(a.repository||'').localeCompare(String(b.repository||''))||String(a.id||'').localeCompare(String(b.id||''));}
@@ -641,7 +691,7 @@ function showGraphViewer(content,title){
 function closeGraphViewer(){
   const content=graphViewerContent;
   if(!content)return;
-  if(content===jelChart)jelRenderSequence++;
+  if(content===jelChart){jelRenderSequence++;jelReportActions.hidden=true;jelReportActions.replaceChildren();}
   const svg=graphViewerSvg();
   if(svg){svg.style.width='';svg.style.height='';svg.style.maxWidth='';}
   const next=graphViewerNext?.parentNode===graphViewerHome?graphViewerNext:null;

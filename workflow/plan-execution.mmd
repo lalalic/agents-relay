@@ -1,0 +1,43 @@
+---
+title: Plan Execution Lifecycle
+description: Guard Plan generation leases and exact success/failure settlement; independent of Job-wide Planner orchestration.
+---
+flowchart LR
+%% relay: initial planning
+planning["state: PLANNING"]
+succeeded["state: SUCCEEDED"]
+failed["state: FAILED"]
+
+claimAvailable["guard: claimAvailable"]
+claimRetryAvailable["guard: retryAvailable"]
+activeJob["guard: activeJob"]
+notPaused["guard: notPaused"]
+reserveLease["action: planner.reserveLease"]
+
+successExecution["guard: executionCurrent"]
+resultValid["guard: resultValid"]
+persistSuccess["action: planner.persistSuccess"]
+
+failureExecution["guard: executionCurrent"]
+failureRetryAvailable["guard: retryAvailable"]
+
+planning -->|on: planner.claim| claimAvailable
+claimAvailable -->|true| claimRetryAvailable
+claimRetryAvailable -->|true| activeJob
+activeJob -->|true| notPaused
+notPaused -->|true| reserveLease
+reserveLease --> planning
+
+planning -->|on: planner.succeeded| successExecution
+successExecution -->|true| resultValid
+resultValid -->|true| persistSuccess
+persistSuccess --> succeeded
+
+planning -->|on: planner.failed| failureExecution
+failureExecution -->|true| failureRetryAvailable
+failureRetryAvailable -->|true| planning
+failureRetryAvailable -->|false| failed
+
+unavailableExecution["guard: executionCurrent"]
+planning -->|on: planner.unavailable| unavailableExecution
+unavailableExecution -->|true| failed

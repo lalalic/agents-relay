@@ -113,10 +113,13 @@ Example:
 
   agents-relay prompt --id JOB --plan-id PLAN --adapter codex [--output FILE]
   agents-relay prompt --id JOB --task-id TASK --adapter codex [--output FILE]
-  agents-relay prompt --eval-file CASE.json --adapter codex [--output FILE]
+  agents-relay prompt --eval-file CASE.json --adapter codex [--prepare-harness] [--output FILE]
 
-A detached --eval-file returns JSON with productionPrompt and safe evaluationPrompt from the SAME managedWorkerInput Builder; it never creates or changes a Job.
-Raw durable worker-facing text on stdout, no profile wrapper. --repo selects local SQLite,
+A detached --eval-file returns structured JSON with productionPrompt,
+evaluationPrompt and evaluationTransport from the SAME Prompt/Harness Builders.
+It never creates or changes a durable Job.
+Durable inspection returns typed {system,user,references} JSON, not a
+flattened or reconstructed System/User text blob. --repo selects local SQLite,
 not GitHub. Old completed Plans are reconstructed from recorded IDs and prior
 Task history; their original historical prompt bytes are not persisted. Only
 Codex currently has production Planner dispatch. Web Planner variants show the

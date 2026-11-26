@@ -557,8 +557,9 @@ mod name_inheritance_tests {
         assert!(body.contains("Preflight specializes"));
         assert_eq!(resolved["sources"].as_array().unwrap().len(),2);
         write(&builtin.join("reviewer.agent.md"),"---\nname: reviewer\nextends: job-acceptance-reviewer\n---\n# Broken\nCycle");
-        assert!(resolve_agent_markdown("job-acceptance-reviewer",
-            &string_path(&builtin),&string_path(&project),None).unwrap_err().contains("cycle"));
+        let error=resolve_agent_markdown("job-acceptance-reviewer",
+            &string_path(&builtin),&string_path(&project),None).unwrap_err();
+        assert!(error.contains("cycle"),"Unexpected inheritance error: {error}");
         fs::remove_dir_all(root).unwrap();
     }
     #[test]

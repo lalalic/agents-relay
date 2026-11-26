@@ -27,6 +27,7 @@ struct FixtureServices {
     fail_refresh: Arc<AtomicBool>,
     fail_webhook: Arc<AtomicBool>,
     duplicate_mobile_id: Arc<AtomicBool>,
+    report_fixture: Option<Value>,
 }
 impl FixtureServices {
     fn log(&self, method: &str, value: Value) -> Value {
@@ -59,7 +60,7 @@ impl DashboardApiServices for FixtureServices {
         if force && self.fail_refresh.load(Ordering::Acquire) {
             return Err("authoritative sqlite unavailable".into());
         }
-        let mut result=jobs();
+        let mut result=self.report_fixture.clone().map(|j|vec![j]).unwrap_or_else(jobs);
         if self.duplicate_mobile_id.load(Ordering::Acquire){
             let mut other=result[0].clone();
             other["repository"]=json!("other/repo");
@@ -73,7 +74,7 @@ impl DashboardApiServices for FixtureServices {
         repo: Option<&str>,
     ) -> Result<Option<Value>, String> {
         self.log("exact", json!({"id":id,"repository":repo}));
-        Ok(jobs().into_iter().find(|job| {
+        Ok(self.report_fixture.clone().map(|j|vec![j]).unwrap_or_else(jobs).into_iter().find(|job| {
             job["id"] == id
                 && repo.is_none_or(|r| job["repository"] == r)
         }))
@@ -573,4 +574,41 @@ fn actual_pwa_http_transport_preserves_bytes_and_authenticates_webhooks() {
     assert_eq!(tcp(&url, &request).0, 400);
     stop.store(true, Ordering::Release);
     server.join().unwrap();
+}
+
+// Explicit opt-in historical report UI acceptance. The Job snapshot is read
+// through the installed Relay CLI; the native HTTP API uses only its snapshot.
+// The real Neo report CLI remains read-only with respect to Relay Jobs.
+#[test]
+#[ignore = "requires explicit real historical Job and local Chrome"]
+fn historical_execution_report_browser() {
+    let id=std::env::var("RELAY_REPORT_TEST_JOB").expect("explicit Job ID");
+    let repo=std::env::var("RELAY_REPORT_TEST_REPO").expect("explicit repository");
+    let task=std::env::var("RELAY_REPORT_TEST_TASK").expect("explicit Task ID");
+    let cli=std::env::var_os("NEO_RELAY_EXECUTABLE").unwrap_or_else(||"agents-relay".into());
+    let output=std::process::Command::new(cli).args(["job","show","--repo",&repo,"--id",&id]).output().unwrap();
+    assert!(output.status.success());
+    let job:Value=serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(job["id"],id);
+    assert_eq!(job["repository"],repo);
+    assert!(job["tasks"].as_array().unwrap().iter().any(|t|t["id"]==task));
+    let mut services=FixtureServices::default();
+    services.report_fixture=Some(job);
+    let options=DashboardApiOptions {
+        graph_directory:PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
+        router_rules_path:std::env::temp_dir().join("unused-report-browser-rules"),
+        webhook_secret:None,webhook_repositories:HashSet::new(),webhook_job_id:None,
+    };
+    let backend=Arc::new(NativeDashboardApi::new(options,services));
+    let listener=TcpListener::bind(("127.0.0.1",0)).unwrap();
+    let base=format!("http://{}",listener.local_addr().unwrap());
+    let stop=Arc::new(AtomicBool::new(false));
+    let server={let stop=stop.clone();thread::spawn(move||serve_dashboard(listener,backend,stop).unwrap())};
+    let result=std::process::Command::new("node")
+        .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dashboard/tests/e2e/report-viewer.mjs"))
+        .env("RELAY_REPORT_TEST_BASE",&base)
+        .status();
+    stop.store(true,Ordering::Release);
+    server.join().unwrap();
+    assert!(result.unwrap().success(),"real historical JEL report browser acceptance failed");
 }

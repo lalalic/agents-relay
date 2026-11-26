@@ -80,6 +80,30 @@ agents-relay task list --repo LOCAL_ROOT_NAME --id JOB_ID
 
 Read `contracts/task-job-contract.md` before authoring or changing Jobs or Tasks and `contracts/orchestrator-workflows.md` when handling initial planning, P0/self Jobs, or merge/delivery boundaries. For content work, load the active Neo Project rules, its Agent Graph if present, and the relevant stage contracts—not a presumed universal production sequence.
 
+## Agent frontmatter schema and Context selection
+
+The [Agent Definition Contract](contracts/agent-contract.md) is the
+**single canonical schema** for Relay and Neo Project Agent Markdown.
+Read it when defining `extends`, startup and conditional mandatory
+Contracts, on-demand `contracts`, directory `contexts`, or
+`required_skills`. Do not duplicate this schema in project Skills.
+
+A Job Task automatically receives the Contract declarations from
+`worker.agent.md`, **without changing the Agent's own extends chain**.
+Explicit `extends: worker` is still ordinary Agent inheritance.
+Implementation and Planner declare
+`contexts: [AGENTS.md]`, which loads the matching project-root
+AGENTS.md when their effective Agent inherits that declaration.
+Ordinary Workers and Neo Project DAG Stage Agents do not load that
+project file automatically. `contexts` uses plain paths relative to
+the active project's Git root, with **no** scope prefix.
+
+Mandatory Contracts enter trusted System/Developer instructions.
+`required_skills` contains **names only**; the Agent resolves them
+using the native Harness Skills List (`neo skill list` in Codex)
+and reads SKILL.md when needed. Relay does not inject Skill file
+contents or validate document contents using SHA.
+
 ## 2. Plan and execute
 
 `job create --initial-plan` starts Planner; `plan` advances an existing DRAFT Job. Direct `task create` is for orchestrator-authored Tasks. Describe outcomes/dependencies, not shell commands. Public outputs: `--output local-git` or `--output file --output-path PATH`; historical SQLite `task_pr` means local Git work. Include `storySize`; Agent `skills`, `model`, and `reasoning` are advisory. Optional Job `--prefer-adapter`, `--prefer-provider`, `--prefer-model`, `--prefer-profile`, `--prefer-reasoning` are **durable soft hints** for eligible, unpinned normal Task routes; use `job update --clear-routing-preferences` to reset. Task `--adapter/--provider/--model` edits are exact, and `task update --clear-routing` removes a selected route. See `contracts/agent-contract.md` and `contracts/task-job-contract.md`.
