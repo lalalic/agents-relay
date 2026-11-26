@@ -84,6 +84,18 @@ inherited Contracts or required Skills. The native Harness's Global
 instructions are a separate baseline and remain present even when the Agent
 declares no directory Context.
 
+## Named Contract blocks in assembled Prompts
+
+All mandatory loaded Contracts appear in the trusted System Prompt inside
+`<contracts>...</contracts>`, introduced with "Contracts are the principal
+rules you must follow." Each document is wrapped exactly once as
+`<contract name="worker-lifecycle">...</contract>` with a stable name derived
+from its Markdown filename (without `.md`). The names are exposed in
+provenance and the Task's User Prompt so assignments can refer to a specific
+Contract without copying its rules. On-demand references remain unloaded and
+are never mislabeled as trusted startup Contracts. The `agents-relay` Skill
+owns this assembly; neither a Task nor a child Agent can rename trusted blocks.
+
 ## Declared startup and assignment Contracts
 
 **Only global shared Contracts load automatically.** Their list is defined

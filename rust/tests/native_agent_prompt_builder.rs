@@ -267,3 +267,67 @@ fn contract_tool_owners_are_declared_by_exact_skill_name() {
     let completion = fs::read_to_string(dir.join("dag-task-completion.md")).unwrap();
     assert!(!completion.contains("```sh"));
 }
+
+#[test]
+fn loaded_named_contracts_are_grouped_as_principles_and_referenced_by_user_name() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    for (operation, terminal, completion) in [
+        ("worker", Some("event"), "event-task-completion"),
+        ("worker", Some("dag"), "dag-task-completion"),
+        ("worker", Some("source"), "source-task-completion"),
+        ("plan", None, "plan-execution"),
+    ] {
+        let metadata = if operation == "plan" {
+            json!({"startup_contracts":"[relay:skills/agents-relay/contracts/plan-execution.md]"})
+        } else { json!({}) };
+        let loaded = agents_relay_rust2::declared_contract_loader::load(
+            &metadata, root, operation, terminal, false).unwrap();
+        assert!(loaded.system.starts_with("<contracts>\nContracts are the principal rules you must follow."));
+        assert!(loaded.system.ends_with("</contracts>"));
+        let input = json!({"agentContent":"# Trusted Agent", "jobId":"746",
+            "taskId":"2378", "executionId":"exec-1", "repository":"vlog",
+            "taskInstructions":format!("Apply `{completion}` for the terminal outcome."),
+            "trustedRuntimePolicy":loaded.system,"startupContracts":loaded.provenance});
+        let prompt = build_relay_work_prompt(&input, None).unwrap();
+        assert_eq!(prompt.system.matches("<contracts>").count(), 1);
+        assert_eq!(prompt.system.matches("</contracts>").count(), 1);
+        assert!(prompt.system.starts_with("# Trusted Agent\n\n<contracts>"));
+        let names: Vec<String> = prompt.references.iter()
+            .filter(|r| r["kind"] == "startup-contract")
+            .map(|r| r["name"].as_str().unwrap().to_owned()).collect();
+        assert!(names.iter().any(|n| n == "execution-boundary"));
+        assert!(names.iter().any(|n| n == completion));
+        assert_eq!(prompt.system.matches("</contract>").count(), names.len());
+        for name in &names {
+            assert_eq!(prompt.system.matches(&format!("<contract name=\"{name}\">")).count(),1);
+            assert!(prompt.user.contains(&format!("`{name}`")));
+        }
+        assert!(prompt.user.contains(&format!("Apply `{completion}` for the terminal outcome.")));
+        assert!(!prompt.user.contains("Contracts are the principal rules you must follow."));
+        assert!(prompt.user.contains("<contracts> group"));
+    }
+}
+
+#[test]
+fn duplicate_on_demand_contract_names_fail_closed() {
+    let dir = temp();fs::create_dir_all(dir.join("one")).unwrap();
+    fs::create_dir_all(dir.join("two")).unwrap();
+    let first=dir.join("one/same.md"); let second=dir.join("two/same.md");
+    fs::write(&first,"One").unwrap();fs::write(&second,"Two").unwrap();
+    let input=json!({"agentContent":"Role","jobId":"1","taskId":"2","executionId":"3",
+        "references":[{"kind":"contract","path":first},{"kind":"contract","path":second}]});
+    assert!(build_relay_work_prompt(&input,None).unwrap_err().contains("Ambiguous Contract name"));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn mismatched_loaded_contract_name_is_rejected() {
+    let dir = temp(); fs::create_dir_all(&dir).unwrap();
+    let contract = dir.join("real-name.md"); fs::write(&contract, "A mandatory principle").unwrap();
+    let input = json!({"agentContent":"# Role", "jobId":"1", "taskId":"2", "executionId":"3",
+        "trustedRuntimePolicy":"<contracts><contract name=\"fake-name\">X</contract></contracts>",
+        "startupContracts":[{"kind":"startup-contract","path":contract,
+            "name":"fake-name","placement":"system","loaded":true}]});
+    assert!(build_relay_work_prompt(&input,None).unwrap_err().contains("name does not match filename"));
+    fs::remove_dir_all(dir).unwrap();
+}

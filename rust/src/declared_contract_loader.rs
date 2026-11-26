@@ -145,6 +145,7 @@ fn add(
     list: Vec<String>,
     root: &Path,
     dedup: &mut HashMap<PathBuf, String>,
+    names: &mut HashMap<String, PathBuf>,
     text: &mut Vec<String>,
     refs: &mut Vec<Value>,
     placement: &str,
@@ -165,12 +166,25 @@ fn add(
             }
             continue;
         }
+        // Stable, human-readable contract identity for cross-layer references.
+        // Two distinct documents with one name cannot both be enforced safely.
+        let contract_name = path.file_stem().and_then(|s| s.to_str())
+            .filter(|s| !s.is_empty() && s.bytes().all(|b|
+                b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_')))
+            .ok_or_else(|| format!("Invalid required Contract name: {name}"))?;
+        if let Some(previous) = names.get(contract_name) {
+            if previous != &path {
+                return Err(format!("Duplicate required Contract name {contract_name}: {} and {}",
+                    previous.display(), path.display()));
+            }
+        }
+        names.insert(contract_name.to_owned(), path.clone());
         dedup.insert(path.clone(), placement.to_owned());
         refs.push(
-            json!({"kind":"startup-contract","path":path,"placement":placement,
+            json!({"kind":"startup-contract","name":contract_name,"path":path,"placement":placement,
             "loaded":true}),
         );
-        text.push(data);
+        text.push(format!("<contract name=\"{contract_name}\">\n{}\n</contract>", data.trim()));
     }
     Ok(())
 }
@@ -193,10 +207,12 @@ pub fn load(
     let mut system = vec![];
     let mut refs = vec![];
     let mut dedup = HashMap::new();
+    let mut names = HashMap::new();
     add(
         global(root)?,
         root,
         &mut dedup,
+        &mut names,
         &mut system,
         &mut refs,
         "system",
@@ -210,6 +226,7 @@ pub fn load(
         combined(task_contracts, meta, startup)?,
         root,
         &mut dedup,
+        &mut names,
         &mut system,
         &mut refs,
         "system",
@@ -219,6 +236,7 @@ pub fn load(
             combined(task_contracts, meta, "artifact_contracts")?,
             root,
             &mut dedup,
+            &mut names,
             &mut system,
             &mut refs,
             "system",
@@ -241,6 +259,7 @@ pub fn load(
         )?,
         root,
         &mut dedup,
+        &mut names,
         &mut system,
         &mut refs,
         "system",
@@ -256,13 +275,19 @@ pub fn load(
             combined(task_contracts, meta, field)?,
             root,
             &mut dedup,
+            &mut names,
             &mut system,
             &mut refs,
             "system",
         )?;
     }
+    // Group all loaded, mandatory Contract principles as one trusted System block.
+    // The individual names remain stable for references from the User assignment.
     Ok(Loaded {
-        system: system.join("\n\n"),
+        system: format!(
+            "<contracts>\nContracts are the principal rules you must follow.\n\n{}\n</contracts>",
+            system.join("\n\n")
+        ),
         provenance: refs,
     })
 }
@@ -274,6 +299,15 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let shared = load(&json!({}), root, "worker", Some("event"), false).unwrap();
         assert_eq!(shared.provenance.len(), 4);
+        assert!(shared.system.starts_with("<contracts>\nContracts are the principal rules you must follow."));
+        assert!(shared.system.ends_with("</contracts>"));
+        assert_eq!(shared.system.matches("<contracts>").count(), 1);
+        assert_eq!(shared.system.matches("</contracts>").count(), 1);
+        for item in &shared.provenance {
+            let name = item["name"].as_str().expect("named Contract provenance");
+            assert_eq!(shared.system.matches(&format!("<contract name=\"{name}\">")).count(), 1);
+        }
+        assert_eq!(shared.system.matches("</contract>").count(), shared.provenance.len());
         assert!(shared.system.contains("Relay Execution Boundary"));
         assert!(shared.system.contains("Managed Worker Lifecycle"));
         assert!(shared.system.contains("Event Task Completion"));

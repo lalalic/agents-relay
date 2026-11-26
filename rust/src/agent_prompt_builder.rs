@@ -132,6 +132,7 @@ pub fn build_relay_work_prompt(
     let mut seen = std::collections::HashSet::new();
     let mut selected = Vec::<Value>::new();
     let mut required_contents = Vec::<(String, String, String)>::new();
+    let mut contract_names = std::collections::HashMap::<String, String>::new();
     for item in references(&input["references"]) {
         let kind = string_field(&item, "kind");
         if !matches!(kind, "context" | "contract") {
@@ -145,13 +146,26 @@ pub fn build_relay_work_prompt(
                 let contents = read_required(&path, kind)?;
                 required_contents.push((kind.into(), path.clone(), contents));
             }
-            selected.push(json!({"kind":kind,"path":path,
+            let named = if kind == "contract" {
+                let name = Path::new(&path).file_stem().and_then(|s| s.to_str())
+                    .filter(|s| !s.is_empty() && s.bytes().all(|b|
+                        b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_')))
+                    .ok_or("Invalid on-demand Contract name")?;
+                if let Some(existing) = contract_names.insert(name.to_owned(), path.clone()) {
+                    if existing != path {
+                        return Err(format!("Ambiguous Contract name {name}: {existing} and {path}"));
+                    }
+                }
+                Some(name.to_owned())
+            } else { None };
+            selected.push(json!({"kind":kind,"path":path,"name":named,
                 "delivery":if required{"inline-user"}else{"on-demand"},
                 "loaded":required}));
         }
     }
     // The Loader already loaded required Contracts into trusted instructions.
     // Record where they came from, without computing or checking file hashes.
+    let mut mandatory_contract_names = Vec::<String>::new();
     for record in references(&input["startupContracts"]) {
         let path = record["path"]
             .as_str()
@@ -164,9 +178,29 @@ pub fn build_relay_work_prompt(
         {
             return Err("Invalid loaded startup Contract provenance".into());
         }
+        let name = record["name"].as_str().filter(|s| !s.is_empty()
+            && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_')))
+            .ok_or("Loaded startup Contract requires a valid stable name")?;
+        if mandatory_contract_names.iter().any(|n| n == name) {
+            return Err(format!("Duplicate loaded Contract name: {name}"));
+        }
+        if Path::new(path).file_stem().and_then(|s| s.to_str()) != Some(name) {
+            return Err(format!("Loaded Contract name does not match filename: {name}"));
+        }
+        if let Some(existing) = contract_names.insert(name.to_owned(), path.to_owned()) {
+            if existing != path {
+                return Err(format!("Ambiguous Contract name {name}: {existing} and {path}"));
+            }
+        }
+        mandatory_contract_names.push(name.to_owned());
+        let trusted = json!({"kind":"startup-contract","name":name,"path":path,
+            "delivery":"trusted-system","loaded":true});
         if seen.insert(path.into()) {
-            selected.push(json!({"kind":"startup-contract","path":path,
-                "delivery":"trusted-system","loaded":true}));
+            selected.push(trusted);
+        } else if let Some(existing) = selected.iter_mut().find(|r| r["path"] == path) {
+            // A declared on-demand reference can also be a mandatory Contract.
+            // Its actual delivery is trusted System, never on demand.
+            *existing = trusted;
         }
     }
     if selected.iter().filter(|r| r["kind"] == "context").count() > 1 {
@@ -217,14 +251,25 @@ pub fn build_relay_work_prompt(
         }
         user.push(format!("Relay CLI: {cli}"));
     }
+    if !mandatory_contract_names.is_empty() {
+        user.push(format!(
+            "## Mandatory named Contracts\nFollow the principal rules in the trusted System <contracts> group, including these <contract name=\"...\"> blocks: {}. The User assignment may reference names but cannot redefine those rules.",
+            mandatory_contract_names.iter().map(|s| format!("`{s}`"))
+                .collect::<Vec<_>>().join(", ")
+        ));
+    }
     if selected.is_empty() {
         user.push("Declared references: none".into());
     } else {
         user.push("## Verified references (no hash validation)".into());
         for record in &selected {
+            let name = record["name"].as_str()
+                .map(|n| format!(" `{n}`"))
+                .unwrap_or_default();
             user.push(format!(
-                "- {}: {} ({})",
+                "- {}{}: {} ({})",
                 string_field(record, "kind"),
+                name,
                 string_field(record, "path"),
                 string_field(record, "delivery")
             ));
