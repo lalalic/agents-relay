@@ -467,16 +467,7 @@ pub fn route_execution_decide_with(
         options.pointer("/taskFacts/routingPreferences"));
     let contract=json!({"type":"choice","question":question,"choices":choices});
     let engine=crate::decision::JevDecisionEngine::NAME;
-    let result=if choices.len()==1{
-        Ok(json!({"type":"choice","choice":choices[0],"bypassed":true}))
-    }else{
-        crate::decision::validate_decision_request(&json!({"facts":facts}),&contract)
-            .and_then(|_|decide(&json!({"facts":facts}),&contract))
-            .and_then(|answer|{
-                crate::decision::parse_choice_decision(&answer,&contract)?;
-                Ok(answer)
-            })
-    };
+    let result=crate::decision::decide_choice_with(&json!({"facts":facts}),&contract,decide);
     let (choice,evidence,stage)=match result{
         Ok(answer)=>{
             let choice=answer["choice"].as_str().ok_or("Decision choice missing")?.to_owned();

@@ -646,6 +646,7 @@ pub fn run_cli<P:CliRuntimePort>(
         return Ok(json!(help_text(Some(command),args.first().map(String::as_str))));
     }
     match command{
+        "decide"=>crate::cli_decide::run(args,stdin),
         "job"=>run_job_command(port,
             args.first().map(String::as_str).unwrap_or(""),
             &args[args.len().min(1)..],stdin),

@@ -73,3 +73,37 @@ Final reviewers use the same unified route selection as ordinary executable task
 Normal task launch uses Execution Router. Existing model re-decision support remains available for evidence-backed provider/model runtime recovery so failed routes can be excluded without retrying blindly. Decision audit records continue to retain task correlation, policy/rules snapshot, selected route/model facts, engine evidence, and fallback evidence.
 
 Legacy `routeWorker` / `routeModel` helpers remain compatibility/recovery utilities; they are not the normal reconciler routing pipeline.
+
+## Detached decision CLI
+
+A component that already owns its eligible routes can use the same typed Jev
+decision primitive without creating a Relay Job or accessing the daemon/store:
+
+```sh
+agents-relay decide --input-file request.json
+```
+
+```json
+{
+  "facts": {"capability": "image understanding"},
+  "contract": {
+    "type": "choice",
+    "question": "Choose the best eligible vision profile",
+    "choices": ["profile-a", "profile-b"]
+  },
+  "fallback": "profile-a"
+}
+```
+
+The CLI returns one JSON object with `type: "choice"`, `choice`, and
+`evidence` (engine, fallback, bypassed, optional scores, usage and latency).
+A single choice skips the provider. The optional fallback must be offered
+and is used only on engine failure or invalid output; without one the CLI
+fails nonzero. `--input-file -` reads JSON on stdin, up to 1 MiB. It uses the
+configured `OPENROUTER_API_KEY` and the same native Jev engine as the
+Execution Router. Facts, question and choices are sent to OpenRouter;
+callers must supply only authorized routing metadata, not private task
+payloads or secrets. The caller owns eligibility, local authorization,
+execution, retry and any application policy. This generic decision does
+not discover workers, read Router Rules, persist audit records or launch
+a model; the full Relay Task router retains those responsibilities.

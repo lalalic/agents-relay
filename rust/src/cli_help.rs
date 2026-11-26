@@ -1,6 +1,6 @@
 // Direct port of Node src/cli-help.ts: evaluated current local-Git-only help text, preserving JS escape semantics.
 #[allow(non_upper_case_globals)] // Public Node export name intentionally preserved.
-pub const usage: &str = r##########"agents-relay <job|task|review|artifact|plan|prompt|blocker|escalation|context|init|record|agent-register|agent-discover|status|reconcile|serve|migrate-local-repositories> [options]"##########;
+pub const usage: &str = r##########"agents-relay <job|task|review|artifact|plan|prompt|decide|blocker|escalation|context|init|record|agent-register|agent-discover|status|reconcile|serve|migrate-local-repositories> [options]"##########;
 pub const CLI_USAGE: &str = usage;
 pub const CLI_HELP_ENTRIES: &[(&str, &str)] = &[
     (
@@ -22,6 +22,7 @@ Commands:
   plan apply               Submit a validated Task Tree within one active Plan
   plan context             Read execution-bound Planner context from SQLite
   prompt                   Print raw Planner/Worker prompt from the production Builder
+  decide                   Stateless typed choice using the configured decision engine
   blocker add|resolve|show  Manage cross-Job blocker dependencies
   escalation               Run the canonical escalation graph with a configured external executor
   context resolve          Resolve shared project instructions, skills, agents, and runtimes
@@ -36,6 +37,24 @@ Commands:
 
 Run 'agents-relay <command> --help' for command options and examples.
 The installed command and local Rust build use the same native implementation."##########,
+    ),
+    (
+        r##########"decide"##########,
+        r##########"Make a standalone typed choice without a Job, daemon or SQLite.
+
+Usage:
+  agents-relay decide --input-file REQUEST.json
+  agents-relay decide --input-file - < REQUEST.json
+
+Input: {"facts":{},"contract":{"type":"choice","question":"Select a route","choices":["a","b"]},"fallback":"a"}
+facts is a JSON object of caller-approved routing facts. contract defines the
+complete eligible choices and question. Optional fallback must be one of them.
+The configured Jev engine sends facts, question and choices to OpenRouter;
+do not include private payloads, credentials or unauthorized data.
+One choice bypasses the provider. Output is one JSON object with type, choice
+and evidence (engine, bypassed, fallback, optional probabilities/usage).
+Without an explicit fallback, provider or validation failure exits nonzero.
+This command only decides; the caller owns eligibility, execution and retries."##########,
     ),
     (
         r##########"job"##########,

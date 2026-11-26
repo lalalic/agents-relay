@@ -297,6 +297,28 @@ impl JevDecisionEngine {
         })
     }
 }
+/// The stateless typed-choice primitive shared by the execution router and
+/// detached callers. A single eligible choice never needs a provider call.
+pub fn decide_choice_with(
+    request: &Value,
+    contract: &Value,
+    decide: impl FnOnce(&Value, &Value) -> Result<Value, String>,
+) -> Result<Value, String> {
+    validate_decision_request(request, contract)?;
+    let choices = contract_choices(contract)?;
+    if choices.len() == 1 {
+        return Ok(json!({"type":"choice","choice":choices[0],"bypassed":true}));
+    }
+    let answer = decide(request, contract)?;
+    let mut validated = parse_choice_decision(&answer, contract)?;
+    for key in ["usage", "latencyMs", "model"] {
+        if let Some(value) = answer.get(key) {
+            validated[key] = value.clone();
+        }
+    }
+    Ok(validated)
+}
+
 pub fn execution_decision_engine() -> JevDecisionEngine {
     JevDecisionEngine::new(JevDecisionOptions::default())
 }
