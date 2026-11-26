@@ -4,9 +4,7 @@
 // changes in the SAME SQLite mutateJob transaction with generation fences.
 use crate::{
     events::event_for,
-    execution_routing::{
-        discover_execution_routes,route_execution_with_choice,route_execution_decide,
-    },
+    execution_routing::select_execution_route,
     final_review_role::{is_final_review_agent,FINAL_REVIEW_AGENT},
     job_task_id_sequence::allocate_entity_id,
     local_merge_lock::iso8601_now,
@@ -207,13 +205,13 @@ pub fn route_reviewer(
         "decisionMode":options.get("decisionMode"),
         "recordDecisionAudit":options.get("recordDecisionAudit"),
         "chatgptRunning":options.pointer("/runtimeSummary/chatgptRunning")});
-    let discovery=discover_execution_routes(&workers,&requirements,&opts,
-        profile_home,policy_path,rules_path,
-        Utc::now().timestamp_millis())?;
-    let routed=if options["useDecisionEngine"]==true{
-        route_execution_decide(&discovery,&requirements,&workers,&opts,
-            options["recentRouteResults"].as_array().map(Vec::as_slice).unwrap_or(&[]))?
-    }else{route_execution_with_choice(&discovery,&requirements,&workers,&opts,None,None,&[],None)?};
+    let use_engine=options["useDecisionEngine"]==true;
+    let recent=if use_engine{
+        options["recentRouteResults"].as_array().map(Vec::as_slice).unwrap_or(&[])
+    }else{&[]};
+    let routed=select_execution_route(&workers,&requirements,&opts,
+        profile_home,policy_path,rules_path,Utc::now().timestamp_millis(),
+        recent,use_engine)?;
     let _=graph_directory;
     Ok(routed)
 }
@@ -382,13 +380,13 @@ pub fn route_task_for_execution(
         "decisionMode":options.get("decisionMode"),
         "recordDecisionAudit":options.get("recordDecisionAudit"),
         "chatgptRunning":options.pointer("/runtimeSummary/chatgptRunning")});
-    let discovery=discover_execution_routes(&workers,&requirements,
-        &opts,profile_home,policy_path,rules_path,
-        Utc::now().timestamp_millis())?;
-    let route=if options["useDecisionEngine"]==true{
-        route_execution_decide(&discovery,&requirements,&workers,&opts,
-            options["recentRouteResults"].as_array().map(Vec::as_slice).unwrap_or(&[]))?
-    }else{route_execution_with_choice(&discovery,&requirements,&workers,&opts,None,None,&[],None)?};
+    let use_engine=options["useDecisionEngine"]==true;
+    let recent=if use_engine{
+        options["recentRouteResults"].as_array().map(Vec::as_slice).unwrap_or(&[])
+    }else{&[]};
+    let route=select_execution_route(&workers,&requirements,&opts,
+        profile_home,policy_path,rules_path,Utc::now().timestamp_millis(),
+        recent,use_engine)?;
     result.decision_audit=route.get("audit").filter(|v|!v.is_null()).cloned();
     let index=tasks(&result.job).iter().position(|t|t.get("id")==task.get("id"))
         .ok_or("Task absent after routing")?;

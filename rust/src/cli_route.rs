@@ -2,7 +2,7 @@
 //! The caller owns execution; no Job, daemon, store or audit writes.
 use crate::{
     decision::{decision_mode, execution_decision_engine},
-    execution_routing::{discover_execution_routes, route_execution_decide_with},
+    execution_routing::select_execution_route_with,
     job_routing_preferences,
     model_routing::default_codex_home,
     routing_policy::execution_router_rules_path,
@@ -189,17 +189,10 @@ pub(crate) fn route_with(
     decide: impl FnOnce(&Value, &Value) -> Result<Value, String>,
 ) -> Result<Value, String> {
     let (requirements, opts, recent) = options(input)?;
-    let discovery = discover_execution_routes(
-        workers,
-        &requirements,
-        &opts,
-        profile_home,
-        policy_path,
-        rules_path,
-        chrono::Utc::now().timestamp_millis(),
+    let routed = select_execution_route_with(
+        workers, &requirements, &opts, profile_home, policy_path, rules_path,
+        chrono::Utc::now().timestamp_millis(), &recent, true, decide,
     )?;
-    let routed =
-        route_execution_decide_with(&discovery, &requirements, workers, &opts, &recent, decide)?;
     Ok(json!({"selection":routed["selection"],"model":routed["model"],"routing":routed["routing"]}))
 }
 
@@ -342,6 +335,40 @@ mod tests {
         assert_eq!(implicit["modelPreference"],json!({
             "model":"openai/gpt-6-luna","reasoning":"xhigh"}));
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn cli_and_managed_model_agents_share_discovery_and_decision_path() {
+        let fixture=Fixture::new();
+        let request=json!({"taskFacts":{"role":"reviewer"},
+            "modelPreference":{"model":"openai/stronger","reasoning":"high"}});
+        let select_quality=|_:&Value,contract:&Value|{
+            let choice=contract["choices"].as_array().unwrap().iter()
+                .find(|value|value.as_str().unwrap().contains("profile=quality"))
+                .expect("configured quality profile");
+            Ok(json!({"type":"choice","choice":choice}))
+        };
+        let cli=fixture.route(&request,select_quality).unwrap();
+        let (requirements,opts,recent)=options(&request).unwrap();
+        let managed=crate::execution_routing::select_execution_route_with(
+            &[native_codex_worker()],&requirements,&opts,&fixture.0,
+            &fixture.0.join("policy.json"),&fixture.0.join("rules.md"),
+            chrono::Utc::now().timestamp_millis(),&recent,true,select_quality,
+        ).unwrap();
+        for key in ["provider","model","profile","reasoning","decidedBy"]{
+            assert_eq!(cli["routing"][key],managed["routing"][key],"{key}");
+        }
+        assert_eq!(cli["selection"]["workerId"],managed["selection"]["workerId"]);
+        assert_eq!(cli["model"],managed["model"]);
+        let fallback=crate::execution_routing::select_execution_route_with(
+            &[native_codex_worker()],&requirements,&opts,&fixture.0,
+            &fixture.0.join("policy.json"),&fixture.0.join("rules.md"),
+            chrono::Utc::now().timestamp_millis(),&recent,false,
+            |_,_|panic!("Decision Engine must not run when disabled"),
+        ).unwrap();
+        assert_eq!(fallback["selection"]["workerId"],cli["selection"]["workerId"]);
+        let mut invalid=request.clone();
+        invalid["routingConstraints"]=json!({"model":"not-configured"});
+        assert!(fixture.route(&invalid,select_quality).is_err());
     }
     #[test]
     fn model_agent_hint_reaches_router_but_does_not_pin_model_or_thinking() {

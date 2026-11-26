@@ -617,6 +617,37 @@ pub fn route_execution_with_choice(
         "facts":facts,"workerRequirements":requirements}))
 }
 
+/// Canonical route discovery and selection for detached CLI calls and managed
+/// Model Agents. The caller controls whether a Decision Engine is authorized;
+/// both paths use the same eligibility gates, policy, fallback and result.
+/// The injected decision function makes this boundary deterministic in tests.
+pub fn select_execution_route_with<Decide>(
+    workers:&[Value],requirements:&Value,options:&Value,
+    home:&Path,policy_path:&Path,rules_path:&Path,now_ms:i64,
+    recent_outcomes:&[Value],use_decision_engine:bool,decide:Decide,
+)->Result<Value,String>
+where Decide:FnOnce(&Value,&Value)->Result<Value,String>{
+    let discovery=discover_execution_routes(workers,requirements,options,
+        home,policy_path,rules_path,now_ms)?;
+    if use_decision_engine{
+        route_execution_decide_with(&discovery,requirements,workers,options,
+            recent_outcomes,decide)
+    }else{
+        route_execution_with_choice(&discovery,requirements,workers,options,
+            None,None,recent_outcomes,None)
+    }
+}
+
+pub fn select_execution_route(
+    workers:&[Value],requirements:&Value,options:&Value,
+    home:&Path,policy_path:&Path,rules_path:&Path,now_ms:i64,
+    recent_outcomes:&[Value],use_decision_engine:bool,
+)->Result<Value,String>{
+    select_execution_route_with(workers,requirements,options,
+        home,policy_path,rules_path,now_ms,recent_outcomes,use_decision_engine,
+        |request,contract|crate::decision::execution_decision_engine().decide(request,contract))
+}
+
 /// Node routeExecution entrypoint. Model/Worker eligibility comes from one
 /// validated route discovery; only the decision choice is passed back by
 /// a caller-provided Decision Engine. No second routing policy is invented.
@@ -626,12 +657,14 @@ pub fn route_execution(
     proposed_choice:Option<&str>,evidence:Option<Value>,
     recent_outcomes:&[Value],audit:Option<Value>,
 )->Result<Value,String>{
-    let discovered=discover_execution_routes(workers,requirements,options,
-        home,policy_path,rules_path,now_ms)?;
-    let mut result=if options["useDecisionEngine"]==true && proposed_choice.is_none() && evidence.is_none() && audit.is_none(){
-        route_execution_decide(&discovered,requirements,workers,options,recent_outcomes)?
+    let mut result=if proposed_choice.is_none() && evidence.is_none() && audit.is_none(){
+        select_execution_route(workers,requirements,options,
+            home,policy_path,rules_path,now_ms,recent_outcomes,
+            options["useDecisionEngine"]==true)?
     }else{
-        route_execution_with_choice(&discovered,requirements,workers,options,
+        let discovery=discover_execution_routes(workers,requirements,options,
+            home,policy_path,rules_path,now_ms)?;
+        route_execution_with_choice(&discovery,requirements,workers,options,
             proposed_choice,evidence,recent_outcomes,audit)?
     };
     // Public Node routeExecution returns the chosen candidate, selection,
