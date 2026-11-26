@@ -264,6 +264,14 @@ impl Reconciler{
                 action.get("taskId"),action.get("transitionKey")]).to_string();
             if !seen_effects.insert(key){continue;}
             let Err(error)=host.launch(action)else{continue;};
+            // The launch host's exact Job CAS checks all precede the durable
+            // execution claim / process spawn. A rejected snapshot is not a
+            // Worker failure: abandon all remaining stale effects and let
+            // the next reconciliation evaluate the latest durable state.
+            if field(action,"action")=="effect.launchTask"
+                &&error=="Concurrent Job mutation; recompute from SQLite snapshot"{
+                return host.load(job_id);
+            }
             let launch_error=error.clone();
             let effect=field(action,"action");
             // Unknown non-Graph effects (e.g. planner.launch) fail closed.

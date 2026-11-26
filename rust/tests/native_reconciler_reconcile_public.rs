@@ -5,7 +5,7 @@ use agents_relay_rust2::{reconciler::Reconciler,
 use serde_json::{json,Value};
 use std::{path::{Path,PathBuf},time::{SystemTime,UNIX_EPOCH}};
 struct Host{store:SQLiteRelayStore,root:PathBuf,persisted:usize,launched:usize,
-    emitted:usize,inject_race:bool,forced_failure:Option<String>,events:Vec<Value>}
+    emitted:usize,inject_race:bool,inject_launch_race:bool,forced_failure:Option<String>,events:Vec<Value>}
 impl ReconcileHost for Host{
  fn load(&mut self,id:&str)->Result<Value,String>{
      self.store.load_job(id)?.ok_or_else(||"Job missing".into())
@@ -39,8 +39,13 @@ impl ReconcileHost for Host{
      let mut rec=rec(&self.root);
      let claimed=rec.claim_task_execution(&current,task_id)?
          .ok_or("Task execution already claimed")?;
+     if std::mem::take(&mut self.inject_launch_race){
+         self.store.mutate_job(job_id,|mut job|{
+             job["title"]=json!("concurrent metadata update");Ok(job)
+         })?;
+     }
      self.store.mutate_job(job_id,|fresh|{
-         if fresh!=current{return Err("Task lease CAS conflict".into());}
+         if fresh!=current{return Err("Concurrent Job mutation; recompute from SQLite snapshot".into());}
          Ok(claimed)
      })?;
      self.launched+=1;Ok(())
@@ -62,7 +67,7 @@ fn fixture(state:&str,paused:bool)->(PathBuf,Host){
      "pause":if paused{json!({"reason":"operator"})}else{Value::Null},
      "headSha":"old-head"})).unwrap();
  (root.clone(),Host{store,root,persisted:0,launched:0,emitted:0,
-     inject_race:false,forced_failure:None,events:Vec::new()})
+     inject_race:false,inject_launch_race:false,forced_failure:None,events:Vec::new()})
 }
 fn rec(root:&Path)->Reconciler{
  Reconciler::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
@@ -284,5 +289,48 @@ fn canonical_launch_effect_failure_is_graph_sqlite_durable_with_exact_event(){
         "A separate Troubleshooter's failure is a distinct Task generation");
     assert_eq!(std::fs::read_to_string(&audit_path).unwrap(),audit,
         "Repeated reconciliation may not re-audit a settled original Task");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// A real conflicting SQLite write between launch snapshot and claim must
+// invalidate this pass without spending an attempt or admitting recovery.
+#[test]
+fn launch_cas_conflict_defers_without_failure_then_claims_once(){
+    let (root,mut host)=fixture("ACTIVE",false);
+    host.store.mutate_job("1",|mut job|{
+        job["tasks"]=json!([{
+            "id":"2","jobId":"1","kind":"work",
+            "agentName":"developer","adapter":"script",
+            "routing":{"decisionId":"decision-2","provider":"fixture",
+                "model":"isolated-runtime","profile":"test"},
+            "title":"Launch with concurrent metadata write","state":"QUEUED",
+            "executionId":null,"attempt":0,"maxAttempts":1,"dependencies":[],
+            "input":"isolated","output":{"kind":"file","path":root.join("out.json")},
+            "createdAt":"2026-11-18T00:00:00.000Z",
+            "updatedAt":"2026-11-18T00:00:00.000Z"
+        }]);Ok(job)
+    }).unwrap();
+    host.inject_launch_race=true;
+    let mut reconciler=rec(&root);
+    let first=reconciler.reconcile("1",None,&root,&json!({}),
+        &[],&[],None,&mut host).unwrap();
+    assert_eq!(first,host.load("1").unwrap());
+    assert_eq!(first["title"],"concurrent metadata update");
+    assert_eq!(first["tasks"].as_array().unwrap().len(),1);
+    assert_eq!(first["tasks"][0]["state"],"QUEUED");
+    assert_eq!(first["tasks"][0]["attempt"],0);
+    assert!(first["tasks"][0]["executionId"].is_null());
+    assert_eq!(host.launched,0);
+    assert!(!host.events.iter().any(|e|e["type"]=="workflow.effect.failed" || e["type"]=="task.failed"));
+    let _=reconciler.reconcile("1",None,&root,&json!({}),
+        &[],&[],None,&mut host).unwrap();
+    let claimed=host.load("1").unwrap();
+    assert_eq!(claimed["tasks"][0]["attempt"],1);
+    assert!(claimed["tasks"][0]["executionId"].is_string());
+    assert_eq!(host.launched,1);
+    let _=reconciler.reconcile("1",None,&root,&json!({}),
+        &[],&[],None,&mut host).unwrap();
+    assert_eq!(host.launched,1);
+    assert_eq!(host.load("1").unwrap()["tasks"][0]["executionId"],claimed["tasks"][0]["executionId"]);
     std::fs::remove_dir_all(root).unwrap();
 }
