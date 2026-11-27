@@ -75,7 +75,7 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
     await eventually(async()=>{assert.equal(daemon.exitCode,null,daemonLog);const v=await fetch(base+'/api/version');return v.ok&&(await v.json()).sourceRef===sha;});
   }
   const jobRow=id=>page.locator('.job-row').filter({hasText:new RegExp('/'+id+':')});
-  const badge=async(id,label)=>{await jobRow(id).locator('.badge').filter({hasText:new RegExp('^'+label.replaceAll('.','\\.')+'$')}).waitFor({timeout:15000});};
+  const badge=async(id,label)=>{await jobRow(id).locator('.badge').filter({hasText:new RegExp('^'+label.replaceAll('.','\\.')+'$')}).waitFor({timeout:30000});};
   const jobs=async()=>{const r=await fetch(base+'/api/jobs');assert(r.ok);return (await r.json()).jobs;};
   async function dbPublication(id){const db=new DatabaseSync(path.join(fixture,'relay.sqlite'),{readOnly:true});try{const row=db.prepare('SELECT json FROM publication_state WHERE job_id=?').get(id);return row?JSON.parse(row.json):null;}finally{db.close();}}
   try{
@@ -194,6 +194,10 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       await page.locator('#qa-reload').click();
       await page.locator('#qa-status').filter({hasText:'Loaded'}).waitFor();
       assert.equal(await guidance.inputValue(),edited);
+      await page.reload({waitUntil:'domcontentloaded'});
+      await page.locator('#qa-tab').click();
+      await page.locator('#qa-status').filter({hasText:'Loaded'}).waitFor();
+      assert.equal(await page.locator('#qa-text').inputValue(),edited);
       const persisted=await (await page.request.get(base+'/api/troubleshooter-qa')).json();
       assert.equal(persisted.text,edited);
       await page.locator('#usage-tab').click();

@@ -334,7 +334,7 @@ pub struct IsolatedSQLiteWriteHost {
 }
 impl IsolatedSQLiteWriteHost {
     pub fn new(config:DaemonConfig)->Self{
-        Self{config,live_store:false,usage_cache:crate::usage_registry::SharedUsageCache::new(||crate::usage::codex_and_zai_usage_registry(None,None).snapshot()),subscriptions:Vec::new(),wake_count:Default::default(),wake_pending:false,reconcile_attempts:Default::default(),connections:RefCell::new(HashMap::new()),
+        Self{config,live_store:false,usage_cache:crate::usage_registry::SharedUsageCache::new(||crate::usage::dashboard_usage_registry().snapshot()),subscriptions:Vec::new(),wake_count:Default::default(),wake_pending:false,reconcile_attempts:Default::default(),connections:RefCell::new(HashMap::new()),
             failure_state:std::sync::Arc::new(DaemonFailureState::new()),
             live_workers:std::sync::Arc::new(std::sync::Mutex::new(DaemonLiveWorkers::default())),
             escalation_notifier:None,event_history_api:None,

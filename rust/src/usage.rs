@@ -25,6 +25,18 @@ pub fn codex_and_zai_usage_registry(
         Some(Box::new(BrowserWorkspaceUsageReader::new(None,None))),
     )
 }
+/// Dashboard Usage is presentation-only observation and must not collect
+/// delivery-side GitHub telemetry or DeepSeek credits before filtering output.
+pub fn dashboard_usage_registry()->UsageRegistry{
+    let optional=|key:&str|std::env::var(key).ok().is_some_and(|v|!v.is_empty());
+    UsageRegistry::new(
+        Box::new(CodexApiUsageReader::new()),
+        Box::new(ZaiUsageReader::new(None)),
+        None,
+        optional("OPENROUTER_API_KEY").then(||Box::new(OpenRouterCreditReader::new(None)) as Box<dyn UsageReader>),
+        Some(Box::new(BrowserWorkspaceUsageReader::new(None,None))),
+    )
+}
 
 use chrono::{DateTime,Utc};
 use serde_json::{json,Value};

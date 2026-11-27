@@ -1,5 +1,5 @@
 use agents_relay_rust2::usage::{
-    CodexApiUsageReader,codex_and_zai_usage_registry,
+    CodexApiUsageReader,codex_and_zai_usage_registry,dashboard_usage_registry,
 };
 use serde_json::{json,Value};
 use std::{fs,os::unix::fs::PermissionsExt,path::PathBuf,time::{Instant,Duration}};
@@ -33,6 +33,26 @@ fn usage_registry_factory_constructs_without_launching_any_provider(){
     assert!(registry.browser.is_some());
     // Production setup owns the reader; only a snapshot request can launch
     // the app-server. Do not call it in the test.
+}
+
+#[test]
+fn dashboard_usage_factory_excludes_deepseek_collection_even_with_key(){
+    let original_deepseek=std::env::var("DEEPSEEK_API_KEY").ok();
+    let original_openrouter=std::env::var("OPENROUTER_API_KEY").ok();
+    std::env::set_var("DEEPSEEK_API_KEY","dashboard-revision-test");
+    std::env::set_var("OPENROUTER_API_KEY","dashboard-revision-test");
+    let registry=dashboard_usage_registry();
+    assert!(registry.deepseek.is_none());
+    assert!(registry.openrouter.is_some());
+    assert!(registry.browser.is_some());
+    match original_deepseek {
+        Some(value)=>std::env::set_var("DEEPSEEK_API_KEY",value),
+        None=>std::env::remove_var("DEEPSEEK_API_KEY"),
+    }
+    match original_openrouter {
+        Some(value)=>std::env::set_var("OPENROUTER_API_KEY",value),
+        None=>std::env::remove_var("OPENROUTER_API_KEY"),
+    }
 }
 
 #[test]
