@@ -571,7 +571,36 @@ pub fn route_execution_with_choice(
             "routingPreferences":preferences})
     }else{json!({"mode":mode,"fallback":true})};
     if evidence.is_none(){evidence=Some(default_evidence);}
-    let evidence=evidence.expect("fallback evidence");
+    let mut evidence=evidence.expect("fallback evidence");
+    // Jev chooses the route identity. Reasoning is a deterministic turn option,
+    // independent of the chosen profile's default. Hard constraints stay first.
+    let effort_sources=[
+        ("task",options.pointer("/routingConstraints/reasoning")),
+        ("job",preferences.and_then(|p|p.get("reasoning"))),
+        ("agent",options.pointer("/modelPreference/reasoning")),
+        ("selected",selected["model"].get("reasoning")),
+    ];
+    let effort=effort_sources.into_iter().find_map(|(source,value)|
+        value.and_then(Value::as_str).filter(|s|!s.is_empty()).map(|s|(source,s.to_owned())));
+    if let Some((source,requested))=effort {
+        let previous=selected["model"].get("reasoning").cloned();
+        if field(&selected["worker"],"adapter")=="codex" {
+            // Use the same executable argument contract as actual fresh/resume turns.
+            let probe=json!({"provider":selected["model"]["provider"],"model":selected["model"]["model"],"reasoning":requested});
+            crate::native_codex_thread::codex_route_flags(&probe)?;
+            if let Some(levels)=selected["model"].get("supportedReasoningLevels").and_then(Value::as_array){
+                if !levels.iter().any(|level|level.as_str()==Some(requested.as_str())) {
+                    return Err(format!("Selected model {}/{} does not support requested reasoning {requested}",field(&selected["model"],"provider"),field(&selected["model"],"model")));
+                }
+            }
+        }
+        if source!="selected" {
+            let verified=selected["model"].get("supportedReasoningLevels").is_some();
+            evidence["reasoningResolution"]=json!({"source":source,"selected":previous,"effective":requested,
+                "catalogVerified":verified});
+        }
+        selected["model"]["reasoning"]=json!(requested);
+    }
     let powered=evidence.get("engine").is_some_and(|v|!v.is_null())
         && evidence.get("fallback")==Some(&Value::Bool(false));
     let by=if powered && evidence.get("engine").and_then(Value::as_str)==Some(crate::decision::JevDecisionEngine::NAME){
@@ -588,9 +617,7 @@ pub fn route_execution_with_choice(
     if let Some(profile)=selected["model"].get("profile"){
         routing["profile"]=profile.clone();
     }
-    if let Some(reasoning)=options.pointer("/routingConstraints/reasoning")
-        .filter(|v|!v.is_null())
-        .or_else(||selected["model"].get("reasoning")){
+    if let Some(reasoning)=selected["model"].get("reasoning"){
         routing["reasoning"]=reasoning.clone();
     }
     let audit=if audit.is_none() && options.get("recordDecisionAudit")==Some(&Value::Bool(true)){

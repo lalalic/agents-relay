@@ -24,12 +24,12 @@ pub fn append_agent_model_preference(question: &str, preference: Option<&Value>)
     if model.is_none() && reasoning.is_none() {
         return question.to_string();
     }
-    let mut lines = vec!["Agent model preference (advisory only; lower priority than user routing instructions and all hard constraints):".to_string()];
+    let mut lines = vec!["Agent model preference (model is advisory; configured reasoning is applied after route selection, below explicit Task and Job reasoning):".to_string()];
     if let Some(model) = model {
         lines.push(format!("Prefer model: {model}"));
     }
     if let Some(reasoning) = reasoning {
-        lines.push(format!("Prefer reasoning: {reasoning}"));
+        lines.push(format!("Prefer reasoning: {reasoning} (applied deterministically after route selection)"));
     }
     lines.push("Choose only among the existing eligible routes. Do not invent or enable a route to satisfy this preference.".to_string());
     append_routing_instruction(question, &lines.join("\n"))

@@ -436,7 +436,7 @@ mod tests {
             let question=contract["question"].as_str().unwrap();
             assert!(question.contains("Prefer model: openai/base"));
             assert!(question.contains("Prefer reasoning: low"));
-            assert!(question.contains("advisory only"));
+            assert!(question.contains("applied deterministically after route selection"));
             // The Engine may still choose a different eligible model.
             let choice=contract["choices"].as_array().unwrap().iter()
                 .find(|v|v.as_str().unwrap().contains("profile=quality"))

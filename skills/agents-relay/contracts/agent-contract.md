@@ -31,10 +31,10 @@ reasoning: high
 | --- | --- | --- |
 | `skills` | Worker User Assignment (including Planner) | Optional skill suggestions, e.g. `Suggested skills ...: markcut, shotcraft`. Only use relevant, available skills. |
 | `model` | Unified Execution Router decision prompt | Preferred provider/model name, e.g. `openai/gpt-6`, for advisory ranking only. |
-| `reasoning` | Unified Execution Router decision prompt | Preferred reasoning effort, e.g. `high`, for advisory ranking only. |
+| `reasoning` | Unified Execution Router | Explicit execution effort after model/profile selection, overridden by Task constraints or Job reasoning. |
 
-A field may be omitted. `reasoning` can be specified without `model`.
-These optional hints do not auto-install/discover/select/require skills, do not
+A field may be omitted. `reasoning` can be specified without `model`. It changes the selected route's turn effort, not its identity or eligibility; unsupported known efforts fail visibly.
+Skill and model hints do not auto-install/discover/select/require skills, do not
 make a Task depend on a skill, do not create or enable model candidates, and do
 not override the Task's explicit routing constraints, available routes, resource
 or runtime gates, user routing instructions, or deterministic fallback.
@@ -191,7 +191,8 @@ authoritative schema**. Neo Project `type`, `inputs`, `outputs` and
 | --- | --- |
 | `name`, `description` | Agent identity |
 | `extends`, `mode`, `sections` | Normal explicit Agent inheritance and section composition |
-| `skills`, `model`, `reasoning` | Advisory Skill or Router preferences only |
+| `skills`, `model` | Advisory Skill or Router preferences |
+| `reasoning` | Explicit turn effort (Task > Job > Agent > selected route) |
 | `required_skills` | Skill **names** only; Agent resolves them through Harness Skills List and reads SKILL.md when needed |
 | `execution_bootstrap` | Optional inherited boolean, default `true`; `false` omits generated execution commands, preserving binding, mandatory Contracts and lifecycle obligations. Use owning Skills when disabled. |
 | `contexts` | At most one explicitly selected native `AGENTS.md` / `CLAUDE.md` file, loaded below trusted Contracts |

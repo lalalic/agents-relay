@@ -195,6 +195,7 @@ pub fn discover_model_candidates(
 /// Catalog models are deliberately NOT fallback profiles.
 pub fn codex_profile_candidates(home:&Path,usage:Option<&Value>,now_ms:i64)->Vec<Value>{
     let mut used=HashSet::new();
+    let catalog=catalog_candidates(home,None,now_ms);
     discover_model_candidates(&json!({"adapter":"codex","workerId":"codex"}),
         &[],usage,home,now_ms).into_iter().filter(|candidate|{
         field(candidate,"id").starts_with("default:")
@@ -204,6 +205,14 @@ pub fn codex_profile_candidates(home:&Path,usage:Option<&Value>,now_ms:i64)->Vec
         let profile=candidate.get("profile").and_then(Value::as_str)
             .unwrap_or("default");
         used.insert(profile.to_string())
+    }).map(|mut candidate|{
+        // Capability evidence, not extra selectable model/profile identities.
+        let levels:Vec<_>=catalog.iter().filter(|m|
+            field(m,"provider")==field(&candidate,"provider") &&
+            field(m,"model")==field(&candidate,"model"))
+            .filter_map(|m|m.get("reasoning").and_then(Value::as_str)).collect();
+        if !levels.is_empty(){candidate["supportedReasoningLevels"]=json!(levels);}
+        candidate
     }).collect()
 }
 

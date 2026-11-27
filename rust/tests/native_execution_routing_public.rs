@@ -55,3 +55,38 @@ fn planner_prefers_strong_reasoning_via_canonical_router_without_pinning_model()
     assert_eq!(result["selection"]["adapter"],"codex");
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn selected_route_identity_stays_fixed_while_effort_follows_task_job_agent_precedence(){
+    use agents_relay_rust2::{execution_routing::route_execution_with_choice,native_codex_thread::codex_route_arguments};
+    let root=std::env::temp_dir().join(format!("r2-effort-route-{}",std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("config.toml"),r#"model = "gpt-test"
+model_reasoning_effort = "high"
+"#).unwrap();
+    fs::write(root.join("models_cache.json"),r#"{"models":[{"slug":"gpt-test","visibility":"list","supported_in_api":true,"supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]}]}"#).unwrap();
+    let workers=[json!({"workerId":"codex","adapter":"codex","runtime":"codex","capabilities":["model","codex"]})];
+    let req=json!({"capabilities":["model"]});
+    let discover=|options:&serde_json::Value|discover_execution_routes(&workers,&req,options,&root,&root.join("policy.json"),&root.join("rules.md"),1795000000000).unwrap();
+    let opts=json!({"modelPreference":{"reasoning":"medium"},"decisionMode":"active"});
+    let discovery=discover(&opts);
+    assert_eq!(discovery.routes.len(),1,"catalog efforts do not become model identities");
+    let label=execution_choice_label(&discovery.routes[0],true);
+    let decide=|options:&serde_json::Value|route_execution_with_choice(&discovery,&req,&workers,options,Some(&label),None,&[],None);
+    let result=decide(&opts).unwrap();
+    assert_eq!(result["routing"]["model"],"gpt-test");
+    assert_eq!(result["model"]["reasoning"],"medium");
+    assert_eq!(result["routing"]["reasoning"],"medium");
+    assert_eq!(result["routing"]["decisionEvidence"]["reasoningResolution"],json!({"source":"agent","selected":"high","effective":"medium","catalogVerified":true}));
+    assert!(codex_route_arguments(&result["routing"]).unwrap().contains(&"model_reasoning_effort=\"medium\"".to_string()));
+    let mut job=opts.clone();job["taskFacts"]=json!({"routingPreferences":{"reasoning":"low"}});
+    assert_eq!(decide(&job).unwrap()["routing"]["reasoning"],"low");
+    job["routingConstraints"]=json!({"reasoning":"high"});
+    assert_eq!(decide(&job).unwrap()["routing"]["reasoning"],"high");
+    assert_eq!(decide(&json!({})).unwrap()["routing"]["reasoning"],"high");
+    assert!(decide(&json!({"modelPreference":{"reasoning":"xhigh"}})).unwrap_err().contains("does not support requested reasoning"));
+    assert!(decide(&json!({"modelPreference":{"reasoning":"invalid"}})).is_err());
+    let fallback=route_execution_with_choice(&discovery,&req,&workers,&opts,None,None,&[],None).unwrap();
+    assert_eq!(fallback["routing"]["reasoning"],"medium");
+    fs::remove_dir_all(root).unwrap();
+}

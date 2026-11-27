@@ -77,8 +77,8 @@ uses the available native Harness Skills List (for Codex, the
 before performing dependent work. If a mandatory Skill is missing or
 unreadable, the Agent must report failure rather than simulate use.
 
-`skills` remains a separate advisory name list; `model` and
-`reasoning` are advisory Router hints. No file-content SHA is used for
+`skills` remains a separate advisory name list; `model` remains an advisory
+Router hint. `reasoning` sets the turn effort after route selection. No file-content SHA is used for
 acceptance. Internal fingerprints are diagnostic/report identifiers only.
 
 ## Harness delivery
