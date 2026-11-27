@@ -267,7 +267,7 @@ pub fn dispatch_task_action_snapshot(
                     "previousExclusions":original.get("routingExclusions"),
                     "error":original.get("error")
                 }));
-                for key in ["routing","workerSelection","routingExclusions"]{
+                for key in ["routing","workerSelection","routingExclusions","providerRecoveryCount","providerRecoveryPending"]{
                     map.remove(key);
                 }
             }

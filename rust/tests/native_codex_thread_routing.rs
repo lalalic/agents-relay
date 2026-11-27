@@ -175,6 +175,21 @@ fn quota_switch_is_graph_owned_and_refuses_tool_side_effects(){
     assert!(next["executionId"].is_null());
     assert!(next["routing"].is_null(),"{next}");
     assert_eq!(next["routingExclusions"][0]["profile"],"zai");
+    assert_eq!(next["providerRecoveryCount"],1);
+    let mut one_shot=original.clone();
+    one_shot["agentName"]=json!("troubleshooter");
+    one_shot["maxAttempts"]=json!(1);
+    let safe=classify_worker_launch_failure(Some(&one_shot),
+        &json!("codex_quota_no_side_effects: rate_limit_exceeded"),"process",
+        Some("generation-1"),Some("generation-1"),true,true,false);
+    assert_eq!(safe.facts["platformFallbackSafe"],true);
+    agents_relay_rust2::native_codex_thread::claim_logical_attempt(&mut next);
+    assert_eq!(next["attempt"],1);
+    one_shot["providerRecoveryCount"]=json!(2);
+    let exhausted=classify_worker_launch_failure(Some(&one_shot),
+        &json!("codex_quota_no_side_effects: rate_limit_exceeded"),"process",
+        Some("generation-1"),Some("generation-1"),true,true,false);
+    assert_eq!(exhausted.facts["platformFallbackSafe"],false);
     let no_more=classify_worker_launch_failure(Some(&original),
         &json!("codex_quota_no_side_effects: quota"),"process",Some("generation-1"),
         Some("generation-1"),true,false,false);
@@ -216,6 +231,11 @@ fn quota_after_completed_tools_resumes_only_a_verified_terminal_thread(){
     let incompatible=json!({"type":"turn.failed","error":{"message":r#"{"type":"error","error":{"message":"Invalid 'input[3].content': array too long.","type":"invalid_request_error","param":"input[3].content","code":"array_above_max_length"},"status":400}"#}});
     assert_eq!(resumable_provider_failure(&format!("{head}{incompatible}"),THREAD).unwrap().0,"resume_context_incompatible");
     assert!(resumable_provider_failure(&format!("{head}{completed}\n{incompatible}"),THREAD).is_none());
+    let coded=json!({"type":"turn.failed","error":{"code":"rate_limit_exceeded",
+        "message":"Weekly/Monthly Limit Exhausted"}});
+    let coded_transcript=format!("{head}{coded}");
+    assert_eq!(resumable_provider_failure(&coded_transcript,THREAD).unwrap().0,"quota_exhausted");
+    assert!(quota_failure_without_effects(&coded_transcript,"").is_some());
 }
 
 #[test]
@@ -264,7 +284,7 @@ exit 1
     assert_eq!(next["routingExclusions"][0]["profile"],"zai");
     assert_eq!(next["platformFailure"]["classification"],"quota_exhausted");
     assert!(next["routing"].is_null());
-    let mut exhausted=original.clone();exhausted["attempt"]=exhausted["maxAttempts"].clone();
+    let mut exhausted=original.clone();exhausted["providerRecoveryCount"]=json!(agents_relay_rust2::native_codex_thread::MAX_PROVIDER_RECOVERIES);
     let blocked=classify_worker_launch_failure(Some(&exhausted),&json!(failure.message),"process",Some("execution-1"),Some("execution-1"),true,true,false);
     assert_eq!(blocked.facts["platformFallbackSafe"],false);
     let no_thread=classify_worker_launch_failure(Some(&json!({"adapter":"codex","agentName":"fixture"})),&json!(failure.message),"process",Some("execution-1"),Some("execution-1"),true,true,false);
@@ -337,4 +357,31 @@ fn unknown_or_incompatible_thread_is_never_resumed_and_session_path_is_only_a_hi
     assert_eq!(compatible_thread(&record,&selected),Some(NEW_THREAD));
     assert_eq!(record["threadHistory"][0]["route"]["provider"],"zai");
     fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn detached_recovery_excludes_routes_bounds_attempts_and_rejects_unknown_effects(){
+    use agents_relay_rust2::native_codex_thread::{detached_provider_recovery,turn_facts,provider_recovery_error};
+    let quota=r#"{"type":"turn.failed","error":{"code":"rate_limit_exceeded","message":"Weekly/Monthly Limit Exhausted"}}"#;
+    let error=provider_recovery_error(&turn_facts(quota),None,false,true).unwrap();
+    let mut calls=0;
+    let answer=detached_provider_recovery(
+        |excluded| Ok(json!({"routing":{"provider":"p","model":"m","profile":format!("profile-{}",excluded.len())}})),
+        |_| {calls+=1;if calls==1{Err(error.clone())}else{Ok("ok")}}).unwrap();
+    assert_eq!((answer,calls),("ok",2));
+    let mut calls=0;
+    let result=detached_provider_recovery::<()>(
+        |excluded| Ok(json!({"routing":{"provider":"p","model":"m","profile":format!("profile-{}",excluded.len())}})),
+        |_| {calls+=1;Err(error.clone())});
+    assert!(result.is_err());assert_eq!(calls,3);
+    let mut calls=0;
+    let result=detached_provider_recovery::<()>(
+        |_| Ok(json!({"routing":{"provider":"p","model":"m","profile":"p"}})),
+        |_| {calls+=1;Err(error.clone())});
+    assert!(result.is_err());assert_eq!(calls,1);
+    let pending=r#"{"type":"item.started","item":{"type":"command_execution","id":"cmd","status":"in_progress"}}"#;
+    let facts=turn_facts(&format!("{pending}\n{quota}"));
+    assert!(provider_recovery_error(&facts,None,false,true).is_none());
+    let facts=turn_facts(&format!("{quota}\n{{\"type\":\"turn.completed\"}}"));
+    assert!(provider_recovery_error(&facts,None,false,true).is_none());
 }

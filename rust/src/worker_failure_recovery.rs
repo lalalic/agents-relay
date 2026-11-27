@@ -63,21 +63,11 @@ pub fn classify_worker_launch_failure(
                 <task.get("maxAttempts").and_then(Value::as_i64).unwrap_or(0));
     let no_start_allowed=can_no_start && codex_no_start_route;
     let normalized_phase=if matches!(phase,"process"|"terminal"){"delivery"}else{phase};
-    let codex_failure=task.filter(|task|
-        field(task,"adapter")=="codex"
-        &&field(task,"agentName")!="troubleshooter")
-        .and_then(|task|{
-            if message.starts_with("codex_quota_no_side_effects:"){
-                Some("quota_exhausted")
-            }else if crate::native_codex_thread::valid_thread_id(field(task,"threadId")){
-                if message.starts_with("codex_provider_continuation_quota_exhausted:"){Some("quota_exhausted")}
-                else if message.starts_with("codex_provider_continuation_resume_context_incompatible:"){Some("resume_context_incompatible")}
-                else{None}
-            }else{None}
-        });
-    let codex_can_retry=codex_failure.is_none() || task.is_some_and(|t|
-        t.get("attempt").and_then(Value::as_u64).unwrap_or(0)
-            <t.get("maxAttempts").and_then(Value::as_u64).unwrap_or(0));
+    let codex_failure=task.filter(|task|field(task,"adapter")=="codex")
+        .and_then(|task|crate::native_codex_thread::recovery_classification(&message,field(task,"threadId")));
+    let codex_can_retry=codex_failure.is_none() || task.is_some_and(
+        |task| crate::native_codex_thread::provider_recovery_available(task)
+            && task["routing"]["decidedBy"]!="cli");
     let platform_failure=if browser {Some(classify_chat_gpt_platform_failure(error,normalized_phase))}
         else {codex_failure.map(|classification|json!({"classification":classification,
             "safeToReroute":true,"evidence":message}))};
@@ -116,18 +106,12 @@ pub fn apply_launch_failure_mutation(
         if proposal.event!="worker.no_start_failed" {
             if original.is_some_and(|v|field(v,"adapter")=="codex"){
                 if let Some(prior)=original{
-                    let mut excluded=updated.get("routingExclusions")
-                        .and_then(Value::as_array).cloned().unwrap_or_default();
                     let route=&prior["routing"];
-                    let failure=json!({"provider":route.get("provider"),
-                        "model":route.get("model"),"profile":route.get("profile"),
-                        "reason":platform.get("classification"),"at":crate::local_merge_lock::iso8601_now()});
-                    if !excluded.iter().any(|v|v.get("provider")==route.get("provider")
-                        &&v.get("profile")==route.get("profile")
-                        &&v.get("model")==route.get("model")){
-                        excluded.push(failure.clone());
+                    let failure=crate::native_codex_thread::exclude_route(updated,route,
+                        field(platform,"classification"));
+                    if status=="QUEUED" {
+                        crate::native_codex_thread::mark_provider_recovery(updated);
                     }
-                    updated["routingExclusions"]=json!(excluded);
                     updated["platformFailure"]=json!({"classification":platform.get("classification"),
                         "executionId":proposal.expected_execution_id,
                         "route":failure,"evidence":platform.get("evidence"),

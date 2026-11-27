@@ -205,3 +205,40 @@ fn planner_rejects_executable_dag_before_task_creation_and_allows_direct_task() 
     assert!(parsed["next_tasks"][0].get("agentGraph").is_none());
     drop(host);std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn manual_plan_quota_recovery_preserves_round_and_logical_attempt_budget(){
+    let (root,mut host)=fixture();
+    let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+    host.store.mutate_job("41",|mut job|{
+        let plan=&mut job["plans"][0];
+        plan["manualPlanning"]=json!(true);
+        plan["maxAttempts"]=json!(1);
+        plan["routing"]=json!({"provider":"zai","model":"glm","profile":"zai"});
+        Ok(job)
+    }).unwrap();
+    let quota="codex_quota_no_side_effects: rate_limit_exceeded";
+    finish_planner(&mut host,&graph,"41","plan-1",Some("exec-1"),Some(quota),None,false).unwrap();
+    let after=host.load("41").unwrap();
+    let plan=&after["plans"][0];
+    assert_eq!(plan["status"],"PLANNING");
+    assert_eq!(plan["attempt"],1);
+    assert_eq!(plan["maxAttempts"],1);
+    assert_eq!(plan["providerRecoveryCount"],1);
+    assert_eq!(plan["providerRecoveryPending"],true);
+    assert_eq!(plan["routingExclusions"][0]["profile"],"zai");
+    assert!(plan["executionId"].is_null());
+    assert_eq!(host.emitted[0]["type"],"planner.retry");
+    host.store.mutate_job("41",|mut job|{
+        let p=&mut job["plans"][0];
+        agents_relay_rust2::native_codex_thread::claim_logical_attempt(p);
+        p["executionId"]=json!("exec-2");
+        p["providerRecoveryCount"]=json!(2);
+        Ok(job)
+    }).unwrap();
+    finish_planner(&mut host,&graph,"41","plan-1",Some("exec-2"),Some(quota),None,false).unwrap();
+    let after=host.load("41").unwrap();
+    assert_eq!(after["plans"][0]["status"],"FAILED");
+    assert_eq!(after["plans"][0]["attempt"],1);
+    drop(host);std::fs::remove_dir_all(root).unwrap();
+}

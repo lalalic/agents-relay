@@ -625,8 +625,9 @@ impl Reconciler{
             result.job["tasks"][idx]=candidate.clone();
             result.effects.push(json!({"action":"effect.launchTask",
                 "jobId":job.get("id"),"taskId":task.get("id"),
-                "transitionKey":format!("dispatch:{}",
-                    task.get("attempt").and_then(Value::as_u64).unwrap_or(0)),
+                "transitionKey":if task["providerRecoveryCount"].as_u64().unwrap_or(0)>0 {
+                    format!("dispatch:{}:provider:{}",task["attempt"].as_u64().unwrap_or(0),task["providerRecoveryCount"])
+                } else { format!("dispatch:{}",task["attempt"].as_u64().unwrap_or(0)) },
                 "data":{"attempt":task.get("attempt"),
                     "reviewInvocationId":task.pointer("/interactiveInvocation/invocationId")}}));
         }
@@ -653,8 +654,7 @@ impl Reconciler{
             .ok_or("Task vanished")?;
         let execution_id=random_uuid();
         let next=&mut candidate["tasks"][index];
-        next["attempt"]=json!(next.get("attempt").and_then(Value::as_u64)
-            .unwrap_or(0)+1);
+        crate::native_codex_thread::claim_logical_attempt(next);
         next["executionId"]=json!(execution_id);
         for key in ["lastProgressAt","lastProgressEventAt","processExitedAt"]{
             if let Some(map)=next.as_object_mut(){map.remove(key);}

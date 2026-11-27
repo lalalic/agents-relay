@@ -176,9 +176,11 @@ context/artifact-based recovery. Only the fenced execution's observed
 
 ## One-shot Troubleshooter policy
 
-Each Troubleshooter has **one execution** (`maxAttempts=1`). A failed
-Troubleshooter is never retried, reopened, rerouted or recreated for the same
-original Task. Failure immediately enters the existing durable escalation
+Each Troubleshooter has **one logical attempt** (`maxAttempts=1`).
+A confirmed safe provider failure may switch routes within the shared bounded
+infrastructure recovery allowance, on the same Task and a new fenced execution.
+A logically failed Troubleshooter is never retried, reopened or recreated
+for the same original Task. Failure immediately enters the existing durable escalation
 contract; if no executor is configured, preserve the unresolved escalated
 state rather than claiming success. A verified fix may authorize recovering
 **the original Task**; that is not a retry of the Troubleshooter itself.

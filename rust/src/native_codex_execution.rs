@@ -159,24 +159,12 @@ pub fn execute_claimed_codex(
                         .find(|t| field(t, "id") == task_id)
                         .cloned()
                 });
-            if let Some(thread) = current
-                .as_ref()
+            let thread = current.as_ref()
                 .filter(|t| field(t, "executionId") == execution_id)
-                .map(|t| field(t, "threadId"))
-                .filter(|id| !id.is_empty())
-            {
-                if let Some((kind, reason)) = output.resumable_provider_failure(thread) {
-                    if kind != "resume_context_incompatible" || resume.is_some() {
-                        return Err(format!("codex_provider_continuation_{kind}: {reason}"));
-                    }
-                }
-            }
-            // A corrective turn may follow real effects from the first
-            // turn. Its local no-effects proof is not execution-wide proof.
-            if recovery_attempts == 0.0 {
-                if let Some(reason) = output.quota_failure_without_effects() {
-                    return Err(format!("codex_quota_no_side_effects: {reason}"));
-                }
+                .map(|t| field(t, "threadId")).filter(|id| !id.is_empty());
+            if let Some(error) = crate::native_codex_thread::provider_recovery_error(
+                &output, thread, resume.is_some(), recovery_attempts == 0.0) {
+                return Err(error);
             }
             return Err(structured.unwrap_or_else(|| {
                 if stderr.trim().is_empty() {

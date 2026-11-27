@@ -202,17 +202,19 @@ impl WorkerFailurePorts for DaemonWorkerFailurePorts {
         usage: Option<&Value>) -> Result<bool, String> {
         if let Some(task)=task.filter(|task|field(task,"adapter")=="codex") {
             let Some(home)=self.profile_home.as_ref()else{return Ok(false)};
-            let profiles=crate::model_routing::codex_profile_candidates(home,usage,now_ms());
             let Some(policy_path)=self.policy_path.as_ref()else{return Ok(false)};
             let Some(rules_path)=self.rules_path.as_ref()else{return Ok(false)};
-            let policy=crate::routing_policy::load_routing_policy(
-                &policy_path.to_string_lossy(),&rules_path.to_string_lossy());
             let current=&task["routing"];
             let mut excluded=task.get("routingExclusions").and_then(Value::as_array)
                 .cloned().unwrap_or_default();
             excluded.push(current.clone());
-            return Ok(!crate::model_routing::eligible_models(
-                &profiles,None,&policy["policy"],&excluded).is_empty());
+            if current["decidedBy"]=="cli" {return Ok(false);}
+            let requirements=task.get("workerRequirements").cloned().unwrap_or(json!({"capabilities":["model"]}));
+            let options=json!({"usage":usage,"excludedRoutes":excluded});
+            let discovery=crate::execution_routing::discover_execution_routes(
+                &[crate::worker_routing::native_codex_worker()],&requirements,&options,
+                home,policy_path,rules_path,now_ms())?;
+            return Ok(!discovery.routes.is_empty());
         }
         Ok(false)
     }
