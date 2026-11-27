@@ -492,6 +492,7 @@ impl<S:DaemonServices+'static> DashboardApiServices for DaemonDashboardBackend<S
         if self.observation_ports.is_some(){return Ok(None);}
         self.services.call(|s|s.github_usage())
     }
+    fn independent_requests(&self)->bool{matches!(&self.services,ServiceAccess::Owner(_))}
     fn event_subscription(&self)->Option<Arc<dyn Fn()->Receiver<String>+Send+Sync>>{
         let sse=self.sse.clone()?;Some(Arc::new(move||sse.subscribe()))
     }
@@ -571,7 +572,7 @@ pub fn run_daemon<S:DaemonServices+'static>(
     let (control_tx,control_rx)=std::sync::mpsc::sync_channel::<ServiceCall<S>>(64);
     let access=ServiceAccess::Owner(control_tx);
     let dashboard=Arc::new(NativeDashboardApi::new(opts,DaemonDashboardBackend::with_access(
-        config.clone(),access.clone(),observations,sse,read_only_shadow)));
+        config.clone(),access.clone(),observations,sse.clone(),read_only_shadow)));
     // This cell is local to the single scheduler thread. Pool invokes its
     // resolve/reconcile callbacks sequentially; no shared mutable host lock.
     let services=std::cell::RefCell::new(services);
@@ -599,8 +600,9 @@ pub fn run_daemon<S:DaemonServices+'static>(
         let publication_observer=publication_runtime.map(|runtime|scope.spawn(move||
             crate::dashboard_publication::observe_releases(
                 &publication_config,&runtime,&publication_stop,|event|{
-                    // Publication observation has already been persisted.
-                    // Dispatch only its notification to the canonical owner.
+                    // Already persisted release observations are SSE-only;
+                    // the production host need not wait on the scheduler.
+                    if let Some(hub)=&sse{hub.publish_event(event);return;}
                     let event=event.clone();
                     if let Err(error)=publication_services.call(move|host|host.publish_event(&event)){
                         eprintln!("warning: Dashboard publication notification: {error}");
@@ -758,6 +760,7 @@ mod dashboard_projection_tests {
         let sse=host.dashboard_sse().unwrap();
         let observations=host.dashboard_observation_ports();
         let (tx,rx)=mpsc::sync_channel::<ServiceCall<IsolatedSQLiteWriteHost>>(4);
+        let filler=tx.clone();
         let (queued,waiting)=mpsc::channel();let (release,gate)=mpsc::channel();
         let owner=std::thread::spawn(move||{
             let command=rx.recv_timeout(Duration::from_secs(3)).unwrap();
@@ -776,6 +779,17 @@ mod dashboard_projection_tests {
         });
         waiting.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(receipt.try_recv().is_err(),"mutation must await durable owner result");
+        // Saturate the actual mailbox while the first request is waiting.
+        // Another HTTP command must fail promptly, not wait on API mutex.
+        for _ in 0..4{assert!(filler.try_send(Box::new(|_|{})).is_ok());}
+        drop(filler);
+        let (busy,overload)=mpsc::channel();let other=Arc::clone(&api);
+        let rejected=std::thread::spawn(move||{
+            busy.send(other.api(DashboardRequest{method:"POST",target:"/api/job-action?id=42&action=cancel",body:b"",headers:&HashMap::new()})).unwrap();
+        });
+        let busy=overload.recv_timeout(Duration::from_secs(1)).expect("HTTP command waited on outer API mutex");
+        assert_eq!(busy.status,503);assert!(String::from_utf8_lossy(&busy.body).contains("control queue busy"));
+        rejected.join().unwrap();
         let (done,read)=mpsc::channel();let observer=Arc::clone(&api);
         let reader=std::thread::spawn(move||{
             let jobs=observer.api(DashboardRequest{method:"GET",target:"/api/jobs",body:b"",headers:&HashMap::new()});

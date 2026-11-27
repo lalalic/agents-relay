@@ -22,7 +22,7 @@ const release=(version,sha,timestamp,jobId)=>({cursor:1,event:{version:1,kind:'r
 
 test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
   let delay=5000,rows=[],history=[],releaseRequests=0,daemon,chrome,page,daemonLog='',daemonPort;
-  let upstreamSse=new Set(),browserSse=new Set(),streamConnections=0;
+  let upstreamSse=new Set(),browserSse=new Set(),streamConnections=0,omitSseFrames=false;
   const bus=createServer((req,res)=>{
     const u=new URL(req.url,'http://localhost');
     const send=data=>{if(res.destroyed)return;res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(data));};
@@ -44,7 +44,12 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
   const proxy=createServer((req,res)=>{
     const up=request({host:'127.0.0.1',port:daemonPort,path:req.url,method:req.method,headers:req.headers},incoming=>{
       res.writeHead(incoming.statusCode,incoming.headers);
-      if(req.url==='/events'){streamConnections++;upstreamSse.add(incoming);browserSse.add(res);incoming.on('close',()=>upstreamSse.delete(incoming));res.on('close',()=>browserSse.delete(res));}
+      if(req.url==='/events'){
+        streamConnections++;upstreamSse.add(incoming);browserSse.add(res);
+        incoming.on('close',()=>upstreamSse.delete(incoming));res.on('close',()=>browserSse.delete(res));
+        incoming.on('data',chunk=>{if(!omitSseFrames)res.write(chunk);});
+        incoming.on('end',()=>res.end());return;
+      }
       incoming.pipe(res);
     });
     up.on('error',()=>{if(!res.headersSent)res.writeHead(502);res.end();});
@@ -167,6 +172,27 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       await badge('91','COMPLETED');await badge('92','RUNNING');await badge('93','QUEUED');
       await page.locator('#jobs-refresh').click();
       await badge('92','RUNNING');await badge('91','COMPLETED');
+    });
+    await t.test('connected SSE with a missed lifecycle event recovers through inventory refresh',async()=>{
+      await eventually(()=>browserSse.size>0);
+      await badge('96','DRAFT');const connections=streamConnections;
+      omitSseFrames=true;
+      try{
+        const response=await page.request.post(base+'/api/job-action?id=96&action=cancel');
+        assert(response.ok(),await response.text());
+        assert.equal((await response.json()).state,'CANCELLED');
+        await badge('96','DRAFT');
+        await page.clock.fastForward(31000);
+        // The default inventory intentionally excludes CANCELLED Jobs.
+        await jobRow('96').waitFor({state:'hidden',timeout:8000});
+        assert.equal(streamConnections,connections,'must recover without SSE reconnect');
+        await page.locator('#status-filter').selectOption('CANCELLED');
+        await badge('96','CANCELLED');
+      }finally{
+        omitSseFrames=false;
+        await page.locator('#status-filter').selectOption('');
+        await jobRow('91').waitFor();
+      }
     });
     await t.test('3 jobless publication derives Git ancestry; reject unrelated/stale',async()=>{
       const good=release('2.8.1',process.env.RELAY_UI_MERGED_SHA,'2026-11-25T10:01:00Z');

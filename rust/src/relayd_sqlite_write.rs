@@ -837,8 +837,7 @@ impl IsolatedSQLiteWriteHost {
         // Original Node Dashboard bus.subscribe wraps each event in a
         // named SSE "relay" frame. A bare JSON string in the socket is
         // ignored by EventSource and cannot update live Dashboard bubbles.
-        let payload=json!({"event":event});
-        self.emit_sse(format!("event: relay\ndata: {payload}\n\n"));
+        self.sse.publish_event(&event);
     }
     fn emit_job_snapshot(&mut self,job:&Value){
         let id=field(job,"id");

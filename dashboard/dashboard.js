@@ -545,7 +545,7 @@ function retryJobsRefresh(){
   if(jobsRetryTimer!==null)return;
   jobsRetryTimer=setTimeout(()=>{jobsRetryTimer=null;if(!jobsView.hidden&&!document.hidden&&!jobsRefresh.disabled)void refresh(false);},2000);
 }
-async function refresh(force=true){const requestSequence=++jobsRequestSequence;jobsRefresh.disabled=true;jobsFeedback.textContent='';try{const params=jobsQuery(force);const discovered=await loadJSON(RELAY_PREFIX+'/api/jobs'+(params?'?'+params:''));if(requestSequence!==jobsRequestSequence)return;const result=Array.isArray(discovered)?{jobs:discovered,repositories:[...new Set(discovered.map(job=>job.repository).filter(Boolean))].sort()}:discovered;if(!result||!Array.isArray(result.jobs))throw new Error('Invalid Jobs response');jobs=mergeJobList(result.jobs).sort(compareJobs).slice(0,20);if(jobsRetryTimer!==null){clearTimeout(jobsRetryTimer);jobsRetryTimer=null;}jobRepositories=result.repositories||[];void drawRuntimeSummary();jobs.sort(compareJobs);if(selectedJob&&!jobForSelection(selectedJob)){selectedJob=null;selectedTaskId=null;}if(!selectedJob){const match=location.hash.match(/^#\/jobs\/(.+)$/);const fromHash=match?decodeURIComponent(match[1]):null;const fromRoute=jobForSelection(fromHash);selectedJob=jobSelectionKey(fromRoute||jobs[0]);}rememberSelection();rememberJobFilters();renderAll();void loadEventHistory();jobsFeedback.textContent='';}catch(error){if(requestSequence!==jobsRequestSequence)return;jobsFeedback.textContent='Refresh failed: '+error.message+'; retrying';retryJobsRefresh();if(!jobs.length)jobList.replaceChildren(element('li','error-state',text('Could not load jobs: '+error.message)));}finally{if(requestSequence===jobsRequestSequence){jobsRefresh.disabled=false;syncFilters();}}}
+async function refresh(force=true,{history=true}={}){const previousSelection=selectedJob;const requestSequence=++jobsRequestSequence;jobsRefresh.disabled=true;jobsFeedback.textContent='';try{const params=jobsQuery(force);const discovered=await loadJSON(RELAY_PREFIX+'/api/jobs'+(params?'?'+params:''));if(requestSequence!==jobsRequestSequence)return;const result=Array.isArray(discovered)?{jobs:discovered,repositories:[...new Set(discovered.map(job=>job.repository).filter(Boolean))].sort()}:discovered;if(!result||!Array.isArray(result.jobs))throw new Error('Invalid Jobs response');jobs=mergeJobList(result.jobs).sort(compareJobs).slice(0,20);applyPublicationObservations(result.jobs);if(jobsRetryTimer!==null){clearTimeout(jobsRetryTimer);jobsRetryTimer=null;}jobRepositories=result.repositories||[];void drawRuntimeSummary();jobs.sort(compareJobs);if(selectedJob&&!jobForSelection(selectedJob)){selectedJob=null;selectedTaskId=null;}if(!selectedJob){const match=location.hash.match(/^#\/jobs\/(.+)$/);const fromHash=match?decodeURIComponent(match[1]):null;const fromRoute=jobForSelection(fromHash);selectedJob=jobSelectionKey(fromRoute||jobs[0]);}rememberSelection();rememberJobFilters();renderAll();if(history||selectedJob!==previousSelection)void loadEventHistory();jobsFeedback.textContent='';}catch(error){if(requestSequence!==jobsRequestSequence)return;jobsFeedback.textContent='Refresh failed: '+error.message+'; retrying';retryJobsRefresh();if(!jobs.length)jobList.replaceChildren(element('li','error-state',text('Could not load jobs: '+error.message)));}finally{if(requestSequence===jobsRequestSequence){jobsRefresh.disabled=false;syncFilters();}}}
 function renderEventScope(){const task=eventTaskId&&selected()?.tasks?.find(candidate=>candidate.id===eventTaskId);eventsAllTasks.disabled=!task;eventsAllTasks.setAttribute('aria-pressed',String(!task));eventsScope.textContent=task?'Task '+task.id+' · newest first · 60 max':'Job-wide · newest first · 60 max';}
 function eventLabel(type){return ({'task.process.launched':'Process launched','task.started':'Worker started','task.process.exited':'Sync process exited','task.process.async_exited':'Async process exited','task.completed':'Worker completed','task.failed':'Worker failed','task.blocked':'Worker blocked','review.started':'Review started','review.approved':'Review approved','review.changes_required':'Review changes required','review.blocked':'Review blocked'})[type]||type||'Event';}
 function eventSeverity(event,level){const type=String(event?.type||'').toLowerCase(),eventLevel=String(event?.level||level||'').toLowerCase(),outcome=String(event?.outcome||event?.status||'').toLowerCase();if(eventLevel==='error'||outcome==='failed'||type.endsWith('.failed')||type==='task.failed')return 'error';if(eventLevel==='warn'||outcome==='blocked'||type.endsWith('.blocked')||type==='task.blocked'||type==='review.blocked')return 'warn';return 'normal';}
@@ -651,9 +651,19 @@ function showView(view){const isJobs=view==='jobs';const isUsage=view==='usage';
 jobsTab.addEventListener('click',()=>{location.hash=selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs';showView('jobs');});
 jobsRefresh.addEventListener('click',()=>void refresh(true));
 eventsAllTasks.addEventListener('click',()=>{eventTaskId=null;clearEvents();renderEventScope();void loadEventHistory();});
-function applyLocalJobFilters(){rememberJobFilters();renderJobList();}
+let filterRefreshTimer=null;
+function applyLocalJobFilters(debounce=false){
+  rememberJobFilters();renderJobList();
+  if(filterRefreshTimer!==null){clearTimeout(filterRefreshTimer);filterRefreshTimer=null;}
+  // The server returns a bounded, filtered inventory. Local filtering alone
+  // cannot recover Jobs excluded from the previous server response.
+  if(debounce){
+    ++jobsRequestSequence;jobsRefresh.disabled=false;
+    filterRefreshTimer=setTimeout(()=>{filterRefreshTimer=null;void refresh(false,{history:false});},250);
+  }else void refresh(false,{history:false});
+}
 repoFilter.addEventListener('change',()=>{selectedRepo=repoFilter.value;applyLocalJobFilters();});
-jobSearch.addEventListener('input',()=>{searchQuery=jobSearch.value;applyLocalJobFilters();});
+jobSearch.addEventListener('input',()=>{searchQuery=jobSearch.value;applyLocalJobFilters(true);});
 statusFilter.addEventListener('change',()=>{selectedStatus=statusFilter.value;applyLocalJobFilters();});
 selectedJobRefresh.addEventListener('click',()=>void refreshSelected());
 mobileJobsBack.addEventListener('click',()=>{location.hash='#/jobs';syncMobileJobsView();window.scrollTo({top:0,behavior:'instant'});});
@@ -781,15 +791,17 @@ function upsertFreshJob(incoming){if(!incoming)return;const normalized=normalize
 // before the cache has refreshed. Poll only visible publication metadata,
 // never replace newer lifecycle/task snapshots or initiate history reads.
 function applyPublicationObservations(incoming){let changed=false;for(const snapshot of incoming){const job=jobs.find(candidate=>jobSelectionKey(candidate)===jobSelectionKey(snapshot));if(!job||!isFreshEnough(snapshot.publicationObservedAt,job.publicationObservedAt)||snapshot.publicationObservedAt===job.publicationObservedAt)continue;for(const key of ['publication','publicationFailure','publicationObservedAt'])job[key]=snapshot[key]??null;changed=true;}return changed;}
-let publicationRefreshPending=false;
-async function refreshVisiblePublications(){if(publicationRefreshPending||jobsView.hidden||document.hidden||!jobs.length)return;publicationRefreshPending=true;try{const params=jobsQuery(false);const result=await loadJSON(RELAY_PREFIX+'/api/jobs'+(params?'?'+params:''));const incoming=Array.isArray(result)?result:result.jobs;if(Array.isArray(incoming)&&applyPublicationObservations(incoming))renderAll();}catch{/* Keep the last verified publication observation. */}finally{publicationRefreshPending=false;}}
 let runtimeSummaryTimer=null;
 function scheduleRuntimeSummary(){if(runtimeSummaryTimer!==null)return;runtimeSummaryTimer=setTimeout(()=>{runtimeSummaryTimer=null;void drawRuntimeSummary();},250);}
 const stream=new EventSource(RELAY_PREFIX+'/events');
 // Reconnect can miss messages during an SSE outage; fill the gap from the
 // bounded authoritative history without resetting newer live events.
 let streamOpened=false;
-stream.addEventListener('open',()=>{if(streamOpened)void refresh(false);streamOpened=true;if(selected())void loadEventHistory();});
+stream.addEventListener('open',()=>{
+  // A connection can miss committed state even before its first open.
+  if(streamOpened||jobs.length)void refresh(false);
+  streamOpened=true;if(selected())void loadEventHistory();
+});
 stream.onmessage=message=>{const payload=parseMessage(message);if(payload?.job){upsertFreshJob({...payload.job,...payload.jobView});renderAll();scheduleRuntimeSummary();}};
 stream.addEventListener('relay',message=>{const payload=parseMessage(message);if(payload?.job)upsertFreshJob({...payload.job,...payload.jobView});else if(payload?.statePatch)applyStatePatch(payload.statePatch);if(payload?.statePatch)void refreshJobSnapshot(payload.statePatch.jobId,payload.statePatch.repository);if(payload?.event){addEvent(payload.event);const event=payload.event;if(event.type==='package.published'||event.type==='package.publish_failed'){const jobId=event.job_id||event.data?.jobId,repository=event.data?.repository||event.repository||null;if(jobId&&(!event.job_id||!event.data?.jobId||event.job_id===event.data.jobId))void refreshJobSnapshot(jobId,repository);}}renderAll();scheduleRuntimeSummary();});
 if(location.hash==='#/usage')showView('usage');else if(graphFromHash())showView('graphs');else if(location.hash==='#/execution-router-rules')showView('rules');else if(location.hash==='#/troubleshooter-qa')showView('qa');else showView('jobs');void refresh(false);
@@ -798,8 +810,9 @@ setInterval(()=>{if(location.hash==='#/usage')void drawUsage();},30000);
 setInterval(()=>void refreshVersion(),30000);
 setInterval(()=>{
   if(jobsView.hidden||document.hidden)return;
-  if(stream.readyState!==EventSource.OPEN||!jobs.length){if(!jobsRefresh.disabled)void refresh(false);}
-  else void refreshVisiblePublications();
+  // SSE is only a notification path. Periodically recover the entire
+  // authoritative Job inventory even when the stream looks connected.
+  if(!jobsRefresh.disabled)void refresh(false,{history:false});
   void drawRuntimeSummary();
 },30000);
 async function refreshSelected(){const job=selected();if(!job){await refresh();return;}selectedJobRefresh.disabled=true;try{const params=new URLSearchParams({id:job.id,repo:job.repository});const updated=await loadJSON(RELAY_PREFIX+'/api/job?'+params.toString());upsertFreshJob(updated);selectedJob=jobSelectionKey(updated);rememberSelection();renderAll();await loadEventHistory();}catch(error){jobsFeedback.textContent='Selected job refresh failed: '+error.message;}finally{selectedJobRefresh.disabled=false;}}

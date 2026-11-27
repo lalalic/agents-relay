@@ -402,8 +402,9 @@ fn handle_connection<B: DashboardBackend>(
         let mobile = target == "/api/mobile/events";
         // A disconnected/slow browser cannot retain an SSE writer forever.
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nX-Content-Type-Options: nosniff\r\n\r\n: connected\n\n")?;
+        // Register before exposing an open stream to the browser.
         let receiver = backend.subscribe_events();
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nX-Content-Type-Options: nosniff\r\n\r\n: connected\n\n")?;
         let mut last_heartbeat = Instant::now();
         while !shutdown.load(Ordering::Relaxed) {
             match receiver.recv_timeout(Duration::from_millis(200)) {

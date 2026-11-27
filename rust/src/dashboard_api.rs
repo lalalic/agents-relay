@@ -126,6 +126,9 @@ pub trait DashboardApiServices: Send + 'static {
     fn account_usage(&mut self) -> Result<Value, String>;
     fn routing_usage(&mut self) -> Result<Value,String>{self.account_usage()}
     fn github_usage(&mut self) -> Result<Option<Value>, String>;
+    /// A request-local facade may submit mutations through a single owner.
+    /// Never clone a mutable standalone/fixture host as a second owner.
+    fn independent_requests(&self)->bool{false}
     fn event_subscription(&self)->Option<Arc<dyn Fn()->Receiver<String>+Send+Sync>>{None}
     fn subscribe_events(&mut self) -> Receiver<String>;
     /// Host-neutral hook for the existing server-side QA endpoint.
@@ -151,6 +154,7 @@ pub struct NativeDashboardApi<S: DashboardApiServices> {
     services: Mutex<S>,
     observations: Mutex<Option<S>>,
     event_subscription:Option<Arc<dyn Fn()->Receiver<String>+Send+Sync>>,
+    independent_requests:bool,
     options: DashboardApiOptions,
     last_known_jobs: Mutex<Option<Vec<Value>>>,
     webhook_deliveries: Mutex<DeliveryDeduper>,
@@ -159,9 +163,10 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
     pub fn new(options: DashboardApiOptions, services: S) -> Self {
         let observations=services.detached_observations();
         let event_subscription=services.event_subscription();
+        let independent_requests=services.independent_requests();
         Self {
             options,
-            observations:Mutex::new(observations),event_subscription,
+            observations:Mutex::new(observations),event_subscription,independent_requests,
             services: Mutex::new(services),
             last_known_jobs: Mutex::new(None),
             webhook_deliveries: Mutex::new(DeliveryDeduper::new(
@@ -643,6 +648,9 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
         match response {
             Ok(response) => response,
             Err(error) => {
+                if matches!(error.as_str(),"Daemon control queue busy; retry later"|"Daemon service unavailable"|"Daemon control receipt unavailable"){
+                    return text_response(503,error);
+                }
                 let status = match path {
                     "/api/job" => 404,
                     "/api/usage" | "/api/troubleshooter-qa" => 503,
@@ -662,15 +670,19 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
 }
 impl<S: DashboardApiServices> DashboardBackend for NativeDashboardApi<S> {
     fn api(&self, req: DashboardRequest<'_>) -> DashboardResponse {
-        // Only observation endpoints may bypass the lifecycle serialization
-        // lock. Clone the independent ports, then drop the template lock
-        // BEFORE executing the same validated route.
+        // Clone the request facade and drop the template lock before routing.
+        // Mutable standalone hosts retain their original serialization.
         let parsed=Url::parse(&format!("http://127.0.0.1{}",req.target)).ok();
         let path=parsed.as_ref().map(Url::path).unwrap_or("");
-        if matches!((req.method,path),
+        // Q&A and routing rule reads/writes retain their existing serialized
+        // file access. Canonical lifecycle commands use independent facades.
+        let owner_command=self.independent_requests && req.method=="POST" && matches!(path,
+            "/api/control"|"/api/task-command"|"/api/job-action"|"/api/task-action"|
+            "/api/job-state"|"/api/task-state"|"/api/mobile/job-cancel");
+        if owner_command || matches!((req.method,path),
             ("GET","/api/events"|"/api/usage"|"/api/decision-audit"|"/api/jobs"|"/api/job"|
                 "/api/runtime-summary"|"/api/status"|"/api/mobile/jobs"|"/api/mobile/job-tasks"|"/api/mobile/job-activity"|
-                "/api/graphs"|"/api/graph-symbol"|"/api/troubleshooter-qa"|"/api/execution-router-rules")
+                "/api/graphs"|"/api/graph-symbol")
             |("GET"|"POST","/api/execution-report")
             |("POST","/api/router-test")){
             let detached=self.observations.lock().ok().and_then(|template|
