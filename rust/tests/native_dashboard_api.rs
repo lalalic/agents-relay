@@ -132,9 +132,13 @@ impl DashboardApiServices for FixtureServices {
         json!({"limited":false,"cooldownUntil":null})
     }
     fn account_usage(&mut self) -> Result<Value, String> {
-        Ok(json!({"providers":[]}))
+        Ok(json!({"providers":[],"credits":[
+            {"id":"deepseek","label":"DeepSeek","credits":{"available":true}},
+            {"id":"openrouter","label":"OpenRouter","credits":{"available":true}}
+        ],"githubEffective":{"remaining":1},"githubStatus":{"calls":1}}))
     }
     fn github_usage(&mut self) -> Result<Option<Value>, String> {
+        self.log("github_usage", json!({}));
         Ok(None)
     }
     fn subscribe_events(&mut self) -> Receiver<String> {
@@ -155,6 +159,8 @@ fn fixture() -> (
         graph_directory: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
         router_rules_path: std::env::temp_dir()
             .join(format!("rust2-dashboard-api-rules-{}", std::process::id())),
+        troubleshooter_qa_path: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../skills/agents-relay/troubleshooter-qa.md"),
         webhook_secret: Some("local-fixture-secret".into()),
         webhook_repositories: HashSet::from(["toy/repo".into()]),
         webhook_job_id: None,
@@ -244,6 +250,13 @@ fn dynamic_dashboard_routes_converge_on_service_backend() {
         data(call(&backend, "GET", "/api/usage", None))["providers"],
         json!([])
     );
+    let usage=data(call(&backend,"GET","/api/usage",None));
+    assert_eq!(usage["credits"].as_array().unwrap().len(),1);
+    assert_eq!(usage["credits"][0]["id"],"openrouter");
+    assert!(usage.get("githubEffective").is_none());
+    assert!(usage.get("githubStatus").is_none());
+    assert!(!calls.lock().unwrap().iter().any(|row|row["method"]=="github_usage"),
+        "Dashboard Usage must not collect GitHub delivery/runtime telemetry");
     assert_eq!(
         data(call(&backend, "GET", "/api/decision-audit", None))
             .as_array()
@@ -424,6 +437,8 @@ fn mobile_http_cross_repo_collision_fails_closed_before_event_history_or_mutatio
         graph_directory:PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
         router_rules_path:std::env::temp_dir().join(format!(
             "rust2-mobile-collision-{}",std::process::id())),
+        troubleshooter_qa_path:PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../skills/agents-relay/troubleshooter-qa.md"),
         webhook_secret:None,webhook_repositories:HashSet::new(),
         webhook_job_id:None,
     };
@@ -438,6 +453,50 @@ fn mobile_http_cross_repo_collision_fails_closed_before_event_history_or_mutatio
     assert!(!log.iter().any(|row|matches!(row["method"].as_str(),
         Some("events"|"job_action"))),
         "ambiguous ID cannot access another repository's events or cancellation");
+}
+
+#[test]
+fn dashboard_qa_loads_saves_and_reloads_the_shared_skill_file(){
+    let path=std::env::temp_dir().join(format!("relay-dashboard-qa-{}-{}.md",
+        std::process::id(),std::time::SystemTime::now().duration_since(
+            std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::write(&path,"# Isolated guidance\n\nOriginal.\n").unwrap();
+    let backend=NativeDashboardApi::new(DashboardApiOptions{
+        graph_directory:PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
+        router_rules_path:std::env::temp_dir().join("unused-qa-test-rules"),
+        troubleshooter_qa_path:path.clone(),
+        webhook_secret:None,webhook_repositories:HashSet::new(),webhook_job_id:None,
+    },FixtureServices::default());
+    let get=|method:&str,body:&[u8],headers:&HashMap<String,String>|backend.api(
+        DashboardRequest{method,target:"/api/troubleshooter-qa",body,headers});
+    let empty=HashMap::new();
+    let loaded=get("GET",&[],&empty);
+    assert_eq!(loaded.status,200);
+    let loaded:Value=serde_json::from_slice(&loaded.body).unwrap();
+    assert_eq!(loaded["text"],"# Isolated guidance\n\nOriginal.\n");
+    let revised="# Isolated guidance\n\nSaved from Dashboard.\n";
+    let mut headers=HashMap::new();
+    headers.insert("content-type".into(),"application/json".into());
+    let saved=get("PUT",json!({"text":revised,"hash":loaded["hash"]})
+        .to_string().as_bytes(),&headers);
+    assert_eq!(saved.status,200);
+    let reloaded=get("GET",&[],&empty);
+    let reloaded:Value=serde_json::from_slice(&reloaded.body).unwrap();
+    assert_eq!(reloaded["text"],revised);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(),revised);
+    assert_eq!(get("POST",&[],&empty).status,405);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn dashboard_default_qa_path_is_the_file_pinned_troubleshooter_reads(){
+    let skill=PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../skills/agents-relay");
+    assert_eq!(agents_relay_rust2::relayd::troubleshooter_qa_path(),
+        skill.join("troubleshooter-qa.md"));
+    let agent=std::fs::read_to_string(skill.join("agents/troubleshooter.agent.md")).unwrap();
+    assert!(agent.contains("Read `troubleshooter-qa.md` beside the Prompt-pinned Relay Skill"));
+    assert!(agent.contains("guidance only, below current evidence and authoritative contracts"));
 }
 fn hmac_sha256(secret: &str, body: &[u8]) -> String {
     let mut key = [0u8; 64];
@@ -597,6 +656,8 @@ fn historical_execution_report_browser() {
     let options=DashboardApiOptions {
         graph_directory:PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
         router_rules_path:std::env::temp_dir().join("unused-report-browser-rules"),
+        troubleshooter_qa_path:PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../skills/agents-relay/troubleshooter-qa.md"),
         webhook_secret:None,webhook_repositories:HashSet::new(),webhook_job_id:None,
     };
     let backend=Arc::new(NativeDashboardApi::new(options,services));

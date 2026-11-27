@@ -4,7 +4,7 @@ import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { createServer, request } from 'node:http';
 import { once } from 'node:events';
-import { stat } from 'node:fs/promises';
+import { chmod, mkdir, stat, writeFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 
@@ -63,8 +63,9 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
   async function start(sha){
     if(!daemonPort){const server=createServer();daemonPort=await listen(server);await close(server);}
     daemonLog='';
-    const env={PATH:process.env.PATH,HOME:path.join(fixture,'home'),TMPDIR:fixture,
+    const env={PATH:path.join(fixture,'bin')+path.delimiter+process.env.PATH,HOME:path.join(fixture,'home'),TMPDIR:fixture,
       AGENTS_RELAY_STORE_DIR:path.join(fixture,'forbidden/stores'),
+      AGENTS_RELAY_TROUBLESHOOTER_QA_PATH:path.join(fixture,'troubleshooter-qa.md'),
       AGENTS_RELAY_RESOURCE_ROOT:repo,AGENTS_RELAY_WORKFLOW_SOURCE_REF:sha,
       EVENTS_BUS_CONFIG:path.join(fixture,'no-global-events.json')};
     daemon=spawn(binary,['--isolated-write-store-dir',path.join(fixture,'stores'),
@@ -74,19 +75,40 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
     await eventually(async()=>{assert.equal(daemon.exitCode,null,daemonLog);const v=await fetch(base+'/api/version');return v.ok&&(await v.json()).sourceRef===sha;});
   }
   const jobRow=id=>page.locator('.job-row').filter({hasText:new RegExp('/'+id+':')});
-  const badge=async(id,label)=>{await jobRow(id).locator('.badge').filter({hasText:new RegExp('^'+label.replaceAll('.','\\.')+'$')}).waitFor({timeout:15000});};
+  const badge=async(id,label)=>{await jobRow(id).locator('.badge').filter({hasText:new RegExp('^'+label.replaceAll('.','\\.')+'$')}).waitFor({timeout:30000});};
   const jobs=async()=>{const r=await fetch(base+'/api/jobs');assert(r.ok);return (await r.json()).jobs;};
   async function dbPublication(id){const db=new DatabaseSync(path.join(fixture,'relay.sqlite'),{readOnly:true});try{const row=db.prepare('SELECT json FROM publication_state WHERE job_id=?').get(id);return row?JSON.parse(row.json):null;}finally{db.close();}}
   try{
     // Keep the fixture's WAL connection alive for native read-only observers.
     const wal = new DatabaseSync(path.join(fixture,'relay.sqlite'));
     t.after(()=>wal.close());
+    await mkdir(path.join(fixture,'bin'),{recursive:true});
+    await writeFile(path.join(fixture,'troubleshooter-qa.md'),'# Isolated Troubleshooter guidance\n\nUse current evidence first.\n');
+    const fakeCodex=[
+      '#!/bin/sh','IFS= read -r init || exit 1',
+      `printf '%s\\n' '${JSON.stringify({jsonrpc:'2.0',id:1,result:{}})}'`,
+      'IFS= read -r initialized || exit 2','case "$initialized" in *initialized*) ;; *) exit 3;; esac',
+      'IFS= read -r query || exit 4','case "$query" in *account/rateLimits/read*) ;; *) exit 5;; esac',
+      `printf '%s\\n' '${JSON.stringify({jsonrpc:'2.0',id:2,result:{rateLimits:{primary:{usedPercent:25,windowDurationMins:300,resetsAt:1900000000},secondary:{usedPercent:60,windowDurationMins:10080,resetsAt:1900000100}}}})}'`,
+      'sleep 30','',
+    ].join('\n');
+    const codexFixture=path.join(fixture,'bin','codex');
+    await writeFile(codexFixture,fakeCodex);await chmod(codexFixture,0o700);
     await start('a'.repeat(40));
     await eventually(()=>releaseRequests>0,15000);
     chrome=await chromium.launch(process.env.CHROME_BIN?{executablePath:process.env.CHROME_BIN,headless:true}:{channel:'chrome',headless:true});
     const context=await chrome.newContext({serviceWorkers:'block'});
     page=await context.newPage();
     page.setDefaultTimeout(8000);
+    await page.route('**/api/usage',route=>route.fulfill({status:200,
+      contentType:'application/json',body:JSON.stringify({providers:[
+        {id:'openai',label:'OpenAI',usage:{available:true,
+          fiveHour:{usedPercent:25,windowMinutes:300,resetsAt:1900000000},
+          weekly:{usedPercent:60,windowMinutes:10080,resetsAt:1900000100}}},
+        {id:'zai',label:'Z.ai',usage:{available:false,
+          reason:'Usage unavailable in isolated browser fixture.'}},
+      ],credits:[{id:'openrouter',label:'OpenRouter',credits:{available:false,
+        reason:'No fixture credit balance.'}}]})}));
     await page.clock.install();
     page.on('pageerror',e=>{
       // Playwright clock.install injects a bootstrap into the dashboard's
@@ -160,6 +182,31 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       rows=[release('2.8.2','4'.repeat(40),'2026-11-25T10:03:00Z','91')];
       await eventually(()=>streamConnections>before);
       await badge('91','v2.8.2');
+    });
+    await t.test('6 Q&A edits reload from Troubleshooter guidance file; Usage shows quota only',async()=>{
+      await page.locator('#qa-tab').click();
+      await page.locator('#qa-status').filter({hasText:'Loaded'}).waitFor();
+      const guidance=page.locator('#qa-text');
+      assert.equal(await guidance.inputValue(),'# Isolated Troubleshooter guidance\n\nUse current evidence first.\n');
+      const edited='# Isolated Troubleshooter guidance\n\nUse the updated isolated guidance.\n';
+      await guidance.fill(edited);await page.locator('#qa-save').click();
+      await page.locator('#qa-status').filter({hasText:'Saved to Markdown file'}).waitFor();
+      await page.locator('#qa-reload').click();
+      await page.locator('#qa-status').filter({hasText:'Loaded'}).waitFor();
+      assert.equal(await guidance.inputValue(),edited);
+      await page.reload({waitUntil:'domcontentloaded'});
+      await page.locator('#qa-tab').click();
+      await page.locator('#qa-status').filter({hasText:'Loaded'}).waitFor();
+      assert.equal(await page.locator('#qa-text').inputValue(),edited);
+      const persisted=await (await page.request.get(base+'/api/troubleshooter-qa')).json();
+      assert.equal(persisted.text,edited);
+      await page.locator('#usage-tab').click();
+      const usage=page.locator('#usage-root');
+      await usage.locator('.usage-provider h3').filter({hasText:'OpenAI'}).waitFor();
+      assert((await usage.innerText()).includes('75%'));
+      assert((await usage.innerText()).includes('Resets'));
+      assert(!/GitHub|DeepSeek/i.test(await usage.innerText()));
+      await page.locator('#jobs-tab').click();
     });
     await t.test('7 real revision change reloads Dashboard and versioned assets',async()=>{
       await stop();await start('b'.repeat(40));

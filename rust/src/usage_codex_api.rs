@@ -10,7 +10,7 @@ use crate::{
 use serde_json::{json,Value};
 use std::{
     io::{BufRead,BufReader,Write},
-    sync::Arc,
+    sync::{mpsc,Arc},
     thread,
     time::{Duration,Instant},
 };
@@ -70,39 +70,83 @@ impl CodexApiUsageReader {
             return unavailable("Codex app-server stdout unavailable.");
         };
         let started=Instant::now();
+        let (replies,received)=mpsc::channel();
+        if thread::Builder::new().name("relay-codex-usage-reader".into())
+            .spawn(move||{
+                for line in BufReader::new(stdout).lines().flatten(){
+                    if let Ok(reply)=serde_json::from_str::<Value>(&line){
+                        if replies.send(reply).is_err(){break;}
+                    }
+                }
+            }).is_err(){
+            child.terminate(TerminationReason::Cancel,None);
+            return unavailable("Codex app-server stdout reader could not be started.");
+        }
         let initialize=json!({"jsonrpc":"2.0","id":1,"method":"initialize",
             "params":{"clientInfo":{"name":"agents-relay","version":"1"},
                 "capabilities":{}}});
-        // The async Node reader sends initialize immediately and the rate
-        // limit query after 100 ms, preserving app-server handshake ordering.
         if writeln!(stdin,"{initialize}").is_err(){
             child.terminate(TerminationReason::Cancel,None);
-            return unavailable("Codex app-server rate-limit request timed out.");
+            return unavailable("Codex app-server initialization failed.");
         }
-        thread::sleep(Duration::from_millis(100));
+        let timeout=Duration::from_millis(10_000);
+        loop{
+            let remaining=timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero(){
+                child.terminate(TerminationReason::Cancel,None);
+                return unavailable("Codex app-server initialization timed out.");
+            }
+            match received.recv_timeout(remaining){
+                Ok(reply) if reply.get("id").and_then(Value::as_f64)==Some(1.0)=>{
+                    if reply.get("error").is_some()||reply.get("result").is_none(){
+                        child.terminate(TerminationReason::Cancel,None);
+                        return unavailable("Codex app-server initialization failed.");
+                    }
+                    break;
+                }
+                Ok(_)=>continue,
+                Err(mpsc::RecvTimeoutError::Timeout)=>{
+                    child.terminate(TerminationReason::Cancel,None);
+                    return unavailable("Codex app-server initialization timed out.");
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected)=>{
+                    child.terminate(TerminationReason::Cancel,None);
+                    return unavailable("Codex app-server closed during initialization.");
+                }
+            }
+        }
+        // app-server accepts account methods only after this JSON-RPC
+        // initialization notification. Waiting for the initialize reply also
+        // keeps the quota request in protocol order instead of relying on a
+        // timing delay.
+        if writeln!(stdin,"{}",json!({"jsonrpc":"2.0","method":"initialized","params":{}})).is_err(){
+            child.terminate(TerminationReason::Cancel,None);
+            return unavailable("Codex app-server initialization failed.");
+        }
         let query=json!({"jsonrpc":"2.0","id":2,
             "method":"account/rateLimits/read","params":{}});
         if writeln!(stdin,"{query}").is_err(){
             child.terminate(TerminationReason::Cancel,None);
             return unavailable("Codex app-server rate-limit request timed out.");
         }
-        drop(stdin);
-        for line in BufReader::new(stdout).lines(){
-            if let Ok(line)=line{
-                if let Ok(reply)=serde_json::from_str::<Value>(&line){
-                    if reply.get("id").and_then(Value::as_f64)==Some(2.0){
-                        let mut snapshot=codex_app_server_usage_response(&reply);
-                        snapshot["generatedAt"]=json!(generated_at);
-                        child.terminate(TerminationReason::Cancel,None);
-                        return snapshot;
-                    }
+        loop{
+            let remaining=timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero(){break;}
+            match received.recv_timeout(remaining){
+                Ok(reply) if reply.get("id").and_then(Value::as_f64)==Some(2.0)=>{
+                    let mut snapshot=codex_app_server_usage_response(&reply);
+                    snapshot["generatedAt"]=json!(generated_at);
+                    child.terminate(TerminationReason::Cancel,None);
+                    return snapshot;
+                }
+                Ok(_)=>continue,
+                Err(mpsc::RecvTimeoutError::Timeout)=>break,
+                Err(mpsc::RecvTimeoutError::Disconnected)=>{
+                    child.terminate(TerminationReason::Cancel,None);
+                    return unavailable("Codex app-server closed before returning rate limits.");
                 }
             }
         }
-        // EOF without id=2 does not mean success. Node still waits for its
-        // bounded timeout; the eventual observation remains unavailable.
-        let remaining=Duration::from_millis(10_000).saturating_sub(started.elapsed());
-        if !remaining.is_zero(){thread::sleep(remaining);}
         child.terminate(TerminationReason::Cancel,None);
         unavailable("Codex app-server rate-limit request timed out.")
     }

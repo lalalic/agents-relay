@@ -40,6 +40,14 @@ pub const DEFAULT_DASHBOARD_PORT:u16=8787;
 pub const DEFAULT_CONCURRENCY:usize=4;
 pub const DEFAULT_RECONCILE_INTERVAL:u64=300_000;
 pub fn daemon_help()->&'static str{DAEMON_HELP}
+pub fn troubleshooter_qa_path()->PathBuf{
+    // The default is adjacent to the same packaged Skill used to assemble a
+    // Troubleshooter prompt; tests and isolated hosts can provide a fixture.
+    std::env::var_os("AGENTS_RELAY_TROUBLESHOOTER_QA_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(||Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../skills/agents-relay/troubleshooter-qa.md"))
+}
 #[derive(Clone,Debug)]
 pub struct DaemonConfig{
     pub workspace_root:PathBuf,
@@ -504,6 +512,7 @@ pub fn run_daemon<S:DaemonServices+'static>(
     let opts=DashboardApiOptions{
         graph_directory:config.graph_directory.clone(),
         router_rules_path:config.router_rules_path.clone(),
+        troubleshooter_qa_path:troubleshooter_qa_path(),
         webhook_secret:None,webhook_repositories:HashSet::new(),
         webhook_job_id:None,
     };
@@ -697,7 +706,8 @@ mod dashboard_projection_tests {
         let mut host=IsolatedSQLiteWriteHost::new(config.clone());
         host.set_loopback_event_history_api(&format!("http://{address}/")).unwrap();
         let opts=DashboardApiOptions{graph_directory:config.graph_directory.clone(),
-            router_rules_path:config.router_rules_path.clone(),webhook_secret:None,
+            router_rules_path:config.router_rules_path.clone(),
+            troubleshooter_qa_path:troubleshooter_qa_path(),webhook_secret:None,
             webhook_repositories:HashSet::new(),webhook_job_id:None};
         let host=Arc::new(Mutex::new(host));
         let mut backend=DaemonDashboardBackend::new(config,Arc::clone(&host),false);

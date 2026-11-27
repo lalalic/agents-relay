@@ -25,6 +25,18 @@ pub fn codex_and_zai_usage_registry(
         Some(Box::new(BrowserWorkspaceUsageReader::new(None,None))),
     )
 }
+/// Dashboard Usage is presentation-only observation and must not collect
+/// delivery-side GitHub telemetry or DeepSeek credits before filtering output.
+pub fn dashboard_usage_registry()->UsageRegistry{
+    let optional=|key:&str|std::env::var(key).ok().is_some_and(|v|!v.is_empty());
+    UsageRegistry::new(
+        Box::new(CodexApiUsageReader::new()),
+        Box::new(ZaiUsageReader::new(None)),
+        None,
+        optional("OPENROUTER_API_KEY").then(||Box::new(OpenRouterCreditReader::new(None)) as Box<dyn UsageReader>),
+        Some(Box::new(BrowserWorkspaceUsageReader::new(None,None))),
+    )
+}
 
 use chrono::{DateTime,Utc};
 use serde_json::{json,Value};
@@ -150,8 +162,9 @@ pub fn codex_app_server_usage_response(response:&Value)->Value{
         let window=limits.get(name)?;
         let used=percent(window.get("usedPercent"))?;
         let duration=minutes(window.get("windowDurationMins"))?;
+        let resets=epoch_seconds(window.get("resetsAt"))?;
         Some(json!({"usedPercent":used,"windowMinutes":duration,
-            "resetsAt":epoch_seconds(window.get("resetsAt"))}))
+            "resetsAt":resets}))
     };
     let mut windows=Vec::new();
     if let Some(w)=extract("primary"){windows.push(w);}
