@@ -70,11 +70,11 @@ impl DaemonServices for ReadOnlySQLiteHost {
     fn account_usage(&mut self)->Result<Value,String>{Self::rejected("account_usage")}
     fn github_usage(&mut self)->Result<Option<Value>,String>{Ok(None)}
     fn status(&mut self)->Value{
-        match inventory_from_local(&self.config,false){
-            Ok(jobs)=>json!({
+        match crate::relay_store_discovery::dashboard_job_count(&self.config.store_directory,&self.config.repositories){
+            Ok(count)=>json!({
                 "runtime":"native-rust",
                 "mode":if self.shadow_live{"shadow-live-read-only"}else{"read-only"},
-                "productionReady":false,"jobCount":jobs.len(),
+                "productionReady":false,"jobCount":count,
                 "reason":"No Worker effect, Graph mutation or event transport bound",
             }),
             Err(error)=>json!({

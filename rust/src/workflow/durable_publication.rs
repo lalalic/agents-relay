@@ -45,7 +45,7 @@ pub struct DurableWorkflowPublication<'a> {
 }
 impl<'a> DurableWorkflowPublication<'a> {
     pub fn new(db: &'a Connection) -> Result<Self, String> {
-        db.execute_batch("CREATE TABLE IF NOT EXISTS workflow_event_outbox (event_key TEXT PRIMARY KEY,event_id TEXT NOT NULL,payload_json TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','published')),created_at TEXT NOT NULL,published_at TEXT)")
+        db.execute_batch("CREATE TABLE IF NOT EXISTS workflow_event_outbox (event_key TEXT PRIMARY KEY,event_id TEXT NOT NULL,payload_json TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','published')),created_at TEXT NOT NULL,published_at TEXT); CREATE INDEX IF NOT EXISTS workflow_event_pending ON workflow_event_outbox(created_at,event_key) WHERE state='pending'")
             .map_err(|error|error.to_string())?;
         Ok(Self { db })
     }

@@ -1021,3 +1021,43 @@ fn coordinator_with_historical_failed_plan_completes_through_live_graph_guard(){
     assert_eq!(completed["plans"][0]["status"],"FAILED");
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn background_publication_retries_same_durable_event_after_missing_pong(){
+    use agents_relay_rust2::events::event_for;
+    use std::{io::{BufRead,BufReader,Read,Write},net::{TcpListener,TcpStream},sync::mpsc,thread,time::{Duration,Instant}};
+    let (root,config)=fixture();let db=root.join("relay.sqlite");
+    let store=SQLiteRelayStore::open(&db,Some("17")).unwrap();store.save_job(&job()).unwrap();
+    let listener=TcpListener::bind("127.0.0.1:0").unwrap();let url=format!("nats://{}/",listener.local_addr().unwrap());
+    let (wire,receipts)=mpsc::channel();let (release,gate)=mpsc::channel();
+    let server=thread::spawn(move||{
+        fn connect(listener:&TcpListener)->(TcpStream,BufReader<TcpStream>){
+            let (mut stream,_)=listener.accept().unwrap();stream.set_read_timeout(Some(Duration::from_secs(4))).unwrap();
+            stream.write_all(b"INFO {}\r\n").unwrap();let mut reader=BufReader::new(stream.try_clone().unwrap());
+            let mut line=String::new();reader.read_line(&mut line).unwrap();assert!(line.starts_with("CONNECT "));(stream,reader)
+        }
+        fn event(reader:&mut BufReader<TcpStream>)->Value{
+            let mut line=String::new();reader.read_line(&mut line).unwrap();assert!(line.starts_with("PUB "),"{line}");
+            let len:usize=line.split_whitespace().last().unwrap().parse().unwrap();let mut body=vec![0;len+2];reader.read_exact(&mut body).unwrap();
+            line.clear();reader.read_line(&mut line).unwrap();assert_eq!(line,"PING\r\n");serde_json::from_slice(&body[..len]).unwrap()
+        }
+        let (sub,mut sub_reader)=connect(&listener);let mut line=String::new();sub_reader.read_line(&mut line).unwrap();assert!(line.starts_with("SUB "));
+        let (first,mut reader)=connect(&listener);wire.send(event(&mut reader)).unwrap();
+        // Deliberately never send a PONG. Publisher must keep row pending.
+        thread::sleep(Duration::from_millis(1250));drop(reader);drop(first);
+        let (mut second,mut reader)=connect(&listener);wire.send(event(&mut reader)).unwrap();
+        gate.recv_timeout(Duration::from_secs(2)).unwrap();second.write_all(b"PONG\r\n").unwrap();
+        thread::sleep(Duration::from_millis(100));drop(sub);
+    });
+    let mut host=IsolatedSQLiteWriteHost::new_live(config);host.set_loopback_model_nats(&url).unwrap();host.start_background_event_io().unwrap();
+    let prior=host.load("17").unwrap();let mut next=prior.clone();next["state"]=json!("ACTIVE");host.save_exact("17",&prior,&next).unwrap();
+    let event=event_for("17","",None,"job.started","info","committed graph transition",None,None,None);
+    let key=format!("daemon-graph/17/job.started/{}",event["event_id"].as_str().unwrap());
+    let started=Instant::now();host.publish_event(&event).unwrap();assert!(started.elapsed()<Duration::from_millis(250));
+    let state=||store.db.query_row("SELECT state FROM workflow_event_outbox WHERE event_key=?",[&key],|r|r.get::<_,String>(0)).unwrap();
+    assert_eq!(receipts.recv_timeout(Duration::from_secs(2)).unwrap(),event);assert_eq!(state(),"pending");
+    let started=Instant::now();assert_eq!(host.load("17").unwrap()["state"],"ACTIVE");assert!(host.flush_workflow_events().is_ok());assert!(started.elapsed()<Duration::from_millis(250));
+    assert_eq!(receipts.recv_timeout(Duration::from_secs(4)).unwrap(),event);assert_eq!(state(),"pending");release.send(()).unwrap();
+    let started=Instant::now();while state()!="published"{assert!(started.elapsed()<Duration::from_secs(2));thread::sleep(Duration::from_millis(10));}
+    server.join().unwrap();drop(host);drop(store);fs::remove_dir_all(root).unwrap();
+}

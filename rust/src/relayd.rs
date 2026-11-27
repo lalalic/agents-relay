@@ -152,6 +152,10 @@ pub fn inventory_from_local(
     if limit_history{Ok(dashboard_managed_jobs(&entries))}
     else{Ok(entries)}
 }
+fn active_inventory(config:&DaemonConfig)->Result<Vec<Value>,String>{
+    Ok(crate::relay_store_discovery::discover_active_jobs(&config.store_directory,&config.repositories)?
+        .into_iter().map(|snapshot|managed_view(&snapshot,&snapshot.jobs[0])).collect())
+}
 fn dashboard_inventory(config:&DaemonConfig)->Result<Vec<Value>,String>{
     // Job visibility is strictly a local SQLite read. Publication receipts
     // are projected by the independent observer, never fetched here.
@@ -245,7 +249,8 @@ pub fn eligible_remote_delivery(job:&Value)->bool{
 }
 pub fn remote_delivery_candidates(config:&DaemonConfig)
     ->Result<Vec<Value>,String>{
-    Ok(inventory_from_local(config,false)?.into_iter()
+    Ok(crate::relay_store_discovery::discover_remote_delivery_jobs(&config.store_directory,&config.repositories)?
+        .into_iter().flat_map(|snapshot|snapshot.jobs.iter().map(|job|managed_view(&snapshot,job)).collect::<Vec<_>>())
         .filter(eligible_remote_delivery).collect())
 }
 /// DaemonServices are supplied by the executable host. No production ports
@@ -309,6 +314,9 @@ pub trait DaemonServices:Send{
     /// Model Workers independently from Pool admission: a Worker already
     /// running cannot be "runnable" merely to get its terminal event.
     fn poll_model_events(&mut self,_id:&str)->Result<usize,String>{Ok(0)}
+    /// Transfer transport ownership before entering the scheduler loop.
+    fn start_background_event_io(&mut self)->Result<(),String>{Ok(())}
+    fn retain_model_event_jobs(&mut self,_jobs:&[Value]){}
     /// Optional, explicitly bound observational publication transport.
     fn publication_history_runtime(&self)->Option<Value>{None}
     fn drain_dashboard_events(&mut self)->Result<(),String>{Ok(())}
@@ -333,6 +341,9 @@ pub trait DaemonServices:Send{
     /// publish callbacks. Never mutate Job state or invent Worker events.
     fn observe_committed_job_snapshot(&mut self,_id:&str)->Result<(),String>{
         Ok(())
+    }
+    fn observe_committed_job_snapshots(&mut self,inventory:&[Value])->Result<(),String>{
+        for job in inventory{self.observe_committed_job_snapshot(field(job,"id"))?;}Ok(())
     }
     fn router_test(&mut self,id:&str,task_id:&str)->Result<Value,String>;
     fn decision_audit(&mut self)->Result<Vec<Value>,String>;
@@ -425,6 +436,10 @@ impl<S:DaemonServices+'static> DashboardApiServices for DaemonDashboardBackend<S
     fn discovered_jobs(&mut self,force:bool)->Result<Vec<Value>,String>{
         let _=force;dashboard_inventory(&self.config)
     }
+    fn search_jobs(&mut self,query:&str)->Option<Result<Value,String>>{
+        Some(crate::relay_store_discovery::dashboard_search(&self.config.store_directory,&self.config.repositories,query))
+    }
+    fn runtime_jobs(&mut self)->Result<Vec<Value>,String>{active_inventory(&self.config)}
     fn exact_job(&mut self,id:&str,repo:Option<&str>)
         ->Result<Option<Value>,String>{
         dashboard_job_by_id(&self.config,id,repo)
@@ -554,7 +569,7 @@ pub fn reconcile_one_daemon_job<S:DaemonServices>(
 }
 /// Runtime host explicit opt-in: one server, one Pool, SQLite inventory only.
 pub fn run_daemon<S:DaemonServices+'static>(
-    config:DaemonConfig,services:S,
+    config:DaemonConfig,mut services:S,
     stop:&AtomicBool,
     mut make_reconciler:impl FnMut(&Value)->Result<Reconciler,String>,
 )->Result<(),String>{
@@ -565,6 +580,9 @@ pub fn run_daemon<S:DaemonServices+'static>(
         webhook_secret:None,webhook_repositories:HashSet::new(),
         webhook_job_id:None,
     };
+    // Only the long-lived daemon detaches transport I/O. Explicit standalone
+    // diagnostic/fixture calls retain their synchronous receipt semantics.
+    services.start_background_event_io()?;
     let read_only_shadow=services.is_read_only_shadow();
     let publication_runtime=services.publication_history_runtime();
     let observations=services.dashboard_observation_ports();
@@ -622,12 +640,11 @@ pub fn run_daemon<S:DaemonServices+'static>(
                 services.borrow_mut()
                     .drain_dashboard_events()?;
                 drain_controls(&control_rx,&services,16);
-                let inventory=inventory_from_local(&config,true)?;
-                // Script/Model Workers commit Graph facts and append identical
-                // durable event receipts from separate subprocesses. Flush
-                // their outbox before reconciling successors, with a broker
-                // round-trip acknowledgment before marking an event delivered.
-                // A disconnected Event Bus must not block Script admission.
+                let inventory=active_inventory(&config)?;
+                services.borrow_mut().retain_model_event_jobs(&inventory);
+                // In production the transport owner drains the durable outbox
+                // independently; standalone hosts may expose a synchronous
+                // flush. Graph/SQLite admission never depends on broker PONG.
                 if let Err(error)=services.borrow_mut()
                     .flush_workflow_events(){
                     eprintln!("warning: durable Worker EventBus outbox: {error}");
@@ -675,13 +692,8 @@ pub fn run_daemon<S:DaemonServices+'static>(
                 // native SSE gap for Script/Provider out-of-process commits.
                 // The host de-duplicates identical revisions and skips work
                 // when no SSE client is listening.
-                for job in &inventory{
-                    let id=field(job,"id");
-                    let result=services.borrow_mut()
-                        .observe_committed_job_snapshot(id);
-                    if let Err(error)=result{
-                        eprintln!("warning: Dashboard SQLite observation for Job {id}: {error}");
-                    }
+                if let Err(error)=services.borrow_mut().observe_committed_job_snapshots(&inventory){
+                    eprintln!("warning: Dashboard SQLite observation: {error}");
                 }
                 // Optional remote push is a distinct, durable projection.
                 // A historic COMPLETED Job without a matching marker never

@@ -59,6 +59,19 @@ fn update_live_worker_from_committed_event(
     }
 }
 
+// The trusted Graph broadcast port used to publish this exact envelope
+// directly after CAS. Its durable namespace is separate from the strictly
+// execution-fenced Worker ingress namespaces; it is never used by ingress.
+fn graph_publication_key(event:&Value)->Option<String>{
+    let kind=field(event,"type");let job=field(event,"job_id");let id=field(event,"event_id");
+    if event["version"]!=1||crate::events::subject_token(job).is_err()
+        ||id.is_empty()||field(event,"timestamp").is_empty()
+        ||!matches!(kind.split('.').next(),Some("job"|"task"|"review"|"planner"))
+        ||!kind.split('.').all(|part|crate::events::subject_token(part).is_ok())
+        ||crate::events::normalize_incoming_event(event).is_none(){return None;}
+    Some(format!("daemon-graph/{job}/{kind}/{id}"))
+}
+
 /// Outbox may carry either a locally produced Script event or a verified,
 /// already-committed Model/Events Bus ingress receipt. Both must be tied to
 /// the precise leased execution and immutable event_id before publication.
@@ -68,6 +81,9 @@ fn verified_worker_outbox_event(key:&str,kind:&str,event:&Value)->bool{
     let task=field(event,"task_id");
     let event_type=field(event,"type");
     let event_id=field(event,"event_id");
+    if key.starts_with("daemon-graph/"){
+        return kind==event_type&&graph_publication_key(event).as_deref()==Some(key);
+    }
     if event.get("version")!=Some(&json!(1))||crate::events::subject_token(job).is_err()
         ||task.is_empty()||event_id.is_empty()||kind!=event_type{
         return false;
@@ -275,15 +291,68 @@ fn decision_options_for(config:&DaemonConfig,live:bool)->Value{
 
 fn dashboard_status(config:&DaemonConfig,live:bool,wake_count:u64,reconcile_attempts:u64)->Value{
         let mode=if live {"live-write"}else{"isolated-write"};
-        match inventory_from_local(config,false){
-            Ok(jobs)=>json!({"runtime":"native-rust","mode":mode,
-                "productionReady":false,"jobCount":jobs.len(),"wakeCount":wake_count,
+        match crate::relay_store_discovery::dashboard_job_count(&config.store_directory,&config.repositories){
+            Ok(count)=>json!({"runtime":"native-rust","mode":mode,
+                "productionReady":false,"jobCount":count,"wakeCount":wake_count,
                 "reconcileAttempts":reconcile_attempts,
                 "reason":"Canonical Rust service ownership active; full external Model/EventBus E2E not yet certified"}),
             Err(error)=>json!({"runtime":"native-rust","mode":mode,
                 "productionReady":false,"error":error}),
         }
     }
+
+// Transport threads have no Job/Task mutation port. Only the scheduler
+// applies authenticated ingress and advances its per-Job history cursor.
+struct HistoryRequest{
+    job:String,after:i64,reply:mpsc::SyncSender<Result<Value,String>>,
+}
+struct BackgroundEventIo{
+    stop:std::sync::Arc<std::sync::atomic::AtomicBool>,
+    workers:Vec<std::thread::JoinHandle<()>>,
+    history:Option<mpsc::SyncSender<HistoryRequest>>,
+    publishes:bool,
+}
+impl BackgroundEventIo{
+    fn new()->Self{Self{stop:Default::default(),workers:Vec::new(),history:None,publishes:false}}
+    fn spawn(&mut self,name:&str,work:impl FnOnce(std::sync::Arc<std::sync::atomic::AtomicBool>)+Send+'static)->Result<(),String>{
+        let stop=self.stop.clone();
+        let worker=std::thread::Builder::new().name(name.into()).spawn(move||work(stop)).map_err(|e|e.to_string())?;
+        self.workers.push(worker);Ok(())
+    }
+}
+impl Drop for BackgroundEventIo{
+    fn drop(&mut self){
+        self.stop.store(true,std::sync::atomic::Ordering::Release);
+        self.history.take();
+        for worker in self.workers.drain(..){let _=worker.join();}
+    }
+}
+fn open_event_outbox(path:&Path)->Result<rusqlite::Connection,String>{
+    let db=rusqlite::Connection::open_with_flags(path,rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE).map_err(|e|e.to_string())?;
+    db.busy_timeout(std::time::Duration::from_millis(500)).map_err(|e|e.to_string())?;
+    Ok(db)
+}
+fn flush_verified_events(db:&rusqlite::Connection,publisher:&crate::events::NatsEventBus,
+    sse:&crate::dashboard_sse::DashboardSse,stop:Option<&std::sync::atomic::AtomicBool>)
+    ->Result<usize,String>{
+    use rusqlite::params;
+    let exists:i64=db.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='workflow_event_outbox'",[],|r|r.get(0)).map_err(|e|e.to_string())?;
+    if exists==0{return Ok(0);}
+    let rows=pending_verified_workflow_events(db,64,true)?;
+    let mut count=0;
+    for (key,event) in rows{
+        if stop.is_some_and(|flag|flag.load(std::sync::atomic::Ordering::Acquire)){break;}
+        publisher.publish(&event)?;
+        // Delivery-uncertain disconnect leaves the exact immutable row
+        // pending. Consumer dedup uses the original event_id on retry.
+        publisher.ping()?;
+        let changed=db.execute("UPDATE workflow_event_outbox SET state='published',
+            published_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE event_key=? AND state='pending'",params![key])
+            .map_err(|e|e.to_string())?;
+        if changed==1{count+=1;sse.publish_event(&event);}
+    }
+    Ok(count)
+}
 
 pub struct IsolatedSQLiteWriteHost {
     config:DaemonConfig,
@@ -315,6 +384,9 @@ pub struct IsolatedSQLiteWriteHost {
     // Explicit non-browser Codex execution path. No PATH lookup/Node relay.
     model_codex_executable:Option<PathBuf>,
     model_event_cursor:HashMap<String,i64>,
+    event_io:Option<BackgroundEventIo>,
+    history_inflight:HashMap<String,Receiver<Result<Value,String>>>,
+    history_due:HashMap<String,std::time::Instant>,
     // NATS callback thread delivers only immutable JSON into a bounded
     // in-process queue. Graph/SQLite is always mutated on daemon thread.
     model_nats_subscription:Option<crate::events::NatsSubscription>,
@@ -329,9 +401,11 @@ pub struct IsolatedSQLiteWriteHost {
     model_nats_last_retry:Option<std::time::Instant>,
     model_nats_pending:HashMap<String,Vec<Value>>,
     workflow_outbox_last_poll:Option<std::time::Instant>,
+    sqlite_wake:Option<(rusqlite::Connection,i64)>,
     // Observational SSE de-duplication: an unchanged Graph/SQLite snapshot
     // must not trigger an extra render on every daemon wake.
     last_sse_snapshot:HashMap<String,String>,
+    last_sse_revision:HashMap<String,String>,
 }
 impl IsolatedSQLiteWriteHost {
     pub fn new(config:DaemonConfig)->Self{
@@ -341,15 +415,15 @@ impl IsolatedSQLiteWriteHost {
             escalation_notifier:None,event_history_api:None,
             model_event_ingress_enabled:false,
             model_codex_executable:None,
-            model_event_cursor:HashMap::new(),
+            model_event_cursor:HashMap::new(),event_io:None,history_inflight:HashMap::new(),history_due:HashMap::new(),
             model_nats_subscription:None,model_nats_publisher:None,
             model_nats_receiver:None,
             model_nats_sender:None,model_nats_url:None,
             model_nats_token:None,
             model_nats_wake:std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             model_nats_last_retry:None,model_nats_pending:HashMap::new(),
-            workflow_outbox_last_poll:None,
-            last_sse_snapshot:HashMap::new()}
+            workflow_outbox_last_poll:None,sqlite_wake:None,
+            last_sse_snapshot:HashMap::new(),last_sse_revision:HashMap::new()}
     }
     /// Construct a Graph/SQLite writer for the canonical store only after
     /// the executable has obtained exclusive ownership, checked the exact
@@ -423,6 +497,7 @@ impl IsolatedSQLiteWriteHost {
         Ok(())
     }
     fn reconnect_isolated_model_nats_if_needed(&mut self)->Result<(),String>{
+        if self.event_io.is_some(){return Ok(());}
         let Some(url)=self.model_nats_url.as_ref() else{return Ok(());};
         if self.model_nats_subscription.as_ref().is_some_and(
             crate::events::NatsSubscription::is_alive){return Ok(());}
@@ -598,6 +673,56 @@ impl IsolatedSQLiteWriteHost {
         }
         Ok(())
     }
+    fn sqlite_commit_wake(&mut self)->bool{
+        use std::time::{Duration,Instant};
+        if self.workflow_outbox_last_poll.is_some_and(|at|at.elapsed()<Duration::from_millis(250)){return false;}
+        self.workflow_outbox_last_poll=Some(Instant::now());
+        if let Some((db,previous))=&mut self.sqlite_wake{
+            if let Ok(version)=db.query_row("PRAGMA data_version",[],|r|r.get::<_,i64>(0)){
+                let changed=version!=*previous;*previous=version;return changed;
+            }
+            self.sqlite_wake=None;
+        }
+        // PRAGMA data_version is connection-local and changes on commits by
+        // other connections. Keep this read-only connection across ticks.
+        let Ok(db)=rusqlite::Connection::open_with_flags(self.path(),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)else{return false;};
+        let Ok(version)=db.query_row("PRAGMA data_version",[],|r|r.get::<_,i64>(0))else{return false;};
+        self.sqlite_wake=Some((db,version));true
+    }
+    fn poll_background_history(&mut self,id:&str)->Result<usize,String>{
+        use std::time::{Duration,Instant};
+        let mut applied=0;
+        if let Some(receipt)=self.history_inflight.get(id){
+            let result=match receipt.try_recv(){
+                Ok(result)=>result,
+                Err(mpsc::TryRecvError::Empty)=>return Ok(0),
+                Err(mpsc::TryRecvError::Disconnected)=>Err("Model history transport stopped".into()),
+            };
+            self.history_inflight.remove(id);
+            // On errors or failed Graph CAS, replay from the last committed
+            // cursor, never the last fetched cursor.
+            self.history_due.insert(id.into(),Instant::now()+Duration::from_secs(5));
+            let page=result?;
+            let rows=page["rows"].as_array().ok_or("Model EventBus history response has no rows")?;
+            for row in rows{
+                let cursor=row["cursor"].as_i64().ok_or("Model EventBus history cursor invalid")?;
+                if self.apply_issued_model_worker_event(id,&row["event"])?{applied+=1;}
+                self.model_event_cursor.insert(id.into(),cursor);
+            }
+            if rows.len()==60{self.history_due.remove(id);}
+        }
+        if self.history_due.get(id).is_some_and(|due|*due>Instant::now()){return Ok(applied);}
+        if let Some(sender)=self.event_io.as_ref().and_then(|io|io.history.as_ref()){
+            let (reply,receipt)=mpsc::sync_channel(1);
+            let request=HistoryRequest{job:id.into(),after:*self.model_event_cursor.get(id).unwrap_or(&0),reply};
+            match sender.try_send(request){
+                Ok(())=>{self.history_inflight.insert(id.into(),receipt);self.history_due.remove(id);},
+                Err(mpsc::TrySendError::Full(_))=>{self.history_due.insert(id.into(),Instant::now()+Duration::from_secs(1));},
+                Err(mpsc::TrySendError::Disconnected(_))=>{self.history_due.insert(id.into(),Instant::now()+Duration::from_secs(5));return Err("Model history transport unavailable".into());},
+            }
+        }
+        Ok(applied)
+    }
     pub fn poll_isolated_model_worker_events(&mut self,id:&str)->Result<usize,String>{
         if !self.model_event_ingress_enabled{return Ok(0);}
         self.drain_nats_dashboard_events()?;
@@ -616,6 +741,7 @@ impl IsolatedSQLiteWriteHost {
         // its authenticated decision on the unrelated Model-lease heuristic.
         if !has_model_lease&&!has_review_wait{
             self.model_nats_pending.remove(id);
+            self.history_inflight.remove(id);self.history_due.remove(id);
             return Ok(0);
         }
         let mut applied=0;
@@ -633,6 +759,7 @@ impl IsolatedSQLiteWriteHost {
                 }
             }
         }
+        if self.event_io.is_some(){return self.poll_background_history(id).map(|count|applied+count);}
         let Some(api)=self.event_history_api.as_ref().cloned() else{
             return Ok(applied);
         };
@@ -1243,6 +1370,15 @@ impl WorkspaceControlBackend for IsolatedSQLiteWriteHost {
                 .is_some_and(|value|!value.is_empty())
             &&matches!(field(event,"type").split('.').next(),
                 Some("job"|"task"|"review"|"planner")){
+            if self.event_io.as_ref().is_some_and(|io|io.publishes){
+                let key=graph_publication_key(event).ok_or("Invalid committed Graph publication identity")?;
+                let db=self.scoped(field(event,"job_id"))?;
+                crate::workflow::durable_publication::DurableWorkflowPublication::new(&db.db)?
+                    .enqueue(&key,field(event,"type"),event)?;
+                // This is a durable enqueue receipt, NOT a broker delivery
+                // acknowledgement. The independent owner marks published.
+                return Ok(());
+            }
             let publisher=self.model_nats_publisher.as_ref()
                 .ok_or("Live Graph lifecycle Events Bus publisher is not bound")?;
             publisher.publish(event)?;
@@ -1673,6 +1809,20 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         self.emit_job_snapshot(&snapshot);
         Ok(())
     }
+    fn observe_committed_job_snapshots(&mut self,_inventory:&[Value])->Result<(),String>{
+        let revisions=crate::relay_store_discovery::dashboard_revisions(&self.config.store_directory,&self.config.repositories)?;
+        for (id,revision) in revisions{
+            if self.last_sse_revision.get(&id)==Some(&revision){continue;}
+            if self.sse.has_subscribers(){
+                if let Err(error)=self.observe_committed_job_snapshot(&id){
+                    eprintln!("Dashboard observation failed for Job {id}: {error}");
+                    continue;
+                }
+            }
+            self.last_sse_revision.insert(id,revision);
+        }
+        Ok(())
+    }
     fn router_test(&mut self,id:&str,task_id:&str)->Result<Value,String>{
         let config=self.config.clone();
         let adapters=self.available_model_workers();
@@ -1701,37 +1851,85 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
     fn poll_model_events(&mut self,id:&str)->Result<usize,String>{
         self.poll_isolated_model_worker_events(id)
     }
-    fn flush_workflow_events(&mut self)->Result<usize,String>{
-        let Some(publisher)=self.model_nats_publisher.as_ref() else {
-            return Ok(0);
-        };
-        if !self.live_store{return Ok(0);}
-        use rusqlite::{Connection,params};
-        // One bounded batch each tick; never open every historical Job.
-        // An event is already durably committed with its Task generation.
-        // A failure leaves that exact event pending for safe replay.
-        let db=Connection::open(self.path()).map_err(|e|e.to_string())?;
-        let rows=pending_verified_workflow_events(&db,64,true)?;
-        let mut count=0;
-        let mut emitted=Vec::new();
-        for (key,event) in rows{
-            publisher.publish(&event)?;
-            // NATS accepts the earlier PUB before responding to this PING.
-            // An uncertain disconnect does not acknowledge the SQLite row;
-            // any later replay retains the SAME event_id for consumer de-dupe.
-            publisher.ping()?;
-            let changed=db.execute(
-                "UPDATE workflow_event_outbox
-                 SET state='published',published_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-                 WHERE event_key=? AND state='pending'",params![key]
-            ).map_err(|e|e.to_string())?;
-            if changed==1{
-                count+=1;
-                emitted.push(event);
+    fn start_background_event_io(&mut self)->Result<(),String>{
+        if self.event_io.is_some(){return Ok(());}
+        crate::relay_store_discovery::ensure_observation_indexes(&self.config.store_directory)?;
+        use std::{sync::atomic::Ordering,time::Duration};
+        let mut io=BackgroundEventIo::new();
+        if let (Some(url),Some(sender))=(self.model_nats_url.clone(),self.model_nats_sender.clone()){
+            let token=self.model_nats_token.clone();let wake=self.model_nats_wake.clone();
+            let mut subscription=self.model_nats_subscription.take();
+            io.spawn("relay-event-subscription",move|stop|{
+                while !stop.load(Ordering::Acquire){
+                    if !subscription.as_ref().is_some_and(|sub|sub.is_alive()){
+                        let sender=sender.clone();let wake=wake.clone();
+                        let result=crate::events::NatsEventBus::with_loopback_token(Some(&url),None,token.as_deref())
+                            .and_then(|bus|bus.subscribe_all(std::sync::Arc::new(move|event|{
+                                sender.try_send(event.clone()).map_err(|e|e.to_string())?;
+                                wake.store(true,Ordering::Release);Ok(())
+                            })));
+                        match result{Ok(next)=>subscription=Some(next),Err(error)=>eprintln!("warning: NATS subscription recovery: {error}")}
+                    }
+                    std::thread::sleep(Duration::from_secs(1));
+                }
+            })?;
+        }
+        if self.live_store{
+            if let Some(publisher)=self.model_nats_publisher.take(){
+                let path=self.path();let sse=self.sse.clone();
+                io.spawn("relay-event-publication",move|stop|{
+                    let mut db=None;
+                    while !stop.load(Ordering::Acquire){
+                        if db.is_none(){db=open_event_outbox(&path).ok();}
+                        let result=db.as_ref().ok_or_else(||"Workflow outbox database unavailable".to_owned())
+                            .and_then(|db|flush_verified_events(db,&publisher,&sse,Some(&stop)));
+                        let delay=match result{
+                            Ok(n) if n==64=>0,Ok(_)=>250,
+                            Err(error)=>{eprintln!("warning: durable EventBus publication: {error}");1000},
+                        };
+                        std::thread::sleep(Duration::from_millis(delay));
+                    }
+                })?;
+                io.publishes=true;
             }
         }
-        for event in emitted{self.emit(event);}
-        Ok(count)
+        if self.model_event_ingress_enabled{
+            if let Some(api)=self.event_history_api.as_ref(){
+                let env=json!({"EVENTS_BUS_API_URL":api.as_str(),"EVENTS_BUS_CONFIG":self.config.store_directory.join(".eventsbus-model-ingress-no-global-config.json").to_string_lossy()});
+                let (tx,rx)=mpsc::sync_channel::<HistoryRequest>(64);let wake=self.model_nats_wake.clone();
+                io.spawn("relay-model-history",move|stop|{
+                    while !stop.load(Ordering::Acquire){
+                        match rx.recv_timeout(Duration::from_millis(100)){
+                            Ok(request)=>{
+                                let result=crate::events_bus_runtime::events_bus_history_page(&request.job,None,&json!(60),
+                                    &json!({"order":"asc","after":request.after,"timeoutMs":1200}),&env);
+                                let _=request.reply.send(result);wake.store(true,Ordering::Release);
+                            },
+                            Err(mpsc::RecvTimeoutError::Timeout)=>{},
+                            Err(mpsc::RecvTimeoutError::Disconnected)=>break,
+                        }
+                    }
+                })?;
+                io.history=Some(tx);
+            }
+        }
+        self.event_io=Some(io);
+        // Establish a baseline before serving HTTP. Historical snapshots are
+        // hydrated by GET, not flooded into every first SSE subscription.
+        self.last_sse_revision=crate::relay_store_discovery::dashboard_revisions(&self.config.store_directory,&self.config.repositories)?.into_iter().collect();
+        let _=self.sqlite_commit_wake();Ok(())
+    }
+    fn retain_model_event_jobs(&mut self,jobs:&[Value]){
+        let active=jobs.iter().filter_map(|j|j["id"].as_str()).collect::<HashSet<_>>();
+        self.history_due.retain(|id,_|active.contains(id.as_str()));
+        self.history_inflight.retain(|id,_|active.contains(id.as_str()));
+        self.model_event_cursor.retain(|id,_|active.contains(id.as_str()));
+        self.model_nats_pending.retain(|id,_|active.contains(id.as_str()));
+    }
+    fn flush_workflow_events(&mut self)->Result<usize,String>{
+        if self.event_io.is_some()||!self.live_store{return Ok(0);}
+        let Some(publisher)=self.model_nats_publisher.as_ref()else{return Ok(0);};
+        flush_verified_events(&open_event_outbox(&self.path())?,publisher,&self.sse,None)
     }
     fn has_pending_model_events(&mut self)->bool{
         // NATS disconnect does not create a new MSG callback. Check the
@@ -1740,7 +1938,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         // per-host 1-second throttle prevents a broker outage reconnect spin.
         // This is only transport maintenance; Graph/SQLite effects still
         // require a verified event in the single daemon reconciliation loop.
-        if self.model_nats_url.is_some()
+        if self.event_io.is_none()&&self.model_nats_url.is_some()
             && self.model_nats_subscription.as_ref().is_some_and(
                 |subscription|!subscription.is_alive()){
             if let Err(error)=self.reconnect_isolated_model_nats_if_needed(){
@@ -1751,6 +1949,9 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         let provider_wake=self.model_nats_wake.swap(
             false,std::sync::atomic::Ordering::AcqRel);
         if native_wake||provider_wake{return true;}
+        if self.event_io.is_some(){
+            return self.history_due.values().any(|due|*due<=std::time::Instant::now())||self.sqlite_commit_wake();
+        }
         // Out-of-process Worker commits have no in-process daemon wake.
         // Probe for a publishable outbox row at a bounded interval rather than
         // waiting for the five-minute Pool scan (or reparsing all Jobs).

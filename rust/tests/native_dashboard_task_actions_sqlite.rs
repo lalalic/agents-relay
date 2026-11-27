@@ -1189,3 +1189,49 @@ fn isolated_daemon_plan_apply_uses_exact_generation_and_durable_graph_sqlite(){
     assert_eq!(replay,accepted,"same Plan generation replay idempotent");
     assert_eq!(f.job(),saved,"Plan completed persisted after restart");
 }
+
+#[test]
+fn background_history_wait_never_blocks_scheduler_and_retains_execution_fence(){
+    use agents_relay_rust2::{events::event_for,execution_event_identity::execution_event_source};
+    use std::{io::{Read,Write},net::TcpListener,sync::mpsc,thread,time::{Duration,Instant}};
+    let f=Fixture::new();let execution="background-codex-generation-1";
+    let path=relay_unified_store_path(&f.config.store_directory);
+    let store=SQLiteRelayStore::open_without_claim_reset(&path,Some("15")).unwrap();
+    store.mutate_job("15",|mut job|{
+        let task=&mut job["tasks"][0];task["adapter"]=json!("codex");task["state"]=json!("QUEUED");
+        task["executionId"]=json!(execution);task["attempt"]=json!(1);task["error"]=Value::Null;
+        task["leaseOwner"]=json!("fixture-owner");task["leaseExpiresAt"]=json!("2027-11-21T23:59:59.000Z");
+        task["gitDeliveryRequired"]=json!(false);Ok(job)
+    }).unwrap();
+    let source=json!({"id":execution_event_source("15","7",execution),"agent":"fixture","component":"agents-relay"});
+    let events=vec![event_for("15","7",None,"task.started","started","forged",None,None,
+        Some(json!({"id":"job/15/task/7/execution/foreign"}))),
+        event_for("15","7",None,"task.started","started","real",None,None,Some(source.clone())),
+        event_for("15","7",None,"task.completed","completed","terminal",None,Some(json!({"output":"verified"})),Some(source))];
+    let listener=TcpListener::bind("127.0.0.1:0").unwrap();let api=format!("http://{}/",listener.local_addr().unwrap());
+    let (seen,request)=mpsc::channel();let (release,gate)=mpsc::channel();
+    let server=thread::spawn(move||{
+        let (mut stream,_)=listener.accept().unwrap();stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let mut raw=String::new();let mut buf=[0u8;1024];while !raw.contains("\r\n\r\n"){
+            let n=stream.read(&mut buf).unwrap();assert!(n>0);raw.push_str(&String::from_utf8_lossy(&buf[..n]));}
+        assert!(raw.contains("after=0"));seen.send(()).unwrap();gate.recv_timeout(Duration::from_secs(3)).unwrap();
+        let body=json!({"job_id":"15","order":"asc","events":events.into_iter().enumerate().map(|(i,event)|json!({"cursor":i+1,"event":event})).collect::<Vec<_>>(),"next_cursor":3}).to_string();
+        write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+    });
+    let mut host=IsolatedSQLiteWriteHost::new(f.config.clone());host.set_loopback_event_history_api(&api).unwrap();
+    host.enable_isolated_model_event_ingress().unwrap();host.start_background_event_io().unwrap();
+    let started=Instant::now();assert_eq!(host.poll_model_events("15").unwrap(),0);
+    assert!(started.elapsed()<Duration::from_millis(250),"scheduler waited for HTTP history");
+    request.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert_eq!(f.job()["tasks"][0]["state"],"QUEUED");
+    // This independent SQLite commit must wake the scheduler without NATS.
+    store.mutate_job("15",|mut job|{job["title"]=json!("External committed edit");Ok(job)}).unwrap();
+    let wake=Instant::now();while !host.has_pending_model_events(){assert!(wake.elapsed()<Duration::from_millis(800));thread::sleep(Duration::from_millis(20));}
+    assert_eq!(host.load("15").unwrap()["title"],"External committed edit");
+    release.send(()).unwrap();server.join().unwrap();
+    let started=Instant::now();let mut count=0;while count<2{count+=host.poll_model_events("15").unwrap();assert!(started.elapsed()<Duration::from_secs(3));thread::sleep(Duration::from_millis(10));}
+    assert_eq!(count,2);assert_eq!(f.job()["tasks"][0]["state"],"SUCCEEDED");
+    assert_eq!(host.poll_model_events("15").unwrap(),0);
+    let rows:i64=store.db.query_row("SELECT count(*) FROM workflow_event_outbox WHERE event_key LIKE 'model-event/15/7/%'",[],|r|r.get(0)).unwrap();
+    assert_eq!(rows,2);drop(host);
+}

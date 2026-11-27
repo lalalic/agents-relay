@@ -93,6 +93,7 @@ pub trait DashboardApiServices: Send + 'static {
     fn supports_indexed_readonly_job(&self)->bool{false}
     fn supports_indexed_job(&self)->bool{self.supports_indexed_readonly_job()}
     fn discovered_jobs(&mut self, force: bool) -> Result<Vec<Value>, String>;
+    fn search_jobs(&mut self,_query:&str)->Option<Result<Value,String>>{None}
     fn runtime_jobs(&mut self)->Result<Vec<Value>,String>{self.discovered_jobs(false)}
     fn exact_job(
         &mut self,
@@ -407,8 +408,16 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                 "/api/jobs" => {
                     if !allowed_method(req,"GET"){return Ok(text_response(405,"Method not allowed"));}
                     let force = query(&parsed, "refresh").as_deref() == Some("1");
+                    let full=query(&parsed,"inventory").as_deref()==Some("1");
+                    if !full{
+                        if let Some(Ok(result))=services.search_jobs(parsed.query().unwrap_or("")){
+                            return Ok(json_response(200,&result));
+                        }
+                        // Legacy JSON encoding or read errors retain the
+                        // original parser and non-forced inventory fallback.
+                    }
                     let jobs = self.discovered(services, force)?;
-                    let body = if query(&parsed, "inventory").as_deref() == Some("1") {
+                    let body = if full {
                         list_dashboard_job_inventory(
                             &jobs,
                             query(&parsed, "repo").as_deref().unwrap_or(""),
