@@ -144,6 +144,25 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       await eventually(async()=>await page.locator('.job-row').count()===6);
       console.log('initial UI '+elapsed+'ms during slow Events Bus');
     });
+    await t.test('transient Jobs and summary failures preserve data and recover automatically',async()=>{
+      await page.locator('#runtime-summary .runtime-stat').first().waitFor();
+      const before=await page.locator('#runtime-summary').innerText();
+      let failJobs=true,failSummary=true;
+      await page.route('**/api/jobs?*',route=>failJobs?route.fulfill({status:503,body:'temporary read failure'}):route.continue());
+      await page.route('**/api/runtime-summary',route=>failSummary?route.fulfill({status:503,body:'temporary summary failure'}):route.continue());
+      await page.locator('#jobs-refresh').click();
+      await page.locator('#jobs-feedback').filter({hasText:'Refresh failed'}).waitFor();
+      assert.equal(await page.locator('.job-row').count(),6);
+      failJobs=false;
+      await page.clock.runFor(2200);
+      await page.locator('#jobs-feedback').filter({hasText:'Refresh failed'}).waitFor({state:'hidden'});
+      await page.waitForFunction(()=>document.querySelector('#runtime-summary')?.dataset.stale==='true');
+      assert.equal(await page.locator('#runtime-summary').innerText(),before);
+      failSummary=false;
+      await page.locator('#jobs-refresh').click();
+      await page.waitForFunction(()=>!document.querySelector('#runtime-summary')?.hasAttribute('data-stale'));
+      await page.unroute('**/api/jobs?*');await page.unroute('**/api/runtime-summary');
+    });
     await t.test('2 mixed running, queued, completed status survives live snapshots',async()=>{
       await badge('91','COMPLETED');await badge('92','RUNNING');await badge('93','QUEUED');
       await page.locator('#jobs-refresh').click();
@@ -200,8 +219,14 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       assert.equal(await page.locator('#qa-text').inputValue(),edited);
       const persisted=await (await page.request.get(base+'/api/troubleshooter-qa')).json();
       assert.equal(persisted.text,edited);
+      // A cold cache is explicitly unavailable; retry without displaying fake quota.
+      let coldUsage=true;
+      await page.route('**/api/usage',route=>coldUsage?route.fulfill({status:502,body:'refreshing'}):route.fallback());
       await page.locator('#usage-tab').click();
       const usage=page.locator('#usage-root');
+      await usage.getByText('Usage unavailable:',{exact:false}).waitFor();
+      coldUsage=false;
+      await page.clock.runFor(2200);
       await usage.locator('.usage-provider h3').filter({hasText:'OpenAI'}).waitFor();
       assert((await usage.innerText()).includes('75%'));
       assert((await usage.innerText()).includes('Resets'));

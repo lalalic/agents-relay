@@ -98,70 +98,70 @@ pub fn read_usage_snapshot(source:&dyn UsageSnapshotProvider)->Result<Value,Stri
     source.snapshot()
 }
 
-// A single provider observation may be expensive (network or owned CLI).
-// Both scheduler and dashboard share the same in-flight refresh; only the
-// detached observational request may wait for it. No network I/O under
-// the cache mutex. Unknown/expired capacity is not presented as healthy.
+// Provider observations publish complete immutable snapshots. Scheduler reads
+// never wait for a network call; concurrent readers coalesce one refresh.
 #[derive(Clone)]
 pub struct SharedUsageCache{
-    state:Arc<(std::sync::Mutex<UsageCacheState>,std::sync::Condvar)>,
+    state:Arc<UsageCacheState>,
     fetch:Arc<dyn Fn()->Result<Value,String>+Send+Sync>,
 }
 #[derive(Default)]
 struct UsageCacheState{
-    result:Option<(std::time::Instant,Result<Value,String>)>,
-    refreshing:bool,
+    result:arc_swap::ArcSwapOption<UsageObservation>,
+    refreshing:std::sync::atomic::AtomicBool,
+}
+struct UsageObservation{
+    at:std::time::Instant,
+    result:Result<Value,String>,
 }
 impl SharedUsageCache{
     pub fn new(fetch:impl Fn()->Result<Value,String>+Send+Sync+'static)->Self{
-        Self{state:Arc::new((std::sync::Mutex::new(UsageCacheState::default()),
-            std::sync::Condvar::new())),fetch:Arc::new(fetch)}
+        Self{state:Arc::new(UsageCacheState::default()),fetch:Arc::new(fetch)}
     }
-    fn fresh(state:&UsageCacheState)->Option<Result<Value,String>>{
-        state.result.as_ref().filter(|(at,result)|at.elapsed()<std::time::Duration::from_secs(
-            if result.is_ok(){60}else{5})).map(|(_,result)|result.clone())
+    fn fresh(&self)->Option<Result<Value,String>>{
+        self.state.result.load().as_ref().filter(|sample|
+            sample.at.elapsed()<std::time::Duration::from_secs(
+                if sample.result.is_ok(){60}else{5}))
+            .map(|sample|sample.result.clone())
     }
-    fn request(&self,state:&mut UsageCacheState){
-        if state.refreshing{return;}
-        state.refreshing=true;
+    fn request(&self){
+        use std::sync::atomic::Ordering;
+        if self.state.refreshing.compare_exchange(false,true,
+            Ordering::AcqRel,Ordering::Acquire).is_err(){return;}
+        // Another reader may have completed a refresh after our first read.
+        if self.fresh().is_some(){
+            self.state.refreshing.store(false,Ordering::Release);return;
+        }
         let cache=Arc::clone(&self.state);
         let fetch=Arc::clone(&self.fetch);
         let started=std::thread::Builder::new().name("relay-usage-observation".into()).spawn(move||{
             let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||fetch()))
                 .unwrap_or_else(|_|Err("Usage observation panicked".into()));
-            let (lock,ready)=&*cache;
-            if let Ok(mut state)=lock.lock(){
-                state.result=Some((std::time::Instant::now(),result));
-                state.refreshing=false;
-                ready.notify_all();
-            }
+            cache.result.store(Some(Arc::new(UsageObservation{at:std::time::Instant::now(),result})));
+            cache.refreshing.store(false,Ordering::Release);
         });
         if let Err(error)=started{
-            state.refreshing=false;
-            state.result=Some((std::time::Instant::now(),Err(format!("Usage observation launch failed: {error}"))));
-            self.state.1.notify_all();
+            self.state.result.store(Some(Arc::new(UsageObservation{
+                at:std::time::Instant::now(),result:Err(format!("Usage observation launch failed: {error}"))})));
+            self.state.refreshing.store(false,Ordering::Release);
         }
     }
-    /// Scheduler reads never wait on external services. Preserve the existing
-    /// unavailable-observation semantics when a fresh sample is not ready.
+    /// A missing/expired sample is unknown, never eligible stale capacity.
     pub fn cached(&self)->Result<Value,String>{
-        let mut state=self.state.0.lock().map_err(|_|"Usage cache poisoned")?;
-        if let Some(result)=Self::fresh(&state){return result;}
-        self.request(&mut state);
+        if let Some(result)=self.fresh(){return result;}
+        self.request();
         Err("Provider usage observation refreshing".into())
     }
-    /// Detached UI/test requests may wait, but not indefinitely.
+    /// Explicit detached diagnostics can await the same bounded refresh.
+    /// No reader holds a shared lock while the provider is in flight.
     pub fn wait(&self)->Result<Value,String>{
-        let (lock,ready)=&*self.state;
-        let mut state=lock.lock().map_err(|_|"Usage cache poisoned")?;
         let deadline=std::time::Instant::now()+std::time::Duration::from_secs(35);
         loop{
-            if let Some(result)=Self::fresh(&state){return result;}
-            self.request(&mut state);
+            if let Some(result)=self.fresh(){return result;}
+            self.request();
             let remaining=deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero(){return Err("Provider usage observation timed out".into());}
-            let (next,_)=ready.wait_timeout(state,remaining).map_err(|_|"Usage cache poisoned")?;
-            state=next;
+            std::thread::sleep(remaining.min(std::time::Duration::from_millis(25)));
         }
     }
 }

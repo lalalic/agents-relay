@@ -31,7 +31,7 @@ use crate::{
         prepare_local_job_execution_worktree,task_requires_managed_worktree},
 };
 use serde_json::{json,Value};
-use std::{cell::{Ref,RefCell,RefMut},collections::{HashMap,HashSet},future::{ready,Future},path::{Path,PathBuf},pin::pin,sync::mpsc::{self,Receiver,Sender},task::{Context,Poll,Waker}};
+use std::{cell::{Ref,RefCell,RefMut},collections::{HashMap,HashSet},future::{ready,Future},path::{Path,PathBuf},pin::pin,sync::mpsc::{self,Receiver},task::{Context,Poll,Waker}};
 fn field<'a>(v:&'a Value,key:&str)->&'a str{v.get(key).and_then(Value::as_str).unwrap_or("")}
 fn denied(name:&str)->String{format!("Rust isolated-write daemon {name} not bound; refusing unsafe side effect")}
 
@@ -292,7 +292,7 @@ pub struct IsolatedSQLiteWriteHost {
     live_store:bool,
     usage_cache:crate::usage_registry::SharedUsageCache,
     routing_credit_cache:crate::usage_registry::SharedUsageCache,
-    subscriptions:Vec<Sender<String>>,
+    sse:crate::dashboard_sse::DashboardSse,
     wake_count:std::sync::Arc<std::sync::atomic::AtomicU64>,
     wake_pending:bool,
     reconcile_attempts:std::sync::Arc<std::sync::atomic::AtomicU64>,
@@ -335,7 +335,7 @@ pub struct IsolatedSQLiteWriteHost {
 }
 impl IsolatedSQLiteWriteHost {
     pub fn new(config:DaemonConfig)->Self{
-        Self{config,live_store:false,usage_cache:crate::usage_registry::SharedUsageCache::new(||crate::usage::dashboard_usage_registry().snapshot()),routing_credit_cache:crate::usage_registry::SharedUsageCache::new(crate::usage::routing_deepseek_credit),subscriptions:Vec::new(),wake_count:Default::default(),wake_pending:false,reconcile_attempts:Default::default(),connections:RefCell::new(HashMap::new()),
+        Self{config,live_store:false,usage_cache:crate::usage_registry::SharedUsageCache::new(||crate::usage::dashboard_usage_registry().snapshot()),routing_credit_cache:crate::usage_registry::SharedUsageCache::new(crate::usage::routing_deepseek_credit),sse:crate::dashboard_sse::DashboardSse::new(),wake_count:Default::default(),wake_pending:false,reconcile_attempts:Default::default(),connections:RefCell::new(HashMap::new()),
             failure_state:std::sync::Arc::new(DaemonFailureState::new()),
             live_workers:std::sync::Arc::new(std::sync::Mutex::new(DaemonLiveWorkers::default())),
             escalation_notifier:None,event_history_api:None,
@@ -831,7 +831,7 @@ impl IsolatedSQLiteWriteHost {
         Ok(result["job"].clone())
     }
     fn emit_sse(&mut self,frame:String){
-        self.subscriptions.retain(|sender|sender.send(frame.clone()).is_ok());
+        self.sse.publish(frame);
     }
     fn emit(&mut self,event:Value){
         // Original Node Dashboard bus.subscribe wraps each event in a
@@ -1397,7 +1397,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                 wakes.load(std::sync::atomic::Ordering::Relaxed),
                 attempts.load(std::sync::atomic::Ordering::Relaxed))),
             history:Arc::new(move |id,task,limit|read_dashboard_history(&config,history.as_ref(),id,task,limit)),
-            usage:Arc::new(move ||if live{usage.wait()}else{Err(denied("provider account usage"))}),
+            usage:Arc::new(move ||if live{usage.cached()}else{Err(denied("provider account usage"))}),
             routing_usage,
             router:Arc::new(move |id,task|read_dashboard_router(&router_config,live,&adapters,
                 ||router_observation(),id,task)),
@@ -1662,12 +1662,10 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
     fn publish_event(&mut self,event:&Value)->Result<(),String>{
         WorkspaceControlBackend::publish(self,event)
     }
-    fn subscribe_events(&mut self)->Receiver<String>{
-        let (sender,receiver)=mpsc::channel();
-        self.subscriptions.push(sender);receiver
-    }
+    fn dashboard_sse(&self)->Option<crate::dashboard_sse::DashboardSse>{Some(self.sse.clone())}
+    fn subscribe_events(&mut self)->Receiver<String>{self.sse.subscribe()}
     fn observe_committed_job_snapshot(&mut self,id:&str)->Result<(),String>{
-        if self.subscriptions.is_empty(){return Ok(());}
+        if !self.sse.has_subscribers(){return Ok(());}
         // Re-read, do not trust the potentially stale inventory copy
         // assembled before the background Worker finished. A Graph/SQLite
         // commit in another process is visible without a synthetic wake.

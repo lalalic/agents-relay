@@ -381,6 +381,10 @@ fn handle_connection<B: DashboardBackend>(
     backend: Arc<B>,
     shutdown: Arc<AtomicBool>,
 ) -> io::Result<()> {
+    // The accept loop is nonblocking, but each connection owns its own
+    // thread. Explicitly restore blocking mode (accept flag inheritance
+    // varies by platform) so partial HTTP headers do not fail with EAGAIN.
+    stream.set_nonblocking(false)?;
     let (method, target, body, headers) = match read_request(&mut stream) {
         Ok(value) => value,
         Err(error) => {
@@ -396,6 +400,8 @@ fn handle_connection<B: DashboardBackend>(
     }
     if method == "GET" && (target == "/events" || target == "/api/mobile/events") {
         let mobile = target == "/api/mobile/events";
+        // A disconnected/slow browser cannot retain an SSE writer forever.
+        stream.set_write_timeout(Some(Duration::from_secs(5)))?;
         stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nX-Content-Type-Options: nosniff\r\n\r\n: connected\n\n")?;
         let receiver = backend.subscribe_events();
         let mut last_heartbeat = Instant::now();

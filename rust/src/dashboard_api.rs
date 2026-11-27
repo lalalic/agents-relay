@@ -23,7 +23,7 @@ use std::{
     path::PathBuf,
     sync::{
         mpsc::{self, Receiver},
-        Mutex,
+        Arc,Mutex,
     },
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -126,6 +126,7 @@ pub trait DashboardApiServices: Send + 'static {
     fn account_usage(&mut self) -> Result<Value, String>;
     fn routing_usage(&mut self) -> Result<Value,String>{self.account_usage()}
     fn github_usage(&mut self) -> Result<Option<Value>, String>;
+    fn event_subscription(&self)->Option<Arc<dyn Fn()->Receiver<String>+Send+Sync>>{None}
     fn subscribe_events(&mut self) -> Receiver<String>;
     /// Host-neutral hook for the existing server-side QA endpoint.
     fn troubleshooter_qa(
@@ -149,6 +150,7 @@ pub struct DashboardApiOptions {
 pub struct NativeDashboardApi<S: DashboardApiServices> {
     services: Mutex<S>,
     observations: Mutex<Option<S>>,
+    event_subscription:Option<Arc<dyn Fn()->Receiver<String>+Send+Sync>>,
     options: DashboardApiOptions,
     last_known_jobs: Mutex<Option<Vec<Value>>>,
     webhook_deliveries: Mutex<DeliveryDeduper>,
@@ -156,9 +158,10 @@ pub struct NativeDashboardApi<S: DashboardApiServices> {
 impl<S: DashboardApiServices> NativeDashboardApi<S> {
     pub fn new(options: DashboardApiOptions, services: S) -> Self {
         let observations=services.detached_observations();
+        let event_subscription=services.event_subscription();
         Self {
             options,
-            observations:Mutex::new(observations),
+            observations:Mutex::new(observations),event_subscription,
             services: Mutex::new(services),
             last_known_jobs: Mutex::new(None),
             webhook_deliveries: Mutex::new(DeliveryDeduper::new(
@@ -666,7 +669,8 @@ impl<S: DashboardApiServices> DashboardBackend for NativeDashboardApi<S> {
         let path=parsed.as_ref().map(Url::path).unwrap_or("");
         if matches!((req.method,path),
             ("GET","/api/events"|"/api/usage"|"/api/decision-audit"|"/api/jobs"|"/api/job"|
-                "/api/runtime-summary"|"/api/status"|"/api/mobile/jobs"|"/api/mobile/job-tasks"|"/api/mobile/job-activity")
+                "/api/runtime-summary"|"/api/status"|"/api/mobile/jobs"|"/api/mobile/job-tasks"|"/api/mobile/job-activity"|
+                "/api/graphs"|"/api/graph-symbol"|"/api/troubleshooter-qa"|"/api/execution-router-rules")
             |("GET"|"POST","/api/execution-report")
             |("POST","/api/router-test")){
             let detached=self.observations.lock().ok().and_then(|template|
@@ -679,6 +683,7 @@ impl<S: DashboardApiServices> DashboardBackend for NativeDashboardApi<S> {
         }
     }
     fn subscribe_events(&self) -> Receiver<String> {
+        if let Some(subscribe)=&self.event_subscription{return subscribe();}
         self.services
             .lock()
             .map(|mut services| services.subscribe_events())

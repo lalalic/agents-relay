@@ -503,7 +503,14 @@ document.querySelector('#job-content-open').addEventListener('click',openJobDeta
 function reviewStatus(job){const review=job?.review;if(!review)return 'Not started';if(review.outcome==='approved'&&review.headSha===job.headSha)return 'MERGE READY · approved';const stale=Array.isArray(job?.tasks)&&job.tasks.some(task=>['reviewer','job-acceptance-reviewer'].includes(task.agentName)&&task.reviewHeadSha&&job.headSha&&task.reviewHeadSha!==job.headSha);if(stale)return 'STALE · awaiting review';return String(review.outcome||'pending').replace('_',' ').toUpperCase();}function renderSelectedJob(){jobDetail.replaceChildren();const job=selected();if(!job){selectedJobTitle.textContent='';jobContentButton.disabled=true;jobContentButton.dataset.state='IDLE';jobDetail.append(element('div','empty',text('No durable jobs discovered.')));buildTree([]);renderTaskDetail(null);return;}selectedJobTitle.textContent=value(job.title||job.id);jobContentButton.disabled=false;jobContentButton.dataset.state=JOB_STATES.includes(job.state)?job.state:'IDLE';jobContentButton.setAttribute('aria-label','Job details · '+value(job.state));jobContentButton.title='Job details · '+value(job.state);if(jobSelectionKey(job)!==selectedJob){selectedJob=jobSelectionKey(job);selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}const summary=element('div','job-summary');summary.append(jobStateField(job),field('Runtime status',job.runtimeStatus||'IDLE'),field('Review',job.reviewEnabled===false?'Not required':reviewStatus(job)),field('Creator thread',job.creatorThreadId||'—'),threadField('Implementation thread',job.implementationThreadId),threadField('Reviewer thread',job.reviewerThreadId),commitField('Review head SHA',job,job.review?.headSha||job.headSha||''),field('Repository',job.repository||'—'),field('Project root',job.projectRoot||'—'),field('Last activity',relativeTime(job.updatedAt)),field('Task states',compactCounts(job.tasks)),jelField(job));jobDetail.append(executionReportControls(job,null),summary);const selectedTask=(job.tasks||[]).find(task=>task.id===selectedTaskId)||null;if(selectedTaskId&&!selectedTask){selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}buildTree(job.tasks||[]);renderTaskDetail(selectedTask);renderEventScope();}function renderAll(){jobs.sort(compareJobs);syncFilters();renderJobList();renderSelectedJob();syncMobileJobsView();}
 function isCompleteUnmerged(job){return job.runtimeStatus==='MERGE_PENDING';}
 function compareJobs(a,b){const lifecycleGroup=job=>job.state==='COMPLETED'||job.state==='CANCELLED'?1:0;const timestamp=job=>{const updated=Date.parse(job.updatedAt||'');if(Number.isFinite(updated))return updated;const created=Date.parse(job.createdAt||'');return Number.isFinite(created)?created:0;};return lifecycleGroup(a)-lifecycleGroup(b)||timestamp(b)-timestamp(a)||String(a.repository||'').localeCompare(String(b.repository||''))||String(a.id||'').localeCompare(String(b.id||''));}
-async function loadJSON(url){const response=await fetch(url);if(!response.ok)throw new Error(response.status+' '+response.statusText);return response.json();}
+async function loadJSON(url){
+  // Only read operations use this helper. Leave mutation receipts to their
+  // own lifecycle; an unavailable read must not hold the page indefinitely.
+  const timeout=10000;
+  const response=await fetch(url,{signal:AbortSignal.timeout(timeout)});
+  if(!response.ok)throw new Error(response.status+' '+response.statusText);
+  return response.json();
+}
 async function refreshVersion(){try{const live=await loadJSON(RELAY_PREFIX+'/api/version');if(live?.version&&(live.version!==DASHBOARD_VERSION||(live.sourceRef&&live.sourceRef!==WORKFLOW_SOURCE_REF)))location.reload();}catch{}}
 function renderRateLimitStatus(status){
   if(!status?.limited){rateLimitWarning.hidden=true;rateLimitWarning.textContent='';return;}
@@ -513,12 +520,32 @@ function renderRateLimitStatus(status){
   rateLimitWarning.hidden=false;
 }
 function runtimePill(label,value){const pill=element('span','runtime-stat');pill.append(document.createTextNode(label+' '),element('strong','',text(value)));return pill;}
-async function drawRuntimeSummary(){try{const summary=await loadJSON(RELAY_PREFIX+'/api/runtime-summary');runtimeSummary.replaceChildren(runtimePill('Active Jobs',summary.activeJobs||0),runtimePill('Running Tasks',summary.runningTasks||0),runtimePill('ChatGPT',summary.workers?.chatgpt||0),runtimePill('Codex',summary.workers?.codex||0));for(const item of Array.isArray(summary.models)?summary.models:[])runtimeSummary.append(runtimePill(item.model,item.count));}catch{runtimeSummary.replaceChildren();}}
+let runtimeSummaryPending=false;
+async function drawRuntimeSummary(){
+  if(runtimeSummaryPending)return;
+  runtimeSummaryPending=true;
+  try{
+    const summary=await loadJSON(RELAY_PREFIX+'/api/runtime-summary');
+    if(!summary||typeof summary.activeJobs!=='number'||typeof summary.runningTasks!=='number')throw new Error('Invalid runtime summary');
+    runtimeSummary.replaceChildren(runtimePill('Active Jobs',summary.activeJobs),runtimePill('Running Tasks',summary.runningTasks),runtimePill('ChatGPT',summary.workers?.chatgpt||0),runtimePill('Codex',summary.workers?.codex||0));
+    for(const item of Array.isArray(summary.models)?summary.models:[])runtimeSummary.append(runtimePill(item.model,item.count));
+    runtimeSummary.removeAttribute('data-stale');runtimeSummary.removeAttribute('title');
+  }catch(error){
+    // Keep the previous verified counts; do not confuse a failed observation
+    // with zero workers or remove the last known state from the screen.
+    runtimeSummary.dataset.stale='true';runtimeSummary.title='Runtime observation unavailable; showing last known data: '+error.message;
+    if(!runtimeSummary.childElementCount)runtimeSummary.append(element('span','subtle',text('Runtime summary unavailable; retrying')));
+  }finally{runtimeSummaryPending=false;}
+}
 async function refreshStatus(){try{renderRateLimitStatus(await loadJSON(RELAY_PREFIX+'/api/status'));}catch{renderRateLimitStatus(null);}}
 function rememberJobFilters(){sessionStorage.setItem('agents-relay:repo-filter',selectedRepo);sessionStorage.setItem('agents-relay:status-filter',selectedStatus);sessionStorage.setItem('agents-relay:job-search',searchQuery);}
 function jobsQuery(force=false){const params=new URLSearchParams();if(searchQuery.trim())params.set('q',searchQuery.trim());if(selectedStatus)params.set('status',selectedStatus);if(selectedRepo)params.set('repo',selectedRepo);if(force)params.set('refresh','1');return params.toString();}
-let jobsRequestSequence=0;
-async function refresh(force=true){const requestSequence=++jobsRequestSequence;jobsRefresh.disabled=true;jobsFeedback.textContent='';try{const params=jobsQuery(force);const discovered=await loadJSON(RELAY_PREFIX+'/api/jobs'+(params?'?'+params:''));if(requestSequence!==jobsRequestSequence)return;const result=Array.isArray(discovered)?{jobs:discovered,repositories:[...new Set(discovered.map(job=>job.repository).filter(Boolean))].sort()}:discovered;jobs=mergeJobList(Array.isArray(result.jobs)?result.jobs:[]).sort(compareJobs).slice(0,20);jobRepositories=result.repositories||[];void drawRuntimeSummary();jobs.sort(compareJobs);if(selectedJob&&!jobForSelection(selectedJob)){selectedJob=null;selectedTaskId=null;}if(!selectedJob){const match=location.hash.match(/^#\/jobs\/(.+)$/);const fromHash=match?decodeURIComponent(match[1]):null;const fromRoute=jobForSelection(fromHash);selectedJob=jobSelectionKey(fromRoute||jobs[0]);}rememberSelection();rememberJobFilters();renderAll();void loadEventHistory();jobsFeedback.textContent='';}catch(error){if(requestSequence!==jobsRequestSequence)return;jobsFeedback.textContent='Refresh failed: '+error.message;if(!jobs.length)jobList.replaceChildren(element('li','error-state',text('Could not load jobs: '+error.message)));}finally{if(requestSequence===jobsRequestSequence){jobsRefresh.disabled=false;syncFilters();}}}
+let jobsRequestSequence=0,jobsRetryTimer=null;
+function retryJobsRefresh(){
+  if(jobsRetryTimer!==null)return;
+  jobsRetryTimer=setTimeout(()=>{jobsRetryTimer=null;if(!jobsView.hidden&&!document.hidden&&!jobsRefresh.disabled)void refresh(false);},2000);
+}
+async function refresh(force=true){const requestSequence=++jobsRequestSequence;jobsRefresh.disabled=true;jobsFeedback.textContent='';try{const params=jobsQuery(force);const discovered=await loadJSON(RELAY_PREFIX+'/api/jobs'+(params?'?'+params:''));if(requestSequence!==jobsRequestSequence)return;const result=Array.isArray(discovered)?{jobs:discovered,repositories:[...new Set(discovered.map(job=>job.repository).filter(Boolean))].sort()}:discovered;if(!result||!Array.isArray(result.jobs))throw new Error('Invalid Jobs response');jobs=mergeJobList(result.jobs).sort(compareJobs).slice(0,20);if(jobsRetryTimer!==null){clearTimeout(jobsRetryTimer);jobsRetryTimer=null;}jobRepositories=result.repositories||[];void drawRuntimeSummary();jobs.sort(compareJobs);if(selectedJob&&!jobForSelection(selectedJob)){selectedJob=null;selectedTaskId=null;}if(!selectedJob){const match=location.hash.match(/^#\/jobs\/(.+)$/);const fromHash=match?decodeURIComponent(match[1]):null;const fromRoute=jobForSelection(fromHash);selectedJob=jobSelectionKey(fromRoute||jobs[0]);}rememberSelection();rememberJobFilters();renderAll();void loadEventHistory();jobsFeedback.textContent='';}catch(error){if(requestSequence!==jobsRequestSequence)return;jobsFeedback.textContent='Refresh failed: '+error.message+'; retrying';retryJobsRefresh();if(!jobs.length)jobList.replaceChildren(element('li','error-state',text('Could not load jobs: '+error.message)));}finally{if(requestSequence===jobsRequestSequence){jobsRefresh.disabled=false;syncFilters();}}}
 function renderEventScope(){const task=eventTaskId&&selected()?.tasks?.find(candidate=>candidate.id===eventTaskId);eventsAllTasks.disabled=!task;eventsAllTasks.setAttribute('aria-pressed',String(!task));eventsScope.textContent=task?'Task '+task.id+' · newest first · 60 max':'Job-wide · newest first · 60 max';}
 function eventLabel(type){return ({'task.process.launched':'Process launched','task.started':'Worker started','task.process.exited':'Sync process exited','task.process.async_exited':'Async process exited','task.completed':'Worker completed','task.failed':'Worker failed','task.blocked':'Worker blocked','review.started':'Review started','review.approved':'Review approved','review.changes_required':'Review changes required','review.blocked':'Review blocked'})[type]||type||'Event';}
 function eventSeverity(event,level){const type=String(event?.type||'').toLowerCase(),eventLevel=String(event?.level||level||'').toLowerCase(),outcome=String(event?.outcome||event?.status||'').toLowerCase();if(eventLevel==='error'||outcome==='failed'||type.endsWith('.failed')||type==='task.failed')return 'error';if(eventLevel==='warn'||outcome==='blocked'||type.endsWith('.blocked')||type==='task.blocked'||type==='review.blocked')return 'warn';return 'normal';}
@@ -568,7 +595,29 @@ function usageBar(label,windowData){const percent=Math.max(0,Math.min(100,100-wi
 function usageProvider(provider){const card=element('section','usage-provider');card.append(element('h3','',text(provider.label)));const usage=provider.usage||{};if(!usage.available||!usage.fiveHour||!usage.weekly){card.append(element('p','empty',text(usage.reason||'Account usage telemetry is unavailable.')));return card;}const bars=element('div','usage-bars');bars.append(usageBar('5-hour remaining',usage.fiveHour),usageBar('Weekly remaining',usage.weekly));card.append(bars);return card;}
 function formatCredit(value,currency){if(value===null||value===undefined||!Number.isFinite(Number(value)))return '—';const number=Number(value);if(currency==='USD')return '$'+number.toFixed(2);if(currency==='CNY')return '¥'+number.toFixed(2);return number.toFixed(2)+' '+currency;}
 function creditProvider(provider){const row=element('section','usage-provider');row.append(element('h3','',text(provider.label)));const credits=provider.credits||{};if(!credits.available||!Array.isArray(credits.balances)||!credits.balances.length){row.append(element('p','empty',text(credits.reason||'Credit balance is unavailable.')));return row;}const balance=credits.balances[0];row.append(element('div','detail-value',text(formatCredit(balance.remaining,balance.currency))));return row;}
-async function drawUsage(){try{const overview=await loadJSON(RELAY_PREFIX+'/api/usage');usageRoot.replaceChildren();usageMeta.textContent='Real account telemetry when available';const providers=Array.isArray(overview.providers)?overview.providers:[];const credits=Array.isArray(overview.credits)?overview.credits:[];const grid=element('div','usage-providers');for(const provider of providers)grid.append(usageProvider(provider));for(const provider of credits)grid.append(creditProvider(provider));if(!grid.children.length){usageRoot.append(element('p','empty',text('Usage telemetry is unavailable.')));return;}usageRoot.append(grid);}catch(error){usageMeta.textContent='Unavailable';usageRoot.replaceChildren(element('p','error-state',text('Usage unavailable: '+error.message)));}}
+let usagePending=false,usageRetryTimer=null;
+async function drawUsage(){
+  if(usagePending)return;
+  usagePending=true;
+  if(usageRetryTimer!==null){clearTimeout(usageRetryTimer);usageRetryTimer=null;}
+  try{
+    const overview=await loadJSON(RELAY_PREFIX+'/api/usage');
+    usageRoot.replaceChildren();usageMeta.textContent='Real account telemetry when available';
+    const providers=Array.isArray(overview.providers)?overview.providers:[];
+    const credits=Array.isArray(overview.credits)?overview.credits:[];
+    const grid=element('div','usage-providers');
+    for(const provider of providers)grid.append(usageProvider(provider));
+    for(const provider of credits)grid.append(creditProvider(provider));
+    if(!grid.children.length){usageRoot.append(element('p','empty',text('Usage telemetry is unavailable.')));return;}
+    usageRoot.append(grid);
+  }catch(error){
+    // Do not display expired capacity as healthy while the atomic snapshot
+    // refreshes; a visible Usage view retries the nonblocking observation.
+    usageMeta.textContent='Unavailable · retrying';
+    usageRoot.replaceChildren(element('p','error-state',text('Usage unavailable: '+error.message)));
+    usageRetryTimer=setTimeout(()=>{usageRetryTimer=null;if(!usageView.hidden&&!document.hidden)void drawUsage();},2000);
+  }finally{usagePending=false;}
+}
 function selectedWorkflowGraph(){return workflowGraphs.find(graph=>graph.id===selectedGraphId)||null;}
 function graphLinks(source){const links=new Map();for(const line of source.split('\n')){const match=/^\s*click\s+([A-Za-z0-9_]+)\s+href\s+"([a-z0-9-]+\.mmd)"(?:\s+"[^"\n]*")?\s*$/.exec(line);if(!match)continue;const id=match[2].slice(0,-4);if(workflowGraphs.some(graph=>graph.id===id))links.set(match[1],id);}return links;}
 function graphFromHash(){if(location.hash==='#/graphs'||location.hash==='#/graphs/entry')return 'main';if(!location.hash.startsWith('#/graphs/'))return null;const id=location.hash.slice(9);return /^[a-z0-9-]+$/.test(id)?id:null;}
@@ -747,5 +796,10 @@ if(location.hash==='#/usage')showView('usage');else if(graphFromHash())showView(
 setInterval(()=>{updateTaskElapsedTitles();},30000);
 setInterval(()=>{if(location.hash==='#/usage')void drawUsage();},30000);
 setInterval(()=>void refreshVersion(),30000);
-setInterval(()=>void refreshVisiblePublications(),30000);
+setInterval(()=>{
+  if(jobsView.hidden||document.hidden)return;
+  if(stream.readyState!==EventSource.OPEN||!jobs.length){if(!jobsRefresh.disabled)void refresh(false);}
+  else void refreshVisiblePublications();
+  void drawRuntimeSummary();
+},30000);
 async function refreshSelected(){const job=selected();if(!job){await refresh();return;}selectedJobRefresh.disabled=true;try{const params=new URLSearchParams({id:job.id,repo:job.repository});const updated=await loadJSON(RELAY_PREFIX+'/api/job?'+params.toString());upsertFreshJob(updated);selectedJob=jobSelectionKey(updated);rememberSelection();renderAll();await loadEventHistory();}catch(error){jobsFeedback.textContent='Selected job refresh failed: '+error.message;}finally{selectedJobRefresh.disabled=false;}}

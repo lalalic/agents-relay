@@ -11,3 +11,5 @@ Job Detail, Task Detail and JEL use one Report action to generate and immediatel
 Workflow inspection is a read-only presentation of canonical graphs and their registered symbols. `docs/workflow-symbol-index.md` is consumed by the Dashboard; keep its contract references valid. Do not make explanatory diagrams executable.
 
 Run `scripts/test-dashboard-browser.sh` for UI, HTTP/SSE, runtime-status and publication changes before review/merge/release. Use isolated native fixtures and real Chrome, including desktop and mobile widths. Native tests include `native_dashboard_api`, `native_dashboard_pwa`, `native_dashboard_browser`, `native_dashboard_jel`. Real remote-device checks must be reported separately.
+
+Read-only Dashboard requests are bounded and transient failures retain the last verified Job/runtime view. Initial failures and SSE disconnects recover through authoritative inventory refresh; an empty filtered result remains a valid empty result. Slow SSE clients cannot block the daemon or other subscribers.

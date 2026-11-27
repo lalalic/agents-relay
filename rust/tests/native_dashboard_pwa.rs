@@ -59,6 +59,19 @@ fn running_server() -> (
     };
     (url, backend, tx, shutdown, handle)
 }
+#[test]
+fn accepted_connection_waits_for_split_request_headers(){
+    let (addr,_backend,_events,shutdown,server)=running_server();
+    let mut stream=TcpStream::connect(addr).unwrap();
+    stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    thread::sleep(Duration::from_millis(100));
+    stream.write_all(b"GET /api/jobs HTTP/1.1\r\nHost:").unwrap();
+    thread::sleep(Duration::from_millis(100));
+    stream.write_all(b" 127.0.0.1\r\nConnection: close\r\n\r\n").unwrap();
+    let mut body=String::new();stream.read_to_string(&mut body).unwrap();
+    assert!(body.starts_with("HTTP/1.1 200"),"{body}");
+    shutdown.store(true,Ordering::Release);server.join().unwrap();
+}
 fn request(addr: &str, raw: &str) -> Vec<u8> {
     let mut stream = TcpStream::connect(addr).unwrap();
     stream

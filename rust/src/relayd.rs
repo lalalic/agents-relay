@@ -280,6 +280,7 @@ impl ObservationBudget{
 }
 pub trait DaemonServices:Send{
     fn dashboard_observation_ports(&self)->Option<DashboardObservationPorts>{None}
+    fn dashboard_sse(&self)->Option<crate::dashboard_sse::DashboardSse>{None}
 
     /// A live-store shadow must not run Pool scheduling, Graph reconcile,
     /// remote delivery or SSE emit loops. It only serves on-demand SQLite
@@ -353,9 +354,43 @@ pub trait DaemonServices:Send{
     fn reconcile_local_completion(&mut self,_id:&str)->Result<bool,String>{Ok(false)}
     fn effect(&mut self,action:&Value)->Result<(),String>;
 }
+// A live daemon has one owner of mutable orchestration state. HTTP mutations
+// request canonical actions through a bounded queue and await the actual receipt.
+// The standalone legacy Service fixture keeps its injected host binding.
+type ServiceCall<S>=Box<dyn FnOnce(&mut S)+Send>;
+enum ServiceAccess<S>{
+    Shared(Arc<Mutex<S>>),
+    Owner(std::sync::mpsc::SyncSender<ServiceCall<S>>),
+}
+impl<S> Clone for ServiceAccess<S>{
+    fn clone(&self)->Self{match self{
+        Self::Shared(host)=>Self::Shared(Arc::clone(host)),
+        Self::Owner(tx)=>Self::Owner(tx.clone()),
+    }}
+}
+impl<S:DaemonServices+'static> ServiceAccess<S>{
+    fn call<T:Send+'static>(&self,f:impl FnOnce(&mut S)->Result<T,String>+Send+'static)->Result<T,String>{
+        match self{
+            Self::Shared(host)=>f(&mut *host.lock().map_err(|_|"Service host poisoned")?),
+            Self::Owner(tx)=>{
+                let (reply,receipt)=std::sync::mpsc::sync_channel(1);
+                tx.try_send(Box::new(move|host|{let _=reply.send(f(host));}))
+                    .map_err(|error|match error{
+                        std::sync::mpsc::TrySendError::Full(_)=>"Daemon control queue busy; retry later",
+                        std::sync::mpsc::TrySendError::Disconnected(_)=>"Daemon service unavailable",
+                    })?;
+                // Do not time out an accepted mutation and accidentally invite
+                // a duplicate action while the owner still holds the command.
+                receipt.recv().map_err(|_|"Daemon control receipt unavailable".to_owned())?
+            }
+        }
+    }
+}
 pub struct DaemonDashboardBackend<S:DaemonServices>{
-    pub config:DaemonConfig,pub services:Arc<Mutex<S>>,
+    pub config:DaemonConfig,
+    services:ServiceAccess<S>,
     observation_ports:Option<DashboardObservationPorts>,
+    sse:Option<crate::dashboard_sse::DashboardSse>,
     history_budget:Arc<ObservationBudget>,
     router_budget:Arc<ObservationBudget>,
     usage_budget:Arc<ObservationBudget>,
@@ -363,8 +398,12 @@ pub struct DaemonDashboardBackend<S:DaemonServices>{
 }
 impl<S:DaemonServices+'static> DaemonDashboardBackend<S>{
     pub fn new(config:DaemonConfig,services:Arc<Mutex<S>>,read_only:bool)->Self{
-        let observation_ports=services.lock().ok().and_then(|host|host.dashboard_observation_ports());
-        Self{config,services,observation_ports,
+        let (ports,sse)=services.lock().map(|host|(host.dashboard_observation_ports(),host.dashboard_sse())).unwrap_or_default();
+        Self::with_access(config,ServiceAccess::Shared(services),ports,sse,read_only)
+    }
+    fn with_access(config:DaemonConfig,services:ServiceAccess<S>,observation_ports:Option<DashboardObservationPorts>,
+        sse:Option<crate::dashboard_sse::DashboardSse>,read_only:bool)->Self{
+        Self{config,services,observation_ports,sse,
             history_budget:Arc::new(ObservationBudget::new(4)),
             router_budget:Arc::new(ObservationBudget::new(1)),
             usage_budget:Arc::new(ObservationBudget::new(4)),read_only}
@@ -375,8 +414,8 @@ impl<S:DaemonServices+'static> DashboardApiServices for DaemonDashboardBackend<S
         // Legacy fixture/observer hosts without a real independent port
         // retain the original behavior; never bypass authorization.
         self.observation_ports.as_ref()?;
-        Some(Self{config:self.config.clone(),services:Arc::clone(&self.services),
-            observation_ports:self.observation_ports.clone(),
+        Some(Self{config:self.config.clone(),services:self.services.clone(),
+            observation_ports:self.observation_ports.clone(),sse:self.sse.clone(),
             history_budget:Arc::clone(&self.history_budget),
             router_budget:Arc::clone(&self.router_budget),usage_budget:Arc::clone(&self.usage_budget),
             read_only:self.read_only})
@@ -391,71 +430,74 @@ impl<S:DaemonServices+'static> DashboardApiServices for DaemonDashboardBackend<S
         dashboard_job_by_id(&self.config,id,repo)
     }
     fn control(&mut self,body:&Value)->Result<Value,String>{
-        self.services.lock().map_err(|_|"Daemon service lock poisoned")?.control(body)
+        let body=body.clone();self.services.call(move|s|s.control(&body))
     }
     fn job_action(&mut self,id:&str,action:&str)->Result<Value,String>{
-        self.services.lock().map_err(|_|"Daemon service lock poisoned")?.job_action(id,action)
+        let (id,action)=(id.to_owned(),action.to_owned());self.services.call(move|s|s.job_action(&id,&action))
     }
     fn task_command(&mut self,body:&Value)->Result<Value,String>{
-        self.services.lock().map_err(|_|"Daemon service lock poisoned")?.task_command(body)
+        let body=body.clone();self.services.call(move|s|s.task_command(&body))
     }
     fn task_action(&mut self,id:&str,task_id:&str,action:&str)->Result<Value,String>{
-        self.services.lock().map_err(|_|"Daemon service lock poisoned")?.task_action(id,task_id,action)
+        let (id,task_id,action)=(id.to_owned(),task_id.to_owned(),action.to_owned());self.services.call(move|s|s.task_action(&id,&task_id,&action))
     }
     fn job_set_state(&mut self,id:&str,state:&str,target:&Value)
         ->Result<Value,String>{
-        self.services.lock().map_err(|_|"Daemon service lock poisoned")?.job_set_state(id,state,target)
+        let (id,state,target)=(id.to_owned(),state.to_owned(),target.clone());self.services.call(move|s|s.job_set_state(&id,&state,&target))
     }
     fn task_set_state(&mut self,id:&str,task_id:&str,state:&str,target:&Value)
         ->Result<Value,String>{
-        self.services.lock().map_err(|_|"Daemon service lock poisoned")?.task_set_state(id,task_id,state,target)
+        let (id,task_id,state,target)=(id.to_owned(),task_id.to_owned(),state.to_owned(),target.clone());self.services.call(move|s|s.task_set_state(&id,&task_id,&state,&target))
     }
     fn events(&mut self,id:&str,task_id:Option<&str>,limit:i64)
         ->Result<Vec<Value>,String>{
         if let Some(ports)=&self.observation_ports{
             return self.history_budget.run(||(ports.history)(id,task_id,limit));
         }
-        self.services.lock().map_err(|_|"Daemon service lock poisoned")?.event_history(id,task_id,limit)
+        let (id,task_id)=(id.to_owned(),task_id.map(str::to_owned));self.services.call(move|s|s.event_history(&id,task_id.as_deref(),limit))
     }
     fn github_webhook(&mut self,event:&Value)->Result<(),String>{
-        self.services.lock().map_err(|_|"Daemon service lock poisoned")?.publish_event(event)
+        let event=event.clone();self.services.call(move|s|s.publish_event(&event))
     }
     fn router_test(&mut self,id:&str,task_id:&str)->Result<Value,String>{
         if let Some(ports)=&self.observation_ports{
             return self.router_budget.run(||(ports.router)(id,task_id));
         }
-        self.services.lock().map_err(|_|"Daemon service lock poisoned")?.router_test(id,task_id)
+        let (id,task_id)=(id.to_owned(),task_id.to_owned());self.services.call(move|s|s.router_test(&id,&task_id))
     }
     fn decision_audit(&mut self)->Result<Vec<Value>,String>{
         if self.observation_ports.is_some(){
             return crate::decision_audit::dashboard_records(&self.config.store_directory);
         }
-        self.services.lock().map_err(|_|"Daemon service lock poisoned")?.decision_audit()
+        self.services.call(|s|s.decision_audit())
     }
     fn runtime_status(&mut self)->Value{
         if let Some(ports)=&self.observation_ports{return (ports.status)();}
-        self.services.lock().map(|mut services|services.status())
-            .unwrap_or_else(|_|json!({"error":"Daemon service lock poisoned"}))
+        self.services.call(|s|Ok(s.status())).unwrap_or_else(|error|json!({"error":error}))
     }
     fn account_usage(&mut self)->Result<Value,String>{
         if let Some(ports)=&self.observation_ports{
             return self.usage_budget.run(||(ports.usage)());
         }
-        self.services.lock().map_err(|_|"Daemon service lock poisoned")?.account_usage()
+        self.services.call(|s|s.account_usage())
     }
     fn routing_usage(&mut self)->Result<Value,String>{
         if let Some(ports)=&self.observation_ports{
             return self.usage_budget.run(||(ports.routing_usage)());
         }
-        self.services.lock().map_err(|_|"Daemon service lock poisoned")?.routing_usage()
+        self.services.call(|s|s.routing_usage())
     }
     fn github_usage(&mut self)->Result<Option<Value>,String>{
         // The native observation host does not expose a GitHub provider.
         if self.observation_ports.is_some(){return Ok(None);}
-        self.services.lock().map_err(|_|"Daemon service lock poisoned")?.github_usage()
+        self.services.call(|s|s.github_usage())
+    }
+    fn event_subscription(&self)->Option<Arc<dyn Fn()->Receiver<String>+Send+Sync>>{
+        let sse=self.sse.clone()?;Some(Arc::new(move||sse.subscribe()))
     }
     fn subscribe_events(&mut self)->Receiver<String>{
-        self.services.lock().map(|mut services|services.subscribe_events())
+        if let Some(sse)=&self.sse{return sse.subscribe();}
+        self.services.call(|s|Ok(s.subscribe_events()))
             .unwrap_or_else(|_|std::sync::mpsc::channel().1)
     }
 }
@@ -524,9 +566,21 @@ pub fn run_daemon<S:DaemonServices+'static>(
     };
     let read_only_shadow=services.is_read_only_shadow();
     let publication_runtime=services.publication_history_runtime();
-    let services=Arc::new(Mutex::new(services));
-    let dashboard=Arc::new(NativeDashboardApi::new(opts,DaemonDashboardBackend::new(
-        config.clone(),Arc::clone(&services),read_only_shadow)));
+    let observations=services.dashboard_observation_ports();
+    let sse=services.dashboard_sse();
+    let (control_tx,control_rx)=std::sync::mpsc::sync_channel::<ServiceCall<S>>(64);
+    let access=ServiceAccess::Owner(control_tx);
+    let dashboard=Arc::new(NativeDashboardApi::new(opts,DaemonDashboardBackend::with_access(
+        config.clone(),access.clone(),observations,sse,read_only_shadow)));
+    // This cell is local to the single scheduler thread. Pool invokes its
+    // resolve/reconcile callbacks sequentially; no shared mutable host lock.
+    let services=std::cell::RefCell::new(services);
+    fn drain_controls<S>(rx:&std::sync::mpsc::Receiver<ServiceCall<S>>,
+        host:&std::cell::RefCell<S>,limit:usize){
+        for _ in 0..limit{
+            match rx.try_recv(){Ok(call)=>call(&mut *host.borrow_mut()),Err(_)=>break}
+        }
+    }
     // The bound loopback socket is owned by this daemon, never the production
     // Node Relay. It serves the immutable shared PWA resources and delegates
     // business requests to the single Graph/SQLite-backed daemon service.
@@ -541,17 +595,20 @@ pub fn run_daemon<S:DaemonServices+'static>(
             .map_err(|e|format!("Dashboard server: {e}")));
         let publication_config=config.clone();
         let publication_stop=Arc::clone(&dashboard_shutdown);
-        let publication_services=Arc::clone(&services);
+        let publication_services=access.clone();
         let publication_observer=publication_runtime.map(|runtime|scope.spawn(move||
             crate::dashboard_publication::observe_releases(
                 &publication_config,&runtime,&publication_stop,|event|{
-                    // Do not hold the service lock during HTTP/SQLite IO.
-                    if let Ok(mut host)=publication_services.lock(){
-                        let _=host.publish_event(event);
+                    // Publication observation has already been persisted.
+                    // Dispatch only its notification to the canonical owner.
+                    let event=event.clone();
+                    if let Err(error)=publication_services.call(move|host|host.publish_event(&event)){
+                        eprintln!("warning: Dashboard publication notification: {error}");
                     }
                 })));
         let mut first=true;
         while !stop.load(Ordering::Acquire){
+            drain_controls(&control_rx,&services,32);
             if read_only_shadow{
                 // No background Job scan or model/provider activity in the
                 // live store. Dashboard reads use the original strictly
@@ -560,16 +617,16 @@ pub fn run_daemon<S:DaemonServices+'static>(
                 continue;
             }
             let result=(||->Result<(),String>{
-                services.lock().map_err(|_|"Daemon service lock poisoned")?
+                services.borrow_mut()
                     .drain_dashboard_events()?;
+                drain_controls(&control_rx,&services,16);
                 let inventory=inventory_from_local(&config,true)?;
                 // Script/Model Workers commit Graph facts and append identical
                 // durable event receipts from separate subprocesses. Flush
                 // their outbox before reconciling successors, with a broker
                 // round-trip acknowledgment before marking an event delivered.
                 // A disconnected Event Bus must not block Script admission.
-                if let Err(error)=services.lock()
-                    .map_err(|_|"Daemon service lock poisoned")?
+                if let Err(error)=services.borrow_mut()
                     .flush_workflow_events(){
                     eprintln!("warning: durable Worker EventBus outbox: {error}");
                 }
@@ -579,9 +636,9 @@ pub fn run_daemon<S:DaemonServices+'static>(
                 // task.started/progress/terminal ingestion. Never let an
                 // unavailable EventBus block unrelated Script workers.
                 for job in inventory.iter().filter(|job|field(job,"state")=="ACTIVE"){
+                    drain_controls(&control_rx,&services,16);
                     let id=field(job,"id");
-                    let receipt=services.lock()
-                        .map_err(|_|"Daemon service lock poisoned")?
+                    let receipt=services.borrow_mut()
                         .poll_model_events(id);
                     if let Err(error)=receipt{
                         eprintln!("warning: Model EventBus observation for Job {id}: {error}");
@@ -591,13 +648,12 @@ pub fn run_daemon<S:DaemonServices+'static>(
                     .collect::<Vec<_>>();
                 pool.reconcile_discovered(&overview,
                     |id|{
-                        let mut guard=services.lock()
-                            .map_err(|_|"Daemon service lock poisoned")?;
+                        let mut guard=services.borrow_mut();
                         guard.load(id).map(Some)
                     },
                     |id,capacity|{
-                        let mut guard=services.lock()
-                            .map_err(|_|"Daemon service lock poisoned")?;
+                        drain_controls(&control_rx,&services,16);
+                        let mut guard=services.borrow_mut();
                         reconcile_one_daemon_job(
                             &config,&mut *guard,id,capacity,|snapshot|{
                                 make_reconciler(snapshot)
@@ -607,8 +663,8 @@ pub fn run_daemon<S:DaemonServices+'static>(
                 // merge or COMPLETE. Reconcile after Task results are durably
                 // written; never infer completion from a Worker receipt.
                 for job in inventory.iter().filter(|j|field(j,"state")=="ACTIVE"){
-                    let mut guard=services.lock()
-                        .map_err(|_|"Daemon service lock poisoned")?;
+                    drain_controls(&control_rx,&services,16);
+                    let mut guard=services.borrow_mut();
                     guard.reconcile_local_completion(field(job,"id"))?;
                 }
                 // Node subscribeLocalCommits observes durable writes even
@@ -619,8 +675,7 @@ pub fn run_daemon<S:DaemonServices+'static>(
                 // when no SSE client is listening.
                 for job in &inventory{
                     let id=field(job,"id");
-                    let result=services.lock()
-                        .map_err(|_|"Daemon service lock poisoned")?
+                    let result=services.borrow_mut()
                         .observe_committed_job_snapshot(id);
                     if let Err(error)=result{
                         eprintln!("warning: Dashboard SQLite observation for Job {id}: {error}");
@@ -630,9 +685,9 @@ pub fn run_daemon<S:DaemonServices+'static>(
                 // A historic COMPLETED Job without a matching marker never
                 // enters this effect queue, not even for metadata inspection.
                 for job in remote_delivery_candidates(&config)?{
+                    drain_controls(&control_rx,&services,16);
                     let id=field(&job,"id");
-                    let mut guard=services.lock()
-                        .map_err(|_|"Daemon service lock poisoned")?;
+                    let mut guard=services.borrow_mut();
                     guard.effect(&json!({
                         "action":"effect.remoteDelivery",
                         "jobId":id,
@@ -654,17 +709,22 @@ pub fn run_daemon<S:DaemonServices+'static>(
             let interval=Duration::from_millis(config.interval_ms.max(100));
             let until=Instant::now()+interval;
             while !stop.load(Ordering::Acquire)&&Instant::now()<until{
-                if services.lock()
-                    .map_err(|_|"Daemon service lock poisoned")?
+                if services.borrow_mut()
                     .has_pending_model_events(){
                     // NATS already queued immutable rows. Re-run the same
                     // lifecycle owner now instead of waiting up to 5 minutes.
                     // No side effect is trusted until exact SQLite CAS.
                     break;
                 }
-                std::thread::sleep(Duration::from_millis(100));
+                match control_rx.recv_timeout(Duration::from_millis(100)){
+                    Ok(call)=>{call(&mut *services.borrow_mut());break;},
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)=>{},
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected)=>break,
+                }
             }
         }
+        // Close receipts before joining an observer that may be awaiting one.
+        drop(control_rx);
         dashboard_shutdown.store(true,Ordering::Release);
         if let Some(observer)=publication_observer{
             observer.join().map_err(|_|"Dashboard publication observer panicked".to_owned())?;
@@ -676,6 +736,63 @@ pub fn run_daemon<S:DaemonServices+'static>(
 #[cfg(test)]
 mod dashboard_projection_tests {
     use super::*;
+    #[test]
+    fn queued_control_waits_for_receipt_but_not_sse_or_read_only_observations(){
+        use crate::{dashboard::{DashboardBackend,DashboardRequest},
+            relayd_sqlite_write::IsolatedSQLiteWriteHost};
+        use std::sync::mpsc;
+        let root=std::env::temp_dir().join(format!("relay-owner-{}-{}",
+            std::process::id(),Utc::now().timestamp_nanos_opt().unwrap()));
+        std::fs::create_dir_all(root.join("stores")).unwrap();
+        let mut config=DaemonConfig::from_argv(&[],&json!({})).unwrap();
+        config.store_directory=root.join("stores");
+        config.graph_directory=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+        config.repositories=vec!["fixture".into()];config.event_transport=json!({});
+        let db=relay_unified_store_path(&config.store_directory);
+        let store=SQLiteRelayStore::open(&db,Some("42")).unwrap();
+        store.save_job(&json!({"id":"42","title":"fixture","repository":"fixture",
+            "projectRoot":root,"state":"ACTIVE","tasks":[],"plans":[],
+            "createdAt":"2026-11-25T09:00:00Z","updatedAt":"2026-11-25T09:00:00Z"})).unwrap();
+        store.close().unwrap();
+        let mut host=IsolatedSQLiteWriteHost::new(config.clone());
+        let sse=host.dashboard_sse().unwrap();
+        let observations=host.dashboard_observation_ports();
+        let (tx,rx)=mpsc::sync_channel::<ServiceCall<IsolatedSQLiteWriteHost>>(4);
+        let (queued,waiting)=mpsc::channel();let (release,gate)=mpsc::channel();
+        let owner=std::thread::spawn(move||{
+            let command=rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            queued.send(()).unwrap();gate.recv_timeout(Duration::from_secs(4)).unwrap();
+            command(&mut host);
+        });
+        let opts=DashboardApiOptions{graph_directory:config.graph_directory.clone(),
+            router_rules_path:config.router_rules_path.clone(),
+            troubleshooter_qa_path:troubleshooter_qa_path().unwrap(),webhook_secret:None,
+            webhook_repositories:HashSet::new(),webhook_job_id:None};
+        let api=Arc::new(NativeDashboardApi::new(opts,DaemonDashboardBackend::with_access(
+            config,ServiceAccess::Owner(tx),observations,Some(sse.clone()),false)));
+        let client=Arc::clone(&api);let (result,receipt)=mpsc::channel();
+        let control=std::thread::spawn(move||{
+            result.send(client.api(DashboardRequest{method:"POST",target:"/api/job-action?id=42&action=cancel",body:b"",headers:&HashMap::new()})).unwrap();
+        });
+        waiting.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(receipt.try_recv().is_err(),"mutation must await durable owner result");
+        let (done,read)=mpsc::channel();let observer=Arc::clone(&api);
+        let reader=std::thread::spawn(move||{
+            let jobs=observer.api(DashboardRequest{method:"GET",target:"/api/jobs",body:b"",headers:&HashMap::new()});
+            let status=observer.api(DashboardRequest{method:"GET",target:"/api/status",body:b"",headers:&HashMap::new()});
+            let stream=observer.subscribe_events();done.send((jobs.status,status.status,stream)).unwrap();
+        });
+        let (jobs,status,stream)=read.recv_timeout(Duration::from_secs(2))
+            .expect("read or SSE subscription waited on queued lifecycle control");
+        assert_eq!((jobs,status),(200,200));sse.publish("independent".into());
+        assert_eq!(stream.recv_timeout(Duration::from_secs(1)).unwrap(),"independent");
+        release.send(()).unwrap();let response=receipt.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_eq!(response.status,200,"{}",String::from_utf8_lossy(&response.body));
+        control.join().unwrap();reader.join().unwrap();owner.join().unwrap();
+        let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("42")).unwrap();
+        assert_eq!(store.load_job("42").unwrap().unwrap()["state"],"CANCELLED");
+        store.close().unwrap();drop(api);std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn detached_history_and_router_usage_do_not_serialize_lifecycle_requests(){
         use crate::{dashboard::{DashboardBackend,DashboardRequest},
