@@ -1,20 +1,14 @@
-# Test strategy
+# Verification strategy
 
-## Fast feedback
+Use disposable `AGENTS_RELAY_STORE_DIR` for tests and child CLIs. Never target production Jobs. Run focused native Cargo tests in `rust/` for the affected behavior, then the repository CI/release gates as applicable; inspect `.github/workflows/rust.yml` and `rust/tests/` for current coverage.
 
-npm run test:fast builds TypeScript and runs 12 focused test modules with two-file concurrency. This checks Graph lifecycle and effects, SQLite authority and cross-process schedule claims, no-PR routing, local Git merge and lock recovery, webhook audit isolation, and reconciliation signals.
+| Layer | Evidence |
+| --- | --- |
+| L1 | graph branches, registered symbols, guards/actions and negative paths |
+| L2 | role/provider contract and actual execution evidence |
+| L3 | deterministic ingress, persistence, SQLite restart/reconciliation, dedupe and no false completion |
+| L4 | actual Prompt/Harness assembly, role context and declared Skill selection |
 
-Use after local edits. Passing fast tests does not authorize a merge.
+Dashboard UI/HTTP/SSE/runtime status/publication changes require `scripts/test-dashboard-browser.sh` with real Chrome and isolated native fixtures. Use the native MVP Skill for production smoke acceptance only when authorized. Provider/browser/device gates are NOT_RUN if not executed; isolated tests do not certify live deployment. Mandatory pre-release gates cannot be deferred. Live-only checks require an explicit post-release acceptance handoff.
 
-## Full acceptance
-
-npm test (or npm run test:full) builds and runs every test/*.test.js serially, including workers, daemon, planner, reviewer, dashboard, shutdown, and publication. Run before merge or release. Do not delete safety coverage to make it green.
-
-npm run test:publish is the existing publish-specific runner.
-
-## Guidelines
-
-- Prefer behavioral reproductions of failures over source-text snapshots.
-- Reuse fixtures instead of duplicating fake GitHub clients in local workflow tests.
-- Retain SQLite concurrency, dual-process merge, stale lock recovery, review SHA invalidation, publication isolation, event-driven wake, and startup recovery.
-- Measure real wall time before altering test concurrency.
+Use `node scripts/release-native.mjs` only for an authorized reviewed release. See [service](service.md) and root README for the verified native release procedure.

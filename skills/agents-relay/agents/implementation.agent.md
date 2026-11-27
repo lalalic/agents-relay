@@ -1,5 +1,6 @@
 ---
 name: implementation
+required_skills: [code-intelligence]
 contexts: [AGENTS.md]
 description: Implement the assigned Agents Relay task in the managed checkout and verify the durable result.
 capabilities: [implementation, local_repo, iterative_tools]

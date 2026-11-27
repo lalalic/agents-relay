@@ -43,8 +43,7 @@ harness-compatible file within the active independent project Git root.
 `planner.agent.md` declare `contexts: [AGENTS.md]`; project
 descendants inherit that declaration through normal `extends`.
 A replacement Agent with no inherited parent must declare its own
-mandatory dependencies. Generic Worker, Reviewer, Troubleshooter and
-Neo Project DAG Stage Agents declare no project Context by default.
+mandatory dependencies. Generic Worker, Reviewer, Troubleshooter and Neo Project DAG Stage Agents declare no project Context by default. Relay development uses a project Reviewer override to select AGENTS.md; other projects can explicitly select their own context.
 
 The selected project `AGENTS.md` is actually read into a lower-priority
 User reference section. A missing or unreadable **declared** file fails

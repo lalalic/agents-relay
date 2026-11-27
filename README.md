@@ -5,7 +5,7 @@ Agents Relay is a native **Rust** CLI and daemon for durable, local Git-backed a
 Worker liveness is process/thread-based rather than deadline-based; see
 [Worker process lifecycle](docs/WORKER_PROCESS_LIFECYCLE.md).
 
-The canonical rules are [`AGENTS.md`](AGENTS.md), [`DESIGN-PRINCIPLES.md`](DESIGN-PRINCIPLES.md) and [`skills/agents-relay/SKILL.md`](skills/agents-relay/SKILL.md).
+The project knowledge entry and design principles are in [`AGENTS.md`](AGENTS.md); runtime operations use [`skills/agents-relay/SKILL.md`](skills/agents-relay/SKILL.md).
 
 ## Code layout
 
@@ -18,7 +18,7 @@ The canonical rules are [`AGENTS.md`](AGENTS.md), [`DESIGN-PRINCIPLES.md`](DESIG
 | [`dashboard/`](dashboard/) | Static HTML/CSS/JS PWA assets, served by the Rust daemon |
 | [`skills/`](skills/) and [`agents/`](agents/) | Agent contracts, skills and prompts |
 | [`mvp/`](mvp/) | Optional CLI/real-device acceptance harnesses targeting the Rust runtime |
-| [`docs/`](docs/) | Operational/reference documents; historical porting notes are not the current build instructions |
+| [`docs/`](docs/) | Current project knowledge and subsystem references |
 
 There is **no** top-level TypeScript `src/`, Node `test/`, `dist/` distribution, npm `package.json`, or npm publish pipeline. Prior implementation and head-to-head test evidence remains available through Git history, rather than a maintained second runtime. The JavaScript frontend and Script Agent bridge are intentionally retained; they do not own Relay orchestration or durable state.
 

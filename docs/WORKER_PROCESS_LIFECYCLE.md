@@ -1,53 +1,7 @@
-# Worker execution identity: process / thread
+# Worker execution identity: process and thread
 
-Relay does not use time leases for Task ownership or deadline-based Worker eviction.
+SQLite owns the Task Graph. An executionId fences each claimed execution. Local native Codex/Script/Planner processes register host, PID, PGID and start token; process identity prevents PID reuse from being mistaken for ownership. Use the shared owned-process lifecycle, not process-name cleanup or elapsed-time leases. A missing process record is unknown, not proof of process death. Cancellation and failure handling must follow the graph and exact owned process identity.
 
-## Identity and lifecycle
+For Codex, preserve the verified JSONL thread ID and execution fence. Resume the same Task thread for supported continuation or provider fallback, retaining completed effects only when safe; never replay an uncertain action. On normal exit without accepted terminal evidence, bounded corrective turns may use the same verified thread. An exited process does not authorize completion: the selected completion contract and graph receipt do. Failure/recovery belongs to the Task Graph; Troubleshooter is one execution, not a routine provider fallback.
 
-- SQLite owns the Task Graph. The executionId (plus attempt) fences an execution
-  generation and is atomically claimed before delivery. Late events are rejected.
-- Local Script/Codex and model Planner invocations register job/task/execution,
-  host, PID, PGID, and process start token in the execution_process table.
-  The process start token prevents mistaking PID reuse for a live Worker.
-- Verified Task terminal events alone authorize completion or failure.
-- The local daemon retains exact generation ownership through the native Worker
-  thread, including output validation and terminal settlement after child exit.
-  The process-local guard is released on thread exit/unwind; daemon death clears
-  it automatically. No time lease or extra durable state is introduced.
-- Native Codex Task Workers use up to two corrective turns after a normal
-  provider exit without a verified SQLite terminal outcome. A completed
-  JSONL turn, exact persisted thread/route and current execution fence, and
-  no outstanding tool operation are required. After a bounded event-ingestion
-  check the adapter resumes the same Codex thread with the original managed
-  completion contract; it does not create a new Task attempt, commit code,
-  or synthesize completion. Each successive subprocess replaces only its
-  already-ended process record. No lifecycle transition occurs within those
-  turns; exhausted/unsafe recovery goes through the existing Task Graph.
-- If no local Worker thread owns the execution and its registered process is
-  gone or reused while the same execution
-  remains QUEUED/RUNNING, the Task Graph handles process.exited and marks
-  unknown outcome / FAILED. Troubleshooter/retry uses the regular Graph.
-- A live process is never terminated or replayed on elapsed time or daemon
-  restart. A missing process record is unknown, not proof of process death.
-- Remote ChatGPT/WebHelm uses its durable thread/session binding and verified
-  provider events; local PID checks do not apply to a remote thread.
-- Capacity and atomic claim still matter. Browser pool occupancy is a Session
-  resource reservation, not a timed Task execution lease.
-
-## Implementation
-
-- rust/src/reconciler.rs: exact generation process reconciliation.
-- rust/src/execution_process_tracker.rs and process_identity.rs: process proof.
-- rust/src/native_codex_execution.rs, native_script_worker.rs,
-  native_browser_execution.rs: Worker execution without runtime deadlines.
-- workflow/task-lifecycle.mmd: process.exited transition.
-- rust/src/workflow/contracts.rs: authoritative Graph event names.
-
-## SQLite deployment
-
-Migration is one-way with explicit backup. Remove leaseOwner and leaseExpiresAt
-from every JSON Job snapshot and the execution_process.lease_owner column.
-Keep executionId, attempt, execution history, process PID and start token.
-Run the one-way rust/scripts/migrate_process_only_sqlite.py migration against a
-stopped daemon after an online SQLite backup. No old-format compatibility shim
-is retained. Verify process-exit recovery after installing the new binary.
+Implementation: `rust/src/owned_process.rs`, `execution_process_tracker.rs`, `process_identity.rs`, `native_codex_execution.rs`, `native_codex_thread.rs`, `native_script_worker.rs`, `reconciler.rs`, `continuation.rs`, `workflow/task-lifecycle.mmd`. Tests: `native_owned_process_lifecycle`, `native_process_identity`, `native_codex_thread_routing`, `native_script_worker_process`.

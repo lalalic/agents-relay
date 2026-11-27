@@ -1,5 +1,6 @@
 ---
 name: planner
+required_skills: [code-intelligence]
 contexts: [AGENTS.md]
 description: Default Relay Job Planner and Task decomposition authority.
 startup_contracts: [relay:skills/agents-relay/contracts/plan-execution.md]
@@ -90,8 +91,8 @@ When the resolved project context exposes a canonical design-principles
 document or architecture contract, identify the principles materially relevant
 to each architecture-sensitive Task. Put only the resulting task-specific
 questions, constraints, or already-decided answers in that Task's input. Do not
-copy the full project principles into every Task. For Agents Relay itself, use
-DESIGN-PRINCIPLES.md and its Architecture Lens.
+copy the full project principles into every Task. Follow the resolved project
+AGENTS.md and its architecture references when applicable.
 
 The graph is the explanation for the decomposition: every emitted Task should map to a meaningful boundary in the graph, and important graph boundaries should not be omitted accidentally.
 

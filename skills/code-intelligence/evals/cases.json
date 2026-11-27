@@ -1,0 +1,120 @@
+[
+  {
+    "id": "small-known-edit",
+    "role": "implementation",
+    "scenario": "Known one-line typo in a specified tracked file.",
+    "expect": {
+      "primary": "bounded-read",
+      "index": false,
+      "broad_scan": false
+    }
+  },
+  {
+    "id": "planner-routing",
+    "role": "planner",
+    "scenario": "Find duplicate routing entry points with a current same-worktree CodeGraph index.",
+    "expect": {
+      "primary": "codegraph",
+      "verify_source": true,
+      "separate_index_task": false
+    }
+  },
+  {
+    "id": "syntax-migration",
+    "role": "implementation",
+    "scenario": "Find every unwrap() in affected Rust modules, ast-grep available.",
+    "expect": {
+      "primary": "ast-grep",
+      "verify_source": true,
+      "run_tests": true
+    }
+  },
+  {
+    "id": "review-wrong-branch",
+    "role": "reviewer",
+    "scenario": "Only graph available is main; review target is an immutable different SHA.",
+    "expect": {
+      "primary": "immutable-git",
+      "use_wrong_index": false,
+      "modify_artifact": false
+    }
+  },
+  {
+    "id": "missing-tools",
+    "role": "implementation",
+    "scenario": "No CodeGraph, ast-grep or rg on PATH.",
+    "expect": {
+      "primary": "git-grep",
+      "install": false,
+      "fail_for_missing_tool": false
+    }
+  },
+  {
+    "id": "cross-doc-design",
+    "role": "planner",
+    "scenario": "An architecture question is answered by AGENTS.md and one referenced current design document.",
+    "expect": {
+      "primary": "project-docs",
+      "broad_scan": false,
+      "index": false
+    }
+  },
+  {
+    "id": "truncated-graph",
+    "role": "reviewer",
+    "scenario": "CodeGraph reports truncated callers for a shared API; acceptance requires all callers.",
+    "expect": {
+      "refine_search": true,
+      "verify_source": true,
+      "approve_on_summary": false
+    }
+  },
+  {
+    "id": "doc-only-preflight",
+    "role": "reviewer",
+    "scenario": "Review a requirements document before Job creation; no source question.",
+    "expect": {
+      "primary": "bounded-read",
+      "index": false,
+      "modify_artifact": false
+    }
+  },
+  {
+    "id": "stale-index",
+    "role": "implementation",
+    "scenario": "Same worktree index is stale after edits, further dependency analysis needed.",
+    "expect": {
+      "refresh_or_fallback": true,
+      "use_stale_index": false
+    }
+  },
+  {
+    "id": "benchmark",
+    "role": "planner",
+    "scenario": "Assess reported token savings without a comparable run.",
+    "expect": {
+      "claim_savings": false,
+      "compare_same_acceptance": true
+    }
+  },
+  {
+    "id": "design-source-disagreement",
+    "role": "planner",
+    "scenario": "The referenced design says all execution uses one router but actual code suggests a bypass.",
+    "expect": {
+      "verify_source": true,
+      "report_discrepancy": true,
+      "invent_design": false
+    }
+  },
+  {
+    "id": "known-text",
+    "role": "implementation",
+    "scenario": "Locate a known error message in an unfamiliar repository, rg available.",
+    "expect": {
+      "primary": "rg",
+      "index": false,
+      "broad_scan": false
+    }
+  }
+]
