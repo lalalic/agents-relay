@@ -518,6 +518,7 @@ fn resolve_name(
     stack.pop();
     let effective=effective.ok_or_else(||format!("Unknown agent {name}"))?;
     crate::interactive_review_policy::agent_supports_review(&Value::Object(metadata.clone()))?;
+    crate::agent_context::execution_bootstrap_enabled(&Value::Object(metadata.clone()))?;
     let content=effective.body;
     Ok(json!({"content":content,"hash":sha(&content),"sources":sources,"metadata":metadata}))
 }

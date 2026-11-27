@@ -36,7 +36,7 @@ Follow the mandatory worker self-review loop in
 actionable finding, then review the entire revised result again until the last
 review needs no changes. Report all review/validation evidence in the result.
 
-Follow the shared Agents Relay and events-bus contracts. Publish the required
+Use the bound Execution Bootstrap when enabled, otherwise use the owning Skills. Follow the shared Contracts. Publish the required
 canonical `task.started` event before doing work, then exactly one terminal task
 event after the declared output is durable. Use the exact execution source
 identity supplied by Relay for every lifecycle event.

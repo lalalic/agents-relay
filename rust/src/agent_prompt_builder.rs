@@ -109,6 +109,85 @@ fn with_execution_binding(text: &str, input: &Value) -> Result<String, String> {
     Ok(result)
 }
 
+// Quote all bound values for POSIX shells, including paths containing spaces,
+// apostrophes or shell metacharacters. JSON data is serialized before quoting.
+fn shell_arg(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+/// Render commands from the already selected execution Contracts, not Agent names.
+/// The commands are User execution facts; trusted Contracts own the obligations.
+fn execution_bootstrap(input: &Value, contracts: &[String]) -> Result<Vec<String>, String> {
+    let has = |name: &str| contracts.iter().any(|n| n == name);
+    let plan = has("plan-execution");
+    let worker = has("worker-lifecycle");
+    if !plan && !worker { return Ok(vec![]); }
+    if plan && worker { return Err("Conflicting Plan and Worker execution Contracts".into()); }
+    let Some(cli) = input["relayCli"].as_str().filter(|v| !v.is_empty()) else {
+        // Unbound/offline render fixtures are not executable assignments.
+        return Ok(vec![]);
+    };
+    if !Path::new(cli).is_absolute() { return Err("Relay CLI binding must be an absolute path".into()); }
+    let cli = shell_arg(cli);
+    let job = string_field(input, "jobId");
+    let task = string_field(input, "taskId");
+    let exec = string_field(input, "executionId");
+    let repo = string_field(input, "repository");
+    let base = format!("--id {}", shell_arg(job));
+    let execution = format!("--execution-id {}", shell_arg(exec));
+    if plan {
+        return Ok(vec![
+            "## Execution commands (run directly; no routine Skill discovery)".into(),
+            format!("Load Plan Context: `{cli} plan context {base} --plan-id {} {execution}`", shell_arg(task)),
+            "Start/progress: the Planner runtime owns Plan lifecycle; do not send Task events. Complete: use the returned `apply_cli` with the Plan JSON and verify its persisted PLAN_APPLIED receipt. Fail: return the actual diagnostic without applying an invalid Plan or publishing Task events.".into(),
+        ]);
+    }
+    let api = string_field(input, "eventApi");
+    if api.is_empty() { return Err("Managed Worker bootstrap requires configured Events Bus API".into()); }
+    let url = url::Url::parse(api).map_err(|_| "Invalid Events Bus API URL")?;
+    if !matches!(url.scheme(), "http" | "https") || !url.username().is_empty()
+        || url.password().is_some() || url.query().is_some() || url.fragment().is_some()
+        || url.host_str().is_none() {
+        return Err("Invalid Events Bus API URL for execution bootstrap".into());
+    }
+    let endpoint = shell_arg(&format!("{}/events", api.trim_end_matches('/')));
+    let source = format!("job/{job}/task/{task}/execution/{exec}");
+    let identity = json!({"job_id":job,"task_id":task,"execution_id":exec});
+    let publish = |kind: &str, data: Value| format!(
+        "curl --fail-with-body --silent --show-error -H 'Content-Type: application/json' --data-binary {} {endpoint}",
+        shell_arg(&json!({"type":kind,"source":source,"data":data}).to_string()));
+    let bound = format!("{base} --task-id {}", shell_arg(task));
+    let context = format!("{cli} task context {bound} {execution}");
+    let show = format!("{cli} task show {bound}");
+    let complete = format!("{cli} task complete --repo {} {bound} {execution}", shell_arg(repo));
+    let modes = ["source-task-completion", "dag-task-completion", "event-task-completion"];
+    if modes.iter().filter(|mode| has(mode)).count() != 1 {
+        return Err("Worker bootstrap requires one selected Completion Contract".into());
+    }
+    let success = if has("source-task-completion") {
+        format!("Complete (after verified clean Git commit and required trailers): `{complete} --commit-sha COMMIT_SHA --summary 'RESULT_SUMMARY'`")
+    } else if has("dag-task-completion") {
+        format!("Complete (after validating declared structured result): `{complete} --summary 'RESULT_SUMMARY'`")
+    } else {
+        let mut data = identity.clone(); data["summary"] = json!("RESULT_SUMMARY");
+        format!("Complete (replace data with the required role-specific result, retaining identity): `{}`", publish("task.completed", data))
+    };
+    let mut progress = identity.clone(); progress["message"] = json!("PROGRESS_MESSAGE");
+    let mut failure = identity.clone(); failure["phase"] = json!("FAILURE_PHASE");
+    failure["reason"] = json!("FAILURE_REASON"); failure["evidence"] = json!("FAILURE_EVIDENCE");
+    Ok(vec![
+        "## Execution commands (run directly; no routine Skill discovery)".into(),
+        format!("Start immediately: `{}`", publish("task.started", identity)),
+        format!("Load Task Context: `{context}`"),
+        "Verify the start publication receipt and authoritative context for this execution; confirm RUNNING before product work. If still QUEUED, recheck acceptance rather than guessing. Use the returned objective/input/output as authoritative.".into(),
+        format!("Progress: `{}`", publish("task.progress", progress)),
+        success,
+        format!("Fail: `{}`", publish("task.failed", failure)),
+        format!("Verify accepted terminal state for this exact execution: `{show}`"),
+        "Replace only result/progress/failure placeholders with actual evidence; serialize valid JSON and shell-quote it safely. Do not send example placeholders. For event completion, apply the trusted role-specific schema. Do not publish both terminal outcomes. Use owning Skills on demand for advanced operations or recovery, not for these bound commands.".into(),
+    ])
+}
+
 /// The sole managed Prompt Builder. The effective inherited Agent is
 /// trusted System content; this Task's identity and dynamic values stay User.
 /// Declared references are locators, never inline source text.
@@ -208,19 +287,25 @@ pub fn build_relay_work_prompt(
     }
     // These are execution facts, not behavioral contracts. The Agent must
     // retrieve full Task/Plan state from the authorized CLI itself.
+    let is_plan = mandatory_contract_names.iter().any(|name| name == "plan-execution");
     let mut user = vec![
-        "# Execution binding".to_owned(),
+        if input["executionBootstrap"] == false { "# Execution binding".into() } else { "# Execution Bootstrap".into() },
         format!("Job: {job}"),
-        format!("Task: {task}"),
+        if is_plan { format!("Plan: {task}") } else { format!("Task: {task}") },
         format!("Execution: {execution}"),
         format!("Project: {}", string_field(input, "projectPath")),
     ];
     if let Some(repo) = input["repository"].as_str().filter(|s| !s.is_empty()) {
         user.push(format!("Repository: {repo}"));
     }
-    user.push(format!(
-        "EVENT SOURCE (exact): job/{job}/task/{task}/execution/{execution}"
-    ));
+    if !is_plan {
+        user.push(format!("EVENT SOURCE (exact): job/{job}/task/{task}/execution/{execution}"));
+    }
+    if input["executionBootstrap"] != false {
+        user.extend(execution_bootstrap(input, &mandatory_contract_names)?);
+    } else {
+        user.push("Execution Bootstrap commands disabled by Agent configuration. Follow all trusted execution Contracts; resolve routine operations through their owning Skills.".into());
+    }
     if let Some(title) = input["taskTitle"].as_str().filter(|s| !s.trim().is_empty()) {
         user.push(format!(
             "Assignment title: {}",

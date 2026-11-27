@@ -101,13 +101,13 @@ fn runtime_policy_is_supplied_by_native_caller_not_hardcoded_in_builder() {
     declared["startupContracts"] = json!(policy.provenance);
     let layers = build_relay_work_prompt(&declared, None).unwrap();
     assert!(layers.system.contains("Publish `task.started` immediately when execution begins."));
-    assert!(layers.system.contains("Use the `events-bus` Skill"));
-    assert!(layers.system.contains("Use the `agents-relay` Skill"));
+    assert!(layers.system.contains("consult the `events-bus` Skill only"));
+    assert!(layers.system.contains("bound Bootstrap execution-fenced `task complete` CLI"));
     assert!(!layers.system.contains("minimal required preflight"));
-    assert!(layers.system.contains("Use the `events-bus` Skill to publish lifecycle events"));
+    assert!(layers.system.contains("execution-bound Bootstrap publication commands"));
     assert!(layers.system.contains("DAG Task Completion Contract"));
     assert!(layers.system.contains("`task complete` CLI"));
-    assert!(layers.system.contains("Use the `agents-relay` Skill"));
+    assert!(layers.system.contains("bound Bootstrap execution-fenced `task complete` CLI"));
     assert!(layers.user.contains("EVENT SOURCE (exact): job/721/task/2259/execution/exec-1"));
     assert!(!layers.system.contains("{{"));
     assert!(!layers
@@ -190,7 +190,7 @@ fn required_completion_contract_is_trusted_not_user_task_text() {
     let layers = build_relay_work_prompt(&input, None).unwrap();
     assert!(layers.system.contains("DAG Task Completion Contract"));
     assert!(layers.system.contains("`task complete` CLI"));
-    assert!(layers.system.contains("Use the `agents-relay` Skill"));
+    assert!(layers.system.contains("bound Bootstrap execution-fenced `task complete` CLI"));
     assert!(layers.user.contains("EVENT SOURCE (exact): job/9/task/8/execution/run-7"));
     assert!(!layers.user.contains("DAG Task Completion Contract"));
     assert!(!layers.user.contains("task complete"));
@@ -329,5 +329,70 @@ fn mismatched_loaded_contract_name_is_rejected() {
         "startupContracts":[{"kind":"startup-contract","path":contract,
             "name":"fake-name","placement":"system","loaded":true}]});
     assert!(build_relay_work_prompt(&input,None).unwrap_err().contains("name does not match filename"));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn bound_bootstrap_selects_completion_contract_and_never_emits_reply_events() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    for (mode, expected) in [("source", "--commit-sha COMMIT_SHA"), ("dag", "task complete"), ("event", "\"type\":\"task.completed\"")] {
+        let policy = agents_relay_rust2::declared_contract_loader::load(&json!({}), root, "worker", Some(mode), false).unwrap();
+        let prompt = build_relay_work_prompt(&json!({"agentName":"arbitrary-custom-role","agentContent":"# Role", "jobId":"9","taskId":"8","executionId":"run-7","repository":"repo name", "projectPath":"/tmp/project", "relayCli":"/tmp/relay's bin/agents-relay-rust", "eventApi":"http://127.0.0.1:4223", "startupContracts":policy.provenance,"trustedRuntimePolicy":policy.system}), None).unwrap();
+        assert!(prompt.user.starts_with("# Execution Bootstrap"));
+        assert!(prompt.user.contains("task context --id '9' --task-id '8' --execution-id 'run-7'"));
+        assert!(prompt.user.contains("job/9/task/8/execution/run-7"));
+        assert!(prompt.user.contains("task.started"));
+        assert!(prompt.user.contains("task.failed"));
+        assert!(prompt.user.contains(expected), "{}", prompt.user);
+        assert_eq!(prompt.user.contains("--commit-sha"), mode == "source");
+        assert_eq!(prompt.user.contains("task.completed"), mode == "event");
+        assert!(!prompt.user.contains("reply.text"));
+        assert!(!prompt.user.contains("reply.completed"));
+        assert!(!prompt.system.contains("curl --fail-with-body"));
+        let line = prompt.user.lines().find(|line|line.starts_with("Load Task Context:")).unwrap();
+        assert!(line.contains("/tmp/relay'\"'\"'s bin/agents-relay-rust"));
+    }
+}
+
+#[test]
+fn execution_bootstrap_opt_out_keeps_binding_and_contracts() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let policy = agents_relay_rust2::declared_contract_loader::load(&json!({}), root, "worker", Some("source"), true).unwrap();
+    let mut input = json!({"agentContent":"# Role","jobId":"9","taskId":"8","executionId":"run-7","repository":"test", "projectPath":"/tmp/project","relayCli":"/tmp/agents-relay-rust","eventApi":"http://127.0.0.1:4223","startupContracts":policy.provenance,"trustedRuntimePolicy":policy.system});
+    let default = build_relay_work_prompt(&input,None).unwrap();
+    input["executionBootstrap"] = json!(false);
+    let off = build_relay_work_prompt(&input,None).unwrap();
+    assert_eq!(default.system, off.system);
+    assert_eq!(default.references, off.references);
+    assert!(default.user.contains("Start immediately:"));
+    assert!(off.user.starts_with("# Execution binding"));
+    assert!(!off.user.contains("Start immediately:"));
+    assert!(!off.user.contains("curl --fail-with-body"));
+    assert!(off.user.contains("job/9/task/8/execution/run-7"));
+    assert!(off.user.contains("owning Skills"));
+    assert!(off.system.contains("Git Source Task Completion Contract"));
+    use agents_relay_rust2::agent_context::execution_bootstrap_enabled as enabled;
+    assert!(enabled(&json!({})).unwrap());
+    assert!(enabled(&json!({"execution_bootstrap":"true"})).unwrap());
+    assert!(!enabled(&json!({"execution_bootstrap":"false"})).unwrap());
+    assert!(enabled(&json!({"execution_bootstrap":"yes"})).is_err());
+}
+
+#[test]
+fn bootstrap_preference_inherits_and_can_be_overridden() {
+    use agents_relay_rust2::{agent_content_resolver::resolve_agent_markdown,agent_context::execution_bootstrap_enabled};
+    let dir = temp();
+    let builtin = dir.join("builtin");
+    let project = dir.join("project");
+    fs::create_dir_all(&builtin).unwrap();
+    fs::create_dir_all(project.join("agents")).unwrap();
+    fs::write(builtin.join("base.agent.md"), "---\nname: base\nexecution_bootstrap: false\n---\nBase role\n").unwrap();
+    fs::write(project.join("agents/child.agent.md"), "---\nname: child\nextends: base\n---\nChild role\n").unwrap();
+    let resolve = || resolve_agent_markdown("child", &builtin.to_string_lossy(), &project.to_string_lossy(), None);
+    assert!(!execution_bootstrap_enabled(&resolve().unwrap()["metadata"]).unwrap());
+    fs::write(project.join("agents/child.agent.md"), "---\nname: child\nextends: base\nexecution_bootstrap: true\n---\nChild role\n").unwrap();
+    assert!(execution_bootstrap_enabled(&resolve().unwrap()["metadata"]).unwrap());
+    fs::write(project.join("agents/child.agent.md"), "---\nname: child\nextends: base\nexecution_bootstrap: maybe\n---\nChild role\n").unwrap();
+    assert!(resolve().unwrap_err().contains("execution_bootstrap must be true or false"));
     fs::remove_dir_all(dir).unwrap();
 }

@@ -181,6 +181,7 @@ pub fn worker_managed_prompt(
         context["project"]["gitRoot"] = json!(cwd);
     }
     let package_root = crate::runtime_resources::package_root()?;
+    context["nativeRustCli"] = json!(crate::runtime_resources::native_cli()?);
     let mut layers = crate::managed_worker_input::managed_worker_input_resolved(
         job,
         task,

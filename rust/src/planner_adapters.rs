@@ -221,8 +221,9 @@ pub fn build_planner_execution_prompt(
     let relay_cli = context
         .get("nativeRustCli")
         .and_then(Value::as_str)
-        .filter(|cli| Path::new(cli).is_absolute())
-        .unwrap_or("");
+        .filter(|cli| Path::new(cli).is_absolute()).map(str::to_owned)
+        .or_else(|| crate::runtime_resources::native_cli().ok().map(|p| p.to_string_lossy().into_owned()))
+        .unwrap_or_default();
     let policy =
         crate::declared_contract_loader::load(&metadata, repository_root, "plan", None, false)?;
     crate::agent_prompt_builder::build_relay_work_prompt(
@@ -235,6 +236,8 @@ pub fn build_planner_execution_prompt(
             "trustedRuntimePolicy":policy.system,
             "startupContracts":policy.provenance,
             "relayCli":relay_cli,
+            "executionBootstrap":crate::agent_context::execution_bootstrap_enabled(&metadata)?,
+            "repository":context.pointer("/job/repository"),
             "jobId":context.pointer("/job/id"),"taskId":plan_id,"executionId":execution_id,
         }),
         prompt_snapshot_dir,

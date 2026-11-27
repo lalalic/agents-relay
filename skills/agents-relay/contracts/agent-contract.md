@@ -193,6 +193,7 @@ authoritative schema**. Neo Project `type`, `inputs`, `outputs` and
 | `extends`, `mode`, `sections` | Normal explicit Agent inheritance and section composition |
 | `skills`, `model`, `reasoning` | Advisory Skill or Router preferences only |
 | `required_skills` | Skill **names** only; Agent resolves them through Harness Skills List and reads SKILL.md when needed |
+| `execution_bootstrap` | Optional inherited boolean, default `true`; `false` omits generated execution commands, preserving binding, mandatory Contracts and lifecycle obligations. Use owning Skills when disabled. |
 | `contexts` | At most one explicitly selected native `AGENTS.md` / `CLAUDE.md` file, loaded below trusted Contracts |
 | `contracts` | On-demand Contract paths, not startup injection |
 | `startup_contracts`, `assignment_contracts` | Required trusted System/Developer Contract documents |

@@ -108,7 +108,7 @@ contents or validate document contents using SHA.
 
 `job create --initial-plan` starts Planner; `plan` advances an existing DRAFT Job. Direct `task create` is for orchestrator-authored Tasks. Describe outcomes/dependencies, not shell commands. Public outputs: `--output local-git` or `--output file --output-path PATH`; historical SQLite `task_pr` means local Git work. Include `storySize`; Agent `skills`, `model`, and `reasoning` are advisory. Optional Job `--prefer-adapter`, `--prefer-provider`, `--prefer-model`, `--prefer-profile`, `--prefer-reasoning` are **durable soft hints** for eligible, unpinned normal Task routes; use `job update --clear-routing-preferences` to reset. Task `--adapter/--provider/--model` edits are exact, and `task update --clear-routing` removes a selected route. See `contracts/agent-contract.md` and `contracts/task-job-contract.md`.
 
-An execution Prompt pins the native CLI path, Role, contracts, Task/Plan ID and execution ID. Use the **exact matching Rust CLI path** from the execution Prompt; do not substitute a different executable revision. Before acting, load execution-bound context:
+An execution Prompt pins the native CLI path, Role, contracts, Task/Plan ID and execution ID. Use the **exact matching Rust CLI path** from the execution Prompt; do not substitute a different executable revision. Use the generated Execution Bootstrap commands directly for routine lifecycle operations; consult this Skill for additional operations. Before acting, load execution-bound context:
 
 ```sh
 # Use the pinned native CLI path from the Prompt when one is provided.

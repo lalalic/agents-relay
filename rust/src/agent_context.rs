@@ -6,6 +6,17 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Inherited prompt-presentation preference; never disables execution Contracts.
+pub fn execution_bootstrap_enabled(metadata: &Value) -> Result<bool, String> {
+    match metadata.get("execution_bootstrap") {
+        None => Ok(true),
+        Some(Value::Bool(value)) => Ok(*value),
+        Some(Value::String(value)) if value == "true" => Ok(true),
+        Some(Value::String(value)) if value == "false" => Ok(false),
+        _ => Err("Agent execution_bootstrap must be true or false".into()),
+    }
+}
+
 fn list(metadata: &Value, key: &str) -> Result<Vec<String>, String> {
     let Some(raw) = metadata.get(key).filter(|v| !v.is_null()) else {
         return Ok(vec![]);

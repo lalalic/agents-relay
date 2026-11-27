@@ -135,7 +135,13 @@ where
         Some(terminal),
         artifact,
     )?;
+    let cli = context.get("nativeRustCli").and_then(Value::as_str).map(str::to_owned)
+        .or_else(|| crate::runtime_resources::native_cli().ok().map(|p| p.to_string_lossy().into_owned()));
+    let environment = json!(std::env::vars().collect::<std::collections::HashMap<_,_>>());
+    let event_runtime = crate::events_bus_runtime::resolve_events_bus_runtime(&environment)?;
     let input = json!({
+        "relayCli":cli,"eventApi":event_runtime["apiUrl"],
+        "executionBootstrap":crate::agent_context::execution_bootstrap_enabled(&selected["metadata"])?,
         "agentName":name,"suggestedSkills":selected["agent"]["suggestedSkills"],
         "agentContent":agent,"adapter":adapter,
         "references":selected_refs,

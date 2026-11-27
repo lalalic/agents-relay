@@ -6,4 +6,4 @@
 - Report the number of rounds, findings, fixes, verification evidence and the latest complete no-changes-required verdict. Unresolved actionable findings or required checks must be reported as evidenced failures, not success.
 - Self-review does not replace independent Final Review, human approvals or Graph-managed gates; never approve one's own Final Review or fabricate evidence.
 - Read-only Tasks validate findings, not invented artifact modifications or review rounds.
-- For DAG children and Git source completion, use the `agents-relay` Skill and the corresponding declared Completion Contract; only Relay may emit their successful terminal events. For Worker-owned failures use the `events-bus` Skill.
+- For DAG children and Git source completion, use the `agents-relay` Skill’s bound Bootstrap and the corresponding declared Completion Contract; only Relay may emit their successful terminal events. For Worker-owned failures use the `events-bus` Skill’s bound failure command.

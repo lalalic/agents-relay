@@ -93,6 +93,9 @@ fn native_codex_uses_trusted_managed_prompt_and_correlated_event_contract() {
     .expect("managed prompt must resolve real Agent and task binding");
     let prompt = layers.user.clone();
     assert!(prompt.contains("job/9001/task/9002/execution/test-source-generation-1"));
+    assert!(prompt.contains("Load Task Context:"));
+    assert!(prompt.contains("Start immediately:"));
+    assert!(!prompt.contains("reply.completed"));
     assert!(layers.system.contains("task.started"));
     assert!(layers.system.contains("task.progress"));
     assert!(layers.system.contains("Event Task Completion Contract"));

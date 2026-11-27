@@ -30,3 +30,14 @@ pub fn bundled_agents_root() -> Result<String, String> {
         .to_string_lossy()
         .into_owned())
 }
+
+/// Resolve the native CLI beside the running binary (also for Cargo test bins).
+pub fn native_cli() -> Result<PathBuf, String> {
+    let host = std::env::current_exe().map_err(|e| e.to_string())?;
+    let sibling = host.with_file_name("agents-relay-rust");
+    let candidate = if sibling.is_file() { sibling } else {
+        host.parent().and_then(Path::parent).ok_or("Native Relay CLI parent unavailable")?
+            .join("agents-relay-rust")
+    };
+    candidate.canonicalize().map_err(|e| format!("Native Relay CLI unavailable: {e}"))
+}

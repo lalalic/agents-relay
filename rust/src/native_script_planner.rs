@@ -209,15 +209,7 @@ impl PlannerLaunchPorts for PlannerPorts {
         let planner_route=self.planner_route.clone();
         let context=if model.is_some(){
             let mut current=context;
-            let host=std::env::current_exe().map_err(|e|e.to_string())?;
-            let sibling=host.with_file_name("agents-relay-rust");
-            let native=if sibling.is_file(){sibling}else{
-                host.parent().and_then(Path::parent)
-                    .ok_or("Native Planner CLI parent unavailable")?
-                    .join("agents-relay-rust")
-            };
-            let native=std::fs::canonicalize(native)
-                .map_err(|e|format!("Native Planner CLI unavailable: {e}"))?;
+            let native=crate::runtime_resources::native_cli()?;
             current["nativeRustCli"]=json!(native.to_string_lossy().to_string());
             if let Some(route)=planner_route{current["plannerRoute"]=route;}
             current
