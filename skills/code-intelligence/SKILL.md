@@ -35,7 +35,48 @@ rg -l 'route_model' rust/src
 rg -n -C 3 'route_model' rust/src/router.rs
 ```
 
-**CodeGraph** — relations, not bulk source. Set `root` to the assigned Git root. Use only that checkout's own local `.codegraph/` index; never reuse another worktree's database. Disable telemetry for every invocation (`export CODEGRAPH_TELEMETRY=0`). Check `codegraph status --strict "$root"`. If stale, and cache writes are permitted, run `codegraph sync --quiet "$root"` then recheck. If missing, initialize only when relationship queries justify the cost and the checkout permits local cache writes: `codegraph init --local-only --yes "$root"`. Verify the cache is Git-ignored and the index is current; do not commit caches or change tracked ignore/config files. Do not initialize or sync in immutable/read-only review checkouts. Fall back if index identity, coverage or freshness is uncertain.
+**CodeGraph** — relations, not bulk source. Set `root` to the assigned Git root. Use only that checkout's local `.codegraph/` index; never reuse another worktree's database. Disable telemetry for every invocation (`export CODEGRAPH_TELEMETRY=0`). Verify cache isolation and freshness; never commit caches or change tracked configuration. Do not initialize or sync in immutable/read-only review checkouts. Fall back on actual tool/index/permission failure, not merely a missing index.
+
+### Planner index precondition
+
+For unfamiliar or cross-module code work, prepare CodeGraph **before technical
+research and Task assignment** in the assigned canonical project main checkout
+(or the explicitly assigned alternative baseline). Confirm Git root, branch,
+HEAD and worktree status; do not switch branches, reset, pull, modify source or
+use another checkout. If uncommitted changes or a moving HEAD prevent verifying
+the assigned baseline, use bounded immutable Git reads instead. Known localized
+edits and non-code work skip this step. Reuse a fresh index across Jobs.
+
+```sh
+root=$(git rev-parse --show-toplevel)
+git -C "$root" branch --show-current
+git -C "$root" rev-parse HEAD
+git -C "$root" status --short
+export CODEGRAPH_TELEMETRY=0
+codegraph status --strict "$root"
+# If missing and local ignored-cache writes are permitted:
+codegraph init --local-only --yes "$root"
+# If stale (not necessary after a successful fresh init):
+codegraph sync --quiet "$root"
+# Recheck after init/sync; verify HEAD is still the assigned baseline:
+codegraph status --strict "$root"
+git -C "$root" check-ignore .codegraph/
+git -C "$root" rev-parse HEAD
+```
+
+Run only the applicable commands. For a ready index, actually query relevant
+callers, dependencies, context or impact; status/init alone does not satisfy
+planning. Verify results in targeted source and include useful relationships
+in the Task Code Map. Record the baseline, index outcome and query evidence in
+Plan assessment. If the installed tool, safe local cache permission, index
+initialization/sync or parser coverage is unavailable, record the concrete
+reason and use bounded Git/rg/AST search instead; do not block the Job solely
+for a search accelerator. No separate Task, repeated blind rebuilds or
+installation attempts. For a shared main cache, avoid concurrent init/sync
+writers; if a competing writer is active, recheck once after it finishes or
+fall back without waiting indefinitely. Implementation uses its own worktree's
+index when needed; Reviewer uses verified immutable-target evidence, never a
+moving main index.
 
 ```sh
 codegraph query route_model --limit 10 --path "$root"
@@ -61,9 +102,9 @@ verified location and check; non-code work needs no Code Map.
 
 1. Identify affected ownership, interfaces and acceptance cases from the
    objective and project knowledge. Locate entry points with rg or Git search.
-2. For uncertain callers or cross-module impact, use CodeGraph when a verified
-   checkout-local index is available or justified and permitted. Otherwise
-   trace targeted source. Use ast-grep when exact structural matching matters.
+2. For unfamiliar or cross-module work, complete the Planner index precondition
+   and run relevant graph queries. Fall back only for a concrete limitation.
+   Use ast-grep when exact structural matching matters.
 3. Verify results against source: canonical implementations, consumers to
    preserve, reusable helpers and test entry points. Label unresolved edges.
 4. Pass only decision-relevant facts, using project-relative paths, symbols and

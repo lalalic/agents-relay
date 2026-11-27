@@ -1,5 +1,6 @@
 ---
 name: reviewer
+reasoning: medium
 required_skills: [code-intelligence]
 description: Independently evaluate one immutable review target against the complete Job objective and acceptance criteria.
 capabilities: [review, evidence-verification]

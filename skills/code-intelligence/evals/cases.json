@@ -192,5 +192,48 @@
       "unrelated_repository_scan": false,
       "mandatory_gates_preserved": true
     }
+  },
+  {
+    "id": "planner-cold-main-index",
+    "role": "planner",
+    "scenario": "Unfamiliar cross-module bug on clean assigned main; CodeGraph installed, index missing, local ignored-cache writes permitted.",
+    "expect": {
+      "initialize_local_index": true,
+      "query_graph": true,
+      "record_baseline": true,
+      "fallback_only_on_failure": true,
+      "separate_index_task": false
+    }
+  },
+  {
+    "id": "planner-warm-main-index",
+    "role": "planner",
+    "scenario": "Same assigned main has a current valid local CodeGraph index for the next cross-module Job.",
+    "expect": {
+      "reuse_index": true,
+      "rebuild_index": false,
+      "query_graph": true
+    }
+  },
+  {
+    "id": "planner-stale-main-index",
+    "role": "planner",
+    "scenario": "Assigned main advanced since indexing, no concurrent writer, cache writes permitted.",
+    "expect": {
+      "sync_index": true,
+      "verify_freshness": true,
+      "query_graph": true
+    }
+  },
+  {
+    "id": "planner-index-failure",
+    "role": "planner",
+    "scenario": "CodeGraph initialization fails due to an actual filesystem permission error.",
+    "expect": {
+      "record_fallback_reason": true,
+      "bounded_git_search": true,
+      "install_tool": false,
+      "fail_job": false
+    }
   }
 ]
