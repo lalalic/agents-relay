@@ -10,8 +10,8 @@ entry point; Neo Project Skills link to the same schema and do not copy it.
 
 1. Resolve the selected Agent's normal `extends` chain, `mode`,
    `sections` and merged metadata. The project Agent retains its own parent.
-2. Load the Global shared Contract declared in `agent-contract.md`
-   (`global_startup_contracts`).
+2. Load the Global shared Contracts declared in `agent-contract.md`
+   (`global_startup_contracts`): execution boundary and checkpoint fallback.
 3. For a **Job Task**, compose only the mandatory Contract declarations
    from `worker.agent.md` as an execution layer. Do **not** implicitly
    inherit the Worker Agent's role text or change its parent chain.
@@ -117,3 +117,13 @@ never use legacy Node `dist/cli.js` paths as an execution authority.
 
 Do not claim a live deployment, merge, real model execution or approval
 unless the corresponding verified evidence exists.
+
+### Local checkpoint fallback
+
+The default checkpoint Contract uses the normal model checkpoint first. Only if
+that save fails or is unavailable before compaction, derive the local temporary
+path `/tmp/relay-checkpoint-<executionId>.md` from the existing Execution ID, save
+via Shell and verify before reset. No additional prompt binding, runtime storage,
+or periodic checkpoint is required. After context loss, recover from the fallback
+before repeating work. Isolated evaluations and unbound executions do not use it.
+Checkpoints are not completion receipts.

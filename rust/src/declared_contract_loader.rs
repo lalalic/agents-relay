@@ -298,7 +298,7 @@ mod tests {
     fn global_declared_and_complete_contracts_only() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let shared = load(&json!({}), root, "worker", Some("event"), false).unwrap();
-        assert_eq!(shared.provenance.len(), 4);
+        assert_eq!(shared.provenance.len(), 5);
         assert!(shared.system.starts_with("<contracts>\nContracts are the principal rules you must follow."));
         assert!(shared.system.ends_with("</contracts>"));
         assert_eq!(shared.system.matches("<contracts>").count(), 1);
@@ -344,7 +344,7 @@ mod tests {
             .contains("Artifact-changing Worker Self-Review"));
         assert!(loaded.system.contains("DAG Task Completion"));
         assert!(!loaded.system.contains("Git Source Task Completion"));
-        assert_eq!(loaded.provenance.len(), 5);
+        assert_eq!(loaded.provenance.len(), 6);
         let explicit_worker =
             crate::agent_content_resolver::resolve_agent_markdown("worker", &dir, &project, None)
                 .unwrap();
@@ -367,7 +367,7 @@ mod tests {
         let plan = load(&planner["metadata"], root, "plan", None, false).unwrap();
         assert!(plan.system.contains("Managed Planner Execution"));
         assert!(!plan.system.contains("Managed Worker Lifecycle"));
-        assert_eq!(plan.provenance.len(), 2);
+        assert_eq!(plan.provenance.len(), 3);
         assert!(plan.system.contains("Managed Planner Execution"));
     }
     #[test]
@@ -395,7 +395,7 @@ mod tests {
             .iter()
             .any(|x| x.as_str().unwrap_or("").ends_with("/worker.agent.md")));
         let loaded = load(&reviewer["metadata"], root, "worker", Some("event"), false).unwrap();
-        assert_eq!(loaded.provenance.len(), 4);
+        assert_eq!(loaded.provenance.len(), 5);
         assert!(loaded.system.contains("Managed Worker Lifecycle"));
         assert!(loaded.system.contains("Event Task Completion"));
         let after = reviewer["sources"].as_array().unwrap();
@@ -414,13 +414,13 @@ mod tests {
                 .unwrap()
                 .provenance
                 .len(),
-            4,
+            5,
             "Agent may clear its own declarations but not Task execution Contracts"
         );
         let conflict = json!({"startup_contracts":"[relay:skills/agents-relay/contracts/task-execution.md]",
             "assignment_contracts":"[relay:skills/agents-relay/contracts/task-execution.md]"});
         let deduplicated = load(&conflict, root, "plan", None, false).unwrap();
-        assert_eq!(deduplicated.provenance.len(), 2);
+        assert_eq!(deduplicated.provenance.len(), 3);
         assert_eq!(
             deduplicated
                 .system

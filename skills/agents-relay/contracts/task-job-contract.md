@@ -79,7 +79,7 @@ An executable `agentGraph` is reserved for a declared **Neo Project Run**
 (`neo project run`), using its Project-owned `graph.mmd` or named `.mmd` Graph.
 Only this caller may create a Coordinator Job with the validated
 `--project-run-manifest` and private Run-local input/output; arbitrary Relay
-`job create` and `task create --agent-graph-file` must not create DAGs.
+`job create`, `task create --agent-graph-file`, and ordinary Planner `next_tasks` must not create DAGs. Plan Apply rejects executable `agentGraph` before materialization; use `agentName` and ordinary Task dependencies. Mermaid in the Plan assessment is explanatory only.
 Neo Project creates its Job and Coordinator Task atomically and activates it with
 `job run --id JOB --task-id NUMERIC_TASK_ID` using the Task ID returned by Job
 creation. Ordinary Jobs should use a direct Implementation Task (or normal

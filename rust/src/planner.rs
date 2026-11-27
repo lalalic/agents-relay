@@ -3,7 +3,6 @@
 // Owned Planner execution is an explicit adapter. Script Planner and installed
 // daemon tests verify actual Graph/SQLite commit; process exit alone is not a Plan.
 use crate::{
-    agent_graph::parse_agent_graph,
     dependency_validity::validate_dependency_validity,
     final_review_role::is_final_review_agent,
     local_merge_lock::iso8601_now,
@@ -312,10 +311,8 @@ pub fn parse_planner_result(value:&Value)->Result<Value,String>{
                 }
             }
         }
-        if let Some(graph)=task.get("agentGraph").and_then(Value::as_str)
-            .filter(|s|!s.is_empty()){
-            parse_agent_graph(graph).map_err(|error|
-                format!("Planner next_tasks[{i}].agentGraph is invalid: {error}"))?;
+        if task.get("agentGraph").is_some_and(|value| !value.is_null()) {
+            return Err(format!("Planner next_tasks[{i}].agentGraph is not allowed: executable Agent DAGs are reserved for declared Project Runs. Omit agentGraph and use agentName with ordinary Task dependencies."));
         }
         let attempts=task.get("maxAttempts").and_then(Value::as_i64).unwrap_or(3);
         if attempts<1{return Err(format!(

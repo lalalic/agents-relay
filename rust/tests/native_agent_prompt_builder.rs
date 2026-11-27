@@ -396,3 +396,27 @@ fn bootstrap_preference_inherits_and_can_be_overridden() {
     assert!(resolve().unwrap_err().contains("execution_bootstrap must be true or false"));
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn fallback_checkpoint_contract_reuses_existing_execution_id_without_extra_binding() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let worker=agents_relay_rust2::declared_contract_loader::load(&json!({}),root,"worker",Some("event"),false).unwrap();
+    let mut input=json!({"agentContent":"# Role","jobId":"checkpoint-fixture","taskId":"task-1",
+        "executionId":"checkpoint-test-exec","repository":"fixture","projectPath":"/tmp/project",
+        "relayCli":"/tmp/agents-relay-rust","eventApi":"http://127.0.0.1:4223",
+        "trustedRuntimePolicy":worker.system,"startupContracts":worker.provenance});
+    let prompt=build_relay_work_prompt(&input,None).unwrap();
+    assert!(prompt.system.contains("Execution Checkpoint Fallback Contract"));
+    assert!(prompt.system.contains("/tmp/relay-checkpoint-<executionId>.md"));
+    assert!(prompt.system.contains("Do not voluntarily reset context if both checkpoint methods failed"));
+    assert!(prompt.user.contains("Execution: checkpoint-test-exec"));
+    assert!(!prompt.user.contains("relay-checkpoint-"));
+    input["executionBootstrap"]=json!(false);
+    let disabled=build_relay_work_prompt(&input,None).unwrap();
+    assert_eq!(disabled.system,prompt.system);
+    assert!(disabled.user.contains("Execution: checkpoint-test-exec"));
+    assert!(!disabled.user.contains("relay-checkpoint-"));
+    let planner=agents_relay_rust2::declared_contract_loader::load(&json!({"startup_contracts":"[relay:skills/agents-relay/contracts/plan-execution.md]"}),root,"plan",None,false).unwrap();
+    assert!(planner.system.contains("/tmp/relay-checkpoint-<executionId>.md"));
+    assert!(planner.system.contains("Isolated evaluations and unbound executions do not use this fallback"));
+}

@@ -170,8 +170,7 @@ Do not create separate Tasks merely for "analyze", "format", "call tool", "check
 
 - Treat durable Job/Task state as authoritative.
 - Discover visible agents from the resolved execution context before selecting an agent. Choose an existing visible agent only when it is appropriate for the Task; otherwise leave `agentName` unset. Agent discovery is runtime/context-specific, not a hardcoded global list.
-- Build `agentGraph` nodes only from agents in the discovered visible-agent catalog. Every named graph agent must be visible in the resolved planning/execution context.
-- `agentGraph` is optional. For a single agent use `flowchart LR\n  implementation[agent:implementation]` (replace with the actual visible agent); do **not** create an edge from an agent/node to itself. Every edge must connect distinct nodes, and all edges must form an acyclic directed graph. If no multi-agent orchestration is needed, omit `agentGraph` entirely.
+- Never include executable `agentGraph` in `next_tasks`. Ordinary Jobs assign the selected `agentName` directly and use Task `dependencies` only when separate durable outcomes are necessary. Executable DAGs belong exclusively to declared Project Runs; never wrap a single Agent in a Coordinator. Mermaid in `assessment` is explanatory only.
 - Never invent completed work or evidence.
 - First decide whether the objective is already satisfied.
 - If satisfied, return `objective_status: "satisfied"` and `next_tasks: []`.
@@ -226,7 +225,7 @@ Use these exact serialized forms:
 - `output` is always an object, never a string:
   - Local Git code work (legacy serialized kind, no GitHub PR): `{"kind":"task_pr"}`
   - File artifact: `{"kind":"file","path":"runs/2026-09-26/example/output.md"}`
-- `agentGraph`, when present, is one executable Mermaid Agent Graph **string** using `flowchart TD|TB|LR|RL`, for example `"flowchart LR\n  build-log-editor --> build-log-producer"`. Do not emit `graph LR`, and do not emit an object with `nodes` or `edges`.
+- Omit `agentGraph` entirely; Plan Apply rejects it. An explanatory Mermaid diagram belongs only in `assessment`.
 - `priority`, when present, is exactly `"P0"`, `"P1"`, `"P2"`, or `"P3"`; otherwise omit it.
 - `storySize` is exactly `"S"`, `"M"`, or `"L"`.
 - `parentTaskId`, when present, is the durable parent work Task ID in the current Job. Never point it at a `plan-N` planner round.
@@ -246,8 +245,7 @@ Example candidate JSON file for a non-satisfied Plan:
       "output": {"kind": "file", "path": "runs/2026-09-26/package.md"},
       "storySize": "L",
       "priority": "P1",
-      "agentName": "build-log-editor",
-      "agentGraph": "flowchart LR\n  build-log-editor --> build-log-producer"
+      "agentName": "build-log-editor"
     }
   ]
 }

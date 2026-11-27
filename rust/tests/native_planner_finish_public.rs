@@ -174,3 +174,34 @@ fn reconciler_apply_planner_tree_uses_same_durable_sqlite_cas_and_rejects_stale_
     drop(host);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn planner_rejects_executable_dag_before_task_creation_and_allows_direct_task() {
+    use agents_relay_rust2::{planner::parse_planner_result,reconciler::Reconciler};
+    let (root,mut host)=fixture();
+    let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+    let mut rec=Reconciler::new(&graph,&root,&root,&root,&root,json!({"owner":"relay"}));
+    let mut proposal=json!({"objective_status":"in_progress",
+        "assessment":"```mermaid\nflowchart LR\n  A --> B\n```\nDirect source work",
+        "next_tasks":[{"id":"fix","title":"Repair Dashboard usage and telemetry reporting",
+            "input":"Fix and verify the source", "agentName":"implementation",
+            "output":{"kind":"task_pr"},"storySize":"M"}]});
+    assert!(parse_planner_result(&proposal).is_ok());
+    let before=host.load("41").unwrap();
+    for invalid in [json!("flowchart LR\n  implementation[agent:implementation]"),
+        json!("flowchart LR\n  implementation --> reviewer"),json!({"nodes":[]}),json!("")] {
+        proposal["next_tasks"][0]["agentGraph"]=invalid;
+        let rejected=rec.apply_planner_tree(&mut host,"41","plan-1","exec-1",&proposal).unwrap_err();
+        assert!(rejected.contains("PLAN_APPLY_VALIDATION_FAILED"),"{rejected}");
+        assert!(rejected.contains("agentGraph is not allowed"),"{rejected}");
+        assert_eq!(host.load("41").unwrap(),before);
+        assert_eq!(host.mutations.load(Ordering::SeqCst),0);
+        assert!(host.emitted.is_empty());
+    }
+    proposal["next_tasks"][0].as_object_mut().unwrap().remove("agentGraph");
+    let parsed=parse_planner_result(&proposal).unwrap();
+    assert_eq!(parsed["next_tasks"][0]["agentName"],"implementation");
+    assert_eq!(parsed["next_tasks"][0]["output"]["kind"],"task_pr");
+    assert!(parsed["next_tasks"][0].get("agentGraph").is_none());
+    drop(host);std::fs::remove_dir_all(root).unwrap();
+}

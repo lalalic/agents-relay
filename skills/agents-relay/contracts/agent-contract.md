@@ -1,6 +1,6 @@
 ---
 kind: relay-agent-definition-contract
-global_startup_contracts: [relay:skills/agents-relay/contracts/execution-boundary.md]
+global_startup_contracts: [relay:skills/agents-relay/contracts/execution-boundary.md, relay:skills/agents-relay/contracts/execution-checkpoint.md]
 ---
 
 # Agents Relay Agent Definition Contract
@@ -104,7 +104,7 @@ owns this assembly; neither a Task nor a child Agent can rename trusted blocks.
 
 **Only global shared Contracts load automatically.** Their list is defined
 in this Agent Definition Contract's `global_startup_contracts` frontmatter,
-currently pointing to `execution-boundary.md`. Every other Contract
+currently pointing to `execution-boundary.md` and `execution-checkpoint.md`. Every other Contract
 must be explicitly declared by the effective inherited Agent Markdown.
 
 An Agent may `extends: worker` to inherit the shared Worker Agent Markdown,
