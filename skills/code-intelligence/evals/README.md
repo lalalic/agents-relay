@@ -2,7 +2,8 @@
 
 Goal: find sufficient verified source evidence with minimal discovery overhead.
 `cases.json` covers tool selection, role boundaries, stale/cross-worktree indexes,
-missing tools, incomplete results and benchmark honesty. Each scenario is a dry
+missing tools, incomplete results, benchmark honesty, technical-plan readiness,
+map reuse, proportionate planning and independent review beyond the map. Each scenario is a dry
 run: load the Skill plus the specified Agent, ask for a JSON object with the
 listed expectation keys, compare values deterministically, and do not execute
 real Job actions. Separately benchmark real source work with matched objective,

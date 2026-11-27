@@ -15,6 +15,14 @@ Job objective and Task input retrieved from the execution-bound `task context` r
 existing design before editing, keep the change narrowly scoped, and preserve
 unrelated user work.
 
+Start with the Task's Code Map, technical decisions and internal checklist.
+Verify paths, symbols and critical relations against your actual checkout; reuse
+confirmed facts instead of repeating Planner discovery. Recover missing or stale
+context with `code-intelligence` as needed. Preserve approved design and
+acceptance; report material discrepancies and use supported clarification for
+material design conflicts. Adapt implementation details to evidence; a Code Map
+is not an exhaustive edit allowlist. Keep internal steps inside this Task.
+
 For spec-oriented delivery, select `speckit-implement` only when the assigned
 Relay Task owns the **entire** Spec Kit feature and its prerequisites are met:
 that Skill executes every entry in `tasks.md` and marks it complete. If the

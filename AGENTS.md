@@ -76,10 +76,13 @@ applicable runtime Contract only when changing that interface.
   from the relevant references; preserve approved design in the existing Job
   handoff. Planner must include this AGENTS.md entry in any Architect Task input
   (explicitly direct the Architect to read it from the assigned project root).
-- Planner: use only relevant design constraints, identify minimal changes and
-  acceptance evidence; pass targeted files/symbols and references in Task input.
-- Implementation: verify the navigation against actual source, reuse canonical
-  code, implement narrowly, test and self-review; update affected current docs.
+- Planner: complete proportionate research and technical design before
+  assignment; pass verified relevant files/symbols, decisions, internal steps
+  and acceptance evidence requirements in Task input. Delegate specialist design
+  only when needed.
+- Implementation: start with the Planner's Code Map, verify against actual
+  source, reuse canonical code, implement narrowly, test and self-review;
+  update affected current docs.
 - Reviewer: independently inspect the immutable target and applicable current
   design/acceptance constraints; do not edit artifacts or trust a summary as proof.
 

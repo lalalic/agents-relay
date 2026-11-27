@@ -52,11 +52,52 @@ ast-grep run --lang rust --pattern '$EXPR.unwrap()' rust/src
 
 Limit search to relevant paths; inspect matches before rewriting. Only authorized implementation may edit. Macros, dynamic dispatch, generated code and parser gaps can escape either graph or AST search; verify relevant source and tests. Do not equate a missing match with proof of absence.
 
+## Produce and reuse a Code Map
+
+For unfamiliar or cross-module code work, Planner prepares a verified compact
+Code Map before assigning implementation. Place it in the existing Task input,
+with shared decisions in Plan assessment. A known localized edit needs only a
+verified location and check; non-code work needs no Code Map.
+
+1. Identify affected ownership, interfaces and acceptance cases from the
+   objective and project knowledge. Locate entry points with rg or Git search.
+2. For uncertain callers or cross-module impact, use CodeGraph when a verified
+   checkout-local index is available or justified and permitted. Otherwise
+   trace targeted source. Use ast-grep when exact structural matching matters.
+3. Verify results against source: canonical implementations, consumers to
+   preserve, reusable helpers and test entry points. Label unresolved edges.
+4. Pass only decision-relevant facts, using project-relative paths, symbols and
+   the inspected baseline. Do not copy source bodies or entire design docs.
+
+Example handoff shape (substitute actual verified names; omit unused fields):
+
+```text
+Outcome: change one observation path; preserve other consumers.
+Code Map (verified at assigned baseline):
+- path::entry -> path::shared_service; relevant ownership/reuse.
+- path::other_consumer: invariant to preserve.
+- test_path::test: expected regression evidence.
+Decision: isolate affected consumer, reuse existing primitives.
+Internal checklist: targeted changes, negative cases, validation.
+Open check: bounded verification of remaining uncertainty.
+```
+
 ## Role workflow
 
-- **Design / Planner:** read relevant project design first. Locate canonical implementation, existing helpers, affected callers and tests. Pass a compact map in existing Task input: paths/symbols, important relations, design constraints and acceptance evidence. No separate indexing or discovery Task for a simple change.
-- **Implementation:** reuse the map, confirm it in the assigned checkout, trace affected callers before edits, reuse shared code, and search sibling paths when required. Refresh the index after edits only if further graph queries need it. Inspect diff and run required tests; maintain affected current design docs.
-- **Reviewer:** independently read the objective, current design and immutable target diff. Treat previous maps as hints. Verify exact source (`git show "$target:$file"` with bounded ranges) and test/negative-case evidence. Use graph/AST results only from a verified exact target; use immutable Git reads otherwise. Do not edit, approve from summaries or omit material requirements to save tokens.
+- **Design / Planner:** research before assignment; choose proportionate design,
+  group steps by responsibility and hand off the Code Map. Restating the
+  objective plus "inspect source" is not a ready cross-module Task. No separate
+  indexing/discovery Task or source edits.
+- **Implementation:** start from the map/checklist, verify critical references
+  at the assigned checkout, reuse confirmed facts and investigate missing or
+  stale edges as needed. Expand scope when correctness requires it, not by
+  default. Refresh an index only if further queries need it. Inspect diff, run
+  tests and update affected current docs.
+- **Reviewer:** start from objective, applicable design and immutable diff.
+  Maps are hints, not proof or scope limits. Independently verify affected
+  consumers, boundaries, tests and negative cases. Use bounded `git show
+  "$target:$file"` reads or graph/AST results verified at the exact target.
+  Never edit or skip material requirements to save tokens.
 
 ## Measure only when needed
 

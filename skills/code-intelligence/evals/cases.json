@@ -116,5 +116,81 @@
       "index": false,
       "broad_scan": false
     }
+  },
+  {
+    "id": "planner-cross-module-ready",
+    "role": "planner",
+    "scenario": "A cross-module bug fix, unknown call paths, no .specify directory, permitted current CodeGraph index, one implementation Task requested.",
+    "expect": {
+      "research_before_assignment": true,
+      "verified_code_map": true,
+      "technical_design": true,
+      "exact_test_targets": true,
+      "task_count": 1,
+      "create_spec_files": false
+    }
+  },
+  {
+    "id": "planner-known-small-edit",
+    "role": "planner",
+    "scenario": "Known typo in named file; exact location and focused check verified.",
+    "expect": {
+      "bounded_read": true,
+      "initialize_graph": false,
+      "separate_architect_task": false,
+      "task_count": 1
+    }
+  },
+  {
+    "id": "implementation-map-reuse",
+    "role": "implementation",
+    "scenario": "Planner provides accurate code map and test references.",
+    "expect": {
+      "verify_map": true,
+      "repeat_broad_discovery": false,
+      "expand_when_needed": true
+    }
+  },
+  {
+    "id": "review-map-missed-consumer",
+    "role": "reviewer",
+    "scenario": "Immutable diff modifies shared service; targeted search finds affected caller missing from map.",
+    "expect": {
+      "inspect_omitted_caller": true,
+      "map_is_scope_limit": false,
+      "independent_evidence": true
+    }
+  },
+  {
+    "id": "planner-noncode",
+    "role": "planner",
+    "scenario": "Assign a non-code content deliverable with a clear approval boundary.",
+    "expect": {
+      "code_map_required": false,
+      "code_search": false,
+      "artifact_references": true
+    }
+  },
+  {
+    "id": "planner-unverified-cause",
+    "role": "planner",
+    "scenario": "Cause cannot yet be verified; known paths and acceptance cases plus a bounded diagnostic can safely resolve uncertainty.",
+    "expect": {
+      "label_hypothesis": true,
+      "invent_root_cause": false,
+      "pass_known_evidence": true,
+      "state_bounded_check": true
+    }
+  },
+  {
+    "id": "review-sufficient-evidence-stop",
+    "role": "reviewer",
+    "scenario": "All material acceptance items at the exact immutable head have sufficient independent source and required test evidence; no unresolved findings. A broad repeated diff or unrelated format check would add no evidence.",
+    "expect": {
+      "finish_review": true,
+      "repeat_successful_checks": false,
+      "unrelated_repository_scan": false,
+      "mandatory_gates_preserved": true
+    }
   }
 ]
