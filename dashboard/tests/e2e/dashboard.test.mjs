@@ -269,7 +269,7 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
     await t.test('8 existing Dashboard selection/refresh and graph-authorized retry/cancel HTTP actions',async()=>{
       await jobRow('94').locator('.job-button').click();
       await page.locator('#selected-job-refresh').click();
-      await page.locator('#job-content-open').click();
+      await page.locator('#selected-job-title').click();
       assert((await page.locator('body').innerText()).includes('Retry fixture'));
       await page.keyboard.press('Escape');
       await page.locator('dialog[open]').waitFor({state:'hidden'});
@@ -281,6 +281,83 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       assert.equal((await cancel.json()).tasks[0].state,'CANCELLED');
       await page.locator('#jobs-refresh').click();
       await eventually(async()=>{const r=await fetch(base+'/api/job?id=94&repo=fixture');return r.ok&&(await r.json()).tasks[0].state==='CANCELLED';});
+    });
+    await t.test('9 selected Job header layout, details and scoped Report actions',async()=>{
+      await jobRow('92').locator('.job-button').click();
+      const title=page.locator('#selected-job-title'),reportButton=page.locator('#job-report-open');
+      const header=page.locator('#workspace-heading').locator('..');
+      assert.equal(await title.textContent(),'Running job');
+      assert.equal(await title.getAttribute('title'),'Running job');
+      assert.equal(await header.getByRole('button',{name:'Job report',exact:true}).count(),1);
+      assert.equal(await page.locator('#job-detail').getByRole('button',{name:'Report',exact:true}).count(),0);
+      assert.equal(await page.locator('.job-status-button').count(),0);
+      // Render a real long title through the selected-job refresh API.
+      const long='Running job '+('with a deliberately long objective '.repeat(12));
+      await page.route('**/api/job?*',async route=>{
+        const response=await route.fetch();
+        const data=await response.json();
+        await route.fulfill({response,json:{...data,title:long}});
+      });
+      await page.locator('#selected-job-refresh').click();
+      await eventually(async()=>await title.textContent()===long);
+      await page.unroute('**/api/job?*');
+      assert.equal(await title.getAttribute('title'),long);
+      const original=page.viewportSize();
+      for(const width of [1280,430,375,320]){
+        await page.setViewportSize({width,height:900});
+        await title.waitFor({state:'visible'});
+        const layout=await header.evaluate(head=>{
+          const t=head.querySelector('#selected-job-title'),r=head.querySelector('#job-report-open'),f=head.querySelector('#selected-job-refresh');
+          const a=t.getBoundingClientRect(),b=r.getBoundingClientRect(),c=f.getBoundingClientRect(),style=getComputedStyle(t);
+          return {nowrap:style.whiteSpace,ellipsis:style.textOverflow,clipped:t.scrollWidth>t.clientWidth,
+            oneRow:Math.abs((a.top+a.bottom)-(b.top+b.bottom))<2&&Math.abs(b.top-c.top)<2,
+            ordered:a.right<=b.left&&b.right<=c.left,overflow:document.documentElement.scrollWidth>innerWidth};
+        });
+        assert.deepEqual(layout,{nowrap:'nowrap',ellipsis:'ellipsis',clipped:true,oneRow:true,ordered:true,overflow:false},'viewport '+width);
+      }
+      await title.focus();await page.keyboard.press('Enter');
+      await page.locator('dialog[open]').getByText('Objective',{exact:true}).waitFor();
+      await page.keyboard.press('Escape');
+      await page.locator('dialog[open]').waitFor({state:'hidden'});
+      await page.locator('#mobile-jobs-back').click();
+      await page.locator('#job-list').waitFor({state:'visible'});
+      await page.setViewportSize(original);
+      await jobRow('92').locator('.job-button').click();
+      const requests=[];let fail=false;
+      await page.route('**/api/execution-report?*',async route=>{
+        const req=route.request(),params=new URL(req.url()).searchParams;
+        requests.push([req.method(),params.get('repo'),params.get('job'),params.get('task')]);
+        await route.fulfill({status:fail?500:200,json:fail?{error:'Fixture report failure'}:{jobId:params.get('job'),taskId:params.get('task'),capturedAt:'fixture '+requests.length,html:'<h1>Fixture report '+requests.length+'</h1>'}});
+      });
+      const report=page.locator('#execution-report-dialog');
+      const runReport=async button=>{
+        await button.click();
+        await report.locator('#execution-report-status').filter({hasText:'Captured fixture'}).waitFor();
+        assert.equal(await report.frameLocator('iframe').locator('h1').textContent(),'Fixture report '+requests.length);
+        await report.locator('#execution-report-close').click();
+      };
+      await runReport(reportButton);await runReport(reportButton);
+      await page.getByText('View JEL chart',{exact:true}).click();
+      await runReport(page.locator('#jel-report-actions').getByRole('button',{name:'Report',exact:true}));
+      await page.locator('#graph-dialog-close').click();
+      await page.locator('.task-row[data-task-id="921"]').click();
+      await runReport(page.locator('#task-detail').getByRole('button',{name:'Report',exact:true}));
+      assert.deepEqual(requests,[['POST','fixture','92',null],['POST','fixture','92',null],['POST','fixture','92',null],['POST','fixture','92','921']]);
+      fail=true;await reportButton.click();
+      await report.locator('#execution-report-status').filter({hasText:'Fixture report failure'}).waitFor();
+      assert.equal(await report.locator('iframe').getAttribute('srcdoc'),null);
+      await report.locator('#execution-report-close').click();
+      await page.unroute('**/api/execution-report?*');
+      // Fresh empty inventory: report and details must not be actionable.
+      const emptyInventory=/\/api\/jobs(?:\?|$)/;
+      await page.route(emptyInventory,route=>route.fulfill({json:{jobs:[],repositories:[]}}));
+      await page.route('**/events',route=>route.abort());
+      await page.reload({waitUntil:'domcontentloaded'});
+      await page.locator('#job-detail').getByText('No durable jobs discovered.').waitFor();
+      assert(await title.isDisabled());assert(await reportButton.isDisabled());
+      assert.equal(await title.getAttribute('title'),null);
+      await page.unroute(emptyInventory);
+      await page.unroute('**/events');
     });
     assert.deepEqual(errors,[],'browser page errors');
   }catch(error){console.error(daemonLog);if(page)console.error((await page.locator('body').innerText().catch(()=>'' )).slice(0,5000));throw error;}

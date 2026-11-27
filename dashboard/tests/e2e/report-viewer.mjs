@@ -21,8 +21,8 @@ try {
   await page.getByText('View JEL chart',{exact:true}).click();
   const report=page.locator('#execution-report-dialog');
   const frame=report.frameLocator('iframe');
-  const generate=async(scope)=>{
-    await scope.getByRole('button',{name:'Report',exact:true}).click();
+  const generate=async(scope,name='Report')=>{
+    await scope.getByRole('button',{name,exact:true}).click();
     await report.locator('#execution-report-status').filter({hasText:'Captured '}).waitFor();
     await frame.locator('h1').waitFor();
     assert((await frame.locator('h1').textContent()).includes(job));
@@ -34,7 +34,7 @@ try {
   await generate(page.locator('#jel-report-actions'));
   await report.getByRole('button',{name:'Close',exact:true}).click();
   await page.locator('#graph-dialog-close').click();
-  await generate(page.locator('#job-detail'));
+  await generate(page.locator('#workspace-heading').locator('..'),'Job report');
   assert.equal(await frame.locator('section[id^="task-"]').count()>1,true);
   await report.getByRole('button',{name:'Close',exact:true}).click();
   // Expand completed DAG coordinators, then select the actual Task.
