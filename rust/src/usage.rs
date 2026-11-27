@@ -150,8 +150,9 @@ pub fn codex_app_server_usage_response(response:&Value)->Value{
         let window=limits.get(name)?;
         let used=percent(window.get("usedPercent"))?;
         let duration=minutes(window.get("windowDurationMins"))?;
+        let resets=epoch_seconds(window.get("resetsAt"))?;
         Some(json!({"usedPercent":used,"windowMinutes":duration,
-            "resetsAt":epoch_seconds(window.get("resetsAt"))}))
+            "resetsAt":resets}))
     };
     let mut windows=Vec::new();
     if let Some(w)=extract("primary"){windows.push(w);}

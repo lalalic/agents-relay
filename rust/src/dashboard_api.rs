@@ -9,8 +9,7 @@ use crate::{
         valid_mobile_identity,
     },
     dashboard_data::{
-        dashboard_workflow_graphs, effective_github_usage, list_dashboard_job_inventory,
-        search_dashboard_jobs,
+        dashboard_workflow_graphs, list_dashboard_job_inventory, search_dashboard_jobs,
     },
     dashboard_workflow_inspection::inspect_workflow_symbol,
     github_webhook::{parse_github_webhook, verify_github_webhook, DeliveryDeduper},
@@ -140,6 +139,8 @@ pub trait DashboardApiServices: Send + 'static {
 pub struct DashboardApiOptions {
     pub graph_directory: PathBuf,
     pub router_rules_path: PathBuf,
+    /// The same pinned Skill file read by a Troubleshooter execution.
+    pub troubleshooter_qa_path: PathBuf,
     pub webhook_secret: Option<String>,
     pub webhook_repositories: HashSet<String>,
     pub webhook_job_id: Option<String>,
@@ -375,7 +376,21 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                         &result.unwrap_or(json!({"error":"No canonical graph symbol found"})),
                     )
                 }
-                "/api/troubleshooter-qa" => services.troubleshooter_qa(req)?,
+                "/api/troubleshooter-qa" => {
+                    let response = crate::troubleshooter_qa_api::handle_troubleshooter_qa(
+                        &self.options.troubleshooter_qa_path,
+                        crate::troubleshooter_qa_api::Request {
+                            method: req.method.to_owned(),
+                            content_type: req.headers.get("content-type").cloned(),
+                            body: req.body.to_vec(),
+                        },
+                    );
+                    let content_type = if response.headers.iter()
+                        .any(|(name, _)| name.eq_ignore_ascii_case("content-type")) {
+                        "application/json"
+                    } else { "text/plain; charset=utf-8" };
+                    DashboardResponse::new(response.status, content_type, "no-store", response.body)
+                }
                 "/api/graphs" => json_response(
                     200,
                     &json!(dashboard_workflow_graphs(&self.options.graph_directory)?),
@@ -455,17 +470,12 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                 "/api/usage" => {
                     if !allowed_method(req,"GET"){return Ok(text_response(405,"Method not allowed"));}
                     let mut account = services.account_usage()?;
-                    let status = services.runtime_status();
-                    let github = services.github_usage().ok().flatten();
                     if let Some(map) = account.as_object_mut() {
-                        map.insert(
-                            "githubEffective".into(),
-                            json!(effective_github_usage(
-                                github.as_ref(),
-                                status.get("runtimeRateUsage")
-                            )),
-                        );
-                        map.insert("githubStatus".into(), status);
+                        map.remove("githubEffective");
+                        map.remove("githubStatus");
+                        if let Some(credits) = map.get_mut("credits").and_then(Value::as_array_mut) {
+                            credits.retain(|credit| credit.get("id").and_then(Value::as_str) != Some("deepseek"));
+                        }
                     }
                     json_response(200, &account)
                 }

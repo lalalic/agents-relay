@@ -11,7 +11,7 @@ use crate::{
     owned_process::{OwnedProcessManager,TerminationReason},
     reconciler::Reconciler,
     reconciler_durable::ReconcileHost,
-    relayd::{DaemonConfig,DaemonDashboardBackend,DaemonServices},
+    relayd::{troubleshooter_qa_path,DaemonConfig,DaemonDashboardBackend,DaemonServices},
 };
 use serde_json::{json,Value};
 use std::{
@@ -158,6 +158,7 @@ pub fn create_service<S:DaemonServices+'static>(
     let api=Arc::new(NativeDashboardApi::new(DashboardApiOptions{
         graph_directory:config.graph_directory.clone(),
         router_rules_path:config.router_rules_path.clone(),
+        troubleshooter_qa_path:troubleshooter_qa_path(),
         webhook_secret:None,webhook_repositories:HashSet::new(),
         webhook_job_id:None,
     },DaemonDashboardBackend::new(config.clone(),Arc::clone(&services),read_only)));
