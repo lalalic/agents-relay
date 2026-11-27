@@ -21,19 +21,22 @@ try {
   await page.getByText('View JEL chart',{exact:true}).click();
   const report=page.locator('#execution-report-dialog');
   const frame=report.frameLocator('iframe');
-  const generate=async(scope,mode)=>{
-    await scope.getByRole('button',{name:mode,exact:true}).click();
+  const generate=async(scope)=>{
+    await scope.getByRole('button',{name:'Report',exact:true}).click();
     await report.locator('#execution-report-status').filter({hasText:'Captured '}).waitFor();
     await frame.locator('h1').waitFor();
     assert((await frame.locator('h1').textContent()).includes(job));
     return await report.locator('#execution-report-status').textContent();
   };
-  const created=await generate(page.locator('#jel-report-actions'),'Generate report');
+  await generate(page.locator('#jel-report-actions'));
   assert.equal(await frame.locator('section[id^="task-"]').count()>1,true);
   await report.getByRole('button',{name:'Close',exact:true}).click();
-  assert.equal(await generate(page.locator('#jel-report-actions'),'Open report'),created);
+  await generate(page.locator('#jel-report-actions'));
   await report.getByRole('button',{name:'Close',exact:true}).click();
   await page.locator('#graph-dialog-close').click();
+  await generate(page.locator('#job-detail'));
+  assert.equal(await frame.locator('section[id^="task-"]').count()>1,true);
+  await report.getByRole('button',{name:'Close',exact:true}).click();
   // Expand completed DAG coordinators, then select the actual Task.
   for(let i=0;i<8&&!(await page.locator('.task-row[data-task-id="'+task+'"]').isVisible());i++){
     const collapsed=page.locator('.task-fold[aria-expanded=false]:visible').first();
@@ -42,14 +45,14 @@ try {
   }
   await page.locator('.task-row[data-task-id="'+task+'"]').click();
   const detail=page.locator('#task-detail');
-  const taskCapture=await generate(detail,'Generate report');
+  await generate(detail);
   assert.equal(await frame.locator('section[id^="task-"]').count(),1);
   assert.equal(await frame.locator('#task-'+task).count(),1);
   assert.equal(await frame.getByText('Observed startup messages',{exact:true}).count()>0,true);
   await report.getByRole('button',{name:'Close',exact:true}).click();
-  assert.equal(await generate(detail,'Open report'),taskCapture);
+  await generate(detail);
   assert.equal(await frame.locator('#task-'+task).count(),1);
   // The read-only report is isolated from Dashboard origin.
   assert.equal(await report.locator('iframe').getAttribute('sandbox'),'allow-scripts allow-downloads');
-  console.log('PASS real JEL Generate/Open Job and Task reports; saved capture unchanged on Open');
+  console.log('PASS real single-click JEL, Job and Task reports');
 }finally{await browser.close();}

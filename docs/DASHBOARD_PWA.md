@@ -6,6 +6,8 @@ Mobile: one Search/Status/Repository/Refresh row without Reset; borderless acces
 
 Serve the shell without stale runtime state. The service worker may cache allowlisted static resources, never navigation, live API, events or credentials. Version and refresh consult the live backend. Use an authenticated trusted HTTPS boundary for remote devices; do not expose local Relay API publicly.
 
+Job Detail, Task Detail and JEL use one Report action to generate and immediately display a fresh scoped execution report. Detailed traces are loopback-only; the authenticated remote Dashboard does not expose them. The report iframe remains sandboxed.
+
 Workflow inspection is a read-only presentation of canonical graphs and their registered symbols. `docs/workflow-symbol-index.md` is consumed by the Dashboard; keep its contract references valid. Do not make explanatory diagrams executable.
 
 Run `scripts/test-dashboard-browser.sh` for UI, HTTP/SSE, runtime-status and publication changes before review/merge/release. Use isolated native fixtures and real Chrome, including desktop and mobile widths. Native tests include `native_dashboard_api`, `native_dashboard_pwa`, `native_dashboard_browser`, `native_dashboard_jel`. Real remote-device checks must be reported separately.
