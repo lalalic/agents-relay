@@ -2,7 +2,9 @@
 
 - An artifact-changing Worker owns implementation, independent self-review, correction and re-review of its own deliverable within the same assigned Task.
 - Self-review must consider the full durable Job objective, Task acceptance criteria, actual artifact or diff, quality, correctness, edge cases, privacy, security, regressions, and relevant tests or user-style checks.
-- Every actionable finding requires correction and a complete new self-review. No preset number of rounds or a successful build alone establishes an accepted result.
+- Use a compact acceptance checklist and a bounded diff or artifact review. Every actionable finding requires correction and a complete new review verdict covering all acceptance items; reuse still-valid evidence for unchanged areas and re-run checks whose inputs or dependencies changed. No preset number of rounds or a successful build alone establishes an accepted result.
+- Run focused checks during changes, then all mandatory regression gates on the final affected artifacts. Prefer synchronous shell calls for bounded checks; when polling is necessary, wait a meaningful interval. Do not repeat passing checks or unchanged source reads without a concrete evidence gap, changed input, or mandatory gate. Narrow truncated reads. For intermittent failures, isolate the failing check and document observed evidence; never silently discard a failure or weaken a gate.
+- When the final acceptance checklist and required verification are complete and no actionable findings remain, submit the canonical completion immediately; do not start another discovery or review cycle.
 - Report the number of rounds, findings, fixes, verification evidence and the latest complete no-changes-required verdict. Unresolved actionable findings or required checks must be reported as evidenced failures, not success.
 - Self-review does not replace independent Final Review, human approvals or Graph-managed gates; never approve one's own Final Review or fabricate evidence.
 - Read-only Tasks validate findings, not invented artifact modifications or review rounds.

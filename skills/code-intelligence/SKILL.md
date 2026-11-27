@@ -75,7 +75,7 @@ for a search accelerator. No separate Task, repeated blind rebuilds or
 installation attempts. For a shared main cache, avoid concurrent init/sync
 writers; if a competing writer is active, recheck once after it finishes or
 fall back without waiting indefinitely. Implementation uses its own worktree's
-index when needed; Reviewer uses verified immutable-target evidence, never a
+index for missing cross-module relationships; Reviewer uses verified immutable-target evidence, never a
 moving main index.
 
 ```sh
@@ -92,6 +92,14 @@ ast-grep run --lang rust --pattern '$EXPR.unwrap()' rust/src
 ```
 
 Limit search to relevant paths; inspect matches before rewriting. Only authorized implementation may edit. Macros, dynamic dispatch, generated code and parser gaps can escape either graph or AST search; verify relevant source and tests. Do not equate a missing match with proof of absence.
+
+## Bound source reads and diff reviews
+
+- Start from the verified Code Map and a compact changed-file list (`git diff --stat` or `git diff --name-only`, with the assigned base/head where applicable). Include staged, unstaged or new artifacts as appropriate to the actual review target. Do not dump a full repository diff into context.
+- When an unfamiliar or cross-module relationship is missing, **query CodeGraph first** for callers, callees, implementations or impact, using a verified same-checkout index and compact symbol output (`context --no-code --max-nodes 12`, `callers --limit 20`). An Implementation agent must prepare its own local index if necessary and safe, using the same freshness/cache rules as the Planner. A read-only Reviewer uses a verified existing exact-target index or bounded immutable Git/source searches; never index a moving or different target for review. Record concrete fallback reasons, not just a missing cache. Known localized edits do not require an index.
+- For repeated syntax or missing call sites, use a scoped `ast-grep` pattern with the appropriate language; for literal/identifier lookups, use scoped `rg`. Neither substitutes for relationship verification or actual diff inspection. A parser gap or truncated result requires targeted additional evidence where material.
+- Read only relevant symbol bodies, ranges and per-file/hunk diffs after narrowing the search. Start with `git diff --stat`, then `git diff -- path/to/file` (or the exact immutable base/head); use `--unified=3` or a bounded source range where appropriate. Review every material changed hunk across the assigned scope; no fixed output cap excuses omitted evidence. If truncated, narrow to a smaller file or range, not the same broad command.
+- During edits and self-review, keep a compact acceptance/evidence checklist in working context. Reuse previously verified, unchanged source/diff evidence; after a fix inspect the changed hunks and affected relationships, then reassess all acceptance items. Re-read or rerun a check only for a changed input, a concrete uncertainty or a mandatory gate. Final review independently verifies the immutable target; implementation evidence is a locator, not proof. Stop discovery once evidence is sufficient.
 
 ## Produce and reuse a Code Map
 

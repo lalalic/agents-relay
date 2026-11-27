@@ -165,7 +165,10 @@ fn planner_prompt_explicitly_loads_project_agents_context_and_fails_when_missing
     .unwrap();
     assert!(built.system.contains("Managed Planner Execution Contract"));
     assert!(built.user.contains("Plan: plan-1"));
-    assert!(built.user.contains("plan context --id '903' --plan-id 'plan-1' --execution-id 'execution-1'"));
+    assert!(built.system.contains("plan context --id '903' --plan-id 'plan-1' --execution-id 'execution-1'"));
+    assert!(built.system.contains("<execution-bootstrap>\n"));
+    assert!(built.user.contains("Follow the trusted System <execution-bootstrap> block"));
+    assert!(!built.user.contains("Load Plan Context:"));
     assert!(!built.user.contains("task.started"));
     assert!(!built.user.contains("EVENT SOURCE (exact)"));
     assert!(!built.user.contains("reply.completed"));

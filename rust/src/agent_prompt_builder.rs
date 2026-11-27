@@ -116,7 +116,7 @@ fn shell_arg(value: &str) -> String {
 }
 
 /// Render commands from the already selected execution Contracts, not Agent names.
-/// The commands are User execution facts; trusted Contracts own the obligations.
+/// The commands are trusted execution bindings; Contracts own the obligations.
 fn execution_bootstrap(input: &Value, contracts: &[String]) -> Result<Vec<String>, String> {
     let has = |name: &str| contracts.iter().any(|n| n == name);
     let plan = has("plan-execution");
@@ -189,7 +189,7 @@ fn execution_bootstrap(input: &Value, contracts: &[String]) -> Result<Vec<String
 }
 
 /// The sole managed Prompt Builder. The effective inherited Agent is
-/// trusted System content; this Task's identity and dynamic values stay User.
+/// trusted System content; bound lifecycle commands are trusted, assignment facts stay User.
 /// Declared references are locators, never inline source text.
 pub fn build_relay_work_prompt(
     input: &Value,
@@ -288,8 +288,11 @@ pub fn build_relay_work_prompt(
     // These are execution facts, not behavioral contracts. The Agent must
     // retrieve full Task/Plan state from the authorized CLI itself.
     let is_plan = mandatory_contract_names.iter().any(|name| name == "plan-execution");
+    let bootstrap = if input["executionBootstrap"] != false {
+        execution_bootstrap(input, &mandatory_contract_names)?
+    } else { vec![] };
     let mut user = vec![
-        if input["executionBootstrap"] == false { "# Execution binding".into() } else { "# Execution Bootstrap".into() },
+        "# Execution binding".into(),
         format!("Job: {job}"),
         if is_plan { format!("Plan: {task}") } else { format!("Task: {task}") },
         format!("Execution: {execution}"),
@@ -301,9 +304,9 @@ pub fn build_relay_work_prompt(
     if !is_plan {
         user.push(format!("EVENT SOURCE (exact): job/{job}/task/{task}/execution/{execution}"));
     }
-    if input["executionBootstrap"] != false {
-        user.extend(execution_bootstrap(input, &mandatory_contract_names)?);
-    } else {
+    if !bootstrap.is_empty() {
+        user.push("Follow the trusted System <execution-bootstrap> block for this execution. After context compaction, reuse it and recover existing state before continuing; never repeat accepted lifecycle operations or rediscover routine commands.".into());
+    } else if input["executionBootstrap"] == false {
         user.push("Execution Bootstrap commands disabled by Agent configuration. Follow all trusted execution Contracts; resolve routine operations through their owning Skills.".into());
     }
     if let Some(title) = input["taskTitle"].as_str().filter(|s| !s.trim().is_empty()) {
@@ -406,6 +409,15 @@ pub fn build_relay_work_prompt(
         ),
         None => role.to_owned(),
     };
+    if !bootstrap.is_empty() {
+        let commands = bootstrap.join("\n");
+        if commands.contains("<execution-bootstrap>") || commands.contains("</execution-bootstrap>") {
+            return Err("Invalid execution bootstrap delimiter in binding".into());
+        }
+        effective_system.push_str("\n\n<execution-bootstrap>\n");
+        effective_system.push_str(&commands);
+        effective_system.push_str("\n</execution-bootstrap>");
+    }
     if let Some(enabled)=input["interactiveReviewEnabled"].as_bool(){
         effective_system.push_str(if enabled {"\n\nInteractive Review: ENABLED for this execution. Prepare the Agent-owned review artifact and request execution-bound Relay interactive review before completion. Await genuine approval; revise on Request Changes."} else {"\n\nInteractive Review: DISABLED for this execution. Do not request, deliver or wait for human interactive review. Continue artifact validation; external actions still require separate authorization."});
     }

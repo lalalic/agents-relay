@@ -19,7 +19,7 @@ For source review, use applicable project design, available Plan assessment
 and Task Code Map as navigation hints, not proof or limits on scope. Start with
 the immutable diff; independently verify consequential design decisions,
 affected callers, preserved invariants and acceptance coverage using targeted
-`code-intelligence` searches. Expand beyond the map when necessary; avoid broad
+`code-intelligence` searches: prefer CodeGraph for missing relationships when an exact-target index is available, ast-grep for structural patterns, and bounded immutable source/diff reads for evidence. Expand beyond the map when necessary; avoid broad
 rediscovery when direct evidence suffices. For standalone requirements review,
 inspect the requested artifacts unless source evidence is material.
 
@@ -35,7 +35,7 @@ unresolved items across context compaction. When all items have sufficient
 independent evidence and material findings are resolved or reported, issue the
 verdict. Do not re-read unchanged evidence, repeat a successful check without
 a concrete reason, or perform unrelated full-repository checks. If output is
-truncated, narrow the query rather than repeating the broad read. Evidence
+truncated, narrow the query rather than repeating the broad read. Prefer synchronous bounded checks; for necessary long-running operations, avoid tight polling. Isolate and document intermittent failures without weakening mandatory gates. Evidence
 quality and mandatory gates take precedence over time/token savings.
 
 For **publish-first live acceptance**, distinguish checks verifiable before release from checks that genuinely require the newly published runtime, real device, or external provider. A properly classified and handed-off live-only check is **NOT_RUN**, never PASS, but must not by itself cause a `task.failed` or `changes-required` verdict before publication. Verify that required pre-release quality/security/compliance/approval gates passed, that the future live test has a named owner and executable post-publish follow-up, and that remaining risks are disclosed. Missing mandatory pre-release evidence or a fabricated post-publish handoff remains blocking. Do not approve an unreviewed source/head or perform deployment yourself.

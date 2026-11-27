@@ -338,18 +338,24 @@ fn bound_bootstrap_selects_completion_contract_and_never_emits_reply_events() {
     for (mode, expected) in [("source", "--commit-sha COMMIT_SHA"), ("dag", "task complete"), ("event", "\"type\":\"task.completed\"")] {
         let policy = agents_relay_rust2::declared_contract_loader::load(&json!({}), root, "worker", Some(mode), false).unwrap();
         let prompt = build_relay_work_prompt(&json!({"agentName":"arbitrary-custom-role","agentContent":"# Role", "jobId":"9","taskId":"8","executionId":"run-7","repository":"repo name", "projectPath":"/tmp/project", "relayCli":"/tmp/relay's bin/agents-relay-rust", "eventApi":"http://127.0.0.1:4223", "startupContracts":policy.provenance,"trustedRuntimePolicy":policy.system}), None).unwrap();
-        assert!(prompt.user.starts_with("# Execution Bootstrap"));
-        assert!(prompt.user.contains("task context --id '9' --task-id '8' --execution-id 'run-7'"));
-        assert!(prompt.user.contains("job/9/task/8/execution/run-7"));
-        assert!(prompt.user.contains("task.started"));
-        assert!(prompt.user.contains("task.failed"));
-        assert!(prompt.user.contains(expected), "{}", prompt.user);
-        assert_eq!(prompt.user.contains("--commit-sha"), mode == "source");
-        assert_eq!(prompt.user.contains("task.completed"), mode == "event");
-        assert!(!prompt.user.contains("reply.text"));
-        assert!(!prompt.user.contains("reply.completed"));
-        assert!(!prompt.system.contains("curl --fail-with-body"));
-        let line = prompt.user.lines().find(|line|line.starts_with("Load Task Context:")).unwrap();
+        assert!(prompt.user.starts_with("# Execution binding"));
+        assert!(prompt.user.contains("Follow the trusted System <execution-bootstrap> block"));
+        let bootstrap=prompt.system.split_once("<execution-bootstrap>\n").unwrap().1
+            .split_once("\n</execution-bootstrap>").unwrap().0;
+        assert_eq!(prompt.system.matches("<execution-bootstrap>\n").count(),1);
+        assert!(bootstrap.contains("task context --id '9' --task-id '8' --execution-id 'run-7'"));
+        assert!(bootstrap.contains("job/9/task/8/execution/run-7"));
+        assert!(bootstrap.contains("task.started"));
+        assert!(bootstrap.contains("task.failed"));
+        assert!(bootstrap.contains(expected), "{}", bootstrap);
+        assert_eq!(bootstrap.contains("--commit-sha"), mode == "source");
+        assert_eq!(bootstrap.contains("\"type\":\"task.completed\""), mode == "event");
+        assert!(!bootstrap.contains("reply.text"));
+        assert!(!bootstrap.contains("reply.completed"));
+        assert!(!prompt.user.contains("curl --fail-with-body"));
+        assert!(!prompt.user.contains("Load Task Context:"));
+        assert!(!prompt.user.contains("Start immediately:"));
+        let line = bootstrap.lines().find(|line|line.starts_with("Load Task Context:")).unwrap();
         assert!(line.contains("/tmp/relay'\"'\"'s bin/agents-relay-rust"));
     }
 }
@@ -362,9 +368,14 @@ fn execution_bootstrap_opt_out_keeps_binding_and_contracts() {
     let default = build_relay_work_prompt(&input,None).unwrap();
     input["executionBootstrap"] = json!(false);
     let off = build_relay_work_prompt(&input,None).unwrap();
-    assert_eq!(default.system, off.system);
+    let (before, rest)=default.system.split_once("\n\n<execution-bootstrap>\n").unwrap();
+    let (_, after)=rest.split_once("\n</execution-bootstrap>").unwrap();
+    assert_eq!(format!("{before}{after}"), off.system);
+    assert!(!off.system.contains("<execution-bootstrap>\n"));
     assert_eq!(default.references, off.references);
-    assert!(default.user.contains("Start immediately:"));
+    assert!(default.system.contains("Start immediately:"));
+    assert!(!default.user.contains("Start immediately:"));
+    assert!(!off.user.contains("Follow the trusted System <execution-bootstrap> block"));
     assert!(off.user.starts_with("# Execution binding"));
     assert!(!off.user.contains("Start immediately:"));
     assert!(!off.user.contains("curl --fail-with-body"));
@@ -413,7 +424,8 @@ fn fallback_checkpoint_contract_reuses_existing_execution_id_without_extra_bindi
     assert!(!prompt.user.contains("relay-checkpoint-"));
     input["executionBootstrap"]=json!(false);
     let disabled=build_relay_work_prompt(&input,None).unwrap();
-    assert_eq!(disabled.system,prompt.system);
+    assert!(disabled.system.contains("Execution Checkpoint Fallback Contract"));
+    assert!(!disabled.system.contains("<execution-bootstrap>\n"));
     assert!(disabled.user.contains("Execution: checkpoint-test-exec"));
     assert!(!disabled.user.contains("relay-checkpoint-"));
     let planner=agents_relay_rust2::declared_contract_loader::load(&json!({"startup_contracts":"[relay:skills/agents-relay/contracts/plan-execution.md]"}),root,"plan",None,false).unwrap();

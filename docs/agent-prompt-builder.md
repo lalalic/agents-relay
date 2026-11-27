@@ -28,14 +28,14 @@ entry point; Neo Project Skills link to the same schema and do not copy it.
 | Surface | Contents | Authority |
 | --- | --- | --- |
 | Harness Global | Native Codex Global AGENTS or XChat bootstrap | Harness-owned |
-| Trusted System/Developer | Effective Agent body; Global shared Contract; mandatory execution, Task/Plan, terminal and applicable self-review Contracts; name-only required Skill instructions | Authoritative for this managed execution |
-| User Task/Plan Assignment | Execution Bootstrap (exact binding, configured event source/endpoint and native CLI commands), project, task facts, lower-priority selected project Context | Current execution data |
+| Trusted System/Developer | Effective Agent body; Global shared Contract; mandatory execution, Task/Plan, terminal and applicable self-review Contracts; bound `<execution-bootstrap>`; name-only required Skill instructions | Authoritative for this managed execution |
+| User Task/Plan Assignment | Exact execution identity, named Bootstrap enforcement when enabled, project, task facts, lower-priority selected project Context | Current execution data |
 | On-demand references | Explicit non-mandatory `contracts` and other authorized documents | Read only when needed |
 | Harness Skills List | Available Skill names, descriptions and paths | The Agent resolves named Skills using this catalog; Relay does not pre-read SKILL.md |
 
 ### Execution Bootstrap
 
-The shared Builder renders routine commands in User assignment from the selected
+The shared Builder renders routine commands in the trusted System `<execution-bootstrap>` block from the selected
 execution and Completion Contracts, not Agent names. Workers publish their own
 start/progress/failure using the configured Events Bus API, retrieve fenced Task
 Context and verify accepted state. Source and DAG success uses the pinned native
@@ -43,7 +43,7 @@ Context and verify accepted state. Source and DAG success uses the pinned native
 loads Plan Context and uses its returned `apply_cli`; it never sends Task events.
 The native runtime resolves its version-matched CLI and configured bus endpoint.
 Effective Agent metadata may set `execution_bootstrap: false` to omit the
-command section (default `true`); the execution binding and all mandatory
+command section (default `true`); the User assignment refers to the block by name only when present. After compaction, reuse the trusted block and recover the current state before continuing. The execution binding and all mandatory
 Contracts remain, and the Agent uses owning Skills for routine operations.
 These commands are Relay `task.*` lifecycle operations only, not a conversation
 reply channel. Routine commands need no Skill re-discovery; additional operations remain on

@@ -235,5 +235,52 @@
       "install_tool": false,
       "fail_job": false
     }
+  },
+  {
+    "id": "implementation-missing-cross-module-relationship",
+    "role": "implementation",
+    "scenario": "The Planner Code Map identifies a shared service but misses one downstream consumer. The assigned worktree has no index, CodeGraph is installed and ignored-cache writes are safe. The agent must locate the relationship without broad source dumps.",
+    "expect": {
+      "initialize_local_index": true,
+      "query_graph": true,
+      "verify_targeted_source": true,
+      "reuse_other_worktree_index": false,
+      "repeat_broad_source_reads": false
+    }
+  },
+  {
+    "id": "implementation-structural-migration",
+    "role": "implementation",
+    "scenario": "Find every invocation of an old API shape within verified affected Rust modules. ast-grep is installed. The caller graph is already understood.",
+    "expect": {
+      "use_ast_grep": true,
+      "use_scoped_search": true,
+      "verify_matches_in_source": true,
+      "rebuild_graph": false
+    }
+  },
+  {
+    "id": "implementation-bounded-rereview",
+    "role": "implementation",
+    "scenario": "A focused correction changes one function after a complete self-review of the assigned diff. Other acceptance evidence remains valid; the required final regression must run.",
+    "expect": {
+      "review_changed_hunks": true,
+      "reassess_all_acceptance_items": true,
+      "reuse_unchanged_evidence": true,
+      "repeat_full_diff_dump": false,
+      "run_mandatory_final_regression": true
+    }
+  },
+  {
+    "id": "review-truncated-diff",
+    "role": "reviewer",
+    "scenario": "An immutable target contains changes across eight files and a broad diff is truncated. No exact-target graph index exists in the read-only checkout.",
+    "expect": {
+      "inspect_all_material_hunks": true,
+      "narrow_to_file_or_range": true,
+      "repeat_truncated_command": false,
+      "build_index_in_readonly_checkout": false,
+      "use_other_checkout_index": false
+    }
   }
 ]
