@@ -459,7 +459,7 @@ fn main() {
             println!("{help}");
         }
         Ok(result) => {
-            let raw = arguments.first().is_some_and(|command| command == "prompt")
+            let raw = arguments.first().is_some_and(|command| command == "prompt" || command == "infer")
                 || matches!(arguments.first().map(String::as_str), Some("plan" | "task"))
                     && arguments
                         .get(1)

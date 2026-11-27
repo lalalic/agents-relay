@@ -638,6 +638,10 @@ pub fn agent_control_request(action:&str,args:&[String])->Result<Value,String>{
 pub fn run_cli<P:CliRuntimePort>(
     port:&mut P,argv:&[String],stdin:Option<&str>,
 )->Result<Value,String>{
+    // Inference owns a strict parser so prompt values that begin with -- are not treated as CLI flags.
+    if argv.first().is_some_and(|v|v=="infer") {
+        return if matches!(argv.get(1).map(String::as_str),Some("--help"|"-h")) { Ok(json!(help_text(Some("infer"),None))) } else { crate::cli_infer::run(&argv[1..]) };
+    }
     crate::cli_option_contract::validate_cli_options(argv)?;
     let Some(command)=argv.first().map(String::as_str)else{
         return Ok(json!(help_text(None,None)));

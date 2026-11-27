@@ -1,6 +1,6 @@
 // Direct port of Node src/cli-help.ts: evaluated current local-Git-only help text, preserving JS escape semantics.
 #[allow(non_upper_case_globals)] // Public Node export name intentionally preserved.
-pub const usage: &str = r##########"agents-relay <job|task|review|artifact|plan|prompt|route|blocker|escalation|context|init|record|agent-register|agent-discover|status|reconcile|serve|migrate-local-repositories> [options]"##########;
+pub const usage: &str = r##########"agents-relay <job|task|review|artifact|plan|prompt|route|infer|blocker|escalation|context|init|record|agent-register|agent-discover|status|reconcile|serve|migrate-local-repositories> [options]"##########;
 pub const CLI_USAGE: &str = usage;
 pub const CLI_HELP_ENTRIES: &[(&str, &str)] = &[
     (
@@ -23,6 +23,7 @@ Commands:
   plan context             Read execution-bound Planner context from SQLite
   prompt                   Print raw Planner/Worker prompt from the production Builder
   route                    Select a configured worker/model with the shared Execution Router
+  infer                    Run synchronous routed text/image inference without a Job
   blocker add|resolve|show  Manage cross-Job blocker dependencies
   escalation               Run the canonical escalation graph with a configured external executor
   context resolve          Resolve shared project instructions, skills, agents, and runtimes
@@ -37,6 +38,12 @@ Commands:
 
 Run 'agents-relay <command> --help' for command options and examples.
 The installed command and local Rust build use the same native implementation."##########,
+    ),
+    (
+        "infer",
+        r#"Run synchronous, detached inference using the shared Execution Router.
+Usage: agents-relay infer --capability text|vision --prompt TEXT [--input IMAGE ...] [--reasoning LEVEL] [--eligible-profiles CSV] [--format text|json]
+Vision requires a caller-verified image-capable profile allowlist. Text accepts no images. Selected Codex provider/model/profile/reasoning is pinned, read-only and ephemeral. JSON format requires an object. Output is raw answer on stdout; route receipt and failures on stderr. No Job, Task, retries, or provider fallback. Only capability facts go to the router. The caller must authorize external transfer and cost."#,
     ),
     (
         r##########"route"##########,

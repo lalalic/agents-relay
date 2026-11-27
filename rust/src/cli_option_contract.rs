@@ -1,5 +1,10 @@
 // Current native CLI option contract. Unknown flags fail before any effects.
 pub fn validate_cli_options(args: &[String]) -> Result<(), String> {
+    // Inference has a strict value-aware parser in cli_infer; prompts may
+    // legitimately begin with -- or contain option-like text.
+    if args.first().is_some_and(|command| command == "infer") {
+        return Ok(());
+    }
     const ALLOWED: &[&str] = &[
         "--action",
         "--adapter",
