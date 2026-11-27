@@ -77,8 +77,9 @@ Legacy `routeWorker` / `routeModel` helpers remain compatibility/recovery utilit
 ## Detached routing CLI
 
 Any component can select a local Model Worker and its configured model using
-the **same Execution Router as Relay Workers**, without creating a Job or
-connecting to the daemon:
+the **same Execution Router as Relay Workers**, without creating a Job.
+The live daemon supplies the shared provider observations (default loopback
+port 8787; `--port` selects an isolated or explicitly configured local daemon):
 
 ```sh
 agents-relay route --input-file request.json
@@ -107,10 +108,12 @@ but does not override hard eligibility or interpret free text on fallback.
 `eligibleProfiles` further limits candidates to verified profile identifiers
 (use `default` for the implicit base profile). `excludedRoutes` removes known
 failed provider/model/profile combinations. `workerRequirements` uses the
-same Worker constraints as Relay. Optional `usage` and `recentRouteResults`
-(at most ten) supply observed runtime facts; absent these, detached callers
-do not have live quota or recent outcome context. These are facts, not
-additional profiles or choices.
+same Worker constraints as Relay. By default, detached callers (including
+Outcome/Preflight Reviewers) read the daemon-owned provider observation and
+the same bounded route history as managed agents. A failed observation request
+is reported instead of silently routing without quota context. Explicit
+`usage` and `recentRouteResults` (at most ten) permit isolated tests. These
+are facts, not additional profiles or choices.
 
 The output contains the canonical `selection`, `model` and `routing` objects,
 including `routing.decisionEvidence`. Single eligible routes bypass Jev;

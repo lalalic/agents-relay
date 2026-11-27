@@ -1,5 +1,5 @@
 //! Detached entry to the same native Execution Router used by model Workers.
-//! The caller owns execution; no Job, daemon, store or audit writes.
+//! The caller owns execution; only read-only shared observations, no Job or audit writes.
 use crate::{
     decision::{decision_mode, execution_decision_engine},
     execution_routing::select_execution_route_with,
@@ -16,10 +16,10 @@ use std::{
 
 const MAX_INPUT_BYTES: u64 = 1024 * 1024;
 const USAGE: &str =
-    "Usage: agents-relay route --input-file REQUEST.json|- [--execution-router-rules PATH]";
+    "Usage: agents-relay route --input-file REQUEST.json|- [--execution-router-rules PATH] [--port PORT]";
 
 fn parse_args(args: &[String]) -> Result<(&str, Option<&str>), String> {
-    let (mut input, mut rules) = (None, None);
+    let (mut input, mut rules, mut port) = (None, None, None);
     for pair in args.chunks(2) {
         let [flag, value] = pair else {
             return Err(USAGE.into());
@@ -30,9 +30,11 @@ fn parse_args(args: &[String]) -> Result<(&str, Option<&str>), String> {
         match flag.as_str() {
             "--input-file" if input.is_none() => input = Some(value.as_str()),
             "--execution-router-rules" if rules.is_none() => rules = Some(value.as_str()),
+            "--port" if port.is_none() => port = Some(value.as_str()),
             _ => return Err(USAGE.into()),
         }
     }
+    crate::cli_support::endpoint(args)?;
     Ok((input.ok_or(USAGE)?, rules))
 }
 
@@ -207,9 +209,25 @@ fn executable_on_path(name: &str) -> bool {
         })
 }
 
+/// Every detached agent goes through this same route ingress (including
+/// both preflight reviewers and public CLI). Explicit observations remain
+/// supported for isolated callers; otherwise use the live Router's sources.
+fn hydrate_observations(
+    input:&mut Value,
+    usage:impl FnOnce()->Result<Value,String>,
+    recent:impl FnOnce()->Vec<Value>,
+)->Result<(),String>{
+    if !input.is_object(){return Err("Routing request must be an object".into());}
+    // Validate caller-supplied facts before touching the live observation service.
+    options(input)?;
+    if input.get("usage").is_none(){input["usage"]=usage()?;}
+    if input.get("recentRouteResults").is_none(){input["recentRouteResults"]=json!(recent());}
+    Ok(())
+}
+
 pub fn run(args: &[String], stdin: Option<&str>) -> Result<Value, String> {
     let (input_path, explicit_rules) = parse_args(args)?;
-    let input = read_request(input_path, stdin)?;
+    let mut input = read_request(input_path, stdin)?;
     // The native daemon supports Codex as its Model Worker. A detached
     // component invokes its own local executable instead of a Relay lease.
     if !executable_on_path("codex") {
@@ -220,6 +238,8 @@ pub fn run(args: &[String], stdin: Option<&str>) -> Result<Value, String> {
         .ok_or("HOME is not set")?;
     let env_rules = std::env::var("AGENTS_RELAY_EXECUTION_ROUTER_RULES").ok();
     let rules = execution_router_rules_path(explicit_rules, env_rules.as_deref(), &home);
+    hydrate_observations(&mut input,||crate::cli_support::relay_routing_usage(args),
+        ||crate::decision_audit::routing_recent_results(&crate::relay_store::relay_store_directory()))?;
     route_with(
         &input,
         &[native_codex_worker()],
@@ -335,6 +355,43 @@ mod tests {
         assert_eq!(implicit["modelPreference"],json!({
             "model":"openai/gpt-6-luna","reasoning":"xhigh"}));
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn detached_and_managed_routes_share_quota_gates(){
+        let f=Fixture::new();
+        std::fs::write(f.0.join("zai.config.toml"),
+            "model = \"glm\"\nmodel_provider = \"zai\"\n").unwrap();
+        let now=chrono::Utc::now().timestamp();
+        let snapshot=json!({"providers":[{"id":"zai","usage":{
+            "available":true,"fiveHour":{"usedPercent":100,"resetsAt":now+3600}}}]});
+        let mut request=json!({"taskFacts":{"role":"reviewer"},
+            "routingInstruction":"Prefer Z.ai first"});
+        let (requirements,opts,_)=options(&request).unwrap();
+        let discover=|opts:&Value|crate::execution_routing::discover_execution_routes(
+            &[native_codex_worker()],&requirements,opts,&f.0,
+            &f.0.join("policy.json"),&f.0.join("rules.md"),now*1000).unwrap();
+        assert!(discover(&opts).routes.iter().any(|r|r["model"]["provider"]=="zai"),
+            "Z.ai must be a real eligible fixture route before applying quota");
+        hydrate_observations(&mut request,||Ok(snapshot.clone()),||vec![]).unwrap();
+        let choose=|_:&Value,contract:&Value|{
+            let choices=contract["choices"].as_array().unwrap();
+            assert!(choices.iter().all(|v|!v.as_str().unwrap().contains("provider=zai")));
+            Ok(json!({"type":"choice","choice":choices[0]}))
+        };
+        let detached=f.route(&request,choose).unwrap();
+        let (requirements,opts,recent)=options(&request).unwrap();
+        let observed=discover(&opts);
+        assert!(observed.evaluations.iter().any(|r|r["route"]["model"]["provider"]=="zai"
+            &&r["eligible"]==false&&r["rejectionReasons"].as_array().unwrap().iter()
+            .any(|reason|reason=="resource_unhealthy")));
+        let managed=select_execution_route_with(&[native_codex_worker()],&requirements,&opts,
+            &f.0,&f.0.join("policy.json"),&f.0.join("rules.md"),
+            chrono::Utc::now().timestamp_millis(),&recent,true,choose).unwrap();
+        assert_ne!(detached["routing"]["provider"],"zai");
+        assert_eq!(detached["routing"]["provider"],managed["routing"]["provider"]);
+        assert_eq!(detached["routing"]["profile"],managed["routing"]["profile"]);
+        assert!(hydrate_observations(&mut json!({}),||Err("offline".into()),||vec![]).is_err());
+        hydrate_observations(&mut request,||panic!("explicit observation"),||panic!("explicit history")).unwrap();
     }
     #[test]
     fn cli_and_managed_model_agents_share_discovery_and_decision_path() {
@@ -481,5 +538,7 @@ mod tests {
             ("-", Some("rules.md"))
         );
         assert!(parse_args(&args(&["--input-file", "-", "--input-file", "x"])).is_err());
+        assert!(parse_args(&args(&["--input-file", "-", "--port", "12345"])).is_ok());
+        assert!(parse_args(&args(&["--input-file", "-", "--port", "0"])).is_err());
     }
 }

@@ -252,8 +252,7 @@ fn read_dashboard_router(config:&DaemonConfig,live:bool,adapters:&[Value],
 
 fn decision_options_for(config:&DaemonConfig,live:bool)->Value{
         let recent=if live{
-            crate::decision_audit::JsonlDecisionAuditStore::new(
-                crate::decision_audit::audit_path(&config.store_directory)).read_recent_routes(10)
+            crate::decision_audit::routing_recent_results(&config.store_directory)
         }else{Vec::new()};
         let global_root=if live {
             std::env::var("AGENTS_HOME").ok()
@@ -357,6 +356,8 @@ impl IsolatedSQLiteWriteHost {
     pub fn new_live(config:DaemonConfig)->Self{
         let mut host=Self::new(config);
         host.live_store=true;
+        // Warm the common usage observation asynchronously before the first route.
+        let _=host.usage_cache.cached();
         host
     }
     /// Bind the REAL Events Bus read-only HTTP history API only when the

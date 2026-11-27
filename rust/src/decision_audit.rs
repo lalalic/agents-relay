@@ -456,6 +456,11 @@ pub fn audit_path(store_directory: &std::path::Path) -> PathBuf {
     root.join("decision-audit.jsonl")
 }
 
+/// Shared bounded route history for managed and detached routing.
+pub fn routing_recent_results(store_directory:&Path)->Vec<Value>{
+    JsonlDecisionAuditStore::new(audit_path(store_directory)).read_recent_routes(10)
+}
+
 /// Dashboard service contract expects chronological order; its API reverses it.
 pub fn dashboard_records(store_directory: &std::path::Path) -> Result<Vec<Value>, String> {
     let mut records = crate::audit_tail::read_jsonl_latest(audit_path(store_directory), 30)?;

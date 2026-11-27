@@ -43,7 +43,7 @@ The installed command and local Rust build use the same native implementation."#
         r##########"Select a configured worker/model route without creating a Job.
 
 Usage:
-  agents-relay route --input-file REQUEST.json [--execution-router-rules PATH]
+  agents-relay route --input-file REQUEST.json [--execution-router-rules PATH] [--port PORT]
   agents-relay route --input-file - < REQUEST.json
 
 Input: {"taskFacts":{"task":{"taskCapabilities":["vision"]}},"routingPreferences":{"profile":"neo"},"routingInstruction":"Prefer visual quality over speed."}
@@ -55,11 +55,12 @@ advisory guidance overriding conflicting global rules and soft preferences.
 Hard constraints always win: routingConstraints (provider, model, profile,
 reasoning), workerRequirements, eligibleProfiles and excludedRoutes may
 restrict routes. No route is invented to satisfy a preference.
-Optional usage and recentRouteResults supply observed resource/outcome facts.
-Without them, quota and recent history are unknown to the detached caller.
+Optional usage and recentRouteResults supply explicit resource/outcome facts.
+By default the CLI reads the live daemon's shared provider observation and
+canonical recent route history; if usage is unreachable, routing fails visibly.
 Output: JSON with selection, model and routing, including decisionEvidence.
 The shared router handles single-choice bypass and deterministic fallback.
-No Job, daemon or SQLite access; no model execution. Only routing facts and
+Read-only daemon observations; no Job creation, SQLite mutation or model execution. Only routing facts and
 guidance are sent to the configured Jev engine; do not supply private payloads.
 Global rules path: explicit flag, AGENTS_RELAY_EXECUTION_ROUTER_RULES, then
 ~/.agents-relay/execution-router-rules.md. Policy: ~/.agents-relay/routing-policy.json."##########,

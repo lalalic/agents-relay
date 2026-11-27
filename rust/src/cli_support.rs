@@ -209,13 +209,18 @@ fn url_for(args:&[String],path:&str,params:&[(&str,String)])
 }
 fn http(args:&[String],path:&str,method:&str,params:&[(&str,String)],
     body:Option<&Value>,description:&str)->Result<Value,String>{
+    http_with_timeout(args,path,method,params,body,description,None)
+}
+fn http_with_timeout(args:&[String],path:&str,method:&str,params:&[(&str,String)],
+    body:Option<&Value>,description:&str,timeout:Option<std::time::Duration>)->Result<Value,String>{
     let url=url_for(args,path,params)?;
     let (host,port)=endpoint(args)?;
     let once=||{
         // A non-2xx HTTP response is a daemon control rejection, not an
         // observed Graph success. Keep its body for CLI diagnostics.
-        let client=ureq::Agent::config_builder().http_status_as_error(false)
-            .build().new_agent();
+        let mut config=ureq::Agent::config_builder().http_status_as_error(false);
+        if let Some(timeout)=timeout{config=config.timeout_global(Some(timeout));}
+        let client=config.build().new_agent();
         let response=if method=="POST"{
             let request=client.post(url.as_str());
             if let Some(body)=body{request.send_json(body)}
@@ -265,6 +270,19 @@ fn job_params(args:&[String],id:&str)->Result<Vec<(&'static str,String)>,String>
 /// unreachable service, nor falls back to Node or a second SQLite store.
 pub fn relay_service_status(args:&[String])->Result<Value,String>{
     http(args,"/api/status","GET",&[],None,"status request")
+}
+/// The daemon owns the provider observation cache used by managed routing.
+/// Detached routing reads that same observation, never starts another reader.
+pub fn relay_routing_usage(args:&[String])->Result<Value,String>{
+    let value=http_with_timeout(args,"/api/usage","GET",&[],None,
+        "shared Router usage",Some(std::time::Duration::from_secs(40)))?;
+    if !value.get("providers").is_some_and(Value::is_array){
+        return Err("Shared Router usage response has no provider observations".into());
+    }
+    // Do not feed unrelated Dashboard/status metadata into route selection.
+    Ok(json!({"generatedAt":value.get("generatedAt"),
+        "providers":value.get("providers"),"credits":value.get("credits"),
+        "browserWorkspace":value.get("browserWorkspace")}))
 }
 /// Original cli.ts "status" reads the Dashboard runtime summary, not
 /// the daemon's lower-level /api/status health diagnostic endpoint.
