@@ -274,7 +274,7 @@ pub fn relay_service_status(args:&[String])->Result<Value,String>{
 /// The daemon owns the provider observation cache used by managed routing.
 /// Detached routing reads that same observation, never starts another reader.
 pub fn relay_routing_usage(args:&[String])->Result<Value,String>{
-    let value=http_with_timeout(args,"/api/usage","GET",&[],None,
+    let value=http_with_timeout(args,"/api/usage","GET",&[("scope","routing".into())],None,
         "shared Router usage",Some(std::time::Duration::from_secs(40)))?;
     if !value.get("providers").is_some_and(Value::is_array){
         return Err("Shared Router usage response has no provider observations".into());

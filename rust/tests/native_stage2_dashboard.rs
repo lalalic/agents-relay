@@ -66,6 +66,7 @@ fn fixture()->(NativeDashboardApi<FakeBackend>,Arc<Mutex<Vec<Value>>>){
     let opts=DashboardApiOptions {
         graph_directory:PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
         router_rules_path:std::env::temp_dir().join(format!("stage2-dashboard-rules-{}",std::process::id())),
+        troubleshooter_qa_path:PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../skills/agents-relay/troubleshooter-qa.md"),
         webhook_secret:None,webhook_repositories:HashSet::new(),
         webhook_job_id:None,
     };

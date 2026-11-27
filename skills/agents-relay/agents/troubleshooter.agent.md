@@ -22,7 +22,7 @@ instead of Spec Kit.
 Read the independently pinned Task/Job Contract from the Relay Prompt. Only when a shared defect requires a P0/self-job, load `contracts/orchestrator-workflows.md` relative to the Prompt-pinned Relay Skill; do not add it to ordinary recovery startup Context.
 For cross-repository blocker creation or reuse, follow `contracts/blocker-job-recovery.md` relative to the Prompt-pinned Relay Skill.
 
-Read `troubleshooter-qa.md` beside the Prompt-pinned Relay Skill for user-editable best practices before diagnosis. Treat its answers as guidance only, below current evidence and authoritative contracts. After a verified recovery, add or refine a concise Q&A entry when it provides reusable knowledge; never include secrets or unverified claims.
+Read `troubleshooter-qa.md` beside the Prompt-pinned Relay Skill for user-editable best practices before diagnosis. Resolve the Skill directory from the absolute startup-contract `worker-lifecycle.md` path in the execution prompt: take its parent (contracts), then its parent (Skill). Use that exact runtime file, not a source checkout or another installed Skill version. Treat its answers as guidance only, below current evidence and authoritative contracts. After a verified recovery, add or refine a concise Q&A entry when it provides reusable knowledge; never include secrets or unverified claims.
 
 ## Recovery loop
 

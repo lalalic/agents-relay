@@ -50,7 +50,7 @@ fn reconcile_one<S:DaemonServices>(
             .unwrap_or_else(||config.workspace_root.clone())
     };
     let registered=if needs_dispatch{host.registered_agents()?}else{Vec::new()};
-    let usage=if needs_dispatch{host.account_usage().ok()}else{None};
+    let usage=if needs_dispatch{host.routing_usage().ok()}else{None};
     let adapters=runner.options.get("adapters").and_then(Value::as_array)
         .cloned().unwrap_or_default();
     let roots=json!({"workspaceRoot":config.workspace_root});
@@ -158,7 +158,7 @@ pub fn create_service<S:DaemonServices+'static>(
     let api=Arc::new(NativeDashboardApi::new(DashboardApiOptions{
         graph_directory:config.graph_directory.clone(),
         router_rules_path:config.router_rules_path.clone(),
-        troubleshooter_qa_path:troubleshooter_qa_path(),
+        troubleshooter_qa_path:troubleshooter_qa_path()?,
         webhook_secret:None,webhook_repositories:HashSet::new(),
         webhook_job_id:None,
     },DaemonDashboardBackend::new(config.clone(),Arc::clone(&services),read_only)));

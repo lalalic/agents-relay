@@ -124,6 +124,7 @@ pub trait DashboardApiServices: Send + 'static {
     fn decision_audit(&mut self) -> Result<Vec<Value>, String>;
     fn runtime_status(&mut self) -> Value;
     fn account_usage(&mut self) -> Result<Value, String>;
+    fn routing_usage(&mut self) -> Result<Value,String>{self.account_usage()}
     fn github_usage(&mut self) -> Result<Option<Value>, String>;
     fn subscribe_events(&mut self) -> Receiver<String>;
     /// Host-neutral hook for the existing server-side QA endpoint.
@@ -469,6 +470,9 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                 },
                 "/api/usage" => {
                     if !allowed_method(req,"GET"){return Ok(text_response(405,"Method not allowed"));}
+                    if query(&parsed,"scope").as_deref()==Some("routing"){
+                        return Ok(json_response(200,&services.routing_usage()?));
+                    }
                     let mut account = services.account_usage()?;
                     if let Some(map) = account.as_object_mut() {
                         map.remove("githubEffective");

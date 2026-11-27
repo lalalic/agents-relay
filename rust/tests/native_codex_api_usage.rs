@@ -56,6 +56,28 @@ fn dashboard_usage_factory_excludes_deepseek_collection_even_with_key(){
 }
 
 #[test]
+fn routing_adds_cached_deepseek_without_collecting_it_for_dashboard() {
+    use agents_relay_rust2::{usage::routing_usage_snapshot,usage_registry::SharedUsageCache};
+    use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+    let calls=Arc::new(AtomicUsize::new(0));
+    let observed=calls.clone();
+    let base=SharedUsageCache::new(||Ok(json!({"providers":[],"credits":[{"id":"openrouter"}]})));
+    let deepseek=SharedUsageCache::new(move||{
+        observed.fetch_add(1,Ordering::SeqCst);
+        Ok(json!({"id":"deepseek","credits":{"available":true,"balances":[{"remaining":0}]}}))
+    });
+    let dashboard=base.wait().unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst),0);
+    let detached=routing_usage_snapshot(&base,&deepseek,true).unwrap();
+    assert_eq!(detached["credits"].as_array().unwrap().len(),2);
+    assert_eq!(detached["credits"][1]["id"],"deepseek");
+    let managed=routing_usage_snapshot(&base,&deepseek,false).unwrap();
+    assert_eq!(managed,detached);
+    assert_eq!(base.wait().unwrap(),dashboard);
+    assert_eq!(calls.load(Ordering::SeqCst),1);
+}
+
+#[test]
 fn app_server_waits_for_initialize_and_reads_actual_quota_before_process_exit(){
     let reply=json!({"jsonrpc":"2.0","id":2,"result":{"rateLimits":{
         "primary":{"usedPercent":25.0,"windowDurationMins":300.0,"resetsAt":1_800_000_000.0},

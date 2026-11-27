@@ -16,26 +16,40 @@ pub use crate::usage_codex_api::{CodexApiUsageReader};
 pub fn codex_and_zai_usage_registry(
     _codex_home:Option<&std::path::Path>,_legacy_window_days:Option<i64>,
 )->UsageRegistry{
+    make_usage_registry(true)
+}
+fn make_usage_registry(include_deepseek:bool)->UsageRegistry{
     let optional=|key:&str|std::env::var(key).ok().is_some_and(|v|!v.is_empty());
     UsageRegistry::new(
         Box::new(CodexApiUsageReader::new()),
         Box::new(ZaiUsageReader::new(None)),
-        optional("DEEPSEEK_API_KEY").then(||Box::new(DeepSeekCreditReader::new(None)) as Box<dyn UsageReader>),
+        (include_deepseek&&optional("DEEPSEEK_API_KEY")).then(||Box::new(DeepSeekCreditReader::new(None)) as Box<dyn UsageReader>),
         optional("OPENROUTER_API_KEY").then(||Box::new(OpenRouterCreditReader::new(None)) as Box<dyn UsageReader>),
         Some(Box::new(BrowserWorkspaceUsageReader::new(None,None))),
     )
 }
 /// Dashboard Usage is presentation-only observation and must not collect
 /// delivery-side GitHub telemetry or DeepSeek credits before filtering output.
-pub fn dashboard_usage_registry()->UsageRegistry{
-    let optional=|key:&str|std::env::var(key).ok().is_some_and(|v|!v.is_empty());
-    UsageRegistry::new(
-        Box::new(CodexApiUsageReader::new()),
-        Box::new(ZaiUsageReader::new(None)),
-        None,
-        optional("OPENROUTER_API_KEY").then(||Box::new(OpenRouterCreditReader::new(None)) as Box<dyn UsageReader>),
-        Some(Box::new(BrowserWorkspaceUsageReader::new(None,None))),
-    )
+pub fn dashboard_usage_registry()->UsageRegistry{make_usage_registry(false)}
+/// DeepSeek is routing-only; its cache never refreshes for a Dashboard read.
+pub fn routing_deepseek_credit()->Result<Value,String>{
+    if std::env::var("DEEPSEEK_API_KEY").ok().is_some_and(|v|!v.is_empty()){
+        Ok(json!({"id":"deepseek","label":"DeepSeek","credits":DeepSeekCreditReader::new(None).read()}))
+    }else{Ok(Value::Null)}
+}
+/// Managed and detached route callers share the same two observation caches.
+/// Nonblocking scheduler reads retain their existing unknown-usage semantics.
+pub fn routing_usage_snapshot(
+    common:&crate::usage_registry::SharedUsageCache,
+    deepseek:&crate::usage_registry::SharedUsageCache,wait:bool,
+)->Result<Value,String>{
+    let pending=deepseek.cached();
+    let mut snapshot=if wait{common.wait()?}else{common.cached()?};
+    let extra=if wait{Some(deepseek.wait()?)}else{pending.ok()};
+    if let Some(credit)=extra.filter(|v|!v.is_null()){
+        if let Some(credits)=snapshot["credits"].as_array_mut(){credits.push(credit);}
+    }
+    Ok(snapshot)
 }
 
 use chrono::{DateTime,Utc};

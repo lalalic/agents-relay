@@ -14,9 +14,6 @@ fn run(req: &Value) -> Result<Value, String> {
             p["jobs"].as_array().ok_or("missing jobs")?,
             p["repository"].as_str().unwrap_or(""),
         ),
-        "dashboard.githubPrUrl" => d::github_pr_url(&p["repository"], &p["prNumber"])
-            .map(Value::String)
-            .unwrap_or(Value::Null),
         "dashboard.githubUsage" => d::effective_github_usage(
             p.get("snapshot").filter(|v| !v.is_null()),
             p.get("runtime").filter(|v| !v.is_null()),

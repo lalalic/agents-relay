@@ -255,6 +255,8 @@ fn dynamic_dashboard_routes_converge_on_service_backend() {
     assert_eq!(usage["credits"][0]["id"],"openrouter");
     assert!(usage.get("githubEffective").is_none());
     assert!(usage.get("githubStatus").is_none());
+    let routing=data(call(&backend,"GET","/api/usage?scope=routing",None));
+    assert!(routing["credits"].as_array().unwrap().iter().any(|v|v["id"]=="deepseek"));
     assert!(!calls.lock().unwrap().iter().any(|row|row["method"]=="github_usage"),
         "Dashboard Usage must not collect GitHub delivery/runtime telemetry");
     assert_eq!(
@@ -490,13 +492,17 @@ fn dashboard_qa_loads_saves_and_reloads_the_shared_skill_file(){
 
 #[test]
 fn dashboard_default_qa_path_is_the_file_pinned_troubleshooter_reads(){
-    let skill=PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../skills/agents-relay");
-    assert_eq!(agents_relay_rust2::relayd::troubleshooter_qa_path(),
+    let skill=agents_relay_rust2::runtime_resources::package_root().unwrap()
+        .join("skills/agents-relay");
+    assert_eq!(agents_relay_rust2::relayd::troubleshooter_qa_path().unwrap(),
         skill.join("troubleshooter-qa.md"));
     let agent=std::fs::read_to_string(skill.join("agents/troubleshooter.agent.md")).unwrap();
     assert!(agent.contains("Read `troubleshooter-qa.md` beside the Prompt-pinned Relay Skill"));
     assert!(agent.contains("guidance only, below current evidence and authoritative contracts"));
+    assert!(agent.contains("absolute startup-contract `worker-lifecycle.md` path"));
+    let contract=std::fs::canonicalize(skill.join("contracts/worker-lifecycle.md")).unwrap();
+    let qa=contract.parent().unwrap().parent().unwrap().join("troubleshooter-qa.md");
+    assert_eq!(qa,agents_relay_rust2::relayd::troubleshooter_qa_path().unwrap());
 }
 fn hmac_sha256(secret: &str, body: &[u8]) -> String {
     let mut key = [0u8; 64];

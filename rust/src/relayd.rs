@@ -40,13 +40,11 @@ pub const DEFAULT_DASHBOARD_PORT:u16=8787;
 pub const DEFAULT_CONCURRENCY:usize=4;
 pub const DEFAULT_RECONCILE_INTERVAL:u64=300_000;
 pub fn daemon_help()->&'static str{DAEMON_HELP}
-pub fn troubleshooter_qa_path()->PathBuf{
-    // The default is adjacent to the same packaged Skill used to assemble a
-    // Troubleshooter prompt; tests and isolated hosts can provide a fixture.
-    std::env::var_os("AGENTS_RELAY_TROUBLESHOOTER_QA_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(||Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../skills/agents-relay/troubleshooter-qa.md"))
+pub fn troubleshooter_qa_path()->Result<PathBuf,String>{
+    if let Some(path)=std::env::var_os("AGENTS_RELAY_TROUBLESHOOTER_QA_PATH"){
+        return Ok(PathBuf::from(path));
+    }
+    Ok(crate::runtime_resources::package_root()?.join("skills/agents-relay/troubleshooter-qa.md"))
 }
 #[derive(Clone,Debug)]
 pub struct DaemonConfig{
@@ -261,6 +259,7 @@ pub type RouterRead=Arc<dyn Fn(&str,&str)->Result<Value,String>+Send+Sync>;
 pub struct DashboardObservationPorts{
     pub history:HistoryRead,
     pub usage:UsageRead,
+    pub routing_usage:UsageRead,
     pub router:RouterRead,
     pub status:Arc<dyn Fn()->Value+Send+Sync>,
 }
@@ -337,6 +336,7 @@ pub trait DaemonServices:Send{
     fn router_test(&mut self,id:&str,task_id:&str)->Result<Value,String>;
     fn decision_audit(&mut self)->Result<Vec<Value>,String>;
     fn account_usage(&mut self)->Result<Value,String>;
+    fn routing_usage(&mut self)->Result<Value,String>{self.account_usage()}
     fn github_usage(&mut self)->Result<Option<Value>,String>;
     fn status(&mut self)->Value;
     fn registered_agents(&mut self)->Result<Vec<Value>,String>;
@@ -443,6 +443,12 @@ impl<S:DaemonServices+'static> DashboardApiServices for DaemonDashboardBackend<S
         }
         self.services.lock().map_err(|_|"Daemon service lock poisoned")?.account_usage()
     }
+    fn routing_usage(&mut self)->Result<Value,String>{
+        if let Some(ports)=&self.observation_ports{
+            return self.usage_budget.run(||(ports.routing_usage)());
+        }
+        self.services.lock().map_err(|_|"Daemon service lock poisoned")?.routing_usage()
+    }
     fn github_usage(&mut self)->Result<Option<Value>,String>{
         // The native observation host does not expose a GitHub provider.
         if self.observation_ports.is_some(){return Ok(None);}
@@ -491,7 +497,7 @@ pub fn reconcile_one_daemon_job<S:DaemonServices>(
     services.prepare_dependency_revisions(job_id)?;
     let snapshot=services.load(job_id)?;
     let project=resolve_job_project_root(&snapshot)?;
-    let usage=services.account_usage().ok();
+    let usage=services.routing_usage().ok();
     let registered=services.registered_agents()?;
     let adapters=services.routing_adapters();
     let mut reconciler=make_reconciler(&snapshot)?;
@@ -512,7 +518,7 @@ pub fn run_daemon<S:DaemonServices+'static>(
     let opts=DashboardApiOptions{
         graph_directory:config.graph_directory.clone(),
         router_rules_path:config.router_rules_path.clone(),
-        troubleshooter_qa_path:troubleshooter_qa_path(),
+        troubleshooter_qa_path:troubleshooter_qa_path()?,
         webhook_secret:None,webhook_repositories:HashSet::new(),
         webhook_job_id:None,
     };
@@ -707,7 +713,7 @@ mod dashboard_projection_tests {
         host.set_loopback_event_history_api(&format!("http://{address}/")).unwrap();
         let opts=DashboardApiOptions{graph_directory:config.graph_directory.clone(),
             router_rules_path:config.router_rules_path.clone(),
-            troubleshooter_qa_path:troubleshooter_qa_path(),webhook_secret:None,
+            troubleshooter_qa_path:troubleshooter_qa_path().unwrap(),webhook_secret:None,
             webhook_repositories:HashSet::new(),webhook_job_id:None};
         let host=Arc::new(Mutex::new(host));
         let mut backend=DaemonDashboardBackend::new(config,Arc::clone(&host),false);

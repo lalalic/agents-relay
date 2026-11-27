@@ -291,6 +291,7 @@ pub struct IsolatedSQLiteWriteHost {
     // still reject any project outside their disposable Git fixture.
     live_store:bool,
     usage_cache:crate::usage_registry::SharedUsageCache,
+    routing_credit_cache:crate::usage_registry::SharedUsageCache,
     subscriptions:Vec<Sender<String>>,
     wake_count:std::sync::Arc<std::sync::atomic::AtomicU64>,
     wake_pending:bool,
@@ -334,7 +335,7 @@ pub struct IsolatedSQLiteWriteHost {
 }
 impl IsolatedSQLiteWriteHost {
     pub fn new(config:DaemonConfig)->Self{
-        Self{config,live_store:false,usage_cache:crate::usage_registry::SharedUsageCache::new(||crate::usage::dashboard_usage_registry().snapshot()),subscriptions:Vec::new(),wake_count:Default::default(),wake_pending:false,reconcile_attempts:Default::default(),connections:RefCell::new(HashMap::new()),
+        Self{config,live_store:false,usage_cache:crate::usage_registry::SharedUsageCache::new(||crate::usage::dashboard_usage_registry().snapshot()),routing_credit_cache:crate::usage_registry::SharedUsageCache::new(crate::usage::routing_deepseek_credit),subscriptions:Vec::new(),wake_count:Default::default(),wake_pending:false,reconcile_attempts:Default::default(),connections:RefCell::new(HashMap::new()),
             failure_state:std::sync::Arc::new(DaemonFailureState::new()),
             live_workers:std::sync::Arc::new(std::sync::Mutex::new(DaemonLiveWorkers::default())),
             escalation_notifier:None,event_history_api:None,
@@ -1054,7 +1055,7 @@ impl IsolatedSQLiteWriteHost {
         // DecisionRouter selects the actual model/profile from configured
         // provider routes. No model or profile is invented by the Planner.
         let planner_route=if codex.is_some()&&script.is_none(){
-            let usage=self.account_usage().ok();
+            let usage=self.routing_usage().ok();
             let mut options=self.decision_options();
             options["taskFacts"]=json!({"task":{"kind":"planner","agentName":"planner","jobId":id,"id":plan_id},"routingPreferences":job.get("routingPreferences")});
             // Agent hints are advisory; preserve the default high-thinking
@@ -1381,6 +1382,11 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         let live=self.live_store;
         let usage=self.usage_cache.clone();
         let router_usage=usage.clone();
+        let router_credits=self.routing_credit_cache.clone();
+        let routing_usage:crate::relayd::UsageRead=Arc::new(move||if live{
+            crate::usage::routing_usage_snapshot(&router_usage,&router_credits,true)
+        }else{Err(denied("provider account usage"))});
+        let router_observation=routing_usage.clone();
         let adapters=self.available_model_workers();
         let router_config=config.clone();
         let status_config=config.clone();
@@ -1392,8 +1398,9 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                 attempts.load(std::sync::atomic::Ordering::Relaxed))),
             history:Arc::new(move |id,task,limit|read_dashboard_history(&config,history.as_ref(),id,task,limit)),
             usage:Arc::new(move ||if live{usage.wait()}else{Err(denied("provider account usage"))}),
+            routing_usage,
             router:Arc::new(move |id,task|read_dashboard_router(&router_config,live,&adapters,
-                ||if live{router_usage.wait()}else{Err(denied("provider account usage"))},id,task)),
+                ||router_observation(),id,task)),
         })
     }
 
@@ -1673,12 +1680,16 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
         let config=self.config.clone();
         let adapters=self.available_model_workers();
         let live=self.live_store;
-        read_dashboard_router(&config,live,&adapters,||self.account_usage(),id,task_id)
+        read_dashboard_router(&config,live,&adapters,||self.routing_usage(),id,task_id)
     }
     fn decision_audit(&mut self)->Result<Vec<Value>,String>{crate::decision_audit::dashboard_records(&self.config.store_directory)}
     fn account_usage(&mut self)->Result<Value,String>{
         if !self.live_store{return Err(denied("provider account usage"));}
         self.usage_cache.cached()
+    }
+    fn routing_usage(&mut self)->Result<Value,String>{
+        if !self.live_store{return Err(denied("provider account usage"));}
+        crate::usage::routing_usage_snapshot(&self.usage_cache,&self.routing_credit_cache,false)
     }
     fn routing_adapters(&self)->Vec<Value>{self.available_model_workers()}
     fn github_usage(&mut self)->Result<Option<Value>,String>{Ok(None)}
@@ -1819,7 +1830,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             &&current.get("routing").is_none_or(Value::is_null)
             &&current.get("workerSelection").is_none_or(Value::is_null);
         if can_route && self.model_codex_executable.is_some(){
-            let usage=self.account_usage().ok();
+            let usage=self.routing_usage().ok();
             let options=self.decision_options();
             let mut available=Vec::new();
             if self.model_codex_executable.is_some(){
@@ -1871,7 +1882,7 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             ]);
             let mut ready=original.clone();
             if task.get("routing").is_none_or(Value::is_null){
-                let usage=self.account_usage().ok();
+                let usage=self.routing_usage().ok();
                 let options=self.decision_options();
                 let route=crate::reconciler_review::route_task_for_execution(
                     &self.config.graph_directory,&self.config.profile_home,
