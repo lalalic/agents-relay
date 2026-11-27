@@ -166,6 +166,7 @@ where
             return Err(error);
         }
     };
+    input["interactiveReviewEnabled"]=json!(task["interactiveReviewEnabled"]==true);
     let agent=field(task,"agentName");
     let discovered=(||->Result<String,String>{
         let project_path=context.pointer("/executionContext/project/path")

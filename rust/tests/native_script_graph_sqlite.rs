@@ -277,3 +277,26 @@ console.log(JSON.stringify({stage:'fixture',status:'PASS',errors:[]}));
     assert!(matches!(future.as_mut().poll(&mut Context::from_waker(Waker::noop())),Poll::Ready(Ok(true))));
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn review_capability_is_resolved_at_claim_and_delivered_to_script(){
+    use agents_relay_rust2::{interactive_review_policy::bind_claim,reconciler_context::WorkerContextRoots};
+    for (job_enabled,agent_enabled) in [(false,false),(false,true),(true,false),(true,true)] {
+        let (root,project,db)=fixture();
+        fs::write(project.join("agents/fixture.agent.md"),format!("---\nname: fixture\ninteractive_review: {agent_enabled}\ncapabilities: [script]\n---\n# Fixture\n")).unwrap();
+        fs::write(project.join("agents/.shortcut/fixture.agent.mjs"),format!("export async function run({{input}}) {{if (input.interactiveReviewEnabled !== {}) throw Error('incorrect runtime flag'); return {{status:'COMPLETED',output:{{ok:true}},artifacts:{{}}}};}}",job_enabled&&agent_enabled)).unwrap();
+        let mut job=make_job(&project,&root);job["interactiveReviewEnabled"]=json!(job_enabled);job["tasks"][0]["maxAttempts"]=json!(1);
+        let store=SQLiteRelayStore::open(&db,Some("17")).unwrap();
+        let mut reconciler=Reconciler::new(graph(),root.join("stores"),root.join("profiles"),root.join("routing.json"),root.join("rules.md"),json!({"owner":"interactive-policy-test"}));
+        let mut claimed=reconciler.claim_task_execution(&job,"2").unwrap().unwrap();
+        bind_claim(&mut claimed,"2",&WorkerContextRoots::isolated(&root)).unwrap();
+        assert_eq!(claimed["tasks"][0]["interactiveReviewEnabled"],job_enabled&&agent_enabled);
+        store.save_job(&claimed).unwrap();
+        let task=claimed["tasks"][0].clone();
+        let runtime=PathBuf::from(env::var("AGENTS_RELAY_SCRIPT_NODE").unwrap());
+        let outcome=run_claimed_script_task(&db,&graph(),&claimed,&task,&runtime,6000);
+        if job_enabled&&agent_enabled {assert!(outcome.unwrap_err().contains("Graph rejected task.completed"));}
+        else {assert_eq!(outcome.unwrap()["status"],"COMPLETED");}
+        fs::remove_dir_all(root).unwrap();
+    }
+}

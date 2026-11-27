@@ -86,6 +86,8 @@ pub fn validate_cli_options(args: &[String]) -> Result<(), String> {
         "--input-file",
         "--intent",
         "--intent-file",
+        "--interactive-review",
+        "--no-interactive-review",
         "--interval",
         "--isolated-nats-token-file",
         "--isolated-nats-url",

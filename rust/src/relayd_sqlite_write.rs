@@ -1901,7 +1901,8 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
                 json!({"owner":format!("live-rust-codex-{}",std::process::id()),
                     "maxConcurrent":self.config.concurrency}),
             );
-            let claimed=reconciler.claim_task_execution(&ready,task_id)?.ok_or("Codex Task no longer eligible for launch")?;
+            let mut claimed=reconciler.claim_task_execution(&ready,task_id)?.ok_or("Codex Task no longer eligible for launch")?;
+            crate::interactive_review_policy::bind_claim(&mut claimed,task_id,&worker_roots)?;
             self.persist_exact(id,&ready,&claimed)?;
             let task=claimed["tasks"].as_array().into_iter().flatten()
                 .find(|t|field(t,"id")==task_id).cloned()
@@ -1983,7 +1984,8 @@ impl DaemonServices for IsolatedSQLiteWriteHost {
             json!({"owner":format!("isolated-rust-daemon-{}",std::process::id()),
                 "maxConcurrent":self.config.concurrency}),
         );
-        let claimed=reconciler.claim_task_execution(&original,task_id)?.ok_or("Script Task no longer eligible for launch")?;
+        let mut claimed=reconciler.claim_task_execution(&original,task_id)?.ok_or("Script Task no longer eligible for launch")?;
+        crate::interactive_review_policy::bind_claim(&mut claimed,task_id,&worker_roots)?;
         // One immutable generation claim, committed via same transactional CAS.
         self.persist_exact(id,&original,&claimed)?;
         let task=claimed.get("tasks").and_then(Value::as_array).into_iter().flatten()

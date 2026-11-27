@@ -29,6 +29,7 @@ pub fn interactive_template(job_id: &str, task_id: &str, execution_id: &str) -> 
 pub fn begin_interactive_review(
     current: &Value, job_id: &str, task_id: &str, execution_id: &str,
 ) -> Result<(Value, Value), String> {
+    crate::interactive_review_policy::require_current(current,task_id,execution_id)?;
     let mut job = current.clone();
     let task = job.get_mut("tasks").and_then(Value::as_array_mut)
         .and_then(|tasks| tasks.iter_mut().find(|task|

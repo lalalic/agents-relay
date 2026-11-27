@@ -147,6 +147,7 @@ pub fn decide_interactive_invocation(
 pub fn bind_interactive_invocation_snapshot(
     current:&Value,task_id:&str,execution_id:&str,now:&str,
 )->Result<Value,String>{
+    crate::interactive_review_policy::require_current(current,task_id,execution_id)?;
     let mut job=current.clone();
     let Some(task)=job.get_mut("tasks").and_then(Value::as_array_mut)
         .and_then(|tasks|tasks.iter_mut().find(|t|field(t,"id")==task_id))

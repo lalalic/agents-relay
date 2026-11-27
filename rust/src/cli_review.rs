@@ -134,6 +134,9 @@ where
 {
     let request=interactive_review_request(argv)?;
     if matches!(argv.first().map(String::as_str),Some("request"|"--path")){
+        let relay=&request["relay"];
+        let admission=control(argv,&json!({"command":"review.interactive.check","jobId":relay["jobId"],"taskId":relay["taskId"],"executionId":relay["executionId"]}))?;
+        if admission["enabled"]!=true{return Err("INTERACTIVE_REVIEW_DISABLED".into());}
         let private=ReviewRequestDir::allocate()?;
         let file=private.write(&request)?;
         let stdout=preview(&file)?;

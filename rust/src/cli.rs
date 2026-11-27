@@ -82,6 +82,7 @@ pub fn job_create_request(args:&[String],stdin:Option<&str>)
     ->Result<Value,String>{
     require_preflight_cli(args)?;
     let repository=new_local_repository(args)?;
+    if has_arg(args,"--interactive-review") && has_arg(args,"--no-interactive-review"){return Err("Choose only one interactive review flag".into());}
     for removed in ["--project-path","--content-only",
         "--no-content-only","--shortcut-execution"]{
         if has_arg(args,removed){
@@ -166,6 +167,7 @@ pub fn job_create_request(args:&[String],stdin:Option<&str>)
         "projectRoot":project,"priority":priority,"tag":tag,
         "preflight":true, // transient Control attestation; not persisted
         "reviewEnabled":!has_arg(args,"--no-review"),
+        "interactiveReviewEnabled":has_arg(args,"--interactive-review"),
         "autoMerge":!has_arg(args,"--no-auto-merge"),
         "reviewerThreadId":arg(args,"--reviewer-thread-id",""),
         "creatorThreadId":arg(args,"--creator-thread-id",""),
@@ -248,6 +250,8 @@ pub fn job_update_request(
     if has_arg(args,"--review")||has_arg(args,"--no-review"){
         patch["reviewEnabled"]=json!(!has_arg(args,"--no-review"));
     }
+    if has_arg(args,"--interactive-review") && has_arg(args,"--no-interactive-review"){return Err("Choose only one interactive review flag".into());}
+    if has_arg(args,"--interactive-review") || has_arg(args,"--no-interactive-review"){patch["interactiveReviewEnabled"]=json!(has_arg(args,"--interactive-review"));}
     if has_arg(args,"--tag"){
         patch["tag"]=serde_json::from_str(arg(args,"--tag",""))
             .map_err(|e|e.to_string())?;

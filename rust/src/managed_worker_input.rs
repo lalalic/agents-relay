@@ -146,6 +146,7 @@ where
         "taskTitle":task["title"],
         "dagNode":task.get("dagNode"),"gitDeliveryRequired":task["gitDeliveryRequired"],
         "repository":job["repository"],
+        "interactiveReviewEnabled":crate::interactive_review_policy::enabled(job,task),
         "jobId":job["id"],"taskId":task["id"],"executionId":task["executionId"]
     });
     build_relay_work_prompt(&input, reference_directory)

@@ -236,6 +236,8 @@ impl ReconcilerRuntime{
         }
         if event_type=="task.completed"
             &&(is_final_review_agent(task.get("agentName").and_then(Value::as_str))
+                || (crate::interactive_review_policy::enabled(job,task)
+                    && task.pointer("/interactiveInvocation/status").and_then(Value::as_str)!=Some("approved"))
                 ||task.pointer("/interactiveInvocation/status")
                     .and_then(Value::as_str).is_some_and(|s|s!="approved")){
             return Ok(RuntimeEffect::ignored(job,format!("{event_type}.ignored")));

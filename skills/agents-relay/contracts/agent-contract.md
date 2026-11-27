@@ -40,6 +40,10 @@ not override the Task's explicit routing constraints, available routes, resource
 or runtime gates, user routing instructions, or deterministic fallback.
 Unknown/unavailable suggestions are not execution errors.
 
+## Interactive Review capability
+
+Optional `interactive_review: true` declares an Agent that prepares its own interactive review artifact. Missing or false disables it; an inherited value may be explicitly overridden. This is a boolean capability, not a routing hint. Relay computes the effective flag at execution claim with the Job's `interactiveReviewEnabled` (default false), injects it in the trusted Model prompt and Script `input.interactiveReviewEnabled`, and enforces it at review admission. Do not read project-specific Review switches. When enabled, use the existing execution-bound Review protocol; when disabled, validate artifacts without requesting or waiting for review. External authorization and Final Review remain independent.
+
 ## Agent-selected dependencies
 
 The effective merged Agent can also declare required resources, which are

@@ -293,6 +293,7 @@ pub mod job_pause;
 pub mod local_managed_store;
 pub mod router_evals;
 pub mod interactive_request;
+pub mod interactive_review_policy;
 pub mod interactive_resume;
 pub mod cli_review;
 pub mod cli_unblock;

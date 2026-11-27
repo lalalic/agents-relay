@@ -132,6 +132,7 @@ where
     Persist: FnMut(&Value) -> Result<Value, String>,
 {
     require_preflight_options(options)?;
+    if options.get("interactiveReviewEnabled").is_some_and(|v| !v.is_boolean()) { return Err("interactiveReviewEnabled must be boolean".into()); }
     if let Some(prefs) = options.get("routingPreferences") {
         job_routing_preferences::validate(prefs)?;
     }
@@ -226,6 +227,7 @@ where
         "priority":optional(options,"priority").unwrap_or("P2"),
         "autoMerge":options.get("autoMerge").and_then(Value::as_bool).unwrap_or(true),
         "reviewEnabled":options.get("reviewEnabled").and_then(Value::as_bool).unwrap_or(true),
+        "interactiveReviewEnabled":options.get("interactiveReviewEnabled").and_then(Value::as_bool).unwrap_or(false),
         "repository":repository,
         "continuation":options.get("continuation"),"createdAt":now,
         "updatedAt":now,"tasks":[]

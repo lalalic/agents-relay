@@ -8,11 +8,12 @@ use agents_relay_rust2::{
 };
 use serde_json::{json, Value};
 use std::{fs, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
+static FIXTURE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 struct Fixture { root:PathBuf, host:IsolatedSQLiteWriteHost, store:SQLiteRelayStore }
 impl Fixture {
     fn new()->Self {
-        let root=std::env::temp_dir().join(format!("rust2-l3-review-wait-{}-{}",
-            std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH)
+        let root=std::env::temp_dir().join(format!("rust2-l3-review-wait-{}-{}-{}",
+            std::process::id(),FIXTURE_SEQUENCE.fetch_add(1,std::sync::atomic::Ordering::Relaxed),SystemTime::now().duration_since(UNIX_EPOCH)
                 .unwrap().as_nanos()));
         let project=root.join("fixture");
         fs::create_dir_all(&project).unwrap();
@@ -31,14 +32,13 @@ impl Fixture {
         store.save_job(&json!({
             "id":"17","repository":"fixture","projectRoot":project,
             "title":"L3 Agent Review gate","state":"ACTIVE","prNumber":0,
-            "reviewEnabled":false,"autoMerge":false,"plans":[],
+            "reviewEnabled":false,"interactiveReviewEnabled":true,"autoMerge":false,"plans":[],
             "createdAt":"2026-11-22T00:00:00.000Z","updatedAt":"2026-11-22T00:00:00.000Z",
             "tasks":[
                 {"id":"2","jobId":"17","title":"first","agentName":"first",
                  "kind":"work","adapter":"script","state":"RUNNING",
                  "attempt":1,"maxAttempts":3,"dependencies":[],
-                 "executionId":"exec-17-2","leaseOwner":"fixture-owner",
-                 "leaseExpiresAt":"2027-11-22T00:00:00.000Z",
+                 "executionId":"exec-17-2","interactiveReviewEnabled":true,
                  "createdAt":"2026-11-22T00:00:00.000Z",
                  "updatedAt":"2026-11-22T00:00:00.000Z"},
                 {"id":"3","jobId":"17","title":"second","agentName":"second",
@@ -78,7 +78,7 @@ fn native_review_wait_is_one_durable_graph_sqlite_transition_and_gates_downstrea
     let persisted=f.job();
     assert_eq!(persisted["tasks"][0]["state"],"AWAITING_DECISION");
     assert!(persisted["tasks"][0]["executionId"].is_null());
-    assert!(persisted["tasks"][0]["leaseOwner"].is_null());
+    // Execution ID is the current ownership fence; legacy time leases were removed.
     assert_eq!(persisted["tasks"][0]["interactiveInvocation"]["executionId"],"exec-17-2");
     assert_eq!(persisted["tasks"][1]["state"],"DRAFT",
         "Downstream must remain gated until true Approve");
@@ -88,4 +88,27 @@ fn native_review_wait_is_one_durable_graph_sqlite_transition_and_gates_downstrea
         "Stale generation must be rejected even after Review is bound");
     assert_eq!(f.job(),persisted);
     assert_eq!(DaemonServices::status(&mut f.host)["mode"],"isolated-write");
+}
+
+#[test]
+fn disabled_job_or_agent_cannot_bind_or_wait(){
+    for (job_enabled,agent_enabled) in [(false,false),(false,true),(true,false)]{
+        let mut f=Fixture::new();
+        f.store.mutate_job("17",|mut job|{job["interactiveReviewEnabled"]=json!(job_enabled);job["tasks"][0]["interactiveReviewEnabled"]=json!(agent_enabled);Ok(job)}).unwrap();
+        let original=f.job();
+        for action in ["check","begin","wait"] {assert!(f.control(action,"exec-17-2").is_err());assert_eq!(f.job(),original);}
+    }
+}
+
+#[test]
+fn enabled_review_cannot_complete_without_approval(){
+    use agents_relay_rust2::{reconciler_runtime::ReconcilerRuntime,events::event_for};
+    let f=Fixture::new();
+    let job=f.job();
+    let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+    let event=event_for("17","2",None,"task.completed","succeeded","attempt to finish before approval",Some("orchestrator"),Some(json!({})),Some(json!({"id":"job/17/task/2/execution/exec-17-2","component":"test"})));
+    let mut runtime=ReconcilerRuntime::new("review-required-test");
+    let effect=runtime.apply_event(&graph,&job,&event,None).unwrap();
+    assert!(!effect.applied);
+    assert_eq!(effect.job,job);
 }

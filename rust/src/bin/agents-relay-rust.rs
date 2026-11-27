@@ -107,6 +107,7 @@ impl CliRuntimePort for DaemonClient {
                     "projectRoot":project,
                     "priority":cli_priority(args,"P2")?,
                     "reviewEnabled":!args.iter().any(|a|a=="--no-review"),
+                    "interactiveReviewEnabled":args.iter().any(|a|a=="--interactive-review"),
                     "continuation":Value::Null,
                     "preflight":true, // transient; never included in Job snapshot
                 });

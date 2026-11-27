@@ -117,7 +117,7 @@ fn authoritative_event_commit_and_invalid_generation_gate(){
 fn interactive_binding_atomic_and_bus_unsubscribe_scoped_to_one_job(){
     let (directory,host,_baseline)=fixture();
     host.store().mutate_job("41",|mut job|{
-        job["tasks"][0]["state"]=json!("RUNNING");Ok(job)
+        job["tasks"][0]["state"]=json!("RUNNING");job["interactiveReviewEnabled"]=json!(true);job["tasks"][0]["interactiveReviewEnabled"]=json!(true);Ok(job)
     }).unwrap();
     let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
     let runtime=ReconcilerRuntimeBase::new(graph,"relay",15000,
@@ -241,7 +241,7 @@ fn interactive_host_bind_returns_one_shot_decision_only_after_sqlite_commit(){
  use agents_relay_rust2::interactive_invocation::host_interactive_decision_event;
  let (directory,host,_initial)=fixture();
  host.store().mutate_job("41",|mut job|{
-  job["tasks"][0]["state"]=json!("RUNNING");
+  job["tasks"][0]["state"]=json!("RUNNING");job["interactiveReviewEnabled"]=json!(true);job["tasks"][0]["interactiveReviewEnabled"]=json!(true);
   Ok(job)
  }).unwrap();
  let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
@@ -282,7 +282,7 @@ fn interactive_host_wait_timeout_and_close_do_not_invent_human_approval(){
  use std::time::Duration;
  let (directory,host,_initial)=fixture();
  host.store().mutate_job("41",|mut job|{
-  job["tasks"][0]["state"]=json!("RUNNING");
+  job["tasks"][0]["state"]=json!("RUNNING");job["interactiveReviewEnabled"]=json!(true);job["tasks"][0]["interactiveReviewEnabled"]=json!(true);
   Ok(job)
  }).unwrap();
  let runtime=ReconcilerRuntimeBase::new(
@@ -314,7 +314,7 @@ fn host_waiter_ignores_forged_source_and_stale_decision_until_trusted_receipt(){
  use std::time::Duration;
  let (directory,host,_initial)=fixture();
  host.store().mutate_job("41",|mut job|{
-  job["tasks"][0]["state"]=json!("RUNNING");Ok(job)
+  job["tasks"][0]["state"]=json!("RUNNING");job["interactiveReviewEnabled"]=json!(true);job["tasks"][0]["interactiveReviewEnabled"]=json!(true);Ok(job)
  }).unwrap();
  let runtime=ReconcilerRuntimeBase::new(
   Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
@@ -357,7 +357,7 @@ fn host_waiter_delivers_changes_requested_comments_after_durable_retry(){
  use agents_relay_rust2::interactive_invocation::host_interactive_decision_event;
  let (directory,host,_initial)=fixture();
  host.store().mutate_job("41",|mut job|{
-  job["tasks"][0]["state"]=json!("RUNNING");Ok(job)
+  job["tasks"][0]["state"]=json!("RUNNING");job["interactiveReviewEnabled"]=json!(true);job["tasks"][0]["interactiveReviewEnabled"]=json!(true);Ok(job)
  }).unwrap();
  let runtime=ReconcilerRuntimeBase::new(
   Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow"),

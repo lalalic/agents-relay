@@ -140,7 +140,7 @@ Usage: agents-relay review job --repo LOCAL_ROOT_NAME --id JOB_ID [--thread-id T
 When provided, --thread-id persists a reviewer destination; otherwise the Job reviewer thread, then creator thread, then legacy review route is used. The command wakes Relay. Review Task creation, idempotency, routing and delivery remain graph/daemon-owned. Rejects in-flight/queued reviews; does not itself mark review delivered.
 
 Worker-facing: agents-relay review interactive --path /absolute/file.md --id JOB --task-id TASK --execution-id EXEC
-This calls Neo review.preview and requests exactly one human review for the current execution. No Git commit or extra invocation ID.
+Relay first verifies the Job and effective Agent opt-in for the current execution, then calls Neo review.preview. No Git commit or extra invocation ID.
 Internal Neo delivery: review interactive begin|wait|fail|abort with --id, --task-id and --execution-id; fail adds --reason.
 Task AWAITING_DECISION resumes on an execution-bound Approve or Request Changes event."##########,
     ),
@@ -175,7 +175,7 @@ Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job r
         r##########"Create a SQLite-authoritative Job (objective-only).
 
 Required: --repo LOCAL_ROOT_NAME, standalone Job objective, and --preflight=true (exact spelling; all new Jobs). Missing/false/invalid preflight returns JOB_PREFLIGHT_REQUIRED, exit 2, and creates nothing. The flag attests the creator ran Spec Kit Specify/Clarify and independent Preflight Review; it is not stored in SQLite. Job ID defaults to an auto-incrementing store-global number; --id may only reference an existing numeric Job.
-Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-root ABSOLUTE_GIT_ROOT, --priority P0|P1|P2|P3, --initial-plan, --review|--no-review, --auto-merge|--no-auto-merge, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
+Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-root ABSOLUTE_GIT_ROOT, --priority P0|P1|P2|P3, --initial-plan, --review|--no-review (Final Review), --interactive-review|--no-interactive-review (Interactive Review, default off), --auto-merge|--no-auto-merge, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
 Soft routing hints: --prefer-adapter codex, --prefer-provider NAME, --prefer-model EXACT_MODEL_ID, --prefer-profile NAME, --prefer-reasoning EFFORT. These rank only eligible worker/model routes for Job Tasks and do not pin routing or widen the model catalog.
 Optional local Git branch binding: --local-merge-source refs/heads/FEATURE --local-merge-target refs/heads/main (both required together). For ordinary code tasks Relay can also bind its isolated local source branch automatically; no remote service or PR is required.
 Creation enables auto-merge and Final Review by default. For plan-free DAG
@@ -212,7 +212,7 @@ There is no Shortcut execution mode."##########,
         r##########"Partially update mutable metadata on a healthy existing Job.
 
 Required: --id JOB_ID. Optional: --repo LOCAL_ROOT_NAME verifies the stored Job identity.
-Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --project-root ABSOLUTE_GIT_ROOT, --priority, --tag JSON, --auto-merge|--no-auto-merge, --review|--no-review, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID, and continuation options. The objective updates local SQLite.
+Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --project-root ABSOLUTE_GIT_ROOT, --priority, --tag JSON, --auto-merge|--no-auto-merge, --review|--no-review (Final Review), --interactive-review|--no-interactive-review (Interactive Review, default off), --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID, and continuation options. The objective updates local SQLite. Interactive Review policy may change only while the Job is DRAFT.
 Unspecified fields are preserved. Soft routing preferences: --prefer-adapter, --prefer-provider, --prefer-model, --prefer-profile, --prefer-reasoning. Use --clear-routing-preferences to reset all Job hints. They do not alter already selected Task routes. Local Job identity mismatch is rejected.
 
 Example:

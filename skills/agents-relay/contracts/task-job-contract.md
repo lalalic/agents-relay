@@ -4,6 +4,8 @@ Use the `agents-relay` Skill for the version-matched Job/Task/Review CLI; requir
 
 This contract is the shared protocol for every component that creates, schedules, reviews, or executes Agents Relay jobs and tasks.
 
+Job `interactiveReviewEnabled` is an optional boolean (default false), independent of `reviewEnabled` (Final Review). Create with `--interactive-review` or `--no-interactive-review`; only DRAFT Jobs may change this policy. Effective Agent capability is bound to the Task execution by Relay. Existing bound review decisions retain their lifecycle.
+
 ## Job and Task authoring format
 
 Job objectives and Task inputs are **Markdown** and are durable execution context, not short labels. Use Mermaid where a diagram materially explains a workflow, state model, architecture, dependency graph, relationship, or other visual structure. **Mermaid-first applies to that explanation/section, not to the entire Job objective or Task input.** Put the diagram before the prose that explains that visual model, but keep normal document structure: start with the goal/context when that is what the reader needs first. Do not force a Mermaid block at the top of every objective/input, and do not add decorative or redundant diagrams when Markdown is clearer.

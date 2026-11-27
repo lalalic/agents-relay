@@ -417,6 +417,8 @@ pub struct Job {
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub review_enabled:Option<bool>,
     #[serde(default,skip_serializing_if="Option::is_none")]
+    pub interactive_review_enabled:Option<bool>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
     pub plans:Option<Vec<Plan>>,
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub review:Option<ReviewState>,

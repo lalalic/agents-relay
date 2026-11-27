@@ -24,7 +24,7 @@ fn request_writes_private_handoff_calls_approved_host_port_and_cleans_up(){
             "relay":{"jobId":"51","taskId":"72","executionId":"generation-1"}}));
         *seen.borrow_mut()=Some(path.to_owned());
         Ok(r#"{"result":{"id":"review-fixture"}}"#.into())
-    },|_,_|->Result<Value,String>{panic!("review request must not use daemon control")})
+    },|_,body|{assert_eq!(body["command"],"review.interactive.check");Ok(json!({"enabled":true}))})
     .unwrap();
     assert_eq!(result["result"]["id"],"review-fixture");
     assert!(!seen.borrow().as_ref().unwrap().exists());
@@ -37,7 +37,7 @@ fn rejected_review_tool_receipt_cannot_claim_human_approval(){
     let error=run_interactive_review_command(&args,|path|{
         *file.borrow_mut()=Some(path.to_owned());
         Ok(r#"{"result":{"isError":true,"humanApproved":true}}"#.into())
-    },|_,_|->Result<Value,String>{panic!("must use review.preview port")})
+    },|_,body|{assert_eq!(body["command"],"review.interactive.check");Ok(json!({"enabled":true}))})
     .unwrap_err();
     assert!(error.starts_with("Neo review.preview rejected:"),"{error}");
     assert!(!file.borrow().as_ref().unwrap().exists());
@@ -91,4 +91,14 @@ fn review_dispatch_routes_job_and_run_without_fabricating_delivery(){
     assert_eq!(run["completed"],false);
     assert!(run_review_command("other",&args,|_|panic!(),
         |_,_|->Result<Value,String>{panic!()},|_|panic!()).is_err());
+}
+
+#[test]
+fn disabled_review_never_calls_preview_host(){
+    let args=strings(&["--path","/tmp/fixture","--id","51","--task-id","72","--execution-id","gen"]);
+    let error=run_interactive_review_command(&args,|_|panic!("disabled review reached host"),|_,body|{
+        assert_eq!(body["command"],"review.interactive.check");
+        Ok(json!({"enabled":false}))
+    }).unwrap_err();
+    assert!(error.contains("INTERACTIVE_REVIEW_DISABLED"));
 }

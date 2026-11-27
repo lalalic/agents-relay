@@ -185,6 +185,7 @@ fn control_review<B:WorkspaceControlBackend>(
     let task_id=required(body,"taskId","Interactive review")?;
     let execution=required(body,"executionId","Interactive review")?;
     match command{
+        "review.interactive.check"=>{crate::interactive_review_policy::require_current(job,task_id,execution)?;Ok(json!({"enabled":true}))},
         "review.interactive.begin"=>{
             let (next,receipt)=begin_interactive_review(job,job_id,task_id,execution)?;
             persist_candidate(backend,job_id,job,&next)?;
@@ -319,7 +320,7 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
             Ok(json!({"jobId":job_id,"taskId":task_id,"scheduled":true,
                 "state":stored.get("state"),"graphRuntime":"tasks"}))
         },
-        "review.interactive.begin"|"review.interactive.abort"
+        "review.interactive.check"|"review.interactive.begin"|"review.interactive.abort"
             |"review.interactive.wait"|"review.interactive.fail"=>
                 control_review(backend,&job,body,command),
         "job.update"=>{
@@ -331,9 +332,13 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
                 }
             }
             let allowed=["title","objective","priority","tag","autoMerge",
-                "reviewEnabled","reviewerThreadId","creatorThreadId",
+                "reviewEnabled","interactiveReviewEnabled","reviewerThreadId","creatorThreadId",
                 "implementationThreadId","continuation","localMerge",
                 "routingPreferences"];
+            if let Some(value)=patch.get("interactiveReviewEnabled"){
+                if !value.is_boolean(){return Err("interactiveReviewEnabled must be boolean".into());}
+                if job["state"]!="DRAFT" && value!=&job["interactiveReviewEnabled"] {return Err("Interactive Review policy may only change on DRAFT Jobs".into());}
+            }
             let mut next=job.clone();
             for (key,value) in patch.as_object().into_iter().flatten(){
                 if allowed.contains(&key.as_str()){

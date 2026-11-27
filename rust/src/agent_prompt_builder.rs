@@ -321,6 +321,9 @@ pub fn build_relay_work_prompt(
         ),
         None => role.to_owned(),
     };
+    if let Some(enabled)=input["interactiveReviewEnabled"].as_bool(){
+        effective_system.push_str(if enabled {"\n\nInteractive Review: ENABLED for this execution. Prepare the Agent-owned review artifact and request execution-bound Relay interactive review before completion. Await genuine approval; revise on Request Changes."} else {"\n\nInteractive Review: DISABLED for this execution. Do not request, deliver or wait for human interactive review. Continue artifact validation; external actions still require separate authorization."});
+    }
     if let Some(directive) = required_skill_directive {
         effective_system.push_str("\n\n");
         effective_system.push_str(&directive);
