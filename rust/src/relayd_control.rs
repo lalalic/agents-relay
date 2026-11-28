@@ -121,6 +121,9 @@ fn control_create<B:WorkspaceControlBackend>(
     // before checking the repository and before any backend side effects.
     let opts=body.get("options").filter(|v|v.is_object())
         .cloned().unwrap_or(json!({}));
+    for retired in ["creatorThreadId","implementationThreadId","reviewerThreadId"] {
+        if opts.get(retired).is_some() { return Err(format!("{retired} is not supported")); }
+    }
     require_preflight_options(&opts)?;
     if opts.get("projectPath").is_some(){
         return Err("Job projectPath is removed; use an independent local Git root".into());
@@ -326,14 +329,16 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
         "job.update"=>{
             let patch=body.get("patch").filter(|p|p.is_object())
                 .cloned().unwrap_or(json!({}));
+            for retired in ["creatorThreadId","implementationThreadId","reviewerThreadId"] {
+                if patch.get(retired).is_some() { return Err(format!("{retired} is not supported")); }
+            }
             for obsolete in ["projectPath","executionMode","schedule"]{
                 if patch.get(obsolete).is_some(){
                     return Err("Job execution modes/schedules and projectPath are unsupported".into());
                 }
             }
             let allowed=["title","objective","priority","tag","autoMerge",
-                "reviewEnabled","interactiveReviewEnabled","reviewerThreadId","creatorThreadId",
-                "implementationThreadId","continuation","localMerge",
+                "reviewEnabled","interactiveReviewEnabled","continuation","localMerge",
                 "routingPreferences"];
             if let Some(value)=patch.get("interactiveReviewEnabled"){
                 if !value.is_boolean(){return Err("interactiveReviewEnabled must be boolean".into());}
@@ -633,17 +638,12 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
             waking(backend,&job_id,"control.task.escalate",snapshot)
         },
         "review.request"=>{
+            if body.get("threadId").is_some() { return Err("threadId reviewer override is not supported".into()); }
             if matches!(field(&job,"state"),"CANCELLED"|"COMPLETED"){
                 return Err("Cannot request review for terminal Job".into());
             }
             if job.get("reviewEnabled")==Some(&Value::Bool(false)){
                 return Err("Review disabled for this Job".into());
-            }
-            if let Some(thread)=text(body,"threadId"){
-                let mut candidate=job.clone();
-                candidate["reviewerThreadId"]=json!(thread);
-                candidate["updatedAt"]=json!(iso8601_now());
-                persist_candidate(backend,&job_id,&job,&candidate)?;
             }
             backend.wake(&job_id,"control.review.request")?;
             backend.load_job(&job_id)

@@ -28,20 +28,14 @@ fn check(v: &Value) -> Result<Value, String> {
             v["reviews"].as_array().ok_or("reviews required")?,
         )),
         "resolveReviewerThreadDestination" => {
-            reviewer_thread::resolve_reviewer_thread_destination(job, v.get("override"))
-        }
-        "resolveImplementationThreadDestination" => {
-            reviewer_thread::resolve_implementation_thread_destination(job)
-        }
-        "resolveImplementationTaskThreadDestination" => {
-            reviewer_thread::resolve_implementation_task_thread_destination(job, &v["task"])
+            reviewer_thread::resolve_reviewer_thread_destination(job)
         }
         "normalizeThreadId" => Ok(json!(reviewer_thread::normalize_thread_id(
             &v["value"],
             v["label"].as_str().unwrap_or("thread ID")
         )?)),
         "prepareReviewerThreadDelivery" => {
-            reviewer_thread::prepare_reviewer_thread_delivery(job, &v["task"], v.get("override"))
+            reviewer_thread::prepare_reviewer_thread_delivery(job, &v["task"])
         }
         "chatgptThreadRequirements" => Ok(reviewer_thread::chatgpt_thread_requirements(
             &v["configured"],

@@ -116,6 +116,11 @@ fn real_chrome_dashboard_regressions() {
         let mut job = json!({"id":id,"repository":name,"projectRoot":root.0.join(name),
             "title":title,"state":state,"prNumber":0,"createdAt":at,"updatedAt":at,
             "reviewEnabled":false,"autoMerge":false,"tasks":[],"plans":[]});
+        if id == "91" {
+            job["creatorThreadId"] = json!("legacy-creator");
+            job["implementationThreadId"] = json!("legacy-implementation");
+            job["reviewerThreadId"] = json!("legacy-reviewer");
+        }
         if matches!(id, "91" | "97") {
             job["localMerge"] =
                 json!({"status":"succeeded","mergedCommitSha":fixture_sha,"updatedAt":at});
@@ -128,6 +133,11 @@ fn real_chrome_dashboard_regressions() {
             job["tasks"] = json!([{"id":task_id,"jobId":id,"title":format!("{title} task"),
                 "kind":"work","adapter":"script","state":task_state,"attempt":1,
                 "maxAttempts":1,"dependencies":[],"createdAt":at,"updatedAt":at}]);
+            if id == "92" {
+                job["tasks"][0]["adapter"] = json!("chatgpt");
+                job["tasks"][0]["threadId"] = json!("worker-thread");
+                job["tasks"][0]["threadUrl"] = json!("https://chatgpt.com/c/worker-thread");
+            }
             if task_state == "RUNNING" {
                 job["tasks"][0]["startedAt"] = json!(at);
             }

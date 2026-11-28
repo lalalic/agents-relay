@@ -123,6 +123,31 @@ impl WorkspaceControlBackend for Backend{
     fn fail_interactive(&mut self,_:&str,_:&str,_:&str,_:&str)->Result<Value,String>{unimplemented!()}
 }
 #[test]
+fn control_rejects_retired_job_bindings_before_mutation_or_wake(){
+    let f=Fixture::new();
+    for key in ["creatorThreadId","implementationThreadId","reviewerThreadId"] {
+        let mut backend=Backend::new(&f);
+        let request=json!({"command":"job.create","repository":"root","options":{key:null}});
+        assert!(workspace_control(&mut backend,&request).unwrap_err().contains(key));
+        assert!(backend.wakes.is_empty());
+        let before=backend.db.load_job("1").unwrap().unwrap();
+        let update=json!({"command":"job.update","jobId":"1","patch":{key:"legacy"}});
+        assert!(workspace_control(&mut backend,&update).unwrap_err().contains(key));
+        assert_eq!(backend.db.load_job("1").unwrap().unwrap(),before);
+        assert!(backend.wakes.is_empty());
+    }
+    let mut backend=Backend::new(&f);
+    let before=backend.db.load_job("1").unwrap().unwrap();
+    let review=json!({"command":"review.request","jobId":"1","threadId":"legacy"});
+    assert!(workspace_control(&mut backend,&review).unwrap_err().contains("threadId"));
+    assert_eq!(backend.db.load_job("1").unwrap().unwrap(),before);
+    assert!(backend.wakes.is_empty());
+    let normal=json!({"command":"review.request","jobId":"1"});
+    assert!(workspace_control(&mut backend,&normal).is_ok());
+    assert_eq!(backend.wakes,vec!["control.review.request"]);
+    assert_eq!(backend.db.load_job("1").unwrap().unwrap(),before);
+}
+#[test]
 fn real_git_commit_cli_graph_and_sqlite_end_to_end_deny_forgery_and_replay(){
     let f=Fixture::new();let mut backend=Backend::new(&f);
     let event=event_for("1","task-2",None,"task.completed","succeeded","fake",Some("worker"),
