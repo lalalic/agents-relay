@@ -185,7 +185,7 @@ async function openExecutionReport(job,task){
   const params=new URLSearchParams({job:job.id,repo:job.repository});
   if(task?.id)params.set('task',task.id);
   document.querySelector('#execution-report-title').textContent='Execution report · '+job.repository+'/'+job.id+(task?.id?' / Task '+task.id:'');
-  reportStatus.textContent='Generating report from recorded execution…';
+  reportStatus.textContent='Opening execution report…';
   reportFrame.removeAttribute('srcdoc');
   if(!reportDialog.open)reportDialog.showModal();
   try{
@@ -197,8 +197,21 @@ async function openExecutionReport(job,task){
     if(sequence!==reportSequence||!reportDialog.open)return;
     if(data.jobId!==String(job.id)||data.taskId!==(task?.id?String(task.id):null)||typeof data.html!=='string')throw new Error('Report scope mismatch');
     // A sandboxed opaque-origin document, with no network or parent DOM
-    // access. Only the local report's own filter/download scripts may run.
-    reportFrame.srcdoc=`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">`+data.html;
+    // access. Fragment navigation is handled inside the frame: srcdoc
+    // resolves relative hrefs against its embedding document by default.
+    reportFrame.srcdoc=`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'"><script>
+document.addEventListener('click',event=>{
+  const link=event.target.closest?.('a[href^="#"]');
+  if(!link)return;
+  event.preventDefault();
+  let id;
+  try{id=decodeURIComponent(link.getAttribute('href').slice(1));}catch{return;}
+  const target=document.getElementById(id);
+  if(!target)return;
+  for(let node=target;node;node=node.parentElement)if(node.tagName==='DETAILS')node.open=true;
+  target.scrollIntoView({block:'start'});
+},true);
+</script>`+data.html;
     reportStatus.textContent='Captured '+(data.capturedAt||'unknown');
   }catch(error){
     if(sequence===reportSequence&&reportDialog.open)reportStatus.textContent=String(error.message||error);

@@ -450,7 +450,7 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
           assert.equal(req.method(),'POST');assert.equal(req.headers()['x-neo-csrf'],'fixture-csrf');
           assert.equal(req.headers()['x-relay-report'],'1');
           assert.equal(params.get('repo'),'fixture');assert.equal(params.get('job'),'92');
-          return route.fulfill({json:{jobId:'92',taskId:params.get('task'),capturedAt:'remote fixture',html:'<h1>Remote report</h1>'}});
+          return route.fulfill({json:{jobId:'92',taskId:params.get('task'),capturedAt:'remote fixture',html:'<h1>Remote report</h1><a href="#task-921">Task link</a> <a href="#call-921-1-2">Evidence link</a><div style="height:1200px"></div><section id="task-921">Task section<details><summary>Timeline</summary><details id="call-921-1-2"><summary>Evidence</summary><p>Evidence result</p></details></details></section><div style="height:1200px"></div>'}});
         });
         await remote.route('**/relay/events',route=>route.abort());
         await remote.route(/\/relay\/api\/(?!execution-report)/,async route=>{
@@ -471,6 +471,13 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
         await remote.locator('.task-row[data-task-id="921"]').click();
         await remote.locator('#task-detail').getByRole('button',{name:'Task report',exact:true}).click();
         await report.locator('#execution-report-status').filter({hasText:'Captured remote fixture'}).waitFor();
+        const frame=report.frameLocator('iframe');
+        await frame.getByRole('link',{name:'Task link'}).click();
+        assert(await frame.locator('#task-921').evaluate(el=>el.getBoundingClientRect().top>=-1&&el.getBoundingClientRect().top<innerHeight));
+        await frame.getByRole('link',{name:'Evidence link'}).click();
+        assert(await frame.getByText('Evidence result',{exact:true}).isVisible());
+        assert(await frame.locator('#call-921-1-2').evaluate(el=>el.open&&el.parentElement.open&&el.getBoundingClientRect().top>=-1&&el.getBoundingClientRect().top<innerHeight));
+        assert.equal(await frame.locator('h1').textContent(),'Remote report');
         await report.locator('#execution-report-close').click();
         assert.equal(csrfCalls,2);assert.equal(reportCalls,2);
         expired=true;await remote.locator('#job-report-open').click();
