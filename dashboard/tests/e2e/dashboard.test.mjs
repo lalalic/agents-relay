@@ -292,7 +292,7 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       assert.equal(await title.textContent(),'Running job');
       assert.equal(await title.getAttribute('title'),'Running job');
       assert.equal(await objectiveButton.count(),1);
-      assert.deepEqual(await header.locator('.detail-actions button').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),['Job report','Job objective','Job execution lifecycle']);
+      assert.deepEqual(await header.locator('.detail-actions button').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),['Job execution lifecycle','Job report','Job objective']);
       assert.equal(await page.locator('#selected-job-refresh').count(),0);
       assert.equal(await page.locator('#job-detail').getByRole('button',{name:'Job report',exact:true}).count(),0);
       for(const label of ['Review head SHA','Task states','Last activity','Project root','Job Execution Lifecycle','View JEL chart'])assert.equal(await page.locator('#job-detail').getByText(label,{exact:true}).count(),0,label);
@@ -319,7 +319,7 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
           const a=t.getBoundingClientRect(),b=r.getBoundingClientRect(),c=f.getBoundingClientRect(),d=j.getBoundingClientRect(),style=getComputedStyle(t);
           return {nowrap:style.whiteSpace,ellipsis:style.textOverflow,clipped:t.scrollWidth>t.clientWidth,
             oneRow:Math.abs((a.top+a.bottom)-(b.top+b.bottom))<2&&Math.abs((b.top+b.bottom)-(c.top+c.bottom))<2&&Math.abs((c.top+c.bottom)-(d.top+d.bottom))<2,
-            ordered:a.right<=b.left&&b.right<=c.left&&c.right<=d.left,overflow:document.documentElement.scrollWidth>innerWidth};
+            ordered:a.right<=d.left&&d.right<=b.left&&b.right<=c.left,overflow:document.documentElement.scrollWidth>innerWidth};
         });
         assert.deepEqual(layout,{nowrap:'nowrap',ellipsis:'ellipsis',clipped:true,oneRow:true,ordered:true,overflow:false},'viewport '+width);
       }
@@ -357,7 +357,7 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       await taskDetail.locator('.task-detail-actions button').first().waitFor();
       assert.deepEqual(await taskDetail.locator('.task-detail-actions button').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),['Task report','Task input and conclusion']);
       const actionStyle=locator=>locator.evaluateAll(nodes=>nodes.map(n=>({path:n.querySelector('path').getAttribute('d'),width:n.getBoundingClientRect().width,height:n.getBoundingClientRect().height})));
-      assert.deepEqual((await actionStyle(header.locator('.detail-actions button'))).slice(0,2),await actionStyle(taskDetail.locator('.detail-actions button')),'matching compact icon pairs');
+      assert.deepEqual((await actionStyle(header.locator('.detail-actions button'))).slice(1),await actionStyle(taskDetail.locator('.detail-actions button')),'matching compact icon pairs');
       for(const label of ['Title','Task ID','Manual override','Planning decision','Planning source','Planning round','PR comment','Conclusion'])assert.equal(await taskDetail.getByText(label,{exact:true}).count(),0,label);
       assert.deepEqual(await taskDetail.locator('.detail-group:has-text("Worker threads") a').evaluateAll(links=>links.map(link=>link.getAttribute('href')).sort()),['codex://threads/38f84f9e-410d-4e36-96e0-a420594a102d','codex://threads/38f84f9e-410d-4e36-96e0-a420594a102e']);
       const taskOriginal=page.viewportSize();
