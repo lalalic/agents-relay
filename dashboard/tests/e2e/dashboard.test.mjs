@@ -269,7 +269,7 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
     await t.test('8 existing Dashboard selection/refresh and graph-authorized retry/cancel HTTP actions',async()=>{
       await jobRow('94').locator('.job-button').click();
       await page.locator('#selected-job-refresh').click();
-      await page.locator('#selected-job-title').click();
+      await page.locator('#job-objective-open').click();
       assert((await page.locator('body').innerText()).includes('Retry fixture'));
       await page.keyboard.press('Escape');
       await page.locator('dialog[open]').waitFor({state:'hidden'});
@@ -284,12 +284,14 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
     });
     await t.test('9 selected Job header layout, details and scoped Report actions',async()=>{
       await jobRow('92').locator('.job-button').click();
-      const title=page.locator('#selected-job-title'),reportButton=page.locator('#job-report-open');
+      const title=page.locator('#selected-job-title'),objectiveButton=page.locator('#job-objective-open');
       const header=page.locator('#workspace-heading').locator('..');
       assert.equal(await title.textContent(),'Running job');
       assert.equal(await title.getAttribute('title'),'Running job');
-      assert.equal(await header.getByRole('button',{name:'Job report',exact:true}).count(),1);
-      assert.equal(await page.locator('#job-detail').getByRole('button',{name:'Report',exact:true}).count(),0);
+      assert.equal(await objectiveButton.count(),1);
+      assert.equal(await header.getByRole('button',{name:'Job report',exact:true}).count(),0);
+      assert.equal(await page.locator('#job-detail .jel-actions').getByRole('button',{name:'Job report',exact:true}).count(),1);
+      for(const label of ['Review head SHA','Task states','Last activity','Project root'])assert.equal(await page.locator('#job-detail').getByText(label,{exact:true}).count(),0,label);
       assert.equal(await page.locator('.job-status-button').count(),0);
       // Render a real long title through the selected-job refresh API.
       const long='Running job '+('with a deliberately long objective '.repeat(12));
@@ -307,15 +309,15 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
         await page.setViewportSize({width,height:900});
         await title.waitFor({state:'visible'});
         const layout=await header.evaluate(head=>{
-          const t=head.querySelector('#selected-job-title'),r=head.querySelector('#job-report-open'),f=head.querySelector('#selected-job-refresh');
+          const t=head.querySelector('#selected-job-title'),r=head.querySelector('#job-objective-open'),f=head.querySelector('#selected-job-refresh');
           const a=t.getBoundingClientRect(),b=r.getBoundingClientRect(),c=f.getBoundingClientRect(),style=getComputedStyle(t);
           return {nowrap:style.whiteSpace,ellipsis:style.textOverflow,clipped:t.scrollWidth>t.clientWidth,
-            oneRow:Math.abs((a.top+a.bottom)-(b.top+b.bottom))<2&&Math.abs(b.top-c.top)<2,
+            oneRow:Math.abs((a.top+a.bottom)-(b.top+b.bottom))<2&&Math.abs((b.top+b.bottom)-(c.top+c.bottom))<2,
             ordered:a.right<=b.left&&b.right<=c.left,overflow:document.documentElement.scrollWidth>innerWidth};
         });
         assert.deepEqual(layout,{nowrap:'nowrap',ellipsis:'ellipsis',clipped:true,oneRow:true,ordered:true,overflow:false},'viewport '+width);
       }
-      await title.focus();await page.keyboard.press('Enter');
+      await objectiveButton.focus();await page.keyboard.press('Enter');
       await page.locator('dialog[open]').getByText('Objective',{exact:true}).waitFor();
       await page.keyboard.press('Escape');
       await page.locator('dialog[open]').waitFor({state:'hidden'});
@@ -330,6 +332,7 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
         await route.fulfill({status:fail?500:200,json:fail?{error:'Fixture report failure'}:{jobId:params.get('job'),taskId:params.get('task'),capturedAt:'fixture '+requests.length,html:'<h1>Fixture report '+requests.length+'</h1>'}});
       });
       const report=page.locator('#execution-report-dialog');
+      const reportButton=page.locator('#job-detail .jel-actions').getByRole('button',{name:'Job report',exact:true});
       const runReport=async button=>{
         await button.click();
         await report.locator('#execution-report-status').filter({hasText:'Captured fixture'}).waitFor();
@@ -338,11 +341,38 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       };
       await runReport(reportButton);await runReport(reportButton);
       await page.getByText('View JEL chart',{exact:true}).click();
-      await runReport(page.locator('#jel-report-actions').getByRole('button',{name:'Report',exact:true}));
+      assert.equal(await page.locator('#graph-dialog').getByRole('button',{name:'Report'}).count(),0);
       await page.locator('#graph-dialog-close').click();
       await page.locator('.task-row[data-task-id="921"]').click();
-      await runReport(page.locator('#task-detail').getByRole('button',{name:'Report',exact:true}));
-      assert.deepEqual(requests,[['POST','fixture','92',null],['POST','fixture','92',null],['POST','fixture','92',null],['POST','fixture','92','921']]);
+      const taskDetail=page.locator('#task-detail');
+      assert.equal(await taskDetail.locator('.task-detail-actions button').count(),2);
+      for(const label of ['Title','Task ID','Manual override','Planning decision','Planning source','Planning round','PR comment','Conclusion'])assert.equal(await taskDetail.getByText(label,{exact:true}).count(),0,label);
+      assert.deepEqual(await taskDetail.locator('.detail-group:has-text("Worker threads") a').evaluateAll(links=>links.map(link=>link.getAttribute('href')).sort()),['codex://threads/38f84f9e-410d-4e36-96e0-a420594a102d','codex://threads/38f84f9e-410d-4e36-96e0-a420594a102e']);
+      const taskOriginal=page.viewportSize();
+      for(const width of [1280,430,375,320]){
+        await page.setViewportSize({width,height:900});
+        const layout=await taskDetail.locator('.task-detail-head').evaluate(head=>{const t=head.querySelector('.task-detail-title'),a=head.querySelector('.task-detail-actions'),x=t.getBoundingClientRect(),y=a.getBoundingClientRect();return {nowrap:getComputedStyle(t).whiteSpace,oneRow:Math.abs((x.top+x.bottom)-(y.top+y.bottom))<2,overflow:document.documentElement.scrollWidth>innerWidth};});
+        assert.deepEqual(layout,{nowrap:'nowrap',oneRow:true,overflow:false},'task viewport '+width);
+      }
+      await page.setViewportSize(taskOriginal);
+      await runReport(taskDetail.getByRole('button',{name:'Task report',exact:true}));
+      await taskDetail.getByRole('button',{name:'Task input and conclusion',exact:true}).click();
+      const taskDialog=page.locator('dialog[open]');
+      await taskDialog.getByText('Exact fixture task input',{exact:true}).waitFor();
+      const conclusion=taskDialog.locator('.dialog-conclusion .dialog-content-body');
+      await conclusion.waitFor();
+      assert.equal(await conclusion.innerText(),'Durable conclusion fixture\nwith exact whitespace');
+      await page.keyboard.press('Escape');
+      await page.locator('.task-row[data-task-id="922"]').click();
+      assert.equal(await page.locator('#task-detail .detail-group:has-text("Worker threads") a').count(),0,'neo profile without a configured mapping must not invent a link');
+      assert.equal(await page.locator('#task-detail .detail-group:has-text("Worker threads") .detail-value').innerText(), '—');
+      await page.locator('#task-detail').getByRole('button',{name:'Task input and conclusion',exact:true}).click();
+      assert.equal(await page.locator('dialog[open] .dialog-conclusion').count(),0,'switching Tasks must not retain the previous conclusion');
+      await page.keyboard.press('Escape');
+      await page.locator('.task-row[data-task-id="923"]').click();
+      assert.equal(await page.locator('#task-detail .detail-group:has-text("Worker threads") a').count(),0,'malformed Codex identities must not produce links');
+      assert.equal(await page.locator('#task-detail .detail-group:has-text("Worker threads") .detail-value').innerText(),'—');
+      assert.deepEqual(requests,[['POST','fixture','92',null],['POST','fixture','92',null],['POST','fixture','92','921']]);
       fail=true;await reportButton.click();
       await report.locator('#execution-report-status').filter({hasText:'Fixture report failure'}).waitFor();
       assert.equal(await report.locator('iframe').getAttribute('srcdoc'),null);
@@ -354,7 +384,7 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       await page.route('**/events',route=>route.abort());
       await page.reload({waitUntil:'domcontentloaded'});
       await page.locator('#job-detail').getByText('No durable jobs discovered.').waitFor();
-      assert(await title.isDisabled());assert(await reportButton.isDisabled());
+      assert(await objectiveButton.isDisabled());assert.equal(await page.locator('#job-detail .jel-actions').count(),0);
       assert.equal(await title.getAttribute('title'),null);
       await page.unroute(emptyInventory);
       await page.unroute('**/events');

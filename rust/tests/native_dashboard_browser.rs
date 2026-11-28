@@ -126,10 +126,27 @@ fn real_chrome_dashboard_regressions() {
             job["pause"] = json!({"generation":1,"requestedAt":at});
             let task_id = format!("{}1", id);
             job["tasks"] = json!([{"id":task_id,"jobId":id,"title":format!("{title} task"),
-                "kind":"work","adapter":"script","state":task_state,"attempt":1,
-                "maxAttempts":1,"dependencies":[],"createdAt":at,"updatedAt":at}]);
+                "kind":"work","adapter":"codex","state":task_state,"attempt":1,
+                "maxAttempts":1,"dependencies":[],"input":"Exact fixture task input","result":{"summary":"Durable conclusion fixture\nwith exact whitespace","data":{"conclusion":"Durable conclusion fixture\nwith exact whitespace"}},"threadId":"38f84f9e-410d-4e36-96e0-a420594a102d","threadRoute":{"provider":"openai","model":"fixture","profile":""},"threadHistory":[{"threadId":"38f84f9e-410d-4e36-96e0-a420594a102e","route":{"provider":"openai","model":"fixture","profile":""}}],"createdAt":at,"updatedAt":at}]);
             if task_state == "RUNNING" {
                 job["tasks"][0]["startedAt"] = json!(at);
+            }
+            if id == "92" {
+                job["tasks"].as_array_mut().unwrap().push(json!({
+                    "id":"922","jobId":id,"title":"Neo profile task","kind":"work",
+                    "adapter":"codex","state":"QUEUED","attempt":1,"maxAttempts":1,
+                    "dependencies":[],"threadId":"38f84f9e-410d-4e36-96e0-a420594a102f",
+                    "threadRoute":{"provider":"neo-local","model":"neo","profile":"neo"},
+                    "createdAt":at,"updatedAt":at
+                }));
+                job["tasks"].as_array_mut().unwrap().push(json!({
+                    "id":"923","jobId":id,"title":"Malformed thread task","kind":"work",
+                    "adapter":"codex","state":"QUEUED","attempt":1,"maxAttempts":1,
+                    "dependencies":[],"threadId":"not-a-uuid",
+                    "threadRoute":{"provider":"openai","model":"fixture","profile":""},
+                    "threadHistory":[{"threadId":"also-not-a-uuid","route":{"provider":"openai","model":"fixture","profile":""}}],
+                    "createdAt":at,"updatedAt":at
+                }));
             }
         }
         let store = SQLiteRelayStore::open(&root.0.join("relay.sqlite"), Some(id)).unwrap();
