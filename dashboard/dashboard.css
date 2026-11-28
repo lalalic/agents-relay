@@ -23,7 +23,7 @@
     .panel-head h2,.panel-head h3 { margin:0; color:var(--muted); font-size:.75rem; letter-spacing:.07em; text-transform:uppercase; min-width:0; }
     #workspace-heading { flex:1 1 0; min-width:0; }
     #selected-job-title { display:block; width:100%; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    #jobs-workspace > .panel:first-child > .panel-head .panel-actions { flex:none; flex-wrap:nowrap; }
+    #jobs-workspace > .panel:first-child > .panel-head { gap:.35rem; padding:.4rem .75rem; }
     .panel-actions { display:flex; align-items:center; gap:.55rem; flex-wrap:wrap; min-width:0; }
     #jobs-view .panel-head { display:flex; align-items:center; justify-content:space-between; gap:.65rem; }
     #jobs-view .panel-actions { display:flex; align-items:center; justify-content:flex-end; gap:.4rem; flex-wrap:wrap; min-width:0; }
@@ -105,10 +105,10 @@
     .dialog-metadata summary { color:var(--muted); font-size:.78rem; font-weight:700; cursor:pointer; }
     .dialog-metadata[open] { display:grid; gap:.7rem; }
     .dialog-metadata[open] summary { margin-bottom:.2rem; }
-    .jel-actions { display:flex; align-items:center; justify-content:space-between; gap:.5rem; }
-    .task-detail-head { display:flex; align-items:center; gap:.35rem; min-width:0; margin:0 0 .55rem; }
+    .task-detail-head { display:flex; align-items:center; gap:.35rem; min-width:0; margin:0 0 .35rem; }
     .task-detail-title { flex:1 1 auto; min-width:0; margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.9rem; }
-    .task-detail-actions { display:flex; align-items:center; flex:0 0 auto; gap:.05rem; }
+    .detail-actions { display:flex; align-items:center; flex:0 0 auto; gap:.05rem; }
+    .detail-actions .icon-button { width:2rem; height:2rem; }
     .job-summary,.detail-groups { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.55rem; }
     .detail-group { min-width:0; padding:.5rem; background:var(--surface2); border:1px solid var(--border); border-radius:.4rem; }
     .detail-label { margin:0; color:var(--muted); font-size:.66rem; text-transform:uppercase; letter-spacing:.04em; }
@@ -217,7 +217,7 @@
       #jobs-view .jobs-feedback { grid-column:1 / -1; text-align:left; }
       #jobs-view #jobs-refresh { width:2.25rem; height:2.25rem; }
       #jobs-workspace > .panel:first-child > .panel-head { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:.3rem; align-items:center; }
-      #jobs-workspace > .panel:first-child > .panel-head .panel-actions { flex-wrap:nowrap; gap:.05rem; }
+      .detail-actions .icon-button { width:2.5rem; height:2.5rem; }
       #jobs-view .panel-body { max-height:none; }
       #jobs-workspace { gap:.65rem; }
       #jobs-workspace .panel-body { max-height:none; }

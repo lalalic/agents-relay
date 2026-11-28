@@ -271,7 +271,7 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
     });
     await t.test('8 existing Dashboard selection/refresh and graph-authorized retry/cancel HTTP actions',async()=>{
       await jobRow('94').locator('.job-button').click();
-      await page.locator('#selected-job-refresh').click();
+      await page.locator('#jobs-refresh').click();
       await page.locator('#job-objective-open').click();
       assert((await page.locator('body').innerText()).includes('Retry fixture'));
       await page.keyboard.press('Escape');
@@ -292,27 +292,30 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       assert.equal(await title.textContent(),'Running job');
       assert.equal(await title.getAttribute('title'),'Running job');
       assert.equal(await objectiveButton.count(),1);
-      assert.equal(await header.getByRole('button',{name:'Job report',exact:true}).count(),0);
-      assert.equal(await page.locator('#job-detail .jel-actions').getByRole('button',{name:'Job report',exact:true}).count(),1);
+      assert.deepEqual(await header.locator('.detail-actions button').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),['Job report','Job objective']);
+      assert.equal(await page.locator('#selected-job-refresh').count(),0);
+      assert.equal(await page.locator('#job-detail').getByRole('button',{name:'Job report',exact:true}).count(),0);
       for(const label of ['Review head SHA','Task states','Last activity','Project root'])assert.equal(await page.locator('#job-detail').getByText(label,{exact:true}).count(),0,label);
       assert.equal(await page.locator('.job-status-button').count(),0);
-      // Render a real long title through the selected-job refresh API.
+      // Render a real long title through the remaining Job list refresh API.
       const long='Running job '+('with a deliberately long objective '.repeat(12));
-      await page.route('**/api/job?*',async route=>{
+      const jobInventory=/\/api\/jobs(?:\?|$)/;
+      await page.route(jobInventory,async route=>{
         const response=await route.fetch();
         const data=await response.json();
-        await route.fulfill({response,json:{...data,title:long}});
+        const rename=jobs=>jobs.map(job=>job.id==='92'?{...job,title:long}:job);
+        await route.fulfill({response,json:Array.isArray(data)?rename(data):{...data,jobs:rename(data.jobs)}});
       });
-      await page.locator('#selected-job-refresh').click();
+      await page.locator('#jobs-refresh').click();
       await eventually(async()=>await title.textContent()===long);
-      await page.unroute('**/api/job?*');
+      await page.unroute(jobInventory);
       assert.equal(await title.getAttribute('title'),long);
       const original=page.viewportSize();
       for(const width of [1280,430,375,320]){
         await page.setViewportSize({width,height:900});
         await title.waitFor({state:'visible'});
         const layout=await header.evaluate(head=>{
-          const t=head.querySelector('#selected-job-title'),r=head.querySelector('#job-objective-open'),f=head.querySelector('#selected-job-refresh');
+          const t=head.querySelector('#selected-job-title'),r=head.querySelector('#job-report-open'),f=head.querySelector('#job-objective-open');
           const a=t.getBoundingClientRect(),b=r.getBoundingClientRect(),c=f.getBoundingClientRect(),style=getComputedStyle(t);
           return {nowrap:style.whiteSpace,ellipsis:style.textOverflow,clipped:t.scrollWidth>t.clientWidth,
             oneRow:Math.abs((a.top+a.bottom)-(b.top+b.bottom))<2&&Math.abs((b.top+b.bottom)-(c.top+c.bottom))<2,
@@ -338,7 +341,7 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
         await route.fulfill({status:fail?500:200,json:fail?{error:'Fixture report failure'}:{jobId:params.get('job'),taskId:params.get('task'),capturedAt:'fixture '+requests.length,html:'<h1>Fixture report '+requests.length+'</h1>'}});
       });
       const report=page.locator('#execution-report-dialog');
-      const reportButton=page.locator('#job-detail .jel-actions').getByRole('button',{name:'Job report',exact:true});
+      const reportButton=header.getByRole('button',{name:'Job report',exact:true});
       const runReport=async button=>{
         await button.click();
         await report.locator('#execution-report-status').filter({hasText:'Captured fixture'}).waitFor();
@@ -351,7 +354,9 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       await page.locator('#graph-dialog-close').click();
       const taskDetail=page.locator('#task-detail');
       await taskDetail.locator('.task-detail-actions button').first().waitFor();
-      assert.equal(await taskDetail.locator('.task-detail-actions button').count(),2);
+      assert.deepEqual(await taskDetail.locator('.task-detail-actions button').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),['Task report','Task input and conclusion']);
+      const actionStyle=locator=>locator.evaluateAll(nodes=>nodes.map(n=>({path:n.querySelector('path').getAttribute('d'),width:n.getBoundingClientRect().width,height:n.getBoundingClientRect().height})));
+      assert.deepEqual(await actionStyle(header.locator('.detail-actions button')),await actionStyle(taskDetail.locator('.detail-actions button')),'matching compact icon pairs');
       for(const label of ['Title','Task ID','Manual override','Planning decision','Planning source','Planning round','PR comment','Conclusion'])assert.equal(await taskDetail.getByText(label,{exact:true}).count(),0,label);
       assert.deepEqual(await taskDetail.locator('.detail-group:has-text("Worker threads") a').evaluateAll(links=>links.map(link=>link.getAttribute('href')).sort()),['codex://threads/38f84f9e-410d-4e36-96e0-a420594a102d','codex://threads/38f84f9e-410d-4e36-96e0-a420594a102e']);
       const taskOriginal=page.viewportSize();
@@ -407,7 +412,7 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       await page.route('**/events',route=>route.abort());
       await page.reload({waitUntil:'domcontentloaded'});
       await page.locator('#job-detail').getByText('No durable jobs discovered.').waitFor();
-      assert(await objectiveButton.isDisabled());assert.equal(await page.locator('#job-detail .jel-actions').count(),0);
+      assert(await objectiveButton.isDisabled());assert(await reportButton.isDisabled());assert.equal(await page.locator('#job-detail').getByRole('button',{name:'Job report',exact:true}).count(),0);
       assert.equal(await title.getAttribute('title'),null);
       await page.unroute(emptyInventory);
       await page.unroute('**/events');
