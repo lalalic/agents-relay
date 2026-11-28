@@ -169,9 +169,6 @@ pub fn job_create_request(args:&[String],stdin:Option<&str>)
         "reviewEnabled":!has_arg(args,"--no-review"),
         "interactiveReviewEnabled":has_arg(args,"--interactive-review"),
         "autoMerge":!has_arg(args,"--no-auto-merge"),
-        "reviewerThreadId":arg(args,"--reviewer-thread-id",""),
-        "creatorThreadId":arg(args,"--creator-thread-id",""),
-        "implementationThreadId":arg(args,"--implementation-thread-id",""),
         "coordinator":coordinator
     });
     // Node JSON.stringify omits undefined option values; an empty
@@ -181,9 +178,6 @@ pub fn job_create_request(args:&[String],stdin:Option<&str>)
         ("--id","id"),
         ("--idempotency-key","idempotencyKey"),
         ("--title","title"),
-        ("--reviewer-thread-id","reviewerThreadId"),
-        ("--creator-thread-id","creatorThreadId"),
-        ("--implementation-thread-id","implementationThreadId"),
     ]{
         let supplied=arg(args,flag,"");
         if !supplied.is_empty(){
@@ -227,9 +221,6 @@ pub fn job_update_request(
     let mut patch=json!({});
     for (flag,key) in [
         ("--title","title"),("--priority","priority"),
-        ("--reviewer-thread-id","reviewerThreadId"),
-        ("--creator-thread-id","creatorThreadId"),
-        ("--implementation-thread-id","implementationThreadId")
     ]{
         if has_arg(args,flag){patch[key]=json!(arg(args,flag,""));}
     }

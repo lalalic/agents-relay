@@ -135,6 +135,9 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       const apiStart=Date.now(),initial=await jobs();
       assert(Date.now()-apiStart<2000,'SQLite list blocked behind release history');
       assert(initial.some(j=>j.id==='91'));
+      await jobRow('91').locator('.job-button').click();
+      const legacyDetail=await page.locator('#job-detail').innerText();
+      for(const label of ['Creator thread','Implementation thread','Reviewer thread']) assert(!legacyDetail.includes(label),label+' leaked into Job detail');
       assert.equal(await page.locator('.job-row').count(),6);
       await page.locator('#repo-filter').selectOption('fixture');
       await eventually(async()=>await page.locator('.job-row').count()===4);
@@ -323,6 +326,9 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       await page.locator('#job-list').waitFor({state:'visible'});
       await page.setViewportSize(original);
       await jobRow('92').locator('.job-button').click();
+      await page.locator('.task-row[data-task-id="921"]').click();
+      await page.locator('#task-detail').getByText('Worker threads').waitFor();
+      assert.equal(await page.locator('#task-detail a[href*=\"worker-thread\"]').count(),1);
       const requests=[];let fail=false;
       await page.route('**/api/execution-report?*',async route=>{
         const req=route.request(),params=new URL(req.url()).searchParams;
@@ -340,7 +346,6 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       await page.getByText('View JEL chart',{exact:true}).click();
       await runReport(page.locator('#jel-report-actions').getByRole('button',{name:'Report',exact:true}));
       await page.locator('#graph-dialog-close').click();
-      await page.locator('.task-row[data-task-id="921"]').click();
       await runReport(page.locator('#task-detail').getByRole('button',{name:'Report',exact:true}));
       assert.deepEqual(requests,[['POST','fixture','92',null],['POST','fixture','92',null],['POST','fixture','92',null],['POST','fixture','92','921']]);
       fail=true;await reportButton.click();

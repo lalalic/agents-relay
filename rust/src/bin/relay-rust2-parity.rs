@@ -1387,23 +1387,9 @@ fn invoke(request: &Value) -> Result<String, String> {
             )?)
             .to_string(),
         ),
-        "resolveImplementationThreadDestination" => Ok(
-            agents_relay_rust2::reviewer_thread::resolve_implementation_thread_destination(
-                &request["job"],
-            )?
-            .to_string(),
-        ),
-        "resolveImplementationTaskThreadDestination" => Ok(
-            agents_relay_rust2::reviewer_thread::resolve_implementation_task_thread_destination(
-                &request["job"],
-                &request["task"],
-            )?
-            .to_string(),
-        ),
         "resolveReviewerThreadDestination" => Ok(
             agents_relay_rust2::reviewer_thread::resolve_reviewer_thread_destination(
                 &request["job"],
-                request.get("override"),
             )?
             .to_string(),
         ),
@@ -1411,7 +1397,6 @@ fn invoke(request: &Value) -> Result<String, String> {
             agents_relay_rust2::reviewer_thread::prepare_reviewer_thread_delivery(
                 &request["job"],
                 &request["task"],
-                request.get("override"),
             )?
             .to_string(),
         ),

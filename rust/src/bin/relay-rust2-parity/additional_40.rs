@@ -173,11 +173,6 @@ pub fn invoke(req:&Value)->Option<Result<String,String>>{
             };
             Ok(result.to_string())
         })()),
-        "certCliReviewThread"=>Some((||{
-            let args=req["args"].as_array().into_iter().flatten()
-                .filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>();
-            Ok(json!(agents_relay_rust2::cli_review::review_request_thread_override(&args)?).to_string())
-        })()),
         "certExecutionRouterPublic"=>Some((||{
             use agents_relay_rust2::execution_routing as e;
             let value=match req["action"].as_str().unwrap_or(""){

@@ -27,42 +27,7 @@ pub fn normalize_thread_id(value: &Value, label: &str) -> Result<Option<String>,
     }
     Ok(Some(s.into()))
 }
-pub fn resolve_implementation_thread_destination(job: &Value) -> Result<Value, String> {
-    if !js_truthy(&job["implementationThreadId"]) {
-        return Ok(Value::Null);
-    }
-    Ok(json!(normalize_thread_id(
-        &job["implementationThreadId"],
-        "Job implementation thread ID"
-    )?))
-}
-pub fn resolve_implementation_task_thread_destination(
-    job: &Value,
-    task: &Value,
-) -> Result<Value, String> {
-    if task["agentName"] == "implementation"
-        || task.get("agentName").is_none()
-        || task["agentName"].is_null()
-    {
-        resolve_implementation_thread_destination(job)
-    } else {
-        Ok(Value::Null)
-    }
-}
-pub fn resolve_reviewer_thread_destination(
-    job: &Value,
-    override_id: Option<&Value>,
-) -> Result<Value, String> {
-    if let Some(v) = override_id {
-        if let Some(id) = normalize_thread_id(v, "--thread-id")? {
-            return Ok(json!({"threadId":id,"source":"override"}));
-        }
-    }
-    if js_truthy(&job["reviewerThreadId"]) {
-        if let Some(id) = normalize_thread_id(&job["reviewerThreadId"], "Job reviewer thread ID")? {
-            return Ok(json!({"threadId":id,"source":"reviewer"}));
-        }
-    }
+pub fn resolve_reviewer_thread_destination(job: &Value) -> Result<Value, String> {
     if let Some(tasks) = job["tasks"].as_array() {
         if let Some(previous) = tasks.iter().rev().find(|task| {
             is_final_review_agent(task["agentName"].as_str())
@@ -80,22 +45,16 @@ pub fn resolve_reviewer_thread_destination(
             );
         }
     }
-    if js_truthy(&job["creatorThreadId"]) {
-        return Ok(
-            json!({"threadId":normalize_thread_id(&job["creatorThreadId"],"Job creator thread ID")?,"source":"creator"}),
-        );
-    }
     Ok(Value::Null)
 }
 pub fn prepare_reviewer_thread_delivery(
     job: &Value,
     task: &Value,
-    override_id: Option<&Value>,
 ) -> Result<Value, String> {
     if !is_final_review_agent(task["agentName"].as_str()) {
         return Ok(Value::Null);
     }
-    let d = resolve_reviewer_thread_destination(job, override_id)?;
+    let d = resolve_reviewer_thread_destination(job)?;
     if d.is_null() {
         return Ok(Value::Null);
     }
@@ -161,23 +120,10 @@ pub fn chatgpt_thread_requirements(configured: &Value) -> Value {
     v
 }
 pub fn runtime_reviewer(args: &[String]) -> Result<Value, String> {
-    let mut thread = String::new();
-    let mut has = false;
-    for (i, a) in args.iter().enumerate() {
-        if a == "--thread-id" {
-            has = true;
-            thread = args.get(i + 1).cloned().unwrap_or_default();
-            break;
-        }
+    if args.iter().any(|arg| arg == "--thread-id" || arg.starts_with("--thread-id=")) {
+        return Err("--thread-id is not supported for runtime reviewer configuration".into());
     }
-    if has {
-        normalize_thread_id(&json!(thread), "--thread-id")?;
-    }
-    let mut v = json!({"requirements":{"capabilities":["model"]}});
-    if !thread.trim().is_empty() {
-        v["threadId"] = json!(thread.trim());
-    }
-    Ok(v)
+    Ok(json!({"requirements":{"capabilities":["model"]}}))
 }
 pub fn prepare_revision_thread_delivery(job: &Value, child: &mut Value) -> Result<Value, String> {
     if child["revision"]["kind"] != "targeted" {
@@ -345,11 +291,24 @@ mod tests {
     }
     #[test]
     fn provenance() {
-        let j = json!({"reviewerThreadId":"  a  ","creatorThreadId":"b"});
+        let j = json!({"reviewerThreadId":"legacy-reviewer","creatorThreadId":"legacy-creator",
+            "tasks":[{"agentName":"job-acceptance-reviewer","state":"SUCCEEDED",
+            "adapter":"chatgpt","routing":{"provider":"chatgpt"},"threadId":"  a  ",
+            "threadUrl":"https://chatgpt.com/c/a"}]});
         assert_eq!(
-            resolve_reviewer_thread_destination(&j, None).unwrap()["threadId"],
+            resolve_reviewer_thread_destination(&j).unwrap()["threadId"],
             "a"
         );
+        assert!(resolve_reviewer_thread_destination(&json!({
+            "reviewerThreadId":"legacy-reviewer","creatorThreadId":"legacy-creator",
+            "tasks":[]
+        })).unwrap().is_null());
+    }
+    #[test]
+    fn runtime_reviewer_rejects_retired_destination() {
+        assert!(runtime_reviewer(&["--thread-id".into(),"legacy".into()]).is_err());
+        assert!(runtime_reviewer(&["--thread-id=legacy".into()]).is_err());
+        assert_eq!(runtime_reviewer(&[]).unwrap(),json!({"requirements":{"capabilities":["model"]}}));
     }
 }
 

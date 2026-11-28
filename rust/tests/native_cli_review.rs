@@ -73,18 +73,22 @@ fn invalid_review_input_must_not_reach_host_or_graph(){
     }
 }
 #[test]
-fn review_dispatch_routes_job_and_run_without_fabricating_delivery(){
-    let args=strings(&["--repo","fixture","--id","51","--thread-id","thread-51"]);
+fn review_dispatch_rejects_retired_destination_and_preserves_normal_request(){
+    let old_args=strings(&["--repo","fixture","--id","51","--thread-id","thread-51"]);
+    assert!(run_review_command("job",&old_args,|_|panic!("no preview"),|_,_|panic!("no dispatch"),|_|panic!("no outcome")).is_err());
+    let equals_args=strings(&["--repo","fixture","--id","51","--thread-id=thread-51"]);
+    assert!(run_review_command("job",&equals_args,|_|panic!("no preview"),|_,_|panic!("no dispatch"),|_|panic!("no outcome")).is_err());
+    let args=strings(&["--repo","fixture","--id","51"]);
     let job=run_review_command("job",&args,|_|panic!("no preview"),|flags,request|{
         assert_eq!(flags,&args);
         assert_eq!(request["command"],"review.request");
         assert_eq!(request["jobId"],"51");
-        assert_eq!(request["threadId"],"thread-51");
-        Ok(json!({"id":"51","prNumber":22,"reviewerThreadId":"thread-51"}))
+        assert!(request.get("threadId").is_none());
+        Ok(json!({"id":"51","prNumber":22,"reviewerThreadId":"legacy"}))
     },|_|panic!("no outcome run")).unwrap();
     assert_eq!(job["status"],"requested");
     assert_eq!(job["pr"],22);
-    assert_eq!(job["reviewerThreadId"],"thread-51");
+    assert!(job.get("reviewerThreadId").is_none());
     let run=run_review_command("run",&strings(&["--id","51"]),
         |_|panic!("no preview"),|_,_|->Result<Value,String>{panic!("no control")},
         |flags|{assert_eq!(flags[0],"--id");Ok(json!({"completed":false}))}).unwrap();
