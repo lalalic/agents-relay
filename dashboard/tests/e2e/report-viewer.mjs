@@ -28,11 +28,7 @@ try {
     assert((await frame.locator('h1').textContent()).includes(job));
     return await report.locator('#execution-report-status').textContent();
   };
-  await generate(page.locator('#jel-report-actions'));
-  assert.equal(await frame.locator('section[id^="task-"]').count()>1,true);
-  await report.getByRole('button',{name:'Close',exact:true}).click();
-  await generate(page.locator('#jel-report-actions'));
-  await report.getByRole('button',{name:'Close',exact:true}).click();
+  assert.equal(await page.locator('#graph-dialog').getByRole('button',{name:'Report',exact:true}).count(),0);
   await page.locator('#graph-dialog-close').click();
   await generate(page.locator('#workspace-heading').locator('..'),'Job report');
   assert.equal(await frame.locator('section[id^="task-"]').count()>1,true);
@@ -45,14 +41,14 @@ try {
   }
   await page.locator('.task-row[data-task-id="'+task+'"]').click();
   const detail=page.locator('#task-detail');
-  await generate(detail);
+  await generate(detail,'Task report');
   assert.equal(await frame.locator('section[id^="task-"]').count(),1);
   assert.equal(await frame.locator('#task-'+task).count(),1);
   assert.equal(await frame.getByText('Observed startup messages',{exact:true}).count()>0,true);
   await report.getByRole('button',{name:'Close',exact:true}).click();
-  await generate(detail);
+  await generate(detail,'Task report');
   assert.equal(await frame.locator('#task-'+task).count(),1);
   // The read-only report is isolated from Dashboard origin.
   assert.equal(await report.locator('iframe').getAttribute('sandbox'),'allow-scripts allow-downloads');
-  console.log('PASS real single-click JEL, Job and Task reports');
+  console.log('PASS real JEL chart and single-click Job and Task reports');
 }finally{await browser.close();}

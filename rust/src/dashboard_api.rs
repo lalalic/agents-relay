@@ -378,8 +378,8 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
         let response = (|| -> Result<DashboardResponse, String> {
             Ok(match path {
                 "/api/execution-report" => {
-                    if !crate::dashboard_report::private_request(req) {
-                        return Ok(text_response(403,"Detailed reports require the local JEL Viewer"));
+                    if !crate::dashboard_report::report_request(req) {
+                        return Ok(text_response(403,"Report request intent required"));
                     }
                     if !matches!(req.method,"GET"|"POST") {
                         return Ok(text_response(405,"Method not allowed"));

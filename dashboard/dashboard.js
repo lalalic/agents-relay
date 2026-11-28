@@ -189,8 +189,7 @@ async function openExecutionReport(job,task){
   reportFrame.removeAttribute('srcdoc');
   if(!reportDialog.open)reportDialog.showModal();
   try{
-    if(RELAY_PREFIX||!['localhost','127.0.0.1','[::1]'].includes(location.hostname))throw new Error('Private execution reports require the local Dashboard on the Relay host (default: http://127.0.0.1:8787/)');
-    const response=await fetch('/api/execution-report?'+params,{method:'POST',headers:{'X-Relay-Report':'1'},cache:'no-store',credentials:'same-origin'});
+    const response=await dashboardWrite(RELAY_PREFIX+'/api/execution-report?'+params,{method:'POST',headers:{'X-Relay-Report':'1'},cache:'no-store',credentials:'same-origin'});
     const raw=await response.text();
     let data;
     try{data=JSON.parse(raw);}catch{throw new Error(raw||'Report unavailable');}

@@ -434,6 +434,50 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       await page.locator('#graph-dialog-close').click();
       await page.unroute(inventory);
     });
+    await t.test('11 authenticated Dashboard report uses gateway path and CSRF; expired session fails closed',async()=>{
+      const remote=await context.newPage();
+      remote.setDefaultTimeout(8000);
+      let csrfCalls=0,reportCalls=0,expired=false;
+      try{
+        await remote.route('**/dashboard/csrf',route=>{
+          csrfCalls++;
+          assert.equal(route.request().method(),'GET');
+          return route.fulfill({status:expired?401:200,json:expired?{}:{csrf:'fixture-csrf'}});
+        });
+        await remote.route('**/relay/api/execution-report?*',route=>{
+          reportCalls++;
+          const req=route.request(),params=new URL(req.url()).searchParams;
+          assert.equal(req.method(),'POST');assert.equal(req.headers()['x-neo-csrf'],'fixture-csrf');
+          assert.equal(req.headers()['x-relay-report'],'1');
+          assert.equal(params.get('repo'),'fixture');assert.equal(params.get('job'),'92');
+          return route.fulfill({json:{jobId:'92',taskId:params.get('task'),capturedAt:'remote fixture',html:'<h1>Remote report</h1>'}});
+        });
+        await remote.route('**/relay/events',route=>route.abort());
+        await remote.route(/\/relay\/api\/(?!execution-report)/,async route=>{
+          const url=new URL(route.request().url());url.pathname=url.pathname.replace(/^\/relay/,'');
+          await route.fulfill({response:await route.fetch({url:url.href})});
+        });
+        await remote.route(/\/dashboard\/(?!csrf$)/,async route=>{
+          const url=new URL(route.request().url());url.pathname=url.pathname.replace(/^\/dashboard/,'');
+          await route.fulfill({response:await route.fetch({url:url.href})});
+        });
+        await remote.goto(base+'/dashboard/',{waitUntil:'domcontentloaded'});
+        await remote.locator('.job-row').filter({hasText:/\/92:/}).click();
+        const report=remote.locator('#execution-report-dialog');
+        await remote.locator('#job-report-open').click();
+        await report.locator('#execution-report-status').filter({hasText:'Captured remote fixture'}).waitFor();
+        assert.equal(await report.frameLocator('iframe').locator('h1').textContent(),'Remote report');
+        await report.locator('#execution-report-close').click();
+        await remote.locator('.task-row[data-task-id="921"]').click();
+        await remote.locator('#task-detail').getByRole('button',{name:'Task report',exact:true}).click();
+        await report.locator('#execution-report-status').filter({hasText:'Captured remote fixture'}).waitFor();
+        await report.locator('#execution-report-close').click();
+        assert.equal(csrfCalls,2);assert.equal(reportCalls,2);
+        expired=true;await remote.locator('#job-report-open').click();
+        await report.locator('#execution-report-status').filter({hasText:'Dashboard login expired'}).waitFor();
+        assert.equal(reportCalls,2);assert.equal(csrfCalls,3);
+      }finally{await remote.close();}
+    });
     assert.deepEqual(errors,[],'browser page errors');
   }catch(error){console.error(daemonLog);if(page)console.error((await page.locator('body').innerText().catch(()=>'' )).slice(0,5000));throw error;}
   finally{await chrome?.close();await stop();await close(proxy);await close(bus);}

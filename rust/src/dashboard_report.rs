@@ -1,4 +1,4 @@
-//! Private localhost JEL report bridge. Neo owns report construction and
+//! Execution report bridge. Gateway owns remote authentication. Neo owns report construction and
 //! harness-specific parsing. No browser-supplied paths or shell commands.
 use crate::dashboard::{DashboardRequest, DashboardResponse};
 use crate::owned_process::{OwnedProcessManager, OwnedProcessOptions, TerminationReason};
@@ -8,7 +8,6 @@ use std::{
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
-use url::Url;
 
 fn response(status: u16, v: Value) -> DashboardResponse {
     DashboardResponse::new(
@@ -21,62 +20,21 @@ fn response(status: u16, v: Value) -> DashboardResponse {
 fn error(status: u16, msg: &str) -> DashboardResponse {
     response(status, json!({"error":msg}))
 }
-pub fn private_request(req: &DashboardRequest<'_>) -> bool {
-    // The detailed report contains private trace material. The normal
-    // dashboard's remote/proxy access is not proof of trace authorization.
-    let Some(host) = req.headers.get("host") else {
-        return false;
-    };
-    let Ok(origin) = Url::parse(&format!("http://{host}")) else {
-        return false;
-    };
-    if !matches!(origin.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
-        || !origin.username().is_empty()
-        || origin.password().is_some()
-        || origin.path() != "/"
-        || origin.query().is_some()
-        || origin.fragment().is_some()
-    {
-        return false;
-    }
-    if req.headers.get("x-relay-report").map(String::as_str) != Some("1") {
-        return false;
-    }
-    if req.headers.keys().any(|k| {
-        matches!(
-            k.as_str(),
-            "forwarded"
-                | "x-forwarded-host"
-                | "x-forwarded-for"
-                | "x-forwarded-proto"
-                | "cf-connecting-ip"
-                | "cf-ray"
-        )
-    }) {
-        return false;
-    }
-    if req
-        .headers
-        .get("sec-fetch-site")
-        .is_some_and(|v| !matches!(v.as_str(), "same-origin" | "none"))
-    {
-        return false;
-    }
-    if let Some(o) = req.headers.get("origin") {
-        if o != &origin.origin().ascii_serialization() {
-            return false;
-        }
-    }
-    true
+// A request-intent header prevents ordinary cross-site forms from generating
+// reports. Remote authentication belongs to the Gateway, not this handler.
+pub fn report_request(req: &DashboardRequest<'_>) -> bool {
+    req.headers.get("x-relay-report").map(String::as_str) == Some("1")
+        && !req.headers.get("sec-fetch-site")
+            .is_some_and(|v| !matches!(v.as_str(), "same-origin" | "none"))
 }
 fn numeric(v: &str) -> bool {
     !v.is_empty() && v.len() <= 20 && v.bytes().all(|b| b.is_ascii_digit())
 }
 pub fn handle(req: &DashboardRequest<'_>, job: &Value, task: Option<&str>) -> DashboardResponse {
-    if !private_request(req) {
+    if !report_request(req) {
         return error(
             403,
-            "Detailed execution reports require the local JEL Viewer",
+            "Report request intent required",
         );
     }
     if !matches!(req.method, "GET" | "POST") {
@@ -220,14 +178,15 @@ pub fn handle(req: &DashboardRequest<'_>, job: &Value, task: Option<&str>) -> Da
 mod tests {
     use super::*;
     #[test]
-    fn local_private_origin_only() {
+    fn report_intent_is_independent_of_host() {
         let mut headers = std::collections::HashMap::from([
-            ("host".into(), "127.0.0.1:1234".into()),
+            ("host".into(), "remote.example".into()),
             ("x-relay-report".into(), "1".into()),
-            ("origin".into(), "http://127.0.0.1:1234".into()),
+            ("x-forwarded-proto".into(), "https".into()),
+            ("sec-fetch-site".into(), "same-origin".into()),
         ]);
         fn ok(h: &std::collections::HashMap<String, String>) -> bool {
-            private_request(&DashboardRequest {
+            report_request(&DashboardRequest {
                 method: "POST",
                 target: "/api/execution-report",
                 body: &[],
@@ -235,13 +194,12 @@ mod tests {
             })
         }
         assert!(ok(&headers));
-        headers.insert("origin".into(), "https://evil.example".into());
+        headers.insert("host".into(), "127.0.0.1:1234".into());
+        assert!(ok(&headers));
+        headers.insert("sec-fetch-site".into(), "cross-site".into());
         assert!(!ok(&headers));
-        headers.remove("origin");
-        headers.insert("x-forwarded-for".into(), "127.0.0.1".into());
-        assert!(!ok(&headers));
-        headers.remove("x-forwarded-for");
-        headers.insert("host".into(), "remote.example".into());
+        headers.remove("sec-fetch-site");
+        headers.remove("x-relay-report");
         assert!(!ok(&headers));
     }
 }
