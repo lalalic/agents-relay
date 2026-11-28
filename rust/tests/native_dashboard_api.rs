@@ -438,6 +438,25 @@ fn mobile_http_redacts_jobs_and_scopes_task_activity_and_cancel(){
     assert_eq!(call(&backend,"GET","/api/mobile/unknown",None).status,404);
 }
 #[test]
+fn mobile_jel_returns_canonical_generator_and_only_scoped_lifecycle_facts(){
+    let mut job=jobs()[1].clone();
+    job["objective"]=json!("private objective");
+    job["tasks"]=json!([{"id":"t1","title":"Review","agentName":"reviewer","state":"SUCCEEDED","attempt":1,"input":"private prompt","threadId":"private thread","executionHistory":[{"attempt":1,"startedAt":"2026-11-15T00:00:00Z","result":"private result"}]}]);
+    let service=FixtureServices{report_fixture:Some(job),..Default::default()};
+    let options=DashboardApiOptions{graph_directory:PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../workflow"),router_rules_path:std::env::temp_dir().join("mobile-jel-test"),troubleshooter_qa_path:PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../skills/agents-relay/troubleshooter-qa.md"),webhook_secret:None,webhook_repositories:HashSet::new(),webhook_job_id:None};
+    let backend=NativeDashboardApi::new(options,service);
+    let receipt=data(call(&backend,"GET","/api/mobile/job-jel?id=102&repo=toy%2Frepo",None));
+    assert_eq!(receipt["schema"],"relay.jel.v1");assert_eq!(receipt["job"]["id"],"102");
+    assert_eq!(receipt["generator"],include_str!("../../dashboard/jel-function.js").trim_end());
+    assert_eq!(receipt["job"]["tasks"][0]["executionHistory"][0]["startedAt"],"2026-11-15T00:00:00Z");
+    assert!(!receipt.to_string().contains("private "));
+    assert_eq!(call(&backend,"GET","/api/mobile/job-jel?id=102&repo=other%2Frepo",None).status,409);
+    assert_eq!(call(&backend,"POST","/api/mobile/job-jel?id=102&repo=toy%2Frepo",None).status,404);
+    let (backend,_,_,_)=fixture();
+    assert_eq!(call(&backend,"GET","/api/mobile/job-jel?id=101&repo=toy%2Frepo",None).status,409);
+}
+
+#[test]
 fn mobile_pause_resume_use_scoped_control_and_require_durable_readback(){
     let service=FixtureServices{report_fixture:Some(jobs()[0].clone()),apply_pause_control:true,..Default::default()};
     let calls=service.calls.clone();

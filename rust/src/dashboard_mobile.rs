@@ -137,6 +137,59 @@ pub fn project_mobile_tasks(row:&Value,id:&Value,repository:&Value)->Result<Valu
         }).collect::<Vec<_>>();
     Ok(json!({"jobId":id,"repository":repository,"tasks":tasks}))
 }
+/// Only the facts read by the canonical Dashboard JEL function cross the
+/// Mobile boundary. No task input, output, thread, objective or paths.
+fn jel_fields(value:&Value, fields:&[&str])->Value{
+    let mut result=serde_json::Map::new();
+    for key in fields {
+        if let Some(raw)=value.get(*key){
+            match raw {
+                Value::String(text)=>{
+                    let text=if *key=="title"{crate::feedback::redact_sensitive_text(text)}else{text.clone()};
+                    result.insert((*key).into(),json!(text.chars().take(if *key=="title"{160}else{200}).collect::<String>()));
+                },
+                Value::Number(_)|Value::Bool(_)=>{result.insert((*key).into(),raw.clone());},
+                _=>{},
+            }
+        }
+    }
+    Value::Object(result)
+}
+fn jel_ids(value:&Value)->Value{
+    json!(value.as_array().into_iter().flatten().filter_map(Value::as_str)
+        .filter(|id|id_pattern().is_match(id)).collect::<Vec<_>>())
+}
+pub fn project_mobile_jel(row:&Value,id:&Value,repo:&Value)->Result<Value,String>{
+    if !valid_mobile_identity(id,repo)||row.get("id")!=Some(id)||row.get("repository")!=Some(repo)
+        ||field(row,"state")!="COMPLETED"{return Err("Completed Job unavailable".into())}
+    let tasks=row["tasks"].as_array().ok_or("JEL Task facts unavailable")?;
+    let plans=row["plans"].as_array();
+    if tasks.len()>500||plans.is_some_and(|p|p.len()>100){return Err("JEL exceeds Mobile chart limits".into())}
+    let mut facts=jel_fields(row,&["id","repository","state","createdAt","updatedAt","githubState","mergedAt"]);
+    facts["tasks"]=json!(tasks.iter().map(|task|{
+        let mut t=jel_fields(task,&["id","title","agentName","kind","state","createdAt","updatedAt","attempt","recoveryForAttempt","parentTaskId","planningDecisionId","planningRound"]);
+        t["dependencies"]=jel_ids(&task["dependencies"]);
+        t["dagNode"]=json!(task.get("dagNode").is_some_and(|v|!v.is_null()&&v!=&json!(false)&&v!=&json!("")));
+        t["agentGraph"]=json!(task.get("agentGraph").is_some_and(|v|!v.is_null()&&v!=&json!(false)&&v!=&json!("")));
+        t["executionHistory"]=json!(task["executionHistory"].as_array().into_iter().flatten()
+            .filter(|record|record["attempt"]==task["attempt"])
+            .map(|record|jel_fields(record,&["attempt","startedAt"])).collect::<Vec<_>>());
+        t
+    }).collect::<Vec<_>>());
+    facts["plans"]=json!(plans.into_iter().flatten().map(|plan|{
+        let mut p=jel_fields(plan,&["id","round","status","createdAt","updatedAt"]);
+        p["generatedTaskIds"]=jel_ids(&plan["generatedTaskIds"]);
+        p["trigger"]=jel_fields(&plan["trigger"],&["source"]);p
+    }).collect::<Vec<_>>());
+    facts["localMerge"]=jel_fields(&row["localMerge"],&["status","updatedAt"]);
+    facts["review"]=jel_fields(&row["review"],&["outcome","updatedAt"]);
+    facts["publication"]=json!({"version":row["publication"]["version"].as_str().is_some_and(|s|!s.is_empty())});
+    let result=json!({"schema":"relay.jel.v1","job":facts,
+        "generator":include_str!("../../dashboard/jel-function.js").trim_end()});
+    if result.to_string().len()>1_000_000{return Err("JEL exceeds Mobile chart limits".into())}
+    Ok(result)
+}
+
 // Match the Node owner-safe mobile projection: source messages are untrusted.
 // Expose only a bounded, conservative plain-language summary for selected
 // lifecycle event types; otherwise the mobile UI uses the event action label.

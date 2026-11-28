@@ -5,7 +5,7 @@
 use crate::{
     dashboard::{DashboardBackend, DashboardRequest, DashboardResponse},
     dashboard_mobile::{
-        project_mobile_jobs,project_mobile_tasks,project_mobile_activity,project_mobile_job,mobile_pause_capability,
+        project_mobile_jobs,project_mobile_tasks,project_mobile_activity,project_mobile_job,mobile_pause_capability,project_mobile_jel,
         valid_mobile_identity,
     },
     dashboard_data::{
@@ -270,6 +270,10 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                     let limit=js_num("limit","20");
                     let jobs=self.discovered(services,false)?;
                     project_mobile_jobs(&json!(jobs),offset,limit)
+                },
+                "/api/mobile/job-jel" if valid_get=>{
+                    let job=services.exact_job(&id,Some(&repo))?.ok_or("Completed Job unavailable")?;
+                    project_mobile_jel(&job,&json!(id),&json!(repo))
                 },
                 "/api/mobile/job-tasks" if valid_get=>{
                     let job=services.exact_job(&id,Some(&repo))?
@@ -718,7 +722,7 @@ impl<S: DashboardApiServices> DashboardBackend for NativeDashboardApi<S> {
             "/api/job-state"|"/api/task-state"|"/api/mobile/job-cancel"|"/api/mobile/job-pause"|"/api/mobile/job-resume");
         if owner_command || matches!((req.method,path),
             ("GET","/api/events"|"/api/usage"|"/api/decision-audit"|"/api/jobs"|"/api/job"|
-                "/api/runtime-summary"|"/api/status"|"/api/mobile/jobs"|"/api/mobile/job-tasks"|"/api/mobile/job-activity"|
+                "/api/runtime-summary"|"/api/status"|"/api/mobile/jobs"|"/api/mobile/job-tasks"|"/api/mobile/job-jel"|"/api/mobile/job-activity"|
                 "/api/graphs"|"/api/graph-symbol")
             |("GET"|"POST","/api/execution-report")
             |("POST","/api/router-test")){
