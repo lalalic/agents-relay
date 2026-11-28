@@ -121,7 +121,7 @@ function chatField(task){
       if(task.adapter==='z'||(task.adapter==='chatgpt'&&task.routing?.profile!=='neo')){url=safeWorkerThreadUrl(item.threadUrl,task.adapter);provider=task.adapter==='z'?'Z.ai':'ChatGPT';}
     }
     if(!url)continue;
-    const line=element('p','detail-value');const link=document.createElement('a');link.href=url;link.textContent='Open '+provider+' thread'+(Number.isInteger(item.attempt)?' · attempt '+item.attempt:'');
+    const line=element('p','detail-value');const link=document.createElement('a');link.href=url;if(provider!=='Codex'){link.target='_blank';link.rel='noopener noreferrer';}link.textContent='Open '+provider+' thread'+(Number.isInteger(item.attempt)?' · attempt '+item.attempt:'');
     line.append(link);box.append(line);shown++;
   }
   if(!shown)box.append(element('p','detail-value',text('—')));

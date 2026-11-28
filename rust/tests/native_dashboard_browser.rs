@@ -171,6 +171,11 @@ fn real_chrome_dashboard_regressions() {
                     "createdAt":at,"updatedAt":at
                 }));
                 job["tasks"].as_array_mut().unwrap().push(json!({
+                    "id":"927","jobId":id,"title":"Task without thread identity","kind":"work",
+                    "adapter":"codex","state":"QUEUED","attempt":1,"maxAttempts":1,
+                    "dependencies":[],"createdAt":at,"updatedAt":at
+                }));
+                job["tasks"].as_array_mut().unwrap().push(json!({
                     "id":"924","jobId":id,"title":"Unmapped Neo task","kind":"work",
                     "adapter":"codex","state":"QUEUED","attempt":1,"maxAttempts":1,
                     "dependencies":[],"threadId":"38f84f9e-410d-4e36-96e0-a420594a102c",
