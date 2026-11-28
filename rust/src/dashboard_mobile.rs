@@ -43,18 +43,24 @@ pub fn valid_mobile_identity(id:&Value,repository:&Value)->bool{
     id.as_str().is_some_and(|s|id_pattern().is_match(s))
         &&repository.as_str().is_some_and(|s|s.encode_utf16().count()<=200&&repo_pattern().is_match(s))
 }
+pub fn mobile_pause_capability(row:&Value, pause:bool)->bool{
+    matches!(field(row,"state"),"DRAFT"|"ACTIVE")
+        && row.get("pause").is_some_and(|v|!v.is_null()) != pause
+}
 pub fn project_mobile_job(row:&Value)->Option<Value>{
     if !row.is_object()||!valid_mobile_identity(&row["id"],&row["repository"]){return None}
     let state=clip(&row["state"],40);
     if !state_pattern().is_match(&state){return None}
     let runtime=clip(&row["runtimeStatus"],40);
-    let status=if state_pattern().is_match(&runtime){runtime}else{state.clone()};
+    let status=if mobile_pause_capability(row,false){"PAUSED".into()}else if state_pattern().is_match(&runtime){runtime}else{state.clone()};
     Some(json!({
         "id":row["id"],"repository":row["repository"],
         "title":clip(&row["title"],120),"status":status,
         "createdAt":clip(&row["createdAt"],40),
         "updatedAt":clip(&row["updatedAt"],40),
         "cancellable":state=="DRAFT"||state=="ACTIVE",
+        "pausable":mobile_pause_capability(row,true),
+        "recoverable":mobile_pause_capability(row,false),
     }))
 }
 // Identity strings are limited to ASCII alphanumeric, '_' '-' and '.'.
@@ -230,6 +236,14 @@ mod tests{
         assert!(!tasks.to_string().contains("SECRET"));
         assert!(project_mobile_tasks(&data,&json!("a"),&json!("other")).is_err());
         assert!(project_mobile_jobs(&json!([data]),0.0,21.0).is_err());
+    }
+    #[test]
+    fn mobile_pause_capabilities_reflect_durable_pause_not_runtime_guess(){
+        let mut job=json!({"id":"101","repository":"repo","state":"ACTIVE","runtimeStatus":"WAITING"});
+        let view=project_mobile_job(&job).unwrap();assert_eq!(view["pausable"],true);assert_eq!(view["recoverable"],false);
+        job["pause"]=json!({"generation":1});
+        let view=project_mobile_job(&job).unwrap();assert_eq!(view["status"],"PAUSED");assert_eq!(view["pausable"],false);assert_eq!(view["recoverable"],true);
+        for terminal in ["COMPLETED","CANCELLED"]{job["state"]=json!(terminal);let view=project_mobile_job(&job).unwrap();assert_eq!(view["pausable"],false);assert_eq!(view["recoverable"],false);}
     }
     #[test]
     fn mobile_activity_uses_safe_action_specific_details_only(){

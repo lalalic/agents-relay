@@ -5,7 +5,7 @@
 use crate::{
     dashboard::{DashboardBackend, DashboardRequest, DashboardResponse},
     dashboard_mobile::{
-        project_mobile_jobs,project_mobile_tasks,project_mobile_activity,
+        project_mobile_jobs,project_mobile_tasks,project_mobile_activity,project_mobile_job,mobile_pause_capability,
         valid_mobile_identity,
     },
     dashboard_data::{
@@ -292,6 +292,30 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                     let history=services.events(&id,None,100)?;
                     Ok(json!({"jobId":id,"repository":repo,
                         "events":project_mobile_activity(&json!(history))}))
+                },
+                "/api/mobile/job-pause"|"/api/mobile/job-resume" if allowed_method(req,"POST")=>{
+                    if req.body.len()>8192{return Err("Job action request too large".into())}
+                    let input:Value=serde_json::from_slice(req.body).map_err(|_|"Invalid JSON")?;
+                    let bound_id=field(&input,"id");
+                    let bound_repo=field(&input,"repository");
+                    if !valid_mobile_identity(&input["id"],&input["repository"]){return Err("Invalid Job identity".into())}
+                    let pause=path=="/api/mobile/job-pause";
+                    let rows=services.discovered_jobs(true)?;
+                    let owned=rows.iter().filter(|job|field(job,"id")==bound_id).collect::<Vec<_>>();
+                    if owned.len()!=1||field(owned[0],"repository")!=bound_repo{
+                        return Err("Job unavailable or ambiguous".into());
+                    }
+                    let before=services.exact_job(bound_id,Some(bound_repo))?.ok_or("Job unavailable")?;
+                    if field(&before,"id")!=bound_id||field(&before,"repository")!=bound_repo
+                        ||!mobile_pause_capability(&before,pause){return Err("Job action unavailable".into())}
+                    services.control(&json!({"command":if pause{"job.pause"}else{"job.resume"},"jobId":bound_id,"repository":bound_repo}))?;
+                    let after=services.exact_job(bound_id,Some(bound_repo))?.ok_or("Job action readback not confirmed")?;
+                    if field(&after,"id")!=bound_id||field(&after,"repository")!=bound_repo
+                        ||after.get("pause").is_some_and(|v|!v.is_null())!=pause
+                        ||(pause&&!mobile_pause_capability(&after,false)){
+                        return Err("Job action readback not confirmed".into());
+                    }
+                    project_mobile_job(&after).ok_or("Job action readback not confirmed".into())
                 },
                 "/api/mobile/job-cancel" if allowed_method(req,"POST")=>{
                     if req.body.len()>8192{return Err("Cancel request too large".into())}
@@ -691,7 +715,7 @@ impl<S: DashboardApiServices> DashboardBackend for NativeDashboardApi<S> {
         // file access. Canonical lifecycle commands use independent facades.
         let owner_command=self.independent_requests && req.method=="POST" && matches!(path,
             "/api/control"|"/api/task-command"|"/api/job-action"|"/api/task-action"|
-            "/api/job-state"|"/api/task-state"|"/api/mobile/job-cancel");
+            "/api/job-state"|"/api/task-state"|"/api/mobile/job-cancel"|"/api/mobile/job-pause"|"/api/mobile/job-resume");
         if owner_command || matches!((req.method,path),
             ("GET","/api/events"|"/api/usage"|"/api/decision-audit"|"/api/jobs"|"/api/job"|
                 "/api/runtime-summary"|"/api/status"|"/api/mobile/jobs"|"/api/mobile/job-tasks"|"/api/mobile/job-activity"|

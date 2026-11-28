@@ -266,6 +266,13 @@ pub fn workspace_control<B:WorkspaceControlBackend>(
         "job.pause"|"job.resume"=>{
             let pause=command=="job.pause";
             let snapshot=backend.mutate_job(&job_id,&|current|{
+                // A scoped mobile command must retain its owner and eligibility
+                // inside the durable mutation, not merely at HTTP preflight.
+                if let Some(repo)=body.get("repository").and_then(Value::as_str){
+                    if field(current,"repository")!=repo||!matches!(field(current,"state"),"DRAFT"|"ACTIVE"){
+                        return Err("Job owner or lifecycle changed".into());
+                    }
+                }
                 let prior=current.clone();
                 let next=if pause{
                     pause_job(current,|task,event|{

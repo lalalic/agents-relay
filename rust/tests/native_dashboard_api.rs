@@ -28,6 +28,7 @@ struct FixtureServices {
     fail_webhook: Arc<AtomicBool>,
     duplicate_mobile_id: Arc<AtomicBool>,
     report_fixture: Option<Value>,
+    apply_pause_control: bool,
 }
 impl FixtureServices {
     fn log(&self, method: &str, value: Value) -> Value {
@@ -80,7 +81,14 @@ impl DashboardApiServices for FixtureServices {
         }))
     }
     fn control(&mut self, body: &Value) -> Result<Value, String> {
-        Ok(self.log("control", body.clone()))
+        let receipt=self.log("control", body.clone());
+        if self.apply_pause_control {
+            if let Some(job)=self.report_fixture.as_mut(){
+                if body["command"]=="job.pause"{job["pause"]=json!({"generation":1});}
+                if body["command"]=="job.resume"{job.as_object_mut().unwrap().remove("pause");}
+            }
+        }
+        Ok(receipt)
     }
     fn job_action(&mut self, id: &str, action: &str) -> Result<Value, String> {
         Ok(self.log("job_action", json!({"id":id,"action":action})))
@@ -419,6 +427,7 @@ fn mobile_http_redacts_jobs_and_scopes_task_activity_and_cancel(){
     assert_eq!(calls.lock().unwrap().iter().filter(|row|
         row["method"]=="job_action").count(),before,
         "wrong owner must never call cancellation");
+    assert_eq!(call(&backend,"POST","/api/mobile/job-pause",Some(json!({"id":"101","repository":"toy/repo"}))).status,409, "Unconfirmed pause is not success");
     let unverified=call(&backend,"POST","/api/mobile/job-cancel",
         Some(json!({"id":"101","repository":"toy/repo"})));
     assert_eq!(unverified.status,409,
@@ -428,6 +437,30 @@ fn mobile_http_redacts_jobs_and_scopes_task_activity_and_cancel(){
         row["method"]=="job_action").count(),before+1);
     assert_eq!(call(&backend,"GET","/api/mobile/unknown",None).status,404);
 }
+#[test]
+fn mobile_pause_resume_use_scoped_control_and_require_durable_readback(){
+    let service=FixtureServices{report_fixture:Some(jobs()[0].clone()),apply_pause_control:true,..Default::default()};
+    let calls=service.calls.clone();
+    let options=DashboardApiOptions{
+        graph_directory:PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../workflow"),
+        router_rules_path:std::env::temp_dir().join("mobile-pause-test"),
+        troubleshooter_qa_path:PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../skills/agents-relay/troubleshooter-qa.md"),
+        webhook_secret:None,webhook_repositories:HashSet::new(),webhook_job_id:None,
+    };
+    let backend=NativeDashboardApi::new(options,service);
+    let body=json!({"id":"101","repository":"toy/repo"});
+    assert_eq!(call(&backend,"POST","/api/mobile/job-resume",Some(body.clone())).status,409);
+    assert_eq!(call(&backend,"POST","/api/mobile/job-pause",Some(json!({"id":"101","repository":"other/repo"}))).status,409);
+    assert_eq!(call(&backend,"GET","/api/mobile/job-pause",None).status,404);
+    let paused=data(call(&backend,"POST","/api/mobile/job-pause",Some(body.clone())));
+    assert_eq!(paused["status"],"PAUSED");assert_eq!(paused["pausable"],false);assert_eq!(paused["recoverable"],true);
+    assert_eq!(call(&backend,"POST","/api/mobile/job-pause",Some(body.clone())).status,409);
+    let resumed=data(call(&backend,"POST","/api/mobile/job-resume",Some(body)));
+    assert_eq!(resumed["pausable"],true);assert_eq!(resumed["recoverable"],false);
+    let log=calls.lock().unwrap();let commands=log.iter().filter(|row|row["method"]=="control").map(|row|row["value"].clone()).collect::<Vec<_>>();
+    assert_eq!(commands,vec![json!({"command":"job.pause","jobId":"101","repository":"toy/repo"}),json!({"command":"job.resume","jobId":"101","repository":"toy/repo"})]);
+}
+
 #[test]
 fn mobile_http_cross_repo_collision_fails_closed_before_event_history_or_mutation(){
     let service=FixtureServices{
@@ -451,9 +484,10 @@ fn mobile_http_cross_repo_collision_fails_closed_before_event_history_or_mutatio
     assert_eq!(data(response)["error"],"Ambiguous Job ID");
     assert_eq!(call(&backend,"POST","/api/mobile/job-cancel",
         Some(json!({"id":"101","repository":"toy/repo"}))).status,409);
+    assert_eq!(call(&backend,"POST","/api/mobile/job-pause",Some(json!({"id":"101","repository":"toy/repo"}))).status,409);
     let log=calls.lock().unwrap();
     assert!(!log.iter().any(|row|matches!(row["method"].as_str(),
-        Some("events"|"job_action"))),
+        Some("events"|"job_action"|"control"))),
         "ambiguous ID cannot access another repository's events or cancellation");
 }
 
