@@ -104,6 +104,51 @@ pub fn review_facts(directory:&Path,job:&Value,head:Option<&str>)
             &&job.pointer("/review/outcome").and_then(Value::as_str)==Some("approved")),
     }))
 }
+/// Only the exact child of this immutable review round can explain the
+/// observed branch tip. Git is evidence, never a Task completion receipt.
+fn revision_delivery_in_flight(job:&Value,review:&Value,head:&str)->bool{
+    if review["outcome"]!="changes_required" {return false;}
+    let matching:Vec<&Value>=tasks(job).iter().filter(|task|{
+        task["revision"]["kind"]=="targeted"
+            &&task["revision"]["reviewTaskId"]==review["taskId"]
+            &&task["revision"]["basedOnHeadSha"]==review["headSha"]
+            &&job["reviewRevisionRequests"].as_array().into_iter().flatten().any(|r|
+                r["reviewTaskId"]==review["taskId"]&&r["reviewHeadSha"]==review["headSha"]
+                    &&r["revisionTaskId"]==task["id"]
+                    &&matches!(field(r,"status"),"queued"|"running"|"verified")
+                    &&task["revision"]["requestIds"].as_array().is_some_and(|ids|
+                        ids.contains(&r["requestId"])))
+    }).collect();
+    // Keep the round intact while a correlated child can still settle. A
+    // previously delivered sibling may own the tip while another child runs.
+    if !matching.iter().any(|t|matches!(field(t,"state"),"DRAFT"|"QUEUED"|"RUNNING")
+        ||(t["state"]=="SUCCEEDED"&&job["reviewRevisionRequests"].as_array()
+            .into_iter().flatten().any(|r|r["revisionTaskId"]==t["id"]
+                &&matches!(field(r,"status"),"queued"|"running")))){
+        return false;
+    }
+    matching.iter().any(|task|{
+        if task["state"]=="RUNNING" {
+            crate::git_delivery::revision_owns_head(job,task,head)
+        }else{
+            // An execution-fenced receipt was previously verified by the
+            // Task Graph; it is not a new proof of completion.
+            task["state"]=="SUCCEEDED"&&task["gitDeliveryRequired"]==true
+                &&task.get("executionId")==Some(&Value::Null)
+                &&task.pointer("/gitDelivery/commitSha").and_then(Value::as_str)==Some(head)
+                &&task.pointer("/gitDelivery/executionId").and_then(Value::as_str)
+                    .is_some_and(|id|!id.is_empty()
+                        &&task.pointer("/gitDeliveryBaseline/executionId").and_then(Value::as_str)==Some(id)
+                        &&task["executionHistory"].as_array().and_then(|h|h.last())
+                            .is_some_and(|last|field(last,"id")==id && task["attempt"].as_u64().is_some_and(|attempt|last["attempt"].as_u64()==Some(attempt))))
+                &&task.pointer("/gitDelivery/baseSha").and_then(Value::as_str)
+                    .is_some_and(|base| matches!(base.len(),40|64)
+                        &&base.bytes().all(|b|b.is_ascii_hexdigit())
+                        &&task.pointer("/gitDeliveryBaseline/sha").and_then(Value::as_str)==Some(base))
+        }
+    })
+}
+
 pub fn invalidate_stale_review(
     directory:&Path,job:&Value,head:Option<&str>,
 )->Result<ReviewSnapshot,String>{
@@ -115,7 +160,7 @@ pub fn invalidate_stale_review(
     }
     let decision=decide_review_lifecycle(directory,
         review.get("outcome").and_then(Value::as_str),
-        "head.changed",&json!({}))?;
+        "head.changed",&json!({"revisionDeliveryInFlight":head.is_some_and(|h|revision_delivery_in_flight(job,review,h))}))?;
     if !graph_actions(&decision,"review.cancelStale"){return Ok(result);}
     let review_id=field(review,"taskId").to_owned();
     let old_head=field(review,"headSha").to_owned();

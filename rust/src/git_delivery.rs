@@ -140,6 +140,20 @@ pub fn bind_source_baseline(task:&mut Value,sha:Option<&str>){
 
 pub fn verify_source_commit(job:&Value,task:&Value,execution_id:&str,commit_sha:&str)
     ->Result<Value,String>{
+    verify_source_commit_inner(job,task,execution_id,commit_sha,true)
+}
+
+/// Read-only provenance for a revision's own new HEAD before its completion
+/// receipt. A dirty worktree does not invalidate an already committed tip.
+/// This never records a delivery or authorizes completion.
+pub fn revision_owns_head(job:&Value,task:&Value,head:&str)->bool{
+    let execution=field(task,"executionId");
+    if execution.is_empty(){return false;}
+    verify_source_commit_inner(job,task,execution,head,false).is_ok()
+        &&source_commit_sha(job).is_ok_and(|actual|actual==head)
+}
+fn verify_source_commit_inner(job:&Value,task:&Value,execution_id:&str,commit_sha:&str,
+    require_clean:bool)->Result<Value,String>{
     if task["gitDeliveryRequired"]!=true||task["state"]!="RUNNING"
         ||field(task,"executionId")!=execution_id{
         return Err("Git delivery requires an active source Task execution".into());
@@ -157,7 +171,7 @@ pub fn verify_source_commit(job:&Value,task:&Value,execution_id:&str,commit_sha:
     if git(&path,&["rev-parse","--verify","HEAD"])?!=actual{
         return Err("Git delivery source worktree HEAD differs from branch".into());
     }
-    if !git(&path,&["status","--porcelain=v1","--untracked-files=all"])?.is_empty(){
+    if require_clean && !git(&path,&["status","--porcelain=v1","--untracked-files=all"])?.is_empty(){
         return Err("Git delivery source worktree has uncommitted or untracked changes".into());
     }
     if git(&path,&["merge-base","--is-ancestor",base,commit_sha]).is_err(){
