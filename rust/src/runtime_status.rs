@@ -177,7 +177,7 @@ pub fn derive_job_runtime_status(job: &Value, _pr_state: &str) -> &'static str {
         return "FAILED";
     }
     if planner_running {
-        return "RUNNING";
+        return "PLANNING";
     }
     if job.get("reviewEnabled") == Some(&Value::Bool(false)) && implementation_complete(job) {
         return "MERGE_PENDING";

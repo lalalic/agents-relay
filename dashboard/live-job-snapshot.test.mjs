@@ -62,7 +62,7 @@ test('publication without an observation timestamp cannot overwrite verified met
 
 test('terminal snapshots normalize transient and absent runtime status; meaningful failure remains',()=>{
   const api=harness();
-  for(const runtimeStatus of [undefined,'IDLE','RUNNING','QUEUED','WAITING','REVIEWING','BLOCKED']){
+  for(const runtimeStatus of [undefined,'IDLE','RUNNING','PLANNING','QUEUED','WAITING','REVIEWING','BLOCKED']){
     api.upsertFreshJob({id:String(api.jobs.length+1),repository:'relay',state:'COMPLETED',runtimeStatus,updatedAt:'2026-11-25T10:00:00Z'});
     assert.equal(api.jobs.at(-1).runtimeStatus,'COMPLETED');
   }
@@ -73,6 +73,8 @@ test('terminal snapshots normalize transient and absent runtime status; meaningf
   api.upsertFreshJob({id:'exceptional',repository:'relay',state:'COMPLETED',runtimeStatus:'IDLE',updatedAt:'2026-11-25T10:00:00Z'});
   api.upsertFreshJob({id:'exceptional',repository:'relay',state:'COMPLETED',runtimeStatus:'MERGE_PENDING',updatedAt:'2026-11-25T10:01:00Z'});
   assert.equal(api.jobs.at(-1).runtimeStatus,'MERGE_PENDING');
+  const merged=api.mergeJobSnapshots({id:'stale-planning',repository:'relay',state:'COMPLETED',runtimeStatus:'PLANNING',updatedAt:'2026-11-25T10:00:00Z'},{id:'stale-planning',repository:'relay',state:'COMPLETED',updatedAt:'2026-11-25T10:01:00Z'});
+  assert.equal(merged.runtimeStatus,'COMPLETED');
 });
 
 test('refresh race rejects snapshots without timestamps and older timestamped responses',()=>{

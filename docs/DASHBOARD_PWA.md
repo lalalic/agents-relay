@@ -12,6 +12,8 @@ Workflow inspection is a read-only presentation of canonical graphs and their re
 
 Run `scripts/test-dashboard-browser.sh` for UI, HTTP/SSE, runtime-status and publication changes before review/merge/release. Use isolated native fixtures and real Chrome, including desktop and mobile widths. Native tests include `native_dashboard_api`, `native_dashboard_pwa`, `native_dashboard_browser`, `native_dashboard_jel`. Real remote-device checks must be reported separately.
 
+`runtimeStatus` is computed by the shared Rust runtime-status derivation. An active Job with no higher-precedence status and a latest `PLANNING` plan is shown as `PLANNING`; Dashboard list, detail and live snapshots consume that value without persisting a lifecycle transition.
+
 Read-only Dashboard requests are bounded and transient failures retain the last verified Job/runtime view. Initial failures, missed events and SSE disconnects recover through authoritative inventory refresh, including periodic refresh while the stream is connected; an empty filtered result remains a valid empty result. Slow SSE clients cannot block the daemon or other subscribers.
 
 Normal Job listing selects the newest 20 after applying the existing filters and ordering to compact SQLite metadata, then hydrates those IDs with joined PR facts and publication state in the same read transaction. The explicit full-inventory request retains its full snapshot contract. Status uses COUNT, runtime summary reads ACTIVE jobs, and SSE observes compact revision metadata and hydrates changed jobs only. Derived SQLite indexes support active and pending-delivery queries.
