@@ -11,4 +11,4 @@ Use disposable `AGENTS_RELAY_STORE_DIR` for tests and child CLIs. Never target p
 
 Dashboard UI/HTTP/SSE/runtime status/publication changes require `scripts/test-dashboard-browser.sh` with real Chrome and isolated native fixtures. Use the native MVP Skill for production smoke acceptance only when authorized. Provider/browser/device gates are NOT_RUN if not executed; isolated tests do not certify live deployment. Mandatory pre-release gates cannot be deferred. Live-only checks require an explicit post-release acceptance handoff.
 
-Use `node scripts/release-native.mjs` only for an authorized reviewed release. See [service](service.md) and root README for the verified native release procedure.
+Use `node scripts/publish-native.mjs` for an authorized reviewed publication; use `node scripts/live-native.mjs` only for authorized activation. See [service](service.md) and root README for the verified native release procedure.

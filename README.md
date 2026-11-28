@@ -102,20 +102,31 @@ Commit to `main` only after native checks. Deployment of a source commit into th
 
 ### Native release (Neo Master)
 
-Commit the Cargo version and lockfile bump with the reviewed change, merge to
-clean main, then run `node scripts/release-native.mjs [--job-id ID]`.
-The operator command requires the installed PM2 launcher, local Events Bus
-release-history API, and no active Jobs before restart. It verifies a non-force
-origin/main push, builds and installs an immutable SHA package, switches the
-live launcher, checks the actual HTTP version/SHA and served assets, and only
-then records `package.published` on the native release channel. A Job ID is
-optional observational correlation, never required for a hotfix. Publication
-failure after a healthy deployment is retriable with the same command and
-association; a failed runtime switch rolls back to the previous package.
+Commit the Cargo version and lockfile bump with the reviewed change and merge
+to clean main. Publish and activate independently:
+
+```sh
+node scripts/publish-native.mjs [--job-id ID]
+node scripts/live-native.mjs [--sha PUBLISHED_SHA]
+```
+
+Publish verifies the non-force origin/main push, builds and verifies an
+immutable SHA package under `versions/`, records `package.published` and
+persists its durable receipt. It does not require idle Jobs or touch the live
+launcher. Job ID is optional correlation; the observer also correlates Git
+ancestry. Retry the same publication metadata if reporting fails.
+
+Live requires an existing package and matching publication receipt. It checks
+the installed PM2 launcher and idle Job/process gate, switches the launcher,
+restarts, verifies HTTP version/SHA and served assets, and rolls back on
+failure. It does not build, push, bump a version or publish an event. By default
+it selects HEAD; pass `--sha` to activate a different published revision.
+`node scripts/release-native.mjs` remains an explicit publish-then-live
+convenience command; a failed activation does not invalidate publication.
 
 ### Shared publication reporter
 
-After a verified installation or registry release, call the shared Node ESM
+After a verified immutable package publication or registry release, call the shared Node ESM
 reporter (shipped in the native Relay package under `scripts/`):
 
 ```sh
