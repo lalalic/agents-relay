@@ -164,6 +164,13 @@ fn real_chrome_dashboard_regressions() {
                     "createdAt":at,"updatedAt":at
                 }));
                 job["tasks"].as_array_mut().unwrap().push(json!({
+                    "id":"926","jobId":id,"title":"Noncanonical ChatGPT URL task","kind":"work",
+                    "adapter":"chatgpt","state":"QUEUED","attempt":1,"maxAttempts":1,
+                    "dependencies":[],"threadId":"worker-thread-malformed",
+                    "threadUrl":"https://chatgpt.com:444/c/worker-thread-malformed",
+                    "createdAt":at,"updatedAt":at
+                }));
+                job["tasks"].as_array_mut().unwrap().push(json!({
                     "id":"924","jobId":id,"title":"Unmapped Neo task","kind":"work",
                     "adapter":"codex","state":"QUEUED","attempt":1,"maxAttempts":1,
                     "dependencies":[],"threadId":"38f84f9e-410d-4e36-96e0-a420594a102c",

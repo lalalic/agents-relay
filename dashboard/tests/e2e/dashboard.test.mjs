@@ -384,6 +384,8 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       assert.equal(await page.locator('#task-detail .detail-group:has-text("Worker threads") .detail-value').innerText(),'—');
       await page.locator('.task-row[data-task-id="925"]').click();
       assert.equal(await page.locator('#task-detail .detail-group:has-text("Worker threads") a').getAttribute('href'),'https://chatgpt.com/c/worker-thread');
+      await page.locator('.task-row[data-task-id="926"]').click();
+      assert.equal(await page.locator('#task-detail .detail-group:has-text("Worker threads") a').count(),0,'noncanonical ChatGPT URL must not be linked');
       await page.locator('.task-row[data-task-id="921"]').click();
       assert.deepEqual(requests,[['POST','fixture','92',null],['POST','fixture','92',null],['POST','fixture','92','921']]);
       fail=true;await reportButton.click();
