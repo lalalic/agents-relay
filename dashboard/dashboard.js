@@ -205,8 +205,11 @@ async function openExecutionReport(job,task){
     if(sequence===reportSequence&&reportDialog.open)reportStatus.textContent=String(error.message||error);
   }
 }
-function inspectJelTask(id){
-  if(!selected()?.tasks?.some(task=>task.id===id))return;
+function inspectJelTask(id,job=selected()){
+  if(!job?.tasks?.some(task=>task.id===id))return;
+  if(jobSelectionKey(selected())!==jobSelectionKey(job)){
+    upsertFreshJob(job);selectJob(job);
+  }
   selectedTaskId=id;eventTaskId=id;rememberSelection();clearEvents();
   dismissGraphViewer();renderAll();void loadEventHistory();
   document.querySelector('#task-detail').scrollIntoView({block:'start',behavior:'smooth'});
@@ -226,15 +229,15 @@ async function openJelChart(job){
     const definitions=graphNodeDefinitions(source);
     for(const node of svg.querySelectorAll('g.node')){const entry=Array.from(definitions.entries()).find(([key])=>node.id.includes('-flowchart-'+key+'-'));if(entry)addNodeLabel(node,entry[1]);}
     applyGraphPalette(svg);
-    applyJelHighlights(svg);
+    applyJelHighlights(svg,job);
     for(const node of svg.querySelectorAll('g.node')){
       const match=node.id.match(/-flowchart-task_([0-9]+)-/);
       const task=match?job.tasks?.[Number(match[1])]:null;
       if(!task?.id)continue;
       node.classList.add('jel-inspectable');node.setAttribute('role','button');node.setAttribute('tabindex','0');
       node.setAttribute('aria-label','Inspect Task '+task.id);
-      node.addEventListener('click',()=>inspectJelTask(task.id));
-      node.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();inspectJelTask(task.id);}});
+      node.addEventListener('click',()=>inspectJelTask(task.id,job));
+      node.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();inspectJelTask(task.id,job);}});
     }
     jelChart.replaceChildren(svg);
     fitGraphViewer();
@@ -243,11 +246,33 @@ async function openJelChart(job){
     jelChart.replaceChildren(element('pre','jel-source',text(source)));
   }
 }
-function applyJelHighlights(svg){
+// Mobile handoffs open an exact completed Job, even outside the visible list
+// or current filter. Never fall back to whichever Job happens to be selected.
+async function openJelFromRoute(){
+  const route=location.hash;
+  if(!route.startsWith('#/jel/'))return;
+  let repository,id;
+  try{
+    const scope=decodeURIComponent(route.slice(6)).split('|');
+    if(scope.length!==2)throw Error('Invalid JEL scope');
+    [repository,id]=scope;
+    if(!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}(\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}){0,3}$/.test(repository)||repository.length>200||!/^[A-Za-z0-9_.-]{1,100}$/.test(id))throw Error('Invalid JEL scope');
+    const job=await loadJSON(RELAY_PREFIX+'/api/job?'+new URLSearchParams({id,repo:repository}));
+    if(location.hash!==route)return;
+    if(job?.id!==id||job?.repository!==repository||job?.state!=='COMPLETED')throw Error('Completed Job unavailable');
+    await openJelChart(job);
+  }catch(error){
+    if(location.hash!==route)return;
+    ++jelRenderSequence;
+    jelChart.replaceChildren(element('p','subtle',text('JEL unavailable for the requested completed Job.')));
+    showGraphViewer(jelChart,'JEL unavailable');
+  }
+}
+function applyJelHighlights(svg,job){
   const palette={failed:['#fee2e2','#b91c1c','#991b1b'],retry:['#ede9fe','#7c3aed','#5b21b6'],troubleshooter:['#fef3c7','#b45309','#92400e'],review:['#dbeafe','#2563eb','#1e40af']};
   for(const node of svg.querySelectorAll('g.node')){
     const taskIndex=node.id.match(/-flowchart-task_([0-9]+)-/);
-    const task=taskIndex?selected()?.tasks?.[Number(taskIndex[1])]:null;
+    const task=taskIndex?job.tasks?.[Number(taskIndex[1])]:null;
     const kind=node.id.includes('-flowchart-failed_')||task?.state==='FAILED'?'failed':
       node.id.includes('-flowchart-retry_')||(task?.attempt||0)>1?'retry':
       node.id.includes('-flowchart-troubleshooter_')||task?.agentName==='troubleshooter'?'troubleshooter':
@@ -824,7 +849,8 @@ stream.addEventListener('open',()=>{
 });
 stream.onmessage=message=>{const payload=parseMessage(message);if(payload?.job){upsertFreshJob({...payload.job,...payload.jobView});renderAll();scheduleRuntimeSummary();}};
 stream.addEventListener('relay',message=>{const payload=parseMessage(message);if(payload?.job)upsertFreshJob({...payload.job,...payload.jobView});else if(payload?.statePatch)applyStatePatch(payload.statePatch);if(payload?.statePatch)void refreshJobSnapshot(payload.statePatch.jobId,payload.statePatch.repository);if(payload?.event){addEvent(payload.event);const event=payload.event;if(event.type==='package.published'||event.type==='package.publish_failed'){const jobId=event.job_id||event.data?.jobId,repository=event.data?.repository||event.repository||null;if(jobId&&(!event.job_id||!event.data?.jobId||event.job_id===event.data.jobId))void refreshJobSnapshot(jobId,repository);}}renderAll();scheduleRuntimeSummary();});
-if(location.hash==='#/usage')showView('usage');else if(graphFromHash())showView('graphs');else if(location.hash==='#/execution-router-rules')showView('rules');else if(location.hash==='#/troubleshooter-qa')showView('qa');else showView('jobs');void refresh(false);
+if(location.hash==='#/usage')showView('usage');else if(graphFromHash())showView('graphs');else if(location.hash==='#/execution-router-rules')showView('rules');else if(location.hash==='#/troubleshooter-qa')showView('qa');else showView('jobs');void refresh(false).then(openJelFromRoute);
+window.addEventListener('hashchange',()=>void openJelFromRoute());
 setInterval(()=>{updateTaskElapsedTitles();},30000);
 setInterval(()=>{if(location.hash==='#/usage')void drawUsage();},30000);
 setInterval(()=>void refreshVersion(),30000);

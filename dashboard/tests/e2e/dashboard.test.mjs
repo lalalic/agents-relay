@@ -418,6 +418,22 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       await page.unroute(emptyInventory);
       await page.unroute('**/events');
     });
+    await t.test('10 exact completed Job JEL handoff ignores list filters and rejects wrong scope',async()=>{
+      const completed=(await jobs()).find(job=>job.state==='COMPLETED');assert(completed);
+      const scope=encodeURIComponent(completed.repository+'|'+completed.id);
+      const inventory=/\/api\/jobs(?:\?|$)/;
+      await page.route(inventory,route=>route.fulfill({json:{jobs:[],repositories:[]}}));
+      await page.goto(base+'/#/jel/'+scope,{waitUntil:'domcontentloaded'});
+      const dialog=page.locator('#graph-dialog');await dialog.waitFor({state:'visible'});
+      await dialog.getByText('JEL · '+completed.repository+'/'+completed.id,{exact:true}).waitFor();
+      assert.equal(await dialog.getByRole('button',{name:'Report',exact:true}).count(),0);
+      await page.locator('#graph-dialog-close').click();
+      await page.evaluate(()=>{location.hash='#/jel/'+encodeURIComponent('wrong-repo|'+location.hash.split('%7C').at(-1));});
+      await dialog.getByText('JEL unavailable',{exact:true}).waitFor();
+      await dialog.getByText('JEL unavailable for the requested completed Job.').waitFor();
+      await page.locator('#graph-dialog-close').click();
+      await page.unroute(inventory);
+    });
     assert.deepEqual(errors,[],'browser page errors');
   }catch(error){console.error(daemonLog);if(page)console.error((await page.locator('body').innerText().catch(()=>'' )).slice(0,5000));throw error;}
   finally{await chrome?.close();await stop();await close(proxy);await close(bus);}
