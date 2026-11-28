@@ -364,11 +364,15 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       assert.equal(await conclusion.innerText(),'Durable conclusion fixture\nwith exact whitespace');
       await page.keyboard.press('Escape');
       await page.locator('.task-row[data-task-id="922"]').click();
-      assert.equal(await page.locator('#task-detail .detail-group:has-text("Worker threads") a').count(),0,'neo profile without a configured mapping must not invent a link');
-      assert.equal(await page.locator('#task-detail .detail-group:has-text("Worker threads") .detail-value').innerText(), '—');
+      assert.equal(await page.locator('#task-detail .detail-group:has-text("Worker threads") a').count(),1,'neo profile exact mapping should resolve to ChatGPT');
+      assert.equal(await page.locator('#task-detail .detail-group:has-text("Worker threads") a').getAttribute('href'),'https://chatgpt.com/c/chatgptThread_neo_fixture_2026');
+      assert.match(await page.locator('#task-detail .detail-group:has-text("Worker threads") a').innerText(),/ChatGPT thread/);
       await page.locator('#task-detail').getByRole('button',{name:'Task input and conclusion',exact:true}).click();
-      assert.equal(await page.locator('dialog[open] .dialog-conclusion').count(),0,'switching Tasks must not retain the previous conclusion');
+      assert.equal(await page.locator('dialog[open] .dialog-conclusion').count(),0,'missing conclusion should remain absent on task switch');
       await page.keyboard.press('Escape');
+      await page.locator('.task-row[data-task-id="924"]').click();
+      assert.equal(await page.locator('#task-detail .detail-group:has-text("Worker threads") a').count(),0,'missing mapping must not invent a link');
+      assert.equal(await page.locator('#task-detail .detail-group:has-text("Worker threads") .detail-value').innerText(), '—');
       await page.locator('.task-row[data-task-id="923"]').click();
       assert.equal(await page.locator('#task-detail .detail-group:has-text("Worker threads") a').count(),0,'malformed Codex identities must not produce links');
       assert.equal(await page.locator('#task-detail .detail-group:has-text("Worker threads") .detail-value').innerText(),'—');

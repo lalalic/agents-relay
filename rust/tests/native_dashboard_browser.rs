@@ -42,6 +42,10 @@ fn real_chrome_dashboard_regressions() {
     fs::create_dir_all(root.0.join("stores")).unwrap();
     fs::create_dir_all(root.0.join("forbidden/stores")).unwrap();
     fs::create_dir_all(root.0.join("home")).unwrap();
+    let gateway_sessions = root.0.join("home/.local/share/neo/model-gateway/sessions");
+    fs::create_dir_all(&gateway_sessions).unwrap();
+    fs::write(gateway_sessions.join("sess_neo_fixture.json"),
+        r#"{"codexThreadId":"38f84f9e-410d-4e36-96e0-a420594a102f","threadId":"chatgptThread_neo_fixture_2026","threadUrl":"https://chatgpt.com/c/chatgptThread_neo_fixture_2026"}"#).unwrap();
     for name in ["fixture", "other"] {
         let project = root.0.join(name);
         fs::create_dir_all(&project).unwrap();
@@ -145,6 +149,13 @@ fn real_chrome_dashboard_regressions() {
                     "dependencies":[],"threadId":"not-a-uuid",
                     "threadRoute":{"provider":"openai","model":"fixture","profile":""},
                     "threadHistory":[{"threadId":"also-not-a-uuid","route":{"provider":"openai","model":"fixture","profile":""}}],
+                    "createdAt":at,"updatedAt":at
+                }));
+                job["tasks"].as_array_mut().unwrap().push(json!({
+                    "id":"924","jobId":id,"title":"Unmapped Neo task","kind":"work",
+                    "adapter":"codex","state":"QUEUED","attempt":1,"maxAttempts":1,
+                    "dependencies":[],"threadId":"38f84f9e-410d-4e36-96e0-a420594a102c",
+                    "threadRoute":{"provider":"neo-local","model":"neo","profile":"neo"},
                     "createdAt":at,"updatedAt":at
                 }));
             }

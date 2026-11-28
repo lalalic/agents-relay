@@ -246,6 +246,7 @@ pub mod projection_outbox;
 // Direct Node src/dashboard-data.ts readonly projections.
 pub mod dashboard;
 pub mod dashboard_api;
+pub mod dashboard_neo_threads;
 pub mod dashboard_report;
 pub mod dashboard_publication;
 pub mod dashboard_data;

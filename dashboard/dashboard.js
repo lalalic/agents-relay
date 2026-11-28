@@ -109,16 +109,15 @@ function safeWorkerThreadUrl(input,adapter){try{const url=new URL(input);const p
 function safeCodexThreadUrl(id){return typeof id==='string'&&/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)?'codex://threads/'+id:null;}
 function chatField(task){
   const box=element('div','detail-group');box.append(element('p','detail-label',text('Worker threads')));
-  const entries=task.threadId?[{threadId:task.threadId,route:task.threadRoute,attempt:task.attempt}]:[];
+  const entries=task.threadId?[{threadId:task.threadId,route:task.threadRoute,attempt:task.attempt,chatgptThreadUrl:task.chatgptThreadUrl}]:[];
   entries.push(...(Array.isArray(task.threadHistory)?task.threadHistory.slice(-8).reverse():[]));
   if(!entries.length&&task.threadUrl)entries.push({threadUrl:task.threadUrl,route:task.threadRoute,attempt:task.attempt});
   const seen=new Set();let shown=0;
   for(const item of entries){
     const id=item?.threadId;const key=String(id||'');if(seen.has(key))continue;seen.add(key);
     const route=item?.route||item?.threadRoute;
-    if(route?.profile==='neo')continue;
-    let url=task.adapter==='codex'?safeCodexThreadUrl(id):null;let provider='Codex';
-    if(!url||!route?.provider||!route?.model){
+    let url=route?.profile==='neo'?safeWorkerThreadUrl(item.chatgptThreadUrl,'chatgpt'):(task.adapter==='codex'?safeCodexThreadUrl(id):null);let provider=route?.profile==='neo'?'ChatGPT':'Codex';
+    if(route?.profile!=='neo'&&(!url||!route?.provider||!route?.model)){
       if(task.adapter==='z'||(task.adapter==='chatgpt'&&task.routing?.profile!=='neo')){url=safeWorkerThreadUrl(item.threadUrl,task.adapter);provider=task.adapter==='z'?'Z.ai':'ChatGPT';}
     }
     if(!url)continue;
