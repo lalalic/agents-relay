@@ -48,7 +48,7 @@ const repoFilter=document.querySelector('#repo-filter');
 const statusFilter=document.querySelector('#status-filter');
 const jobsFeedback=document.querySelector('#jobs-feedback');
 const selectedJobRefresh=document.querySelector('#selected-job-refresh');
-const jobReportButton=document.querySelector('#job-report-open');
+const jobObjectiveButton=document.querySelector('#job-objective-open');
 const mobileJobsBack=document.querySelector('#mobile-jobs-back');
 const mobileJobs=window.matchMedia('(max-width:650px)');
 const jobDetail=document.querySelector('#job-detail');
@@ -105,9 +105,28 @@ function compactCounts(input){const order=['RUNNING','AWAITING_DECISION','BLOCKE
 function relativeTime(timestamp){if(!timestamp)return '—';const parsed=Date.parse(timestamp);if(!Number.isFinite(parsed))return value(timestamp);const seconds=Math.max(0,Math.round((Date.now()-parsed)/1000));if(seconds<60)return 'just now';if(seconds<3600)return Math.floor(seconds/60)+'m ago';if(seconds<86400)return Math.floor(seconds/3600)+'h ago';return Math.floor(seconds/86400)+'d ago';}
 function safeCommitUrl(repository,sha){if(typeof repository!=='string'||typeof sha!=='string'||!/^[0-9a-f]{7,64}$/i.test(sha))return null;const parts=repository.split('/');if(parts.length!==2||!parts[0]||!parts[1])return null;return 'https://github.com/'+parts[0]+'/'+parts[1]+'/commit/'+sha;}
 function commitField(label,job,sha){const box=element('div','detail-group');box.append(element('p','detail-label',text(label)));const line=element('p','detail-value');const url=safeCommitUrl(job?.githubRepo,sha);if(url){const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener noreferrer';link.textContent=sha.slice(0,7);line.append(link);}else line.append(text(sha||'—'));box.append(line);return box;}
-function safeWorkerThreadUrl(input,adapter){try{const url=new URL(input);const parts=url.pathname.split('/');const domain=adapter==='z'?'chat.z.ai':'chatgpt.com';if(url.protocol!=='https:'||url.hostname!==domain||parts.length!==3||parts[1]!=='c'||!/^[A-Za-z0-9_-]{8,160}$/.test(parts[2]))return null;return url.origin+url.pathname;}catch{return null;}}
-function chatField(task){const box=element('div','detail-group');box.append(element('p','detail-label',text('Worker threads')));const items=Array.isArray(task.threadHistory)?task.threadHistory.slice(-8).reverse():[];if(items.length===0)items.push({threadUrl:task.threadUrl,attempt:task.attempt});let shown=0;for(const item of items){const url=safeWorkerThreadUrl(item.threadUrl,task.adapter);if(!url)continue;const line=element('p','detail-value');const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open '+(task.adapter==='z'?'Z.ai':'ChatGPT')+' thread'+(Number.isInteger(item.attempt)?' · attempt '+item.attempt:'');line.append(link);box.append(line);shown++;}if(!shown){const line=element('p','detail-value');if(task.adapter==='chatgpt'&&typeof task.threadId==='string'){const url=safeWorkerThreadUrl('https://chatgpt.com/c/'+encodeURIComponent(task.threadId),'chatgpt');if(url){const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open ChatGPT thread';line.append(link);shown++;}}if(!shown)line.append(text('—'));box.append(line);}return box;}
-function taskCommentField(task){const box=element('div','detail-group');box.append(element('p','detail-label',text('PR comment')));const line=element('p','detail-value');if(typeof task.taskUrl==='string'&&task.taskUrl.startsWith('https://github.com/')){const link=document.createElement('a');link.className='task-link';link.href=task.taskUrl;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open task comment';line.append(link);}else line.append(text('—'));box.append(line);return box;}
+function safeWorkerThreadUrl(input,adapter){try{const url=new URL(input);const parts=url.pathname.split('/');const domain=adapter==='z'?'chat.z.ai':'chatgpt.com';if(url.protocol!=='https:'||url.hostname!==domain||url.port||url.username||url.password||url.search||url.hash||parts.length!==3||parts[1]!=='c'||!/^[A-Za-z0-9_-]{8,160}$/.test(parts[2]))return null;return url.origin+url.pathname;}catch{return null;}}
+function safeCodexThreadUrl(id){return typeof id==='string'&&/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)?'codex://threads/'+id:null;}
+function chatField(task){
+  const box=element('div','detail-group');box.append(element('p','detail-label',text('Worker threads')));
+  const entries=task.threadId?[{threadId:task.threadId,threadUrl:task.threadUrl,route:task.threadRoute,attempt:task.attempt,chatgptThreadUrl:task.chatgptThreadUrl}]:[];
+  entries.push(...(Array.isArray(task.threadHistory)?task.threadHistory.slice(-8).reverse():[]));
+  if(!entries.length&&task.threadUrl)entries.push({threadUrl:task.threadUrl,route:task.threadRoute,attempt:task.attempt});
+  const seen=new Set();let shown=0;
+  for(const item of entries){
+    const id=item?.threadId;const key=String(id||'');if(seen.has(key))continue;seen.add(key);
+    const route=item?.route||item?.threadRoute;
+    let url=route?.profile==='neo'?safeWorkerThreadUrl(item.chatgptThreadUrl,'chatgpt'):(task.adapter==='codex'?safeCodexThreadUrl(id):null);let provider=route?.profile==='neo'?'ChatGPT':'Codex';
+    if(route?.profile!=='neo'&&(!url||!route?.provider||!route?.model)){
+      if(task.adapter==='z'||(task.adapter==='chatgpt'&&task.routing?.profile!=='neo')){url=safeWorkerThreadUrl(item.threadUrl,task.adapter);provider=task.adapter==='z'?'Z.ai':'ChatGPT';}
+    }
+    if(!url)continue;
+    const line=element('p','detail-value');const link=document.createElement('a');link.href=url;if(provider!=='Codex'){link.target='_blank';link.rel='noopener noreferrer';}link.textContent='Open '+provider+' thread'+(Number.isInteger(item.attempt)?' · attempt '+item.attempt:'');
+    line.append(link);box.append(line);shown++;
+  }
+  if(!shown)box.append(element('p','detail-value',text('—')));
+  return box;
+}
 function parseAgentGraphSource(source){if(typeof source!=='string'||!source.trim())return null;const agents=new Map(),edges=[];for(const raw of source.split(/\r?\n/)){const line=raw.trim();if(!line||line.startsWith('%%')||line.startsWith('flowchart '))continue;let match=line.match(/^([A-Za-z_][A-Za-z0-9_.-]*)(?:\[agent:([A-Za-z_][A-Za-z0-9_.-]*)\])?\s*-->\s*([A-Za-z_][A-Za-z0-9_.-]*)(?:\[agent:([A-Za-z_][A-Za-z0-9_.-]*)\])?$/);if(match){agents.set(match[1],match[2]||agents.get(match[1])||match[1]);agents.set(match[3],match[4]||agents.get(match[3])||match[3]);edges.push([match[1],match[3]]);continue;}match=line.match(/^([A-Za-z_][A-Za-z0-9_.-]*)\[agent:([A-Za-z_][A-Za-z0-9_.-]*)\]$/);if(match){agents.set(match[1],match[2]);continue;}return null;}const incoming=new Map([...agents.keys()].map(id=>[id,0]));for(const [,to] of edges)incoming.set(to,(incoming.get(to)||0)+1);const remaining=new Map(incoming),waves=[];let ready=[...remaining].filter(([,degree])=>degree===0).map(([id])=>id).sort();while(ready.length){waves.push(ready);const next=[];for(const id of ready)for(const [from,to] of edges)if(from===id){const degree=(remaining.get(to)||0)-1;remaining.set(to,degree);if(degree===0)next.push(to);}ready=[...new Set(next)].sort();}return {agents,waves};}
 function agentGraphField(task){if(typeof task.agentGraph!=='string'||!task.agentGraph.trim())return null;const box=element('div','detail-group');box.style.gridColumn='1 / -1';box.append(element('p','detail-label',text('Task agent graph')));const graph=element('div','agent-graph');const parsed=parseAgentGraphSource(task.agentGraph);if(parsed&&parsed.waves.length){parsed.waves.forEach((wave,index)=>{const row=element('div','agent-wave');if(index>0)row.append(element('span','agent-arrow',text('↓')));for(const id of wave)row.append(element('span','agent-node',text(id+' · '+(parsed.agents.get(id)||id))));graph.append(row);});}const source=document.createElement('pre');source.className='agent-graph-source';source.textContent=task.agentGraph;graph.append(source);box.append(graph);return box;}
 function clearEvents(){displayedEventIds.clear();eventFeed.replaceChildren(element('li','empty',text('Waiting for events.')));}
@@ -149,7 +168,6 @@ function syncFilters(){
 function repoName(repository){if(typeof repository!=='string'||!repository)return 'unknown-repo';const parts=repository.split('/').filter(Boolean);return parts.at(-1)||repository;}
 const buildJelDiagram=window.__RELAY_DASHBOARD_CONFIG.buildJelDiagram;
 const jelChart=document.querySelector('#jel-chart');
-const jelReportActions=document.querySelector('#jel-report-actions');
 const reportDialog=document.querySelector('#execution-report-dialog');
 const reportFrame=document.querySelector('#execution-report-frame');
 const reportStatus=document.querySelector('#execution-report-status');
@@ -186,15 +204,6 @@ async function openExecutionReport(job,task){
     if(sequence===reportSequence&&reportDialog.open)reportStatus.textContent=String(error.message||error);
   }
 }
-function executionReportControls(job,task){
-  const group=element('span','graph-navigation');
-  const button=element('button','refresh-button',text('Report'));
-  button.type='button';
-  button.addEventListener('click',()=>void openExecutionReport(job,task));
-  group.append(button);
-  return group;
-}
-
 function inspectJelTask(id){
   if(!selected()?.tasks?.some(task=>task.id===id))return;
   selectedTaskId=id;eventTaskId=id;rememberSelection();clearEvents();
@@ -206,9 +215,6 @@ async function openJelChart(job){
   const renderId=++jelRenderSequence;
   jelChart.replaceChildren(element('p','subtle',text('Rendering job lifecycle…')));
   showGraphViewer(jelChart,'JEL · '+value(job.repository)+'/'+value(job.id));
-  jelReportActions.replaceChildren(executionReportControls(job,null));
-  jelReportActions.hidden=false;
-
   const source=buildJelDiagram(job);
   try{
     if(!window.mermaid)throw new Error('Mermaid unavailable');
@@ -252,7 +258,7 @@ function applyJelHighlights(svg){
     for(const label of node.querySelectorAll('text,tspan'))label.setAttribute('fill',color);
   }
 }
-function jelField(job){const box=element('div','detail-group');box.append(element('p','detail-label',text('Job Execution Lifecycle')));const line=element('p','detail-value');const link=element('a','',text('View JEL chart'));link.href='#graph-dialog';link.addEventListener('click',event=>{event.preventDefault();void openJelChart(job);});line.append(link);box.append(line);return box;}
+function jelField(job){const box=element('div','detail-group');box.append(element('p','detail-label',text('Job Execution Lifecycle')));const line=element('p','detail-value jel-actions');const link=element('a','',text('View JEL chart'));link.href='#graph-dialog';link.addEventListener('click',event=>{event.preventDefault();void openJelChart(job);});const report=element('button','refresh-button',text('Report'));report.type='button';report.setAttribute('aria-label','Job report');report.title='Job report';report.addEventListener('click',()=>void openExecutionReport(job,null));line.append(link,report);box.append(line);return box;}
 function renderJobList(){jobList.replaceChildren();const visible=filteredJobs();if(!jobs.length){jobList.append(element('li','empty',text('No durable jobs discovered.')));return;}if(!visible.length){jobList.append(element('li','empty',text('No jobs match the selected filters.')));return;}for(const job of visible){const row=element('div','job-row'+(isCompleteUnmerged(job)?' complete-unmerged':''));row.setAttribute('aria-current',String(jobSelectionKey(job)===selectedJob));row.addEventListener('click',()=>selectJob(job));const content=element('div','job-content');const select=document.createElement('button');select.type='button';select.className='job-button';select.setAttribute('aria-current',String(jobSelectionKey(job)===selectedJob));select.title=job.title||job.id;select.addEventListener('click',event=>{event.stopPropagation();selectJob(job);});select.append(element('span','job-title',text(repoName(job.repository)+'/'+value(job.id)+': '+value(job.title||job.id))));const states=element('span','job-status-line');states.append(element('span','badge '+value(job.state),text(value(job.state))));const runtimeStatus=job.runtimeStatus||'IDLE';if(runtimeStatus!==job.state)states.append(element('span','badge '+value(runtimeStatus),text(value(runtimeStatus))));if(job.publicationFailure)states.append(element('span','badge FAILED',text('PUBLISH FAILED: '+value(job.publicationFailure.stage))));else if(job.publication?.version)states.append(element('span','badge SUCCEEDED',text('v'+job.publication.version)));if(job.state==='ACTIVE'&&job.reviewEnabled!==false)states.append(element('span','badge flag-review',text('REVIEW REQUIRED')));if(job.localMerge?.status==='failed')states.append(element('span','badge FAILED',text('MERGE FAILED: '+value(job.localMerge.error||'Unknown error'))));else if(isCompleteUnmerged(job))states.append(element('span','badge MERGE_PENDING',text('MERGE PENDING')));const primary=element('div','job-primary');primary.append(states);const lastLine=element('div','job-last-line');lastLine.append(element('span','subtle',text(compactCounts(counts(job.tasks)))),element('span','subtle',text(relativeTime(job.updatedAt))));content.append(select,primary,lastLine);row.append(content);jobList.append(element('li','',row));}}
 function taskTagDisplay(job,task){const display=task.tag&&job?.tag?.values?.[task.tag];return typeof display==='string'&&display?display:null;}
 function taskVerdict(job,task){if(task.state!=="SUCCEEDED")return null;const data=task.result?.data||{};if(["reviewer","job-acceptance-reviewer"].includes(task.agentName)){const verdict=data.verdict||((job?.review?.taskId===task.id)?job.review.outcome:null);return ({approved:"APPROVED",pass:"APPROVED","changes-required":"CHANGES REQUIRED",changes_required:"CHANGES REQUIRED"})[verdict]||null;}if(task.agentName==="troubleshooter"){const original=job?.tasks?.find(t=>t.id===task.parentTaskId);const resolution=original?.resolution;if(resolution?.state!=="resolved"||resolution.owner!=="troubleshooter")return null;return ({exact_original_retry:"RETRY VERIFIED",same_job_dependency:"DEPENDENCY REGISTERED",blocker_job_dependency:"BLOCKER REGISTERED",cancel_supersede:"SUPERSEDED"})[resolution.path]||null;}return null;}function taskSubtreeComplete(task,children){return ['SUCCEEDED','CANCELLED'].includes(task.state)&&(children.get(task.id)||[]).every(child=>taskSubtreeComplete(child,children));}
@@ -288,8 +294,7 @@ function jobStateField(job){const box=element('div','detail-group');box.append(e
 const TASK_STATES=['DRAFT','QUEUED','RUNNING','AWAITING_DECISION','BLOCKED','SUCCEEDED','FAILED','CANCELLED'];
 async function setTaskState(task,state,select){const job=selected();if(!job||state===task.state)return;select.disabled=true;try{const params=new URLSearchParams({id:job.id,task:task.id,state,repo:job.repository});const response=await dashboardWrite(RELAY_PREFIX+'/api/task-state?'+params.toString(),{method:'POST'});if(!response.ok)throw new Error(response.status+' '+response.statusText);const updated=await response.json();const index=jobs.findIndex(candidate=>jobSelectionKey(candidate)===jobSelectionKey(job));if(index>=0)jobs[index]=updated;else jobs.push(updated);renderAll();void loadEventHistory();}catch(error){select.title='Set task state: '+error.message;select.value=task.state;}finally{select.disabled=false;}}
 function taskStateField(task){const box=element('div','detail-group');box.append(element('p','detail-label',text('State')));const select=document.createElement('select');select.className='job-filter task-state-select';select.setAttribute('aria-label','Task state');for(const state of TASK_STATES)select.append(new Option(state,state));select.value=task.state;select.addEventListener('change',()=>void setTaskState(task,select.value,select));box.append(select);return box;}
-function manualOverrideField(task){const rows=Array.isArray(task.manualStateOverrides)?task.manualStateOverrides:[];const last=rows.at(-1);return field('Manual override',last?last.from+' → '+last.to+' · '+relativeTime(last.at):'—');}
-function iconSvg(name){const paths={close:'M5 5l14 14M19 5 5 19',detail:'M7 3h7l4 4v14H7zM14 3v5h4M10 12h5m-5 4h5'};const ns='http://www.w3.org/2000/svg';const svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('aria-hidden','true');const path=document.createElementNS(ns,'path');path.setAttribute('d',paths[name]);svg.append(path);return svg;}
+function iconSvg(name){const paths={close:'M5 5l14 14M19 5 5 19',detail:'M7 3h7l4 4v14H7zM14 3v5h4M10 12h5m-5 4h5',report:'M7 3h7l4 4v14H7zM14 3v5h4M10 17v-3m3 3v-5m3 5v-2'};const ns='http://www.w3.org/2000/svg';const svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('aria-hidden','true');const path=document.createElementNS(ns,'path');path.setAttribute('d',paths[name]);svg.append(path);return svg;}
 // Content-only dialogs: durable Job/Task intent, original inputs and actual review feedback.
 // No lifecycle state, transport details, or raw runtime diagnostics belong here.
 const detailMarkdownRenderer=typeof window.markdownit==='function'?window.markdownit({html:false,linkify:false,breaks:true}):null;
@@ -421,7 +426,7 @@ function readerCommentsSection(comments){
   section.append(body);
   return section;
 }
-function showDetailsDialog(kind,id,title,objective,inputs,comments){
+function showDetailsDialog(kind,id,title,objective,inputs,comments,conclusion=''){
   const dialog=element('dialog','details-dialog');
   const headingId='details-dialog-heading';
   dialog.setAttribute('aria-labelledby',headingId);
@@ -440,6 +445,7 @@ function showDetailsDialog(kind,id,title,objective,inputs,comments){
   objectiveSection.append(element('div','dialog-content-body',detailMarkdown(objective||title)));
   body.append(objectiveSection);
   for(const item of inputs)body.append(readerInputSection(item));
+  if(conclusion){const section=element('section','dialog-content-section dialog-conclusion');section.append(element('h3','',text('Conclusion')),element('div','dialog-content-body',detailMarkdown(conclusion)));body.append(section);}
   body.append(readerCommentsSection(comments));
   dialog.append(head,body);
   dialog.addEventListener('close',()=>dialog.remove());
@@ -490,19 +496,30 @@ function taskReaderInputs(task,envelope=taskReaderEnvelope(task)){
   if(!inputs.length)inputs.push({content:'```json\n'+JSON.stringify(envelope,null,2)+'\n```'});
   return inputs;
 }
+function taskConclusion(task){
+  const result=task?.result?.data??task?.result;
+  for(const candidate of [result?.conclusion,result?.summary,task?.result?.summary,result?.verdict,result?.outcome?.verdict])
+    if(typeof candidate==='string'&&candidate.length)return candidate;
+  return '';
+}
 function openTaskDetails(task){
   const job=selected();
-  const envelope=taskReaderEnvelope(task);
-  const objective=taskReaderObjective(task,envelope);
-  const candidates=taskReaderInputs(task,envelope);
-  for(const attachment of task.attachments||[])candidates.push({source:'Attachment',content:attachment});
-  const inputs=uniqueInputs(candidates,objective);
-  showDetailsDialog('Task',task.id,task.title,objective,inputs,readerReviewComments(job,task));
+  const objective=taskReaderObjective(task);
+  const inputs=[{source:'Task input',content:typeof task.input==='string'?task.input:''},...(task.attachments||[]).map(content=>({source:'Attachment',content}))];
+  const dialogInputs=inputs.filter(item=>item.content);
+  const conclusion=taskConclusion(task);
+  showDetailsDialog('Task',task.id,task.title,objective,dialogInputs,readerReviewComments(job,task),conclusion);
 }
-selectedJobTitle.addEventListener('click',openJobDetails);
-jobReportButton.addEventListener('click',()=>void openExecutionReport(selected(),null));
-function renderTaskDetail(task){taskDetailRoot.replaceChildren();if(!task){taskDetailRoot.append(element('p','empty',text('Select a task to inspect execution details.')));return;}const jobForReport=selected();if(jobForReport)taskDetailRoot.append(executionReportControls(jobForReport,task));const routing=task.routing||{};const groups=element('div','detail-groups');groups.append(field('Title',task.title||'—'),field('Task ID',task.id),field('Kind',task.kind||'work'),taskStateField(task),...(task.state==='FAILED'&&task.resolution?.state?[field('Resolution state',task.resolution.state),field('Resolution path',task.resolution.path||'—'),field('Resolution target',task.resolution.targetTaskId||'—')]:[]),manualOverrideField(task),field('Planning decision',task.planningDecisionId||'—'),field('Planning source',task.planningSource||'—'),field('Planning round',task.planningRound===undefined?'—':String(task.planningRound)),field('Project / agent',value(task.projectName)+' / '+value(task.agentName)),field('Parent task',task.parentTaskId||'root'),...(task.resolutionClassification?[field('Resolution classification',task.resolutionClassification.kind),field('Resolution target',task.resolutionClassification.targetTaskId),field('Resolution evidence',task.resolutionClassification.evidence),field('Resolution reason',task.resolutionClassification.reason)]:[]),field('Adapter',task.adapter),field('Provider / model',value(routing.provider)+' / '+value(routing.model)),field('Reasoning / profile',value(routing.reasoning||routing.profile)),field('Attempt',attemptBudget(task)),field('Dependencies',Array.isArray(task.dependencies)&&task.dependencies.length?task.dependencies.join(', '):'none'),taskCommentField(task),chatField(task));const job=selected();if(task.reviewHeadSha&&job)groups.append(commitField('HEAD commit',job,task.reviewHeadSha));const graph=agentGraphField(task);if(graph)groups.append(graph);if(task.plannerResult)groups.append(field('Objective status',task.plannerResult.objective_status),markdownField('Assessment',task.plannerResult.assessment));if(task.error)groups.append(field('Error',task.error));const result=task.result?.data??task.result;if(result){groups.append(field('Conclusion',result.verdict||result.outcome?.verdict||task.result?.summary||'Available'));}taskDetailRoot.append(groups);const details=element('button','icon-button');details.append(iconSvg('detail'));details.type='button';details.setAttribute('aria-label','Task details and conclusion');details.title='Task details and conclusion';details.addEventListener('click',()=>openTaskDetails(task));taskDetailRoot.append(details);}
-function reviewStatus(job){const review=job?.review;if(!review)return 'Not started';if(review.outcome==='approved'&&review.headSha===job.headSha)return 'MERGE READY · approved';const stale=Array.isArray(job?.tasks)&&job.tasks.some(task=>['reviewer','job-acceptance-reviewer'].includes(task.agentName)&&task.reviewHeadSha&&job.headSha&&task.reviewHeadSha!==job.headSha);if(stale)return 'STALE · awaiting review';return String(review.outcome||'pending').replace('_',' ').toUpperCase();}function renderSelectedJob(){jobDetail.replaceChildren();const job=selected();if(!job){selectedJobTitle.textContent='';selectedJobTitle.removeAttribute('title');selectedJobTitle.disabled=true;jobReportButton.disabled=true;jobDetail.append(element('div','empty',text('No durable jobs discovered.')));buildTree([]);renderTaskDetail(null);return;}selectedJobTitle.textContent=value(job.title||job.id);selectedJobTitle.title=selectedJobTitle.textContent;selectedJobTitle.disabled=false;jobReportButton.disabled=false;if(jobSelectionKey(job)!==selectedJob){selectedJob=jobSelectionKey(job);selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}const summary=element('div','job-summary');summary.append(jobStateField(job),field('Runtime status',job.runtimeStatus||'IDLE'),field('Review',job.reviewEnabled===false?'Not required':reviewStatus(job)),commitField('Review head SHA',job,job.review?.headSha||job.headSha||''),field('Repository',job.repository||'—'),field('Project root',job.projectRoot||'—'),field('Last activity',relativeTime(job.updatedAt)),field('Task states',compactCounts(job.tasks)),jelField(job));jobDetail.append(summary);const selectedTask=(job.tasks||[]).find(task=>task.id===selectedTaskId)||null;if(selectedTaskId&&!selectedTask){selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}buildTree(job.tasks||[]);renderTaskDetail(selectedTask);renderEventScope();}function renderAll(){jobs.sort(compareJobs);syncFilters();renderJobList();renderSelectedJob();syncMobileJobsView();}
+jobObjectiveButton.addEventListener('click',openJobDetails);
+function reportIconButton(label,handler){const button=element('button','icon-button');button.type='button';button.append(iconSvg(label==='Task report'?'report':'detail'));button.setAttribute('aria-label',label);button.title=label;button.addEventListener('click',handler);return button;}
+function renderTaskDetail(task){
+  taskDetailRoot.replaceChildren();if(!task){taskDetailRoot.append(element('p','empty',text('Select a task to inspect execution details.')));return;}
+  const head=element('div','task-detail-head');const title=element('h4','task-detail-title',text(task.title||'Task '+task.id));title.title=title.textContent;title.setAttribute('aria-label',title.textContent);
+  const actions=element('div','task-detail-actions');const job=selected();if(job)actions.append(reportIconButton('Task report',()=>void openExecutionReport(job,task)));actions.append(reportIconButton('Task input and conclusion',()=>openTaskDetails(task)));head.append(title,actions);taskDetailRoot.append(head);
+  const routing=task.routing||{};const groups=element('div','detail-groups');groups.append(field('Kind',task.kind||'work'),taskStateField(task),...(task.state==='FAILED'&&task.resolution?.state?[field('Resolution state',task.resolution.state),field('Resolution path',task.resolution.path||'—'),field('Resolution target',task.resolution.targetTaskId||'—')]:[]),field('Project / agent',value(task.projectName)+' / '+value(task.agentName)),field('Parent task',task.parentTaskId||'root'),...(task.resolutionClassification?[field('Resolution classification',task.resolutionClassification.kind),field('Resolution target',task.resolutionClassification.targetTaskId),field('Resolution evidence',task.resolutionClassification.evidence),field('Resolution reason',task.resolutionClassification.reason)]:[]),field('Adapter',task.adapter),field('Provider / model',value(routing.provider)+' / '+value(routing.model)),field('Reasoning / profile',value(routing.reasoning||routing.profile)),field('Attempt',attemptBudget(task)),field('Dependencies',Array.isArray(task.dependencies)&&task.dependencies.length?task.dependencies.join(', '):'none'),chatField(task));
+  if(task.reviewHeadSha&&job)groups.append(commitField('HEAD commit',job,task.reviewHeadSha));const graph=agentGraphField(task);if(graph)groups.append(graph);if(task.plannerResult)groups.append(field('Objective status',task.plannerResult.objective_status),markdownField('Assessment',task.plannerResult.assessment));if(task.error)groups.append(field('Error',task.error));taskDetailRoot.append(groups);
+}
+function reviewStatus(job){const review=job?.review;if(!review)return 'Not started';if(review.outcome==='approved'&&review.headSha===job.headSha)return 'MERGE READY · approved';const stale=Array.isArray(job?.tasks)&&job.tasks.some(task=>['reviewer','job-acceptance-reviewer'].includes(task.agentName)&&task.reviewHeadSha&&job.headSha&&task.reviewHeadSha!==job.headSha);if(stale)return 'STALE · awaiting review';return String(review.outcome||'pending').replace('_',' ').toUpperCase();}function renderSelectedJob(){jobDetail.replaceChildren();const job=selected();if(!job){selectedJobTitle.textContent='';selectedJobTitle.removeAttribute('title');selectedJobTitle.removeAttribute('aria-label');jobObjectiveButton.disabled=true;jobDetail.append(element('div','empty',text('No durable jobs discovered.')));buildTree([]);renderTaskDetail(null);return;}selectedJobTitle.textContent=value(job.title||job.id);selectedJobTitle.title=selectedJobTitle.textContent;selectedJobTitle.setAttribute('aria-label',selectedJobTitle.textContent);jobObjectiveButton.disabled=false;if(jobSelectionKey(job)!==selectedJob){selectedJob=jobSelectionKey(job);selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}const summary=element('div','job-summary');summary.append(jobStateField(job),field('Runtime status',job.runtimeStatus||'IDLE'),field('Review',job.reviewEnabled===false?'Not required':reviewStatus(job)),field('Repository',job.repository||'—'),jelField(job));jobDetail.append(summary);const selectedTask=(job.tasks||[]).find(task=>task.id===selectedTaskId)||null;if(selectedTaskId&&!selectedTask){selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}buildTree(job.tasks||[]);renderTaskDetail(selectedTask);renderEventScope();}function renderAll(){jobs.sort(compareJobs);syncFilters();renderJobList();renderSelectedJob();syncMobileJobsView();}
 function isCompleteUnmerged(job){return job.runtimeStatus==='MERGE_PENDING';}
 function compareJobs(a,b){const lifecycleGroup=job=>job.state==='COMPLETED'||job.state==='CANCELLED'?1:0;const timestamp=job=>{const updated=Date.parse(job.updatedAt||'');if(Number.isFinite(updated))return updated;const created=Date.parse(job.createdAt||'');return Number.isFinite(created)?created:0;};return lifecycleGroup(a)-lifecycleGroup(b)||timestamp(b)-timestamp(a)||String(a.repository||'').localeCompare(String(b.repository||''))||String(a.id||'').localeCompare(String(b.id||''));}
 async function loadJSON(url){
@@ -736,7 +753,6 @@ function showGraphViewer(content,title){
 function closeGraphViewer(){
   const content=graphViewerContent;
   if(!content)return;
-  if(content===jelChart){jelRenderSequence++;jelReportActions.hidden=true;jelReportActions.replaceChildren();}
   const svg=graphViewerSvg();
   if(svg){svg.style.width='';svg.style.height='';svg.style.maxWidth='';}
   const next=graphViewerNext?.parentNode===graphViewerHome?graphViewerNext:null;

@@ -22,9 +22,7 @@
     .panel-head { display:flex; align-items:center; justify-content:space-between; gap:.6rem; padding:.65rem .75rem; border-bottom:1px solid var(--border); }
     .panel-head h2,.panel-head h3 { margin:0; color:var(--muted); font-size:.75rem; letter-spacing:.07em; text-transform:uppercase; min-width:0; }
     #workspace-heading { flex:1 1 0; min-width:0; }
-    #selected-job-title { display:block; width:100%; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; border:0; padding:0; background:transparent; color:inherit; font:inherit; letter-spacing:inherit; text-transform:inherit; text-align:left; cursor:pointer; }
-    #selected-job-title:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-    #selected-job-title:disabled { cursor:default; }
+    #selected-job-title { display:block; width:100%; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     #jobs-workspace > .panel:first-child > .panel-head .panel-actions { flex:none; flex-wrap:nowrap; }
     .panel-actions { display:flex; align-items:center; gap:.55rem; flex-wrap:wrap; min-width:0; }
     #jobs-view .panel-head { display:flex; align-items:center; justify-content:space-between; gap:.65rem; }
@@ -107,6 +105,10 @@
     .dialog-metadata summary { color:var(--muted); font-size:.78rem; font-weight:700; cursor:pointer; }
     .dialog-metadata[open] { display:grid; gap:.7rem; }
     .dialog-metadata[open] summary { margin-bottom:.2rem; }
+    .jel-actions { display:flex; align-items:center; justify-content:space-between; gap:.5rem; }
+    .task-detail-head { display:flex; align-items:center; gap:.35rem; min-width:0; margin:0 0 .55rem; }
+    .task-detail-title { flex:1 1 auto; min-width:0; margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.9rem; }
+    .task-detail-actions { display:flex; align-items:center; flex:0 0 auto; gap:.05rem; }
     .job-summary,.detail-groups { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.55rem; }
     .detail-group { min-width:0; padding:.5rem; background:var(--surface2); border:1px solid var(--border); border-radius:.4rem; }
     .detail-label { margin:0; color:var(--muted); font-size:.66rem; text-transform:uppercase; letter-spacing:.04em; }

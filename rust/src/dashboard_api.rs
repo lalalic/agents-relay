@@ -11,6 +11,7 @@ use crate::{
     dashboard_data::{
         dashboard_workflow_graphs, list_dashboard_job_inventory, search_dashboard_jobs,
     },
+    dashboard_neo_threads::{project_jobs, project_thread_links, sessions_directory},
     dashboard_workflow_inspection::inspect_workflow_symbol,
     github_webhook::{parse_github_webhook, verify_github_webhook, DeliveryDeduper},
     routing_policy::{load_execution_router_rules, save_execution_router_rules},
@@ -410,13 +411,15 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                     let force = query(&parsed, "refresh").as_deref() == Some("1");
                     let full=query(&parsed,"inventory").as_deref()==Some("1");
                     if !full{
-                        if let Some(Ok(result))=services.search_jobs(parsed.query().unwrap_or("")){
+                        if let Some(Ok(mut result))=services.search_jobs(parsed.query().unwrap_or("")){
+                            project_thread_links(&mut result, sessions_directory().as_deref());
                             return Ok(json_response(200,&result));
                         }
                         // Legacy JSON encoding or read errors retain the
                         // original parser and non-forced inventory fallback.
                     }
-                    let jobs = self.discovered(services, force)?;
+                    let mut jobs = self.discovered(services, force)?;
+                    project_jobs(&mut jobs, sessions_directory().as_deref());
                     let body = if full {
                         list_dashboard_job_inventory(
                             &jobs,
@@ -450,7 +453,7 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                     }
                     let repo = target(&parsed);
                     let exact = services.exact_job(&id, repo.as_deref())?;
-                    let chosen = exact
+                    let mut chosen = exact
                         .or_else(|| {
                             jobs.into_iter().find(|job| {
                                 field(job, "id") == id
@@ -461,6 +464,7 @@ impl<S: DashboardApiServices> NativeDashboardApi<S> {
                             })
                         })
                         .ok_or("Managed job not found")?;
+                    project_thread_links(&mut chosen, sessions_directory().as_deref());
                     json_response(200, &chosen)
                 }
                 "/api/events" => {
