@@ -18,7 +18,7 @@ try {
   await page.route('https://cdn.jsdelivr.net/**',r=>r.abort());
   await page.goto(base,{waitUntil:'domcontentloaded'});
   await page.locator('.job-row').filter({hasText:new RegExp('/'+job+':')}).click();
-  await page.getByText('View JEL chart',{exact:true}).click();
+  await page.getByRole('button',{name:'Job execution lifecycle',exact:true}).click();
   const report=page.locator('#execution-report-dialog');
   const frame=report.frameLocator('iframe');
   const generate=async(scope,name='Report')=>{
