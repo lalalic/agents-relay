@@ -68,6 +68,7 @@ export async function live(args){
   const link=path.join(args.root,'live');
   const old=fs.realpathSync(link);
   const previous=fs.readFileSync(path.join(old,'SOURCE_REVISION'),'utf8').trim();
+  if(args['expected-live-sha']!==undefined&&previous!==args['expected-live-sha']&&previous!==sha)throw Error('Live revision changed; recompute activation target');
   const prior=packageIdentity(args.root,previous);
   if(old!==prior.packageDir)throw Error('Installed package identity mismatch');
   if(old!==packageDir){
@@ -82,11 +83,12 @@ export async function main(argv=process.argv.slice(2)){
   const {values:args}=parseArgs({args:argv,options:{
     root:{type:'string',default:path.join(os.homedir(),'.local/share/agents-relay')},
     api:{type:'string',default:'http://127.0.0.1:8787'},
-    sha:{type:'string'},'allow-paused-job':{type:'string',multiple:true,default:[]},help:{type:'boolean'}
+    sha:{type:'string'},'expected-live-sha':{type:'string'},'allow-paused-job':{type:'string',multiple:true,default:[]},help:{type:'boolean'}
   }});
-  if(args.help){console.log('live-native.mjs [--sha SHA (default: HEAD)] [--root DIR] [--api LOOPBACK] [--allow-paused-job ID]');return;}
+  if(args.help){console.log('live-native.mjs [--sha SHA (default: HEAD)] [--expected-live-sha SHA] [--root DIR] [--api LOOPBACK] [--allow-paused-job ID]');return;}
   if(args['allow-paused-job'].some(id=>!/^[1-9][0-9]*$/.test(id)))throw Error('Job IDs must be positive decimal strings');
   args.root=fs.realpathSync(args.root);args.api=loopback(args.api);args.sha??=git('rev-parse','HEAD');
+  if(args['expected-live-sha']!==undefined&&!shaPattern.test(args['expected-live-sha']))throw Error('Invalid expected live SHA');
   if(!shaPattern.test(args.sha))throw Error('Invalid package SHA');
   await withReleaseLock(args.root,()=>live(args));
 }

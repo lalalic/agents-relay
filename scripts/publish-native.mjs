@@ -10,7 +10,9 @@ import {requestJSON,releaseEvent,releaseHistoryPath,publishVerified} from './rep
 import {ROOT,PACKAGE,run,git,loopback,shaPattern,service,cleanMain,packageIdentity,receiptPath,withReleaseLock} from './native-release-common.mjs';
 
 export async function publish(args){
-  const sha=git('rev-parse','HEAD');cleanMain(sha);
+  const sha=git('rev-parse','HEAD');
+  if(args.sha!==undefined&&args.sha!==sha)throw Error('Expected publication SHA no longer matches main');
+  cleanMain(sha);
   const version=fs.readFileSync(path.join(ROOT,'rust/Cargo.toml'),'utf8').match(/^version = "([^"]+)"/m)?.[1];
   const event=releaseEvent({packageName:PACKAGE,version,sha,jobId:args['job-id']});
   run(process.execPath,['--test','scripts/report-publication.test.mjs','scripts/test-release-native.mjs'],{timeout:60000});cleanMain(sha);
@@ -72,10 +74,11 @@ export async function main(argv=process.argv.slice(2)){
   const {values:args}=parseArgs({args:argv,options:{
     root:{type:'string',default:path.join(os.homedir(),'.local/share/agents-relay')},
     'events-api':{type:'string',default:'http://127.0.0.1:4223'},
-    'job-id':{type:'string'},help:{type:'boolean'}
+    'job-id':{type:'string'},sha:{type:'string'},help:{type:'boolean'}
   }});
-  if(args.help){console.log('publish-native.mjs [--root DIR] [--events-api LOOPBACK] [--job-id ID]');return;}
+  if(args.help){console.log('publish-native.mjs [--root DIR] [--events-api LOOPBACK] [--job-id ID] [--sha EXPECTED_MAIN_SHA]');return;}
   if(args['job-id']!==undefined&&!/^[1-9][0-9]*$/.test(args['job-id']))throw Error('Job ID must be a positive decimal string');
+  if(args.sha!==undefined&&!shaPattern.test(args.sha))throw Error('Invalid expected publication SHA');
   args.root=fs.realpathSync(args.root);args['events-api']=loopback(args['events-api']);
   return await withReleaseLock(args.root,()=>publish(args));
 }

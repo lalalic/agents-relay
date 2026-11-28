@@ -113,11 +113,15 @@ test('publish and live CLI are independently observable',async t=>{
   const publish=()=>cli('publish-native.mjs','--events-api',api);
   assert.notEqual((await activate()).code,0,'unpublished package cannot go live');
   assert.equal(posts,0);assert.equal(fs.realpathSync(path.join(root,'live')),old);
-  const result=await publish();assert.equal(result.code,0,result.output);
+  const wrong=await cli('publish-native.mjs','--sha','f'.repeat(40),'--events-api',api);
+  assert.notEqual(wrong.code,0);assert.match(wrong.output,/Expected publication SHA/);assert.equal(posts,0);
+  const result=await cli('publish-native.mjs','--sha',sha,'--events-api',api);assert.equal(result.code,0,result.output);
   assert.equal(posts,1);assert.equal(rows[0].event.data.sha,sha);
   assert.equal(fs.realpathSync(path.join(root,'live')),old,'publish must not switch live');
   assert(!fs.existsSync(journal),'publish must not restart');
   assert.equal((await publish()).code,0,'retry publication');assert.equal(posts,1);
+  const stale=await cli('live-native.mjs','--sha',sha,'--expected-live-sha','f'.repeat(40),'--api',api);
+  assert.notEqual(stale.code,0);assert.match(stale.output,/Live revision changed/);assert(!fs.existsSync(journal));
   const blocked=await activate();assert.notEqual(blocked.code,0);assert.match(blocked.output,/nonterminal Jobs/);
   assert.equal(posts,1);assert.equal(fs.realpathSync(path.join(root,'live')),old);
   const update=new DatabaseSync(dbPath);update.prepare('UPDATE job_snapshot SET json=?').run(JSON.stringify({id:'762',state:'COMPLETED'}));update.close();
