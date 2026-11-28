@@ -943,5 +943,10 @@ mod dashboard_projection_tests {
         assert_eq!(projected["publication"]["version"],"2.0.259");
         assert_eq!(projected["publicationFailure"]["stage"],"push");
         assert_eq!(projected["publicationObservedAt"],"2026-11-25T10:01:00Z");
+        let planning=json!({"id":"43","repository":"agents-relay","state":"ACTIVE",
+            "updatedAt":"2026-11-25T10:02:00Z","tasks":[],"plans":[{"status":"PLANNING"}]});
+        let snapshot=LocalRelayStoreSnapshot{path:PathBuf::from("fixture"),
+            jobs:vec![planning.clone()],facts:None,publications:serde_json::Map::new()};
+        assert_eq!(managed_view(&snapshot,&planning)["runtimeStatus"],"PLANNING");
     }
 }

@@ -10,9 +10,9 @@ const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const chrome=process.env.CHROME_BIN||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const jobs=[
   {id:'91',repository:'fixture',title:'Completed before SSE',state:'COMPLETED',runtimeStatus:'COMPLETED',updatedAt:'2026-11-25T10:00:00Z',tasks:[],plans:[],reviewEnabled:true,publication:null,publicationFailure:null,publicationObservedAt:null},
-  {id:'92',repository:'fixture',title:'Completes from SSE',state:'ACTIVE',runtimeStatus:'RUNNING',updatedAt:'2026-11-25T10:00:00Z',tasks:[],plans:[],reviewEnabled:true},
+  {id:'92',repository:'fixture',title:'Completes from SSE',state:'ACTIVE',runtimeStatus:'PLANNING',updatedAt:'2026-11-25T10:00:00Z',tasks:[],plans:[{status:'PLANNING'}],reviewEnabled:true},
 ];
-const eventual={id:'92',repository:'fixture',title:'Completes from SSE',state:'COMPLETED',updatedAt:'2026-11-25T10:01:00Z'};
+const eventual={id:'92',repository:'fixture',title:'Completes from SSE',state:'COMPLETED',runtimeStatus:'PLANNING',updatedAt:'2026-11-25T10:01:00Z'};
 const publication={package:'fixture',version:'2.0.260',sha:'a'.repeat(40),registry:'native'};
 const sourceByPath={
   '/': ['text/html; charset=utf-8',await readFile(path.join(root,'dashboard/index.html'))],
@@ -46,7 +46,7 @@ const server=createServer((req,res)=>{
   if(url.pathname==='/api/usage')return json({providers:[],credits:[]});
   if(url.pathname==='/events'){
     res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-store','connection':'keep-alive'});res.write(': connected\n\n');sseClients.push(res);
-    const timer=setTimeout(()=>res.write(`data: ${JSON.stringify({job:eventual})}\n\n`),700);
+    const timer=setTimeout(()=>res.write(`data: ${JSON.stringify({job:eventual})}\n\n`),1800);
     const publishTimer=setTimeout(()=>res.write(`event: relay\ndata: ${JSON.stringify({event:{type:'package.published',data:{jobId:'91',package:'fixture'}}})}\n\n`),1000);
     req.on('close',()=>{clearTimeout(timer);clearTimeout(publishTimer);sseClients=sseClients.filter(client=>client!==res);});return;
   }
@@ -79,6 +79,16 @@ try{
   await send('Page.navigate',{url:`http://127.0.0.1:${server.address().port}/`});
   console.log('Dashboard loaded; waiting for SSE projection');
   let state;
+  for(let n=0;n<30;n++){
+    await wait(100);
+    const result=await send('Runtime.evaluate',{expression:`(()=>({rows:[...document.querySelectorAll('.job-row')].map(row=>({title:row.querySelector('.job-title')?.textContent||'',badges:row.querySelector('.job-status-line')?.innerText||''}))}))()`,returnByValue:true});
+    state=result.result?.result?.value;
+    if(state?.rows.some(row=>row.title.includes('Completes from SSE')&&row.badges.includes('PLANNING')))break;
+  }
+  assert.ok(state?.rows.some(row=>row.title.includes('Completes from SSE')&&row.badges.includes('PLANNING')),'Dashboard list did not render PLANNING');
+  await send('Runtime.evaluate',{expression:`(()=>{const row=[...document.querySelectorAll('.job-row')].find(row=>row.innerText.includes('Completes from SSE'));row?.querySelector('.job-button')?.click()})()`});
+  const detail=await send('Runtime.evaluate',{expression:`document.querySelector('#job-detail')?.innerText||''`,returnByValue:true});
+  assert.match(detail.result?.result?.value||'',/RUNTIME STATUS\s*PLANNING/,'Dashboard detail did not render PLANNING');
   for(let n=0;n<80;n++){
     await wait(100);
     const result=await send('Runtime.evaluate',{expression:`(()=>({version:document.querySelector('.version')?.textContent||'',rows:[...document.querySelectorAll('.job-row')].map(row=>({title:row.querySelector('.job-title')?.textContent||'',badges:row.querySelector('.job-status-line')?.innerText||''})),feedback:document.querySelector('#jobs-feedback')?.textContent||'',listHtml:document.querySelector('#job-list')?.innerHTML||'',navigationCount:performance.getEntriesByType('navigation').length}))()`,returnByValue:true});
