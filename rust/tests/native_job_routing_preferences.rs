@@ -24,6 +24,12 @@ fn queued_task() -> Value {
 
 #[test]
 fn preferences_create_update_merge_clear_and_validate() {
+    for command in ["create", "update"] {
+        for retired in ["--creator-thread-id", "--implementation-thread-id", "--reviewer-thread-id"] {
+            let old=args(&["job",command,retired,"legacy"]);
+            assert!(validate_cli_options(&old).is_err(),"accepted {retired} for job {command}");
+        }
+    }
     let create=args(&["--repo","demo","--objective","Build artifact",
         "--preflight=true","--prefer-adapter","codex",
         "--prefer-provider","openai","--prefer-model","gpt-6",

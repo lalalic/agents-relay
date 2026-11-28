@@ -7,7 +7,6 @@ use crate::{
     job_task_id_sequence::{allocate_entity_id, is_generated_entity_id},
     local_git_merge::git,
     local_merge_lock::iso8601_now,
-    reviewer_thread::normalize_thread_id,
     workflow::entity_creation::{create_job_entity, create_task_entity},
 };
 use serde_json::{json, Value};
@@ -107,12 +106,6 @@ fn same_coordinator(existing: &Value, requested: &Value) -> bool {
                 && existing.pointer("/graphStartContext/projectRoot")
                     == requested.get("projectRoot")
         })
-}
-fn normalize_thread(value: Option<&Value>, label: &str) -> Result<Option<String>, String> {
-    match value {
-        None => Ok(None),
-        Some(value) => normalize_thread_id(value, label),
-    }
 }
 /// `known_jobs` must be obtained from the unified SQLite read-only inventory,
 /// not from any remote registry. `load_job` and `persist` are authoritative
@@ -241,15 +234,6 @@ where
     }
     if let Some(prefs) = options.get("routingPreferences") {
         job["routingPreferences"] = prefs.clone();
-    }
-    for (field, label) in [
-        ("reviewerThreadId", "reviewer thread ID"),
-        ("creatorThreadId", "creator thread ID"),
-        ("implementationThreadId", "implementation thread ID"),
-    ] {
-        if let Some(id) = normalize_thread(options.get(field), label)? {
-            job[field] = json!(id);
-        }
     }
     if let Some(coordinator) = options.get("coordinator").filter(|v| !v.is_null()) {
         let mut graph = json!({

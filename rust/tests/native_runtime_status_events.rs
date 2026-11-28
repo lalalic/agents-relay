@@ -39,3 +39,25 @@ fn same_id_in_other_repository_is_independent_and_callback_error_does_not_persis
     assert_eq!(*count.borrow(), 1);
     assert!(base.get("runtimeStatus").is_none());
 }
+
+#[test]
+fn planning_transition_is_published_once_and_task_running_supersedes_it() {
+    let events = Rc::new(RefCell::new(Vec::<Value>::new()));
+    let captured = Rc::clone(&events);
+    let mut publisher = create_runtime_status_publisher(move |event| {
+        captured.borrow_mut().push(event);
+        Ok(())
+    });
+    let idle = json!({"repository":"repo","id":"planning","state":"ACTIVE","tasks":[],"plans":[]});
+    let planning = json!({"repository":"repo","id":"planning","state":"ACTIVE","tasks":[],"plans":[{"status":"PLANNING"}]});
+    let running = json!({"repository":"repo","id":"planning","state":"ACTIVE","tasks":[{"id":"worker","kind":"work","agentName":"worker","state":"RUNNING"}],"plans":[{"status":"PLANNING"}]});
+    publisher.publish(&idle);
+    publisher.publish(&planning);
+    publisher.publish(&planning);
+    publisher.publish(&running);
+    assert_eq!(events.borrow().len(), 2);
+    assert_eq!(events.borrow()[0]["data"]["from"], "IDLE");
+    assert_eq!(events.borrow()[0]["data"]["to"], "PLANNING");
+    assert_eq!(events.borrow()[1]["data"]["from"], "PLANNING");
+    assert_eq!(events.borrow()[1]["data"]["to"], "RUNNING");
+}

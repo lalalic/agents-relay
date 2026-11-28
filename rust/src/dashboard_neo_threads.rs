@@ -93,8 +93,12 @@ fn read_mappings(directory: &Path, wanted: &HashSet<String>) -> Option<HashMap<S
         if size > MAX_SESSION_FILE_BYTES || total_bytes > MAX_SESSION_BYTES {
             return None;
         }
-        let bytes = fs::read(entry.path()).ok()?;
-        let session: Value = serde_json::from_slice(&bytes).ok()?;
+        let Ok(bytes) = fs::read(entry.path()) else {
+            continue;
+        };
+        let Ok(session) = serde_json::from_slice::<Value>(&bytes) else {
+            continue;
+        };
         let Some(codex_id) = session.get("codexThreadId").and_then(Value::as_str) else {
             continue;
         };
@@ -275,6 +279,22 @@ mod tests {
         assert_eq!(
             value["tasks"][0]["threadHistory"][0]["chatgptThreadUrl"],
             "https://chatgpt.com/c/chatgptThread_abcdefgh"
+        );
+    }
+
+    #[test]
+    fn unrelated_malformed_session_does_not_hide_a_valid_exact_match() {
+        let f = Fixture::new();
+        f.add("sess_broken.json", "not json");
+        f.add(
+            "sess_valid.json",
+            &session(CODEX, CHATGPT, &format!("https://chatgpt.com/c/{CHATGPT}")),
+        );
+        let mut value = json!({"tasks":[task()]});
+        project_thread_links(&mut value, Some(&f.0));
+        assert_eq!(
+            value["tasks"][0]["chatgptThreadUrl"],
+            format!("https://chatgpt.com/c/{CHATGPT}")
         );
     }
 

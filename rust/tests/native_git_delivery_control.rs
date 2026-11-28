@@ -18,7 +18,11 @@ struct Fixture{
 }
 impl Fixture{
     fn new()->Self{
-        let base=std::env::temp_dir().join(format!("rust2-control-git-{}",format!("{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos())));
+        static NEXT: std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+        let base=std::env::temp_dir().join(format!("rust2-control-git-{}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+            NEXT.fetch_add(1,std::sync::atomic::Ordering::Relaxed)));
         let root=base.join("root");let work=base.join("worker");
         fs::create_dir_all(&root).unwrap();
         run(&root,&["init","-b","main"]);
@@ -123,6 +127,31 @@ impl WorkspaceControlBackend for Backend{
     fn fail_interactive(&mut self,_:&str,_:&str,_:&str,_:&str)->Result<Value,String>{unimplemented!()}
 }
 #[test]
+fn control_rejects_retired_job_bindings_before_mutation_or_wake(){
+    let f=Fixture::new();
+    for key in ["creatorThreadId","implementationThreadId","reviewerThreadId"] {
+        let mut backend=Backend::new(&f);
+        let request=json!({"command":"job.create","repository":"root","options":{key:null}});
+        assert!(workspace_control(&mut backend,&request).unwrap_err().contains(key));
+        assert!(backend.wakes.is_empty());
+        let before=backend.db.load_job("1").unwrap().unwrap();
+        let update=json!({"command":"job.update","jobId":"1","patch":{key:"legacy"}});
+        assert!(workspace_control(&mut backend,&update).unwrap_err().contains(key));
+        assert_eq!(backend.db.load_job("1").unwrap().unwrap(),before);
+        assert!(backend.wakes.is_empty());
+    }
+    let mut backend=Backend::new(&f);
+    let before=backend.db.load_job("1").unwrap().unwrap();
+    let review=json!({"command":"review.request","jobId":"1","threadId":"legacy"});
+    assert!(workspace_control(&mut backend,&review).unwrap_err().contains("threadId"));
+    assert_eq!(backend.db.load_job("1").unwrap().unwrap(),before);
+    assert!(backend.wakes.is_empty());
+    let normal=json!({"command":"review.request","jobId":"1"});
+    assert!(workspace_control(&mut backend,&normal).is_ok());
+    assert_eq!(backend.wakes,vec!["control.review.request"]);
+    assert_eq!(backend.db.load_job("1").unwrap().unwrap(),before);
+}
+#[test]
 fn real_git_commit_cli_graph_and_sqlite_end_to_end_deny_forgery_and_replay(){
     let f=Fixture::new();let mut backend=Backend::new(&f);
     let event=event_for("1","task-2",None,"task.completed","succeeded","fake",Some("worker"),
@@ -154,6 +183,134 @@ fn real_git_commit_cli_graph_and_sqlite_end_to_end_deny_forgery_and_replay(){
     assert_eq!(backend.wakes.len(),1);
     let mut fake=f.request(&good);fake["executionId"]=json!("other-execution");
     assert!(workspace_control(&mut backend,&fake).is_err());
+}
+fn targeted_revision_job(f:&Fixture)->Value{
+    let mut job=f.job();
+    job["review"]=json!({"taskId":"review-1","headSha":f.baseline,
+        "outcome":"changes_required","revisionDisposition":"targeted"});
+    job["headSha"]=json!(f.baseline);
+    job["tasks"][0]["executionHistory"]=json!([{"id":"ex-1","attempt":1}]);
+    job["tasks"][0]["revision"]=json!({"kind":"targeted","originalTaskId":"original",
+        "reviewTaskId":"review-1","basedOnHeadSha":f.baseline,"requestIds":["req-1"]});
+    job["reviewRevisionRequests"]=json!([{"requestId":"req-1","reviewTaskId":"review-1",
+        "reviewHeadSha":f.baseline,"revisionTaskId":"task-2","status":"running"}]);
+    job
+}
+#[test]
+fn revision_owned_commit_survives_reconcile_then_delivers_and_settles(){
+    use agents_relay_rust2::{reconciler_review::invalidate_stale_review,
+        review_revision_execution::reconcile_review_revision_facts,
+        review_revision_settlement::settle_review_revision_round};
+    let f=Fixture::new();
+    let mut backend=Backend::new(&f);
+    let good=f.commit(true);
+    let mut job=targeted_revision_job(&f);
+    job["headSha"]=json!(good);
+    // Reproduce a reconciliation between Git commit and the CLI receipt.
+    let effect=invalidate_stale_review(&backend.graph,&job,Some(&good)).unwrap();
+    assert_eq!(effect.job,job);
+    assert!(effect.cancel_execution_ids.is_empty());
+    // A dirty worktree after a commit must not cancel the active generation,
+    // but cannot pass the stricter completion gate.
+    fs::write(f.work.join("temporary.txt"),"dirty").unwrap();
+    assert_eq!(invalidate_stale_review(&backend.graph,&job,Some(&good)).unwrap().job,job);
+    backend.db.save_job(&job).unwrap();
+    assert!(workspace_control(&mut backend,&f.request(&good)).unwrap_err().contains("uncommitted"));
+    fs::remove_file(f.work.join("temporary.txt")).unwrap();
+    let delivered=workspace_control(&mut backend,&f.request(&good)).unwrap();
+    assert_eq!(delivered["task"]["state"],"SUCCEEDED");
+    let mut saved=backend.db.load_job("1").unwrap().unwrap();
+    // Reconciliation before request settlement must not discard the receipt.
+    assert_eq!(invalidate_stale_review(&backend.graph,&saved,Some(&good)).unwrap().job,saved);
+    assert!(reconcile_review_revision_facts(&backend.graph,&mut saved).unwrap());
+    assert_eq!(saved["reviewRevisionRequests"][0]["status"],"verified");
+    assert!(settle_review_revision_round(&backend.graph,&mut saved,3,2).unwrap());
+    assert_eq!(saved["review"]["outcome"],"stale");
+    assert_eq!(saved["review"]["headSha"],f.baseline);
+    assert_eq!(saved["tasks"][0]["state"],"SUCCEEDED");
+}
+#[test]
+fn delivered_sibling_preserves_current_round_across_sqlite_reload_but_stale_receipt_does_not(){
+    use agents_relay_rust2::{reconciler_review::invalidate_stale_review,
+        review_revision_execution::reconcile_review_revision_facts};
+    let f=Fixture::new();
+    let mut backend=Backend::new(&f);
+    let good=f.commit(true);
+    let mut job=targeted_revision_job(&f);
+    job["headSha"]=json!(good);
+    backend.db.save_job(&job).unwrap();
+    workspace_control(&mut backend,&f.request(&good)).unwrap();
+    let mut saved=backend.db.load_job("1").unwrap().unwrap();
+    reconcile_review_revision_facts(&backend.graph,&mut saved).unwrap();
+    let sibling=json!({"id":"task-3","jobId":"1","kind":"work","agentName":"implementation",
+        "state":"QUEUED","attempt":0,"maxAttempts":3,"gitDeliveryRequired":true,
+        "revision":{"kind":"targeted","originalTaskId":"other","reviewTaskId":"review-1",
+            "basedOnHeadSha":f.baseline,"requestIds":["req-2"]}});
+    saved["tasks"].as_array_mut().unwrap().push(sibling);
+    saved["reviewRevisionRequests"].as_array_mut().unwrap().push(json!({
+        "requestId":"req-2","reviewTaskId":"review-1","reviewHeadSha":f.baseline,
+        "revisionTaskId":"task-3","status":"queued"}));
+    backend.db.save_job(&saved).unwrap();
+    let reopened=SQLiteRelayStore::open(&f.base.join("state.sqlite"),None).unwrap();
+    let current=reopened.load_job("1").unwrap().unwrap();
+    let effect=invalidate_stale_review(&backend.graph,&current,Some(&good)).unwrap();
+    assert_eq!(effect.job,current);
+    assert!(effect.cancel_execution_ids.is_empty());
+    assert_eq!(effect.job["review"]["outcome"],"changes_required");
+    assert_eq!(effect.job["reviewRevisionRequests"][0]["status"],"verified");
+    assert_eq!(effect.job["reviewRevisionRequests"][1]["status"],"queued");
+    // Both old receipt and baseline agree, but the newest durable generation differs.
+    let mut stale=current.clone();
+    stale["tasks"][0]["executionHistory"].as_array_mut().unwrap().push(json!({"id":"ex-2","attempt":2}));
+    stale["tasks"][0]["attempt"]=json!(2);
+    let effect=invalidate_stale_review(&backend.graph,&stale,Some(&good)).unwrap();
+    assert_eq!(effect.job["review"]["outcome"],"stale");
+    assert_eq!(effect.job["tasks"][1]["state"],"CANCELLED");
+    assert_eq!(effect.job["reviewRevisionRequests"][1]["status"],"stale");
+    assert_ne!(effect.job["review"]["outcome"],"approved");
+    // Incomplete durable provenance must fail closed, not compare missing
+    // JSON fields as equal.
+    for missing in ["executionId","attempt","baselineSha"] {
+        let mut malformed=current.clone();
+        let task=&mut malformed["tasks"][0];
+        match missing {
+            "executionId"=>{task.as_object_mut().unwrap().remove("executionId");},
+            "attempt"=>{
+                task.as_object_mut().unwrap().remove("attempt");
+                task["executionHistory"][0].as_object_mut().unwrap().remove("attempt");
+            },
+            _=>{
+                task["gitDelivery"].as_object_mut().unwrap().remove("baseSha");
+                task["gitDeliveryBaseline"].as_object_mut().unwrap().remove("sha");
+            }
+        }
+        let effect=invalidate_stale_review(&backend.graph,&malformed,Some(&good)).unwrap();
+        assert_eq!(effect.job["review"]["outcome"],"stale","{missing}");
+        assert_eq!(effect.job["tasks"][1]["state"],"CANCELLED","{missing}");
+    }
+}
+#[test]
+fn unrelated_head_or_wrong_generation_still_invalidates_revision(){
+    use agents_relay_rust2::reconciler_review::invalidate_stale_review;
+    let f=Fixture::new();
+    let backend=Backend::new(&f);
+    let unrelated=f.commit(false);
+    let job=targeted_revision_job(&f);
+    let stale=invalidate_stale_review(&backend.graph,&job,Some(&unrelated)).unwrap();
+    assert_eq!(stale.job["tasks"][0]["state"],"CANCELLED");
+    assert_eq!(stale.job["reviewRevisionRequests"][0]["status"],"stale");
+    assert_eq!(stale.cancel_execution_ids,vec!["ex-1"]);
+    let good=f.commit(true);
+    let mut replacement=job.clone();
+    replacement["tasks"][0]["executionId"]=json!("ex-2");
+    replacement["tasks"][0]["gitDeliveryBaseline"]["executionId"]=json!("ex-2");
+    let stale=invalidate_stale_review(&backend.graph,&replacement,Some(&good)).unwrap();
+    assert_eq!(stale.job["tasks"][0]["state"],"CANCELLED");
+    assert_eq!(stale.cancel_execution_ids,vec!["ex-2"]);
+    let mut unrelated_review=job.clone();
+    unrelated_review["tasks"][0]["revision"]["reviewTaskId"]=json!("old-review");
+    assert_eq!(invalidate_stale_review(&backend.graph,&unrelated_review,Some(&good))
+        .unwrap().job["review"]["outcome"],"stale");
 }
 #[test]
 fn real_task_start_snapshots_exact_source_branch_baseline() {

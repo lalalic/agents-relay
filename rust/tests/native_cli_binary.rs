@@ -109,8 +109,8 @@ fn native_cli_review_and_revision_use_exact_daemon_control_requests(){
             let response=if step==0{
                 assert_eq!(request["command"],"review.request");
                 assert_eq!(request["jobId"],"17");
-                assert_eq!(request["threadId"],"thread-fixture-123456");
-                json!({"id":"17","prNumber":0,"reviewerThreadId":"thread-fixture-123456"})
+                assert!(request.get("threadId").is_none());
+                json!({"id":"17","prNumber":0})
             }else{
                 assert_eq!(request["command"],"task.revise");
                 assert_eq!(request["jobId"],"17");
@@ -128,11 +128,11 @@ fn native_cli_review_and_revision_use_exact_daemon_control_requests(){
         }
     });
     let review=Command::new(binary()).args(["review","job","--repo","project",
-        "--id","17","--thread-id","thread-fixture-123456","--port",&port]).output().unwrap();
+        "--id","17","--port",&port]).output().unwrap();
     assert!(review.status.success(),"{}",String::from_utf8_lossy(&review.stderr));
     let receipt:Value=serde_json::from_slice(&review.stdout).unwrap();
     assert_eq!(receipt["status"],"requested");
-    assert_eq!(receipt["reviewerThreadId"],"thread-fixture-123456");
+    assert!(receipt.get("reviewerThreadId").is_none());
     let temp=std::env::temp_dir().join(format!("rust-cli-revision-{}",std::process::id()));
     std::fs::write(&temp,"[{\"id\":\"f1\",\"summary\":\"Correct the regression\"}]").unwrap();
     let revise=Command::new(binary()).args(["task","revise","--repo","project",

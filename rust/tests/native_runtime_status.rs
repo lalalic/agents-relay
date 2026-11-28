@@ -48,3 +48,24 @@ fn empty_implementation_cannot_be_complete_and_review_approved_is_display_only_p
     job["state"] = json!("COMPLETED");
     assert_eq!(derive_job_runtime_status(&job, "OPEN"), "COMPLETED");
 }
+
+#[test]
+fn latest_planning_is_computed_without_changing_precedence_or_history_rules() {
+    let mut job = json!({"state":"ACTIVE","reviewEnabled":true,"tasks":[],"plans":[{"status":"PLANNING"}]});
+    assert_eq!(derive_job_runtime_status(&job, "OPEN"), "PLANNING");
+    job["plans"] = json!([{"status":"SUCCEEDED"}]);
+    assert_eq!(derive_job_runtime_status(&job, "OPEN"), "IDLE");
+    job["plans"] = json!([{"status":"FAILED"}]);
+    assert_eq!(derive_job_runtime_status(&job, "OPEN"), "FAILED");
+    job["plans"] = json!([]);
+    assert_eq!(derive_job_runtime_status(&job, "OPEN"), "IDLE");
+    job["plans"] = json!([{"status":"PLANNING"},{"status":"SUCCEEDED"}]);
+    assert_eq!(derive_job_runtime_status(&job, "OPEN"), "IDLE");
+    job["plans"] = json!([{"status":"PLANNING"},{"status":"FAILED"}]);
+    assert_eq!(derive_job_runtime_status(&job, "OPEN"), "FAILED");
+    job["plans"] = json!([{"status":"PLANNING"}]);
+    job["tasks"] = json!([{"id":"queued","kind":"work","agentName":"worker","state":"QUEUED"}]);
+    assert_eq!(derive_job_runtime_status(&job, "OPEN"), "QUEUED");
+    job["tasks"] = json!([{"id":"running","kind":"work","agentName":"worker","state":"RUNNING"}]);
+    assert_eq!(derive_job_runtime_status(&job, "OPEN"), "RUNNING");
+}

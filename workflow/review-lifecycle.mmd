@@ -164,7 +164,12 @@ reviewNoProgressAllowed -->|false| limitOwnerResolution
 reviewRoundAllowed -->|false| limitOwnerResolution
 limitOwnerResolution --> changes
 prepareRereview --> stale
-changes -->|on: head.changed| cancelChanges
+%% A revision's own verified branch tip must not cancel its active execution.
+%% Wait for canonical Task delivery/settlement; unrelated changes still stale.
+revisionDeliveryInFlight["guard: revisionDeliveryInFlight"]
+changes -->|on: head.changed| revisionDeliveryInFlight
+revisionDeliveryInFlight -->|true| changes
+revisionDeliveryInFlight -->|false| cancelChanges
 cancelChanges --> stale
 %% Only a new committed Git head with settled work/planning opens re-review.
 reviewChangesReady["guard: reviewPlanReady"]

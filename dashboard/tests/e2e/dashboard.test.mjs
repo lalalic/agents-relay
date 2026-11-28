@@ -135,6 +135,9 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       const apiStart=Date.now(),initial=await jobs();
       assert(Date.now()-apiStart<2000,'SQLite list blocked behind release history');
       assert(initial.some(j=>j.id==='91'));
+      await jobRow('91').locator('.job-button').click();
+      const legacyDetail=await page.locator('#job-detail').innerText();
+      for(const label of ['Creator thread','Implementation thread','Reviewer thread']) assert(!legacyDetail.includes(label),label+' leaked into Job detail');
       assert.equal(await page.locator('.job-row').count(),6);
       await page.locator('#repo-filter').selectOption('fixture');
       await eventually(async()=>await page.locator('.job-row').count()===4);
@@ -325,6 +328,9 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       await page.locator('#job-list').waitFor({state:'visible'});
       await page.setViewportSize(original);
       await jobRow('92').locator('.job-button').click();
+      await page.locator('.task-row[data-task-id="921"]').click();
+      await page.locator('#task-detail').getByText('Worker threads').waitFor();
+      assert.deepEqual(await page.locator('#task-detail .detail-group:has-text("Worker threads") a').evaluateAll(links=>links.map(link=>link.getAttribute('href')).sort()),['codex://threads/38f84f9e-410d-4e36-96e0-a420594a102d','codex://threads/38f84f9e-410d-4e36-96e0-a420594a102e']);
       const requests=[];let fail=false;
       await page.route('**/api/execution-report?*',async route=>{
         const req=route.request(),params=new URL(req.url()).searchParams;
@@ -343,8 +349,8 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       await page.getByText('View JEL chart',{exact:true}).click();
       assert.equal(await page.locator('#graph-dialog').getByRole('button',{name:'Report'}).count(),0);
       await page.locator('#graph-dialog-close').click();
-      await page.locator('.task-row[data-task-id="921"]').click();
       const taskDetail=page.locator('#task-detail');
+      await taskDetail.locator('.task-detail-actions button').first().waitFor();
       assert.equal(await taskDetail.locator('.task-detail-actions button').count(),2);
       for(const label of ['Title','Task ID','Manual override','Planning decision','Planning source','Planning round','PR comment','Conclusion'])assert.equal(await taskDetail.getByText(label,{exact:true}).count(),0,label);
       assert.deepEqual(await taskDetail.locator('.detail-group:has-text("Worker threads") a').evaluateAll(links=>links.map(link=>link.getAttribute('href')).sort()),['codex://threads/38f84f9e-410d-4e36-96e0-a420594a102d','codex://threads/38f84f9e-410d-4e36-96e0-a420594a102e']);
@@ -376,6 +382,9 @@ test('Real Chrome / native SQLite Dashboard', {timeout:120000},async t=>{
       await page.locator('.task-row[data-task-id="923"]').click();
       assert.equal(await page.locator('#task-detail .detail-group:has-text("Worker threads") a').count(),0,'malformed Codex identities must not produce links');
       assert.equal(await page.locator('#task-detail .detail-group:has-text("Worker threads") .detail-value').innerText(),'—');
+      await page.locator('.task-row[data-task-id="925"]').click();
+      assert.equal(await page.locator('#task-detail .detail-group:has-text("Worker threads") a').getAttribute('href'),'https://chatgpt.com/c/worker-thread');
+      await page.locator('.task-row[data-task-id="921"]').click();
       assert.deepEqual(requests,[['POST','fixture','92',null],['POST','fixture','92',null],['POST','fixture','92','921']]);
       fail=true;await reportButton.click();
       await report.locator('#execution-report-status').filter({hasText:'Fixture report failure'}).waitFor();

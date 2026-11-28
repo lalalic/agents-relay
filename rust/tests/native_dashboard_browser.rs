@@ -120,6 +120,11 @@ fn real_chrome_dashboard_regressions() {
         let mut job = json!({"id":id,"repository":name,"projectRoot":root.0.join(name),
             "title":title,"state":state,"prNumber":0,"createdAt":at,"updatedAt":at,
             "reviewEnabled":false,"autoMerge":false,"tasks":[],"plans":[]});
+        if id == "91" {
+            job["creatorThreadId"] = json!("legacy-creator");
+            job["implementationThreadId"] = json!("legacy-implementation");
+            job["reviewerThreadId"] = json!("legacy-reviewer");
+        }
         if matches!(id, "91" | "97") {
             job["localMerge"] =
                 json!({"status":"succeeded","mergedCommitSha":fixture_sha,"updatedAt":at});
@@ -149,6 +154,13 @@ fn real_chrome_dashboard_regressions() {
                     "dependencies":[],"threadId":"not-a-uuid",
                     "threadRoute":{"provider":"openai","model":"fixture","profile":""},
                     "threadHistory":[{"threadId":"also-not-a-uuid","route":{"provider":"openai","model":"fixture","profile":""}}],
+                    "createdAt":at,"updatedAt":at
+                }));
+                job["tasks"].as_array_mut().unwrap().push(json!({
+                    "id":"925","jobId":id,"title":"ChatGPT adapter task","kind":"work",
+                    "adapter":"chatgpt","state":"QUEUED","attempt":1,"maxAttempts":1,
+                    "dependencies":[],"threadId":"worker-thread",
+                    "threadUrl":"https://chatgpt.com/c/worker-thread",
                     "createdAt":at,"updatedAt":at
                 }));
                 job["tasks"].as_array_mut().unwrap().push(json!({

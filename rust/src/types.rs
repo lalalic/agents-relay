@@ -17,7 +17,7 @@ pub enum JobLifecycleState{Draft,Active,Completed,Cancelled}
 pub enum TaskState{Draft,Queued,Running,AwaitingDecision,Blocked,Succeeded,Failed,Cancelled}
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
 #[serde(rename_all="SCREAMING_SNAKE_CASE")]
-pub enum JobRuntimeStatus{Idle,Waiting,Queued,Running,Blocked,Failed,Reviewing,MergePending,Merged,Completed,Cancelled}
+pub enum JobRuntimeStatus{Idle,Waiting,Queued,Running,Planning,Blocked,Failed,Reviewing,MergePending,Merged,Completed,Cancelled}
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
 pub enum Priority{P0,P1,P2,P3}
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
