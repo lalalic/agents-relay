@@ -154,12 +154,16 @@ fn options(input: &Value) -> Result<(Value, Value, Vec<Value>), String> {
     if let Some(v) = input.get("excludedRoutes") {
         let rows = v.as_array().ok_or("excludedRoutes must be an array")?;
         for route in rows {
+            let mut identifiers_only=route.clone();
+            if identifiers_only.get("profile")==Some(&Value::Null) {
+                if let Some(map)=identifiers_only.as_object_mut(){map.remove("profile");}
+            }
             identifiers(
-                route,
+                &identifiers_only,
                 &["provider", "model", "profile"],
                 "excludedRoutes entry",
             )?;
-            if route.as_object().unwrap().is_empty() {
+            if identifiers_only.as_object().unwrap().is_empty() {
                 return Err("excludedRoutes entry must identify a route".into());
             }
         }

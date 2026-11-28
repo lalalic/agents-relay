@@ -291,9 +291,25 @@ pub fn finish_planner<P:PlannerFinishPorts>(
                     let attempt=fresh.get("attempt").and_then(Value::as_u64).unwrap_or(0);
                     let max=fresh.get("maxAttempts").and_then(Value::as_u64)
                         .unwrap_or(if fresh["manualPlanning"]==true{1}else{3});
-                    retry=attempt<max&&!message.starts_with(
+                    let provider=crate::native_codex_thread::recovery_classification(message,field(fresh,"threadId"));
+                    let route=fresh["routing"].clone();
+                    let provider_retry=provider.is_some() && route.is_object()
+                        && crate::native_codex_thread::provider_recovery_available(fresh);
+                    let logical_retry=provider.is_none() && attempt<max && !message.starts_with("codex_provider_recovery_unsafe:") && !message.starts_with(
                         "Planner JSON correction failed after one retry:");
-                    fresh["status"]=json!(if retry{"PLANNING"}else{"FAILED"});
+                    let decision=crate::workflow::policy_graph::choose_policy(
+                        graph,"plan-execution","PLANNING","planner.failed",
+                        &json!({"executionCurrent":true,"retryAvailable":provider_retry||logical_retry}),14,|_|false)?;
+                    if decision["accepted"]!=true {return Err("Plan Graph rejected failure".into());}
+                    retry=decision["target"]=="PLANNING";
+                    if let Some(kind)=provider {
+                        if route.is_object() {
+                            let exclusion=crate::native_codex_thread::exclude_route(fresh,&route,kind);
+                            fresh["platformFailure"]=json!({"classification":kind,"route":exclusion,"executionId":execution_id,"evidence":message});
+                        }
+                        if retry && provider_retry {crate::native_codex_thread::mark_provider_recovery(fresh);}
+                    }
+                    fresh["status"]=decision["target"].clone();
                     fresh["retryFeedback"]=json!(message);
                     fresh["error"]=json!(message);
                     fresh["assessment"]=json!(format!("Planning {}: {message}",
@@ -312,6 +328,14 @@ pub fn finish_planner<P:PlannerFinishPorts>(
             if applied{ports.save_plan(plan(&fresh,plan_id).ok_or("Plan missing")?)?;}
         }
         if applied{
+            let mut audit_record=old.clone();
+            audit_record["adapter"]=json!("codex");
+            audit_record["jobId"]=json!(job_id);
+            if audit_record["routing"].is_object(){
+                crate::route_outcome_recording::record_launch_route_outcome_jsonl(
+                    &crate::decision_audit::audit_path(ports.store_directory()),&audit_record,
+                    message,"process",execution_id,message.starts_with("codex_provider_recovery_unsafe:"));
+            }
             ports.emit(&event_for(job_id,plan_id,None,
                 if retry{"planner.retry"}else{"planner.failed"},
                 if retry{"queued"}else{"failed"},

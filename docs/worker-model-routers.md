@@ -7,3 +7,13 @@ All model-backed execution entry points (Planner, Implementation, Reviewer, stan
 The detached `agents-relay route --input-file request.json` calls the same routing implementation and obtains daemon-owned provider observations unless explicit isolated facts are provided. It selects a route, not an execution, and creates no Job. `agents-relay infer --help` exposes synchronous text/image inference using that same ingress and shared Codex route encoder. It creates no Job or Task; callers must supply a verified vision profile allowlist and authorize external transfer. Consult `agents-relay route --help` and the [Agent Definition Contract](../skills/agents-relay/contracts/agent-contract.md) for input fields.
 
 Implementation: `rust/src/execution_routing.rs` (shared selection), `model_routing.rs` (discovery), `routing_policy.rs`, `router_rules.rs`, `worker_routing.rs`, `usage_registry.rs`, `usage.rs`, `cli_route.rs`, `model_redecision.rs`. Tests: `native_execution_routing_public`, `native_routing_policy`, `native_job_routing_preferences`, `native_codex_thread_routing`. Verify all entry points, hard eligibility, quota observations, advisory preferences and fallback; inspect current code for exact behavior.
+
+All Codex model roles (Planner, managed Workers including Final Reviewer and
+Troubleshooter, standalone Outcome Reviewer, and detached inference) share
+structured terminal failure classification and a maximum of two provider
+route switches. Managed Task/Plan Graphs retain execution fences and durable
+route exclusions; these infrastructure switches do not consume logical
+attempts. Detached calls have no durable execution/thread binding and recover
+only confirmed no-tool-effect failures. All routes still pass the existing
+Router's constraints, profile allowlists and health gates. Unknown or pending
+tool effects fail closed.

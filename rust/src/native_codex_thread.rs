@@ -290,6 +290,7 @@ impl CodexTurnFacts {
         };
         let kind = field(&event, "type");
         if self.terminal_seen {
+            self.quota_valid = false;
             self.resume_valid = false;
         }
         match kind {
@@ -299,6 +300,7 @@ impl CodexTurnFacts {
                     || self.thread_id.as_deref().is_some_and(|prior| prior != id)
                 {
                     self.resume_valid = false;
+                    self.quota_valid = false;
                 } else {
                     self.thread_id = Some(id.to_owned());
                 }
@@ -335,32 +337,34 @@ impl CodexTurnFacts {
             }
             "turn.failed" => {
                 self.terminal_seen = true;
-                let message = event.pointer("/error/message").and_then(Value::as_str);
+                // Codex protocol versions/providers put the structured code
+                // and message in different places. Keep one parser for every
+                // model-backed role and classify from both fields.
+                let error = event.get("error").filter(|value| value.is_object());
+                let code = error.and_then(|value| value.get("code")).and_then(Value::as_str)
+                    .or_else(|| error.and_then(|value| value.get("codex_error_info")).and_then(Value::as_str))
+                    .or_else(|| event.get("code").and_then(Value::as_str));
+                let message = error.and_then(|value| value.get("message")).and_then(Value::as_str)
+                    .or_else(|| event.get("message").and_then(Value::as_str));
+                let evidence = [code, message].into_iter().flatten().collect::<Vec<_>>().join(": ");
                 self.terminal_failure = Some(
-                    message
-                        .unwrap_or("Codex turn failed")
+                    if evidence.is_empty() { "Codex turn failed" } else { &evidence }
                         .chars()
                         .take(1500)
                         .collect(),
                 );
                 if self.quota_valid && self.quota_without_effects.is_none() {
-                    if let Some(msg) =
-                        message.or_else(|| event.get("message").and_then(Value::as_str))
-                    {
-                        let quota=regex::Regex::new(r"(?i)(?:\b429\b|rate[_ -]?limit|quota|usage[_ -]?limit|credits? exhausted|insufficient credits|resource exhausted)").expect("static quota matcher");
-                        if quota.is_match(msg) {
-                            self.quota_without_effects = Some(msg.chars().take(250).collect());
-                        }
+                    if is_quota_error(&evidence) {
+                        self.quota_without_effects = Some(evidence.chars().take(250).collect());
                     }
                 }
-                if let Some(msg) = message {
-                    let quota=regex::Regex::new(r"(?i)(?:\b429\b|rate[_ -]?limit[_ -]?exceeded|quota[_ -]?exceeded|usage[_ -]?limit reached|weekly/monthly limit exhausted|insufficient[_ -]?quota|credits? exhausted|insufficient credits|resource exhausted)").expect("static provider quota matcher");
+                if !evidence.is_empty() {
                     let incompatible = !self.tool_seen
-                        && msg.contains("array_above_max_length")
-                        && msg.contains("input[")
-                        && msg.contains(".content")
-                        && msg.contains("invalid_request_error");
-                    let classification = if quota.is_match(msg) {
+                        && evidence.contains("array_above_max_length")
+                        && evidence.contains("input[")
+                        && evidence.contains(".content")
+                        && evidence.contains("invalid_request_error");
+                    let classification = if is_quota_error(&evidence) {
                         Some("quota_exhausted")
                     } else if incompatible {
                         Some("resume_context_incompatible")
@@ -368,7 +372,7 @@ impl CodexTurnFacts {
                         None
                     };
                     self.continuation =
-                        classification.map(|kind| (kind, msg.chars().take(500).collect()));
+                        classification.map(|kind| (kind, evidence.chars().take(500).collect()));
                 } else {
                     self.resume_valid = false;
                 }
@@ -378,7 +382,7 @@ impl CodexTurnFacts {
                 self.turn_completed = true;
             }
             "turn.started" | "error" => {}
-            _ => self.resume_valid = false,
+            _ => { self.resume_valid = false; self.quota_valid = false; },
         }
         if !self.resume_valid {
             self.pending.clear();
@@ -404,7 +408,7 @@ impl CodexTurnFacts {
         self.terminal_failure.as_deref()
     }
     pub fn quota_failure_without_effects(&self) -> Option<String> {
-        if self.quota_valid {
+        if self.quota_valid && !self.turn_completed {
             self.quota_without_effects.clone()
         } else {
             None
@@ -420,6 +424,113 @@ impl CodexTurnFacts {
             None
         }
     }
+}
+
+/// Structured terminal quota evidence. Generic quota mentions are not proof.
+pub fn is_quota_error(message: &str) -> bool {
+    static MATCHER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    MATCHER.get_or_init(|| regex::Regex::new(r"(?i)(?:\b429\b|rate[_ -]?limit[_ -]?exceeded|quota[_ -]?exceeded|usage[_ -]?limit reached|weekly/monthly limit exhausted|insufficient[_ -]?quota|credits? exhausted|insufficient credits|resource exhausted)").expect("static provider quota matcher")).is_match(message)
+}
+
+/// Provider switches are infrastructure recovery, not logical task attempts.
+pub const MAX_PROVIDER_RECOVERIES: u64 = 2;
+
+pub fn recovery_classification(error: &str, thread_id: &str) -> Option<&'static str> {
+    if error.starts_with("codex_quota_no_side_effects:") {
+        Some("quota_exhausted")
+    } else if valid_thread_id(thread_id) {
+        if error.starts_with("codex_provider_continuation_quota_exhausted:") {
+            Some("quota_exhausted")
+        } else if error.starts_with("codex_provider_continuation_resume_context_incompatible:") {
+            Some("resume_context_incompatible")
+        } else { None }
+    } else { None }
+}
+
+/// A caller must supply a durable, execution-fenced thread binding, not an
+/// unverified guessed thread. Detached calls can only retry no-effect failures.
+pub fn provider_recovery_error(facts: &CodexTurnFacts, thread_id: Option<&str>,
+    resumed: bool, allow_no_effects: bool) -> Option<String> {
+    if let Some((kind, reason)) = thread_id.and_then(|id| facts.resumable_provider_failure(id)) {
+        if kind != "resume_context_incompatible" || resumed {
+            return Some(format!("codex_provider_continuation_{kind}: {reason}"));
+        }
+    }
+    if allow_no_effects {
+        if let Some(reason) = facts.quota_failure_without_effects() {
+            return Some(format!("codex_quota_no_side_effects: {reason}"));
+        }
+    }
+    None
+}
+
+pub fn turn_facts(stdout: &str) -> CodexTurnFacts {
+    let mut facts = CodexTurnFacts::new();
+    for line in stdout.lines() { facts.observe(line); }
+    facts
+}
+
+pub fn provider_recovery_available(record: &Value) -> bool {
+    record["providerRecoveryCount"].as_u64().unwrap_or(0) < MAX_PROVIDER_RECOVERIES
+}
+
+pub fn mark_provider_recovery(record: &mut Value) {
+    record["providerRecoveryCount"] = json!(record["providerRecoveryCount"].as_u64().unwrap_or(0) + 1);
+    record["providerRecoveryPending"] = json!(true);
+}
+
+/// Consume the pending infrastructure switch at the next fenced claim.
+pub fn claim_logical_attempt(record: &mut Value) {
+    let pending = record["providerRecoveryPending"] == true;
+    if let Some(map) = record.as_object_mut() { map.remove("providerRecoveryPending"); }
+    if !pending {
+        record["attempt"] = json!(record["attempt"].as_u64().unwrap_or(0) + 1);
+    }
+}
+
+pub fn exclude_route(record: &mut Value, route: &Value, classification: &str) -> Value {
+    let mut exclusions = record["routingExclusions"].as_array().cloned().unwrap_or_default();
+    let failure = json!({"provider":route.get("provider"),"model":route.get("model"),
+        "profile":route.get("profile"),"reason":classification,"at":crate::local_merge_lock::iso8601_now()});
+    if !exclusions.iter().any(|v| ["provider","model","profile"].iter().all(|key|
+        v.get(*key).unwrap_or(&Value::Null) == failure.get(*key).unwrap_or(&Value::Null))) {
+        exclusions.push(failure.clone());
+    }
+    record["routingExclusions"] = json!(exclusions);
+    failure
+}
+
+/// Detached roles have no durable task/thread to recover. Retry only a
+/// proven no-effect rejection; carry exact route exclusions to the Router.
+pub fn detached_provider_recovery<T>(
+    mut route: impl FnMut(&[Value]) -> Result<Value, String>,
+    mut execute: impl FnMut(&Value) -> Result<T, String>,
+) -> Result<T, String> {
+    let mut excluded = Vec::new();
+    let mut last = None;
+    for attempt in 0..=MAX_PROVIDER_RECOVERIES {
+        let decision = route(&excluded).map_err(|error| match last.as_ref() {
+            Some(prior) => format!("{prior}; no eligible recovery route: {error}"),
+            None => error,
+        })?;
+        let selected = &decision["routing"];
+        let exclusion = json!({"provider":selected["provider"],"model":selected["model"],"profile":selected["profile"]});
+        if excluded.contains(&exclusion) {
+            return Err(format!("{}; router repeated an excluded route", last.unwrap_or_default()));
+        }
+        match execute(&decision) {
+            Ok(value) => return Ok(value),
+            Err(error) if attempt < MAX_PROVIDER_RECOVERIES && recovery_classification(&error, "").is_some() => {
+                if field(selected, "provider").is_empty() || field(selected, "model").is_empty() {
+                    return Err(error);
+                }
+                excluded.push(exclusion);
+                last = Some(error);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err("Provider recovery budget exhausted".into())
 }
 
 /// Compatibility helpers for callers with a complete in-memory test transcript.

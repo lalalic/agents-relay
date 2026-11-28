@@ -79,6 +79,7 @@ pub struct PlannerProcessResult {
     pub exit_code: i32,
     pub stdout: String,
     pub stderr: String,
+    pub verified_thread_id: Option<String>,
 }
 #[derive(Clone, Debug)]
 pub struct CommandObjectivePlanner {
@@ -326,7 +327,18 @@ impl AgentObjectivePlanner {
             .map(Path::new);
         crate::codex_context_builder::ensure_host_global()?;
         let result = run_owned(&self.command, &argv, cwd)?;
-        if result.exit_code != 0 {
+        let facts = crate::native_codex_thread::turn_facts(&result.stdout);
+        if result.exit_code != 0 || facts.terminal_failure().is_some() {
+            if let Some(error) = crate::native_codex_thread::provider_recovery_error(
+                &facts, result.verified_thread_id.as_deref(), previous.is_some(), true) {
+                return Err(error);
+            }
+            if let Some(error) = facts.terminal_failure() {
+                if crate::native_codex_thread::is_quota_error(error) {
+                    return Err(format!("codex_provider_recovery_unsafe: {error}"));
+                }
+                return Err(error.into());
+            }
             return Err(if result.stderr.trim().is_empty() {
                 format!("Planner agent runtime exited {}", result.exit_code)
             } else {

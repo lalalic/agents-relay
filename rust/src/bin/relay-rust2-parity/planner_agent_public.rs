@@ -26,6 +26,7 @@ pub fn invoke(request:&Value)->Option<Result<String,String>>{
                 exit_code:request["exitCode"].as_i64().unwrap_or(0) as i32,
                 stdout:request["output"].as_str().unwrap_or("").into(),
                 stderr:request["stderr"].as_str().unwrap_or("").into(),
+                verified_thread_id:None,
             })
         });
         Ok(json!({"outcome":match outcome{

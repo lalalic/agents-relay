@@ -277,7 +277,7 @@ pub fn launch_plan_execution<P: PlannerLaunchPorts>(
             }
             claimed["trigger"]["currentHeadSha"] = claimed["headSha"].clone();
         }
-        claimed["attempt"] = json!(plan.get("attempt").and_then(Value::as_u64).unwrap_or(0) + 1);
+        crate::native_codex_thread::claim_logical_attempt(&mut claimed);
         if claimed.get("maxAttempts").is_none_or(Value::is_null) {
             claimed["maxAttempts"] = json!(if claimed["manualPlanning"] == true {
                 1

@@ -310,3 +310,34 @@ fn routed_planner_resumes_only_compatible_bound_thread() {
         fs::remove_dir_all(root).unwrap();
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn native_planner_extracts_structured_quota_instead_of_stdin_stderr(){
+    use agents_relay_rust2::native_script_planner::run_native_codex_planner_with_route;
+    use std::os::unix::fs::PermissionsExt;
+    let (root, _project, db) = fixture();
+    let store=SQLiteRelayStore::open_without_claim_reset(&db,Some("903")).unwrap();
+    store.mutate_job("903",|mut job|{
+        job["plans"][0]["manualPlanning"]=json!(true);
+        job["plans"][0]["maxAttempts"]=json!(1);
+        Ok(job)
+    }).unwrap();drop(store);
+    let fake=root.join("quota-codex");
+    fs::write(&fake,r#"#!/bin/sh
+printf '%s\n' '{"type":"thread.started","thread_id":"38f84f9e-410d-4e36-96e0-a420594a102d"}' '{"type":"turn.started"}' '{"type":"turn.failed","error":{"code":"rate_limit_exceeded","message":"Weekly/Monthly Limit Exhausted"}}'
+echo "Reading additional input from stdin..." >&2
+exit 1
+"#).unwrap();
+    fs::set_permissions(&fake,fs::Permissions::from_mode(0o700)).unwrap();
+    let graph=Path::new(env!("CARGO_MANIFEST_DIR")).join("../workflow");
+    let route=json!({"model":{"provider":"zai","model":"glm","profile":"zai"},"routing":{"provider":"zai","model":"glm","profile":"zai"}});
+    let result=run_native_codex_planner_with_route(&db,&root.join("stores"),&graph,"903","plan-1",&fake,4000,Some(route)).unwrap();
+    let p=&result["plans"][0];
+    assert_eq!(p["status"],"PLANNING","{p}");
+    assert_eq!(p["attempt"],1);
+    assert_eq!(p["providerRecoveryPending"],true);
+    assert!(p["error"].as_str().unwrap().contains("rate_limit_exceeded"),"{p}");
+    assert_eq!(p["routingExclusions"][0]["profile"],"zai");
+    fs::remove_dir_all(root).unwrap();
+}

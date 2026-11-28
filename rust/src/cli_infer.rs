@@ -1,13 +1,13 @@
 //! Synchronous, detached model inference. No Job, lease or Graph transition.
 use crate::{
     cli_route,
-    native_codex_thread::codex_route_arguments,
+    native_codex_thread::{codex_route_arguments, CodexTurnFacts},
     owned_process::{OwnedProcessManager, OwnedProcessOptions},
 };
 use serde_json::{json, Value};
 use std::{
     fs,
-    io::{self, Write},
+    io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
     thread,
     time::Duration,
@@ -116,7 +116,7 @@ fn parse(args: &[String]) -> Result<Request, String> {
     Ok(r)
 }
 impl Request {
-    fn routing_request(&self) -> Value {
+    fn routing_request(&self, excluded: &[Value]) -> Value {
         let instruction = if self.capability == "vision" {
             "Source-grounded visual inference. Prefer fast, accurate descriptions."
         } else {
@@ -129,6 +129,7 @@ impl Request {
         if !self.profiles.is_empty() {
             request["eligibleProfiles"] = json!(self.profiles);
         }
+        if !excluded.is_empty() { request["excludedRoutes"] = json!(excluded); }
         request
     }
     fn selected_route<'a>(&self, decision: &'a Value) -> Result<&'a Value, String> {
@@ -149,6 +150,7 @@ impl Request {
     fn argv(&self, route: &Value, output: &Path) -> Result<Vec<String>, String> {
         let mut args = vec![
             "exec".into(),
+            "--json".into(),
             "--ephemeral".into(),
             "--skip-git-repo-check".into(),
             "--sandbox".into(),
@@ -231,8 +233,12 @@ fn execute(request: &Request, route: &Value) -> Result<String, String> {
     )?;
     // Drain provider output concurrently; only its final-message file is the
     // response. Neither private prompt nor provider transcript is logged.
-    let mut stdout = child.take_stdout().ok_or("Missing inference stdout")?;
-    let drain = thread::spawn(move || io::copy(&mut stdout, &mut io::sink()));
+    let stdout = child.take_stdout().ok_or("Missing inference stdout")?;
+    let drain = thread::spawn(move || {
+        let mut facts=CodexTurnFacts::new();
+        for line in BufReader::new(stdout).lines() { facts.observe(&line?); }
+        Ok::<_,io::Error>(facts)
+    });
     let mut stdin = child.take_stdin().ok_or("Missing inference stdin")?;
     let format = if request.format == "json" {
         "Return only the requested JSON object."
@@ -257,7 +263,12 @@ fn execute(request: &Request, route: &Value) -> Result<String, String> {
     let status = child
         .exit_status()?
         .ok_or("Inference process has no exit status")?;
-    let _ = drain.join();
+    let facts = drain.join().map_err(|_| "Inference stdout reader failed")?
+        .map_err(|error| error.to_string())?;
+    if let Some(error)=crate::native_codex_thread::provider_recovery_error(&facts,None,false,sent.is_ok()){
+        return Err(error);
+    }
+    if let Some(error)=facts.terminal_failure(){return Err(error.into());}
     if sent.is_err() || !status.success() {
         return Err(format!("Codex inference failed ({status})"));
     }
@@ -268,17 +279,16 @@ fn execute(request: &Request, route: &Value) -> Result<String, String> {
 
 pub fn run(args: &[String]) -> Result<Value, String> {
     let request = parse(args)?;
-    let facts = request.routing_request();
-    let decision = cli_route::run(
-        &["--input-file".into(), "-".into()],
-        Some(&facts.to_string()),
-    )?;
-    let route = request.selected_route(&decision)?;
-    eprintln!(
-        "{}",
-        json!({"type":"inference.route","profile":route["profile"],"provider":route["provider"],"model":route["model"],"reasoning":route["reasoning"]})
-    );
-    execute(&request, route).map(Value::String)
+    crate::native_codex_thread::detached_provider_recovery(
+        |excluded| {
+            let facts=request.routing_request(excluded);
+            cli_route::run(&["--input-file".into(),"-".into()],Some(&facts.to_string()))
+        },
+        |decision| {
+            let route=request.selected_route(decision)?;
+            eprintln!("{}",json!({"type":"inference.route","profile":route["profile"],"provider":route["provider"],"model":route["model"],"reasoning":route["reasoning"]}));
+            execute(&request,route).map(Value::String)
+        })
 }
 
 #[cfg(test)]
@@ -302,7 +312,7 @@ mod tests {
             "vision-low,other",
         ];
         let r = parse(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap();
-        let f = r.routing_request().to_string();
+        let f = r.routing_request(&[]).to_string();
         assert!(!f.contains("private"));
         assert!(f.contains("vision-low"));
         let d = json!({"selection":{"adapter":"codex"},"routing":{"profile":"vision-low","provider":"openai","model":"fixture","reasoning":"low"}});

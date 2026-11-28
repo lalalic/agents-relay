@@ -179,6 +179,9 @@ impl PlannerLaunchPorts for PlannerPorts {
                 return Err("Concurrent Planner or Worker generation already claimed the Job".into());
             }
             *existing=claimed.clone();
+            if let Some(route)=self.planner_route.as_ref().and_then(|r|r.get("routing").or_else(||r.get("model"))) {
+                existing["routing"]=route.clone();
+            }
             Ok(current)
         })?;
         if let Some(mut audit)=self.planner_route.as_ref().and_then(|route|route.get("audit")).filter(|v|v.is_object()).cloned(){
@@ -273,8 +276,8 @@ impl PlannerLaunchPorts for PlannerPorts {
                         // Observe a real Codex JSONL thread even if the
                         // Planner's CLI apply or model response failed. The
                         // exact execution ID fences the durable Plan record.
-                        if let Some(thread_id)=stdout.lines().find_map(
-                            crate::native_codex_thread::parse_thread_started){
+                        let verified_thread_id=stdout.lines().find_map(crate::native_codex_thread::parse_thread_started);
+                        if let Some(thread_id)=verified_thread_id.as_ref(){
                             store(&db,&job_id)?.mutate_job(&job_id,|mut latest|{
                                 let current=latest.get_mut("plans").and_then(Value::as_array_mut)
                                     .and_then(|plans|plans.iter_mut().find(|p|field(p,"id")==plan_id))
@@ -296,7 +299,7 @@ impl PlannerLaunchPorts for PlannerPorts {
                         if stdout.len()>8*1024*1024||stderr.len()>128*1024{
                             return Err("Model Planner provider output exceeded size limit".into());
                         }
-                        Ok(PlannerProcessResult{exit_code:status.code().unwrap_or(-1),stdout,stderr})
+                        Ok(PlannerProcessResult{exit_code:status.code().unwrap_or(-1),stdout,stderr,verified_thread_id})
                     });
             }
             let run=invoke_trusted_script_recorded(&interpreter,&script,&context,

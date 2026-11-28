@@ -32,9 +32,11 @@ A confirmed pre-tool incompatible-history rejection on resume excludes that
 route as well. Never silently start a fresh thread, replay an uncertain
 action, or exceed the attempt budget. If no eligible Profile remains, fail closed.
 
-Troubleshooter is a **one-execution specialist** (`maxAttempts=1`). It is
-never retried/reopened or used for routine provider quota fallback. On an
-unresolved failure, invoke the existing durable escalation workflow.
+All Codex model roles share structured provider failure recovery: at most two
+safe route switches per durable Task/Plan, independent of logical attempts.
+Troubleshooter is a **one-logical-attempt specialist** (`maxAttempts=1`).
+A proven provider rejection may continue the same Task via a new fenced
+generation; semantic failure is never retried/reopened and must escalate.
 
 ## Native Codex Worker execution permissions
 

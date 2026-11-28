@@ -1192,6 +1192,7 @@ impl IsolatedSQLiteWriteHost {
                     .unwrap_or_else(||json!({"reasoning":"high"}));
             options["fallbackRoutingPreferences"]=json!({"reasoning":"high"});
             options["usage"]=json!(usage);
+            options["excludedRoutes"]=plan["routingExclusions"].clone();
             let workers=self.available_model_workers().into_iter()
                 .filter(|worker|field(worker,"adapter")=="codex")
                 .collect::<Vec<_>>();
@@ -1200,8 +1201,29 @@ impl IsolatedSQLiteWriteHost {
                 &options,
                 &self.config.profile_home,&self.config.policy_path,
                 &self.config.router_rules_path,
-                chrono::Utc::now().timestamp_millis(),None,None,options["recentRouteResults"].as_array().map(Vec::as_slice).unwrap_or(&[]),None)?;
-            Some(routed)
+                chrono::Utc::now().timestamp_millis(),None,None,options["recentRouteResults"].as_array().map(Vec::as_slice).unwrap_or(&[]),None);
+            match routed {
+                Ok(route)=>Some(route),
+                Err(error) if plan["providerRecoveryPending"]==true=>{
+                    let mut next=job.clone();
+                    let current=next["plans"].as_array_mut().unwrap().iter_mut()
+                        .find(|p|field(p,"id")==plan_id).ok_or("Plan missing")?;
+                    let decision=crate::workflow::policy_graph::choose_policy(
+                        &self.config.graph_directory,"plan-execution","PLANNING","planner.unavailable",
+                        &json!({"executionCurrent":true}),14,|_|false)?;
+                    if decision["accepted"]!=true||decision["target"]!="FAILED"{
+                        return Err("Plan Graph rejected unavailable recovery route".into());
+                    }
+                    current["status"]=json!("FAILED");
+                    current["error"]=json!(format!("No eligible provider recovery route: {error}"));
+                    current["assessment"]=current["error"].clone();
+                    current["providerRecoveryPending"]=json!(false);
+                    current["updatedAt"]=json!(crate::local_merge_lock::iso8601_now());
+                    self.persist_exact(id,&job,&next)?;
+                    return Ok(());
+                }
+                Err(error)=>return Err(error),
+            }
         }else{None};
         let graph=self.config.graph_directory.clone();
         let store_directory=self.config.store_directory.clone();
