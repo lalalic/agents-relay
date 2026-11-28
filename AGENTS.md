@@ -93,6 +93,7 @@ Apply L1–L4 and required negative/restart/dedupe coverage as applicable; see
 [verification](docs/testing-strategy.md). Dashboard/HTTP/SSE/runtime status or
 publication changes require `scripts/test-dashboard-browser.sh`. Report real
 provider/device/browser gates as NOT_RUN when unexecuted. For authorized native
-deployment use `node scripts/release-native.mjs` and verify the durable release
-receipt; staging is not installation. Record reusable lessons in their owning
-current document, graph or test rather than appending incident history.
+publication use `node scripts/publish-native.mjs` and verify the durable release
+receipt; use `node scripts/live-native.mjs` separately for deployment. Record
+reusable lessons in their owning current document, graph or test rather than
+appending incident history.
